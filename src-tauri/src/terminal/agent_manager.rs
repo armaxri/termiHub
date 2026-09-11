@@ -3524,15 +3524,14 @@ mod tests {
 
     // ── Resource-hygiene helpers (#1239: G6 reap / prune, G7 reconcile) ──
 
-    /// Build a placeholder [`AgentConnection`] for map-manipulation tests.
+    /// Build a placeholder [`AgentConnection`] over the given command sender.
     ///
-    /// The command channel receiver is dropped immediately — none of the
-    /// hygiene helpers send over it — so only `alive` is meaningful here.
-    fn make_agent_connection(alive: bool) -> AgentConnection {
-        let (command_tx, _command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+    /// Used by tests that need to keep the command *receiver* alive (e.g. the
+    /// CONC-003 timeout test, which sends a request the receiver never answers).
+    fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) -> AgentConnection {
         AgentConnection {
             command_tx,
-            alive: Arc::new(AtomicBool::new(alive)),
+            alive: Arc::new(AtomicBool::new(true)),
             capabilities: AgentCapabilities {
                 connection_types: vec![],
                 max_sessions: 0,
@@ -3547,6 +3546,17 @@ mod tests {
             protocol_version: String::new(),
             client_id: String::new(),
         }
+    }
+
+    /// Build a placeholder [`AgentConnection`] for map-manipulation tests.
+    ///
+    /// The command channel receiver is dropped immediately — none of the
+    /// hygiene helpers send over it — so only `alive` is meaningful here.
+    fn make_agent_connection(alive: bool) -> AgentConnection {
+        let (command_tx, _command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+        let mut conn = make_agent_connection_with_tx(command_tx);
+        conn.alive = Arc::new(AtomicBool::new(alive));
+        conn
     }
 
     /// G6: an exhausted reconnect self-reaps its own entry from the manager map
@@ -3653,6 +3663,88 @@ mod tests {
 
         // A non-matching id is a no-op.
         assert!(!cancel_connect_token(&registry, "agent-2"));
+    }
+
+    /// CONC-002: the reconnect connect-cancellation watcher fires its token as
+    /// soon as `alive` flips false, so a hung reconnect connect (which selects
+    /// on that token) aborts promptly on a user Disconnect / shutdown instead of
+    /// parking the I/O task for the full connect timeout. This unit-tests the
+    /// `alive`→token bridge; the core proves the token actually aborts a real
+    /// hung connect (`connect_aborts_when_token_cancelled`).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn cancel_connect_watcher_fires_token_when_alive_flips() {
+        let alive = Arc::new(AtomicBool::new(true));
+        let token = CancellationToken::new();
+        let watcher =
+            tokio::spawn(cancel_connect_when_disconnected(alive.clone(), token.clone()));
+
+        // While alive, the token stays live well past one poll interval.
+        tokio::time::sleep(RECONNECT_CANCEL_POLL_INTERVAL * 3).await;
+        assert!(
+            !token.is_cancelled(),
+            "the token must not fire while alive is still true"
+        );
+
+        // A Disconnect flips alive; the watcher must fire the token promptly.
+        alive.store(false, Ordering::SeqCst);
+        tokio::time::timeout(std::time::Duration::from_secs(2), token.cancelled())
+            .await
+            .expect("watcher must fire the token promptly once alive is false");
+        assert!(token.is_cancelled());
+        let _ = watcher.await;
+    }
+
+    /// CONC-003: `send_request` must return a real timeout error within the
+    /// bounded window when the agent never answers (e.g. the I/O task is wedged
+    /// in a multi-minute reconnect), rather than blocking for the whole reconnect
+    /// window and then reporting a "timed out" that never actually fired.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn send_request_times_out_when_no_response_arrives() {
+        let app = tauri::test::mock_app();
+        let manager = Arc::new(AgentConnectionManager::new(app.handle().clone()));
+
+        // Hold the command receiver but never answer — modelling an io_task
+        // parked in reconnect. Keeping `_command_rx` alive is what makes the
+        // command send succeed (a dropped rx fails early with a different error),
+        // so the test truly exercises the wait-timeout path.
+        let (command_tx, _command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
+        {
+            let mut agents = manager.agents.lock().unwrap();
+            agents.insert(
+                "agent-1".to_string(),
+                make_agent_connection_with_tx(command_tx),
+            );
+        }
+
+        let started = std::time::Instant::now();
+        let result = {
+            let m = manager.clone();
+            tokio::task::spawn_blocking(move || {
+                m.send_request_with_timeout(
+                    "agent-1",
+                    "connections.list",
+                    serde_json::json!({}),
+                    std::time::Duration::from_millis(200),
+                )
+            })
+            .await
+            .expect("spawn_blocking join")
+        };
+        let elapsed = started.elapsed();
+
+        let err = result.expect_err("a request with no response must return a timeout error");
+        assert!(
+            err.to_string().to_lowercase().contains("timed out"),
+            "expected a real timeout error, got: {err}"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "send_request must fail fast on timeout, took {elapsed:?}"
+        );
+
+        // Prove the receiver was still alive across the wait — i.e. we exercised
+        // the timeout path, not the send-failure path.
+        drop(_command_rx);
     }
 
     /// The RAII guard clears the registry entry when the connect finishes, so a
