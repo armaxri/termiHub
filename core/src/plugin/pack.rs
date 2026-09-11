@@ -431,6 +431,28 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn skips_symlinks_in_the_source_tree() {
+        // A symlink inside a packaged subtree must not be followed or packaged:
+        // the archive should carry neither the link nor its (external) target.
+        let src = source_tree(&theme_manifest());
+        fs::create_dir(src.path().join("backend")).unwrap();
+        fs::write(src.path().join("backend/real.so"), b"\x7fELF").unwrap();
+        // A symlink pointing outside the source tree.
+        std::os::unix::fs::symlink("/etc/passwd", src.path().join("backend/escape")).unwrap();
+
+        let out = TempDir::new().unwrap();
+        let pkg = pack_plugin(src.path(), out.path()).unwrap();
+
+        let names = entry_names(&pkg);
+        assert!(names.contains("backend/real.so"));
+        assert!(
+            !names.contains("backend/escape"),
+            "symlink leaked into the package: {names:?}"
+        );
+    }
+
+    #[test]
     fn missing_manifest_is_reported() {
         let empty = TempDir::new().unwrap();
         let out = TempDir::new().unwrap();

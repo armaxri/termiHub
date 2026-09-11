@@ -213,6 +213,16 @@ fn validate_package_with_limit(
     path: &Path,
     max_bytes: u64,
 ) -> Result<PluginManifest, PluginPackageError> {
+    validate_package_with_limits(path, max_bytes, MAX_PACKAGE_ENTRIES)
+}
+
+/// [`validate_package`] with explicit size *and* entry-count limits. Factored out
+/// so both caps can be exercised in tests with tiny fixtures.
+fn validate_package_with_limits(
+    path: &Path,
+    max_bytes: u64,
+    max_entries: usize,
+) -> Result<PluginManifest, PluginPackageError> {
     check_size_with_limit(path, max_bytes)?;
 
     let file = std::fs::File::open(path)?;
@@ -221,7 +231,7 @@ fn validate_package_with_limit(
 
     // Reject an absurd entry count before reading anything — a many-entry archive
     // is a resource-exhaustion vector independent of each entry's decompressed size.
-    check_entry_count(archive.len(), MAX_PACKAGE_ENTRIES)?;
+    check_entry_count(archive.len(), max_entries)?;
 
     let manifest_json = {
         let mut entry = match archive.by_name(MANIFEST_FILE_NAME) {
@@ -460,6 +470,41 @@ mod tests {
         let err = read_entry_bounded(Cursor::new(vec![0u8; 4096]), 64, &mut remaining, &mut buf)
             .unwrap_err();
         assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn check_entry_count_accepts_within_cap_and_rejects_over() {
+        check_entry_count(10, 8192).expect("10 entries is under the cap");
+        check_entry_count(8192, 8192).expect("exactly at the cap is accepted");
+        let err = check_entry_count(8193, 8192).unwrap_err();
+        match err {
+            PluginPackageError::TooManyEntries { actual, max } => {
+                assert_eq!(actual, 8193);
+                assert_eq!(max, 8192);
+            }
+            other => panic!("expected TooManyEntries, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn validate_rejects_package_over_entry_count_cap() {
+        // A well-formed package with a manifest plus one extra entry (2 total),
+        // rejected purely on a tiny injected entry-count cap of 1 — proving the
+        // cap is enforced on the validate/read path before the manifest is parsed.
+        let pkg = make_package(Some(&good_manifest_json()), &[("README.md", b"# hi")]);
+        let err = validate_package_with_limits(pkg.path(), MAX_PACKAGE_SIZE_BYTES, 1).unwrap_err();
+        match err {
+            PluginPackageError::TooManyEntries { actual, max } => {
+                assert_eq!(actual, 2);
+                assert_eq!(max, 1);
+            }
+            other => panic!("expected TooManyEntries, got: {other}"),
+        }
+    }
+
+    #[test]
+    fn entry_count_cap_constant_is_8192() {
+        assert_eq!(MAX_PACKAGE_ENTRIES, 8192);
     }
 
     #[test]

@@ -45,9 +45,9 @@ use thiserror::Error;
 
 use super::manifest::{is_valid_plugin_id, parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{
-    check_entry_count, check_package_size, read_entry_bounded, validate_package, PluginPackageError,
-    MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES, MAX_DECOMPRESSED_TOTAL_BYTES,
-    MAX_PACKAGE_ENTRIES,
+    check_entry_count, check_package_size, read_entry_bounded, validate_package,
+    PluginPackageError, MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES,
+    MAX_DECOMPRESSED_TOTAL_BYTES, MAX_PACKAGE_ENTRIES,
 };
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
 use super::signature::{self, VerifiedArchive};
@@ -867,17 +867,20 @@ fn extract_package(
         expected_key_id,
         MAX_DECOMPRESSED_ENTRY_BYTES,
         MAX_DECOMPRESSED_TOTAL_BYTES,
+        MAX_PACKAGE_ENTRIES,
     )
 }
 
-/// [`extract_package`] with explicit decompression limits, so the zip-bomb guard
-/// on the extraction path can be exercised in tests with tiny fixtures.
+/// [`extract_package`] with explicit decompression and entry-count limits, so the
+/// zip-bomb and many-entry guards on the extraction path can be exercised in tests
+/// with tiny fixtures.
 fn extract_package_with_limits(
     package_path: &Path,
     dest: &Path,
     expected_key_id: Option<&str>,
     per_entry_limit: u64,
     total_limit: u64,
+    max_entries: usize,
 ) -> Result<(), PluginManagerError> {
     let file = std::fs::File::open(package_path)?;
     let mut archive =
@@ -886,7 +889,7 @@ fn extract_package_with_limits(
     // Reject an absurd entry count before extracting anything — a many-entry
     // archive is a resource-exhaustion vector (one create per entry) independent
     // of each entry's decompressed size, which is bounded separately below.
-    check_entry_count(archive.len(), MAX_PACKAGE_ENTRIES)?;
+    check_entry_count(archive.len(), max_entries)?;
 
     // Re-verify against this open archive and resolve the digest map the written
     // bytes must match. `Some(map)` means "bind every entry to this"; `None` means
@@ -1619,7 +1622,9 @@ mod tests {
             &[("bomb.bin", &[0u8; 4096])],
         );
         let dest = tmp.path().join("out");
-        let err = extract_package_with_limits(&pkg, &dest, None, 64, 1_000_000).unwrap_err();
+        let err =
+            extract_package_with_limits(&pkg, &dest, None, 64, 1_000_000, MAX_PACKAGE_ENTRIES)
+                .unwrap_err();
         assert!(
             matches!(&err, PluginManagerError::Io(e) if e.kind() == std::io::ErrorKind::InvalidData),
             "expected an InvalidData io error, got: {err:?}"
@@ -1637,7 +1642,8 @@ mod tests {
             &[("a.bin", &[0u8; 400]), ("b.bin", &[0u8; 400])],
         );
         let dest = tmp.path().join("out");
-        let err = extract_package_with_limits(&pkg, &dest, None, 10_000, 600).unwrap_err();
+        let err = extract_package_with_limits(&pkg, &dest, None, 10_000, 600, MAX_PACKAGE_ENTRIES)
+            .unwrap_err();
         assert!(
             matches!(&err, PluginManagerError::Io(e) if e.kind() == std::io::ErrorKind::InvalidData),
             "expected an InvalidData io error, got: {err:?}"
@@ -1655,12 +1661,95 @@ mod tests {
             &[("backend/lib.so", b"\x7fELF-small")],
         );
         let dest = tmp.path().join("out");
-        extract_package_with_limits(&pkg, &dest, None, 1_000_000, 1_000_000)
+        extract_package_with_limits(&pkg, &dest, None, 1_000_000, 1_000_000, MAX_PACKAGE_ENTRIES)
             .expect("content within budget must extract");
         assert_eq!(
             std::fs::read(dest.join("backend/lib.so")).unwrap(),
             b"\x7fELF-small"
         );
+    }
+
+    #[test]
+    fn extract_rejects_a_symlink_entry() {
+        // A package carrying a symlink entry (pointing outside the plugin dir) is
+        // refused before it can be written — even though its own path is contained,
+        // an extracted symlink can escape the sandbox when followed later.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("linky.termihub-plugin");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let opts = SimpleFileOptions::default();
+        zip.start_file(MANIFEST_FILE_NAME, opts).unwrap();
+        zip.write_all(manifest_json("linky", "1.0").as_bytes())
+            .unwrap();
+        // A symlink entry whose target escapes the plugin directory.
+        zip.add_symlink("themes/escape", "../../../../etc/passwd", opts)
+            .unwrap();
+        zip.finish().unwrap();
+
+        let dest = tmp.path().join("out");
+        let err = extract_package_with_limits(
+            &path,
+            &dest,
+            None,
+            1_000_000,
+            1_000_000,
+            MAX_PACKAGE_ENTRIES,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(&err, PluginManagerError::SymlinkEntry(name) if name == "themes/escape"),
+            "expected SymlinkEntry, got: {err:?}"
+        );
+        // Nothing about the symlink landed on disk.
+        assert!(!dest.join("themes/escape").exists());
+    }
+
+    #[test]
+    fn install_rejects_a_symlink_entry() {
+        // End-to-end: install refuses a package with a symlink entry and leaves no
+        // plugin directory behind.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("linky.termihub-plugin");
+        let file = std::fs::File::create(&path).unwrap();
+        let mut zip = ZipWriter::new(file);
+        let opts = SimpleFileOptions::default();
+        zip.start_file(MANIFEST_FILE_NAME, opts).unwrap();
+        zip.write_all(manifest_json("linky", "1.0").as_bytes())
+            .unwrap();
+        zip.add_symlink("evil-link", "/etc/passwd", opts).unwrap();
+        zip.finish().unwrap();
+
+        let (mgr, _t) = manager();
+        let result = mgr.install(&path, true, false);
+        assert!(
+            matches!(result, Err(PluginManagerError::SymlinkEntry(_))),
+            "got: {result:?}"
+        );
+        assert!(!mgr.root().join("linky").exists());
+    }
+
+    #[test]
+    fn extract_rejects_over_the_entry_count_cap() {
+        // Two entries (manifest + one file) against an injected entry-count cap of
+        // 1 — the extractor refuses the archive before writing anything.
+        let tmp = TempDir::new().unwrap();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json("crowded", "1.0"),
+            &[("themes/dark.json", b"{}")],
+        );
+        let dest = tmp.path().join("out");
+        let err =
+            extract_package_with_limits(&pkg, &dest, None, 1_000_000, 1_000_000, 1).unwrap_err();
+        match err {
+            PluginManagerError::Package(PluginPackageError::TooManyEntries { actual, max }) => {
+                assert_eq!(actual, 2);
+                assert_eq!(max, 1);
+            }
+            other => panic!("expected TooManyEntries, got: {other:?}"),
+        }
+        assert!(!dest.join("themes/dark.json").exists());
     }
 
     #[test]
