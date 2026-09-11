@@ -348,9 +348,14 @@ fn spawn_registry_daemon() -> std::io::Result<()> {
     crate::daemon::spawn::configure_detached_stderr(&mut command, log);
     crate::daemon::spawn::configure_detachment(&mut command);
 
-    // Detached and never waited on: the child reparents to init and outlives us
-    // by design, so there is no zombie to reap.
-    command.spawn()?;
+    // The daemon is detached via `setsid` (unix), which starts a new session but
+    // does NOT reparent it to init — this worker stays its parent until the
+    // worker exits. Hand the child to a reaper so that if the registry daemon
+    // terminates while this worker is still alive it is `wait()`ed rather than
+    // left a zombie (AGT-018 / #2580). Once the worker exits, init inherits and
+    // reaps the surviving daemon as before.
+    let child = command.spawn()?;
+    let _ = crate::daemon::spawn::reap_detached_child(child);
     info!("Spawned registry daemon");
     Ok(())
 }

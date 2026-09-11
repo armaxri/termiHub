@@ -72,9 +72,82 @@ pub fn configure_detachment(command: &mut std::process::Command) {
     }
 }
 
+/// Reap a spawned, detached daemon child so it never becomes a zombie.
+///
+/// [`configure_detachment`] uses `setsid` (unix), which starts a new *session*
+/// but does **not** reparent the child to init — the spawning worker stays its
+/// parent until the worker itself exits. A detached daemon that then terminates
+/// while its worker is still alive (shell exits, `MSG_KILL`, crash) would sit as
+/// a **zombie** in the worker's process table with no one to `wait()` it. A
+/// long-lived worker cycling many persistent sessions would accumulate zombies
+/// (AGT-018 / #2580).
+///
+/// A double-fork would sidestep this (reparent to init), but it is incompatible
+/// with the session-daemon spawn: the worker polls the *real* daemon's exit
+/// status with `try_wait` during the connect race (#847), which a double-fork's
+/// throwaway intermediate child would break. So instead we hand the `Child` to a
+/// dedicated reaper thread that blocks in `wait()` for the daemon's lifetime and
+/// reaps it the moment it exits. The thread costs nothing while parked and ends
+/// when its daemon does, so it does not accumulate. On Windows there are no
+/// zombies, but reaping the handle here is harmless and keeps the seam uniform.
+///
+/// Returns the reaper thread's [`JoinHandle`](std::thread::JoinHandle) (its
+/// result is the daemon's exit status) so tests can join it deterministically;
+/// production callers ignore it. If the reaper thread cannot be spawned the
+/// `Child` is dropped as before (best-effort, never a panic) and `None` is
+/// returned.
+#[must_use = "ignoring the handle is fine in production but tests should join it"]
+pub fn reap_detached_child(
+    child: std::process::Child,
+) -> Option<std::thread::JoinHandle<std::io::Result<std::process::ExitStatus>>> {
+    match std::thread::Builder::new()
+        .name("termihub-daemon-reaper".to_string())
+        .spawn(move || {
+            let mut child = child;
+            child.wait()
+        }) {
+        Ok(handle) => Some(handle),
+        Err(e) => {
+            tracing::warn!(
+                "could not spawn daemon reaper thread ({e}); dropping child unreaped"
+            );
+            None
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a trivially short-lived process for the reaper test.
+    #[cfg(unix)]
+    fn trivial_command() -> std::process::Command {
+        let mut c = std::process::Command::new("sh");
+        c.arg("-c").arg("exit 0");
+        c
+    }
+    #[cfg(windows)]
+    fn trivial_command() -> std::process::Command {
+        let mut c = std::process::Command::new("cmd");
+        c.arg("/C").arg("exit 0");
+        c
+    }
+
+    /// A spawned, then-exited child handed to the reaper must be `wait()`ed —
+    /// i.e. reaped, never left a zombie (AGT-018 / #2580). Joining the reaper
+    /// thread returns the child's exit status, proving `wait()` completed.
+    #[cfg(any(unix, windows))]
+    #[test]
+    fn reap_detached_child_reaps_a_short_lived_process() {
+        let child = trivial_command().spawn().expect("spawn trivial process");
+        let handle = reap_detached_child(child).expect("reaper thread spawned");
+        let status = handle
+            .join()
+            .expect("reaper thread joins")
+            .expect("wait() succeeds");
+        assert!(status.success(), "the reaped process exited 0");
+    }
 
     // ── daemon detachment (issue #995) ───────────────────────────────
 

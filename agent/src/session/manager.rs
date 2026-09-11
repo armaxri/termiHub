@@ -283,10 +283,19 @@ impl DaemonLauncher for SystemDaemonLauncher {
         })
         .await
         {
-            Ok(client) => client,
+            Ok(client) => {
+                // The daemon is detached (setsid) but not reparented to init, so
+                // the worker stays its parent. Hand the child to a reaper so it
+                // is `wait()`ed when it eventually exits and never lingers as a
+                // zombie in a long-lived worker (AGT-018 / #2580).
+                let _ = crate::daemon::spawn::reap_detached_child(child);
+                client
+            }
             Err(e) => {
-                // Don't leave a half-started daemon orphaned when connect fails.
+                // Don't leave a half-started daemon orphaned when connect fails:
+                // kill it AND reap it so the killed process is not left a zombie.
                 let _ = child.kill();
+                let _ = crate::daemon::spawn::reap_detached_child(child);
                 return Err(e);
             }
         };
