@@ -17,6 +17,7 @@ import type {
   WorkflowTrigger,
   WorkflowTriggerKind,
 } from "@/types/workflow";
+import { newId } from "@/services/transport/ids";
 
 /**
  * Current version of the workflow export envelope. Bump only on an incompatible
@@ -289,11 +290,7 @@ export function summarizeLocalProcessSteps(workflows: Workflow[]): {
 
 /** Default fresh-id generator; mirrors the store's `generateWorkflowId`. */
 function defaultGenerateId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") {
-    return `workflow-${c.randomUUID()}`;
-  }
-  return `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("workflow");
 }
 
 /**

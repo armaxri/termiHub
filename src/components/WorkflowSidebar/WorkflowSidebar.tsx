@@ -14,15 +14,12 @@ import type { Workflow } from "@/types/workflow";
 import { WorkflowListItem } from "./WorkflowListItem";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
+import { newId } from "@/services/transport/ids";
 import "./WorkflowSidebar.css";
 
 /** Generate a unique workflow id for a new or duplicated workflow. */
 function generateWorkflowId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") {
-    return `workflow-${c.randomUUID()}`;
-  }
-  return `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("workflow");
 }
 
 /** Turn a workflow name into a filesystem-friendly slug for the default filename. */

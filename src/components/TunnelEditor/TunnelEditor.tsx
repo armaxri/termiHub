@@ -28,6 +28,7 @@ import { bestSshViaForAgent, deriveCompanion, findCompanion } from "@/utils/tunn
 import { TunnelDiagram } from "./TunnelDiagram";
 import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
 import { validateTunnelType } from "./tunnelValidation";
+import { newId } from "@/services/transport/ids";
 import "./TunnelEditor.css";
 
 /** Encode a run-location as a `Select` option value, and decode it back. */
@@ -152,7 +153,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // built tunnel links to the same row Save creates.
   const buildConfig = useCallback(
     (): TunnelConfig => ({
-      id: existingTunnel?.id ?? `tun-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      id: existingTunnel?.id ?? newId("tun"),
       name: name || "Untitled Tunnel",
       sshConnectionId,
       tunnelType,

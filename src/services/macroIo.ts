@@ -9,6 +9,7 @@
  */
 
 import type { Macro, MacroStep } from "@/types/macro";
+import { newId } from "@/services/transport/ids";
 
 /**
  * Current version of the macro export envelope. Bump only on an incompatible
@@ -133,11 +134,7 @@ export function parseMacroEnvelope(json: string): Macro[] {
 
 /** Default fresh-id generator; mirrors the store's `generateMacroId`. */
 function defaultGenerateId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") {
-    return `macro-${c.randomUUID()}`;
-  }
-  return `macro-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("macro");
 }
 
 /**

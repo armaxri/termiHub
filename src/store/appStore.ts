@@ -197,6 +197,7 @@ import {
   type WorkflowRunLocalProcessSeam,
 } from "@/services/workflowRunner";
 import { dispatchOnConnectTriggers } from "@/services/workflowTriggers";
+import { newId } from "@/services/transport/ids";
 import {
   invokeRunLocalProcess,
   cancelLocalProcess,
@@ -1699,13 +1700,9 @@ const LOCAL_PROCESS_CANCEL_POLL_MS = 200;
  */
 let activeWorkflowRun: WorkflowRunHandle | null = null;
 
-/** Generate a unique workflow id, falling back when `crypto.randomUUID` is absent. */
+/** Generate a unique workflow id. */
 function generateWorkflowId(): string {
-  const c = globalThis.crypto;
-  if (c && typeof c.randomUUID === "function") {
-    return `workflow-${c.randomUUID()}`;
-  }
-  return `workflow-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return newId("workflow");
 }
 
 let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -5440,7 +5437,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (!original) return;
       const duplicate: SavedConnection = {
         ...original,
-        id: `conn-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        id: newId("conn"),
         name: `Copy of ${original.name}`,
       };
       mirrorConnectionIntent("connection.add", { connection: duplicate });
@@ -7702,7 +7699,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             activeGroupIndex
           ));
         }
-        const id = `ws-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+        const id = newId("ws");
         await apiSaveWorkspace({
           id,
           name,
