@@ -20,7 +20,16 @@ import {
 } from "@/services/api";
 import { onAgentSetupProgress } from "@/services/events";
 import { useAppStore } from "@/store/appStore";
-import { Modal, Button, Input, Spinner, toast } from "@/components/ui";
+import {
+  Modal,
+  Button,
+  Input,
+  Spinner,
+  Checkbox,
+  RadioGroup,
+  RadioGroupItem,
+  toast,
+} from "@/components/ui";
 import "./AgentSetupDialog.css";
 
 interface AgentSetupDialogProps {
@@ -415,17 +424,19 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
             <div className="agent-setup-dialog__field">
               <label className="agent-setup-dialog__label">Binary Source</label>
-              <div className="agent-setup-dialog__source-selector">
+              <RadioGroup
+                className="agent-setup-dialog__source-selector"
+                value={binarySource}
+                onValueChange={(v) => setBinarySource(v as "github" | "branch" | "local")}
+                aria-label="Binary Source"
+              >
                 <label
                   className={`agent-setup-dialog__source-option${binarySource === "github" ? " agent-setup-dialog__source-option--selected" : ""}`}
                 >
                   <div className="agent-setup-dialog__source-option-header">
-                    <input
-                      type="radio"
-                      name="binarySource"
+                    <RadioGroupItem
                       value="github"
-                      checked={binarySource === "github"}
-                      onChange={() => setBinarySource("github")}
+                      aria-label="Download from GitHub"
                       data-testid="agent-setup-source-github"
                     />
                     <span>Download from GitHub</span>
@@ -439,12 +450,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                   className={`agent-setup-dialog__source-option${binarySource === "branch" ? " agent-setup-dialog__source-option--selected" : ""}`}
                 >
                   <div className="agent-setup-dialog__source-option-header">
-                    <input
-                      type="radio"
-                      name="binarySource"
+                    <RadioGroupItem
                       value="branch"
-                      checked={binarySource === "branch"}
-                      onChange={() => setBinarySource("branch")}
+                      aria-label="Branch build"
                       data-testid="agent-setup-source-branch"
                     />
                     <span>Branch build</span>
@@ -468,12 +476,9 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                   className={`agent-setup-dialog__source-option${binarySource === "local" ? " agent-setup-dialog__source-option--selected" : ""}`}
                 >
                   <div className="agent-setup-dialog__source-option-header">
-                    <input
-                      type="radio"
-                      name="binarySource"
+                    <RadioGroupItem
                       value="local"
-                      checked={binarySource === "local"}
-                      onChange={() => setBinarySource("local")}
+                      aria-label="Use local file"
                       data-testid="agent-setup-source-local"
                     />
                     <span>Use local file</span>
@@ -496,7 +501,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
                     </div>
                   )}
                 </label>
-              </div>
+              </RadioGroup>
             </div>
 
             <div className="agent-setup-dialog__field">
@@ -516,11 +521,10 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
             {!isWindows && (
               <div className="agent-setup-dialog__checkbox-row">
-                <input
-                  type="checkbox"
+                <Checkbox
                   id="install-service"
                   checked={installService}
-                  onChange={(e) => setInstallService(e.target.checked)}
+                  onCheckedChange={setInstallService}
                   data-testid="agent-setup-install-service"
                 />
                 <label htmlFor="install-service">Install systemd service</label>

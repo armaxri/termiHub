@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from "react";
 import { ArrowLeftRight, Plus, Trash2, AlertTriangle, FileDown } from "lucide-react";
 import type { JumpHostConfig } from "@/types/connection";
 import type { SettingsSchema } from "@/types/schema";
+import { Checkbox } from "@/components/ui";
 import { jumpHostInlineFields, type SavedConnectionOption } from "@/utils/jumpHost";
 import { JumpHostEntry } from "./JumpHostEntry";
 import { JumpHostPathDisplay } from "./JumpHostPathDisplay";
@@ -114,10 +115,10 @@ export function JumpHostSection({
       <h3 className="settings-panel__category-title">Jump Host</h3>
 
       <label className="settings-form__field settings-form__field--checkbox">
-        <input
-          type="checkbox"
+        <Checkbox
           checked={enabled}
-          onChange={(e) => toggleEnabled(e.target.checked)}
+          onCheckedChange={toggleEnabled}
+          aria-label="Connect through a jump host"
           data-testid="jump-host-enabled"
         />
         <span className="settings-form__label jump-host__toggle-label">

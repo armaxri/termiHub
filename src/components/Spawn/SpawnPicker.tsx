@@ -1,6 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Container, Folder, Terminal } from "lucide-react";
-import { Button, Checkbox, Input, Modal, Select } from "@/components/ui";
+import {
+  Button,
+  Checkbox,
+  Input,
+  Modal,
+  RadioGroup,
+  RadioGroupItem,
+  Select,
+} from "@/components/ui";
 import { listSpawnOptions, type SpawnOptions } from "@/services/api";
 import type { ContainerRuntime, SpawnChoice, SpawnTarget } from "@/types/spawn";
 import { frontendLog } from "@/utils/frontendLog";
@@ -156,13 +164,7 @@ export function SpawnPicker({
       className={`spawn-picker__row${selected === id ? " spawn-picker__row--selected" : ""}`}
       data-testid={`spawn-picker-row-${id}`}
     >
-      <input
-        type="radio"
-        name="spawn-picker-target"
-        className="spawn-picker__radio"
-        checked={selected === id}
-        onChange={() => setSelected(id)}
-      />
+      <RadioGroupItem value={id} aria-label={label} data-testid={`spawn-picker-radio-${id}`} />
       <span className="spawn-picker__row-icon" aria-hidden="true">
         {icon}
       </span>
@@ -272,7 +274,12 @@ export function SpawnPicker({
           Looking for available sessions…
         </p>
       ) : (
-        <div className="spawn-picker__sections" role="radiogroup" aria-label="Session target">
+        <RadioGroup
+          className="spawn-picker__sections"
+          value={selected ?? ""}
+          onValueChange={(v) => setSelected(v as RowId)}
+          aria-label="Session target"
+        >
           {options.shells.length > 0 ? (
             <section className="spawn-picker__section">
               <h3 className="spawn-picker__section-label">Local shells</h3>
@@ -299,7 +306,7 @@ export function SpawnPicker({
               No spawn targets were found on this host.
             </p>
           ) : null}
-        </div>
+        </RadioGroup>
       )}
     </Modal>
   );

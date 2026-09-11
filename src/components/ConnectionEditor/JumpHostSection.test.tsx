@@ -204,8 +204,9 @@ describe("JumpHostSection", () => {
 
   it("is disabled with no inline fields when value is empty", () => {
     render(undefined, vi.fn());
-    const checkbox = query("jump-host-enabled") as HTMLInputElement;
-    expect(checkbox.checked).toBe(false);
+    const checkbox = query("jump-host-enabled");
+    // Migrated to the shared Checkbox primitive (Radix): aria-checked, not .checked.
+    expect(checkbox?.getAttribute("aria-checked")).toBe("false");
     expect(query("jump-host-host-0")).toBeNull();
   });
 

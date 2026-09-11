@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
-import { Modal, Button } from "@/components/ui";
+import { Modal, Button, Checkbox } from "@/components/ui";
 import "./PasswordPrompt.css";
 
 /**
@@ -79,13 +79,13 @@ export function PasswordPrompt() {
       />
       {storeActive && (
         <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={savePassword}
-            onChange={(e) => setSavePassword(e.target.checked)}
+            onCheckedChange={setSavePassword}
+            aria-label="Save password"
             data-testid="password-prompt-save-checkbox"
           />
-          Save password
+          <span>Save password</span>
         </label>
       )}
     </Modal>

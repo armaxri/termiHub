@@ -1251,7 +1251,8 @@ describe("ConnectionEditor — SSH Jump Host section", () => {
   it("renders the Jump Host section for an SSH connection", () => {
     renderFor(SSH_CONN_PASSWORD.id);
     expect(query("jump-host-section")).toBeTruthy();
-    expect((query("jump-host-enabled") as HTMLInputElement).checked).toBe(false);
+    // Migrated to the shared Checkbox primitive (Radix): aria-checked, not .checked.
+    expect(query("jump-host-enabled")?.getAttribute("aria-checked")).toBe("false");
   });
 
   it("persists an inline jump host through save, surviving a later schema-field edit", async () => {

@@ -4,7 +4,7 @@ import { CheckCircle2, XCircle, HardDrive, Info } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { listConfigFiles, exportConfigToPortable, importConfigFromPortable } from "@/services/api";
 import type { ConfigFileStatus } from "@/types/connection";
-import { Button } from "@/components/ui";
+import { Button, Checkbox } from "@/components/ui";
 import "./PortableModeSettings.css";
 
 const PORTABLE_FILES = [
@@ -63,11 +63,11 @@ function MigrationDialog({
             key={f.name}
             className={`portable-mode__migration-file${!f.present ? " portable-mode__migration-file--missing" : ""}`}
           >
-            <input
-              type="checkbox"
+            <Checkbox
               checked={selected.has(f.name)}
               disabled={!f.present || isRunning}
-              onChange={() => toggle(f.name)}
+              onCheckedChange={() => toggle(f.name)}
+              aria-label={f.name}
             />
             <span className="portable-mode__migration-filename">{f.name}</span>
             {!f.present && <span className="portable-mode__migration-absent">not found</span>}
