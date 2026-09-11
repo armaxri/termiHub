@@ -884,17 +884,25 @@ impl ConnectionType for Wsl {
                                 tap = None;
                             }
                         }
-                        // Forward to main output subscriber.
-                        let guard = output_tx_clone.lock().ok();
-                        if let Some(ref guard) = guard {
-                            if let Some(ref sender) = **guard {
-                                let _ = sender.blocking_send(data);
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
+                        // Forward to main output subscriber. Clone the sender out
+                        // of the guard and DROP the lock BEFORE the blocking
+                        // send. `blocking_send` parks this thread under
+                        // backpressure (full channel), so holding `output_tx`
+                        // across it would stall any path that needs the same lock
+                        // (teardown clearing the sender, or a disconnect) behind
+                        // a reader that is itself blocked — a lockup where the
+                        // session can neither drain nor be torn down (CONC-010).
+                        // Senders are cheap to clone.
+                        let sender = match output_tx_clone.lock() {
+                            Ok(guard) => match guard.as_ref() {
+                                Some(sender) => sender.clone(),
+                                None => break,
+                            },
+                            Err(_) => break,
+                        };
+                        // Lock released above; the blocking send below can no
+                        // longer stall other holders of `output_tx`.
+                        let _ = sender.blocking_send(data);
                     }
                     Err(_) => break,
                 }

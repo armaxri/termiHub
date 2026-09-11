@@ -627,16 +627,24 @@ impl ConnectionType for Ssh {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let guard = output_tx_clone.lock().ok();
-                        if let Some(ref guard) = guard {
-                            if let Some(ref sender) = **guard {
-                                let _ = sender.blocking_send(buf[..n].to_vec());
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
+                        // Clone the sender out of the guard and DROP the lock
+                        // BEFORE the blocking send. `blocking_send` parks this
+                        // thread under backpressure (full channel), so holding
+                        // `output_tx` across it would stall any path that needs
+                        // the same lock (teardown clearing the sender, or a
+                        // disconnect) behind a reader that is itself blocked —
+                        // a lockup where the session can neither drain nor be
+                        // torn down (CONC-010). Senders are cheap to clone.
+                        let sender = match output_tx_clone.lock() {
+                            Ok(guard) => match guard.as_ref() {
+                                Some(sender) => sender.clone(),
+                                None => break,
+                            },
+                            Err(_) => break,
+                        };
+                        // Lock released above; the blocking send below can no
+                        // longer stall other holders of `output_tx`.
+                        let _ = sender.blocking_send(buf[..n].to_vec());
                     }
                     Err(_) => break,
                 }
@@ -741,6 +749,10 @@ mod tests {
 
     struct MockSshConnector {
         should_fail: bool,
+        /// When set, the shell reader streams data continuously (never idle) so
+        /// the output channel fills and the reader parks in `blocking_send` —
+        /// used by the CONC-010 lock-release regression test.
+        flood: bool,
         write_log: Arc<Mutex<Vec<Vec<u8>>>>,
         resize_log: Arc<Mutex<Vec<(u16, u16)>>>,
     }
@@ -749,6 +761,7 @@ mod tests {
         fn new() -> Self {
             Self {
                 should_fail: false,
+                flood: false,
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
             }
@@ -757,6 +770,17 @@ mod tests {
         fn failing() -> Self {
             Self {
                 should_fail: true,
+                flood: false,
+                write_log: Arc::new(Mutex::new(Vec::new())),
+                resize_log: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        /// Reader streams data continuously so the output channel fills up.
+        fn flooding() -> Self {
+            Self {
+                should_fail: false,
+                flood: true,
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
             }
@@ -787,10 +811,17 @@ mod tests {
             let resize_log = self.resize_log.clone();
             let alive_for_reader = alive.clone();
             let alive_for_close = alive.clone();
-            Ok(SshShellHandle {
-                reader: Box::new(MockReader {
+            let reader: Box<dyn Read + Send> = if self.flood {
+                Box::new(FloodingReader {
                     alive: alive_for_reader,
-                }),
+                })
+            } else {
+                Box::new(MockReader {
+                    alive: alive_for_reader,
+                })
+            };
+            Ok(SshShellHandle {
+                reader,
                 write: Arc::new(move |data: &[u8]| {
                     write_log.lock().unwrap().push(data.to_vec());
                     Ok(())
@@ -821,6 +852,29 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(5));
             }
             Ok(0)
+        }
+    }
+
+    /// Streams a chunk of data on every `read` while `alive`, then returns EOF.
+    /// Used to drive the output channel to a full/backpressured state so the
+    /// reader thread parks in `blocking_send` (CONC-010 regression test).
+    struct FloodingReader {
+        alive: Arc<AtomicBool>,
+    }
+
+    impl Read for FloodingReader {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if !self.alive.load(Ordering::SeqCst) {
+                return Ok(0);
+            }
+            // A small pause keeps the loop from spinning the CPU while still
+            // producing data far faster than an (absent) consumer drains it.
+            std::thread::sleep(Duration::from_millis(1));
+            let n = buf.len().min(64);
+            for b in buf.iter_mut().take(n) {
+                *b = b'x';
+            }
+            Ok(n)
         }
     }
 
@@ -1473,6 +1527,56 @@ mod tests {
         ssh.connect(mock_settings()).await.unwrap();
         assert!(ssh.is_connected());
         ssh.disconnect().await.unwrap();
+    }
+
+    /// Regression for CONC-010. The reader thread must NOT hold the `output_tx`
+    /// mutex while parked in `blocking_send` under backpressure (a full output
+    /// channel with a slow/absent consumer). If it did, any other path needing
+    /// that lock — teardown clearing the sender, or a `disconnect()` — would
+    /// stall forever behind the blocked reader, a lockup where the session can
+    /// neither drain nor be torn down.
+    ///
+    /// This drives the flooding mock reader into exactly that state: subscribe
+    /// but never drain, let the reader fill the channel and park in
+    /// `blocking_send`, then assert the `output_tx` lock is still acquirable.
+    /// Pre-fix (guard held across the send) the lock is held permanently and
+    /// this never succeeds; with the fix (clone the sender out, drop the guard,
+    /// then send) it is free.
+    #[tokio::test]
+    async fn reader_releases_output_lock_across_blocking_send() {
+        let mut ssh = Ssh::with_connector(Box::new(MockSshConnector::flooding()));
+        ssh.connect(mock_settings()).await.expect("connect");
+
+        // Subscribe but deliberately NEVER drain: the output channel
+        // (capacity OUTPUT_CHANNEL_CAPACITY) fills and stays full, so the reader
+        // ends up parked in `blocking_send`.
+        let rx = ssh.subscribe_output();
+
+        // Give the reader time to fill the channel and park in `blocking_send`.
+        std::thread::sleep(Duration::from_millis(300));
+
+        // `output_tx` must still be acquirable — poll `try_lock` for a bounded
+        // window. Pre-fix, the reader holds the guard across the never-returning
+        // send, so this never succeeds and the test fails at the deadline.
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        let mut acquired = false;
+        while std::time::Instant::now() < deadline {
+            if ssh.output_tx.try_lock().is_ok() {
+                acquired = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            acquired,
+            "output_tx must be acquirable while the reader is parked in \
+             blocking_send — the lock must not be held across the send (CONC-010)"
+        );
+
+        // Teardown: dropping the receiver unblocks the parked send so the reader
+        // can observe the closed channel and exit; disconnect then clears state.
+        drop(rx);
+        ssh.disconnect().await.ok();
     }
 
     #[tokio::test]
