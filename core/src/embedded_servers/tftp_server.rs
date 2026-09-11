@@ -46,6 +46,7 @@ const ERR_NOT_DEFINED: u16 = 0;
 const ERR_ACCESS: u16 = 2;
 const ERR_DISK_FULL: u16 = 3;
 const ERR_ILLEGAL_OP: u16 = 4;
+const ERR_UNKNOWN_TID: u16 = 5;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -230,11 +231,38 @@ fn handle_rrq(
     }
 
     let mut reader = std::io::BufReader::new(file);
-    let mut block_num: u16 = 1;
+    stream_file(&socket, peer, &mut reader, 1, stats, shutdown)
+}
+
+/// Stream `reader` to `peer` as TFTP DATA packets, starting at block number
+/// `start_block` and waiting for each block's ACK before sending the next.
+///
+/// Two RFC 1350 correctness properties this guarantees (CORE-023):
+///
+/// * **Block-number rollover.** The `u16` block counter is advanced with
+///   [`u16::wrapping_add`], so it wraps `65535 → 0` instead of overflowing.
+///   A transfer larger than `65535 × 512` (~32 MiB) therefore keeps
+///   progressing rather than corrupting or stalling. `start_block` exists so
+///   the wrap boundary can be exercised deterministically in tests without
+///   moving 32 MiB over the socket; production always starts at block 1.
+/// * **Terminating block for exact multiples.** The DATA packet is sent
+///   *before* the "is this the last block?" check, so a file whose size is an
+///   exact multiple of [`BLOCK_SIZE`] (including a zero-length file) still
+///   emits an explicit final empty DATA block. Without it the client would
+///   wait forever for EOF.
+fn stream_file<R: Read>(
+    socket: &UdpSocket,
+    peer: SocketAddr,
+    reader: &mut R,
+    start_block: u16,
+    stats: &AtomicServerStats,
+    shutdown: &Arc<AtomicBool>,
+) -> Result<()> {
+    let mut block_num = start_block;
 
     loop {
         let mut block = [0u8; BLOCK_SIZE];
-        let n = read_block(&mut reader, &mut block).context("Cannot read file block")?;
+        let n = read_block(reader, &mut block).context("Cannot read file block")?;
         let block_data = &block[..n];
 
         // Send DATA packet.
@@ -247,19 +275,21 @@ fn handle_rrq(
             .bytes_sent
             .fetch_add(block_data.len() as u64, Ordering::Relaxed);
 
-        match wait_for_ack(&socket, peer, &packet, block_num, MAX_RETRIES, shutdown)? {
+        match wait_for_ack(socket, peer, &packet, block_num, MAX_RETRIES, shutdown)? {
             AckOutcome::Acked => {}
             // Server was stopped mid-transfer: abort promptly instead of
             // burning the remaining retry budget (up to ~25s). (#1145 / G1)
             AckOutcome::Aborted => return Ok(()),
         }
 
-        // A short block (including the empty block for a zero-length file) is
+        // A short block (including the empty block for a zero-length file, and
+        // the explicit empty terminator after an exact-multiple-of-512 file) is
         // the last one per RFC 1350.
         if n < BLOCK_SIZE {
             break;
         }
 
+        // Wrap at u16::MAX per RFC 1350 so transfers > ~32 MiB do not stall.
         block_num = block_num.wrapping_add(1);
     }
 
@@ -333,7 +363,16 @@ fn wait_for_ack(
         // Wait for ACK.
         let mut ack_buf = [0u8; 4];
         match socket.recv_from(&mut ack_buf) {
-            Ok((4, _)) => {
+            Ok((4, src)) => {
+                // Enforce the transfer's TID (RFC 1350 §4, CORE-024): only the
+                // peer that started the transfer may ACK it. A datagram from any
+                // other source is a stray/spoofed packet — reply with ERROR
+                // "unknown transfer ID" to that sender and ignore it, without
+                // disturbing the in-flight transfer with the legitimate peer.
+                if src != peer {
+                    let _ = send_error(socket, src, ERR_UNKNOWN_TID, "Unknown transfer ID");
+                    continue;
+                }
                 let ack_op = u16::from_be_bytes([ack_buf[0], ack_buf[1]]);
                 let ack_block = u16::from_be_bytes([ack_buf[2], ack_buf[3]]);
                 if ack_op == OP_ACK && ack_block == block_num {
@@ -399,7 +438,7 @@ fn handle_wrq(
             return Ok(());
         }
 
-        let (len, _) = match socket.recv_from(&mut buf) {
+        let (len, src) = match socket.recv_from(&mut buf) {
             Ok(r) => r,
             // The read timeout lets us re-check the shutdown flag instead of
             // blocking indefinitely on a stalled client.
@@ -414,6 +453,15 @@ fn handle_wrq(
                 return Err(anyhow::Error::new(e).context("Receive DATA failed"));
             }
         };
+        // Enforce the transfer's TID (RFC 1350 §4, CORE-024): only the peer that
+        // issued the WRQ may send DATA for it. A datagram from any other source
+        // is a stray/spoofed packet — reply with ERROR "unknown transfer ID" to
+        // that sender and drop it, so it can neither be written to disk nor
+        // advance/corrupt the legitimate transfer's state.
+        if src != peer {
+            let _ = send_error(&socket, src, ERR_UNKNOWN_TID, "Unknown transfer ID");
+            continue;
+        }
         if len < 4 {
             continue;
         }
