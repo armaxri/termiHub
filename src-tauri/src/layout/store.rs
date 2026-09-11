@@ -31,9 +31,9 @@ use serde_json::{json, Value};
 
 use termihub_core::layout::panel_tree::{
     contains_panel_id, create_leaf_panel, edge_to_split, find_leaf, find_leaf_by_tab,
-    generate_panel_id, get_all_leaves, normalize_sizes, remove_leaf, simplify_tree, split_leaf,
-    split_leaf_with_id, update_leaf, Direction, DropEdge, LeafPanel, PanelNode, Position,
-    SplitContainer, Tab,
+    generate_panel_id, get_all_leaves, normalize_sizes, remove_leaf, sanitize_tree, simplify_tree,
+    split_leaf, split_leaf_with_id, update_leaf, Direction, DropEdge, LeafPanel, PanelNode,
+    Position, SplitContainer, Tab,
 };
 
 /// A rejectable layout-intent failure. Maps to an intent ack `(code, message)`
@@ -752,7 +752,10 @@ impl LayoutStore {
             .or_insert_with(ClientLayout::seeded);
         let active_id = client.active_group_id.clone();
         if let Ok(group) = client.group_mut(Some(&active_id)) {
-            group.root = root;
+            // Sanitize externally-sourced trees: a restored / hand-edited
+            // workspace file can carry a degenerate empty or single-child Split
+            // that would later panic directional navigation (CORE-038).
+            group.root = sanitize_tree(&root);
             group.active_panel_id = active_panel_id;
             fix_active(group);
         }
@@ -778,6 +781,10 @@ impl LayoutStore {
                 active_group_id,
             };
             for group in client.groups.iter_mut() {
+                // Sanitize each restored tree so a degenerate empty/single-child
+                // Split from a persisted workspace cannot panic navigation later
+                // (CORE-038).
+                group.root = sanitize_tree(&group.root);
                 fix_active(group);
             }
             if !client.groups.iter().any(|g| g.id == client.active_group_id) {
