@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Trash2 } from "lucide-react";
 import { rdpTrustList, rdpTrustForget, type RdpTrustedHost } from "@/services/api";
-import { Button, Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface RdpTrustSettingsProps {
@@ -81,11 +81,13 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
         </p>
 
         {loading ? (
-          <p className="settings-panel__empty">Loading…</p>
+          <EmptyState variant="panel" loading />
         ) : hosts.length === 0 ? (
-          <p className="settings-panel__empty" data-testid="rdp-trust-empty">
-            No remembered RDP certificates.
-          </p>
+          <EmptyState
+            variant="panel"
+            title="No remembered RDP certificates."
+            data-testid="rdp-trust-empty"
+          />
         ) : (
           hosts.map((h) => (
             <div key={h.host} className="settings-panel__field" data-testid="rdp-trust-host">

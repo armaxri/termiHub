@@ -59,15 +59,6 @@
   padding: var(--spacing-lg) 0;
 }
 
-.agent-setup-dialog__spinner {
-  width: 24px;
-  height: 24px;
-  border: 2px solid var(--border-primary);
-  border-top-color: var(--accent-color);
-  border-radius: 50%;
-  animation: th-spin 0.7s linear infinite;
-}
-
 .agent-setup-dialog__detecting-label {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);

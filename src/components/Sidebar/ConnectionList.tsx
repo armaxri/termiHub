@@ -45,7 +45,7 @@ import { newId } from "@/services/transport/ids";
 import { toast } from "@/components/ui";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Button, Tooltip, Input, ConfirmDialog } from "@/components/ui";
+import { Button, Tooltip, Input, ConfirmDialog, EmptyState } from "@/components/ui";
 import { shouldShowInsecureFtpWarning } from "@/utils/ftpSecurity";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useSectionResize } from "@/hooks/useSectionResize";
@@ -1495,13 +1495,10 @@ export function ConnectionList() {
                       />
                     ))}
                     {normalizedAgentQuery && visibleAgents.length === 0 && (
-                      <p
-                        className="connection-list__empty"
-                        role="status"
+                      <EmptyState
+                        title={`No agents match “${agentFilterQuery.trim()}”.`}
                         data-testid="remote-agents-empty"
-                      >
-                        No agents match “{agentFilterQuery.trim()}”.
-                      </p>
+                      />
                     )}
                   </div>
                 </SortableContext>
@@ -1680,9 +1677,7 @@ function RootDropZone({
             />
           )}
           {filter && !hasVisibleResults && (
-            <p className="connection-list__empty" role="status">
-              No connections match “{filter.query}”.
-            </p>
+            <EmptyState title={`No connections match “${filter.query}”.`} />
           )}
           {visibleRootFolders.map((folder) => (
             <TreeNode

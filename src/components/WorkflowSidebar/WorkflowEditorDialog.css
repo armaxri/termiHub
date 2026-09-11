@@ -169,11 +169,6 @@
   font-size: 12px;
 }
 
-.workflow-triggers__empty {
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-
 .workflow-triggers__connections {
   display: flex;
   flex-direction: column;

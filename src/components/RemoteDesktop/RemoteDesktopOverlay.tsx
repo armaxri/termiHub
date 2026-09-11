@@ -1,5 +1,5 @@
-import { Loader2, RefreshCw, AlertCircle, Power } from "lucide-react";
-import { Button } from "@/components/ui";
+import { RefreshCw, AlertCircle, Power } from "lucide-react";
+import { Button, Spinner } from "@/components/ui";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
 import { MAX_RECONNECT_ATTEMPTS } from "@/types/remoteDesktop";
 
@@ -33,7 +33,7 @@ export function RemoteDesktopOverlay({
   if (state === "connecting" || state === "authenticating") {
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-connecting">
-        <Loader2 size={30} className="rd-overlay__icon rd-overlay__spin motion-essential-spinner" />
+        <Spinner size="lg" label={null} className="rd-overlay__icon" />
         <div className="rd-overlay__title">Connecting to {host}…</div>
         <div className="rd-overlay__sub">
           {state === "authenticating" ? "Authenticating" : "Establishing connection"}

@@ -23,7 +23,15 @@ import {
   AppWindow,
 } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { Modal, Button, Tooltip, Progress, ConfirmDialog, toast } from "@/components/ui";
+import {
+  Modal,
+  Button,
+  Tooltip,
+  Progress,
+  ConfirmDialog,
+  EmptyState,
+  toast,
+} from "@/components/ui";
 import { formatBytes } from "@/utils/formatters";
 import {
   resolveTunnelHost,
@@ -703,9 +711,9 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
       }
     >
       <div className="open-connections__body">
-        {loading && totalCount === 0 && <div className="open-connections__empty">Loading…</div>}
+        {loading && totalCount === 0 && <EmptyState loading />}
         {!loading && totalCount === 0 && !showXServerSetup && (
-          <div className="open-connections__empty">No open connections.</div>
+          <EmptyState title="No open connections." />
         )}
 
         {/* Connecting (in-flight handshakes) */}

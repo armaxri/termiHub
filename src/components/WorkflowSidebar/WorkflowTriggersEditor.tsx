@@ -1,5 +1,5 @@
 import { Zap, Play, Keyboard } from "lucide-react";
-import { Input, Checkbox, Field } from "@/components/ui";
+import { Input, Checkbox, Field, EmptyState } from "@/components/ui";
 import type { WorkflowTrigger, WorkflowTriggerKind } from "@/types/workflow";
 import type { SavedConnection } from "@/types/connection";
 
@@ -99,7 +99,7 @@ export function WorkflowTriggersEditor({
         <div className="workflow-triggers__detail" data-testid="workflow-trigger-on-connect-detail">
           <span className="workflow-triggers__detail-label">Fire when connecting to:</span>
           {connections.length === 0 ? (
-            <span className="workflow-triggers__empty">No saved connections.</span>
+            <EmptyState title="No saved connections." />
           ) : (
             <div className="workflow-triggers__connections">
               {connections.map((conn) => {

@@ -13,7 +13,6 @@ import {
   RefreshCw,
   Upload,
   FolderPlus,
-  Loader2,
   AlertCircle,
   Download,
   Pencil,
@@ -42,7 +41,7 @@ import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
-import { Button, Tooltip, Progress, Input, toast } from "@/components/ui";
+import { Button, Tooltip, Progress, Input, Spinner, EmptyState, toast } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, sendInput } from "@/services/api";
@@ -1313,7 +1312,7 @@ export function FileBrowser() {
         <div className="file-browser__placeholder" data-testid="file-browser-session-connecting">
           {isLoading ? (
             <>
-              <Loader2 size={20} className="file-browser__spinner motion-essential-spinner" />
+              <Spinner size="md" label={null} />
               <span>Loading files...</span>
             </>
           ) : error ? (
@@ -1609,7 +1608,7 @@ export function FileBrowser() {
         <ContextMenu.Trigger asChild>
           {isLoading && fileEntries.length === 0 ? (
             <div className="file-browser__loading">
-              <Loader2 size={20} className="file-browser__spinner motion-essential-spinner" />
+              <Spinner size="md" label={null} />
               <span>Loading...</span>
             </div>
           ) : (
@@ -1631,9 +1630,9 @@ export function FileBrowser() {
               }}
             >
               {displayEntries.length === 0 ? (
-                <div className="file-browser__empty">
-                  {filterQuery ? "No files match the filter" : "This folder is empty"}
-                </div>
+                <EmptyState
+                  title={filterQuery ? "No files match the filter" : "This folder is empty"}
+                />
               ) : (
                 <div
                   className="file-browser__list-inner"

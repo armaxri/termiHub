@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Trash2 } from "lucide-react";
 import { sshTrustList, sshTrustForget, type SshTrustedHost } from "@/services/api";
-import { Button, Tooltip, toast } from "@/components/ui";
+import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 
 interface SshTrustSettingsProps {
@@ -80,11 +80,13 @@ export function SshTrustSettings({ visibleFields }: SshTrustSettingsProps) {
         </p>
 
         {loading ? (
-          <p className="settings-panel__empty">Loading…</p>
+          <EmptyState variant="panel" loading />
         ) : hosts.length === 0 ? (
-          <p className="settings-panel__empty" data-testid="ssh-trust-empty">
-            No remembered SSH host keys.
-          </p>
+          <EmptyState
+            variant="panel"
+            title="No remembered SSH host keys."
+            data-testid="ssh-trust-empty"
+          />
         ) : (
           hosts.map((h) => (
             <div key={h.host} className="settings-panel__field" data-testid="ssh-trust-host">
