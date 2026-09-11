@@ -460,11 +460,24 @@ async fn wait_for_shell_ready(
 }
 
 /// Write raw bytes to the PTY writer, flushing immediately.
+///
+/// A failed write silently loses user input, so surface the error via a warning
+/// rather than discarding it — the write stays best-effort (non-fatal).
 fn pty_write(writer: &Arc<Mutex<Box<dyn Write + Send>>>, data: &[u8]) {
     if let Ok(mut w) = writer.lock() {
-        let _ = w.write_all(data);
-        let _ = w.flush();
+        if let Err(e) = write_and_flush(&mut *w, data) {
+            warn!(error = %e, "WSL PTY write failed; terminal input may be lost");
+        }
     }
+}
+
+/// Write all bytes and flush, returning the first error encountered.
+///
+/// Split out from [`pty_write`] so the failure path is unit-testable without a
+/// real PTY.
+fn write_and_flush(w: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
+    w.write_all(data)?;
+    w.flush()
 }
 
 /// Async task that injects the WSL OSC 7 CWD hook after the shell is ready.
@@ -1011,6 +1024,41 @@ mod tests {
     fn type_id() {
         let wsl = Wsl::new();
         assert_eq!(wsl.type_id(), "wsl");
+    }
+
+    /// A `Write` that always fails, to exercise the PTY-write error path.
+    struct FailingWriter;
+
+    impl std::io::Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "pty gone",
+            ))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "pty gone",
+            ))
+        }
+    }
+
+    #[test]
+    fn write_and_flush_surfaces_write_error() {
+        // Regression for WA-RS-008: a failed PTY write must be surfaced (an error
+        // the caller can log), not silently discarded.
+        let mut w = FailingWriter;
+        let err = super::write_and_flush(&mut w, b"hello").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
+    }
+
+    #[test]
+    fn write_and_flush_ok_on_healthy_writer() {
+        let mut buf: Vec<u8> = Vec::new();
+        super::write_and_flush(&mut buf, b"hello").unwrap();
+        assert_eq!(buf, b"hello");
     }
 
     #[test]

@@ -253,7 +253,18 @@ impl SshConnector for RusshSshConnector {
         // before the login shell's rc files run. Names it rejects are covered
         // by the `export` injection after the shell starts (see below).
         for (key, value) in &config.env {
-            let _ = channel.set_env(false, key, value).await;
+            // Log the per-name outcome so a dropped env var is diagnosable. The
+            // server only honours names in its `AcceptEnv`; a rejection is common
+            // and non-fatal (the `export` injection below is the fallback), but it
+            // must not be invisible. Never log `value` — env values may be secrets.
+            match channel.set_env(false, key, value).await {
+                Ok(()) => tracing::debug!(key = %key, "sent SSH env request"),
+                Err(e) => tracing::warn!(
+                    key = %key,
+                    error = %e,
+                    "SSH env request rejected by server; relying on export fallback"
+                ),
+            }
         }
 
         channel
@@ -279,18 +290,39 @@ impl SshConnector for RusshSshConnector {
         // the server's `AcceptEnv` rejected the `set_env` requests above. The
         // line is briefly visible, matching the X11 `export DISPLAY` injection.
         if let Some(export_line) = super::build_ssh_env_export(&config.env) {
-            let _ = channel.data(export_line.as_bytes()).await;
+            // Never log `export_line` — it embeds the env values, which may be
+            // secrets. On failure the configured env vars silently won't apply, so
+            // surface the write error itself.
+            if let Err(e) = channel.data(export_line.as_bytes()).await {
+                tracing::warn!(
+                    error = %e,
+                    "failed to inject SSH env export line; configured environment variables may not apply"
+                );
+            }
         }
 
         // Inject DISPLAY and xauth if X11 forwarding is active.
         if let Some(display_num) = x11_display {
             let export_cmd = format!("export DISPLAY=localhost:{display_num}.0\n");
-            let _ = channel.data(export_cmd.as_bytes()).await;
+            if let Err(e) = channel.data(export_cmd.as_bytes()).await {
+                tracing::warn!(
+                    display = display_num,
+                    error = %e,
+                    "failed to inject DISPLAY for X11 forwarding; X11 apps may not display"
+                );
+            }
             if let Some(ref cookie) = x11_cookie {
                 let xauth_cmd = format!(
                     "xauth add localhost:{display_num} MIT-MAGIC-COOKIE-1 {cookie} 2>/dev/null\n"
                 );
-                let _ = channel.data(xauth_cmd.as_bytes()).await;
+                // Never log `xauth_cmd` — it embeds the MIT-MAGIC-COOKIE-1 secret.
+                if let Err(e) = channel.data(xauth_cmd.as_bytes()).await {
+                    tracing::warn!(
+                        display = display_num,
+                        error = %e,
+                        "failed to inject xauth cookie for X11 forwarding; X11 apps may not display"
+                    );
+                }
             }
         }
 
