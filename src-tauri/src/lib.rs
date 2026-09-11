@@ -113,6 +113,7 @@ mod workflow_projection;
 mod workflows;
 mod workspace;
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
@@ -130,6 +131,7 @@ use network::NetworkManager;
 use session::manager::SessionManager;
 use session::registry::build_desktop_registry;
 use terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
+use utils::config_paths::DirOutcome;
 use utils::file_log;
 use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer};
 
@@ -263,6 +265,110 @@ fn run_app_teardown(app_handle: &tauri::AppHandle) {
         // sessions by `SessionManager`, so there is no standalone SFTP session
         // registry to close here since the UUID `SftpManager` was retired (#2314).
     });
+}
+
+/// Which startup storage location is being prepared. Selects the wording of the
+/// [`RecoveryWarning`] and the degrade-on-total-failure behavior when the
+/// directory cannot be created (ERR-004 / TAURI-005).
+#[derive(Clone, Copy)]
+enum StartupStorage {
+    /// The portable `data/` directory. On total failure the override is dropped
+    /// so the app falls back to the OS default config location.
+    PortableData,
+    /// The per-user config directory. On total failure the preferred path is
+    /// kept best-effort so later storage init still has a target.
+    Config,
+}
+
+impl StartupStorage {
+    /// The `file_name` bucket the warning is grouped under in the UI.
+    fn file_name(self) -> &'static str {
+        match self {
+            StartupStorage::PortableData => "portable data directory",
+            StartupStorage::Config => "config directory",
+        }
+    }
+
+    /// Human-readable label for the directory in warning messages.
+    fn label(self) -> &'static str {
+        match self {
+            StartupStorage::PortableData => "portable data",
+            StartupStorage::Config => "configuration",
+        }
+    }
+}
+
+/// Build the [`RecoveryWarning`] for a failure to even *resolve* the config
+/// directory (before any creation is attempted).
+///
+/// Split out so the "resolve failed -> temporary fallback + warn the user" path
+/// is unit-testable without a Tauri `AppHandle` (ERR-004 / TAURI-005).
+fn config_resolve_failure_warning(error: &str, fallback: &Path) -> RecoveryWarning {
+    RecoveryWarning {
+        file_name: StartupStorage::Config.file_name().to_string(),
+        message: format!(
+            "Could not determine the configuration directory. Using temporary storage at {}; \
+             settings and credentials may not persist across restarts.",
+            fallback.display()
+        ),
+        details: Some(error.to_string()),
+    }
+}
+
+/// Map a directory-creation [`DirOutcome`] to the path startup should use plus an
+/// optional [`RecoveryWarning`] describing any degradation.
+///
+/// This is what turns an unwritable config/data location into a user-visible
+/// warning (surfaced via `get_recovery_warnings`) instead of only a log line,
+/// while never panicking (ERR-004 / TAURI-005). `preferred` is the originally
+/// intended directory — used in the warning detail and as the best-effort path
+/// when even the temporary fallback cannot be created.
+///
+/// Returns `(None, _)` only for [`StartupStorage::PortableData`] total failure,
+/// where startup drops the portable override and uses the OS default location.
+fn resolve_startup_dir(
+    outcome: DirOutcome,
+    kind: StartupStorage,
+    preferred: &Path,
+) -> (Option<PathBuf>, Option<RecoveryWarning>) {
+    match outcome {
+        DirOutcome::Preferred(dir) => (Some(dir), None),
+        DirOutcome::Fallback { dir, error } => {
+            let warning = RecoveryWarning {
+                file_name: kind.file_name().to_string(),
+                message: format!(
+                    "Could not create the {} directory. Using temporary storage at {}; data may \
+                     not persist across restarts.",
+                    kind.label(),
+                    dir.display()
+                ),
+                details: Some(format!("{} ({error})", preferred.display())),
+            };
+            (Some(dir), Some(warning))
+        }
+        DirOutcome::Failed {
+            preferred_error,
+            fallback_error,
+        } => {
+            let chosen = match kind {
+                StartupStorage::PortableData => None,
+                StartupStorage::Config => Some(preferred.to_path_buf()),
+            };
+            let warning = RecoveryWarning {
+                file_name: kind.file_name().to_string(),
+                message: format!(
+                    "Could not create the {} directory or a temporary fallback. Continuing \
+                     best-effort; data may not persist across restarts.",
+                    kind.label()
+                ),
+                details: Some(format!(
+                    "{} ({preferred_error}); fallback failed ({fallback_error})",
+                    preferred.display()
+                )),
+            };
+            (chosen, Some(warning))
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -494,38 +600,23 @@ pub fn run() {
             // so all storage modules (which check TERMIHUB_CONFIG_DIR) use the portable path.
             if app_mode.is_portable() && std::env::var("TERMIHUB_CONFIG_DIR").is_err() {
                 if let Some(data_dir) = app_mode.data_dir() {
-                    // Degrade instead of panicking (ERR-004 / WA-RS-003): a
-                    // read-only portable medium is exactly where creating the
-                    // portable `data/` dir fails. Fall back to a temp directory
-                    // so the app still starts; log what happened.
+                    // Degrade instead of panicking (ERR-004 / TAURI-005 /
+                    // WA-RS-003): a read-only portable medium is exactly where
+                    // creating the portable `data/` dir fails. Fall back to a
+                    // temp directory so the app still starts, and surface a
+                    // RecoveryWarning like every other startup step so the user
+                    // sees that storage degraded rather than only the log.
                     let temp_fallback = std::env::temp_dir().join("termihub-portable-data");
-                    let storage_dir = match utils::config_paths::create_dir_with_fallback(
+                    let outcome = utils::config_paths::create_dir_with_fallback(
                         data_dir,
                         &temp_fallback,
-                    ) {
-                        utils::config_paths::DirOutcome::Preferred(dir) => Some(dir),
-                        utils::config_paths::DirOutcome::Fallback { dir, error } => {
-                            warn!(
-                                "could not create portable data directory {} ({error}); \
-                                 using temporary storage at {}",
-                                data_dir.display(),
-                                dir.display()
-                            );
-                            Some(dir)
-                        }
-                        utils::config_paths::DirOutcome::Failed {
-                            preferred_error,
-                            fallback_error,
-                        } => {
-                            tracing::error!(
-                                "could not create portable data directory {} ({preferred_error}) \
-                                 or temporary fallback ({fallback_error}); continuing with the OS \
-                                 default config location — portable data may not persist",
-                                data_dir.display()
-                            );
-                            None
-                        }
-                    };
+                    );
+                    let (storage_dir, warning) =
+                        resolve_startup_dir(outcome, StartupStorage::PortableData, data_dir);
+                    if let Some(w) = warning {
+                        warn!("{} ({})", w.message, w.details.as_deref().unwrap_or(""));
+                        recovery_warnings.push(w);
+                    }
                     if let Some(dir) = storage_dir {
                         // Safety: called before any threads that read env vars are spawned.
                         #[allow(unused_unsafe)]
@@ -544,8 +635,9 @@ pub fn run() {
             // Portable mode already exported `TERMIHUB_CONFIG_DIR` above, so the
             // shared resolver's handle branch yields the correct directory.
             // Resolve + create the config dir, degrading to temp storage instead
-            // of panicking (ERR-004 / WA-RS-003). A locked-down profile, a full
-            // disk, or a config path that exists as a file must not kill launch.
+            // of panicking (ERR-004 / TAURI-005 / WA-RS-003). A locked-down
+            // profile, a full disk, or a config path that exists as a file must
+            // not kill launch — each degradation also surfaces a RecoveryWarning.
             let temp_config_fallback = std::env::temp_dir().join("termihub-config");
             let resolved_config_dir =
                 match utils::config_paths::resolve_config_dir(Some(app.handle())) {
@@ -556,43 +648,36 @@ pub fn run() {
                              storage at {}",
                             temp_config_fallback.display()
                         );
+                        recovery_warnings.push(config_resolve_failure_warning(
+                            &e.to_string(),
+                            &temp_config_fallback,
+                        ));
                         temp_config_fallback.clone()
                     }
                 };
-            let config_dir = match utils::config_paths::create_dir_with_fallback(
+            let outcome = utils::config_paths::create_dir_with_fallback(
                 &resolved_config_dir,
                 &temp_config_fallback,
-            ) {
-                utils::config_paths::DirOutcome::Preferred(dir) => dir,
-                utils::config_paths::DirOutcome::Fallback { dir, error } => {
-                    warn!(
-                        "could not create config directory {} ({error}); using temporary storage \
-                         at {}",
-                        resolved_config_dir.display(),
-                        dir.display()
-                    );
-                    // Keep the rest of the app coherent: point storage modules
-                    // (which re-resolve via TERMIHUB_CONFIG_DIR) at the same dir.
-                    // Safety: still on the setup thread, before storage threads start.
-                    #[allow(unused_unsafe)]
-                    unsafe {
-                        std::env::set_var("TERMIHUB_CONFIG_DIR", &dir);
-                    }
-                    dir
+            );
+            let (config_dir_opt, warning) =
+                resolve_startup_dir(outcome, StartupStorage::Config, &resolved_config_dir);
+            if let Some(w) = warning {
+                warn!("{} ({})", w.message, w.details.as_deref().unwrap_or(""));
+                recovery_warnings.push(w);
+            }
+            // The config dir always yields a usable path: a total failure keeps
+            // the preferred directory best-effort.
+            let config_dir = config_dir_opt.unwrap_or_else(|| resolved_config_dir.clone());
+            if config_dir != resolved_config_dir {
+                // A temporary fallback is in use — point storage modules (which
+                // re-resolve via TERMIHUB_CONFIG_DIR) at the directory actually
+                // in use. Safety: still on the setup thread, before storage
+                // threads start.
+                #[allow(unused_unsafe)]
+                unsafe {
+                    std::env::set_var("TERMIHUB_CONFIG_DIR", &config_dir);
                 }
-                utils::config_paths::DirOutcome::Failed {
-                    preferred_error,
-                    fallback_error,
-                } => {
-                    tracing::error!(
-                        "could not create config directory {} ({preferred_error}) or temporary \
-                         fallback ({fallback_error}); continuing best-effort — some settings may \
-                         not persist",
-                        resolved_config_dir.display()
-                    );
-                    resolved_config_dir
-                }
-            };
+            }
 
             // Plugin management layer (#1992) + native host loader (#1995): owns
             // <app-data>/plugins/, created lazily. The host loads a plugin's
@@ -1885,4 +1970,97 @@ pub fn run() {
                 }
             }
         });
+}
+
+#[cfg(test)]
+mod startup_storage_tests {
+    use super::{config_resolve_failure_warning, resolve_startup_dir, DirOutcome, StartupStorage};
+    use std::io::{Error, ErrorKind};
+    use std::path::PathBuf;
+
+    fn io_err(msg: &str) -> Error {
+        Error::new(ErrorKind::PermissionDenied, msg)
+    }
+
+    #[test]
+    fn preferred_yields_the_real_path_and_no_warning() {
+        let dir = PathBuf::from("/real/config");
+        let (path, warning) = resolve_startup_dir(
+            DirOutcome::Preferred(dir.clone()),
+            StartupStorage::Config,
+            &dir,
+        );
+        assert_eq!(path, Some(dir));
+        assert!(
+            warning.is_none(),
+            "the happy path must not surface a warning"
+        );
+    }
+
+    #[test]
+    fn fallback_yields_the_fallback_path_and_a_warning() {
+        let preferred = PathBuf::from("/read-only/config");
+        let fallback = PathBuf::from("/tmp/termihub-config");
+        let (path, warning) = resolve_startup_dir(
+            DirOutcome::Fallback {
+                dir: fallback.clone(),
+                error: io_err("denied"),
+            },
+            StartupStorage::Config,
+            &preferred,
+        );
+        assert_eq!(path, Some(fallback));
+        let w = warning.expect("a degradation must surface a warning");
+        assert_eq!(w.file_name, "config directory");
+        let details = w.details.expect("warning carries details");
+        assert!(details.contains("read-only/config"));
+        assert!(details.contains("denied"));
+    }
+
+    #[test]
+    fn config_total_failure_keeps_the_preferred_path_best_effort() {
+        let preferred = PathBuf::from("/read-only/config");
+        let (path, warning) = resolve_startup_dir(
+            DirOutcome::Failed {
+                preferred_error: io_err("denied"),
+                fallback_error: io_err("also denied"),
+            },
+            StartupStorage::Config,
+            &preferred,
+        );
+        assert_eq!(
+            path,
+            Some(preferred),
+            "config keeps the preferred dir best-effort on total failure"
+        );
+        assert!(warning.is_some());
+    }
+
+    #[test]
+    fn portable_total_failure_drops_the_override() {
+        let preferred = PathBuf::from("/usb/termiHub/data");
+        let (path, warning) = resolve_startup_dir(
+            DirOutcome::Failed {
+                preferred_error: io_err("read-only medium"),
+                fallback_error: io_err("read-only medium"),
+            },
+            StartupStorage::PortableData,
+            &preferred,
+        );
+        assert_eq!(
+            path, None,
+            "portable total failure drops to the OS default location"
+        );
+        let w = warning.expect("a degradation must surface a warning");
+        assert_eq!(w.file_name, "portable data directory");
+    }
+
+    #[test]
+    fn resolve_failure_produces_a_config_warning() {
+        let fallback = PathBuf::from("/tmp/termihub-config");
+        let w = config_resolve_failure_warning("no config dir available", &fallback);
+        assert_eq!(w.file_name, "config directory");
+        assert!(w.message.contains("termihub-config"));
+        assert_eq!(w.details.as_deref(), Some("no config dir available"));
+    }
 }
