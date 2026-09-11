@@ -36,7 +36,19 @@ use crate::terminal::agent_forward::DesktopAgentForward;
 use crate::terminal::backend::{OutputSender, RemoteAgentConfig, RemoteStateChangeEvent};
 use crate::terminal::jsonrpc;
 use crate::utils::errors::TerminalError;
-use crate::utils::ssh_auth::{connect_and_authenticate, connect_and_authenticate_cancellable};
+use crate::utils::ssh_auth::connect_and_authenticate_cancellable;
+
+/// Wall-clock cap on a single agent JSON-RPC round-trip (CONC-003).
+///
+/// Without it, [`send_request`](AgentConnectionManager::send_request) parks its
+/// `spawn_blocking` thread on the response channel for the entire reconnect
+/// window (up to minutes) whenever the link drops mid-RPC — and a burst of agent
+/// operations during an outage piles up dozens of parked blocking threads. The
+/// bound is generous enough to cover a legitimately slow agent-side operation
+/// (e.g. a nested `connection.create` that itself connects out, bounded by the
+/// 45 s SSH connect timeout) while still failing in seconds-to-a-minute rather
+/// than minutes.
+const AGENT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Capabilities returned by the agent after initialization.
 ///
@@ -1154,11 +1166,38 @@ impl<R: Runtime> AgentConnectionManager<R> {
     }
 
     /// Send a JSON-RPC request to an agent and wait for the response.
+    ///
+    /// Bounded by [`AGENT_REQUEST_TIMEOUT`] so a request never parks its
+    /// `spawn_blocking` thread for the whole reconnect window when the link
+    /// drops mid-RPC (CONC-003).
     pub fn send_request(
         &self,
         agent_id: &str,
         method: &str,
         params: Value,
+    ) -> Result<Value, TerminalError> {
+        self.send_request_with_timeout(agent_id, method, params, AGENT_REQUEST_TIMEOUT)
+    }
+
+    /// [`send_request`](Self::send_request) with an explicit wait bound.
+    ///
+    /// The blocking wait on the response oneshot is capped by `timeout`: a real
+    /// [`tokio::time::timeout`], not the old channel-close-only path that
+    /// returned a "timed out" error which never actually timed out (CONC-003).
+    /// When it elapses the caller gets a genuine timeout error and its
+    /// `spawn_blocking` thread is freed, instead of hanging for the entire
+    /// (up to multi-minute) reconnect window. `timeout` is a parameter so tests
+    /// can drive the elapsed path deterministically without the production wait.
+    ///
+    /// Same runtime-context requirement as the previous `blocking_recv`: call
+    /// only from inside `spawn_blocking` or another non-async-task context (as
+    /// every `commands/agent.rs` site does).
+    fn send_request_with_timeout(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
     ) -> Result<Value, TerminalError> {
         let agents = self
             .agents
@@ -1181,10 +1220,22 @@ impl<R: Runtime> AgentConnectionManager<R> {
         // Drop the lock before waiting for response
         drop(agents);
 
-        resp_rx
-            .blocking_recv()
-            .map_err(|_| TerminalError::RemoteError("Agent request timed out".to_string()))?
-            .map_err(TerminalError::RemoteError)
+        // Bounded wait: a fired timeout returns a real timeout error and frees
+        // this thread; a dropped sender (io_task gone / pending drained on drop)
+        // surfaces as a connection-lost error rather than the old misleading
+        // "timed out" string (CONC-003).
+        match tokio::runtime::Handle::current()
+            .block_on(async { tokio::time::timeout(timeout, resp_rx).await })
+        {
+            Err(_elapsed) => Err(TerminalError::RemoteError(format!(
+                "Agent request timed out after {:?}",
+                timeout
+            ))),
+            Ok(Err(_recv)) => {
+                Err(TerminalError::RemoteError("Agent connection lost".to_string()))
+            }
+            Ok(Ok(inner)) => inner.map_err(TerminalError::RemoteError),
+        }
     }
 
     /// Create a session on the agent.
@@ -2247,6 +2298,17 @@ async fn agent_io_task<R: Runtime>(
         );
         info!("Agent {}: connection lost, attempting reconnect", agent_id);
 
+        // CONC-003: fail every in-flight request the moment the link drops, so
+        // its caller (and the `spawn_blocking` thread it pins) unblocks now
+        // rather than parking for the entire reconnect window. New requests
+        // issued during the outage are bounded separately by the
+        // `AGENT_REQUEST_TIMEOUT` in `send_request`. The reconnect-resolved
+        // drains below then run against an already-empty map (the io_task does
+        // not touch `command_rx`/`pending_responses` while reconnecting).
+        for (_, tx) in pending_responses.drain() {
+            let _ = tx.send(Err("Agent connection lost".to_string()));
+        }
+
         match reconnect_agent(&config, &agent_settings, &mut request_id, &alive).await {
             Ok((new_session, new_channel, reconnect_notifications)) => {
                 // Replace the current session handle with the new one.
@@ -2708,10 +2770,30 @@ fn handle_notification(
     }
 }
 
+/// Poll cadence for the reconnect connect-cancellation watcher (CONC-002).
+const RECONNECT_CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Fire `token` as soon as the shared `alive` flag goes `false`.
+///
+/// Bridges the reconnect path's `alive` [`AtomicBool`] — flipped by a user
+/// Disconnect or app shutdown (see [`disconnect_agent`](AgentConnectionManager::disconnect_agent))
+/// — to the [`CancellationToken`] the cancellable SSH connect selects on, so a
+/// hung reconnect to a black-holed host aborts promptly instead of parking the
+/// I/O task for the full connect timeout (CONC-002). Returns once it has fired
+/// the token; the caller aborts it when the connect completes first.
+async fn cancel_connect_when_disconnected(alive: Arc<AtomicBool>, token: CancellationToken) {
+    while alive.load(Ordering::SeqCst) {
+        tokio::time::sleep(RECONNECT_CANCEL_POLL_INTERVAL).await;
+    }
+    token.cancel();
+}
+
 /// Attempt to reconnect to an agent with exponential backoff.
 ///
 /// Respects the `alive` flag — if it becomes `false` during the inter-attempt
-/// delay the function returns immediately so the caller can exit cleanly.
+/// delay the function returns immediately so the caller can exit cleanly. The
+/// per-attempt SSH connect is also cancellable on `alive` (CONC-002), so a
+/// Disconnect during a hung connect aborts it without waiting out the timeout.
 #[allow(clippy::type_complexity)]
 async fn reconnect_agent(
     config: &RemoteAgentConfig,
@@ -2753,10 +2835,27 @@ async fn reconnect_agent(
 
         let ssh_config = config.to_ssh_config();
 
-        // 1. Connect
-        let session = match connect_and_authenticate(&ssh_config) {
+        // 1. Connect — cancellable so a user Disconnect / app shutdown (which
+        //    flips `alive`) aborts a hung connect to a black-holed host promptly,
+        //    instead of parking the I/O task for the whole connect timeout
+        //    (CONC-002). The connect itself stays bounded by the 45 s
+        //    `SshConfig::connect_timeout`. A watcher task fires the token the
+        //    moment `alive` goes false and is aborted once the connect returns.
+        let connect_token = CancellationToken::new();
+        let cancel_watcher = tokio::spawn(cancel_connect_when_disconnected(
+            alive.clone(),
+            connect_token.clone(),
+        ));
+        let connect_result = connect_and_authenticate_cancellable(&ssh_config, connect_token);
+        cancel_watcher.abort();
+        let session = match connect_result {
             Ok(s) => s,
             Err(e) => {
+                // A Disconnect that fired the token aborts the loop now rather
+                // than looping into another backoff (CONC-002).
+                if !alive.load(Ordering::SeqCst) {
+                    return Err("Reconnect stopped by user".to_string());
+                }
                 warn!("Reconnect attempt {} failed (SSH): {}", attempt + 1, e);
                 continue;
             }
