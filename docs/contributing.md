@@ -970,8 +970,8 @@ the _net_ user-facing change, not the development path:
 ### Commit, Tag, and Push
 
 ```bash
-# Commit the version bump and changelog
-git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json CHANGELOG.md
+# Commit the version bump and changelog (all four version files + CHANGELOG)
+git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json agent/Cargo.toml CHANGELOG.md
 git commit -m "chore: release vX.Y.Z"
 
 # Create an annotated tag

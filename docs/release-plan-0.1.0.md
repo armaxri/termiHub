@@ -1,5 +1,19 @@
 # termiHub v0.1.0-beta Release & Test Plan
 
+> **Historical — superseded; no longer the authoritative release process.**
+>
+> This plan (created 2026-03-08) describes a test topology and process that no longer exist. It
+> assigns machines to run the **"Full E2E suite (tauri-driver)"**, but the WebdriverIO/`tauri-driver`
+> full E2E suite was fully retired (#1027) — all specs were ported to the Python bridge harness
+> (`tests/system/`), and `tauri-driver` now backs only the smoke test. The plan also predates the
+> current turnkey release strategy (the automated harness plus a small number of device sessions has
+> overtaken the multi-phase 18–24 h manual estimate below).
+>
+> For the current, authoritative process see **[contributing.md → Release Process](contributing.md#release-process)**
+> and **[testing.md](testing.md)**. Read what follows as a historical snapshot only.
+
+<!-- -->
+
 > **Target**: First public beta release of termiHub
 > **Date created**: 2026-03-08
 > **Total estimated effort**: ~18–24 hours (spread across multiple sessions)

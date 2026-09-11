@@ -20,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       # Pin the clippy/rustfmt toolchain (issue #2549). A floating `@stable`
       # lets any new Rust release introduce clippy lints that fire under the
@@ -33,7 +33,7 @@ jobs:
       # them the same way, and pinning them (or a repo-root rust-toolchain.toml)
       # would needlessly freeze local dev and every other CI job on one version.
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@1.98.0
+        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0 branch
         with:
           components: rustfmt, clippy
 
@@ -49,7 +49,7 @@ jobs:
             librsvg2-dev
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Reader/writer split. Integration happens on develop: merging a PR is a
           # push event on develop, which SAVEs the cache; main is the default
@@ -102,7 +102,7 @@ jobs:
       # Prebuilt binary download (~seconds) instead of `cargo install cargo-audit`,
       # which compiles from source (~3 min) on a cold cache.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: cargo-audit
 
@@ -130,13 +130,13 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -172,22 +172,22 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: 'pnpm'
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Reader/writer split. Integration happens on develop: merging a PR is a
           # push event on develop, which SAVEs the cache; main is the default
@@ -240,10 +240,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
         with:
           # Pin uv itself (issue #1552). Without an explicit version the action
           # resolves "latest" through the GitHub Releases API, which flakes and
@@ -277,13 +277,13 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
 
@@ -311,13 +311,13 @@ jobs:
         continue-on-error: true  # Dev-only advisories: warn, do not fail
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
 
       # Prebuilt binary download instead of compiling cargo-audit from source.
       # This job has no rust-cache, so the old `cargo install` recompiled it every
       # run (~197 s); the prebuilt download takes seconds.
       - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: cargo-audit
 
@@ -336,7 +336,7 @@ jobs:
       #     or git source fails CI (#2096).
       # cargo-audit above still covers vulnerability RUSTSECs.
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
         with:
           tool: cargo-deny
 
@@ -351,7 +351,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           fetch-depth: 0
 
@@ -359,7 +359,7 @@ jobs:
         uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
 

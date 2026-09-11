@@ -165,10 +165,23 @@ struct StorageFormat {
     folders: Vec<Folder>,
 }
 
+/// In-memory definitions: connections and folders held together.
+///
+/// These two maps are almost always read/mutated as a pair (every mutation
+/// persists both via `save_to_disk`), so they live behind a **single** mutex.
+/// Keeping them under one lock removes the AB-BA lock-order-inversion deadlock
+/// that existed when `connections` and `folders` were two independent mutexes
+/// locked in opposite orders across methods (CONC-001).
+#[derive(Debug, Default)]
+struct Definitions {
+    connections: HashMap<String, Connection>,
+    folders: HashMap<String, Folder>,
+}
+
 /// Manages connections and folders with disk persistence.
 pub struct ConnectionStore {
-    connections: Mutex<HashMap<String, Connection>>,
-    folders: Mutex<HashMap<String, Folder>>,
+    /// Connections and folders under a single lock (see [`Definitions`]).
+    definitions: Mutex<Definitions>,
     file_path: PathBuf,
     /// Read-only connections loaded from external files, tagged with their source path.
     external_snapshots: Mutex<Vec<ConnectionSnapshot>>,
@@ -178,10 +191,9 @@ impl ConnectionStore {
     /// Create a new store, loading existing data from disk.
     /// Migrates from legacy `sessions.json` if `connections.json` doesn't exist.
     pub fn new(file_path: PathBuf) -> Self {
-        let (connections, folders) = Self::load_from_disk(&file_path);
+        let definitions = Self::load_from_disk(&file_path);
         Self {
-            connections: Mutex::new(connections),
-            folders: Mutex::new(folders),
+            definitions: Mutex::new(definitions),
             file_path,
             external_snapshots: Mutex::new(Vec::new()),
         }
@@ -191,8 +203,7 @@ impl ConnectionStore {
     #[cfg(test)]
     pub fn new_temp(file_path: PathBuf) -> Self {
         Self {
-            connections: Mutex::new(HashMap::new()),
-            folders: Mutex::new(HashMap::new()),
+            definitions: Mutex::new(Definitions::default()),
             file_path,
             external_snapshots: Mutex::new(Vec::new()),
         }
@@ -200,17 +211,16 @@ impl ConnectionStore {
 
     /// Get a connection by ID. Returns `None` if not found.
     pub async fn get(&self, id: &str) -> Option<ConnectionSnapshot> {
-        let conns = self.connections.lock().await;
-        conns.get(id).map(|c| c.snapshot())
+        let defs = self.definitions.lock().await;
+        defs.connections.get(id).map(|c| c.snapshot())
     }
 
     /// Create a new connection. Returns the snapshot.
     pub async fn create(&self, conn: Connection) -> ConnectionSnapshot {
         let snapshot = conn.snapshot();
-        let mut conns = self.connections.lock().await;
-        let folders = self.folders.lock().await;
-        conns.insert(conn.id.clone(), conn);
-        self.save_to_disk(&conns, &folders);
+        let mut defs = self.definitions.lock().await;
+        defs.connections.insert(conn.id.clone(), conn);
+        self.save_to_disk(&defs);
         snapshot
     }
 
@@ -227,8 +237,8 @@ impl ConnectionStore {
         terminal_options: Option<Option<serde_json::Value>>,
         icon: Option<Option<String>>,
     ) -> Option<ConnectionSnapshot> {
-        let mut conns = self.connections.lock().await;
-        let conn = conns.get_mut(id)?;
+        let mut defs = self.definitions.lock().await;
+        let conn = defs.connections.get_mut(id)?;
 
         if let Some(name) = name {
             conn.name = name;
@@ -253,19 +263,18 @@ impl ConnectionStore {
         }
 
         let snapshot = conn.snapshot();
-        let folders = self.folders.lock().await;
-        self.save_to_disk(&conns, &folders);
+        self.save_to_disk(&defs);
         Some(snapshot)
     }
 
     /// List all connections and folders, including read-only external file connections.
     pub async fn list(&self) -> (Vec<ConnectionSnapshot>, Vec<FolderSnapshot>) {
-        let conns = self.connections.lock().await;
-        let folders = self.folders.lock().await;
+        let defs = self.definitions.lock().await;
         let external = self.external_snapshots.lock().await;
-        let mut conn_list: Vec<ConnectionSnapshot> = conns.values().map(|c| c.snapshot()).collect();
+        let mut conn_list: Vec<ConnectionSnapshot> =
+            defs.connections.values().map(|c| c.snapshot()).collect();
         conn_list.extend(external.iter().cloned());
-        let folder_list = folders.values().map(|f| f.snapshot()).collect();
+        let folder_list = defs.folders.values().map(|f| f.snapshot()).collect();
         (conn_list, folder_list)
     }
 
@@ -308,11 +317,10 @@ impl ConnectionStore {
 
     /// Delete a connection by ID. Returns `true` if found and deleted.
     pub async fn delete(&self, id: &str) -> bool {
-        let mut conns = self.connections.lock().await;
-        let removed = conns.remove(id).is_some();
+        let mut defs = self.definitions.lock().await;
+        let removed = defs.connections.remove(id).is_some();
         if removed {
-            let folders = self.folders.lock().await;
-            self.save_to_disk(&conns, &folders);
+            self.save_to_disk(&defs);
         }
         removed
     }
@@ -320,10 +328,9 @@ impl ConnectionStore {
     /// Create a new folder. Returns the snapshot.
     pub async fn create_folder(&self, folder: Folder) -> FolderSnapshot {
         let snapshot = folder.snapshot();
-        let mut folders = self.folders.lock().await;
-        let conns = self.connections.lock().await;
-        folders.insert(folder.id.clone(), folder);
-        self.save_to_disk(&conns, &folders);
+        let mut defs = self.definitions.lock().await;
+        defs.folders.insert(folder.id.clone(), folder);
+        self.save_to_disk(&defs);
         snapshot
     }
 
@@ -335,8 +342,8 @@ impl ConnectionStore {
         parent_id: Option<Option<String>>,
         is_expanded: Option<bool>,
     ) -> Option<FolderSnapshot> {
-        let mut folders = self.folders.lock().await;
-        let folder = folders.get_mut(id)?;
+        let mut defs = self.definitions.lock().await;
+        let folder = defs.folders.get_mut(id)?;
 
         if let Some(name) = name {
             folder.name = name;
@@ -349,31 +356,29 @@ impl ConnectionStore {
         }
 
         let snapshot = folder.snapshot();
-        let conns = self.connections.lock().await;
-        self.save_to_disk(&conns, &folders);
+        self.save_to_disk(&defs);
         Some(snapshot)
     }
 
     /// Delete a folder by ID. Moves children (connections and subfolders) to root.
     /// Returns `true` if found and deleted.
     pub async fn delete_folder(&self, id: &str) -> bool {
-        let mut folders = self.folders.lock().await;
-        let removed = folders.remove(id).is_some();
+        let mut defs = self.definitions.lock().await;
+        let removed = defs.folders.remove(id).is_some();
         if removed {
-            let mut conns = self.connections.lock().await;
             // Move connections in this folder to root
-            for conn in conns.values_mut() {
+            for conn in defs.connections.values_mut() {
                 if conn.folder_id.as_deref() == Some(id) {
                     conn.folder_id = None;
                 }
             }
             // Move subfolders to root
-            for folder in folders.values_mut() {
+            for folder in defs.folders.values_mut() {
                 if folder.parent_id.as_deref() == Some(id) {
                     folder.parent_id = None;
                 }
             }
-            self.save_to_disk(&conns, &folders);
+            self.save_to_disk(&defs);
         }
         removed
     }
@@ -381,8 +386,8 @@ impl ConnectionStore {
     /// Ensure a "Default Shell" connection exists if the store is empty.
     /// Call this after loading to auto-create the default on first run.
     pub async fn ensure_default_shell(&self) {
-        let mut conns = self.connections.lock().await;
-        if !conns.is_empty() {
+        let mut defs = self.definitions.lock().await;
+        if !defs.connections.is_empty() {
             return;
         }
 
@@ -399,9 +404,9 @@ impl ConnectionStore {
         };
 
         info!("Creating default shell connection (shell: {})", shell);
-        conns.insert(default_conn.id.clone(), default_conn);
-        let folders = self.folders.lock().await;
-        self.save_to_disk(&conns, &folders);
+        defs.connections
+            .insert(default_conn.id.clone(), default_conn);
+        self.save_to_disk(&defs);
     }
 
     /// Get the default storage path: `~/.config/termihub-agent/connections.json`.
@@ -411,7 +416,7 @@ impl ConnectionStore {
     }
 
     /// Load from disk, with migration from legacy `sessions.json`.
-    fn load_from_disk(path: &PathBuf) -> (HashMap<String, Connection>, HashMap<String, Folder>) {
+    fn load_from_disk(path: &PathBuf) -> Definitions {
         // Try loading the new format first
         if let Ok(contents) = std::fs::read_to_string(path) {
             match serde_json::from_str::<StorageFormat>(&contents) {
@@ -422,7 +427,7 @@ impl ConnectionStore {
                         storage.folders.len(),
                         path.display()
                     );
-                    let conns = storage
+                    let connections = storage
                         .connections
                         .into_iter()
                         .map(|c| (c.id.clone(), c))
@@ -432,11 +437,14 @@ impl ConnectionStore {
                         .into_iter()
                         .map(|f| (f.id.clone(), f))
                         .collect();
-                    return (conns, folders);
+                    return Definitions {
+                        connections,
+                        folders,
+                    };
                 }
                 Err(e) => {
                     warn!("Failed to parse connections from {}: {}", path.display(), e);
-                    return (HashMap::new(), HashMap::new());
+                    return Definitions::default();
                 }
             }
         }
@@ -451,7 +459,7 @@ impl ConnectionStore {
                         defs.len(),
                         legacy.display()
                     );
-                    let conns: HashMap<String, Connection> = defs
+                    let connections: HashMap<String, Connection> = defs
                         .into_iter()
                         .map(|d| {
                             let conn = Connection {
@@ -467,13 +475,16 @@ impl ConnectionStore {
                             (d.id, conn)
                         })
                         .collect();
-                    return (conns, HashMap::new());
+                    return Definitions {
+                        connections,
+                        folders: HashMap::new(),
+                    };
                 }
             }
         }
 
         debug!("No connections file at {}", path.display());
-        (HashMap::new(), HashMap::new())
+        Definitions::default()
     }
 
     /// Derive the legacy sessions.json path from the connections.json path.
@@ -483,10 +494,10 @@ impl ConnectionStore {
             .map(|dir| dir.join("sessions.json"))
     }
 
-    fn save_to_disk(&self, conns: &HashMap<String, Connection>, folders: &HashMap<String, Folder>) {
+    fn save_to_disk(&self, defs: &Definitions) {
         let storage = StorageFormat {
-            connections: conns.values().cloned().collect(),
-            folders: folders.values().cloned().collect(),
+            connections: defs.connections.values().cloned().collect(),
+            folders: defs.folders.values().cloned().collect(),
         };
         if let Some(parent) = self.file_path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
@@ -1217,6 +1228,86 @@ mod tests {
 
         let (conns, _) = store.list().await;
         assert!(conns.is_empty());
+    }
+
+    // ── Concurrency (AB-BA deadlock regression, CONC-001 / TBE-008) ──
+
+    /// Regression test for CONC-001: the store used to hold two independent
+    /// mutexes locked in opposite orders across methods
+    /// (`create`: connections→folders; `create_folder`: folders→connections),
+    /// each holding the first guard across the second `.lock().await`. Two
+    /// concurrent client RPCs — one of each group — could park forever in a
+    /// classic AB-BA deadlock. This is invisible to single-client tests
+    /// (TBE-008); it needs ≥2 tasks contending on one shared store on a
+    /// multi-thread runtime.
+    ///
+    /// The test drives the previously-opposite-order operations concurrently
+    /// many times under a watchdog timeout: against the OLD two-mutex code it
+    /// hangs (→ timeout failure); with the single-lock fix all operations
+    /// complete. `flavor = "multi_thread"` ensures the tasks run in parallel so
+    /// the lock interleaving can actually occur.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_mixed_ops_do_not_deadlock() {
+        use std::sync::Arc;
+        use tokio::time::{timeout, Duration};
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        let store = Arc::new(ConnectionStore::new_temp(path));
+
+        // Number of concurrent contenders per operation group. A handful of
+        // interleaved connections→folders vs folders→connections acquisitions
+        // is enough to hit the AB-BA window with high probability.
+        const N: usize = 64;
+
+        let run = async {
+            let mut handles = Vec::new();
+
+            for i in 0..N {
+                // Group A: create (locks connections, then folders).
+                let store_a = Arc::clone(&store);
+                handles.push(tokio::spawn(async move {
+                    store_a
+                        .create(make_connection(&format!("conn-{i}"), "Shell", false))
+                        .await;
+                }));
+
+                // Group B: create_folder (locked folders, then connections).
+                let store_b = Arc::clone(&store);
+                handles.push(tokio::spawn(async move {
+                    store_b
+                        .create_folder(make_folder(&format!("folder-{i}"), "Folder", None))
+                        .await;
+                }));
+
+                // Group B: delete_folder (also folders→connections, and mutates
+                // both maps) contending against the group-A creates.
+                let store_c = Arc::clone(&store);
+                handles.push(tokio::spawn(async move {
+                    store_c.delete_folder(&format!("folder-{i}")).await;
+                }));
+
+                // Group A: list (locks connections then folders) — read side.
+                let store_d = Arc::clone(&store);
+                handles.push(tokio::spawn(async move {
+                    let _ = store_d.list().await;
+                }));
+            }
+
+            for h in handles {
+                h.await.expect("task panicked");
+            }
+        };
+
+        // If the store deadlocks, these tasks never finish and the timeout
+        // fires — turning a hang into a deterministic test failure.
+        timeout(Duration::from_secs(30), run)
+            .await
+            .expect("connection-store operations deadlocked (AB-BA lock-order inversion)");
+
+        // Sanity: all connections were created and no lock was left poisoned.
+        let (conns, _) = store.list().await;
+        assert_eq!(conns.len(), N);
     }
 
     #[tokio::test]

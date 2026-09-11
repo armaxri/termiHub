@@ -79,24 +79,24 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup pnpm
         uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: pnpm
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           targets: ${{ matrix.rust_target }}
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Shared with build.yml (same rust target → same shared-key): these
           # full release builds on push to develop/main warm the cache that PR
@@ -144,7 +144,7 @@ jobs:
         run: ./scripts/build-rdp-sidecar.sh --release --target ${{ matrix.rust_target }} --tauri-externalbin
 
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # v0.6.2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TERMIHUB_DEV_BUILD: 'true'
@@ -251,7 +251,7 @@ jobs:
           fi
 
       - name: Upload app artifacts to staging
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: app-${{ matrix.platform }}
           path: termiHub-dev-${{ matrix.platform }}*
@@ -276,15 +276,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           targets: ${{ matrix.target }}
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: dev-agent-${{ matrix.target }}
           # Budget guard (#1006): agent binaries are built only post-merge and are
@@ -295,9 +295,19 @@ jobs:
           save-if: false
 
       - name: Install cross-rs
+        # Pinned to a specific cross-rs release and SHA256-verified before extract
+        # (was: curl releases/latest | sudo tar — an unpinned arbitrary binary on
+        # the agent/release build path). See CI-004 / WA-CI-019.
+        env:
+          CROSS_VERSION: "0.2.5"
+          CROSS_SHA256: "642375d1bcf3bd88272c32ba90e999f3d983050adf45e66bd2d3887e8e838bad"
         run: |
-          curl -fsSL https://github.com/cross-rs/cross/releases/latest/download/cross-x86_64-unknown-linux-gnu.tar.gz \
-            | sudo tar xz -C /usr/local/bin
+          set -euo pipefail
+          url="https://github.com/cross-rs/cross/releases/download/v${CROSS_VERSION}/cross-x86_64-unknown-linux-gnu.tar.gz"
+          curl -fsSL "$url" -o /tmp/cross.tar.gz
+          echo "${CROSS_SHA256}  /tmp/cross.tar.gz" | sha256sum -c -
+          sudo tar xz -f /tmp/cross.tar.gz -C /usr/local/bin
+          rm -f /tmp/cross.tar.gz
 
       # No Docker Buildx / custom cross image on CI: the flaky "Set up Docker
       # Buildx" step pulled moby/buildkit from Docker Hub (registry-1.docker.io),
@@ -317,7 +327,7 @@ jobs:
         run: cp "target/${{ matrix.target }}/release/termihub-agent" "${{ matrix.artifact_name }}"
 
       - name: Upload agent binary to staging
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: agent-${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}
@@ -340,15 +350,15 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           targets: ${{ matrix.target }}
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: dev-agent-${{ matrix.target }}
           # Budget guard (#1006): macOS agent binaries are built only post-merge and
@@ -366,7 +376,7 @@ jobs:
         run: cp "target/${{ matrix.target }}/release/termihub-agent" "${{ matrix.artifact_name }}"
 
       - name: Upload agent binary to staging
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: agent-${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}
@@ -382,7 +392,7 @@ jobs:
 
     steps:
       - name: Download all staged artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: artifacts/
           merge-multiple: true

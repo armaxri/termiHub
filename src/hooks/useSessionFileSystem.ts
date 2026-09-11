@@ -16,7 +16,7 @@ import {
   localDelete,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
-import { frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { runTransfer, seedTransferQueueRow } from "./transferFeedback";
 
 /**
@@ -326,8 +326,9 @@ export function useSessionFileSystem() {
               await startUpload(sessionFileBrowserId, tempPath, destPath);
             } finally {
               // Best-effort cleanup of the local temp copy; a leftover must never
-              // fail a paste whose bytes already landed.
-              await localDelete(tempPath, false).catch(() => {});
+              // fail a paste whose bytes already landed — but log it so a
+              // leaking temp file is auditable rather than silent.
+              fireAndForget(localDelete(tempPath, false), `delete paste temp file ${tempPath}`);
             }
           } else {
             // Byte-based fallback (Docker / FTP / remote-agent, or a mixed

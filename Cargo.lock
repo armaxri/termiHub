@@ -7649,6 +7649,7 @@ dependencies = [
  "tauri-plugin-opener",
  "temp-env",
  "tempfile",
+ "termihub-agent",
  "termihub-core",
  "thiserror 2.0.18",
  "tokio",

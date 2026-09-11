@@ -5,7 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import { Button } from "@/components/ui";
 import { createTerminal, closeTerminal } from "@/services/api";
-import { frontendLog } from "@/utils/frontendLog";
+import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import "./FileBrowserTab.css";
 
 interface FileBrowserTabProps {
@@ -70,7 +70,10 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         const sessionId = await createTerminal(tab.config);
         if (canceled) {
           // Superseded by a StrictMode remount — tear down the orphan session.
-          closeTerminal(sessionId).catch(() => {});
+          fireAndForget(
+            closeTerminal(sessionId),
+            `close orphaned file-browser session ${sessionId}`
+          );
           return;
         }
         sessionIdRef.current = sessionId;
@@ -96,7 +99,7 @@ export function FileBrowserTab({ tabId, isVisible }: FileBrowserTabProps) {
         sessionIdRef.current = null;
         pendingCloseRef.current = window.setTimeout(() => {
           pendingCloseRef.current = null;
-          closeTerminal(sid).catch(() => {});
+          fireAndForget(closeTerminal(sid), `close file-browser session ${sid} on tab close`);
           setTabSessionId(tabId, null);
         }, 50);
       }

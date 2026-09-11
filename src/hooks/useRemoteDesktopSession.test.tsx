@@ -61,7 +61,12 @@ vi.mock("@/services/events", () => ({
   },
 }));
 
-vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
+// Preserve the real module (incl. fireAndForget) and stub only the DEBUG logger,
+// so the hook's fireAndForget teardown calls remain real functions.
+vi.mock("@/utils/frontendLog", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/utils/frontendLog")>()),
+  frontendLog: vi.fn(),
+}));
 
 const mockedConnect = vi.mocked(remoteDesktopConnect);
 const mockedDisconnect = vi.mocked(remoteDesktopDisconnect);
