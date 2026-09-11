@@ -1784,6 +1784,37 @@ mod tests {
         );
     }
 
+    // Regression: a thread that panics while holding the store mutex must not
+    // cascade that panic to every later connection access. The lock guards use
+    // `.unwrap_or_else(|e| e.into_inner())`, so a poisoned lock degrades to its
+    // inner value instead of re-panicking (ERR-001 / TAURI-004).
+    #[test]
+    fn poisoned_lock_recovers_instead_of_cascading() {
+        let dir = tempfile::tempdir().unwrap();
+        let cred_store = Arc::new(MockStore::new());
+        let mgr = Arc::new(ConnectionManager::new_for_test(dir.path(), cred_store).unwrap());
+
+        // Poison the store mutex by panicking while holding its guard.
+        let poisoner = Arc::clone(&mgr);
+        let handle = std::thread::spawn(move || {
+            let _guard = poisoner.store.lock().unwrap();
+            panic!("intentional panic to poison the store lock");
+        });
+        assert!(handle.join().is_err(), "poisoning thread should panic");
+        assert!(mgr.store.is_poisoned(), "store mutex should be poisoned");
+
+        // Access must still succeed via the recovered guard, not re-panic.
+        let all = mgr
+            .get_all()
+            .expect("get_all must recover from a poisoned lock");
+        assert!(all.connections.is_empty());
+
+        // A mutation path (also behind the store lock) must recover too.
+        mgr.save_connection(make_local_conn("recover-1")).unwrap();
+        let after = mgr.get_all().unwrap();
+        assert_eq!(after.connections.len(), 1);
+    }
+
     #[test]
     fn prepare_for_storage_does_not_call_get_for_serial_connection() {
         let store = SpyStore::new();

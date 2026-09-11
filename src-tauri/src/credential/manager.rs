@@ -274,6 +274,34 @@ mod tests {
         assert_eq!(mgr.status(), CredentialStoreStatus::Unlocked);
     }
 
+    // Regression: a thread that panics while holding the backend lock must not
+    // cascade that panic to every later credential access. The lock guards use
+    // `.unwrap_or_else(|e| e.into_inner())`, so a poisoned lock degrades to its
+    // inner value instead of re-panicking (ERR-001 / TAURI-004).
+    #[test]
+    fn poisoned_lock_recovers_instead_of_cascading() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = Arc::new(CredentialManager::new(
+            StorageMode::None,
+            dir.path().to_path_buf(),
+        ));
+
+        // Poison the backend RwLock by panicking while holding a write guard.
+        let poisoner = Arc::clone(&mgr);
+        let handle = std::thread::spawn(move || {
+            let _guard = poisoner.inner.write().unwrap();
+            panic!("intentional panic to poison the credential store lock");
+        });
+        assert!(handle.join().is_err(), "poisoning thread should panic");
+        assert!(mgr.inner.is_poisoned(), "backend lock should be poisoned");
+
+        // Reads must still succeed via the recovered guard, not re-panic.
+        assert_eq!(mgr.get_mode(), StorageMode::None);
+        // Writes through the poisoned lock must also recover.
+        mgr.switch_store(StorageMode::MasterPassword).unwrap();
+        assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
+    }
+
     #[test]
     fn switch_store_changes_mode() {
         let dir = tempfile::tempdir().unwrap();
