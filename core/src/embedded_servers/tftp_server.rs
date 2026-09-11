@@ -894,7 +894,15 @@ mod tests {
         let stats = AtomicServerStats::new();
         let shutdown = Arc::new(AtomicBool::new(false));
         let handle = std::thread::spawn(move || {
-            handle_rrq(&root, "exact.bin", peer, "127.0.0.1", 1024, &stats, &shutdown)
+            handle_rrq(
+                &root,
+                "exact.bin",
+                peer,
+                "127.0.0.1",
+                1024,
+                &stats,
+                &shutdown,
+            )
         });
 
         // Block 1: the full 512-byte block.
@@ -911,7 +919,11 @@ mod tests {
         // Block 2: the explicit empty terminating block.
         let (n2, _) = client.recv_from(&mut buf).expect("recv terminating DATA 2");
         assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), OP_DATA);
-        assert_eq!(u16::from_be_bytes([buf[2], buf[3]]), 2, "terminator is block #2");
+        assert_eq!(
+            u16::from_be_bytes([buf[2], buf[3]]),
+            2,
+            "terminator is block #2"
+        );
         assert_eq!(n2, 4, "terminating block must carry zero data bytes");
         client
             .send_to(&make_ack(2), server_addr)
@@ -971,7 +983,10 @@ mod tests {
             client.send_to(&make_ack(expected), from).expect("send ACK");
         }
 
-        assert_eq!(received, payload, "payload must survive the block-number wrap");
+        assert_eq!(
+            received, payload,
+            "payload must survive the block-number wrap"
+        );
         let result = handle.join().expect("server thread");
         assert!(result.is_ok(), "stream_file errored: {result:?}");
     }
@@ -999,7 +1014,9 @@ mod tests {
         // must not ACK it. (recv blocks until the reply arrives, so this also
         // orders the stray strictly before the legitimate DATA below.)
         let mut abuf = [0u8; 516];
-        let (an, _) = attacker.recv_from(&mut abuf).expect("stray sender should get a reply");
+        let (an, _) = attacker
+            .recv_from(&mut abuf)
+            .expect("stray sender should get a reply");
         assert!(an >= 4, "reply too short");
         assert_eq!(u16::from_be_bytes([abuf[0], abuf[1]]), OP_ERROR);
         assert_eq!(u16::from_be_bytes([abuf[2], abuf[3]]), ERR_UNKNOWN_TID);
@@ -1017,7 +1034,10 @@ mod tests {
         assert!(result.is_ok(), "handle_wrq errored: {result:?}");
 
         let written = std::fs::read(dir.path().join("up.bin")).expect("read uploaded file");
-        assert_eq!(written, payload, "only the legitimate peer's bytes may be written");
+        assert_eq!(
+            written, payload,
+            "only the legitimate peer's bytes may be written"
+        );
     }
 
     #[test]
@@ -1059,7 +1079,9 @@ mod tests {
             .send_to(&make_ack(1), server_addr)
             .expect("send stray ACK");
         let mut abuf = [0u8; 516];
-        let (an, _) = attacker.recv_from(&mut abuf).expect("stray sender should get a reply");
+        let (an, _) = attacker
+            .recv_from(&mut abuf)
+            .expect("stray sender should get a reply");
         assert!(an >= 4, "reply too short");
         assert_eq!(u16::from_be_bytes([abuf[0], abuf[1]]), OP_ERROR);
         assert_eq!(u16::from_be_bytes([abuf[2], abuf[3]]), ERR_UNKNOWN_TID);
