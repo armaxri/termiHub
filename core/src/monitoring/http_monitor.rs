@@ -20,11 +20,13 @@
 //! ambient runtime, and the agent can start it from its async dispatcher, both
 //! without a "no reactor running" panic.
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -88,6 +90,18 @@ pub struct HttpMonitorConfig {
     pub method: String,
     pub expected_status: u16,
     pub timeout_ms: u64,
+    /// Opt-in escape hatch for monitoring an internal host (SEC-008).
+    ///
+    /// When `true`, the monitor is allowed to reach loopback (`127/8`, `::1`),
+    /// RFC 1918 private ranges (`10/8`, `172.16/12`, `192.168/16`), and IPv6
+    /// unique-local (`fc00::/7`) addresses — e.g. a local dev server on
+    /// `localhost` or an internal host. Link-local (including the cloud-metadata
+    /// endpoint `169.254.169.254`) and the unspecified address stay blocked
+    /// regardless, as no legitimate monitor targets them. Defaults to `false`
+    /// (deny-internal) so the SSRF guard is safe by default; `#[serde(default)]`
+    /// keeps configs stored before this field deserializing.
+    #[serde(default)]
+    pub allow_private_network: bool,
 }
 
 /// The result of a single HTTP check.
@@ -137,6 +151,7 @@ impl HttpMonitorConfig {
             method,
             expected_status,
             timeout_ms,
+            allow_private_network: false,
         }
     }
 }
@@ -232,6 +247,13 @@ impl HttpMonitorService {
                         },
                         true,
                         Some(Value::from(5_000)),
+                    ),
+                    field(
+                        "allowPrivateNetwork",
+                        "Allow internal / private targets",
+                        FieldType::Boolean,
+                        false,
+                        Some(Value::Bool(false)),
                     ),
                 ],
             }],
@@ -506,6 +528,178 @@ fn build_client_outcome(
     }
 }
 
+// ── SSRF protection (SEC-008) ────────────────────────────────────────────────
+//
+// The monitor fetches a user/config-supplied URL and can run **agent-side**, so
+// without guards it is an SSRF primitive: pointing it at `http://169.254.169.254/`
+// leaks cloud IAM credentials, and internal-only services (admin panels, other
+// agents, the agent's own loopback ports) become reachable. Defence is two-part
+// so both name- and literal-addressed targets — and every redirect hop — are
+// covered, and DNS-rebinding is closed by validating the exact address connected
+// to:
+//
+//   1. [`SsrfResolver`] — a custom `reqwest` DNS resolver used for hostnames. It
+//      resolves, drops every disallowed address, and connects only to the
+//      survivors (or fails if none remain). reqwest connects to precisely the
+//      addresses the resolver returns, so a hostname cannot rebind to an internal
+//      IP between the check and the connection. It runs for the initial request
+//      *and* every redirect hop.
+//   2. [`blocked_literal_ip`] — reqwest never calls the resolver for URLs whose
+//      host is an IP literal, so those are validated directly: the initial URL
+//      before sending (see [`check_once`]) and each redirect target via the
+//      client's redirect policy.
+
+/// Whether `ip` is a target the monitor must refuse (SSRF guard).
+///
+/// Link-local (incl. the metadata endpoint `169.254.169.254`), the unspecified
+/// address, and IPv4 broadcast are **always** blocked — no legitimate monitor
+/// targets them. Loopback (`127/8`, `::1`), RFC 1918 private ranges, and IPv6
+/// unique-local (`fc00::/7`) are blocked unless `allow_private` (the monitor's
+/// opt-in `allowPrivateNetwork`, for the legitimate "monitor my local/internal
+/// host" case) is set.
+fn is_blocked_ip(ip: IpAddr, allow_private: bool) -> bool {
+    match ip {
+        IpAddr::V4(v4) => is_blocked_ipv4(v4, allow_private),
+        // Classify an IPv4-mapped address (`::ffff:a.b.c.d`) by its IPv4 value so
+        // `::ffff:169.254.169.254` cannot smuggle past the v4 rules.
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => is_blocked_ipv4(v4, allow_private),
+            None => is_blocked_ipv6(v6, allow_private),
+        },
+    }
+}
+
+fn is_blocked_ipv4(ip: Ipv4Addr, allow_private: bool) -> bool {
+    // Always-blocked: 0.0.0.0, 169.254/16 (incl. metadata), broadcast.
+    if ip.is_unspecified() || ip.is_link_local() || ip.is_broadcast() {
+        return true;
+    }
+    // 127/8 loopback and 10/8, 172.16/12, 192.168/16 private — blocked unless the
+    // operator opted in to internal targets.
+    if (ip.is_loopback() || ip.is_private()) && !allow_private {
+        return true;
+    }
+    false
+}
+
+fn is_blocked_ipv6(ip: Ipv6Addr, allow_private: bool) -> bool {
+    // Always-blocked: :: and fe80::/10 link-local.
+    if ip.is_unspecified() || is_ipv6_link_local(ip) {
+        return true;
+    }
+    // ::1 loopback and fc00::/7 unique-local (the IPv6 analogue of RFC 1918) —
+    // blocked unless the operator opted in to internal targets.
+    if (ip.is_loopback() || is_ipv6_unique_local(ip)) && !allow_private {
+        return true;
+    }
+    false
+}
+
+/// `fe80::/10` — IPv6 link-local unicast.
+fn is_ipv6_link_local(ip: Ipv6Addr) -> bool {
+    (ip.segments()[0] & 0xffc0) == 0xfe80
+}
+
+/// `fc00::/7` — IPv6 unique-local addresses.
+fn is_ipv6_unique_local(ip: Ipv6Addr) -> bool {
+    (ip.octets()[0] & 0xfe) == 0xfc
+}
+
+/// If `url`'s host is an IP **literal** that the guard blocks, return the reason
+/// string; otherwise `None`. Hostnames return `None` here — they are validated
+/// by [`SsrfResolver`] at connection time.
+fn blocked_literal_ip(url: &reqwest::Url, allow_private: bool) -> Option<String> {
+    let host = url.host_str()?;
+    // `host_str` yields IPv6 literals in bracketed form (`[::1]`); strip the
+    // brackets before parsing. A host that does not parse as an IP is a domain
+    // name and is handled by `SsrfResolver` at connection time, not here.
+    let ip = parse_host_ip(host)?;
+    if is_blocked_ip(ip, allow_private) {
+        Some(format!(
+            "blocked by SSRF protection: {ip} is not an allowed target"
+        ))
+    } else {
+        None
+    }
+}
+
+/// Parse a URL host string as an IP literal, accepting the bracketed IPv6 form
+/// (`[::1]`). Returns `None` for domain names.
+fn parse_host_ip(host: &str) -> Option<IpAddr> {
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        return Some(ip);
+    }
+    host.strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .and_then(|h| h.parse::<IpAddr>().ok())
+}
+
+/// A `reqwest` DNS resolver that filters out SSRF-blocked addresses.
+///
+/// Applied to hostnames for the initial request and every redirect hop. reqwest
+/// connects to exactly the addresses returned here, so validating them closes the
+/// DNS-rebinding window (the checked address is the connected address).
+#[derive(Debug, Clone)]
+struct SsrfResolver {
+    allow_private: bool,
+}
+
+impl Resolve for SsrfResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let allow_private = self.allow_private;
+        Box::pin(async move {
+            let host = name.as_str().to_owned();
+            // getaddrinfo on tokio's blocking pool; port 0 — reqwest overrides it
+            // with the URL's port.
+            let resolved = tokio::net::lookup_host((host.as_str(), 0)).await?;
+            let allowed: Vec<SocketAddr> = resolved
+                .filter(|addr| !is_blocked_ip(addr.ip(), allow_private))
+                .collect();
+            if allowed.is_empty() {
+                let err: Box<dyn std::error::Error + Send + Sync> = format!(
+                    "blocked by SSRF protection: {host} resolves only to disallowed addresses"
+                )
+                .into();
+                return Err(err);
+            }
+            let addrs: Addrs = Box::new(allowed.into_iter());
+            Ok(addrs)
+        })
+    }
+}
+
+/// Build the monitor's HTTP client with SSRF defences wired in: the custom
+/// [`SsrfResolver`] for hostnames and a redirect policy that re-validates every
+/// literal-IP hop (and caps the chain at 10 redirects).
+fn build_guarded_client(config: &HttpMonitorConfig) -> Result<Client, reqwest::Error> {
+    let allow_private = config.allow_private_network;
+    Client::builder()
+        .timeout(Duration::from_millis(config.timeout_ms))
+        .dns_resolver(Arc::new(SsrfResolver { allow_private }))
+        .redirect(reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 10 {
+                return attempt.error("too many redirects");
+            }
+            match blocked_literal_ip(attempt.url(), allow_private) {
+                Some(reason) => attempt.error(reason),
+                None => attempt.follow(),
+            }
+        }))
+        .build()
+}
+
+/// Build a failed [`HttpCheckResult`] carrying `error`, tagged with `config.id`.
+fn failed_result(config: &HttpMonitorConfig, error: String, timestamp_ms: u64) -> HttpCheckResult {
+    HttpCheckResult {
+        monitor_id: config.id.clone(),
+        status_code: None,
+        latency_ms: None,
+        ok: false,
+        error: Some(error),
+        timestamp_ms,
+    }
+}
+
 /// The background poll loop for one monitor.
 ///
 /// Emits a [`CHECK_EVENT_KIND`] [`ServiceEvent`] (payload: [`HttpCheckResult`])
@@ -518,9 +712,7 @@ async fn run_monitor(
     paused: Arc<AtomicBool>,
     last_result: Arc<Mutex<Option<HttpCheckResult>>>,
 ) {
-    let build_result = Client::builder()
-        .timeout(Duration::from_millis(config.timeout_ms))
-        .build();
+    let build_result = build_guarded_client(&config);
     let client = match build_client_outcome(&config, build_result) {
         ClientBuildOutcome::Ready(c) => c,
         ClientBuildOutcome::Failed(result) => {
@@ -581,6 +773,16 @@ async fn check_once(config: &HttpMonitorConfig, client: &Client) -> HttpCheckRes
     let method =
         reqwest::Method::from_bytes(config.method.as_bytes()).unwrap_or(reqwest::Method::GET);
 
+    // SSRF pre-flight for an IP-literal target: reqwest never consults the custom
+    // resolver for a literal host, so validate it here before any connection is
+    // made. Hostnames are validated by `SsrfResolver` at connection time.
+    if let Ok(url) = reqwest::Url::parse(&config.url) {
+        if let Some(reason) = blocked_literal_ip(&url, config.allow_private_network) {
+            debug!(monitor_id = %config.id, "HTTP monitor: {reason}");
+            return failed_result(config, reason, timestamp_ms);
+        }
+    }
+
     let started = Instant::now();
     match client.request(method, &config.url).send().await {
         Ok(response) => {
@@ -610,6 +812,133 @@ async fn check_once(config: &HttpMonitorConfig, client: &Client) -> HttpCheckRes
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── SSRF guard (SEC-008) ──────────────────────────────────────────────────
+
+    #[test]
+    fn always_blocks_metadata_link_local_and_unspecified() {
+        // These are blocked regardless of the opt-in — no legitimate monitor
+        // targets them, and 169.254.169.254 is the cloud-metadata crown jewel.
+        for (addr, label) in [
+            ("0.0.0.0", "ipv4 unspecified"),
+            ("169.254.169.254", "cloud metadata endpoint"),
+            ("169.254.1.1", "ipv4 link-local"),
+            ("255.255.255.255", "ipv4 broadcast"),
+            ("::", "ipv6 unspecified"),
+            ("fe80::1", "ipv6 link-local"),
+            ("::ffff:169.254.169.254", "ipv4-mapped metadata"),
+        ] {
+            let ip: IpAddr = addr.parse().unwrap();
+            assert!(
+                is_blocked_ip(ip, false),
+                "{label} ({addr}) must be blocked (deny-internal)"
+            );
+            assert!(
+                is_blocked_ip(ip, true),
+                "{label} ({addr}) must stay blocked even with allow_private"
+            );
+        }
+    }
+
+    #[test]
+    fn loopback_and_private_ranges_blocked_by_default_allowed_on_opt_in() {
+        // Internal targets (loopback + private) are blocked by default but
+        // reachable via the explicit `allowPrivateNetwork` opt-in.
+        for addr in [
+            "127.0.0.1",        // ipv4 loopback
+            "127.5.6.7",        // ipv4 loopback range
+            "10.0.0.1",         // RFC 1918
+            "172.16.0.1",       // RFC 1918
+            "172.31.255.255",   // RFC 1918
+            "192.168.1.1",      // RFC 1918
+            "::1",              // ipv6 loopback
+            "::ffff:127.0.0.1", // ipv4-mapped loopback
+            "fc00::1",          // ipv6 unique-local
+            "fd12:3456::1",     // ipv6 unique-local
+        ] {
+            let ip: IpAddr = addr.parse().unwrap();
+            assert!(
+                is_blocked_ip(ip, false),
+                "{addr} must be blocked when internal access is denied"
+            );
+            assert!(
+                !is_blocked_ip(ip, true),
+                "{addr} must be allowed when allow_private is opted in"
+            );
+        }
+    }
+
+    #[test]
+    fn public_addresses_are_allowed() {
+        for addr in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "93.184.216.34",        // example.com
+            "172.15.0.1",           // just outside 172.16/12
+            "172.32.0.1",           // just outside 172.16/12
+            "2606:4700:4700::1111", // public IPv6
+        ] {
+            let ip: IpAddr = addr.parse().unwrap();
+            assert!(
+                !is_blocked_ip(ip, false),
+                "{addr} is public and must be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn blocked_literal_ip_flags_ipv4_and_ipv6_literals() {
+        let blocked = reqwest::Url::parse("http://169.254.169.254/latest/meta-data/").unwrap();
+        assert!(blocked_literal_ip(&blocked, false).is_some());
+
+        let v6 = reqwest::Url::parse("http://[::1]:8080/").unwrap();
+        assert!(blocked_literal_ip(&v6, false).is_some());
+
+        // A domain host is not judged here (the resolver handles it).
+        let domain = reqwest::Url::parse("http://example.com/").unwrap();
+        assert!(blocked_literal_ip(&domain, false).is_none());
+
+        // A public literal is allowed.
+        let public = reqwest::Url::parse("http://8.8.8.8/").unwrap();
+        assert!(blocked_literal_ip(&public, false).is_none());
+
+        // Private literal: blocked by default, allowed on opt-in.
+        let private = reqwest::Url::parse("http://192.168.1.10/").unwrap();
+        assert!(blocked_literal_ip(&private, false).is_some());
+        assert!(blocked_literal_ip(&private, true).is_none());
+    }
+
+    #[tokio::test]
+    async fn check_once_rejects_metadata_endpoint_without_network() {
+        // A monitor pointed at the metadata endpoint must fail fast with an SSRF
+        // error and never attempt the request.
+        let mut cfg = sample_config();
+        cfg.url = "http://169.254.169.254/latest/meta-data/".into();
+        let client = build_guarded_client(&cfg).expect("client builds");
+        let result = check_once(&cfg, &client).await;
+        assert!(!result.ok);
+        assert!(result.status_code.is_none());
+        let err = result.error.unwrap_or_default();
+        assert!(
+            err.contains("SSRF protection"),
+            "error should name the SSRF guard, got: {err}"
+        );
+    }
+
+    #[test]
+    fn allow_private_network_defaults_to_false_when_absent() {
+        // Configs stored before the field existed must deserialize to deny-internal.
+        let json = serde_json::json!({
+            "id": "m1",
+            "url": "https://example.com",
+            "intervalMs": 30000,
+            "method": "GET",
+            "expectedStatus": 200,
+            "timeoutMs": 5000
+        });
+        let cfg: HttpMonitorConfig = serde_json::from_value(json).unwrap();
+        assert!(!cfg.allow_private_network);
+    }
 
     #[test]
     fn new_config_has_valid_uuid() {
@@ -833,6 +1162,8 @@ mod tests {
         let mut cfg = sample_config();
         cfg.url = format!("http://{addr}/");
         cfg.interval_ms = MIN_INTERVAL_MS;
+        // The test sink binds on loopback; opt in so the SSRF guard allows it.
+        cfg.allow_private_network = true;
         let cfg_id = cfg.id.clone();
 
         let mut svc = HttpMonitorService::new();

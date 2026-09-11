@@ -126,6 +126,13 @@ export interface HttpMonitorConfig {
   method: string;
   expectedStatus: number;
   timeoutMs: number;
+  /**
+   * Opt-in escape hatch for monitoring an internal host (SEC-008). When `true`,
+   * the monitor may reach RFC 1918 private / IPv6 unique-local addresses;
+   * loopback, link-local (incl. `169.254.169.254`), and the unspecified address
+   * stay blocked regardless. Defaults to `false` (deny-internal) when omitted.
+   */
+  allowPrivateNetwork?: boolean;
 }
 
 export interface HttpCheckResult {
