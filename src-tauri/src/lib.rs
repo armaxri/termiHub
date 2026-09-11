@@ -250,7 +250,7 @@ fn run_app_teardown(app_handle: &tauri::AppHandle) {
         }
         // Cancel all HTTP monitor poll loops so in-flight reqwest requests are
         // aborted rather than abandoned on exit (#1147).
-        if let Some(mgr) = handle.try_state::<NetworkManager>() {
+        if let Some(mgr) = handle.try_state::<Arc<NetworkManager>>() {
             mgr.stop_all_http_monitors();
         }
         // Cancel every in-flight transfer *before* closing sessions, so no
@@ -669,7 +669,11 @@ pub fn run() {
             // value, before any shared reference to it can exist.
             let mut network_manager = NetworkManager::new();
             network_manager.init(config_dir.clone(), app.handle().clone());
-            app.manage(network_manager);
+            // Managed behind an `Arc` so background tasks (port scan, ping,
+            // traceroute) can hold an owned, lifetime-checked handle to the
+            // manager instead of laundering a `State` reference through a
+            // `usize` pointer (TAURI-002).
+            app.manage(Arc::new(network_manager));
 
             let settings = match SettingsStorage::new(app.handle()) {
                 Ok(storage) => match storage.load_with_recovery() {
