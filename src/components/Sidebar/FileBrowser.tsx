@@ -50,7 +50,7 @@ import { FileEntry } from "@/types/connection";
 import type { ShellType } from "@/types/terminal";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/shell-detection";
-import { formatBytes, formatRelativeTime } from "@/utils/formatters";
+import { formatBytes, formatRelativeTime, formatAbsoluteTime } from "@/utils/formatters";
 import {
   sortEntries,
   filterEntries,
@@ -478,6 +478,11 @@ function FileRow({
 
   const showMultiSelect = isSelected && selectedCount > 1;
 
+  // Files show a real byte size; directories show none. `formatBytes` returns an
+  // empty string when the size is missing/invalid, so a file whose backend never
+  // populated `size` renders no size cell instead of the old "NaN GB" (#2798).
+  const sizeLabel = entry.isDirectory ? "" : formatBytes(entry.size);
+
   if (isRenaming) {
     return <RenameRow entry={entry} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />;
   }
@@ -509,9 +514,9 @@ function FileRow({
               title={
                 entry.isSymlink
                   ? entry.symlinkTarget
-                    ? `Symbolic link → ${entry.symlinkTarget}`
-                    : "Symbolic link"
-                  : undefined
+                    ? `${entry.name} — symbolic link → ${entry.symlinkTarget}`
+                    : `${entry.name} — symbolic link`
+                  : entry.name
               }
             >
               {entry.name}
@@ -524,15 +529,22 @@ function FileRow({
                 → {entry.symlinkTarget}
               </span>
             )}
-            {entry.modified && (
-              <span className="file-browser__modified">{formatRelativeTime(entry.modified)}</span>
-            )}
-            {!entry.isDirectory && (
-              <span className="file-browser__size">{formatBytes(entry.size)}</span>
-            )}
-            {entry.permissions && (
-              <span className="file-browser__permissions">{entry.permissions}</span>
-            )}
+            <span className="file-browser__meta">
+              {entry.modified && (
+                <span
+                  className="file-browser__modified"
+                  title={formatAbsoluteTime(entry.modified) || undefined}
+                >
+                  {formatRelativeTime(entry.modified)}
+                </span>
+              )}
+              {!entry.isDirectory && sizeLabel && (
+                <span className="file-browser__size">{sizeLabel}</span>
+              )}
+              {entry.permissions && (
+                <span className="file-browser__permissions">{entry.permissions}</span>
+              )}
+            </span>
           </button>
           <div className="file-browser__row-menu">
             <DropdownMenu.Root>

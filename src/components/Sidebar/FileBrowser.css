@@ -193,10 +193,29 @@
   font-style: italic;
 }
 
+/* The filename is the dominant element: it takes the remaining width and
+   truncates with an ellipsis. `min-width: 0` is essential — without it a flex
+   item refuses to shrink below its content width, so a long name would push the
+   meta group (Modified / Size) out of view and clip it (#2798). */
 .file-browser__name {
-  flex: 1;
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+/* Right-hand meta group: Modified + Size (+ permissions) sit in an aligned,
+   non-shrinking column that is always pinned to the right and never overlaps the
+   name. `margin-left: auto` keeps it right-anchored even for short names. */
+.file-browser__meta {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-left: auto;
+  padding-left: var(--spacing-sm);
 }
 
 .file-browser__size,
@@ -205,6 +224,13 @@
   font-size: var(--font-size-2xs);
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Right-align the size so byte counts line up column-wise down the list. */
+.file-browser__size {
+  min-width: 4.5em;
+  text-align: right;
 }
 
 /* Keyboard focus ring for roving-tabindex list navigation. */
@@ -218,6 +244,7 @@
   font-size: var(--font-size-2xs);
   color: var(--text-secondary);
   font-family: monospace;
+  white-space: nowrap;
 }
 
 /* Connection picker */
