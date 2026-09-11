@@ -1799,7 +1799,15 @@ fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) ->
     serde_json::json!({
         "protocolVersion": "0.3.0",
         "client": "termihub-desktop",
-        "clientVersion": "0.1.0",
+        // AGT-014: report the desktop crate's real version rather than a stale
+        // literal. The agent records this in its per-process client registry and
+        // echoes it via `agent.list_connections` (the connected-client update
+        // guard, #1349), so a hardcoded constant makes every client look identical
+        // and defeats any version-based reasoning. `CARGO_PKG_VERSION` is the same
+        // source Tauri's `package_info().version` derives from (both come from
+        // `Cargo.toml`), and matches how the rest of the desktop reports its
+        // version (see `cli::version_string`, `agent_deploy`, `agent_setup`).
+        "clientVersion": env!("CARGO_PKG_VERSION"),
         "agentSettings": settings,
         "externalConnectionFiles": external_files
     })
@@ -3531,6 +3539,25 @@ mod tests {
             err.contains("stopped") || err.contains("cancelled"),
             "expected stop-related error, got: {err}"
         );
+    }
+
+    /// AGT-014: `initialize` must report the desktop crate's real version in
+    /// `clientVersion`, not a hardcoded literal. The agent records this and echoes
+    /// it via `agent.list_connections` (the connected-client update guard, #1349),
+    /// so a constant makes every client look identical. Deriving it from
+    /// `CARGO_PKG_VERSION` also guards against the field silently going stale on the
+    /// next version bump (the old literal would have kept reporting `0.1.0`).
+    #[test]
+    fn initialize_params_report_real_client_version() {
+        let settings = AgentSettings::default();
+        let params = build_initialize_params(&settings, &[]);
+        assert_eq!(
+            params["clientVersion"], env!("CARGO_PKG_VERSION"),
+            "clientVersion must track the desktop crate version, not a literal"
+        );
+        // The protocol/client identity fields stay as declared.
+        assert_eq!(params["protocolVersion"], "0.3.0");
+        assert_eq!(params["client"], "termihub-desktop");
     }
 
     /// serialize_request produces valid newline-terminated JSON-RPC.
