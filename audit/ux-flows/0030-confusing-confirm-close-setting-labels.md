@@ -9,7 +9,8 @@ subsystem: src/components/Settings
 evidence:
   - src/components/Settings/settingsRegistry.ts:404
   - src/components/Settings/settingsRegistry.ts:364
-status: open
+status: fixed
+resolution: "#2827 — differentiated close-confirm labels + Close-confirmations/Network-warnings sub-headers; label/keywords text only, no key/behavior change"
 ---
 
 ## What

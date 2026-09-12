@@ -9,7 +9,8 @@ subsystem: src/components/Settings
 evidence:
   - src/components/Settings/settingsRegistry.ts:26
   - src/components/Settings/settingsRegistry.ts:491
-status: open
+status: fixed
+resolution: "#2827 — split overloaded General into top-level categories (Serial/Sessions/Safety Prompts/X Server); General kept as defaults home (empty-state deep-link target)"
 ---
 
 ## What

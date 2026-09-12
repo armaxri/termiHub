@@ -10,7 +10,8 @@ evidence:
   - src/components/TunnelEditor/TunnelEditor.tsx:167
   - src/components/TunnelEditor/TunnelEditor.tsx:157
   - src/store/slices/tunnelSlice.ts:173
-status: open
+status: fixed
+resolution: "#2825 — toast.success on tunnel save; Save disabled on blank/whitespace name (matches ConnectionEditor); Untitled fallback only for chain-a-hop caller"
 ---
 
 ## What

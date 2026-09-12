@@ -9,7 +9,8 @@ subsystem: src/components/TunnelEditor
 evidence:
   - src/components/TunnelEditor/TunnelEditor.tsx:173
   - src/store/slices/tunnelSlice.ts:210
-status: open
+status: fixed
+resolution: "#2825 — start/reconnect toast held pending, resolves success only on real connected transition via _awaitingFirstConnect (was intent-ack); #2169 failure toast preserved"
 ---
 
 ## What
