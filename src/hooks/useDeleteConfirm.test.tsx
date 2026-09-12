@@ -23,7 +23,7 @@ describe("useDeleteConfirm", () => {
   let container: HTMLDivElement;
   let root: Root;
   let latest: DeleteConfirm<Target>;
-  let onConfirm: ReturnType<typeof vi.fn>;
+  let onConfirm: ReturnType<typeof vi.fn<(target: Target) => void | Promise<void>>>;
 
   function render() {
     act(() => {
@@ -32,7 +32,7 @@ describe("useDeleteConfirm", () => {
   }
 
   beforeEach(() => {
-    onConfirm = vi.fn();
+    onConfirm = vi.fn<(target: Target) => void | Promise<void>>();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -93,7 +93,7 @@ describe("useDeleteConfirm", () => {
     );
     render();
     act(() => latest.request({ id: "1", name: "Deploy" }));
-    let confirmResult: void | Promise<void>;
+    let confirmResult: void | Promise<void> = undefined;
     act(() => {
       confirmResult = latest.confirm();
     });
