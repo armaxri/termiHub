@@ -180,43 +180,20 @@ impl Default for Docker {
 
 /// Return the Podman socket URI for the current platform, if detectable.
 ///
-/// Checks (in order):
+/// Checks (in priority order):
 /// - `$CONTAINER_HOST` / `$DOCKER_HOST` environment variables (bollard reads these already,
 ///   but we use them for the explicit-Podman path too)
 /// - XDG_RUNTIME_DIR / well-known paths for Podman machine sockets (Unix)
+/// - macOS Podman machine API socket under `$TMPDIR` (see #1622)
 /// - Named-pipe path for Podman machine on Windows
+///
+/// The environment/filesystem discovery lives in
+/// [`runtime::discover_podman_socket_env`]; the ordered decision itself is the
+/// pure [`runtime::resolve_podman_socket_uri`], so the socket-selection logic is
+/// unit-tested without a live Podman host.
 #[cfg(unix)]
 fn podman_socket_uri() -> Option<String> {
-    // Prefer explicit socket env vars
-    if let Ok(host) = std::env::var("CONTAINER_HOST") {
-        return Some(host);
-    }
-    if let Ok(host) = std::env::var("DOCKER_HOST") {
-        return Some(host);
-    }
-    // XDG_RUNTIME_DIR path (rootless Podman)
-    if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-        let path = format!("{xdg}/podman/podman.sock");
-        if std::path::Path::new(&path).exists() {
-            return Some(format!("unix://{path}"));
-        }
-    }
-    // Podman machine default socket (~/.local/share/containers/...)
-    if let Ok(home) = std::env::var("HOME") {
-        let path = format!(
-            "{home}/.local/share/containers/podman/machine/podman-machine-default/podman.sock"
-        );
-        if std::path::Path::new(&path).exists() {
-            return Some(format!("unix://{path}"));
-        }
-    }
-    // macOS: Podman runs in a VM whose Docker-compatible API socket lives under
-    // the per-user `$TMPDIR` (none of the paths above exist on macOS). See #1622.
-    #[cfg(target_os = "macos")]
-    if let Some(uri) = runtime::podman_machine_socket() {
-        return Some(uri);
-    }
-    None
+    runtime::resolve_podman_socket_uri(&runtime::discover_podman_socket_env())
 }
 
 #[cfg(windows)]
@@ -1614,6 +1591,11 @@ mod tests {
     /// Podman (the exact misconfiguration the bug describes). Run with:
     /// `cargo test -p termihub-core --features docker -- --ignored --nocapture
     ///  connect_to_runtime_honours_docker_context`.
+    ///
+    /// The *endpoint-resolution decision* this exercises is now unit-covered in
+    /// `runtime::tests` (`choose_docker_endpoint`, `resolve_podman_socket_uri`),
+    /// which run in normal CI without a daemon; this stays as an end-to-end smoke
+    /// for the real I/O path (WA-RS-013).
     #[cfg(unix)]
     #[tokio::test]
     #[ignore = "requires a live Docker+Podman host with docker.sock -> Podman"]
@@ -1681,6 +1663,10 @@ mod tests {
     /// `None`. Run with:
     /// `cargo test -p termihub-core --features docker -- --ignored --nocapture
     ///  connect_to_runtime_reaches_macos_podman_machine`.
+    ///
+    /// The socket-selection decision is now unit-covered cross-platform via
+    /// `runtime::tests::podman_macos_machine_socket_is_last_resort` and the
+    /// `podman_machine_socket_in` fixtures; this stays as a live smoke (WA-RS-013).
     #[cfg(target_os = "macos")]
     #[tokio::test]
     #[ignore = "requires a macOS host with a running Podman machine"]
