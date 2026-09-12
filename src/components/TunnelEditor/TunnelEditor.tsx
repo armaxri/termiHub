@@ -145,7 +145,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // visible field is invalid. `tunnelType` is a fresh object on every edit, so
   // memoizing the check would never hit; it iterates only a few fields.
   const { errors, valid } = validateTunnelType(tunnelType);
-  const canSave = !!sshConnectionId && valid;
+  // Require a non-blank name too (UX-022): Save is disabled while the name is
+  // empty rather than silently persisting the tunnel as "Untitled Tunnel" —
+  // matching the ConnectionEditor, which gates Save on `name.trim()`.
+  const canSave = !!name.trim() && !!sshConnectionId && valid;
 
   // Build the parent `TunnelConfig` from the current editor state. Shared by
   // Save and by "Chain a hop" (which must persist the parent before linking a
@@ -154,7 +157,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const buildConfig = useCallback(
     (): TunnelConfig => ({
       id: existingTunnel?.id ?? newId("tun"),
-      name: name || "Untitled Tunnel",
+      // Save is disabled while the name is blank (UX-022), so this fallback only
+      // ever guards the non-Save caller (chaining a hop).
+      name: name.trim() || "Untitled Tunnel",
       sshConnectionId,
       tunnelType,
       host,
@@ -176,6 +181,11 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
             frontendLog("tunnel_editor", `Failed to start tunnel after save: ${err}`);
             toast.error("Failed to start tunnel");
           });
+        } else {
+          // Plain Save gave no feedback before (UX-022) — the only signal was the
+          // tab closing. Confirm it, matching Duplicate/Delete/Start. Save & Start
+          // skips this: `startTunnel` owns the feedback for that path.
+          toast.success(`Saved tunnel "${config.name}"`);
         }
         // Find panelId for this tab and close it
         const { findLeafByTab } = await import("@/utils/panelTree");
