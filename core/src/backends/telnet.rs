@@ -62,6 +62,40 @@ pub struct Telnet {
 struct ConnectedState {
     writer: Arc<Mutex<TcpStream>>,
     alive: Arc<AtomicBool>,
+    /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
+    /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
+    /// The graceful path and the guard must never both tear the socket down.
+    disconnected: bool,
+}
+
+impl Drop for ConnectedState {
+    /// Best-effort synchronous teardown for CORE-020: guarantees the reader
+    /// thread is stopped and the TCP socket is shut down even when the connected
+    /// state is dropped WITHOUT a graceful
+    /// [`disconnect()`](ConnectionType::disconnect) — a panic between spawn and
+    /// store, an early `?` return, or a manager that forgets.
+    ///
+    /// Without this, `alive` stays `true` and the reader thread — which reads its
+    /// own `try_clone()`'d socket, independent of the state's writer — would
+    /// never notice the session ended and would leak forever. Clearing `alive`
+    /// makes the reader loop exit on its next timeout, and `shutdown(Both)`
+    /// unblocks it immediately. Both operations are synchronous and non-blocking,
+    /// so they are safe to run directly in `Drop` (no runtime is awaited, nothing
+    /// blocks — mandatory because `Drop` may run on a tokio worker thread). The
+    /// shutdown error is swallowed, so this can never panic.
+    ///
+    /// When [`disconnect()`](ConnectionType::disconnect) already ran it set
+    /// `disconnected = true` and this is a no-op, so the graceful path and this
+    /// guard never both shut the socket down.
+    fn drop(&mut self) {
+        if self.disconnected {
+            return;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        if let Ok(writer) = self.writer.lock() {
+            let _ = writer.shutdown(std::net::Shutdown::Both);
+        }
+    }
 }
 
 impl Telnet {
@@ -367,13 +401,18 @@ impl ConnectionType for Telnet {
         self.state = Some(ConnectedState {
             writer: Arc::new(Mutex::new(stream)),
             alive,
+            disconnected: false,
         });
 
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
-        if let Some(state) = self.state.take() {
+        if let Some(mut state) = self.state.take() {
+            // Mark the graceful path so the `Drop` guard on `state` (which runs
+            // when it goes out of scope at the end of this block) does not shut
+            // the socket down a second time (CORE-020 double-teardown guard).
+            state.disconnected = true;
             state.alive.store(false, Ordering::SeqCst);
             // Shut down the socket to unblock the reader thread.
             if let Ok(writer) = state.writer.lock() {
@@ -794,6 +833,70 @@ mod tests {
         let _peer = accept.join().expect("accept thread").expect("accept");
 
         assert!(telnet.is_connected());
+    }
+
+    // --- Drop guard (CORE-020) --------------------------------------------
+
+    /// Bind a loopback listener, connect a client stream, and accept the peer.
+    /// Returns `(client, peer)` — a genuinely connected TCP pair for exercising
+    /// the Drop guard's socket teardown.
+    fn connected_pair() -> (TcpStream, TcpStream) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("local_addr");
+        let accept = std::thread::spawn(move || listener.accept());
+        let client = TcpStream::connect(addr).expect("connect");
+        let (peer, _) = accept.join().expect("accept thread").expect("accept");
+        (client, peer)
+    }
+
+    /// Regression for CORE-020. Dropping a connected telnet state WITHOUT a
+    /// graceful `disconnect()` must still mark the session dead (so the reader
+    /// thread — which owns its own cloned socket — stops instead of leaking) and
+    /// shut the socket down, via the `Drop` guard.
+    #[tokio::test]
+    async fn drop_without_disconnect_marks_dead_and_closes_socket() {
+        let (client, mut peer) = connected_pair();
+        let alive = Arc::new(AtomicBool::new(true));
+        let state = ConnectedState {
+            writer: Arc::new(Mutex::new(client)),
+            alive: alive.clone(),
+            disconnected: false,
+        };
+
+        // Drop the state without ever calling disconnect().
+        drop(state);
+
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "Drop must mark the session dead so the reader thread stops (CORE-020)"
+        );
+        // The peer observes EOF now that the socket has been shut down/closed —
+        // the OS-level resource was released rather than left dangling.
+        let mut buf = [0u8; 1];
+        let n = peer.read(&mut buf).expect("peer read after teardown");
+        assert_eq!(n, 0, "peer must see EOF once the socket is torn down");
+    }
+
+    /// Double-teardown guard for CORE-020. A graceful `disconnect()` already
+    /// shut the socket down and set `disconnected = true`; the subsequent drop of
+    /// the taken state must be a pure no-op — it must not touch `alive` or the
+    /// socket again.
+    #[tokio::test]
+    async fn drop_after_disconnect_flag_is_noop() {
+        let (client, _peer) = connected_pair();
+        let alive = Arc::new(AtomicBool::new(true));
+        let state = ConnectedState {
+            writer: Arc::new(Mutex::new(client)),
+            alive: alive.clone(),
+            disconnected: true,
+        };
+
+        drop(state);
+
+        assert!(
+            alive.load(Ordering::SeqCst),
+            "Drop with the disconnected flag set must be a no-op (leave alive as-is)"
+        );
     }
 
     /// Create a dummy TCP stream for testing `filter_telnet_commands`.
