@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import type { SavedConnection } from "@/types/connection";
 import { EmptyWindowState } from "./EmptyWindowState";
 
 // Standard mocks required when importing useAppStore.
@@ -35,6 +36,26 @@ vi.mock("@/services/api", () => ({
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
 }));
 
+// The empty-window CTA branches on the live saved-connection count and the
+// number of open native windows; drive both through configurable hook mocks so
+// each test controls the first-run vs. returning-user and single- vs. multi-
+// window cases without a real bridge or window registry.
+let mockConnections: SavedConnection[] = [];
+let mockWindowCount = 1;
+
+vi.mock("@/store/useProjectedConnections", () => ({
+  useProjectedConnections: () => ({ connections: mockConnections, folders: [] }),
+}));
+
+vi.mock("@/hooks/useWindowInfo", () => ({
+  useWindowInfo: () => ({ label: "main", name: "Main Window", count: mockWindowCount }),
+}));
+
+/** A throwaway saved connection — only its presence (list length) matters here. */
+function fakeConnection(): SavedConnection {
+  return { id: "c1", name: "box" } as unknown as SavedConnection;
+}
+
 /** Click the button carrying the given test id. */
 function clickTestId(container: HTMLElement, testid: string): void {
   const btn = container.querySelector(`[data-testid="${testid}"]`) as HTMLButtonElement;
@@ -43,11 +64,13 @@ function clickTestId(container: HTMLElement, testid: string): void {
   });
 }
 
-describe("EmptyWindowState (#1902)", () => {
+describe("EmptyWindowState (#1902, UX-003)", () => {
   let container: HTMLDivElement;
   let root: Root;
 
   beforeEach(() => {
+    mockConnections = [];
+    mockWindowCount = 1;
     useAppStore.setState(useAppStore.getInitialState());
     container = document.createElement("div");
     document.body.appendChild(container);
@@ -77,37 +100,50 @@ describe("EmptyWindowState (#1902)", () => {
     expect(addTab).toHaveBeenCalledWith("Terminal", "local");
   });
 
-  it("reveals the Connections sidebar when Open Connection is clicked", () => {
-    const setSidebarView = vi.fn();
-    // A non-connections view so the CTA action switches to Connections rather
-    // than toggling an already-open panel closed.
-    useAppStore.setState({ setSidebarView, sidebarView: "files", sidebarCollapsed: false });
+  it("opens a connection picker (command palette) when saved connections exist", () => {
+    mockConnections = [fakeConnection()];
+    const setCommandPaletteOpen = vi.fn();
+    const openConnectionEditorTab = vi.fn();
+    useAppStore.setState({ setCommandPaletteOpen, openConnectionEditorTab });
     act(() => root.render(<EmptyWindowState />));
 
     clickTestId(container, "empty-window-open-connection");
 
-    expect(setSidebarView).toHaveBeenCalledWith("connections");
+    // With ≥1 saved connection the CTA opens the palette to pick one — it does
+    // not just reveal a sidebar and does not open the new-connection editor.
+    expect(setCommandPaletteOpen).toHaveBeenCalledWith(true);
+    expect(openConnectionEditorTab).not.toHaveBeenCalled();
   });
 
-  it("expands a collapsed Connections sidebar rather than toggling it shut", () => {
-    const setSidebarView = vi.fn();
-    useAppStore.setState({ setSidebarView, sidebarView: "connections", sidebarCollapsed: true });
+  it("routes to the new-connection editor when there are zero connections", () => {
+    mockConnections = [];
+    const setCommandPaletteOpen = vi.fn();
+    const openConnectionEditorTab = vi.fn();
+    useAppStore.setState({ setCommandPaletteOpen, openConnectionEditorTab });
     act(() => root.render(<EmptyWindowState />));
 
     clickTestId(container, "empty-window-open-connection");
 
-    // Already the active view but collapsed → still call to expand it.
-    expect(setSidebarView).toHaveBeenCalledWith("connections");
+    // First-run user with no connections → straight to the create flow, not a
+    // blank picker or panel.
+    expect(openConnectionEditorTab).toHaveBeenCalledWith("new");
+    expect(setCommandPaletteOpen).not.toHaveBeenCalled();
   });
 
-  it("does not collapse the Connections sidebar when it is already open", () => {
-    const setSidebarView = vi.fn();
-    useAppStore.setState({ setSidebarView, sidebarView: "connections", sidebarCollapsed: false });
+  it("shows first-run copy (not the multi-window hint) for a single empty window", () => {
+    mockConnections = [];
+    mockWindowCount = 1;
     act(() => root.render(<EmptyWindowState />));
 
-    clickTestId(container, "empty-window-open-connection");
+    // First-run guidance, and no power-user multi-window instruction.
+    expect(container.textContent).toContain("create a connection");
+    expect(container.textContent).not.toContain("Move to Window");
+  });
 
-    // Already showing Connections → do nothing (calling would toggle it shut).
-    expect(setSidebarView).not.toHaveBeenCalled();
+  it("surfaces the multi-window hint only when more than one window is open", () => {
+    mockWindowCount = 2;
+    act(() => root.render(<EmptyWindowState />));
+
+    expect(container.textContent).toContain("Move to Window");
   });
 });
