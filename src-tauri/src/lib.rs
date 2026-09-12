@@ -3,6 +3,10 @@
 /// (the ordered agent list + per-agent sessions/definitions/folders). Drives the
 /// live UI (stateless-UI inversion complete, #2283) — see [`agents_projection`].
 mod agents_projection;
+/// Shared "desktop controls a service hosted on a remote agent" control layer:
+/// the periodic agent `*.status` poller lifecycle reused by the embedded-server,
+/// HTTP-monitor, and tunnel managers (DUP-020).
+mod agent_service;
 /// Broadcast-membership authority (#2242, Phase 4 step 5b of #2139, part of
 /// #2206 / #2152): the client-scoped `broadcast@<clientId>` projection region +
 /// `broadcast.*` intents modeling the `appStore` broadcast-input membership slice
