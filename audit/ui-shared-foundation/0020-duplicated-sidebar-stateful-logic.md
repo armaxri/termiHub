@@ -14,7 +14,8 @@ evidence:
   - src/components/WorkflowSidebar/WorkflowSidebar.tsx:154
   - src/components/WorkspaceSidebar/WorkspaceSidebar.tsx:103
   - src/components/TunnelSidebar/TunnelSidebar.tsx:108
-status: open
+status: fixed
+resolution: "#2873 — extracted useListFilter/useJsonFileExport+Import/useDeleteConfirm hooks (src/hooks); migrated Macro/Workflow/Workspace sidebars; entity-specific toasts kept caller-owned. Remaining RecentSessions/Tunnel/EmbeddedServer migration → #2874"
 ---
 
 ## What

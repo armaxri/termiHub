@@ -13,7 +13,8 @@ evidence:
   - src/components/Sidebar/AgentNode.tsx:217
   - src/components/Sidebar/AgentNode.tsx:1476
   - src/components/SidebarListItem/SidebarListItem.tsx
-status: open
+status: fixed
+resolution: "#2875 — extracted TreeFolderRow/TreeItemRow primitives (forwardRef, ref+prop composition for Radix ContextMenu asChild); ConnectionList + AgentNode (folder/connection/session rows) migrated; DOM parity via unchanged suites + new TreeRow tests"
 ---
 
 ## What

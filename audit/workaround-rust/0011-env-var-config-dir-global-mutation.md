@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src-tauri/lib.rs, storage modules
 evidence:
   - src-tauri/src/lib.rs:490
-status: open
+status: fixed
+resolution: "#2876 — removed 2 TERMIHUB_CONFIG_DIR set_var self-writes; portable dir now threaded via ConfigDirOverride managed-state (0 call-site changes). Env READ kept (it's a public external override — README/examples/harness). Behavior-preserving"
 ---
 
 ## What
