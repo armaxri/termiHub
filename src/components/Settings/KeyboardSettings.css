@@ -17,14 +17,14 @@
 }
 
 .keyboard-settings__passthrough input[type="checkbox"] {
-  margin-top: 2px;
+  margin-top: var(--spacing-xxs);
   flex-shrink: 0;
 }
 
 .keyboard-settings__passthrough span {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--spacing-xxs);
 }
 
 .keyboard-settings__passthrough small {
@@ -101,7 +101,7 @@
 .keyboard-settings__binding-cell {
   width: 42%;
   cursor: pointer;
-  padding: 2px var(--spacing-sm);
+  padding: var(--spacing-xxs) var(--spacing-sm);
   border-radius: var(--radius-sm);
   font-family: monospace;
   color: var(--text-primary);

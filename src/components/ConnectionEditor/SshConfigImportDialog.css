@@ -2,15 +2,15 @@
   color: var(--text-secondary);
   font-size: var(--font-size-md);
   margin: 0;
-  padding: 8px 0;
+  padding: var(--spacing-sm) 0;
 }
 
 .ssh-config-import__empty {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
-  padding: 24px 8px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xl) var(--spacing-sm);
   color: var(--text-secondary);
   text-align: center;
 }
@@ -26,7 +26,7 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--spacing-xs);
   max-height: 360px;
   overflow-y: auto;
 }
@@ -36,7 +36,7 @@
   align-items: center;
   gap: 10px;
   width: 100%;
-  padding: 8px 10px;
+  padding: var(--spacing-sm) 10px;
   border: 1px solid transparent;
   border-radius: var(--radius-sm, 4px);
   background: transparent;
@@ -59,7 +59,7 @@
 .ssh-config-import__row-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   min-width: 0;
 }
 

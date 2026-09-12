@@ -13,8 +13,8 @@
 .tunnel-editor__header {
   display: flex;
   align-items: center;
-  padding: 16px 24px 8px;
-  gap: 8px;
+  padding: var(--spacing-lg) var(--spacing-xl) var(--spacing-sm);
+  gap: var(--spacing-sm);
 }
 
 .tunnel-editor__title {
@@ -26,15 +26,15 @@
 .tunnel-editor__form {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 8px 24px 24px;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-sm) var(--spacing-xl) var(--spacing-xl);
   max-width: 600px;
 }
 
 .tunnel-editor__field {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--spacing-xs);
 }
 
 .tunnel-editor__label {
@@ -45,7 +45,7 @@
 
 .tunnel-editor__row {
   display: flex;
-  gap: 12px;
+  gap: var(--spacing-md);
 }
 
 .tunnel-editor__row > .tunnel-editor__field {
@@ -59,7 +59,7 @@
 .tunnel-editor__checkbox-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 .tunnel-editor__checkbox-label {
@@ -70,12 +70,12 @@
 
 .tunnel-editor__type-selector {
   display: flex;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 .tunnel-editor__type-option {
   flex: 1;
-  padding: 8px 12px;
+  padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid var(--border-primary);
   border-radius: 6px;
   background: var(--bg-secondary);
@@ -106,20 +106,20 @@
 .tunnel-editor__type-option-desc {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  margin-top: 2px;
+  margin-top: var(--spacing-xxs);
 }
 
 .tunnel-editor__actions {
   display: flex;
-  gap: 8px;
-  padding-top: 8px;
+  gap: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
 }
 
 .tunnel-editor__section-title {
   font-size: var(--font-size-md);
   font-weight: 600;
   color: var(--text-primary);
-  padding-top: 8px;
+  padding-top: var(--spacing-sm);
   border-top: 1px solid var(--border-primary);
 }
 
@@ -128,7 +128,7 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding: 10px 12px;
+  padding: 10px var(--spacing-md);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
@@ -141,7 +141,7 @@
   align-items: center;
   gap: 6px;
   color: var(--text-secondary);
-  margin-bottom: 4px;
+  margin-bottom: var(--spacing-xs);
 }
 
 .tunnel-editor__endpoint-line code {
@@ -157,8 +157,8 @@
 .tunnel-editor__reachability {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--spacing-sm);
+  padding: 10px var(--spacing-md);
   border: 1px solid var(--border-warning);
   border-radius: var(--radius-md);
   background: var(--bg-warning);
