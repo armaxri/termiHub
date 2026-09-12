@@ -1059,14 +1059,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     focusFirstInvalidField,
   ]);
 
+  // Cancel dismisses the editor through the same unsaved-changes guard as the
+  // Escape key and tab close (TabBar): when the form is dirty, open the
+  // confirmation dialog via pendingCloseRequest; otherwise close immediately.
+  // The visible Cancel button, Escape, and tab-close all share this one path so
+  // none of them can silently discard unsaved edits (UX-006).
   const handleCancel = useCallback(() => {
-    closeThisTab();
-  }, [closeThisTab]);
-
-  // Escape dismisses the editor through the same unsaved-changes guard as the
-  // tab close (TabBar): when the form is dirty, open the confirmation dialog via
-  // pendingCloseRequest; otherwise close immediately.
-  const handleEscapeCancel = useCallback(() => {
     if (useAppStore.getState().editorDirtyTabs[tabId]) {
       const leaf = findLeafByTab(rootPanel, tabId);
       if (leaf) setPendingCloseRequest({ tabId, panelId: leaf.id });
@@ -1079,7 +1077,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // inputs are exempt so Enter there doesn't save the whole connection.
   const handleKeyDown = useEditorKeyboard({
     onSubmit: () => void handleSave(),
-    onCancel: handleEscapeCancel,
+    onCancel: handleCancel,
     exemptSelector: '[data-testid="jump-host-section"]',
   });
 
