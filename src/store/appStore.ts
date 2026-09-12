@@ -275,6 +275,7 @@ import {
   currentConnectionsView,
   ensureConnectionsSubscribed,
   mirrorConnectionIntent,
+  persistConnectionMutation,
 } from "@/store/connectionsBridge";
 import { currentFileBrowsersView, mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
@@ -5317,10 +5318,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Optimistic add in the region, then persist. The persist command recomputes
       // the name-derived id and folds the authoritative view back server-side
       // (#2389), so the optimistic `conn-<ts>` row is reconciled to the persisted id
-      // without a frontend id-reconcile / reload pass.
-      mirrorConnectionIntent("connection.add", { connection });
+      // without a frontend id-reconcile / reload pass. A rejected persist reverts the
+      // region so a never-persisted row does not linger until reload (FES-005).
       frontendLog("connection_sync", `addConnection: persisting ${connection.id}`);
-      persistConnection(stripPassword(connection))
+      persistConnectionMutation(
+        { kind: "connection.add", payload: { connection } },
+        () => persistConnection(stripPassword(connection)),
+        { kind: "connection.remove", payload: { connectionId: connection.id } }
+      )
         .then(() => {
           toast.success(`Saved ${connection.name}`);
         })
@@ -5337,14 +5342,22 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     bulkAddConnections: (newConnections) => {
       if (newConnections.length === 0) return;
-      for (const connection of newConnections) {
-        mirrorConnectionIntent("connection.add", { connection });
-      }
       frontendLog(
         "connection_sync",
         `bulkAddConnections: persisting ${newConnections.length} connections`
       );
-      Promise.all(newConnections.map((c) => persistConnection(stripPassword(c))))
+      // Per-item atomicity (FES-005): each add reverts its own region entry if its
+      // persist rejects, so a partial import failure leaves only the successfully
+      // persisted rows in the region rather than every optimistic row.
+      Promise.all(
+        newConnections.map((c) =>
+          persistConnectionMutation(
+            { kind: "connection.add", payload: { connection: c } },
+            () => persistConnection(stripPassword(c)),
+            { kind: "connection.remove", payload: { connectionId: c.id } }
+          )
+        )
+      )
         .then(() => {
           toast.success(
             `Imported ${newConnections.length} ${newConnections.length === 1 ? "connection" : "connections"}`
@@ -5366,9 +5379,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // name-derived persisted id; the persist command's server-side fold (#2389)
       // reconciles it back into the region under the new id, so a connect fired
       // after the save resolves reads the correct id (#875) without a frontend pass.
-      mirrorConnectionIntent("connection.update", { connection });
+      // On a rejected persist, revert the region to the prior value so an unsaved
+      // edit does not linger until reload (FES-005).
+      const prior = currentConnectionsView().connections.find((c) => c.id === connection.id);
       frontendLog("connection_sync", `updateConnection: persisting ${connection.id}`);
-      persistConnection(stripPassword(connection))
+      persistConnectionMutation(
+        { kind: "connection.update", payload: { connection } },
+        () => persistConnection(stripPassword(connection)),
+        prior
+          ? { kind: "connection.update", payload: { connection: prior } }
+          : { kind: "connection.remove", payload: { connectionId: connection.id } }
+      )
         .then(() => {
           toast.success(`Saved ${connection.name}`);
         })
@@ -5386,8 +5407,19 @@ export const useAppStore = create<AppState>((set, get, store) => {
     deleteConnection: (connectionId) => {
       const conn = currentConnectionsView().connections.find((c) => c.id === connectionId);
       frontendLog("connection_sync", `deleteConnection: removing ${connectionId} optimistically`);
-      mirrorConnectionIntent("connection.remove", { connectionId });
-      removeConnection(connectionId, conn?.sourceFile)
+      // Revert (re-add the captured connection) if the on-disk delete rejects, so a
+      // still-on-disk connection does not resurrect on the next reseed (FES-005).
+      // Without a captured entry there is nothing to restore — fall back to the plain
+      // optimistic remove.
+      const forward = { kind: "connection.remove" as const, payload: { connectionId } };
+      const persist = () => removeConnection(connectionId, conn?.sourceFile);
+      const deletePromise = conn
+        ? persistConnectionMutation(forward, persist, {
+            kind: "connection.add",
+            payload: { connection: conn },
+          })
+        : (mirrorConnectionIntent(forward.kind, forward.payload), persist());
+      deletePromise
         .then(() => {
           frontendLog("connection_sync", `deleteConnection: backend confirmed`);
           toast.success(`Deleted ${conn?.name ?? "connection"}`);
@@ -5410,10 +5442,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "connection_sync",
         `bulkDeleteConnections: removing ${connectionIds.join(", ")} optimistically`
       );
-      for (const c of toDelete) {
-        mirrorConnectionIntent("connection.remove", { connectionId: c.id });
-      }
-      Promise.all(toDelete.map((c) => removeConnection(c.id, c.sourceFile)))
+      // Per-item atomicity (FES-005): each delete re-adds its own captured entry if
+      // its persist rejects, so a partial failure resurrects only the rows still on
+      // disk rather than leaving every optimistic removal diverged until reload.
+      Promise.all(
+        toDelete.map((c) =>
+          persistConnectionMutation(
+            { kind: "connection.remove", payload: { connectionId: c.id } },
+            () => removeConnection(c.id, c.sourceFile),
+            { kind: "connection.add", payload: { connection: c } }
+          )
+        )
+      )
         .then(() => {
           frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed`);
           toast.success(
@@ -5469,9 +5509,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
         id: newId("conn"),
         name: `Copy of ${original.name}`,
       };
-      mirrorConnectionIntent("connection.add", { connection: duplicate });
       frontendLog("connection_sync", `duplicateConnection: persisting copy of ${connectionId}`);
-      persistConnection(stripPassword(duplicate)).catch((err) => {
+      // Revert (remove the optimistic copy) if the persist rejects, so a
+      // never-persisted duplicate does not linger until reload (FES-005).
+      persistConnectionMutation(
+        { kind: "connection.add", payload: { connection: duplicate } },
+        () => persistConnection(stripPassword(duplicate)),
+        { kind: "connection.remove", payload: { connectionId: duplicate.id } }
+      ).catch((err) => {
         frontendLog(
           "app_store",
           `Failed to persist duplicated connection: ${err instanceof Error ? err.message : String(err)}`

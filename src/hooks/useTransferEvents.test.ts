@@ -7,15 +7,27 @@ let emit: ((progress: TransferProgress) => void) | undefined;
 // push-event to, so a test can fire it directly (#1985).
 let emitOwnership: (() => void) | undefined;
 const unlisten = vi.fn();
+// Resolvers for the two listener-registration promises. The real
+// `onTransferProgress` / `onSessionOwnershipChanged` resolve their unlisten fn
+// asynchronously; deferring resolution here lets a test control the exact moment
+// registration completes — in particular, unmounting *before* it resolves, to
+// reproduce the FEC-017 leak where the async `setup()` had not yet assigned its
+// unlisten handles when the effect tore down.
+let resolveTransferReg: (() => void) | undefined;
+let resolveOwnershipReg: (() => void) | undefined;
 
 vi.mock("@/services/events", () => ({
   onTransferProgress: vi.fn((cb: (progress: TransferProgress) => void) => {
     emit = cb;
-    return Promise.resolve(unlisten);
+    return new Promise<() => void>((resolve) => {
+      resolveTransferReg = () => resolve(unlisten);
+    });
   }),
   onSessionOwnershipChanged: vi.fn((cb: () => void) => {
     emitOwnership = cb;
-    return Promise.resolve(unlisten);
+    return new Promise<() => void>((resolve) => {
+      resolveOwnershipReg = () => resolve(unlisten);
+    });
   }),
 }));
 
@@ -61,6 +73,8 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     emit = undefined;
     emitOwnership = undefined;
+    resolveTransferReg = undefined;
+    resolveOwnershipReg = undefined;
     vi.clearAllMocks();
   });
 
@@ -68,6 +82,17 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     act(() => root.unmount());
     container.remove();
   });
+
+  // Resolve both listener-registration promises and flush the resulting
+  // microtasks, so the hook has its unlisten handles in hand.
+  async function resolveRegistrations(): Promise<void> {
+    await act(async () => {
+      resolveTransferReg?.();
+      resolveOwnershipReg?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
 
   async function mountHook(): Promise<void> {
     function Harness() {
@@ -78,9 +103,7 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
       root.render(React.createElement(Harness));
     });
     // The subscription is set up asynchronously inside an effect.
-    await act(async () => {
-      await Promise.resolve();
-    });
+    await resolveRegistrations();
   }
 
   it("shows exactly one success toast on a completed download", async () => {
@@ -188,5 +211,97 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
       emit!(progress({ phase: "done" }));
     });
     expect(useAppStore.getState().transfers["t1"]).toBeUndefined();
+  });
+});
+
+describe("useTransferEvents — registration/cleanup lifecycle (FEC-017)", () => {
+  function Harness() {
+    useTransferEvents();
+    return null;
+  }
+
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+    emit = undefined;
+    emitOwnership = undefined;
+    resolveTransferReg = undefined;
+    resolveOwnershipReg = undefined;
+    vi.clearAllMocks();
+  });
+
+  it("unlistens listeners that register after the effect has already torn down (leak guard)", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    // Mount the hook, but do NOT resolve the registration promises yet: this
+    // mimics `setup()`'s awaits still being in flight.
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    // Registration has not completed, so no unlisten handle exists yet.
+    expect(unlisten).not.toHaveBeenCalled();
+
+    // Tear the effect down before the awaits resolve.
+    await act(async () => {
+      root.unmount();
+    });
+
+    // Now the two registrations resolve — late, after teardown. Each must be
+    // immediately unlistened so the listeners do not leak past the hook's life.
+    await act(async () => {
+      resolveTransferReg?.();
+      resolveOwnershipReg?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(unlisten).toHaveBeenCalledTimes(2);
+
+    container.remove();
+  });
+
+  it("clears the pending owners-refresh timer on unmount so it cannot fire afterwards", async () => {
+    const refresh = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ refreshSessionOwners: refresh });
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      resolveTransferReg?.();
+      resolveOwnershipReg?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    // Drain the on-mount seed refresh and any debounce pending from earlier work.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 200));
+    });
+    refresh.mockClear();
+
+    // Schedule a coalesced refresh, then unmount before the debounce window
+    // (150ms) elapses — the timer is still pending at teardown.
+    act(() => {
+      emitOwnership!();
+    });
+    await act(async () => {
+      root.unmount();
+    });
+
+    // Let well over the debounce window pass. The pending refresh must NOT fire
+    // after the hook has unmounted.
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    expect(refresh).not.toHaveBeenCalled();
+
+    container.remove();
   });
 });

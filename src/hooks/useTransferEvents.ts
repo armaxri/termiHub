@@ -53,6 +53,21 @@ function scheduleOwnersRefresh(refresh: () => void): void {
 }
 
 /**
+ * Cancel any pending coalesced owners-refresh. Called from the hook's effect
+ * cleanup so a refresh scheduled moments before unmount cannot fire after the
+ * hook is gone (FEC-017). The timer stays module-scoped (a shared imperative
+ * resource); clearing on cleanup is safe because the hook is mounted once at the
+ * app root, so there is no second live instance whose pending refresh this would
+ * cancel.
+ */
+function cancelOwnersRefresh(): void {
+  if (ownersRefreshTimer !== null) {
+    clearTimeout(ownersRefreshTimer);
+    ownersRefreshTimer = null;
+  }
+}
+
+/**
  * Hook that listens for `transfer-progress` events from the backend (#1245) and
  * folds them into the store's transient `transfers` map (#1247), driving the Open
  * Connections "Transfers" section, the file-browser footer, and the status-bar
@@ -75,40 +90,45 @@ export function useTransferEvents(): void {
   const refreshSessionOwners = useAppStore((s) => s.refreshSessionOwners);
 
   useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let unlistenOwnership: (() => void) | null = null;
+    // `disposed` guards the async listener registration below: if the effect
+    // tears down before a registration's promise resolves, `unlisten` is still
+    // unassigned and the naive `unlisten?.()` cleanup would silently leak the
+    // listener that lands moments later. Following the known-good pattern in
+    // `useRemoteDesktopSession`, each registration checks `disposed` on resolve
+    // and unlistens immediately if the effect is already gone (FEC-017).
+    let disposed = false;
+    const unlisteners: Array<() => void> = [];
 
     // Seed the ownership map so scoping is correct from the first event, before
     // any transfer has flowed.
     void refreshSessionOwners();
 
-    const setup = async () => {
-      // Push path (#1985): refresh the ownership mirror the moment the backend
-      // reports a claim/release/window-destroy, so a sibling window's claim is
-      // reflected here immediately — no flash-then-prune waiting on the first
-      // transfer-progress event. Debounced (shared coalescer) to avoid a storm
-      // during multi-session restore.
-      unlistenOwnership = await onSessionOwnershipChanged(() => {
-        scheduleOwnersRefresh(() => void refreshSessionOwners());
-      });
-      unlisten = await onTransferProgress((progress) => {
-        // Keep the ownership map fresh while transfers flow (coalesced) so a
-        // session claimed by a sibling window is scoped out here (#1964).
-        scheduleOwnersRefresh(() => void refreshSessionOwners());
-        // Fold the event into the transient #1247 `transfers` map (clears
-        // terminal rows) that drives Open Connections / the footer / the status
-        // bar. The persistent #1337 Transfer Queue panel is fed server-side into
-        // the authoritative `transfers` region (#2229 / #2387) — no fold here.
-        applyTransferProgress(progress);
-        toastTerminalPhase(progress);
-      });
-    };
+    // Push path (#1985): refresh the ownership mirror the moment the backend
+    // reports a claim/release/window-destroy, so a sibling window's claim is
+    // reflected here immediately — no flash-then-prune waiting on the first
+    // transfer-progress event. Debounced (shared coalescer) to avoid a storm
+    // during multi-session restore.
+    void onSessionOwnershipChanged(() => {
+      scheduleOwnersRefresh(() => void refreshSessionOwners());
+    }).then((un) => (disposed ? un() : unlisteners.push(un)));
 
-    void setup();
+    void onTransferProgress((progress) => {
+      // Keep the ownership map fresh while transfers flow (coalesced) so a
+      // session claimed by a sibling window is scoped out here (#1964).
+      scheduleOwnersRefresh(() => void refreshSessionOwners());
+      // Fold the event into the transient #1247 `transfers` map (clears
+      // terminal rows) that drives Open Connections / the footer / the status
+      // bar. The persistent #1337 Transfer Queue panel is fed server-side into
+      // the authoritative `transfers` region (#2229 / #2387) — no fold here.
+      applyTransferProgress(progress);
+      toastTerminalPhase(progress);
+    }).then((un) => (disposed ? un() : unlisteners.push(un)));
 
     return () => {
-      unlisten?.();
-      unlistenOwnership?.();
+      disposed = true;
+      unlisteners.forEach((un) => un());
+      // Drop any coalesced refresh still pending so it cannot fire post-unmount.
+      cancelOwnersRefresh();
     };
   }, [applyTransferProgress, refreshSessionOwners]);
 }
