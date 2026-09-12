@@ -26,7 +26,14 @@ export interface PasswordPromptSlice {
   passwordPromptResolve: ((password: string | null) => void) | null;
   /** Whether the user checked "Save password" in the last password prompt. */
   passwordPromptShouldSave: boolean;
-  requestPassword: (host: string, username: string) => Promise<string | null>;
+  /**
+   * Optional context line explaining *why* the prompt appeared — e.g. a stored
+   * credential that the server just rejected (UX-013). Rendered as a subtitle in
+   * the prompt so a re-prompt is never unexplained. Empty string when the prompt
+   * opened for an ordinary first-time credential entry.
+   */
+  passwordPromptNotice: string;
+  requestPassword: (host: string, username: string, notice?: string) => Promise<string | null>;
   submitPassword: (password: string, shouldSave?: boolean) => void;
   dismissPasswordPrompt: () => void;
 }
@@ -40,8 +47,9 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
   passwordPromptUsername: "",
   passwordPromptResolve: null,
   passwordPromptShouldSave: false,
+  passwordPromptNotice: "",
 
-  requestPassword: (host, username) => {
+  requestPassword: (host, username, notice = "") => {
     return new Promise<string | null>((resolve) => {
       set({
         passwordPromptOpen: true,
@@ -49,6 +57,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
         passwordPromptUsername: username,
         passwordPromptResolve: resolve,
         passwordPromptShouldSave: false,
+        passwordPromptNotice: notice,
       });
     });
   },
@@ -62,6 +71,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
       passwordPromptUsername: "",
       passwordPromptResolve: null,
       passwordPromptShouldSave: shouldSave,
+      passwordPromptNotice: "",
     });
   },
 
@@ -74,6 +84,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
       passwordPromptUsername: "",
       passwordPromptResolve: null,
       passwordPromptShouldSave: false,
+      passwordPromptNotice: "",
     });
   },
 });

@@ -15,6 +15,7 @@ export function PasswordPrompt() {
   const open = useAppStore((s) => s.passwordPromptOpen);
   const host = useAppStore((s) => s.passwordPromptHost);
   const username = useAppStore((s) => s.passwordPromptUsername);
+  const notice = useAppStore((s) => s.passwordPromptNotice);
   const submitPassword = useAppStore((s) => s.submitPassword);
   const dismissPasswordPrompt = useAppStore((s) => s.dismissPasswordPrompt);
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
@@ -65,6 +66,11 @@ export function PasswordPrompt() {
         </>
       }
     >
+      {notice && (
+        <p className="password-prompt__notice" role="alert" data-testid="password-prompt-notice">
+          {notice}
+        </p>
+      )}
       <p className="password-prompt__description">
         Enter password for {username}@{host}
       </p>
