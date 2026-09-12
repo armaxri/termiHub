@@ -382,6 +382,207 @@ mod tests {
         assert_eq!(docker_endpoint_from_dir(tmp.path()), None);
     }
 
+    // --- Pure Docker-endpoint decision (`choose_docker_endpoint`) ------------
+    // These cover the priority that decides *which endpoint a Docker/Auto
+    // connection reaches*, without a live daemon — previously only exercised by
+    // the `#[ignore]`'d live-host `connect_to_runtime_honours_docker_context`.
+
+    #[test]
+    fn docker_host_beats_context_endpoint() {
+        // An explicit DOCKER_HOST override always wins over the active context.
+        assert_eq!(
+            choose_docker_endpoint(
+                Some("tcp://192.0.2.10:2375".to_string()),
+                Some("unix:///Users/arne/.docker/run/docker.sock".to_string()),
+            ),
+            Some("tcp://192.0.2.10:2375".to_string())
+        );
+    }
+
+    #[test]
+    fn context_endpoint_used_without_docker_host() {
+        assert_eq!(
+            choose_docker_endpoint(
+                None,
+                Some("unix:///Users/arne/.docker/run/docker.sock".to_string()),
+            ),
+            Some("unix:///Users/arne/.docker/run/docker.sock".to_string())
+        );
+    }
+
+    #[test]
+    fn docker_endpoint_none_when_neither_set() {
+        // Falls through to `None`, i.e. the caller uses the platform default.
+        assert_eq!(choose_docker_endpoint(None, None), None);
+    }
+
+    #[test]
+    fn docker_context_may_point_at_a_podman_socket() {
+        // A context whose Docker endpoint is a Podman socket is resolved as-is;
+        // classifying that daemon as Podman is a separate runtime concern
+        // (`version_is_podman`, covered above). This is the endpoint-resolution
+        // half of the "docker.sock hijacked by Podman" scenario (#1600).
+        let podman_sock = "unix:///run/user/1000/podman/podman.sock".to_string();
+        assert_eq!(
+            choose_docker_endpoint(None, Some(podman_sock.clone())),
+            Some(podman_sock)
+        );
+    }
+
+    // --- Pure Podman socket-URI decision (`resolve_podman_socket_uri`) --------
+    // Cover the ordered fallback that decides *which socket an explicit
+    // `runtime: Podman` (or the Auto fallback) reaches* — previously only
+    // exercised by the `#[ignore]`'d live-host tests
+    // (`connect_to_runtime_reaches_macos_podman_machine`).
+
+    #[test]
+    fn podman_container_host_wins() {
+        let env = PodmanSocketEnv {
+            container_host: Some("unix:///run/container.sock".to_string()),
+            docker_host: Some("unix:///run/docker.sock".to_string()),
+            xdg_socket_path: Some("/run/user/1000/podman/podman.sock".to_string()),
+            machine_socket_uri: Some("unix:///tmp/machine-api.sock".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&env),
+            Some("unix:///run/container.sock".to_string())
+        );
+    }
+
+    #[test]
+    fn podman_docker_host_used_when_no_container_host() {
+        let env = PodmanSocketEnv {
+            docker_host: Some("tcp://192.0.2.20:2375".to_string()),
+            xdg_socket_path: Some("/run/user/1000/podman/podman.sock".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&env),
+            Some("tcp://192.0.2.20:2375".to_string())
+        );
+    }
+
+    #[test]
+    fn podman_xdg_socket_is_wrapped_as_unix_uri() {
+        let env = PodmanSocketEnv {
+            xdg_socket_path: Some("/run/user/1000/podman/podman.sock".to_string()),
+            home_socket_path: Some("/home/u/.local/share/containers/podman.sock".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&env),
+            Some("unix:///run/user/1000/podman/podman.sock".to_string())
+        );
+    }
+
+    #[test]
+    fn podman_home_socket_used_when_no_xdg() {
+        let env = PodmanSocketEnv {
+            home_socket_path: Some(
+                "/home/u/.local/share/containers/podman/machine/podman-machine-default/podman.sock"
+                    .to_string(),
+            ),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&env),
+            Some(
+                "unix:///home/u/.local/share/containers/podman/machine/podman-machine-default/podman.sock"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn podman_macos_machine_socket_is_last_resort() {
+        // The macOS machine API socket (already a `unix://…` URI) is the final
+        // fallback. Passing it as an explicit input means this macOS-only path
+        // is unit-tested on every platform's CI, not just macOS.
+        let env = PodmanSocketEnv {
+            machine_socket_uri: Some(
+                "unix:///var/folders/x/T/podman/podman-machine-default-api.sock".to_string(),
+            ),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&env),
+            Some("unix:///var/folders/x/T/podman/podman-machine-default-api.sock".to_string())
+        );
+    }
+
+    #[test]
+    fn podman_full_priority_ordering() {
+        // container_host > docker_host > xdg > home > machine.
+        let base = PodmanSocketEnv {
+            container_host: Some("C".to_string()),
+            docker_host: Some("D".to_string()),
+            xdg_socket_path: Some("/x".to_string()),
+            home_socket_path: Some("/h".to_string()),
+            machine_socket_uri: Some("unix:///m".to_string()),
+        };
+        assert_eq!(resolve_podman_socket_uri(&base), Some("C".to_string()));
+
+        let no_container = PodmanSocketEnv {
+            container_host: None,
+            ..base.clone()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&no_container),
+            Some("D".to_string())
+        );
+
+        let no_env = PodmanSocketEnv {
+            container_host: None,
+            docker_host: None,
+            ..base.clone()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&no_env),
+            Some("unix:///x".to_string())
+        );
+
+        let only_home_machine = PodmanSocketEnv {
+            container_host: None,
+            docker_host: None,
+            xdg_socket_path: None,
+            ..base.clone()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&only_home_machine),
+            Some("unix:///h".to_string())
+        );
+
+        let only_machine = PodmanSocketEnv {
+            machine_socket_uri: base.machine_socket_uri.clone(),
+            ..Default::default()
+        };
+        assert_eq!(
+            resolve_podman_socket_uri(&only_machine),
+            Some("unix:///m".to_string())
+        );
+    }
+
+    #[test]
+    fn podman_none_when_nothing_resolves() {
+        // No env vars, no discoverable sockets, no machine — the caller then
+        // reports that no Podman socket could be found.
+        assert_eq!(resolve_podman_socket_uri(&PodmanSocketEnv::default()), None);
+    }
+
+    #[test]
+    fn podman_empty_container_host_is_preserved() {
+        // The original inline logic read `std::env::var(...)` (not the
+        // empty-filtering `non_empty_env`), so a set-but-empty `$CONTAINER_HOST`
+        // was returned as `Some("")`. Lock that behaviour in.
+        let env = PodmanSocketEnv {
+            container_host: Some(String::new()),
+            docker_host: Some("unix:///run/docker.sock".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_podman_socket_uri(&env), Some(String::new()));
+    }
+
     #[test]
     fn context_id_is_sha256_hex_of_name() {
         // Matches `printf desktop-linux | shasum -a 256`.
