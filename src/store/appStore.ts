@@ -5541,19 +5541,23 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // its persist rejects, so a partial failure resurrects only the rows still on
       // disk rather than leaving every optimistic removal diverged until reload.
       Promise.all(
-        toDelete.map((c) =>
-          persistConnectionMutation(
+        toDelete.map((c) => {
+          const persistDone = persistConnectionMutation(
             { kind: "connection.remove", payload: { connectionId: c.id } },
             () => removeConnection(c.id, c.sourceFile),
             { kind: "connection.add", payload: { connection: c } }
-          ).then((res) => {
-            // Sweep per id on its OWN durable success (FES-009): a sibling whose
-            // persist rejected is rolled back (FES-005) and must not be swept, so
-            // this cannot gate on Promise.all resolving for the whole batch.
-            sweepDeletedConnectionRefs([c.id]);
-            return res;
-          })
-        )
+          );
+          // Sweep per id on its OWN durable success (FES-009): a sibling whose
+          // persist rejected is rolled back (FES-005) and must not be swept, so
+          // this cannot gate on the whole batch resolving. Kept as a side-effect
+          // branch (the unmodified promise is what the batch awaits) so the
+          // batch's own rejection timing / error toast is unchanged.
+          void persistDone.then(
+            () => sweepDeletedConnectionRefs([c.id]),
+            () => {}
+          );
+          return persistDone;
+        })
       )
         .then(() => {
           frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed`);
