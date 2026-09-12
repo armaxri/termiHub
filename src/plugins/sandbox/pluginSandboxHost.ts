@@ -61,6 +61,12 @@ interface SessionQueue {
 const MAX_PENDING_PER_SESSION = 1024;
 /** Force-pass a stuck head chunk after this long, so the terminal keeps flowing. */
 const HEAD_WATCHDOG_MS = 500;
+/**
+ * Tear the worker down and fall back to the synchronous fast path after this many
+ * consecutive uncaught worker errors — a worker that keeps crashing on untrusted
+ * plugin code should not keep taking terminal output round-trips.
+ */
+const MAX_WORKER_ERRORS = 3;
 
 let worker: Worker | null = null;
 let hasParsers = false;
@@ -70,6 +76,8 @@ let seqCounter = 0;
 /** True after a head chunk timed out; new chunks pass through until the worker recovers. */
 let degraded = false;
 let headTimer: ReturnType<typeof setTimeout> | null = null;
+/** Consecutive uncaught worker errors since the worker last made progress. */
+let workerErrorCount = 0;
 
 const sessions = new Map<string, SessionQueue>();
 const pending = new Map<number, { sessionId: string; slot: Slot }>();
@@ -84,9 +92,77 @@ let workerFactory: () => Worker = () =>
 function ensureWorker(): Worker {
   if (worker) return worker;
   const w = workerFactory();
+  workerErrorCount = 0;
   w.addEventListener("message", (e: MessageEvent<WorkerToHostMessage>) => handleMessage(e.data));
+  // An uncaught throw or a dead worker must not silently hang outstanding slots:
+  // surface it, and force every pending chunk through untransformed.
+  w.addEventListener("error", (e: ErrorEvent) =>
+    handleWorkerFault("error", e.message || "uncaught error")
+  );
+  w.addEventListener("messageerror", () =>
+    handleWorkerFault("messageerror", "failed to deserialize a message from the worker")
+  );
   worker = w;
   return w;
+}
+
+/**
+ * Handle an uncaught worker `error` / `messageerror`. **Best-effort — must never
+ * throw** (it runs on the liveness hot path). Surface the fault to the LogViewer,
+ * force every outstanding slot through untransformed so a dead or crashing worker
+ * cannot hang the terminal, and — once the worker has crashed {@link
+ * MAX_WORKER_ERRORS} times in a row — tear it down and revert to the synchronous
+ * fast path so untrusted plugin code can no longer take output round-trips.
+ */
+function handleWorkerFault(kind: "error" | "messageerror", detail: string): void {
+  try {
+    workerErrorCount++;
+    frontendLog(
+      "plugin_sandbox",
+      `Sandbox worker ${kind} (#${workerErrorCount}): ${detail}. ` +
+        `Passing outstanding terminal output through untransformed.`
+    );
+    // Treat the worker as degraded: outstanding slots and new chunks pass through.
+    degraded = true;
+    forceDrainPending();
+    if (workerErrorCount >= MAX_WORKER_ERRORS) {
+      frontendLog(
+        "plugin_sandbox",
+        `Sandbox worker crashed ${workerErrorCount} times; disabling the sandbox ` +
+          `and reverting the terminal to the synchronous fast path.`
+      );
+      teardownFaultyWorker();
+    }
+  } catch {
+    // The fault handler is a liveness guard — swallow anything it hits so it can
+    // never itself break the terminal it exists to protect.
+  }
+}
+
+/** Force every pending slot through as untransformed pass-through, in order. */
+function forceDrainPending(): void {
+  // Snapshot the keys first (array spread is bounded by the heap, unlike a
+  // call-argument spread) — `resolveSlot` mutates `pending` as it drains.
+  for (const seq of Array.from(pending.keys())) resolveSlot(seq, null);
+}
+
+/**
+ * Terminate a repeatedly-crashing worker and revert to the fast path. Plugins
+ * stay in {@link loadedPlugins}, so a later load/unload rebuilds a fresh worker;
+ * until then `sandboxHasParsers()` is false and the terminal runs synchronously.
+ */
+function teardownFaultyWorker(): void {
+  if (worker) {
+    worker.terminate();
+    worker = null;
+  }
+  hasParsers = false; // → sandboxHasParsers() false → terminal reverts to fast path
+  degraded = false;
+  workerErrorCount = 0;
+  if (headTimer) {
+    clearTimeout(headTimer);
+    headTimer = null;
+  }
 }
 
 function post(message: HostToWorkerMessage, transfer?: Transferable[]): void {
@@ -99,6 +175,7 @@ function disposeWorkerIfIdle(): void {
   worker = null;
   hasParsers = false;
   degraded = false;
+  workerErrorCount = 0;
   if (headTimer) {
     clearTimeout(headTimer);
     headTimer = null;
@@ -120,6 +197,7 @@ function handleMessage(msg: WorkerToHostMessage): void {
     case "transformResult":
       // Any reply means the worker is making progress again.
       degraded = false;
+      workerErrorCount = 0;
       resolveSlot(msg.seq, msg.changed ? (msg.bytes ?? null) : null);
       break;
     case "widgetUpsert":
@@ -182,9 +260,15 @@ function onWatchdog(): void {
   // The worker did not answer in time — treat it as degraded and force the
   // oldest pending slots through untransformed, preserving order.
   degraded = true;
-  const oldest = Math.min(...pending.keys());
-  const entry = pending.get(oldest);
-  if (entry) resolveSlot(oldest, null);
+  // Running min via iteration — never spread `pending.keys()` into a call:
+  // `pending` is unbounded in aggregate (only capped per session), so
+  // `Math.min(...keys)` can throw `RangeError` past the engine's argument limit,
+  // exactly inside the watchdog meant to keep the terminal flowing.
+  let oldest = Infinity;
+  for (const seq of pending.keys()) {
+    if (seq < oldest) oldest = seq;
+  }
+  if (oldest !== Infinity) resolveSlot(oldest, null);
   rearmWatchdog();
 }
 
@@ -317,6 +401,7 @@ export function __resetSandboxHost(): void {
   loadedPlugins.clear();
   seqCounter = 0;
   degraded = false;
+  workerErrorCount = 0;
   if (headTimer) {
     clearTimeout(headTimer);
     headTimer = null;
