@@ -285,6 +285,7 @@ impl ConnectionType for Serial {
     fn settings_schema(&self) -> SettingsSchema {
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "serial".to_string(),
                 label: "Serial Port".to_string(),
                 fields: vec![

@@ -18,7 +18,7 @@ pub struct SettingsSchema {
 }
 
 /// A named group of related settings fields.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SettingsGroup {
     /// Machine-readable key (e.g., "connection", "authentication").
@@ -27,6 +27,13 @@ pub struct SettingsGroup {
     pub label: String,
     /// Fields in this group, rendered in order.
     pub fields: Vec<SettingsField>,
+    /// Progressive-disclosure hint: when `true` the UI renders this group
+    /// collapsed by default behind an expander (e.g. an SSH "Advanced" group),
+    /// so a basic connection shows only the essential groups. Defaults to
+    /// `false` (expanded), so groups that omit it are unaffected. The user can
+    /// always expand it; collapsing never unregisters fields or drops values.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collapsed: bool,
 }
 
 /// A single settings field with metadata for UI rendering and validation.
@@ -177,6 +184,7 @@ mod tests {
         SettingsSchema {
             groups: vec![
                 SettingsGroup {
+                    collapsed: false,
                     key: "connection".to_string(),
                     label: "Connection".to_string(),
                     fields: vec![
@@ -209,6 +217,7 @@ mod tests {
                     ],
                 },
                 SettingsGroup {
+                    collapsed: false,
                     key: "authentication".to_string(),
                     label: "Authentication".to_string(),
                     fields: vec![
@@ -485,6 +494,7 @@ mod tests {
     fn nested_object_list_roundtrip() {
         let schema = SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "docker".to_string(),
                 label: "Docker".to_string(),
                 fields: vec![SettingsField {

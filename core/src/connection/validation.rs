@@ -221,6 +221,7 @@ mod tests {
     fn schema_with_fields(fields: Vec<SettingsField>) -> SettingsSchema {
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "test".to_string(),
                 label: "Test".to_string(),
                 fields,
@@ -895,6 +896,7 @@ mod tests {
         let schema = SettingsSchema {
             groups: vec![
                 SettingsGroup {
+                    collapsed: false,
                     key: "connection".to_string(),
                     label: "Connection".to_string(),
                     fields: vec![
@@ -928,6 +930,7 @@ mod tests {
                     ],
                 },
                 SettingsGroup {
+                    collapsed: false,
                     key: "auth".to_string(),
                     label: "Auth".to_string(),
                     fields: vec![SettingsField {

@@ -293,6 +293,7 @@ fn opt(value: &str, label: &str) -> SelectOption {
 /// Server group: host + control port.
 fn server_group() -> SettingsGroup {
     SettingsGroup {
+        collapsed: false,
         key: "server".to_string(),
         label: "Server".to_string(),
         fields: vec![
@@ -316,6 +317,7 @@ fn server_group() -> SettingsGroup {
 /// Security group: TLS mode + an insecure-FTP warning shown only for plain FTP.
 fn security_group() -> SettingsGroup {
     SettingsGroup {
+        collapsed: false,
         key: "security".to_string(),
         label: "Security".to_string(),
         fields: vec![
@@ -368,6 +370,7 @@ fn authentication_group() -> SettingsGroup {
         equals: serde_json::json!(false),
     };
     SettingsGroup {
+        collapsed: false,
         key: "authentication".to_string(),
         label: "Authentication".to_string(),
         fields: vec![
@@ -393,6 +396,7 @@ fn authentication_group() -> SettingsGroup {
 /// Transfer group: data mode, transfer type, initial directory, timeout.
 fn transfer_group() -> SettingsGroup {
     SettingsGroup {
+        collapsed: false,
         key: "transfer".to_string(),
         label: "Transfer".to_string(),
         fields: vec![

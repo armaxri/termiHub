@@ -217,6 +217,7 @@ pub fn config_schema_to_settings_schema(schema: &serde_json::Value) -> SettingsS
     }
     SettingsSchema {
         groups: vec![SettingsGroup {
+            collapsed: false,
             key: "config".to_string(),
             label: "Configuration".to_string(),
             fields,

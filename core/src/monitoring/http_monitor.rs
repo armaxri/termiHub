@@ -199,6 +199,7 @@ impl HttpMonitorService {
     fn schema() -> SettingsSchema {
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "monitor".to_string(),
                 label: "HTTP Monitor".to_string(),
                 fields: vec![

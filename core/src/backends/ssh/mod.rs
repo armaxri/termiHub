@@ -261,6 +261,7 @@ impl ConnectionType for Ssh {
         SettingsSchema {
             groups: vec![
                 SettingsGroup {
+                    collapsed: false,
                     key: "connection".to_string(),
                     label: "Connection".to_string(),
                     fields: vec![
@@ -308,6 +309,7 @@ impl ConnectionType for Ssh {
                     ],
                 },
                 SettingsGroup {
+                    collapsed: false,
                     key: "authentication".to_string(),
                     label: "Authentication".to_string(),
                     fields: vec![
@@ -397,6 +399,10 @@ impl ConnectionType for Ssh {
                     ],
                 },
                 SettingsGroup {
+                    // Progressive disclosure (UX-008): a basic SSH connection
+                    // needs only Host/Port/Username + an auth method, so the
+                    // Advanced group starts collapsed behind an expander.
+                    collapsed: true,
                     key: "advanced".to_string(),
                     label: "Advanced".to_string(),
                     fields: vec![
@@ -961,6 +967,36 @@ mod tests {
         assert_eq!(schema.groups[0].key, "connection");
         assert_eq!(schema.groups[1].key, "authentication");
         assert_eq!(schema.groups[2].key, "advanced");
+    }
+
+    /// Progressive disclosure (UX-008): only the Advanced group is collapsed by
+    /// default; the essential Connection and Authentication groups stay open.
+    #[test]
+    fn schema_only_advanced_group_is_collapsed_by_default() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        assert!(!schema.groups[0].collapsed, "connection must be expanded");
+        assert!(
+            !schema.groups[1].collapsed,
+            "authentication must be expanded"
+        );
+        assert!(schema.groups[2].collapsed, "advanced must be collapsed");
+    }
+
+    /// The `collapsed` flag serializes to camelCase and is omitted when false,
+    /// so groups that don't opt in stay off the wire and other connection types
+    /// are unaffected.
+    #[test]
+    fn schema_collapsed_flag_serialization() {
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let json = serde_json::to_value(&schema).expect("serialize schema");
+        let groups = json["groups"].as_array().expect("groups array");
+        // Expanded groups omit the field entirely.
+        assert!(groups[0].get("collapsed").is_none());
+        assert!(groups[1].get("collapsed").is_none());
+        // The collapsed Advanced group carries `collapsed: true`.
+        assert_eq!(groups[2]["collapsed"], serde_json::json!(true));
     }
 
     #[test]

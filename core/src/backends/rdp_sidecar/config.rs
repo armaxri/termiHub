@@ -327,6 +327,7 @@ pub fn rdp_settings_schema() -> SettingsSchema {
     let mut groups = shared_field_base(RDP_DEFAULT_PORT);
 
     groups.push(SettingsGroup {
+        collapsed: false,
         key: "rdp".to_string(),
         label: "RDP Options".to_string(),
         fields: vec![

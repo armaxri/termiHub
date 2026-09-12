@@ -462,6 +462,7 @@ impl ConnectionType for Docker {
         SettingsSchema {
             groups: vec![
                 SettingsGroup {
+                    collapsed: false,
                     key: "container".to_string(),
                     label: "Container".to_string(),
                     fields: vec![
@@ -560,6 +561,7 @@ impl ConnectionType for Docker {
                     ],
                 },
                 SettingsGroup {
+                    collapsed: false,
                     key: "environment".to_string(),
                     label: "Environment".to_string(),
                     fields: vec![

@@ -68,6 +68,7 @@ fn opt(value: &str, label: &str) -> SelectOption {
 pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
     vec![
         SettingsGroup {
+            collapsed: false,
             key: "connection".to_string(),
             label: "Connection".to_string(),
             fields: vec![
@@ -99,6 +100,7 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
             ],
         },
         SettingsGroup {
+            collapsed: false,
             key: "display".to_string(),
             label: "Display".to_string(),
             fields: vec![
@@ -135,6 +137,7 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
             ],
         },
         SettingsGroup {
+            collapsed: false,
             key: "features".to_string(),
             label: "Features".to_string(),
             fields: vec![
