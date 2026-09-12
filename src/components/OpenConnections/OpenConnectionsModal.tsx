@@ -77,6 +77,7 @@ import {
 } from "@/services/networkApi";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { XServerStatusReport } from "@/types/xserver";
+import { PROTOCOL_LABELS } from "@/types/embeddedServer";
 import { resolveAgentUpdateState } from "@/utils/agentVersion";
 import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { useWindowInfo } from "@/hooks/useWindowInfo";
@@ -147,6 +148,14 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const { terminalConnecting } = useProjectedSessionLifecycleMaps();
   const closeTab = useAppStore((s) => s.closeTab);
   const markSessionKilled = useAppStore((s) => s.markSessionKilled);
+  // Embedded HTTP/FTP/TFTP servers. The Services sidebar owns the same
+  // `embeddedServers` config list + keyed `embeddedServerStates` runtime map and
+  // the `stopEmbeddedServer` action; the panel reads them directly (single
+  // source of truth) so this "kill everything" surface can see and stop the
+  // servers a user would otherwise miss here (SM-017).
+  const embeddedServers = useAppStore((s) => s.embeddedServers);
+  const embeddedServerStates = useAppStore((s) => s.embeddedServerStates);
+  const stopEmbeddedServer = useAppStore((s) => s.stopEmbeddedServer);
 
   // Sessions still establishing their connection (visible as connecting tabs).
   // Cancelling aborts the in-flight handshake instead of waiting it out (#952).
@@ -209,6 +218,19 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   // backoff loop by disconnecting.
   const establishingAgents = remoteAgents.filter(
     (a) => a.connectionState === "connecting" || a.connectionState === "reconnecting"
+  );
+
+  // Every embedded server holding a port: running, or in a transitional
+  // start/stop phase (mirrors the Services sidebar's "active" notion so a stuck
+  // starting/stopping server stays visible + killable). Stopped/errored servers
+  // hold no port, so they are omitted and the section hides when none are live.
+  const runningEmbeddedServers = useMemo(
+    () =>
+      embeddedServers.filter((s) => {
+        const status = embeddedServerStates[s.id]?.status;
+        return status === "running" || status === "starting" || status === "stopping";
+      }),
+    [embeddedServers, embeddedServerStates]
   );
 
   const loadData = useCallback(async () => {
@@ -297,6 +319,7 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     transferList.length +
     openMonitors.length +
     httpMonitors.length +
+    runningEmbeddedServers.length +
     (showXServer ? 1 : 0);
 
   const handleCancelConnecting = async (tabId: string, panelId: string) => {
@@ -643,6 +666,39 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     } catch (err) {
       frontendLog("open_connections", `Failed to stop all HTTP monitors: ${err}`);
       toast.error(`Failed to stop monitors: ${err}`);
+    }
+  };
+
+  // Stop a running embedded server, reusing the store action the Services
+  // sidebar drives (single source of truth) and toasting on the outcome to match
+  // the other sections' feedback (SM-017).
+  const handleStopEmbeddedServer = async (serverId: string, name: string) => {
+    try {
+      await stopEmbeddedServer(serverId);
+      toast.success(`Stopped “${name}”`);
+    } catch (err) {
+      frontendError("open_connections", `Failed to stop embedded server ${serverId}: ${err}`);
+      toast.error(`Failed to stop server: ${err}`);
+    }
+  };
+
+  const handleStopAllEmbeddedServers = async () => {
+    const results = await Promise.allSettled(
+      runningEmbeddedServers.map((s) => stopEmbeddedServer(s.id))
+    );
+    const failed = results.filter((r) => r.status === "rejected").length;
+    if (failed > 0) {
+      results.forEach((r, i) => {
+        if (r.status === "rejected") {
+          frontendError(
+            "open_connections",
+            `Failed to stop embedded server ${runningEmbeddedServers[i].id}: ${r.reason}`
+          );
+        }
+      });
+      toast.error(`Failed to stop ${failed} server${failed === 1 ? "" : "s"}`);
+    } else {
+      toast.success("All servers stopped");
     }
   };
 
@@ -1086,6 +1142,37 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
                 killLabel="Stop"
               />
             ))}
+          </Section>
+        )}
+
+        {/* Embedded Servers — running HTTP/FTP/TFTP servers (SM-017). The
+            Services sidebar owns the live state + stop action; the panel mirrors
+            them so this "kill everything" surface can see and stop them. */}
+        {runningEmbeddedServers.length > 0 && (
+          <Section
+            title="Embedded Servers"
+            icon={<Server size={14} />}
+            count={runningEmbeddedServers.length}
+            onKillAll={handleStopAllEmbeddedServers}
+            killAllLabel="Stop All"
+            data-testid="open-connections-embedded-servers-section"
+          >
+            {runningEmbeddedServers.map((s) => {
+              const status = embeddedServerStates[s.id]?.status;
+              return (
+                <ConnectionRow
+                  key={s.id}
+                  icon={<Server size={14} />}
+                  title={s.name}
+                  detail={`${PROTOCOL_LABELS[s.serverType]} · ${s.bindHost}:${s.port}`}
+                  badge={status === "running" ? "up" : "connecting"}
+                  onKill={() => handleStopEmbeddedServer(s.id, s.name)}
+                  killLabel="Stop"
+                  data-testid={`open-connections-embedded-server-${s.id}`}
+                  killTestId={`open-connections-embedded-server-stop-${s.id}`}
+                />
+              );
+            })}
           </Section>
         )}
 
