@@ -36,20 +36,35 @@ interface TunnelsView {
 const _tunnelStartInFlight = new Set<string>();
 const _tunnelStopInFlight = new Set<string>();
 
-// First-connect failure-toast tracking (#2169). After the projection migration
+// First-connect toast tracking (#2169, UX-023). After the projection migration
 // (#2150) `tunnel.start` / `tunnel.reconnect` are fire-and-forget: the ack only
-// confirms the start was *accepted*, and a failure during the SSH handshake now
-// arrives as a projected `error` status rather than the old synchronous red
-// toast. To restore that immediate failure feedback for parity — without
-// re-serialising the blocking handshake onto the dispatcher — we remember each
-// tunnel THIS client just dispatched a start/reconnect for, and raise a transient
-// failure toast when its projected state *transitions into* `error`.
+// confirms the start was *accepted*, and the real connecting → connected / error
+// transition arrives later as a projected status diff. So the pending
+// `toast.loading("Starting …")` is kept alive across the ack and only resolved in
+// place once the projected status settles — to `success` on the genuine
+// `connected` transition (UX-023: no premature green "Started" a beat before the
+// handshake), or to `error` on a `→ error` transition (#2169: restores the
+// immediate failure feedback the old synchronous red toast gave). This mirrors
+// how the connection overlay distinguishes connecting from connected, without
+// re-serialising the blocking handshake onto the dispatcher.
 //
-// Keyed by tunnel id → the verb for the message ("start" | "reconnect"). The map
-// is intentionally per-client (module-local), so only the initiating client sees
-// the toast — a mid-session death or another client's start (which this client
-// never dispatched) surfaces only as the Error status badge, never a toast here.
-const _awaitingFirstConnect = new Map<string, "start" | "reconnect">();
+// Keyed by tunnel id → the pending toast + its verb. The map is intentionally
+// per-client (module-local), so only the initiating client resolves the toast —
+// a mid-session death or another client's start (which this client never
+// dispatched) surfaces only as the Error status badge, never a toast here.
+interface FirstConnectWatch {
+  /** The verb for the resolved message ("start" → "Started" / "reconnect" → "Reconnected"). */
+  verb: "start" | "reconnect";
+  /** The pending loading-toast id to resolve in place into success/error. */
+  toastId: string | number;
+}
+const _awaitingFirstConnect = new Map<string, FirstConnectWatch>();
+
+/** Past-tense success label for a resolved first-connect toast. */
+const FIRST_CONNECT_SUCCESS: Record<FirstConnectWatch["verb"], string> = {
+  start: "Started",
+  reconnect: "Reconnected",
+};
 
 // The projection transport + `tunnels` region client, shared across the slice.
 // Both are created lazily on first use (`loadTunnels` / the first intent) so the
@@ -85,35 +100,36 @@ function errMessage(err: unknown): string {
 }
 
 /**
- * Raise the first-connect failure toast (#2169) for any tunnel THIS client
- * dispatched a start/reconnect for whose projected status just transitioned into
- * `error`, then stop tracking it.
+ * Resolve the pending first-connect toast (#2169, UX-023) in place for any tunnel
+ * THIS client dispatched a start/reconnect for whose projected status just
+ * settled, then stop tracking it.
  *
  * Driven purely from the projected status diff (never from re-serialising the
  * handshake): we compare the previously cached states against the freshly pushed
- * ones and only fire on a genuine `→ error` transition, so a repeated/coalesced
- * diff that still shows `error` cannot re-toast, and a stale pre-dispatch `error`
- * (from an earlier failed attempt) is not mistaken for the new outcome. A tunnel
- * that instead reaches `connected` is a success — its "Started/Reconnected …"
- * toast already fired on the ack — so we simply stop tracking it, leaving a
- * later mid-session death to surface only as the Error badge.
+ * ones and act only on a genuine transition.
+ * - `→ connected`: the handshake succeeded — resolve the still-pending loading
+ *   toast to "Started/Reconnected …" (UX-023: the green success now lands with
+ *   the actual connection, not a beat early on the intent ack). Then stop
+ *   watching, so a later mid-session drop to `error` is a badge, not a toast.
+ * - `→ error`: the handshake failed — resolve the loading toast to a failure
+ *   toast (#2169). Gated on `prev !== error` so a repeated/coalesced `error` diff
+ *   cannot re-toast and a stale pre-dispatch `error` is not mistaken for it.
  */
-function raiseFirstConnectFailureToasts(
+function resolveFirstConnectToasts(
   prevStates: Record<string, TunnelState>,
   nextStates: Record<string, TunnelState>,
   tunnels: TunnelConfig[]
 ): void {
   if (_awaitingFirstConnect.size === 0) return;
-  for (const [id, verb] of _awaitingFirstConnect) {
+  for (const [id, { verb, toastId }] of _awaitingFirstConnect) {
     const nextStatus = nextStates[id]?.status;
+    const name = tunnels.find((t) => t.id === id)?.name ?? "tunnel";
     if (nextStatus === "error" && prevStates[id]?.status !== "error") {
-      const name = tunnels.find((t) => t.id === id)?.name ?? "tunnel";
       const detail = nextStates[id]?.error ?? "connection failed";
-      toast.error(`Failed to ${verb} ${name}: ${detail}`);
+      toast.error(`Failed to ${verb} ${name}: ${detail}`, { id: toastId });
       _awaitingFirstConnect.delete(id);
     } else if (nextStatus === "connected") {
-      // Resolved successfully — the ack already toasted success. Stop watching so
-      // a later mid-session drop to `error` is a badge, not a first-connect toast.
+      toast.success(`${FIRST_CONNECT_SUCCESS[verb]} ${name}`, { id: toastId });
       _awaitingFirstConnect.delete(id);
     }
   }
@@ -129,7 +145,8 @@ function raiseFirstConnectFailureToasts(
  * model into `tunnels` / `tunnelStates`; the UI renders from those exactly as
  * before. User actions dispatch `tunnel.*` intents (pessimistic — the resulting
  * status/config change is reflected only when its projection diff arrives, never
- * optimistically), keeping toasts as immediate feedback on the intent ack.
+ * optimistically). Toasts confirm the intent ack, except start/reconnect, whose
+ * pending toast is held until the actual `connected`/`error` transition (UX-023).
  */
 export interface TunnelSlice {
   tunnels: TunnelConfig[];
@@ -151,16 +168,18 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     try {
       // Re-subscribing (e.g. a re-init) drops the previous region client first,
       // and any pending first-connect watches with it (they belong to the old
-      // session's dispatches).
+      // session's dispatches). Dismiss their still-pending loading toasts so they
+      // do not hang forever once their session is gone.
       _client?.stop();
+      for (const { toastId } of _awaitingFirstConnect.values()) toast.dismiss(toastId);
       _awaitingFirstConnect.clear();
       const client = new ProjectionClient(transport(), TUNNELS_REGION);
       client.onChange((state) => {
         const view = (state.view ?? {}) as Partial<TunnelsView>;
         const nextStates = view.states ?? {};
-        // Detect first-connect failures against the previously cached states
-        // BEFORE overwriting them (#2169).
-        raiseFirstConnectFailureToasts(get().tunnelStates, nextStates, view.tunnels ?? []);
+        // Resolve pending first-connect toasts against the previously cached
+        // states BEFORE overwriting them (#2169, UX-023).
+        resolveFirstConnectToasts(get().tunnelStates, nextStates, view.tunnels ?? []);
         set({ tunnels: view.tunnels ?? [], tunnelStates: nextStates });
       });
       await client.start();
@@ -209,10 +228,10 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
       // and render on the tunnel row.
       const ack = await dispatchTunnelIntent("tunnel.start", { id: tunnelId });
       throwIfRejected(ack, "start tunnel");
-      toast.success(`Started ${name}`, { id: toastId });
-      // Accepted — now watch for a handshake failure arriving as a projected
-      // `error` transition and re-raise the failure toast then (#2169).
-      _awaitingFirstConnect.set(tunnelId, "start");
+      // Accepted, but NOT yet connected (UX-023): keep the toast pending
+      // ("Starting …") and let the projected `connected`/`error` transition
+      // resolve it to success/failure via `resolveFirstConnectToasts` (#2169).
+      _awaitingFirstConnect.set(tunnelId, { verb: "start", toastId });
     } catch (err) {
       frontendLog("app_store", `Failed to start tunnel: ${errMessage(err)}`);
       toast.error(`Failed to start ${name}: ${errMessage(err)}`, { id: toastId });
@@ -255,10 +274,10 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     try {
       const ack = await dispatchTunnelIntent("tunnel.reconnect", { id: tunnelId });
       throwIfRejected(ack, "reconnect tunnel");
-      toast.success(`Reconnected ${name}`, { id: toastId });
-      // Accepted — watch for the stop→start sequence failing during its
-      // handshake, arriving as a projected `error` transition (#2169).
-      _awaitingFirstConnect.set(tunnelId, "reconnect");
+      // Accepted, but the fresh handshake is not done (UX-023): hold the toast
+      // pending until the projected `connected`/`error` transition resolves it
+      // via `resolveFirstConnectToasts` (#2169).
+      _awaitingFirstConnect.set(tunnelId, { verb: "reconnect", toastId });
     } catch (err) {
       frontendLog("app_store", `Failed to reconnect tunnel: ${errMessage(err)}`);
       toast.error(`Failed to reconnect ${name}: ${errMessage(err)}`, { id: toastId });
