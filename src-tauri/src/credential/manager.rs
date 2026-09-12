@@ -99,6 +99,20 @@ impl CredentialManager {
         *guard = Some(timer);
     }
 
+    /// Returns whether an auto-lock timer is installed for this manager.
+    ///
+    /// The timer is installed once at startup; a `false` result means its
+    /// background thread failed to spawn (WA-RS-004). Callers use this to gate
+    /// unlocking the master-password store: without a live timer the store
+    /// cannot be auto-locked after inactivity, so it must stay locked rather
+    /// than be left unlocked with no mechanism to re-lock it.
+    pub fn has_auto_lock_timer(&self) -> bool {
+        self.auto_lock_timer
+            .read()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
+    }
+
     /// Notify the auto-lock timer that the store was unlocked.
     pub fn notify_auto_lock_unlocked(&self) {
         if let Ok(guard) = self.auto_lock_timer.read() {
@@ -300,6 +314,17 @@ mod tests {
         // Writes through the poisoned lock must also recover.
         mgr.switch_store(StorageMode::MasterPassword).unwrap();
         assert_eq!(mgr.get_mode(), StorageMode::MasterPassword);
+    }
+
+    #[test]
+    fn has_auto_lock_timer_false_before_install() {
+        // WA-RS-004: when the auto-lock timer thread fails to spawn, no timer is
+        // installed. `has_auto_lock_timer` must report `false` so callers can
+        // refuse to unlock the store (fail-safe) rather than leave credentials
+        // unlocked with nothing to auto-lock them.
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+        assert!(!mgr.has_auto_lock_timer());
     }
 
     #[test]
