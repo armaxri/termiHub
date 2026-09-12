@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/tunnel
 evidence:
   - core/src/tunnel/remote_forward.rs
-status: open
+status: fixed
+resolution: "#2813 — tunnel remote_forward registry poison-tolerant via lock_registry (unwrap_or_else into_inner); other cited sites were #[cfg(test)]"
 ---
 
 ## What

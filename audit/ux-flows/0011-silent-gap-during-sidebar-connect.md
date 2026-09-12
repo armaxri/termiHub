@@ -10,7 +10,8 @@ evidence:
   - src/hooks/useConnectSavedConnection.ts:129
   - src/hooks/useConnectSavedConnection.ts:157
   - src/hooks/useConnectSavedConnection.ts:44
-status: open
+status: fixed
+resolution: "#2817 — toast.loading during slow sidebar pre-connect, dismissed on openTab/cancel"
 ---
 
 ## What

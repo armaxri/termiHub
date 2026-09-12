@@ -13,7 +13,8 @@ evidence:
   - src/utils/monacoCustomLanguages.ts:27
   - src/utils/monacoCustomLanguages.ts:28
   - vite.config.ts:19
-status: open
+status: fixed
+resolution: "#2812 — Monaco+shiki code-split out of entry via React.lazy/dynamic import; entry -48% raw/-50% gzip; FileEditor behavior preserved (removed harmful manualChunks)"
 ---
 
 ## What

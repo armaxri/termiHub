@@ -9,7 +9,8 @@ subsystem: src/components/TransferQueue
 evidence:
   - src/components/TransferQueue/TransferQueue.tsx:45
   - src/components/TransferQueue/TransferQueue.tsx:57
-status: open
+status: fixed
+resolution: "#2816 — TransferQueue: registry bool threaded cmd→api→UI; success only on true, info on no-op, error on reject"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - core/src/monitoring/http_monitor.rs:568
   - src-tauri/src/network/mod.rs:233
   - core/src/monitoring/http_monitor.rs:550
-status: open
+status: fixed
+resolution: "#2810 — http monitors load stopped-but-listed (no auto-start N loops) + subscriber-gated checks; BEHAVIOR: resume-on-demand after restart. #2811 deferral"
 ---
 
 ## What

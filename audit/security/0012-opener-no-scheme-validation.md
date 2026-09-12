@@ -10,7 +10,8 @@ evidence:
   - src/components/Settings/UpdateSettings.tsx:65
   - src/components/UpdateNotification/UpdateNotification.tsx:46
   - src/components/FileEditor/FileEditor.tsx:1062
-status: open
+status: fixed
+resolution: "#2818 — safeOpenExternal http(s)/mailto allowlist for release-URL sites + Monaco registerLinkOpener guard (typeof-guarded)"
 ---
 
 ## What

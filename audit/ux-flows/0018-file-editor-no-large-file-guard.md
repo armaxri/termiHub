@@ -9,7 +9,8 @@ subsystem: src/components/FileEditor
 evidence:
   - src/components/FileEditor/FileEditor.tsx:341
   - src/components/FileEditor/FileEditor.tsx:86
-status: open
+status: fixed
+resolution: "#2740 — already-on-develop: FileEditor large-file guard (#PROD-014/#PERF-002) with Open-anyway — audit branch stale"
 ---
 
 ## What

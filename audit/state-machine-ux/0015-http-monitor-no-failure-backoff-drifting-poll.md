@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/src/monitoring/http_monitor.rs
 evidence:
   - core/src/monitoring/http_monitor.rs:542
-status: open
+status: fixed
+resolution: "#2810 — http monitor: drift-free deadline-based cadence + capped exponential failure backoff (reset on success)"
 ---
 
 ## What

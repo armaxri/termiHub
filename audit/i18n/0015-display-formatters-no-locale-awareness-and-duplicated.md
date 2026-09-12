@@ -11,7 +11,8 @@ evidence:
   - src/utils/formatters.ts:11
   - src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx:43
   - src/components/StatusBar/StatusBar.tsx:71
-status: open
+status: fixed
+resolution: "#2819 — shared formatters locale-aware via Intl.NumberFormat + resolveUiLocale (safe-locale); relative-time kept literal"
 ---
 
 ## What

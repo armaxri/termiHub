@@ -13,7 +13,8 @@ evidence:
   - src/types/transfer.ts:253
   - src/components/NetworkTools/monitorStaleness.ts:45
   - src/components/Terminal/TerminalConnectionOverlay.tsx:53
-status: open
+status: fixed
+resolution: "#2819 — consolidated byte/rate/relative/duration formatters into formatters.ts; 5 call sites delegate"
 ---
 
 ## What

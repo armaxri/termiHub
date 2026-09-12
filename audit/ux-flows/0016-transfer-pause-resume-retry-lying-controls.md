@@ -10,7 +10,8 @@ evidence:
   - src/components/TransferQueue/TransferQueue.tsx:45
   - src-tauri/src/files/transfer/registry.rs:587
   - src-tauri/src/commands/session.rs:547
-status: open
+status: fixed
+resolution: "#2816 — transfer controls honest (no false success); capability-disabling deferred → #2815"
 ---
 
 ## What

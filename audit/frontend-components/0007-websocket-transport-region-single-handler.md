@@ -10,7 +10,8 @@ evidence:
   - src/services/transport/WebSocketTransport.ts:32
   - src/services/transport/WebSocketTransport.ts:48
   - src/services/transport/WebSocketTransport.ts:78
-status: open
+status: fixed
+resolution: "#2814 — WebSocketTransport per-region Set fan-out; unsubscribe removes only caller; listener torn down on last; +close()"
 ---
 
 ## What

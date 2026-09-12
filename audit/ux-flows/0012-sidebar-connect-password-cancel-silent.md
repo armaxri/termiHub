@@ -9,7 +9,8 @@ subsystem: src/hooks/useConnectSavedConnection
 evidence:
   - src/hooks/useConnectSavedConnection.ts:189
   - src/components/ConnectionEditor/ConnectionEditor.tsx:988
-status: open
+status: fixed
+resolution: "#2817 — toast.info on password-prompt cancel (mirrors editor path)"
 ---
 
 ## What

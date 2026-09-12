@@ -12,7 +12,8 @@ evidence:
   - src/services/transport/ProjectionClient.ts:110
   - src/services/transport/ProjectionClient.ts:193
   - src/services/transport/ProjectionClient.ts:216
-status: open
+status: fixed
+resolution: "#2814 — ProjectionClient buffers pre-snapshot frames + flushes in order; adoptSnapshot refuses version regression"
 ---
 
 ## What

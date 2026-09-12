@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/hooks/useConnectSavedConnection
 evidence:
   - src/hooks/useConnectSavedConnection.ts:165
-status: open
+status: fixed
+resolution: "#2817 — rejected stored cred → re-prompt subtitle notice (passwordPromptNotice); typed-code gating kept"
 ---
 
 ## What

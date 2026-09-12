@@ -10,7 +10,8 @@ evidence:
   - src/components/ConnectionEditor/ConnectionEditor.tsx:1061
   - src/components/ConnectionEditor/ConnectionEditor.tsx:1068
   - src/components/ConnectionEditor/ConnectionEditor.tsx:680
-status: open
+status: fixed
+resolution: "#2821 — ConnectionEditor Cancel button routed through existing unsaved-changes dirty-guard (shared with Escape/tab-close)"
 ---
 
 ## What
