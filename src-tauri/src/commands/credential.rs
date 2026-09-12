@@ -74,6 +74,46 @@ fn collect_credentials_for_migration(
     Ok(credentials_to_migrate)
 }
 
+/// Migrate collected credentials into the freshly-switched store, returning the
+/// count migrated and the human-readable warnings surfaced to the frontend in
+/// [`SwitchResult`]. The source store is left intact on any failure, so the user
+/// can recover.
+fn migrate_credentials(
+    manager: &CredentialManager,
+    credentials_to_migrate: &[(CredentialKey, String)],
+) -> (u32, Vec<String>) {
+    let mut migrated_count = 0u32;
+    let mut warnings = Vec::new();
+
+    for (key, value) in credentials_to_migrate {
+        match manager.set(key, value) {
+            Ok(()) => {
+                migrated_count += 1;
+            }
+            Err(e) => {
+                warnings.push(format!("Failed to migrate {}: {}", key, e));
+            }
+        }
+    }
+
+    // Unconditional so a fully-failed migration (migrated_count == 0) is not the
+    // silent case — this lands in the INFO+ durable file log.
+    info!(
+        migrated_count,
+        source_count = credentials_to_migrate.len(),
+        warning_count = warnings.len(),
+        "credential migration complete"
+    );
+    if !warnings.is_empty() {
+        warn!(
+            warning_count = warnings.len(),
+            "some credentials failed to migrate to the new store; source store left intact"
+        );
+    }
+
+    (migrated_count, warnings)
+}
+
 fn emit_status_changed(app_handle: &AppHandle, manager: &CredentialManager) {
     let info = build_status_info(manager);
     if let Err(e) = app_handle.emit(EVENT_STORE_STATUS_CHANGED, &info) {
@@ -333,33 +373,11 @@ pub async fn switch_credential_store(
         manager.notify_auto_lock_unlocked();
     }
 
-    // Migrate credentials to the new store
-    let mut migrated_count = 0u32;
-    let mut warnings = Vec::new();
-
-    for (key, value) in &credentials_to_migrate {
-        match manager.set(key, value) {
-            Ok(()) => {
-                migrated_count += 1;
-            }
-            Err(e) => {
-                warnings.push(format!("Failed to migrate {}: {}", key, e));
-            }
-        }
-    }
-
-    info!(
-        migrated_count,
-        source_count = credentials_to_migrate.len(),
-        warning_count = warnings.len(),
-        "Credential migration complete"
-    );
-    if !warnings.is_empty() {
-        warn!(
-            warning_count = warnings.len(),
-            "Some credentials failed to migrate to the new store; source store left intact"
-        );
-    }
+    // Migrate credentials to the new store. Each failure is logged at WARN
+    // (key only, never the secret value) and an INFO summary is emitted
+    // unconditionally, so a partial or total migration failure leaves a durable
+    // trace instead of failing silently (OBS-007).
+    let (migrated_count, warnings) = migrate_credentials(&manager, &credentials_to_migrate);
 
     // Persist the new mode to settings so it survives app restarts.
     let mut settings = connection_manager.get_settings();
