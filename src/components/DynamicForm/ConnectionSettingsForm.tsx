@@ -124,9 +124,21 @@ export function ConnectionSettingsForm({
     [hasPortField, setValue]
   );
 
+  // Snapshot of the values most recently seeded into the form or propagated to
+  // the parent. The `watch` propagation below skips an emission whose values
+  // match this snapshot, which suppresses the no-op `onChange` that `reset`
+  // echoes on a type switch — WITHOUT a sticky "am I resetting?" flag.
+  //
+  // A flag was the previous approach and was unsafe (FEC-019): it was set before
+  // `reset`, expecting the synchronous watch echo to consume it, but that echo is
+  // not guaranteed to reach our subscription. When the parent passes a fresh
+  // `onChange` identity on the switch render, React tears the watch subscription
+  // down and rebuilds it *around* the reset (effect cleanup runs before setup),
+  // so the echo lands on no subscriber, the flag stays set, and it then swallows
+  // the next genuine user edit. Comparing values has no such ordering hazard.
+  const lastPropagatedRef = useRef<string>(JSON.stringify(settings));
+
   // Reset the form when the connection type changes (schema groups differ).
-  // isResetting suppresses the watch callback that reset fires synchronously,
-  // preventing a spurious onChange call back to the parent on type switch.
   //
   // Every field key in the new schema is seeded to `undefined` before the new
   // settings are layered on top. react-hook-form keeps a value cache keyed by
@@ -139,11 +151,9 @@ export function ConnectionSettingsForm({
   // stale cache so absent keys reset to empty.
   const schemaKey = schema.groups.map((g) => g.key).join("|");
   const prevSchemaKey = useRef(schemaKey);
-  const isResetting = useRef(false);
   useEffect(() => {
     if (prevSchemaKey.current !== schemaKey) {
       prevSchemaKey.current = schemaKey;
-      isResetting.current = true;
       const cleared: Record<string, unknown> = {};
       for (const group of schema.groups) {
         for (const field of group.fields) {
@@ -155,19 +165,27 @@ export function ConnectionSettingsForm({
           cleared[field.key] = null;
         }
       }
-      reset({ ...cleared, ...settings });
+      const resetValues = { ...cleared, ...settings };
+      // Seed the snapshot *before* reset so the reset's watch echo is recognised
+      // as a no-op and not forwarded to the parent as a spurious change.
+      lastPropagatedRef.current = JSON.stringify(resetValues);
+      reset(resetValues);
     }
     // Only trigger on schema change, not on every settings update.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [schemaKey]);
 
-  // Propagate every form value change to the parent.
+  // Propagate every genuine form value change to the parent. Skip an emission
+  // whose serialized values equal the last snapshot: that only ever happens for
+  // the reset echo (values just seeded) — a real edit necessarily differs. A
+  // mismatched key order can at worst cause one harmless redundant propagation;
+  // it can never falsely suppress a genuine edit, since equal strings require
+  // equal content.
   useEffect(() => {
     const subscription = watch((values) => {
-      if (isResetting.current) {
-        isResetting.current = false;
-        return;
-      }
+      const snapshot = JSON.stringify(values);
+      if (snapshot === lastPropagatedRef.current) return;
+      lastPropagatedRef.current = snapshot;
       onChange(values as Record<string, unknown>);
     });
     return () => subscription.unsubscribe();
