@@ -52,6 +52,36 @@ struct ConnectedState {
     writer_task: tokio::task::JoinHandle<()>,
     /// `true` while the reader task is running (i.e. port is alive).
     alive: Arc<AtomicBool>,
+    /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
+    /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
+    /// The graceful path and the guard must never both abort the tasks.
+    disconnected: bool,
+}
+
+impl Drop for ConnectedState {
+    /// Best-effort synchronous teardown for CORE-020: guarantees the detached
+    /// reader/writer tasks are aborted (releasing the serial port they hold via
+    /// their `Arc<SerialPort>` clones) even when the connected state is dropped
+    /// WITHOUT a graceful [`disconnect()`](ConnectionType::disconnect) — a panic
+    /// between spawn and store, an early `?` return, or a manager that forgets.
+    ///
+    /// Aborting a [`JoinHandle`](tokio::task::JoinHandle) is synchronous and
+    /// non-blocking (it just flags the task for cancellation), so it is safe to
+    /// do directly in `Drop`: no runtime is awaited and nothing blocks — which is
+    /// mandatory because `Drop` can run on a tokio worker thread where a
+    /// `block_on` would panic or deadlock. `abort()` cannot panic.
+    ///
+    /// When [`disconnect()`](ConnectionType::disconnect) already ran it set
+    /// `disconnected = true` and this is a no-op, so the graceful path and this
+    /// guard never both tear the tasks down.
+    fn drop(&mut self) {
+        if self.disconnected {
+            return;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        self.reader_task.abort();
+        self.writer_task.abort();
+    }
 }
 
 impl Serial {
@@ -465,13 +495,19 @@ impl ConnectionType for Serial {
             reader_task,
             writer_task,
             alive,
+            disconnected: false,
         });
 
         Ok(())
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
-        if let Some(state) = self.state.take() {
+        if let Some(mut state) = self.state.take() {
+            // Mark the graceful path so the `Drop` guard on `state` (which runs
+            // when it goes out of scope at the end of this block) does not abort
+            // the tasks a second time (CORE-020 double-teardown guard).
+            state.disconnected = true;
+            state.alive.store(false, Ordering::SeqCst);
             state.reader_task.abort();
             state.writer_task.abort();
             if let Ok(mut guard) = self.output_tx.lock() {
@@ -787,6 +823,124 @@ mod tests {
             .disconnect()
             .await
             .expect("disconnect should not fail");
+    }
+
+    // --- Drop guard (CORE-020) --------------------------------------------
+
+    /// Sets a shared flag when dropped. A task holding one of these as a local
+    /// runs the `Drop` when the task's future is dropped — which is exactly what
+    /// `JoinHandle::abort()` triggers — giving the test an observable signal that
+    /// the background task was actually cancelled (not merely detached).
+    struct AbortObserver(Arc<AtomicBool>);
+
+    impl Drop for AbortObserver {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// Spawn a task that lives forever until aborted; when aborted (its future
+    /// dropped) it flips `flag` via the [`AbortObserver`].
+    fn spawn_pending_task(flag: Arc<AtomicBool>) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(async move {
+            let _obs = AbortObserver(flag);
+            std::future::pending::<()>().await;
+        })
+    }
+
+    /// Poll `flag` up to one second, yielding to the runtime so an aborted
+    /// task's future gets a chance to be dropped. Returns whether it flipped.
+    async fn flag_became_true(flag: &Arc<AtomicBool>) -> bool {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !flag.load(Ordering::SeqCst) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    /// Regression for CORE-020. Dropping a connected serial state WITHOUT a
+    /// graceful `disconnect()` must still abort the detached reader/writer tasks
+    /// (releasing the serial port they hold) via the `Drop` guard, so the tasks
+    /// and the port never leak.
+    #[tokio::test]
+    async fn drop_without_disconnect_aborts_tasks() {
+        let reader_flag = Arc::new(AtomicBool::new(false));
+        let writer_flag = Arc::new(AtomicBool::new(false));
+        let reader_task = spawn_pending_task(reader_flag.clone());
+        let writer_task = spawn_pending_task(writer_flag.clone());
+        // Let both tasks start running (and construct their AbortObservers).
+        tokio::task::yield_now().await;
+
+        let alive = Arc::new(AtomicBool::new(true));
+        let (write_tx, _write_rx) = mpsc::channel::<Vec<u8>>(8);
+        let state = ConnectedState {
+            write_tx,
+            reader_task,
+            writer_task,
+            alive: alive.clone(),
+            disconnected: false,
+        };
+
+        // Drop the state without ever calling disconnect().
+        drop(state);
+
+        assert!(
+            flag_became_true(&reader_flag).await,
+            "reader task must be aborted by the Drop guard (CORE-020)"
+        );
+        assert!(
+            flag_became_true(&writer_flag).await,
+            "writer task must be aborted by the Drop guard (CORE-020)"
+        );
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "Drop must mark the port dead"
+        );
+    }
+
+    /// Double-teardown guard for CORE-020. A graceful `disconnect()` already
+    /// aborts the tasks and sets `disconnected = true`; the subsequent drop of
+    /// the taken state must be a pure no-op — it must NOT abort tasks again nor
+    /// touch `alive`. Here the state carries `disconnected = true`, so its Drop
+    /// must leave the (detached) tasks running and `alive` untouched.
+    #[tokio::test]
+    async fn drop_after_disconnect_flag_is_noop() {
+        let reader_flag = Arc::new(AtomicBool::new(false));
+        let writer_flag = Arc::new(AtomicBool::new(false));
+        let reader_task = spawn_pending_task(reader_flag.clone());
+        let writer_task = spawn_pending_task(writer_flag.clone());
+        tokio::task::yield_now().await;
+
+        let alive = Arc::new(AtomicBool::new(true));
+        let (write_tx, _write_rx) = mpsc::channel::<Vec<u8>>(8);
+        let state = ConnectedState {
+            write_tx,
+            reader_task,
+            writer_task,
+            alive: alive.clone(),
+            disconnected: true,
+        };
+
+        drop(state);
+
+        // Give any erroneous abort a chance to fire before asserting it did not.
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !reader_flag.load(Ordering::SeqCst),
+            "Drop after a graceful disconnect must not abort the reader again"
+        );
+        assert!(
+            !writer_flag.load(Ordering::SeqCst),
+            "Drop after a graceful disconnect must not abort the writer again"
+        );
+        assert!(
+            alive.load(Ordering::SeqCst),
+            "Drop with the disconnected flag set must not touch alive"
+        );
     }
 
     // --- run_serial_reader / lost-port disconnect (#1824) -----------------
