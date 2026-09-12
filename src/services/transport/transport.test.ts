@@ -23,6 +23,11 @@ class FakeSocket implements JsonRpcSocket {
   emitNotification(method: string, params: unknown): void {
     this.notifHandlers.get(method)?.(params);
   }
+
+  /** Whether a handler is currently registered for a notification method. */
+  hasNotificationHandler(method: string): boolean {
+    return this.notifHandlers.has(method);
+  }
 }
 
 const snapshot: SnapshotFrame = {
@@ -76,6 +81,65 @@ describe("WebSocketTransport", () => {
     expect(socket.requests[socket.requests.length - 1]?.method).toBe("projection.unsubscribe");
     socket.emitNotification("projection.frame", diff);
     expect(frames).toHaveLength(1);
+  });
+
+  it("fans out frames to multiple subscribers per region, unsubscribing one keeps the other (FEC-007)", async () => {
+    const socket = new FakeSocket();
+    socket.responses.set("projection.subscribe", snapshot);
+    const transport = new WebSocketTransport(socket, "client-1");
+
+    const a: DiffFrame[] = [];
+    const b: DiffFrame[] = [];
+    const subA = await transport.subscribe("tunnels", (f) => a.push(f as DiffFrame));
+    const subB = await transport.subscribe("tunnels", (f) => b.push(f as DiffFrame));
+
+    const diff: DiffFrame = {
+      region: "tunnels",
+      kind: "diff",
+      baseVersion: 41,
+      version: 42,
+      ops: [{ op: "replace", path: "/tunnels/0/status", value: "connecting" }],
+    };
+
+    // Both subscribers to the same region receive the frame.
+    socket.emitNotification("projection.frame", diff);
+    expect(a).toEqual([diff]);
+    expect(b).toEqual([diff]);
+
+    // Unsubscribing one leaves the other alive; the shared listener stays.
+    subA.unsubscribe();
+    expect(socket.hasNotificationHandler("projection.frame")).toBe(true);
+    socket.emitNotification("projection.frame", diff);
+    expect(a).toEqual([diff]);
+    expect(b).toEqual([diff, diff]);
+
+    // The last subscriber leaving tears down the underlying notification listener.
+    subB.unsubscribe();
+    expect(socket.hasNotificationHandler("projection.frame")).toBe(false);
+    socket.emitNotification("projection.frame", diff);
+    expect(b).toEqual([diff, diff]);
+  });
+
+  it("close() tears down the notification listener and drops all subscribers (FEC-007)", async () => {
+    const socket = new FakeSocket();
+    socket.responses.set("projection.subscribe", snapshot);
+    const transport = new WebSocketTransport(socket, "client-1");
+
+    const frames: DiffFrame[] = [];
+    await transport.subscribe("tunnels", (f) => frames.push(f as DiffFrame));
+    expect(socket.hasNotificationHandler("projection.frame")).toBe(true);
+
+    transport.close();
+    expect(socket.hasNotificationHandler("projection.frame")).toBe(false);
+
+    socket.emitNotification("projection.frame", {
+      region: "tunnels",
+      kind: "diff",
+      baseVersion: 41,
+      version: 42,
+      ops: [],
+    });
+    expect(frames).toHaveLength(0);
   });
 
   it("passes the held version to resync", async () => {
