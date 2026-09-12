@@ -1,11 +1,11 @@
 import { useState, useEffect } from "react";
 import { X, Shield, RefreshCw } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { Button } from "@/components/ui";
 import { useDesktopVersion } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
+import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import "./UpdateNotification.css";
 
 /**
@@ -42,10 +42,14 @@ export function UpdateNotification() {
   if (!isSecurity && skippedVersion === updateInfo.latestVersion) return null;
 
   const handleOpenDownloads = async () => {
+    let opened = false;
     try {
-      await openUrl(updateInfo.releaseUrl);
+      opened = await safeOpenExternal(updateInfo.releaseUrl);
     } catch (err) {
       frontendLog("update", `Failed to open release URL: ${err}`);
+      throw new Error("Could not open the downloads page in your browser.");
+    }
+    if (!opened) {
       throw new Error("Could not open the downloads page in your browser.");
     }
     dismissUpdateNotification();

@@ -24,6 +24,7 @@ import { getBasename, formatBytes } from "@/utils/formatters";
 import { suggestedSaveCopyPath } from "@/utils/saveCopyPath";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { getMonacoTheme } from "@/utils/monacoCustomLanguages";
+import { openMonacoLink } from "@/utils/safeOpenExternal";
 import { getCurrentTheme, onThemeChange } from "@/themes";
 import {
   localReadFile,
@@ -92,6 +93,23 @@ export const LARGE_FILE_THRESHOLD_BYTES = 10 * 1024 * 1024;
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
+
+// Route Monaco link clicks through the shared external-URL allowlist so links
+// embedded in edited file content (attacker-influenceable on remote/SFTP files)
+// can only open http(s)/mailto and never hand an arbitrary scheme to the OS
+// opener (SEC-012). `registerLinkOpener` is a global Monaco registration, so it
+// is installed exactly once regardless of how many editors mount.
+let monacoLinkOpenerRegistered = false;
+function registerSafeMonacoLinkOpener(): void {
+  if (monacoLinkOpenerRegistered) return;
+  // `registerLinkOpener` exists in production Monaco (>= 0.44) but not in the
+  // lightweight monaco mock used by the vitest suite (nor in older Monaco), so
+  // guard the call: no-op cleanly when the API is absent and never throw on
+  // editor mount.
+  if (typeof monaco.editor.registerLinkOpener !== "function") return;
+  monacoLinkOpenerRegistered = true;
+  monaco.editor.registerLinkOpener({ open: openMonacoLink });
+}
 
 /**
  * Read a file's text through the session layer (#1557).
@@ -1373,6 +1391,9 @@ export function FileEditor({
   const handleEditorMount = useCallback(
     (editor: monaco.editor.IStandaloneCodeEditor) => {
       editorRef.current = editor;
+
+      // Gate link opens from file content through the scheme allowlist (SEC-012).
+      registerSafeMonacoLinkOpener();
 
       // Tag Monaco's hidden input so the test bridge can target it with pressKey
       // (Ctrl+S, Ctrl+End, …). Monaco renders to a canvas with no addressable

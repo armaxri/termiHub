@@ -153,6 +153,7 @@ if (typeof Element !== "undefined") {
 vi.mock("monaco-editor", () => ({
   editor: {
     setTheme: vi.fn(),
+    registerLinkOpener: vi.fn(),
   },
   languages: {
     getLanguages: vi.fn(() => [
