@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/src/plugin
 evidence:
   - core/src/plugin/signature.rs:359
-status: open
+status: fixed
+resolution: "already-on-develop — core/src/plugin/signature.rs verify() uses ed25519 verify_strict (cofactorless, rejects small-order/malleability) deliberately, with explanatory comment. No PR — verified 2026-09-12"
 ---
 
 ## What

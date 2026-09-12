@@ -9,7 +9,8 @@ subsystem: src-tauri/src/terminal/jsonrpc.rs, core/src/ipc/ndjson.rs
 evidence:
   - src-tauri/src/terminal/jsonrpc.rs:150
   - core/src/ipc/ndjson.rs:35
-status: open
+status: fixed
+resolution: "already-on-develop — core::ipc::read_line now capped at MAX_LINE_LEN (16 MiB) — production desktop NDJSON path bounded; jsonrpc.rs read_line_blocking is test-only (dead in prod). OOM vector closed. Residual: 16MiB vs agent's 1MiB (both bounded). No PR — verified 2026-09-12"
 ---
 
 ## What
