@@ -11,7 +11,8 @@ evidence:
   - src/store/appStore.ts:5442
   - src/store/connectionsBridge.ts:223
   - src/store/connectionsBridge.ts:142
-status: open
+status: fixed
+resolution: "#2830 — connection mutations now revert region via compensating intent (persistConnectionMutation) on persist failure; closes phantom-resurrection; heavier single-fold refactor → #2831"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:169
-status: open
+status: fixed
+resolution: "#2829 — isolated xterm private cell-width read behind typed xtermDimensions adapter + loud shape-test (public API floors sub-pixel width, infeasible); no inline as-any on layout path"
 ---
 
 ## What

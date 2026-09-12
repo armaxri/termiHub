@@ -9,7 +9,8 @@ subsystem: src/hooks
 evidence:
   - src/hooks/useTransferEvents.ts:85
   - src/hooks/useTransferEvents.ts:45
-status: open
+status: fixed
+resolution: "#2832 — useTransferEvents adopts disposed-flag registration (unlisten late-resolving handles) + clears module ownersRefreshTimer on cleanup; re-land of closed #2826"
 ---
 
 ## What
