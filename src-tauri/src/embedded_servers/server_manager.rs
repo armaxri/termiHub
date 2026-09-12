@@ -25,7 +25,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast::error::RecvError;
 
 use super::config::{
@@ -35,6 +35,7 @@ use super::service::{
     auto_start_error_state, service_id_for, EmbeddedServerService, STATUS_EVENT_KIND,
 };
 use super::storage::EmbeddedServerStorage;
+use crate::agent_service::{agent_rpc_client, AgentStatusPollDelegate, AgentStatusPoller};
 use crate::connection::recovery::RecoveryWarning;
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -99,11 +100,10 @@ pub struct EmbeddedServerManager {
     /// per-server preference in `run_locations`; a server with no recorded
     /// preference resolves local, so users see no behaviour change.
     run_location: RunLocationResolver,
-    /// Handle to the single periodic agent `service.status` poller task (#2214).
-    /// `Some` while at least one agent-hosted server exists; the task self-reaps
-    /// and clears this slot once none remain, and `stop_all` aborts it on
-    /// shutdown.
-    agent_status_poller: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// The single periodic agent `service.status` poller (#2214). Runs while at
+    /// least one agent-hosted server exists, self-reaping once none remain; the
+    /// shared [`AgentStatusPoller`] owns the task lifecycle (DUP-020).
+    agent_status_poller: AgentStatusPoller,
     app_handle: AppHandle,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
 }
@@ -124,7 +124,7 @@ impl EmbeddedServerManager {
             run_locations: Mutex::new(HashMap::new()),
             service_registry: build_service_registry(),
             run_location: RunLocationResolver::new(),
-            agent_status_poller: Arc::new(Mutex::new(None)),
+            agent_status_poller: AgentStatusPoller::new(),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
         })
@@ -321,12 +321,9 @@ impl EmbeddedServerManager {
 
         let params = service_start_params(server_id, config)?;
 
-        let agent_manager = self
-            .app_handle
-            .try_state::<Arc<dyn AgentRpcClient>>()
-            .ok_or_else(|| {
-                TerminalError::EmbeddedServerError("Agent manager is not available".to_string())
-            })?;
+        let agent_manager = agent_rpc_client(&self.app_handle).ok_or_else(|| {
+            TerminalError::EmbeddedServerError("Agent manager is not available".to_string())
+        })?;
 
         match agent_manager.send_request(agent_id, "service.start", params) {
             Ok(result) => {
@@ -344,7 +341,7 @@ impl EmbeddedServerManager {
                 let _ = self.app_handle.emit(SERVER_STATUS_EVENT, &state);
                 // Sample the agent's status periodically so a later transition
                 // (e.g. a crash → Error) and live stats reach the frontend.
-                self.ensure_agent_status_poller();
+                self.ensure_status_poller();
                 tracing::info!("Embedded server {server_id} started on agent {agent_id}");
                 Ok(())
             }
@@ -371,7 +368,7 @@ impl EmbeddedServerManager {
         let Some(handle) = handle else {
             return false;
         };
-        if let Some(agent_manager) = self.app_handle.try_state::<Arc<dyn AgentRpcClient>>() {
+        if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
             let params = json!({ "instanceId": server_id });
             if let Err(e) = agent_manager.send_request(&handle.agent_id, "service.stop", params) {
                 tracing::warn!(
@@ -428,7 +425,7 @@ impl EmbeddedServerManager {
         for id in agent_ids {
             self.stop_agent_service(&id);
         }
-        self.stop_agent_status_poller();
+        self.agent_status_poller.stop();
     }
 
     /// Start all servers with `auto_start: true`.
@@ -457,104 +454,15 @@ impl EmbeddedServerManager {
         }
     }
 
-    /// Ensure the single periodic agent `service.status` poller task is running
-    /// (#2214).
-    ///
-    /// Idempotent, mirroring `tunnel_manager::ensure_agent_stats_poller` (#2199):
-    /// every [`STATUS_POLL_INTERVAL`] it snapshots the live agent-server set,
-    /// polls each one's `service.status` over the agent RPC (the blocking batch on
-    /// a `spawn_blocking` thread), writes the fresh state back into the handle,
-    /// and re-emits [`SERVER_STATUS_EVENT`] on a status/error transition so the
-    /// frontend sees a crash-to-Error just like a desktop server. The task
-    /// self-reaps (clearing this slot) once no agent server remains.
-    fn ensure_agent_status_poller(&self) {
-        let mut slot = match self.agent_status_poller.lock() {
-            Ok(slot) => slot,
-            Err(_) => return,
-        };
-        // Already running (and not yet finished) — nothing to do.
-        if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
-            return;
-        }
-
-        let agent_servers = Arc::clone(&self.agent_servers);
-        let app_handle = self.app_handle.clone();
-        let poller_slot = Arc::clone(&self.agent_status_poller);
-
-        let handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(STATUS_POLL_INTERVAL).await;
-
-                // Snapshot the (server id, agent id) targets under the lock, then
-                // release it before any RPC so a slow agent never blocks a
-                // start/stop that also touches this map.
-                let targets: Vec<(String, String)> = match agent_servers.lock() {
-                    Ok(map) => map
-                        .iter()
-                        .map(|(id, handle)| (id.clone(), handle.agent_id.clone()))
-                        .collect(),
-                    Err(_) => break,
-                };
-
-                // No agent-hosted server left: stop polling and clear the slot so
-                // a later start re-spawns the task.
-                if targets.is_empty() {
-                    break;
-                }
-
-                // Resolve the agent RPC client fresh each tick (an agent may
-                // connect after the poller started). Absent → skip this tick.
-                let Some(client) = app_handle
-                    .try_state::<Arc<dyn AgentRpcClient>>()
-                    .map(|state| (*state).clone())
-                else {
-                    continue;
-                };
-
-                // `service.status` is a blocking RPC; run the whole batch on a
-                // blocking thread so no async worker is stalled.
-                let samples =
-                    tokio::task::spawn_blocking(move || poll_agent_server_states(client, &targets))
-                        .await
-                        .unwrap_or_default();
-
-                // Write the fresh samples back into the live handles under the
-                // lock, emitting only on a status/error transition (matching the
-                // desktop service, which emits on transitions, not every tick).
-                let mut transitions = Vec::new();
-                if let Ok(mut map) = agent_servers.lock() {
-                    for state in samples {
-                        if let Some(handle) = map.get_mut(&state.server_id) {
-                            let changed = handle.last_state.status != state.status
-                                || handle.last_state.error != state.error;
-                            handle.last_state = state.clone();
-                            if changed {
-                                transitions.push(state);
-                            }
-                        }
-                    }
-                }
-                for state in &transitions {
-                    let _ = app_handle.emit(SERVER_STATUS_EVENT, state);
-                }
-            }
-
-            // Self-reap: drop our own handle so a later start re-spawns the task.
-            if let Ok(mut slot) = poller_slot.lock() {
-                *slot = None;
-            }
+    /// Ensure the single periodic agent `service.status` poller is running
+    /// (#2214). Idempotent; the shared [`AgentStatusPoller`] owns the task
+    /// lifecycle and the [`EmbeddedServerPoll`] delegate supplies the
+    /// service-specific poll + write-back/emit (DUP-020).
+    fn ensure_status_poller(&self) {
+        self.agent_status_poller.ensure(EmbeddedServerPoll {
+            agent_servers: Arc::clone(&self.agent_servers),
+            app: self.app_handle.clone(),
         });
-
-        *slot = Some(handle);
-    }
-
-    /// Abort the agent `service.status` poller task (if any) and clear its slot.
-    fn stop_agent_status_poller(&self) {
-        if let Ok(mut slot) = self.agent_status_poller.lock() {
-            if let Some(handle) = slot.take() {
-                handle.abort();
-            }
-        }
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
@@ -687,6 +595,67 @@ fn synth_state_from_status(server_id: &str, status: &serde_json::Value) -> Serve
         error,
         stats: ServerStats::default(),
         started_at: None,
+    }
+}
+
+/// The embedded-server side of the shared agent status poller (DUP-020).
+///
+/// Supplies the service-specific pieces to [`AgentStatusPoller`]: the live
+/// agent-server targets, the `service.status` batch (via
+/// [`poll_agent_server_states`]), and the write-back that re-emits
+/// [`SERVER_STATUS_EVENT`] only on a status/error transition — matching the
+/// desktop service, which emits on transitions, not every tick.
+struct EmbeddedServerPoll {
+    agent_servers: Arc<Mutex<HashMap<String, AgentServerHandle>>>,
+    app: AppHandle,
+}
+
+impl AgentStatusPollDelegate for EmbeddedServerPoll {
+    type Sample = ServerState;
+
+    fn interval(&self) -> Duration {
+        STATUS_POLL_INTERVAL
+    }
+
+    fn client(&self) -> Option<Arc<dyn AgentRpcClient>> {
+        agent_rpc_client(&self.app)
+    }
+
+    fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
+        match self.agent_servers.lock() {
+            Ok(map) => {
+                let targets = map
+                    .iter()
+                    .map(|(id, handle)| (id.clone(), handle.agent_id.clone()))
+                    .collect();
+                (targets, !map.is_empty())
+            }
+            // A poisoned lock stops the poller, exactly as the old `break` did.
+            Err(_) => (Vec::new(), false),
+        }
+    }
+
+    fn poll(client: Arc<dyn AgentRpcClient>, targets: &[(String, String)]) -> Vec<ServerState> {
+        poll_agent_server_states(client, targets)
+    }
+
+    fn apply(&self, samples: Vec<ServerState>) {
+        let mut transitions = Vec::new();
+        if let Ok(mut map) = self.agent_servers.lock() {
+            for state in samples {
+                if let Some(handle) = map.get_mut(&state.server_id) {
+                    let changed = handle.last_state.status != state.status
+                        || handle.last_state.error != state.error;
+                    handle.last_state = state.clone();
+                    if changed {
+                        transitions.push(state);
+                    }
+                }
+            }
+        }
+        for state in &transitions {
+            let _ = self.app.emit(SERVER_STATUS_EVENT, state);
+        }
     }
 }
 
