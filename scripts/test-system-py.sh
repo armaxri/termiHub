@@ -108,7 +108,7 @@ needs_build() {
 if [ "$SKIP_BUILD" -eq 1 ]; then
     if [ "$DRY_RUN" -eq 0 ] && [ ! -f "$APP_BINARY" ]; then
         echo "ERROR: app binary not found at $APP_BINARY" >&2
-        echo "Build it (drop --skip-build) or run: pnpm tauri build${PROFILE:+ --$PROFILE}" >&2
+        echo "Build it (drop --skip-build) or run: pnpm tauri build${PROFILE:+ --$PROFILE} --config src-tauri/tauri.test.conf.json --features mock-remote-desktop" >&2
         exit 1
     fi
     BUILD_ACTION="skip (--skip-build)"
@@ -145,10 +145,16 @@ if [ "$BUILD_ACTION" = "build" ]; then
     # which deep-merges over tauri.conf.json. A build without it cannot connect
     # the bridge — so any test build MUST pass --config here (see also
     # system-integration.yml and tests/system/README.md).
+    #
+    # --features mock-remote-desktop (DEAD-001): the mock graphical backend is no
+    # longer in the desktop crate's `default` feature set (a test/demo backend
+    # must not ship in a release). The E2E lane still needs it so the shared
+    # remote-desktop layer is testable with no real VNC/RDP server, so the test
+    # app opts back into it here — matching system-integration.yml.
     if [ "$PROFILE" = "debug" ]; then
-        pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
+        pnpm tauri build --debug --config src-tauri/tauri.test.conf.json --features mock-remote-desktop
     else
-        pnpm tauri build --config src-tauri/tauri.test.conf.json
+        pnpm tauri build --config src-tauri/tauri.test.conf.json --features mock-remote-desktop
     fi
 else
     echo "=== Build $BUILD_ACTION, using $APP_BINARY ==="

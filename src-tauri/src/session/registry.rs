@@ -74,7 +74,9 @@ pub fn build_desktop_registry() -> ConnectionTypeRegistry {
 
     // Mock remote desktop — a protocol-less graphical backend so the shared
     // remote-desktop layer works with no real VNC/RDP server (gated behind the
-    // `mock-remote-desktop` feature; enabled by default). It reports
+    // `mock-remote-desktop` feature, which is NOT enabled by default — it is a
+    // test/demo backend opted into only by E2E/integration builds, so a shipping
+    // release never registers this type; see DEAD-001). It reports
     // `graphical: true`, so it routes through the GraphicalSessionManager into a
     // remote-desktop canvas tab. Real backends (VNC #1681, RDP #1682) register
     // here identically — this is the additive, data-driven seam.

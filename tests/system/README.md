@@ -265,6 +265,14 @@ cd tests/system && ./pytest.sh -m integration -k sftp_infra -x -s
 Point at an arbitrary binary (e.g. a bundle in a non-standard location) with
 `TERMIHUB_TEST_APP_BINARY=/path/to/termihub`.
 
+> **Remote-desktop coverage (DEAD-001):** the mock graphical backend is **not**
+> in the desktop crate's `default` features (a test/demo backend must not ship
+> in a release), so a hand-run `pnpm tauri build` no longer registers the "Mock
+> Remote Desktop" connection type. To exercise the shared remote-desktop layer,
+> build the test app with `--features mock-remote-desktop` (the recommended
+> `./scripts/test-system-py.sh` and the nightly `system-integration.yml` already
+> pass it for you).
+
 ### Failure artifacts
 
 When an **integration** test fails, the harness writes a diagnostic bundle to

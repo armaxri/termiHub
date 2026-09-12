@@ -15,11 +15,19 @@ publish = false
 # FTP / FTPS connection type. Enabled by default so the desktop ships it, but
 # kept as a toggle so the registry registration is gated (`#[cfg(feature = "ftp")]`)
 # and a build without it still compiles.
-default = ["ftp", "mock-remote-desktop", "vnc", "rdp-sidecar"]
+default = ["ftp", "vnc", "rdp-sidecar"]
 ftp = ["termihub-core/ftp"]
 # Mock graphical remote-desktop backend so the shared remote-desktop layer
-# (#1680) ships and is E2E-testable with no real VNC/RDP server. Gated so the
-# registration is `#[cfg(feature = "mock-remote-desktop")]`.
+# (#1680) is E2E-testable with no real VNC/RDP server. Gated so the registration
+# is `#[cfg(feature = "mock-remote-desktop")]`.
+#
+# NOT in `default` (DEAD-001): a protocol-less test/demo backend must never
+# compile into a shipping release, where it would appear as a user-selectable
+# "Mock Remote Desktop" connection type (only hidden behind the experimental
+# toggle). Opt in explicitly for E2E/integration builds with
+# `--features mock-remote-desktop`; the E2E test-app builds in
+# system-integration.yml and scripts/test-system-py.sh pass it, and per-PR CI's
+# `cargo test/clippy --all-features` still exercises the gated Rust tests.
 mock-remote-desktop = ["termihub-core/mock-remote-desktop"]
 # VNC (RFB) graphical remote-desktop backend (#1681). Gated so the registration
 # is `#[cfg(feature = "vnc")]`. Ships experimental — hidden unless the user
