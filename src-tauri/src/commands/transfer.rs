@@ -14,34 +14,43 @@ use crate::utils::errors::TerminalError;
 #[cfg(feature = "ftp")]
 use crate::utils::fs::file_name_of;
 
-/// Pause an in-flight transfer. Unknown ids are a no-op.
+/// Pause an in-flight transfer.
+///
+/// Returns `true` when the transfer accepted the pause (a live *rich* transfer),
+/// and `false` when it was a no-op — an unknown/finished id, or a *legacy*
+/// SFTP transfer, which the queue model does not (yet) support pausing. The
+/// frontend uses this to give honest feedback instead of a blanket success
+/// toast (#1336; audit FEC-004 / UX-016).
 #[tauri::command]
-pub fn transfer_pause(transfer_id: String, registry: State<'_, TransferRegistry>) {
+pub fn transfer_pause(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
     debug!(transfer_id, "transfer pause");
-    registry.pause(&transfer_id);
+    registry.pause(&transfer_id)
 }
 
-/// Resume a paused transfer. Unknown ids are a no-op.
+/// Resume a paused transfer. Returns `true` when the transfer accepted the
+/// resume, `false` on a no-op (see [`transfer_pause`]).
 #[tauri::command]
-pub fn transfer_resume(transfer_id: String, registry: State<'_, TransferRegistry>) {
+pub fn transfer_resume(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
     debug!(transfer_id, "transfer resume");
-    registry.resume(&transfer_id);
+    registry.resume(&transfer_id)
 }
 
-/// Cancel an in-flight transfer (queued, active, or paused). Unknown ids are a
-/// no-op. Works for both legacy SFTP and rich FTP transfers.
+/// Cancel an in-flight transfer (queued, active, or paused). Works for both
+/// legacy SFTP and rich FTP transfers. Returns `true` when a live transfer was
+/// cancelled, `false` for an unknown/already-finished id.
 #[tauri::command]
-pub fn transfer_cancel(transfer_id: String, registry: State<'_, TransferRegistry>) {
+pub fn transfer_cancel(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
     debug!(transfer_id, "transfer cancel");
-    registry.cancel(&transfer_id);
+    registry.cancel(&transfer_id)
 }
 
-/// Manually retry a failed transfer (resets its attempt counter). Unknown ids
-/// are a no-op.
+/// Manually retry a failed transfer (resets its attempt counter). Returns
+/// `true` when the transfer accepted the retry, `false` on a no-op (see
+/// [`transfer_pause`]).
 #[tauri::command]
-pub fn transfer_retry(transfer_id: String, registry: State<'_, TransferRegistry>) {
+pub fn transfer_retry(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
     debug!(transfer_id, "transfer retry");
-    registry.retry(&transfer_id);
+    registry.retry(&transfer_id)
 }
 
 /// List the rich (queued) transfers, optionally filtered by session.
