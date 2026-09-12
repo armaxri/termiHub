@@ -120,13 +120,6 @@ pub struct RegionDelta {
     pub stats_cache: Vec<(String, Option<Value>)>,
 }
 
-impl RegionDelta {
-    /// True when no entry was touched since the last drain.
-    pub fn is_empty(&self) -> bool {
-        self.monitors.is_empty() && self.stats_cache.is_empty()
-    }
-}
-
 /// The shadow system-monitor authority. Owns one [`MonitorEntry`] per monitored
 /// host/session, keyed by `MonitorKey`, plus the last-known stats cache. The
 /// single shared `system-monitors` region projects this state.
