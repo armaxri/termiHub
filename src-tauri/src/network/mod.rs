@@ -15,12 +15,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter};
 use tokio::sync::broadcast::error::RecvError;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use uuid::Uuid;
 
+use crate::agent_service::{AgentStatusPollDelegate, AgentStatusPoller};
 use http_monitor::{
     register_http_monitor, HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState,
 };
@@ -96,10 +97,10 @@ pub struct NetworkManager {
     /// the desktop default and today's behaviour. Persisted configs load stopped
     /// on this computer after a relaunch (PERF-008); a resume runs them locally.
     monitor_run_locations: Mutex<HashMap<String, RunLocation>>,
-    /// Handle to the single periodic agent `service.status` poller task (#2592).
-    /// `Some` while at least one agent-hosted monitor exists; the task self-reaps
-    /// once none remain, and shutdown aborts it.
-    agent_status_poller: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// The single periodic agent `service.status` poller (#2592). Runs while at
+    /// least one agent-hosted monitor exists, self-reaping once none remain; the
+    /// shared [`AgentStatusPoller`] owns the task lifecycle (DUP-020).
+    agent_status_poller: AgentStatusPoller,
     /// Desktop-side registry of run-location-routable services. The HTTP monitor
     /// is registered here (discovery, schema, capabilities) as the S2 pilot.
     service_registry: ServiceRegistry,
@@ -129,7 +130,7 @@ impl NetworkManager {
             http_monitors: Mutex::new(HashMap::new()),
             agent_monitors: Arc::new(Mutex::new(HashMap::new())),
             monitor_run_locations: Mutex::new(HashMap::new()),
-            agent_status_poller: Arc::new(Mutex::new(None)),
+            agent_status_poller: AgentStatusPoller::new(),
             service_registry: build_service_registry(),
             run_location: RunLocationResolver::new(),
             run_locations: Mutex::new(HashMap::new()),
@@ -207,10 +208,8 @@ impl NetworkManager {
     /// `None` before the app is fully set up (e.g. in unit tests without a live
     /// Tauri app); the agent-routed path treats that as "agent unavailable".
     pub fn agent_rpc_client(&self) -> Option<Arc<dyn AgentRpcClient>> {
-        use tauri::Manager;
-        let app = self.app_handle()?;
-        app.try_state::<Arc<dyn AgentRpcClient>>()
-            .map(|state| (*state).clone())
+        self.app_handle()
+            .and_then(|app| crate::agent_service::agent_rpc_client(&app))
     }
 
     /// Initialise the manager with the app config directory and app handle.
@@ -521,99 +520,23 @@ impl NetworkManager {
                 paused: false,
             },
         );
-        self.ensure_agent_status_poller();
+        self.ensure_status_poller();
         tracing::info!("HTTP monitor {id} started on agent {agent_id}");
         Ok(id)
     }
 
-    /// Ensure the single periodic agent `service.status` poller task is running
-    /// (#2592).
-    ///
-    /// Idempotent, mirroring the embedded-server poller (#2214): every
-    /// [`AGENT_STATUS_POLL_INTERVAL`] it snapshots the live agent-monitor set,
-    /// polls each running one's `service.status` over the agent RPC (blocking, on
-    /// a `spawn_blocking` thread), and re-emits [`HTTP_MONITOR_CHECK_EVENT`] with
-    /// the streamed [`HttpCheckResult`] when a fresh check arrives — so a
-    /// monitor's checks reach the frontend from the agent's vantage exactly as a
-    /// desktop-hosted monitor's do. The task self-reaps once no agent monitor
-    /// remains.
-    fn ensure_agent_status_poller(&self) {
-        let mut slot = match self.agent_status_poller.lock() {
-            Ok(slot) => slot,
-            Err(_) => return,
-        };
-        if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
-            return;
+    /// Ensure the single periodic agent `service.status` poller is running
+    /// (#2592). Idempotent; the shared [`AgentStatusPoller`] owns the task
+    /// lifecycle and the [`AgentMonitorPoll`] delegate supplies the monitor-specific
+    /// poll + write-back/emit (DUP-020). No-op without an app handle (e.g. in unit
+    /// tests) — the same "agent unavailable" fall-through the old poller took.
+    fn ensure_status_poller(&self) {
+        if let Some(app) = self.app_handle() {
+            self.agent_status_poller.ensure(AgentMonitorPoll {
+                agent_monitors: Arc::clone(&self.agent_monitors),
+                app,
+            });
         }
-
-        let agent_monitors = Arc::clone(&self.agent_monitors);
-        let poller_slot = Arc::clone(&self.agent_status_poller);
-        let app = self.app_handle();
-
-        let handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(AGENT_STATUS_POLL_INTERVAL).await;
-
-                // Snapshot the running (monitor id, agent id) targets under the
-                // lock, then release it before any RPC so a slow agent never
-                // blocks a start/stop that also touches this map.
-                let targets: Vec<(String, String)> = match agent_monitors.lock() {
-                    Ok(map) => map
-                        .iter()
-                        .filter(|(_, h)| h.running && !h.paused)
-                        .map(|(id, h)| (id.clone(), h.agent_id.clone()))
-                        .collect(),
-                    Err(_) => break,
-                };
-                // No agent monitor left at all: stop polling and clear the slot.
-                let any_left = agent_monitors
-                    .lock()
-                    .map(|m| !m.is_empty())
-                    .unwrap_or(false);
-                if !any_left {
-                    break;
-                }
-                if targets.is_empty() {
-                    continue;
-                }
-
-                let (Some(app), Some(client)) = (app.clone(), resolve_agent_client(app.as_ref()))
-                else {
-                    continue;
-                };
-
-                let samples = tokio::task::spawn_blocking(move || {
-                    poll_agent_monitor_checks(client, &targets)
-                })
-                .await
-                .unwrap_or_default();
-
-                // Write fresh checks back into the handles and emit each new one.
-                let mut fresh = Vec::new();
-                if let Ok(mut map) = agent_monitors.lock() {
-                    for (id, result) in samples {
-                        if let Some(handle) = map.get_mut(&id) {
-                            let is_new = handle
-                                .last_result
-                                .as_ref()
-                                .map(|prev| prev.timestamp_ms != result.timestamp_ms)
-                                .unwrap_or(true);
-                            handle.last_result = Some(result.clone());
-                            if is_new {
-                                fresh.push(result);
-                            }
-                        }
-                    }
-                }
-                for result in fresh {
-                    let _ = app.emit(HTTP_MONITOR_CHECK_EVENT, result);
-                }
-            }
-            if let Ok(mut slot) = poller_slot.lock() {
-                *slot = None;
-            }
-        });
-        *slot = Some(handle);
     }
 
     /// The agent hosting `monitor_id`, if it is an agent-hosted monitor (#2607).
@@ -815,7 +738,7 @@ impl NetworkManager {
                     handle.paused = false;
                 }
             }
-            self.ensure_agent_status_poller();
+            self.ensure_status_poller();
             debug!(monitor_id, "Resumed agent-hosted HTTP monitor");
             return Ok(());
         }
@@ -907,11 +830,7 @@ impl NetworkManager {
         if let Ok(mut map) = self.agent_monitors.lock() {
             map.clear();
         }
-        if let Ok(mut slot) = self.agent_status_poller.lock() {
-            if let Some(handle) = slot.take() {
-                handle.abort();
-            }
-        }
+        self.agent_status_poller.stop();
     }
 
     /// List all HTTP monitors (running and stopped), desktop- and agent-hosted.
@@ -1009,14 +928,76 @@ fn spawn_event_bridge(app: AppHandle, mut events: termihub_core::service::Servic
     });
 }
 
-/// Resolve the agent RPC client from Tauri managed state (#2592).
+/// The HTTP-monitor side of the shared agent status poller (DUP-020).
 ///
-/// A free function (no `&self`) so the periodic poller task can resolve the
-/// client fresh each tick without holding a [`NetworkManager`] reference — an
-/// agent may connect after the poller started.
-fn resolve_agent_client(app: Option<&AppHandle>) -> Option<Arc<dyn AgentRpcClient>> {
-    app?.try_state::<Arc<dyn AgentRpcClient>>()
-        .map(|state| (*state).clone())
+/// Supplies the monitor-specific pieces to [`AgentStatusPoller`]: the running,
+/// non-paused agent-monitor targets (a paused-but-listed monitor is skipped this
+/// tick but keeps the poller alive), the `service.status` batch (via
+/// [`poll_agent_monitor_checks`]), and the write-back that re-emits
+/// [`HTTP_MONITOR_CHECK_EVENT`] for each fresh check — so an agent-hosted
+/// monitor's checks reach the frontend exactly as a desktop-hosted one's do.
+struct AgentMonitorPoll {
+    agent_monitors: Arc<Mutex<HashMap<String, AgentMonitorHandle>>>,
+    app: AppHandle,
+}
+
+impl AgentStatusPollDelegate for AgentMonitorPoll {
+    type Sample = (String, HttpCheckResult);
+
+    fn interval(&self) -> Duration {
+        AGENT_STATUS_POLL_INTERVAL
+    }
+
+    fn client(&self) -> Option<Arc<dyn AgentRpcClient>> {
+        crate::agent_service::agent_rpc_client(&self.app)
+    }
+
+    fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
+        match self.agent_monitors.lock() {
+            Ok(map) => {
+                // Poll only running, non-paused monitors; `any_remaining` tracks
+                // whether *any* monitor is still listed, so a paused monitor keeps
+                // the poller alive (skips the tick) rather than stopping it.
+                let targets = map
+                    .iter()
+                    .filter(|(_, h)| h.running && !h.paused)
+                    .map(|(id, h)| (id.clone(), h.agent_id.clone()))
+                    .collect();
+                (targets, !map.is_empty())
+            }
+            // A poisoned lock stops the poller, exactly as the old `break` did.
+            Err(_) => (Vec::new(), false),
+        }
+    }
+
+    fn poll(
+        client: Arc<dyn AgentRpcClient>,
+        targets: &[(String, String)],
+    ) -> Vec<(String, HttpCheckResult)> {
+        poll_agent_monitor_checks(client, targets)
+    }
+
+    fn apply(&self, samples: Vec<(String, HttpCheckResult)>) {
+        let mut fresh = Vec::new();
+        if let Ok(mut map) = self.agent_monitors.lock() {
+            for (id, result) in samples {
+                if let Some(handle) = map.get_mut(&id) {
+                    let is_new = handle
+                        .last_result
+                        .as_ref()
+                        .map(|prev| prev.timestamp_ms != result.timestamp_ms)
+                        .unwrap_or(true);
+                    handle.last_result = Some(result.clone());
+                    if is_new {
+                        fresh.push(result);
+                    }
+                }
+            }
+        }
+        for result in fresh {
+            let _ = self.app.emit(HTTP_MONITOR_CHECK_EVENT, result);
+        }
+    }
 }
 
 /// Poll `service.status` for a batch of agent-hosted monitors and collect the
