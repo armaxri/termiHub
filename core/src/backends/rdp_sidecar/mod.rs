@@ -1066,6 +1066,62 @@ mod tests {
         assert_eq!(resolved, fake);
     }
 
+    /// CORE-011: the bare-name fallback must resolve to the ABSOLUTE path the OS
+    /// would execute from PATH, so the pre-spawn integrity check hashes the exact
+    /// file `Command::new` later spawns.
+    ///
+    /// Before the fix `resolve_helper_binary` returned the bare `HELPER_BIN_NAME`
+    /// when neither the override nor the next-to-exe candidate existed. That bare
+    /// name is opened by `sha256_hex_of_file` **relative to CWD**, while spawn
+    /// resolves it via **PATH** — potentially two different files (and in a
+    /// release build with an embedded digest, hashing the nonexistent relative
+    /// path errors and refuses to spawn even when a valid helper is on PATH).
+    ///
+    /// This test plants a fake helper on PATH (and nowhere the earlier branches
+    /// look) and asserts the resolved path is absolute, is that exact file, and
+    /// hashes to that file's bytes — i.e. hash-file == spawn-file. It fails
+    /// (non-absolute bare name) without the fix.
+    #[test]
+    fn bare_name_resolves_to_absolute_path_on_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let helper = tmp.path().join(HELPER_BIN_NAME);
+        std::fs::write(&helper, b"fake helper bytes").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&helper).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&helper, perms).unwrap();
+        }
+
+        // Scope the env mutation so it cannot leak to other tests: unset the
+        // override (so the first branch is skipped) and point PATH only at the
+        // temp dir (so the bare name resolves there and nowhere else).
+        let resolved = temp_env::with_vars(
+            [
+                (HELPER_PATH_ENV, None::<&str>),
+                ("PATH", Some(tmp.path().to_str().unwrap())),
+            ],
+            resolve_helper_binary,
+        );
+
+        // The bug returned a bare, relative name; the fix returns an absolute one.
+        assert!(
+            resolved.is_absolute(),
+            "resolve_helper_binary must return an absolute path, got {resolved:?}"
+        );
+        // ...and it is exactly the file we planted on PATH — the one spawn runs.
+        assert_eq!(
+            std::fs::canonicalize(&resolved).unwrap(),
+            std::fs::canonicalize(&helper).unwrap()
+        );
+        // So the integrity check hashes the exact bytes that would be spawned.
+        assert_eq!(
+            integrity::sha256_hex_of_file(&resolved).unwrap(),
+            integrity::sha256_hex_of_file(&helper).unwrap()
+        );
+    }
+
     fn test_shared() -> Arc<SidecarShared> {
         Arc::new(SidecarShared {
             clipboard: Mutex::new(String::new()),
