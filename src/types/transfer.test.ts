@@ -5,6 +5,7 @@ import {
   stateFromPhase,
   isTerminalTransferState,
   formatThroughput,
+  computeEtaSeconds,
   type TransferEntry,
 } from "./transfer";
 import type { TransferProgress, TransferSnapshot } from "@/services/api";
@@ -230,6 +231,133 @@ describe("transferEntryFromSnapshot (#1645)", () => {
     expect(entry.state).toBe("cancelled");
     expect(entry.percent).toBeNull();
     expect(entry.totalBytes).toBeNull();
+  });
+});
+
+describe("computeEtaSeconds", () => {
+  it("computes seconds-remaining from bytes-remaining / speed", () => {
+    // 40 bytes left at 20 B/s → 2s
+    expect(
+      computeEtaSeconds({
+        state: "active",
+        transferred: 60,
+        totalBytes: 100,
+        speedBytesPerSec: 20,
+      })
+    ).toBe(2);
+  });
+
+  it("prefers a backend-measured ETA over the byte/speed estimate", () => {
+    expect(
+      computeEtaSeconds({
+        state: "active",
+        transferred: 60,
+        totalBytes: 100,
+        speedBytesPerSec: 20,
+        backendEtaSeconds: 9,
+      })
+    ).toBe(9);
+  });
+
+  it("is null when the total size is unknown (indeterminate)", () => {
+    expect(
+      computeEtaSeconds({
+        state: "active",
+        transferred: 60,
+        totalBytes: null,
+        speedBytesPerSec: 20,
+      })
+    ).toBeNull();
+  });
+
+  it("is null when the speed is zero or unknown", () => {
+    expect(
+      computeEtaSeconds({
+        state: "active",
+        transferred: 60,
+        totalBytes: 100,
+        speedBytesPerSec: 0,
+      })
+    ).toBeNull();
+    expect(
+      computeEtaSeconds({
+        state: "active",
+        transferred: 60,
+        totalBytes: 100,
+        speedBytesPerSec: null,
+      })
+    ).toBeNull();
+  });
+
+  it("is null when no bytes remain", () => {
+    expect(
+      computeEtaSeconds({
+        state: "active",
+        transferred: 100,
+        totalBytes: 100,
+        speedBytesPerSec: 20,
+      })
+    ).toBeNull();
+  });
+
+  it("is null for any non-active state", () => {
+    for (const state of ["queued", "paused", "completed", "failed", "cancelled"] as const) {
+      expect(
+        computeEtaSeconds({ state, transferred: 60, totalBytes: 100, speedBytesPerSec: 20 })
+      ).toBeNull();
+    }
+  });
+
+  it("smooths a jumpy estimate toward the previous ETA (EMA)", () => {
+    // raw = 80 / 20 = 4s; blended with prev 10s at alpha 0.4 → 0.4*4 + 0.6*10 = 7.6 → 8
+    expect(
+      computeEtaSeconds({
+        state: "active",
+        transferred: 20,
+        totalBytes: 100,
+        speedBytesPerSec: 20,
+        prevEtaSeconds: 10,
+      })
+    ).toBe(8);
+  });
+});
+
+describe("transferEntryFromProgress ETA", () => {
+  it("computes etaSeconds from the byte/speed delta for an active row", () => {
+    const prev = transferEntryFromProgress(progress({ transferred: 0 }), undefined, 1000);
+    // 1024 more bytes over 1000ms → 1024 B/s; 99*1024 - 1024 bytes left... use round total
+    const entry = transferEntryFromProgress(
+      progress({ transferred: 1024, total: 11 * 1024 }),
+      prev,
+      2000
+    );
+    expect(entry.speedBytesPerSec).toBe(1024);
+    // 10 KiB remaining at 1 KiB/s → 10s
+    expect(entry.etaSeconds).toBe(10);
+  });
+
+  it("prefers the backend etaSecs when supplied", () => {
+    const entry = transferEntryFromProgress(
+      progress({ state: "active", speed: 1024, transferred: 50, etaSecs: 42 }),
+      undefined,
+      0
+    );
+    expect(entry.etaSeconds).toBe(42);
+  });
+
+  it("has a null etaSeconds for an indeterminate (unknown-total) row", () => {
+    const entry = transferEntryFromProgress(
+      progress({ total: 0, transferred: 10, speed: 1024 }),
+      undefined,
+      0
+    );
+    expect(entry.totalBytes).toBeNull();
+    expect(entry.etaSeconds).toBeNull();
+  });
+
+  it("clears etaSeconds on completion", () => {
+    const entry = transferEntryFromProgress(progress({ phase: "done", transferred: 100 }), undefined, 0);
+    expect(entry.etaSeconds).toBeNull();
   });
 });
 
