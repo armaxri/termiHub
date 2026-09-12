@@ -5,7 +5,7 @@
   width: 380px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   box-shadow: var(--shadow-md);
   z-index: var(--z-banner);
   font-size: var(--font-size-md);
@@ -64,7 +64,7 @@
   cursor: pointer;
   color: var(--text-secondary);
   padding: 2px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
 
