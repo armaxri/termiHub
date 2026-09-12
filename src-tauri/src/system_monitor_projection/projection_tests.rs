@@ -22,8 +22,8 @@ use termihub_core::monitoring::SystemStats;
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
-    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    apply_ops, compute_ops, DiffFrame, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus,
+    ProjectionError, ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
 use crate::system_monitor_projection::projection::{
     fold_monitor_transition, publish_monitors, SYSTEM_MONITORS_REGION,
@@ -627,4 +627,155 @@ fn server_side_fold_is_a_noop_without_managed_state() {
     let app = tauri::test::mock_app();
     // Nothing managed — reaching the assert without panicking is the contract.
     fold_monitor_transition(app.handle(), |s| s.stats("s1", stats("h", 1.0)));
+}
+
+// ── Incremental publish equivalence (PERF-006) ────────────────────────────────
+//
+// The incremental publish (`drain_delta` → reduced diff → in-place splice) must
+// emit a diff **byte-identical** to the old whole-region path (re-serialize the
+// whole store + `compute_ops` of the two full trees). These tests pin that: at
+// each fold they assert the fanned-out ops equal `compute_ops(prev_full,
+// new_full)`, and that the subscriber cache converges on the store snapshot.
+
+/// Publish `store` and assert the emitted diff equals the whole-region diff
+/// between `prev` (the region view before the fold) and the store's fresh
+/// snapshot. Advances `prev` to the new snapshot. Returns nothing; a `None`
+/// publish (no change) is asserted to coincide with an empty whole-region diff.
+fn assert_incremental_equals_full(
+    projector: &Projector,
+    store: &SystemMonitorStore,
+    sink: &VecSink,
+    prev: &mut Value,
+    label: &str,
+) {
+    let before = sink.diffs().len();
+    let new_full = store.snapshot();
+    let expected_ops: Vec<DiffOp> = compute_ops(prev, &new_full);
+
+    let produced = publish_monitors(projector, store);
+    let diffs = sink.diffs();
+
+    if expected_ops.is_empty() {
+        assert!(produced.is_empty(), "{label}: no region advanced on a no-op");
+        assert_eq!(diffs.len(), before, "{label}: no diff on a no-op");
+    } else {
+        assert_eq!(diffs.len(), before + 1, "{label}: exactly one diff emitted");
+        assert_eq!(
+            &diffs.last().unwrap().ops,
+            &expected_ops,
+            "{label}: incremental ops must equal the whole-region diff"
+        );
+    }
+
+    // Cross-check the reference view converges exactly like a client cache would.
+    let mut applied = prev.clone();
+    apply_ops(&mut applied, &expected_ops).expect("diff applies cleanly");
+    assert_eq!(applied, new_full, "{label}: applying the diff reproduces the snapshot");
+
+    *prev = new_full;
+}
+
+/// The representative fold sequence the finding calls out — add an entry, update
+/// one field of one entry among many, remove an entry, and a no-op — each
+/// producing exactly the whole-region diff, over a populated (O(N)) region.
+#[test]
+fn incremental_publish_is_byte_identical_to_the_whole_region_diff() {
+    let store = SystemMonitorStore::new();
+    // A populated region: several live monitors, so a whole-region rebuild would
+    // be O(N) per fold and a single-entry change must not touch the rest.
+    for i in 0..6 {
+        let key = format!("s{i}");
+        store.open(&key, Some(format!("host-{i}")), None);
+        store.opened(&key);
+        store.stats(&key, stats(&format!("host-{i}"), i as f64));
+    }
+
+    let projector = Projector::new();
+    projector.register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(SYSTEM_MONITORS_REGION, "sub", "A", sink.clone());
+
+    // Clear the seed dirty set; the region baseline already equals the store, so
+    // this drains without emitting (a no-op publish).
+    assert!(publish_monitors(&projector, &store).is_empty());
+
+    let mut prev = store.snapshot();
+
+    // 1) Update one field of one entry among many (the hot per-sample path).
+    store.stats("s3", stats("host-3", 99.0));
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "update-one-of-many");
+
+    // 2) Add a brand-new entry.
+    store.open("s42", Some("host-42".to_string()), None);
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "add-entry");
+
+    // 3) A status change on the new entry, then a stats sample (touches both maps).
+    store.opened("s42");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "opened");
+    store.stats("s42", stats("host-42", 7.0));
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "stats-both-maps");
+
+    // 4) Remove an entry (its stats cache survives — a `remove` under /monitors).
+    store.close("s0");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "remove-entry");
+
+    // 5) A genuine no-op: `opened` on an already-live monitor changes nothing.
+    store.opened("s1");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "no-op");
+
+    // The subscriber, fed only the incremental diffs, converges on the authority.
+    let snap = projector.snapshot(SYSTEM_MONITORS_REGION);
+    assert_eq!(snap.view, store.snapshot(), "region view == store authority");
+}
+
+/// Two entries changing in the **same** publish must still diff byte-identically
+/// to the whole-region path (both under `/monitors`, plus a `/statsCache` add),
+/// exercising multi-key ordering within one reduced diff.
+#[test]
+fn incremental_publish_coalesces_multi_entry_changes_identically() {
+    let store = SystemMonitorStore::new();
+    for i in 0..4 {
+        let key = format!("s{i}");
+        store.open(&key, Some(format!("host-{i}")), None);
+        store.opened(&key);
+    }
+    let projector = Projector::new();
+    projector.register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(SYSTEM_MONITORS_REGION, "sub", "A", sink.clone());
+    assert!(publish_monitors(&projector, &store).is_empty());
+
+    let mut prev = store.snapshot();
+
+    // Mutate three entries before a single publish → one coalesced diff.
+    store.stats("s2", stats("host-2", 50.0));
+    store.set_paused("s0", true);
+    store.close("s3");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "coalesced-multi");
+}
+
+/// The whole-map `replace` mirror (the one intrinsically O(region) fold) also
+/// stays byte-identical: adds for the new keys, removes for the gone ones.
+#[test]
+fn incremental_publish_replace_matches_the_whole_region_diff() {
+    let store = seeded_store(); // s1 connecting, s2 live
+    let projector = Projector::new();
+    projector.register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(SYSTEM_MONITORS_REGION, "sub", "A", sink.clone());
+    assert!(publish_monitors(&projector, &store).is_empty());
+
+    let mut prev = store.snapshot();
+
+    let source = SystemMonitorStore::new();
+    source.open("s3", Some("host-c".to_string()), None);
+    source.opened("s3");
+    source.stats("s3", stats("host-c", 7.0));
+    let mirror = source.snapshot();
+    let monitors = serde_json::from_value(mirror["monitors"].clone()).unwrap();
+    let stats_cache = serde_json::from_value(mirror["statsCache"].clone()).unwrap();
+    store.replace(monitors, stats_cache);
+
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "replace");
+    assert_eq!(prev, source.snapshot(), "region mirrors the replace source");
 }
