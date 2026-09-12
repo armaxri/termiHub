@@ -328,6 +328,42 @@ impl NetworkManager {
             .unwrap_or_default()
     }
 
+    /// Find an **actively-running** monitor (desktop- or agent-hosted) whose
+    /// target URL matches `url`, returning its monitor id (SM-019).
+    ///
+    /// The server-side dedupe key is the exact target URL: two monitors — even
+    /// with distinct ids — that poll the same URL are duplicate work, so
+    /// [`start_http_monitor`](Self::start_http_monitor) returns the existing one
+    /// instead of spawning a second loop. Matching is on the exact URL string
+    /// (the codebase stores the URL verbatim and normalizes nowhere else, so no
+    /// trailing-slash/host-case folding is applied — keeping the guard simple and
+    /// predictable). Only *running* loops count: a stopped-but-listed monitor (a
+    /// persisted config, or one the user stopped) does not block starting or
+    /// resuming that URL again. A poisoned lock yields `None` (fail-open, matching
+    /// the lenient locking elsewhere in this manager).
+    fn active_monitor_id_for_url(&self, url: &str) -> Option<String> {
+        // Desktop-hosted: a service is active when its poll loop is alive.
+        if let Ok(monitors) = self.http_monitors.lock() {
+            if let Some(id) = monitors.iter().find_map(|(id, svc)| {
+                svc.state()
+                    .filter(|s| s.running && s.config.url == url)
+                    .map(|_| id.clone())
+            }) {
+                return Some(id);
+            }
+        }
+        // Agent-hosted: active when the control handle reports it running.
+        if let Ok(agent) = self.agent_monitors.lock() {
+            if let Some(id) = agent
+                .iter()
+                .find_map(|(id, h)| (h.running && h.config.url == url).then(|| id.clone()))
+            {
+                return Some(id);
+            }
+        }
+        None
+    }
+
     /// Start a new HTTP monitor and persist its config. Returns its ID.
     ///
     /// `run_location` records where the monitor should run (default:
@@ -341,6 +377,21 @@ impl NetworkManager {
         config: HttpMonitorConfig,
         run_location: RunLocation,
     ) -> Result<String, TerminalError> {
+        // Server-side dedupe by URL (SM-019). The backend is the authoritative
+        // guard against double-polling a URL — it must not rely on the client-side
+        // guard, which a race, a resumed-then-restarted monitor, or a duplicate
+        // call can bypass. If a monitor is already *actively* polling this URL,
+        // return its id (idempotent) instead of spawning a second poll loop.
+        // Only running loops dedupe; a stopped-but-listed monitor for the same URL
+        // (a persisted config, or one the user stopped) can still be (re)started.
+        if let Some(existing) = self.active_monitor_id_for_url(&config.url) {
+            debug!(
+                url = %config.url,
+                existing_monitor = %existing,
+                "HTTP monitor already running for URL — returning existing id (SM-019)"
+            );
+            return Ok(existing);
+        }
         // Record the run-location before spawning so the resolver routes it.
         self.set_http_monitor_run_location(&config.id, run_location)?;
         // Persist first so a monitor the user just created survives a restart
@@ -1381,6 +1432,141 @@ mod tests {
         let loaded = mgr.load_persisted_monitor_configs();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].url, "https://new.example.com");
+    }
+
+    // ── Server-side dedupe by URL (SM-019) ────────────────────────────────────
+
+    #[test]
+    fn active_monitor_id_for_url_matches_a_running_monitor() {
+        // A running desktop monitor is found by its exact URL; a different URL is
+        // not matched, so a genuinely-new monitor still starts.
+        let mgr = NetworkManager::new();
+        let cfg = HttpMonitorConfig::new(
+            "https://svc.example/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let url = cfg.url.clone();
+        let id = insert_dummy_monitor_config(&mgr, cfg);
+        assert_eq!(mgr.active_monitor_id_for_url(&url), Some(id));
+        assert_eq!(
+            mgr.active_monitor_id_for_url("https://other.example/"),
+            None,
+            "a new URL must not be deduped"
+        );
+    }
+
+    #[test]
+    fn active_monitor_id_for_url_ignores_stopped_monitors() {
+        // A stopped-but-listed monitor (a persisted config, or one the user
+        // stopped) must NOT dedupe — restarting/resuming that URL is legitimate.
+        let mgr = NetworkManager::new();
+        let cfg = HttpMonitorConfig::new(
+            "https://svc.example/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let url = cfg.url.clone();
+        mgr.load_http_monitor_stopped(cfg);
+        assert_eq!(
+            mgr.active_monitor_id_for_url(&url),
+            None,
+            "a stopped monitor must not block re-starting its URL"
+        );
+    }
+
+    #[test]
+    fn active_monitor_id_for_url_matches_a_running_agent_monitor() {
+        // An agent-hosted monitor dedupes by URL too — while running, not once
+        // stopped.
+        let mgr = NetworkManager::new();
+        let cfg = HttpMonitorConfig::new(
+            "https://edge.example/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let url = cfg.url.clone();
+        let id = cfg.id.clone();
+        mgr.agent_monitors.lock().unwrap().insert(
+            id.clone(),
+            AgentMonitorHandle {
+                agent_id: "edge".into(),
+                config: cfg,
+                last_result: None,
+                running: true,
+                paused: false,
+            },
+        );
+        assert_eq!(mgr.active_monitor_id_for_url(&url), Some(id.clone()));
+
+        // A stopped agent handle (running: false) no longer dedupes.
+        mgr.agent_monitors
+            .lock()
+            .unwrap()
+            .get_mut(&id)
+            .unwrap()
+            .running = false;
+        assert_eq!(mgr.active_monitor_id_for_url(&url), None);
+    }
+
+    #[test]
+    fn start_http_monitor_dedupes_a_running_url_and_does_not_double_spawn() {
+        // SM-019: the backend is the authoritative guard against double-polling a
+        // URL — it must not rely on the client-side guard. If a monitor is already
+        // actively polling a URL and a second start for that same URL reaches the
+        // backend (client guard bypassed, a race, or a duplicate call), the backend
+        // must NOT spawn a second poll loop; it returns the already-running
+        // monitor's id, idempotently.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        // An already-running monitor for the URL (a live poll loop).
+        let running_cfg = HttpMonitorConfig::new(
+            "https://dup.example/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let url = running_cfg.url.clone();
+        let existing_id = insert_dummy_monitor_config(&mgr, running_cfg);
+
+        // A second start for the SAME url but a DISTINCT id — as if the client
+        // guard was bypassed or a start raced. Before the fix this would spawn a
+        // second loop (or, without an app handle, error); after the fix it returns
+        // the existing id without spawning anything.
+        let dup_cfg = HttpMonitorConfig::new(url.clone(), 30_000, "GET".into(), 200, 5_000);
+        assert_ne!(
+            dup_cfg.id, existing_id,
+            "the duplicate start carries a fresh id"
+        );
+        let returned = mgr
+            .start_http_monitor(dup_cfg, RunLocation::ThisComputer)
+            .expect("dedupe returns the existing id, not an error");
+        assert_eq!(
+            returned, existing_id,
+            "start returns the already-running monitor's id"
+        );
+
+        // Exactly one monitor is tracked for that URL — no second poll loop.
+        let listed = mgr.list_http_monitors();
+        assert_eq!(
+            listed.iter().filter(|m| m.config.url == url).count(),
+            1,
+            "only one loop may poll a given URL"
+        );
+        assert_eq!(listed.len(), 1, "no second monitor was created");
+        // The duplicate config was never persisted — dedupe happens before persist.
+        assert!(
+            mgr.load_persisted_monitor_configs().is_empty(),
+            "a deduped start must not persist a duplicate config"
+        );
     }
 
     // ── Stop vs. Remove (audit Gap #6) ────────────────────────────────────────
