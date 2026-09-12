@@ -9,7 +9,8 @@ subsystem: agent/src/main.rs, src-tauri/src/terminal/agent_manager.rs
 evidence:
   - agent/src/main.rs:205
   - src-tauri/src/terminal/agent_manager.rs:2196
-status: open
+status: fixed
+resolution: "#2855 — agent now writes durable rotating log (5MiB×3) at <config-dir>/logs/termihub-agent.log for ALL roles incl daemon/listen (mirrors desktop file_log; russh clamped; best-effort no-panic). Structured-over-stdio framing → #2854"
 ---
 
 ## What

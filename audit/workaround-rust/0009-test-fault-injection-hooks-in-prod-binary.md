@@ -9,7 +9,8 @@ subsystem: agent/io, agent/daemon
 evidence:
   - agent/src/io/tcp.rs:196
   - agent/src/daemon/transport.rs:490
-status: open
+status: fixed
+resolution: "#2847 — TERMIHUB_TEST_STARTUP_DELAY_MS gated behind cfg(debug_assertions) (compiled out of release, verified via strings); LINGERING_SOCKET was already cfg(test)-gated (finding half-stale)"
 ---
 
 ## What

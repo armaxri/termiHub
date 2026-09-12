@@ -9,7 +9,8 @@ subsystem: src/components/Settings
 evidence:
   - src/components/Settings/KeyboardSettings.tsx:302
   - src/services/keybindings.ts:63
-status: open
+status: fixed
+resolution: "#2846 — recorder captures chord sequences (KeyCombo[]) matching engine shape; single-combo preserved via 800ms window; checkConflict handles chords; round-trip tested through processKeyEvent"
 ---
 
 ## What

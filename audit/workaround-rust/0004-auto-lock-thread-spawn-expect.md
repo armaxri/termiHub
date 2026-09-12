@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src-tauri/credential
 evidence:
   - src-tauri/src/credential/auto_lock.rs:109
-status: open
+status: fixed
+resolution: "#2852 — AutoLockTimer::new returns io::Result (no .expect panic); fail-safe: unlock/setup gated on has_auto_lock_timer() so a failed spawn keeps store LOCKED (never unlocked-without-timer); startup force-locks on Err"
 ---
 
 ## What

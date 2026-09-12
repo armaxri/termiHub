@@ -9,7 +9,8 @@ subsystem: src/components/KeyboardShortcuts
 evidence:
   - src/components/KeyboardShortcuts/ShortcutsOverlay.tsx:82
   - src/components/Settings/KeyboardSettings.tsx:345
-status: open
+status: fixed
+resolution: "#2846 — shortcuts overlay gains 'Edit shortcuts…' link → Settings→Keyboard"
 ---
 
 ## What

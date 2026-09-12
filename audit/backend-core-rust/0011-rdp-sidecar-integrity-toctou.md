@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/rdp_sidecar
 evidence:
   - core/src/backends/rdp_sidecar/mod.rs:473
-status: open
+status: fixed
+resolution: "#2834 — rdp sidecar resolved to one absolute path (which crate) for both hash+spawn — path-mismatch fully closed, TOCTOU narrowed; full fd-exec hardening → #2835"
 ---
 
 ## What

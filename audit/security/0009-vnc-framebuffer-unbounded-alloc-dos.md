@@ -9,7 +9,8 @@ subsystem: core/src/backends/vnc
 evidence:
   - core/src/backends/vnc/frame.rs:47
   - core/src/backends/vnc/mod.rs:377
-status: open
+status: fixed
+resolution: "already-on-develop — vnc frame.rs resize() clamps width/height to MAX_DIMENSION before allocating (single choke point) + regression tests present. No PR — verified 2026-09-12"
 ---
 
 ## What

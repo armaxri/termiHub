@@ -9,7 +9,8 @@ subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/mod.rs:1446
   - core/src/backends/docker/mod.rs:1513
-status: open
+status: fixed
+resolution: "#2853 — extracted docker/podman socket-resolution decision into pure choose_docker_endpoint/resolve_podman_socket_uri fns (runtime.rs) + 12 unit tests (no live host); behavior-preserving; live-host smoke tests kept #[ignore]"
 ---
 
 ## What

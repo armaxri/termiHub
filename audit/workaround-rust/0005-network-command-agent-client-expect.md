@@ -9,7 +9,8 @@ subsystem: src-tauri/commands/network
 evidence:
   - src-tauri/src/commands/network.rs:98
   - src-tauri/src/commands/network.rs:229
-status: open
+status: fixed
+resolution: "#2851 — 3 network handlers (port_scan/ping/traceroute incl. uncited 3rd site) return TerminalError::NetworkError instead of .expect() panic on missing agent client; up-front guard + in-task defense"
 ---
 
 ## What

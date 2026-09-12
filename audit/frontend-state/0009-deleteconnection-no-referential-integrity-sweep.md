@@ -9,7 +9,8 @@ subsystem: src/store/appStore
 evidence:
   - src/store/appStore.ts:5364
   - src/store/appStore.ts:3537
-status: open
+status: fixed
+resolution: "#2849 — deleteConnection/bulk now sweepDeletedConnectionRefs: tears down persistentSessions, clears dangling tab connectionIds, surfaces orphan tunnels; sweep runs only after durable persist (respects FES-005 rollback). Backend tunnel cascade → #2850"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: src/components/SplitView/EmptyWindowState
 evidence:
   - src/components/SplitView/EmptyWindowState.tsx:30
   - src/components/SplitView/EmptyWindowState.tsx:47
-status: open
+status: fixed
+resolution: "#2845 — empty-window Open Connection opens CommandPalette (≥1 conn) or new-connection editor (0 conn) instead of just revealing sidebar; first-run copy; multi-window hint gated on window count. UX-001 already fixed on develop"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/AgentUpdateBanner
 evidence:
   - src/components/AgentUpdateBanner/AgentUpdateBanner.tsx:22
-status: open
+status: fixed
+resolution: "#2841 — expected agent-update disconnect now decided by agent connectionState leaving 'connected' in a 4s window (locale-independent), not english substrings; biases against false success; structured-code plumbing → #2840"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: core/backends
 evidence:
   - core/src/backends/local_shell.rs
   - core/src/backends/docker/mod.rs
-status: open
+status: fixed
+resolution: "#2842 — local_shell + docker ConnectedState now impl Drop (sync SIGKILL / detached teardown via Handle::try_current) with disconnected-flag guard; other backends → #2843"
 ---
 
 ## What

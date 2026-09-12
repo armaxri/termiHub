@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/files
 evidence:
   - core/src/files/local.rs
-status: open
+status: fixed
+resolution: "#2848 — local file browser: symlink-to-dir now is_symlink=true + is_directory=true (navigable) via shared resolve_entry_metadata (no-follow flag + follow for is_dir); dangling/loop degrade gracefully; both list+stat builders"
 ---
 
 ## What

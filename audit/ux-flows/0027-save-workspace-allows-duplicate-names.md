@@ -9,7 +9,8 @@ subsystem: src/components/WorkspaceSidebar
 evidence:
   - src/store/appStore.ts:7706
   - src/components/WorkspaceSidebar/SaveWorkspaceDialog.tsx:34
-status: open
+status: fixed
+resolution: "#2844 — workspace save prompts overwrite (reuses existing id → true update via upsert) vs cancel-to-rename, shared ConfirmDialog; no same-name duplicate"
 ---
 
 ## What
