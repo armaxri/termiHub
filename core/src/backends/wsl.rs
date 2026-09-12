@@ -54,6 +54,37 @@ struct ConnectedState {
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     alive: Arc<AtomicBool>,
     child: Arc<Mutex<Box<dyn portable_pty::Child + Send>>>,
+    /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
+    /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
+    /// The graceful path and the guard must never both kill the child.
+    disconnected: bool,
+}
+
+impl Drop for ConnectedState {
+    /// Best-effort synchronous teardown for CORE-020: guarantees the `wsl.exe`
+    /// child process is killed even when the connected state is dropped WITHOUT a
+    /// graceful [`disconnect()`](ConnectionType::disconnect) — a panic between
+    /// spawn and store, an early `?` return, or a manager that forgets.
+    ///
+    /// Killing the child is a synchronous operation (`portable_pty::Child::kill`),
+    /// so it is safe to do directly in `Drop`: no runtime is required, nothing is
+    /// awaited, and nothing blocks — which is mandatory because `Drop` can run on
+    /// a tokio worker thread where a `block_on` would panic or deadlock. The kill
+    /// error is swallowed, so this can never panic. This mirrors the local-shell
+    /// backend's CORE-020 guard.
+    ///
+    /// When [`disconnect()`](ConnectionType::disconnect) already ran it set
+    /// `disconnected = true` and this is a no-op, so the graceful path and this
+    /// guard never both kill the child.
+    fn drop(&mut self) {
+        if self.disconnected {
+            return;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        if let Ok(mut child) = self.child.lock() {
+            let _ = child.kill();
+        }
+    }
 }
 
 /// Detect the Windows UNC prefix for accessing a WSL distribution's filesystem.
@@ -957,6 +988,7 @@ impl ConnectionType for Wsl {
             writer: writer_arc,
             alive,
             child: Arc::new(Mutex::new(child)),
+            disconnected: false,
         });
 
         // Detect the UNC prefix once; share it between the file browser and
@@ -981,7 +1013,11 @@ impl ConnectionType for Wsl {
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
-        if let Some(state) = self.state.take() {
+        if let Some(mut state) = self.state.take() {
+            // Mark the graceful path so the `Drop` guard on `state` (which runs
+            // when it goes out of scope at the end of this block) does not kill
+            // the child a second time (CORE-020 double-teardown guard).
+            state.disconnected = true;
             state.alive.store(false, Ordering::SeqCst);
             if let Ok(mut child) = state.child.lock() {
                 let _ = child.kill();
@@ -1291,6 +1327,136 @@ mod tests {
     fn file_browser_none_when_disconnected() {
         let wsl = Wsl::new();
         assert!(wsl.file_browser().is_none());
+    }
+
+    // --- Drop guard (CORE-020) --------------------------------------------
+
+    use std::sync::atomic::AtomicUsize;
+
+    /// Kill-counting stand-in for the child killer split off a real child.
+    #[derive(Debug)]
+    struct MockKiller {
+        kills: Arc<AtomicUsize>,
+    }
+
+    impl portable_pty::ChildKiller for MockKiller {
+        fn kill(&mut self) -> std::io::Result<()> {
+            self.kills.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
+            Box::new(MockKiller {
+                kills: self.kills.clone(),
+            })
+        }
+    }
+
+    /// Kill-counting mock `Child` so a test can observe whether the Drop guard
+    /// killed the child without spawning a real `wsl.exe` process.
+    #[derive(Debug)]
+    struct MockChild {
+        kills: Arc<AtomicUsize>,
+    }
+
+    impl portable_pty::ChildKiller for MockChild {
+        fn kill(&mut self) -> std::io::Result<()> {
+            self.kills.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
+            Box::new(MockKiller {
+                kills: self.kills.clone(),
+            })
+        }
+    }
+
+    impl portable_pty::Child for MockChild {
+        fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
+            Ok(None)
+        }
+
+        fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
+            Ok(portable_pty::ExitStatus::with_exit_code(0))
+        }
+
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    /// Build a `ConnectedState` backed by a real (process-less) ConPTY master and
+    /// a kill-counting mock child. Only `child` and `alive` are load-bearing for
+    /// the Drop guard; the master is a genuine pseudoterminal so the struct is
+    /// constructed exactly as `connect()` builds it.
+    fn drop_test_state(
+        disconnected: bool,
+        alive: Arc<AtomicBool>,
+        kills: Arc<AtomicUsize>,
+    ) -> ConnectedState {
+        let pty = native_pty_system()
+            .openpty(PtySize::default())
+            .expect("openpty");
+        ConnectedState {
+            master: Arc::new(Mutex::new(pty.master)),
+            writer: Arc::new(Mutex::new(
+                Box::new(std::io::sink()) as Box<dyn Write + Send>
+            )),
+            alive,
+            child: Arc::new(Mutex::new(Box::new(MockChild { kills }))),
+            disconnected,
+        }
+    }
+
+    /// Regression for CORE-020. Dropping a connected WSL state WITHOUT a graceful
+    /// `disconnect()` must still kill the child process best-effort via the
+    /// `Drop` guard, so the `wsl.exe` process never leaks.
+    #[tokio::test]
+    async fn drop_without_disconnect_kills_child() {
+        let alive = Arc::new(AtomicBool::new(true));
+        let kills = Arc::new(AtomicUsize::new(0));
+        let state = drop_test_state(false, alive.clone(), kills.clone());
+
+        // Drop the state without ever calling disconnect().
+        drop(state);
+
+        assert_eq!(
+            kills.load(Ordering::SeqCst),
+            1,
+            "Drop must kill the child best-effort when disconnect() was skipped (CORE-020)"
+        );
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "Drop must mark the session dead"
+        );
+    }
+
+    /// Double-teardown guard for CORE-020. A graceful `disconnect()` already
+    /// killed the child and set `disconnected = true`; the subsequent drop of the
+    /// taken state must be a pure no-op — it must NOT kill again nor touch
+    /// `alive`.
+    #[tokio::test]
+    async fn drop_after_disconnect_flag_is_noop() {
+        let alive = Arc::new(AtomicBool::new(true));
+        let kills = Arc::new(AtomicUsize::new(0));
+        let state = drop_test_state(true, alive.clone(), kills.clone());
+
+        drop(state);
+
+        assert_eq!(
+            kills.load(Ordering::SeqCst),
+            0,
+            "Drop with the disconnected flag set must not kill the child again"
+        );
+        assert!(
+            alive.load(Ordering::SeqCst),
+            "Drop with the disconnected flag set must not touch alive"
+        );
     }
 
     // -----------------------------------------------------------------------
