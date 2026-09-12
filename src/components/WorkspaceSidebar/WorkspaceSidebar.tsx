@@ -1,7 +1,5 @@
 import { useCallback, useState } from "react";
 import { Plus, Save, Download, Upload } from "lucide-react";
-import { save, open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import {
   getAllTabsAcrossGroupTrees,
@@ -12,6 +10,8 @@ import { Button, toast, Tooltip, ConfirmDialog } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
+import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import type { WorkspaceSummary } from "@/types/workspace";
 import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
@@ -39,8 +39,6 @@ export function WorkspaceSidebar() {
     scope: SaveWorkspaceScope;
     description?: string;
   } | null>(null);
-  // The workspace pending deletion once the user confirms the destructive action.
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   // The workspace pending launch once the user confirms tearing down live
   // sessions (UX-026). `count` is the number of open sessions that would be lost.
   const [pendingLaunch, setPendingLaunch] = useState<{
@@ -48,6 +46,22 @@ export function WorkspaceSidebar() {
     name: string;
     count: number;
   } | null>(null);
+
+  // The delete/export/import flows come from the shared sidebar hooks (UISF-020).
+  const exportWorkspacesToFile = useJsonFileExport("workspaces");
+  const importWorkspacesFromFile = useJsonFileImport("workspaces");
+  const workspaceDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {
+    try {
+      // The store only removes the item from local state after the backend
+      // resolves, so a failed delete leaves the workspace visible.
+      await deleteWorkspace(id);
+      toast.success(`Deleted workspace ${name}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to delete workspace: ${message}`);
+    }
+  });
+  const requestDelete = workspaceDelete.request;
 
   const handleNew = useCallback(() => {
     openWorkspaceEditorTab(null);
@@ -102,25 +116,10 @@ export function WorkspaceSidebar() {
     (workspaceId: string) => {
       const workspace = workspaces.find((ws) => ws.id === workspaceId);
       if (!workspace) return;
-      setPendingDelete({ id: workspace.id, name: workspace.name });
+      requestDelete({ id: workspace.id, name: workspace.name });
     },
-    [workspaces]
+    [workspaces, requestDelete]
   );
-
-  const handleConfirmDelete = useCallback(async () => {
-    if (!pendingDelete) return;
-    const { id, name } = pendingDelete;
-    setPendingDelete(null);
-    try {
-      // The store only removes the item from local state after the backend
-      // resolves, so a failed delete leaves the workspace visible.
-      await deleteWorkspace(id);
-      toast.success(`Deleted workspace ${name}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to delete workspace: ${message}`);
-    }
-  }, [pendingDelete, deleteWorkspace]);
 
   // Persist the current layout as a workspace. `overwriteId` reuses an existing
   // workspace's id so the save is a true update rather than a duplicate (UX-027).
@@ -168,43 +167,26 @@ export function WorkspaceSidebar() {
 
   const loadWorkspaces = useAppStore((s) => s.loadWorkspaces);
 
-  const handleExport = useCallback(async () => {
-    // A cancelled file dialog returns null before any write happens — treat it
-    // as a no-op (no toast). Only a genuine failure surfaces an error (GAP G8).
-    try {
-      const json = await exportWorkspaces();
-      const filePath = await save({
-        defaultPath: "termihub-workspaces.json",
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      });
-      if (!filePath) return;
-      await writeTextFile(filePath, json);
-      toast.success("Exported workspaces");
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to export workspaces: ${message}`);
-    }
-  }, []);
-
-  const handleImport = useCallback(async () => {
-    // A cancelled file dialog returns null before any work happens — treat it as
-    // a no-op (no toast). A parse failure or duplicate-skip must be reported so
-    // the user can tell if 0, some, or all workspaces imported (GAP G8).
-    const filePath = await open({
-      multiple: false,
-      filters: [{ name: "JSON", extensions: ["json"] }],
+  // A cancelled file dialog is a silent no-op (no toast). Only a genuine failure
+  // surfaces an error (GAP G8).
+  const handleExport = useCallback(() => {
+    void exportWorkspacesToFile({
+      defaultPath: "termihub-workspaces.json",
+      content: () => exportWorkspaces(),
+      successMessage: "Exported workspaces",
     });
-    if (!filePath) return;
-    try {
-      const json = await readTextFile(filePath);
+  }, [exportWorkspacesToFile]);
+
+  // A cancelled file dialog is a silent no-op. A parse failure or duplicate-skip
+  // must be reported so the user can tell if 0, some, or all workspaces imported
+  // (GAP G8).
+  const handleImport = useCallback(() => {
+    void importWorkspacesFromFile(async (json) => {
       const count = await importWorkspaces(json);
       await loadWorkspaces();
       toast.success(`Imported ${count} workspace${count === 1 ? "" : "s"}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to import workspaces: ${message}`);
-    }
-  }, [loadWorkspaces]);
+    });
+  }, [loadWorkspaces, importWorkspacesFromFile]);
 
   const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
   const activeGroupName = activeGroup?.name ?? "Main";
@@ -333,12 +315,12 @@ export function WorkspaceSidebar() {
         onCancel={() => setPendingOverwrite(null)}
       />
       <ConfirmDeleteDialog
-        open={pendingDelete !== null}
+        {...workspaceDelete.dialogProps}
         message={
-          pendingDelete ? `Delete workspace "${pendingDelete.name}"? This cannot be undone.` : ""
+          workspaceDelete.pending
+            ? `Delete workspace "${workspaceDelete.pending.name}"? This cannot be undone.`
+            : ""
         }
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setPendingDelete(null)}
       />
       <ConfirmDialog
         open={pendingLaunch !== null}
