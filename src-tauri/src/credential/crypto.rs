@@ -209,16 +209,45 @@ pub fn encrypt_with_password(password: &str, plaintext: &[u8]) -> Result<Encrypt
     encrypt_with_cost(password, plaintext, &Argon2Cost::current())
 }
 
+/// A decryption failure carrying a locale-invariant discriminator.
+///
+/// Callers (e.g. the import command) react to a wrong password without matching
+/// the human-readable English message, so classification survives localization
+/// or a reword of the text (I18N-010).
+///
+/// [`WrongPassword`](DecryptError::WrongPassword) is the AEAD authentication
+/// failure: the password was wrong — or, indistinguishably, the ciphertext was
+/// tampered with or corrupted, which is handled identically. [`Other`] covers
+/// structural failures (unsupported version, malformed base64, invalid KDF
+/// params) that no password can fix.
+///
+/// [`Other`]: DecryptError::Other
+#[derive(Debug, thiserror::Error)]
+pub enum DecryptError {
+    /// AEAD authentication failed: wrong password or corrupted/tampered data.
+    #[error("Decryption failed — wrong password or corrupted data")]
+    WrongPassword,
+    /// A structural decrypt failure unrelated to the password.
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
+}
+
 /// Decrypt an [`EncryptedEnvelope`] using the given password.
 ///
-/// Returns the decrypted plaintext bytes, or an error if the password is
-/// wrong or the envelope is corrupted.
-pub fn decrypt_with_password(password: &str, envelope: &EncryptedEnvelope) -> Result<Vec<u8>> {
+/// Returns the decrypted plaintext bytes, or a typed [`DecryptError`]. A wrong
+/// password (or tampered ciphertext) surfaces as [`DecryptError::WrongPassword`]
+/// so callers can classify it without matching the English message; every other
+/// failure is [`DecryptError::Other`].
+pub fn decrypt_with_password(
+    password: &str,
+    envelope: &EncryptedEnvelope,
+) -> std::result::Result<Vec<u8>, DecryptError> {
     if envelope.version != ENVELOPE_VERSION {
-        anyhow::bail!(
+        return Err(anyhow::anyhow!(
             "Unsupported encrypted envelope version: {}",
             envelope.version
-        );
+        )
+        .into());
     }
 
     let salt = BASE64
@@ -235,15 +264,12 @@ pub fn decrypt_with_password(password: &str, envelope: &EncryptedEnvelope) -> Re
     // `Nonce::from_slice`, and a corrupted salt would silently derive a wrong
     // key. Surface both as recoverable errors instead (#2049).
     if salt.len() != SALT_LEN {
-        anyhow::bail!(
-            "Invalid salt length: expected {SALT_LEN}, got {}",
-            salt.len()
-        );
+        return Err(anyhow::anyhow!("Invalid salt length: expected {SALT_LEN}, got {}", salt.len()).into());
     }
     if nonce_bytes.len() != NONCE_LEN {
-        anyhow::bail!(
-            "Invalid nonce length: expected {NONCE_LEN}, got {}",
-            nonce_bytes.len()
+        return Err(
+            anyhow::anyhow!("Invalid nonce length: expected {NONCE_LEN}, got {}", nonce_bytes.len())
+                .into(),
         );
     }
 
@@ -261,9 +287,13 @@ pub fn decrypt_with_password(password: &str, envelope: &EncryptedEnvelope) -> Re
         msg: &ciphertext,
         aad: AAD,
     };
+    // AEAD authentication failure: the derived key (hence the password) is wrong,
+    // or the ciphertext was tampered/corrupted — indistinguishable and handled
+    // identically. Surface the locale-invariant `WrongPassword` discriminator so
+    // callers classify by variant, not by this English message (I18N-010).
     let mut plaintext = cipher
         .decrypt(nonce, payload)
-        .map_err(|_| anyhow::anyhow!("Decryption failed — wrong password or corrupted data"))?;
+        .map_err(|_| DecryptError::WrongPassword)?;
 
     let result = plaintext.clone();
     plaintext.zeroize();
@@ -286,13 +316,33 @@ mod tests {
     }
 
     #[test]
-    fn wrong_password_fails() {
+    fn wrong_password_returns_typed_variant() {
+        // A wrong password must surface the locale-invariant `WrongPassword`
+        // variant, so callers classify by type rather than by the English
+        // message (I18N-010) — a reworded or localized message must not change
+        // this outcome.
         let plaintext = b"secret data";
         let envelope = encrypt_with_password("correct-password", plaintext).unwrap();
 
         let result = decrypt_with_password("wrong-password", &envelope);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("wrong password"));
+        assert!(
+            matches!(result, Err(DecryptError::WrongPassword)),
+            "wrong password must classify as DecryptError::WrongPassword, got: {result:?}"
+        );
+    }
+
+    #[test]
+    fn structural_failures_do_not_classify_as_wrong_password() {
+        // A structural failure (here: an unsupported envelope version) is not a
+        // password problem, so it must be `Other`, never `WrongPassword`.
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.version = 99;
+
+        let result = decrypt_with_password("pw", &envelope);
+        assert!(
+            matches!(result, Err(DecryptError::Other(_))),
+            "a structural failure must classify as DecryptError::Other, got: {result:?}"
+        );
     }
 
     #[test]
