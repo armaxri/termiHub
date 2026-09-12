@@ -590,7 +590,7 @@ pub fn run() {
             let mut recovery_warnings: Vec<RecoveryWarning> = Vec::new();
 
             // Detect portable mode before any storage initialization.
-            // Priority: TERMIHUB_CONFIG_DIR env var > portable mode detection > OS default.
+            // Priority: external TERMIHUB_CONFIG_DIR override > portable mode > OS default.
             let app_mode = match utils::portable::detect_app_mode() {
                 Ok(mode) => {
                     info!(is_portable = mode.is_portable(), "App mode detected");
@@ -602,65 +602,67 @@ pub fn run() {
                 }
             };
 
-            // If portable mode is active and no explicit override is set, redirect config dir
-            // so all storage modules (which check TERMIHUB_CONFIG_DIR) use the portable path.
-            if app_mode.is_portable() && std::env::var("TERMIHUB_CONFIG_DIR").is_err() {
-                if let Some(data_dir) = app_mode.data_dir() {
-                    // Degrade instead of panicking (ERR-004 / TAURI-005 /
-                    // WA-RS-003): a read-only portable medium is exactly where
-                    // creating the portable `data/` dir fails. Fall back to a
-                    // temp directory so the app still starts, and surface a
-                    // RecoveryWarning like every other startup step so the user
-                    // sees that storage degraded rather than only the log.
+            // Resolve the effective config directory once, explicitly. Priority:
+            //   1. an external `TERMIHUB_CONFIG_DIR` override (public knob used by
+            //      the system-test harness, README, and power users);
+            //   2. the portable `data/` directory when in portable mode;
+            //   3. the OS per-user config directory (installed mode).
+            // The resolved value is published as `ConfigDirOverride` managed state
+            // below so every storage module reads it explicitly, rather than the
+            // app writing the directory into its own process-global environment
+            // (WA-RS-011). Each degradation to a temp dir surfaces a
+            // RecoveryWarning rather than panicking (ERR-004 / TAURI-005 /
+            // WA-RS-003): a read-only portable medium, a locked-down profile, a
+            // full disk, or a config path that exists as a file must not kill
+            // launch.
+            let temp_config_fallback = std::env::temp_dir().join("termihub-config");
+            let resolved_config_dir: PathBuf =
+                if let Ok(dir) = std::env::var("TERMIHUB_CONFIG_DIR") {
+                    // 1. External override wins, exactly as before — portable mode
+                    //    never redirects when the user has set this explicitly.
+                    PathBuf::from(dir)
+                } else if let Some(portable_dir) = app_mode.data_dir().and_then(|data_dir| {
+                    // 2. Portable: create the `data/` dir, degrading to a temp
+                    //    directory. On total failure the portable override is
+                    //    dropped (None) so resolution falls through to the OS
+                    //    default, matching the previous behavior.
                     let temp_fallback = std::env::temp_dir().join("termihub-portable-data");
-                    let outcome = utils::config_paths::create_dir_with_fallback(
-                        data_dir,
-                        &temp_fallback,
-                    );
+                    let outcome =
+                        utils::config_paths::create_dir_with_fallback(data_dir, &temp_fallback);
                     let (storage_dir, warning) =
                         resolve_startup_dir(outcome, StartupStorage::PortableData, data_dir);
                     if let Some(w) = warning {
                         warn!("{} ({})", w.message, w.details.as_deref().unwrap_or(""));
                         recovery_warnings.push(w);
                     }
-                    if let Some(dir) = storage_dir {
-                        // Safety: called before any threads that read env vars are spawned.
-                        #[allow(unused_unsafe)]
-                        unsafe {
-                            std::env::set_var("TERMIHUB_CONFIG_DIR", &dir);
+                    storage_dir
+                }) {
+                    portable_dir
+                } else {
+                    // 3. Installed mode (or portable total-failure fallback): the
+                    //    OS per-user config directory via Tauri's own resolver.
+                    match utils::config_paths::app_config_dir(app.handle()) {
+                        Ok(dir) => dir,
+                        Err(e) => {
+                            warn!(
+                                "could not resolve app config directory ({e}); using temporary \
+                                 storage at {}",
+                                temp_config_fallback.display()
+                            );
+                            recovery_warnings.push(config_resolve_failure_warning(
+                                &e.to_string(),
+                                &temp_config_fallback,
+                            ));
+                            temp_config_fallback.clone()
                         }
                     }
-                }
-            }
+                };
 
             // Store the detected app mode so commands and the frontend can query it.
             app.manage(app_mode);
 
-            // Load settings to determine the credential storage mode.
-            // On failure, fall back to defaults so the app can still start.
-            // Portable mode already exported `TERMIHUB_CONFIG_DIR` above, so the
-            // shared resolver's handle branch yields the correct directory.
-            // Resolve + create the config dir, degrading to temp storage instead
-            // of panicking (ERR-004 / TAURI-005 / WA-RS-003). A locked-down
-            // profile, a full disk, or a config path that exists as a file must
-            // not kill launch — each degradation also surfaces a RecoveryWarning.
-            let temp_config_fallback = std::env::temp_dir().join("termihub-config");
-            let resolved_config_dir =
-                match utils::config_paths::resolve_config_dir(Some(app.handle())) {
-                    Ok(dir) => dir,
-                    Err(e) => {
-                        warn!(
-                            "could not resolve app config directory ({e}); using temporary \
-                             storage at {}",
-                            temp_config_fallback.display()
-                        );
-                        recovery_warnings.push(config_resolve_failure_warning(
-                            &e.to_string(),
-                            &temp_config_fallback,
-                        ));
-                        temp_config_fallback.clone()
-                    }
-                };
+            // Materialize the config dir, degrading to temp storage instead of
+            // panicking if it cannot be created (ERR-004 / TAURI-005 / WA-RS-003).
             let outcome = utils::config_paths::create_dir_with_fallback(
                 &resolved_config_dir,
                 &temp_config_fallback,
@@ -674,16 +676,13 @@ pub fn run() {
             // The config dir always yields a usable path: a total failure keeps
             // the preferred directory best-effort.
             let config_dir = config_dir_opt.unwrap_or_else(|| resolved_config_dir.clone());
-            if config_dir != resolved_config_dir {
-                // A temporary fallback is in use — point storage modules (which
-                // re-resolve via TERMIHUB_CONFIG_DIR) at the directory actually
-                // in use. Safety: still on the setup thread, before storage
-                // threads start.
-                #[allow(unused_unsafe)]
-                unsafe {
-                    std::env::set_var("TERMIHUB_CONFIG_DIR", &config_dir);
-                }
-            }
+
+            // Publish the resolved directory as managed state so every storage
+            // module's `resolve_config_dir(Some(handle))` reads this one explicit
+            // value — the threaded replacement for the former self-mutated
+            // `TERMIHUB_CONFIG_DIR` (WA-RS-011). Managed before any storage module
+            // is constructed below.
+            app.manage(utils::config_paths::ConfigDirOverride(config_dir.clone()));
 
             // Plugin management layer (#1992) + native host loader (#1995): owns
             // <app-data>/plugins/, created lazily. The host loads a plugin's
