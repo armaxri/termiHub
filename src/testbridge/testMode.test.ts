@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
   isTestBridgeEnabled,
   getTestBridgePort,
@@ -60,6 +60,33 @@ describe("isTestBridgeEnabled", () => {
     window.history.replaceState({}, "", "/?testBridge=0&other=1");
     window.localStorage.setItem(TEST_BRIDGE_STORAGE_KEY, "no");
     expect(isTestBridgeEnabled()).toBe(false);
+  });
+
+  describe("production build gate (SEC-005)", () => {
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
+    it("ignores every runtime signal in a production build without VITE_TEST_BRIDGE", () => {
+      vi.stubEnv("PROD", true);
+      // All three runtime opt-ins present at once — none may activate the bridge.
+      (window as unknown as Record<string, unknown>)[TEST_BRIDGE_GLOBAL_KEY] = true;
+      window.localStorage.setItem(TEST_BRIDGE_STORAGE_KEY, "1");
+      window.history.replaceState({}, "", "/?testBridge=1");
+      expect(isTestBridgeEnabled()).toBe(false);
+    });
+
+    it("is enabled in a production build only when compiled with VITE_TEST_BRIDGE=1", () => {
+      vi.stubEnv("PROD", true);
+      vi.stubEnv("VITE_TEST_BRIDGE", "1");
+      expect(isTestBridgeEnabled()).toBe(true);
+    });
+
+    it("still honours runtime signals in a non-production build", () => {
+      vi.stubEnv("PROD", false);
+      window.history.replaceState({}, "", "/?testBridge=1");
+      expect(isTestBridgeEnabled()).toBe(true);
+    });
   });
 });
 
