@@ -48,7 +48,11 @@ vi.mock("@/services/api", () => ({
 
 import { OpenConnectionsModal } from "./OpenConnectionsModal";
 
-function config(id: string, name: string, serverType: EmbeddedServerConfig["serverType"]): EmbeddedServerConfig {
+function config(
+  id: string,
+  name: string,
+  serverType: EmbeddedServerConfig["serverType"]
+): EmbeddedServerConfig {
   return {
     id,
     name,
