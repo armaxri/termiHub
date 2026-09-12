@@ -59,3 +59,6 @@ export type { ToastApi, ToastOptions, ToastPromiseMessages } from "./Toast";
 
 export { ErrorBoundary } from "./ErrorBoundary";
 export type { ErrorBoundaryProps } from "./ErrorBoundary";
+
+export { TrustPrompt } from "./TrustPrompt";
+export type { TrustPromptProps, TrustFact } from "./TrustPrompt";
