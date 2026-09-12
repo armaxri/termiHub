@@ -185,6 +185,38 @@ describe("head-of-line watchdog", () => {
   });
 });
 
+describe("watchdog oldest-pending computation", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    loadPluginInSandbox("p", ["/*a*/"]);
+    fake.emit({ t: "parsersActive", active: true });
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("force-passes the oldest pending chunk without throwing on a huge backlog", () => {
+    // `Math.min(...pending.keys())` spreads every in-flight seq into a call and
+    // throws `RangeError: Maximum call stack size exceeded` past ~125k args in
+    // V8 — inside the watchdog, the mechanism meant to keep the terminal flowing.
+    // A running-min iteration finds the same oldest seq but can never throw.
+    const out: string[] = [];
+    // seq 0 — the oldest pending slot; must be the one the watchdog force-passes.
+    enqueueSandboxTransform("s0", enc("OLDEST"), (b) => out.push(dec(b)));
+
+    // Pile up a backlog far larger than the spread limit, spread across many
+    // sessions so no single session trips the per-session cap (they stay pending).
+    const filler = new Uint8Array(1);
+    const noop = () => {};
+    for (let s = 1; s <= 150; s++) {
+      const id = `s${s}`;
+      for (let i = 0; i < 1000; i++) enqueueSandboxTransform(id, filler, noop);
+    }
+
+    // Firing the watchdog must not throw, and must force the oldest slot through.
+    expect(() => vi.advanceTimersByTime(600)).not.toThrow();
+    expect(out).toEqual(["OLDEST"]);
+  });
+});
+
 describe("widget descriptor relay", () => {
   it("materialises upserts into the store and removes on remove", () => {
     loadPluginInSandbox("p", ["/*a*/"]);
