@@ -182,9 +182,15 @@ function onWatchdog(): void {
   // The worker did not answer in time — treat it as degraded and force the
   // oldest pending slots through untransformed, preserving order.
   degraded = true;
-  const oldest = Math.min(...pending.keys());
-  const entry = pending.get(oldest);
-  if (entry) resolveSlot(oldest, null);
+  // Running min via iteration — never spread `pending.keys()` into a call:
+  // `pending` is unbounded in aggregate (only capped per session), so
+  // `Math.min(...keys)` can throw `RangeError` past the engine's argument limit,
+  // exactly inside the watchdog meant to keep the terminal flowing.
+  let oldest = Infinity;
+  for (const seq of pending.keys()) {
+    if (seq < oldest) oldest = seq;
+  }
+  if (oldest !== Infinity) resolveSlot(oldest, null);
   rearmWatchdog();
 }
 
