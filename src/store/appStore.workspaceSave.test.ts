@@ -36,11 +36,16 @@ vi.mock("@/services/storage", () => ({
   getRecoveryWarnings: vi.fn(() => Promise.resolve([])),
 }));
 
-const apiSaveWorkspace = vi.fn(() => Promise.resolve());
+interface SavedDefinition {
+  id: string;
+  name: string;
+  description?: string;
+}
+const apiSaveWorkspace = vi.fn((_definition: SavedDefinition) => Promise.resolve());
 vi.mock("@/services/workspaceApi", () => ({
   getWorkspaces: vi.fn(() => Promise.resolve([])),
   loadWorkspace: vi.fn(() => Promise.resolve({})),
-  saveWorkspace: (...args: unknown[]) => apiSaveWorkspace(...(args as [])),
+  saveWorkspace: (definition: SavedDefinition) => apiSaveWorkspace(definition),
   deleteWorkspace: vi.fn(() => Promise.resolve()),
   duplicateWorkspace: vi.fn(() => Promise.resolve()),
 }));
@@ -62,9 +67,9 @@ beforeEach(() => {
 });
 
 /** Extract the single definition passed to the mocked `saveWorkspace`. */
-function savedDefinition(): { id: string; name: string; description?: string } {
+function savedDefinition(): SavedDefinition {
   expect(apiSaveWorkspace).toHaveBeenCalledTimes(1);
-  return apiSaveWorkspace.mock.calls[0][0] as { id: string; name: string; description?: string };
+  return apiSaveWorkspace.mock.calls[0][0];
 }
 
 describe("saveCurrentAsWorkspace — id handling (UX-027)", () => {

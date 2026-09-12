@@ -315,8 +315,9 @@ export function WorkspaceSidebar() {
       )}
       <ConfirmDialog
         open={pendingOverwrite !== null}
-        variant="warn"
+        variant="danger"
         title="Overwrite workspace?"
+        description="Replace the existing workspace's saved layout with the current one."
         message={
           pendingOverwrite
             ? `A workspace named "${pendingOverwrite.name}" already exists. Overwrite it with ` +
