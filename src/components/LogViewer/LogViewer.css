@@ -22,14 +22,14 @@
 
 .log-viewer__level-filters {
   display: flex;
-  gap: 2px;
+  gap: var(--spacing-xxs);
 }
 
 /* Level filter chips: a colour-per-level segmented toggle, not a standard
    action button — the design-system Button has no coloured-chip variant, so
    these stay a bespoke (fully tokenized) control. */
 .log-viewer__level-filter {
-  padding: 2px 8px;
+  padding: var(--spacing-xxs) var(--spacing-sm);
   font-size: var(--font-size-xs);
   font-weight: 600;
   border: 1px solid var(--border-primary);
