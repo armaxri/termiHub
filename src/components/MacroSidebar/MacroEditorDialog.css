@@ -2,8 +2,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
-  margin-bottom: 4px;
+  margin-top: var(--spacing-sm);
+  margin-bottom: var(--spacing-xs);
 }
 
 .macro-editor__steps-title {
@@ -15,19 +15,19 @@
 .macro-editor__steps {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: var(--spacing-xs);
   max-height: 320px;
   overflow-y: auto;
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
-  padding: 4px;
+  padding: var(--spacing-xs);
 }
 
 .macro-editor__step {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) 6px;
   border-radius: var(--radius-sm);
 }
 
@@ -57,7 +57,7 @@
 .macro-editor__step-delay {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   flex-shrink: 0;
 }
 
@@ -72,13 +72,13 @@
 
 .macro-editor__step-actions {
   display: flex;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   flex-shrink: 0;
 }
 
 .macro-editor__empty {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  padding: 12px;
+  padding: var(--spacing-md);
   text-align: center;
 }

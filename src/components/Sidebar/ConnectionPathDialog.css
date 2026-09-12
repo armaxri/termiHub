@@ -29,9 +29,9 @@
 .connection-path-dialog__row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   width: 100%;
-  padding: 6px 8px;
+  padding: 6px var(--spacing-sm);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-sm, 4px);
@@ -83,12 +83,12 @@
 }
 
 .connection-path-dialog__error {
-  margin: 2px 0 0 30px;
+  margin: var(--spacing-xxs) 0 0 30px;
   color: var(--color-error);
   font-size: var(--font-size-xs);
 }
 
 .connection-path-dialog__arrow {
   color: var(--text-secondary);
-  margin: 2px 0 2px 14px;
+  margin: var(--spacing-xxs) 0 var(--spacing-xxs) 14px;
 }

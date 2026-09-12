@@ -28,7 +28,7 @@
   align-items: stretch;
   padding: var(--spacing-xs) var(--spacing-sm);
   border-bottom: 1px solid var(--border-secondary);
-  gap: 2px;
+  gap: var(--spacing-xxs);
 }
 
 /* Editable breadcrumb path bar */
@@ -68,7 +68,7 @@
 .file-browser__crumb {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  padding: 0 2px;
+  padding: 0 var(--spacing-xxs);
   border-radius: var(--radius-sm);
   background: transparent;
   cursor: pointer;
@@ -96,7 +96,7 @@
 .file-browser__actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px;
+  gap: var(--spacing-xxs);
 }
 
 .file-browser__menu-reveal {
@@ -166,7 +166,7 @@
 .file-browser__row-menu {
   position: relative;
   flex-shrink: 0;
-  padding-right: 4px;
+  padding-right: var(--spacing-xs);
 }
 
 .file-browser__icon {
@@ -285,7 +285,7 @@
 
 .file-browser__picker-select {
   width: 100%;
-  padding: 4px 8px;
+  padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   background: var(--bg-primary);
@@ -336,8 +336,8 @@
 .file-browser__new-dir {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px var(--spacing-sm);
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
   border-bottom: 1px solid var(--border-secondary);
 }
 
@@ -346,7 +346,7 @@
    so the input isn't clipped. */
 .file-browser__row--renaming {
   height: auto;
-  padding: 2px var(--spacing-sm);
+  padding: var(--spacing-xxs) var(--spacing-sm);
 }
 
 /* Placeholder for unsupported connection types */
@@ -418,7 +418,7 @@
 .file-browser__subbar {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   padding: var(--spacing-xs) var(--spacing-sm);
   border-bottom: 1px solid var(--border-secondary);
 }
@@ -459,7 +459,7 @@
 .file-browser__col {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   font-size: var(--font-size-2xs);
   text-transform: uppercase;
   letter-spacing: var(--letter-spacing-label);
