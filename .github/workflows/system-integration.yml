@@ -246,7 +246,16 @@ jobs:
         # identical to production, so this lane still exercises the shipped
         # rendering-relevant policy — including the CSP-violation assertion in
         # test_csp.py.
-        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
+        #
+        # --features mock-remote-desktop (DEAD-001): the mock graphical backend
+        # is NO LONGER in the desktop crate's `default` feature set — a
+        # protocol-less test/demo backend must not compile into a shipping
+        # release. It exists so the shared remote-desktop layer (#1680) is
+        # E2E-testable with no real VNC/RDP server, so the E2E test app must opt
+        # back into it here; without this flag the built app would not register
+        # the "Mock Remote Desktop" connection type the integration lane relies
+        # on for remote-desktop coverage.
+        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json --features mock-remote-desktop
 
       - name: Bring up the Docker fixtures
         # Linux only. Pre-build and start the profile-less SSH/telnet fixtures so
@@ -501,8 +510,10 @@ jobs:
         run: cargo build --release -p termihub-agent
 
       - name: Build the desktop app (debug)
-        # Same debug bundle + test-CSP overlay as the bulk lane (see its note).
-        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json
+        # Same debug bundle + test-CSP overlay + mock-remote-desktop opt-in as
+        # the bulk lane (see its note; DEAD-001 dropped that backend from the
+        # crate default, so the E2E app must opt back in).
+        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json --features mock-remote-desktop
 
       - name: Run the display-critical grades (Linux, headless via Xvfb)
         # dbus-run-session (#2646): same headless-portal hang fix as the bulk lane
