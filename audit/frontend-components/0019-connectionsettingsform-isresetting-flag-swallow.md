@@ -9,7 +9,8 @@ subsystem: src/components/DynamicForm
 evidence:
   - src/components/DynamicForm/ConnectionSettingsForm.tsx:143
   - src/components/DynamicForm/ConnectionSettingsForm.tsx:165
-status: open
+status: fixed
+resolution: "#2824 — replaced isResetting watch-echo flag with value-snapshot compare (subscription teardown lost the echo); regression test RED→GREEN; #1820 workaround preserved"
 ---
 
 ## What

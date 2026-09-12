@@ -9,7 +9,8 @@ subsystem: src/components/DynamicForm
 evidence:
   - src/components/DynamicForm/ConnectionSettingsForm.tsx:239
   - core/src/backends/ssh/mod.rs:251
-status: open
+status: fixed
+resolution: "#2824 — SettingsGroup gained serde-default collapsed hint; SSH Advanced group collapsed behind accessible expander (fields stay mounted)"
 ---
 
 ## What

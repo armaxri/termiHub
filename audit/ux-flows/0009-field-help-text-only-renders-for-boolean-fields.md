@@ -10,7 +10,8 @@ evidence:
   - src/components/DynamicForm/DynamicField.tsx:229
   - src/components/DynamicForm/DynamicField.tsx:65
   - core/src/backends/ssh/mod.rs:429
-status: open
+status: fixed
+resolution: "#2824 — helpText now surfaced on all field types via shared FieldHelp on FieldLabel (was boolean-only)"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: src/components/SshHostKeyPrompt
 evidence:
   - src/components/SshHostKeyPrompt/SshHostKeyPrompt.tsx:123
   - src/components/SshHostKeyPrompt/SshHostKeyPrompt.tsx:104
-status: open
+status: in-progress
+resolution: "#2823 — copyable fingerprint done (SSH+RDP); old-vs-new comparison deferred → #2822 (prior fingerprint not plumbed to frontend)"
 ---
 
 ## What

@@ -11,7 +11,8 @@ evidence:
   - src/components/SshHostKeyPrompt/SshHostKeyPrompt.tsx:104
   - src/components/RemoteDesktop/RemoteDesktopCertPrompt.tsx:30
   - src/components/RemoteDesktop/RemoteDesktopCertPrompt.tsx:74
-status: open
+status: fixed
+resolution: "#2823 — extracted shared TrustPrompt ui-primitive; SSH host-key + RDP cert prompts render through it (MITM warning + 3-verdict footer now single-source)"
 ---
 
 ## What
