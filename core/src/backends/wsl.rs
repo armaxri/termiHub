@@ -389,8 +389,23 @@ fn build_wslenv(existing: Option<&str>, names: &[String]) -> String {
 // Silent setup task
 // ---------------------------------------------------------------------------
 
-/// Linux path where the transient setup script is written inside WSL.
-const INIT_SCRIPT_LINUX_PATH: &str = "/tmp/.termihub_init";
+/// Generate a per-session Linux path for the transient WSL setup script:
+/// `/tmp/.termihub_init-<uuid-v4>`.
+///
+/// # Why a fresh UUID per session (CORE-019)
+///
+/// A fixed, world-readable path like `/tmp/.termihub_init` is a classic
+/// symlink/pre-creation race: another local user or process inside the distro
+/// can pre-create or symlink the path to redirect the write or read the init
+/// content, and two concurrent WSL sessions writing the same file clobber each
+/// other. A fresh v4 UUID makes the name unpredictable, which defeats both the
+/// pre-creation/symlink race and the concurrent-session clobber. It mirrors the
+/// `/tmp/termihub-<uuid>` pattern already used by the SSH sftp elevated-write
+/// path. The name is entirely tool-generated, so no user or remote text ever
+/// forms the path.
+fn init_script_linux_path() -> String {
+    format!("/tmp/.termihub_init-{}", uuid::Uuid::new_v4())
+}
 
 /// Wait for `needle` to appear in the stream from `rx`, up to `timeout`.
 /// Returns `true` if found, `false` on timeout or closed channel.
@@ -511,13 +526,14 @@ fn write_and_flush(w: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
 ///    500 ms of silence after the first output chunk (zsh / other shells).
 ///    Hard deadline: 5 s.
 ///
-/// 2. Write the setup script to `INIT_SCRIPT_LINUX_PATH` via the Windows UNC
-///    path for the distribution (e.g. `\\wsl.localhost\Ubuntu\tmp\.termihub_init`).
-///    This avoids spawning a second `wsl.exe` process, which can trigger
+/// 2. Write the setup script to a per-session path (see
+///    [`init_script_linux_path`]) via the Windows UNC path for the distribution
+///    (e.g. `\\wsl.localhost\Ubuntu\tmp\.termihub_init-<uuid>`). This avoids
+///    spawning a second `wsl.exe` process, which can trigger
 ///    `Wsl/Service/E_UNEXPECTED` on some Windows configurations when a second
 ///    WSL process starts while the first is still initializing.
 ///
-/// 3. Inject `source INIT_SCRIPT_LINUX_PATH 2>/dev/null` into the PTY. The
+/// 3. Inject `source <init-path> 2>/dev/null` into the PTY. The
 ///    `source` line is echoed/displayed (unavoidable), and the script's own
 ///    `echo` message appears on the next line before the prompt returns.
 ///    The `2>/dev/null` suppresses any "no such file" error from a rare
@@ -535,19 +551,28 @@ async fn wsl_setup(
     wait_for_shell_ready(&mut tap_rx, 500, Duration::from_secs(5)).await;
 
     // Phase 2 — write the setup script via the Windows UNC path.
-    // The script self-cleans the temp file; no erase sequences are emitted.
-    let script = format!("{setup_cmd}\nrm -f {INIT_SCRIPT_LINUX_PATH}\n");
+    // The path is unpredictable per session (CORE-019); the script self-cleans
+    // the temp file via its trailing `rm -f`, and no erase sequences are emitted.
+    let init_path = init_script_linux_path();
+    let script = format!("{setup_cmd}\nrm -f {init_path}\n");
 
     // Convert the Linux path to a Windows UNC path for writing from the host.
-    // e.g. /tmp/.termihub_init → \\wsl.localhost\Ubuntu\tmp\.termihub_init
-    let unc_script_path = format!(
-        "{}{}",
-        unc_prefix,
-        INIT_SCRIPT_LINUX_PATH.replace('/', "\\")
-    );
+    // e.g. /tmp/.termihub_init-<uuid> → \\wsl.localhost\Ubuntu\tmp\.termihub_init-<uuid>
+    let unc_script_path = format!("{}{}", unc_prefix, init_path.replace('/', "\\"));
 
+    // Create with `create_new` (CREATE_NEW / O_EXCL semantics): the open fails
+    // if the path already exists, so a pre-created file or symlink at the path
+    // is rejected rather than followed/clobbered — defense in depth on top of
+    // the unpredictable name. On failure we fall back to direct injection below.
     let write_result: Result<(), String> = tokio::task::spawn_blocking(move || {
-        std::fs::write(&unc_script_path, script.as_bytes()).map_err(|e| e.to_string())
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&unc_script_path)
+            .map_err(|e| e.to_string())?;
+        file.write_all(script.as_bytes())
+            .map_err(|e| e.to_string())?;
+        file.flush().map_err(|e| e.to_string())
     })
     .await
     .map_err(|e| e.to_string())
@@ -560,7 +585,7 @@ async fn wsl_setup(
             // The `2>/dev/null` suppresses any rare UNC-visibility race error.
             pty_write(
                 &writer,
-                format!("source {INIT_SCRIPT_LINUX_PATH} 2>/dev/null\n").as_bytes(),
+                format!("source {init_path} 2>/dev/null\n").as_bytes(),
             );
             debug!("WSL setup: init script written via UNC and sourced");
         }
