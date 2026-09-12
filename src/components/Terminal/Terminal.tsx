@@ -53,6 +53,7 @@ import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
+import { getRenderedCellWidth } from "./xtermDimensions";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import { currentSessionView, waitForBackendAgentReconnectOutcome } from "@/store/sessionBridge";
@@ -166,9 +167,11 @@ function updateHorizontalScrollWidth(xterm: XTerm, fitAddon: FitAddon, _containe
   // area. Using container.clientWidth / dims.cols would produce a slightly
   // inflated cell width (full width ÷ reduced cols), pushing targetWidth back
   // to full container width and hiding content under the right-side scrollbar.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cellWidth: number = (xterm as any)._core?._renderService?.dimensions?.css?.cell?.width;
-  if (!cellWidth || cellWidth <= 0) return;
+  // The private-internals read is isolated behind the typed `xtermDimensions`
+  // adapter, whose test fails loudly if an xterm upgrade restructures the shape
+  // (FEC-001) — no public xterm API exposes this sub-pixel width.
+  const cellWidth = getRenderedCellWidth(xterm);
+  if (!cellWidth) return;
 
   const contentCols = getMaxLineCells(xterm);
   const effectiveCols = Math.max(contentCols, dims.cols);
