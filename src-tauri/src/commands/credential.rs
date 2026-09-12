@@ -543,12 +543,10 @@ mod tests {
         )];
 
         let buffer = create_log_buffer();
-        let subscriber =
-            tracing_subscriber::registry().with(LogCaptureLayer::new(buffer.clone()));
+        let subscriber = tracing_subscriber::registry().with(LogCaptureLayer::new(buffer.clone()));
 
-        let (migrated, warnings) = tracing::subscriber::with_default(subscriber, || {
-            migrate_credentials(&mgr, &creds)
-        });
+        let (migrated, warnings) =
+            tracing::subscriber::with_default(subscriber, || migrate_credentials(&mgr, &creds));
 
         // Worst case: nothing migrated, one warning surfaced to the frontend.
         assert_eq!(migrated, 0, "a locked store migrates nothing");
@@ -570,7 +568,9 @@ mod tests {
         );
         // SECRET HYGIENE: no captured log line may contain the credential value.
         assert!(
-            entries.iter().all(|e| !e.message.contains(MIGRATION_TEST_SECRET)),
+            entries
+                .iter()
+                .all(|e| !e.message.contains(MIGRATION_TEST_SECRET)),
             "a credential value must NEVER be logged, got: {entries:?}"
         );
     }
