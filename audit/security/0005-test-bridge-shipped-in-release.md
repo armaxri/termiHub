@@ -11,7 +11,8 @@ evidence:
   - src/testbridge/testMode.ts:43
   - src-tauri/src/utils/test_bridge.rs:137
   - src-tauri/src/utils/test_bridge.rs:184
-status: open
+status: fixed
+resolution: "#2861 — test bridge + CSP relaxation + frontend activation gated behind non-default test-bridge cargo feature + VITE_TEST_BRIDGE (harness builds release, so feature not debug_assertions); release strings verified 0 bridge markers; CSP stays strict. WATCH nightly system-integration lane"
 ---
 
 ## What
