@@ -357,7 +357,11 @@ describe("transferEntryFromProgress ETA", () => {
   });
 
   it("clears etaSeconds on completion", () => {
-    const entry = transferEntryFromProgress(progress({ phase: "done", transferred: 100 }), undefined, 0);
+    const entry = transferEntryFromProgress(
+      progress({ phase: "done", transferred: 100 }),
+      undefined,
+      0
+    );
     expect(entry.etaSeconds).toBeNull();
   });
 });
