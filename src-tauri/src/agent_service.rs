@@ -204,7 +204,6 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use crate::connection::config::AgentSettings;
-    use crate::terminal::agent_deploy::ConnectedHost;
     use crate::terminal::agent_manager::{
         AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
         AgentFolderInfo, AgentSessionInfo,
@@ -241,7 +240,11 @@ mod tests {
         fn get_capabilities(&self, agent_id: &str) -> Option<AgentCapabilities> {
             unimplemented!()
         }
-        fn shutdown_agent(&self, agent_id: &str, reason: Option<&str>) -> Result<u32, TerminalError> {
+        fn shutdown_agent(
+            &self,
+            agent_id: &str,
+            reason: Option<&str>,
+        ) -> Result<u32, TerminalError> {
             unimplemented!()
         }
         fn send_request(
@@ -460,7 +463,10 @@ mod tests {
         poller.ensure(d);
 
         settle(45).await;
-        assert!(ticks.load(Ordering::SeqCst) >= 2, "loop should tick repeatedly");
+        assert!(
+            ticks.load(Ordering::SeqCst) >= 2,
+            "loop should tick repeatedly"
+        );
         assert!(
             !applied.lock().unwrap().is_empty(),
             "samples should be applied when a client and targets are present"
