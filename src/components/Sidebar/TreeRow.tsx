@@ -18,6 +18,11 @@ import { ChevronDown, ChevronRight, Folder } from "lucide-react";
  * keyboard handlers, and the per-row content (icons, badges, status, actions)
  * are all passed in by the caller, so the rendered DOM for a given set of props
  * is byte-identical to the previous inline markup.
+ *
+ * Both forward their ref and spread any extra props onto the underlying button,
+ * so they can serve as a Radix `ContextMenu.Trigger asChild` child exactly as
+ * the raw `<button>` did — the trigger's injected ref and pointer/context-menu
+ * handlers reach the button, composed with the roving-nav / drag wiring.
  */
 
 /** Left padding (px) for a tree row at `depth`, matching the shared indent. */
@@ -29,8 +34,58 @@ export function treeRowPaddingLeft(depth: number): number {
 type DragAttributes = ReturnType<typeof useDraggable>["attributes"];
 type DragListeners = ReturnType<typeof useDraggable>["listeners"];
 
+type UnknownFn = (...args: unknown[]) => void;
+
+/**
+ * Merge prop objects onto one target, composing overlapping function props
+ * (both are called) — mirroring how Radix's `Slot` merges a trigger's handlers
+ * with the child's own. This preserves the case where dnd-kit's activator
+ * `onPointerDown` and Radix's long-press `onPointerDown` both need to fire.
+ */
+function mergeButtonProps(
+  ...sources: (Record<string, unknown> | undefined)[]
+): React.ButtonHTMLAttributes<HTMLButtonElement> {
+  const out: Record<string, unknown> = {};
+  for (const source of sources) {
+    if (!source) continue;
+    for (const key of Object.keys(source)) {
+      const prev = out[key];
+      const next = source[key];
+      if (typeof prev === "function" && typeof next === "function") {
+        const prevFn = prev as UnknownFn;
+        const nextFn = next as UnknownFn;
+        out[key] = (...args: unknown[]) => {
+          prevFn(...args);
+          nextFn(...args);
+        };
+      } else {
+        out[key] = next;
+      }
+    }
+  }
+  return out as React.ButtonHTMLAttributes<HTMLButtonElement>;
+}
+
+/** Compose a forwarded ref with a callback ref onto one element. */
+function useComposedButtonRef(
+  forwardedRef: React.ForwardedRef<HTMLButtonElement>,
+  buttonRef: (el: HTMLButtonElement | null) => void
+): (el: HTMLButtonElement | null) => void {
+  return React.useCallback(
+    (el: HTMLButtonElement | null) => {
+      buttonRef(el);
+      if (typeof forwardedRef === "function") forwardedRef(el);
+      else if (forwardedRef) forwardedRef.current = el;
+    },
+    [forwardedRef, buttonRef]
+  );
+}
+
 /** Props for {@link TreeFolderRow}. */
-export interface TreeFolderRowProps {
+export interface TreeFolderRowProps extends Omit<
+  React.ButtonHTMLAttributes<HTMLButtonElement>,
+  "children"
+> {
   /** Ref callback for the folder button (drop-target + roving-nav row). */
   buttonRef: (el: HTMLButtonElement | null) => void;
   /** Folder label. */
@@ -47,9 +102,6 @@ export interface TreeFolderRowProps {
   dropOver?: boolean;
   /** Optional `data-testid` for the button. */
   testId?: string;
-  onClick?: React.MouseEventHandler<HTMLButtonElement>;
-  onKeyDown?: React.KeyboardEventHandler<HTMLButtonElement>;
-  onFocus?: React.FocusEventHandler<HTMLButtonElement>;
 }
 
 /**
@@ -57,41 +109,43 @@ export interface TreeFolderRowProps {
  * trailing expand/collapse chevron, wrapped in the shared
  * `connection-tree__folder` button with tree ARIA + roving-tabindex wiring.
  */
-export function TreeFolderRow({
-  buttonRef,
-  label,
-  expanded,
-  indentPx,
-  ariaLevel,
-  tabIndex,
-  dropOver = false,
-  testId,
-  onClick,
-  onKeyDown,
-  onFocus,
-}: TreeFolderRowProps): React.ReactElement {
-  const Chevron = expanded ? ChevronDown : ChevronRight;
-  const className = `connection-tree__folder${dropOver ? " connection-tree__folder--drop-over" : ""}`;
-  return (
-    <button
-      ref={buttonRef}
-      className={className}
-      onClick={onClick}
-      style={{ paddingLeft: indentPx }}
-      data-testid={testId}
-      role="treeitem"
-      aria-expanded={expanded}
-      aria-level={ariaLevel}
-      tabIndex={tabIndex}
-      onKeyDown={onKeyDown}
-      onFocus={onFocus}
-    >
-      <Folder size={16} />
-      <span className="connection-tree__label">{label}</span>
-      <Chevron size={16} className="connection-tree__chevron" />
-    </button>
-  );
-}
+export const TreeFolderRow = React.forwardRef<HTMLButtonElement, TreeFolderRowProps>(
+  function TreeFolderRow(
+    {
+      buttonRef,
+      label,
+      expanded,
+      indentPx,
+      ariaLevel,
+      tabIndex,
+      dropOver = false,
+      testId,
+      ...rest
+    },
+    ref
+  ) {
+    const composedRef = useComposedButtonRef(ref, buttonRef);
+    const Chevron = expanded ? ChevronDown : ChevronRight;
+    const className = `connection-tree__folder${dropOver ? " connection-tree__folder--drop-over" : ""}`;
+    return (
+      <button
+        ref={composedRef}
+        {...rest}
+        className={className}
+        style={{ paddingLeft: indentPx }}
+        data-testid={testId}
+        role="treeitem"
+        aria-expanded={expanded}
+        aria-level={ariaLevel}
+        tabIndex={tabIndex}
+      >
+        <Folder size={16} />
+        <span className="connection-tree__label">{label}</span>
+        <Chevron size={16} className="connection-tree__chevron" />
+      </button>
+    );
+  }
+);
 
 /** Modifier flags → `connection-tree__item--*` classes, applied in order. */
 function treeItemClassName({
@@ -114,7 +168,10 @@ function treeItemClassName({
 }
 
 /** Props for {@link TreeItemRow}. */
-export interface TreeItemRowProps {
+export interface TreeItemRowProps extends Omit<
+  React.ButtonHTMLAttributes<HTMLButtonElement>,
+  "title"
+> {
   /** Ref callback for the item button (draggable/droppable + roving-nav row). */
   buttonRef: (el: HTMLButtonElement | null) => void;
   /** Left padding in pixels (typically `treeRowPaddingLeft(depth)`). */
@@ -146,10 +203,6 @@ export interface TreeItemRowProps {
   dragAttributes?: DragAttributes;
   /** dnd-kit draggable listeners to spread onto the button. */
   dragListeners?: DragListeners;
-  onClick?: React.MouseEventHandler<HTMLButtonElement>;
-  onDoubleClick?: React.MouseEventHandler<HTMLButtonElement>;
-  onKeyDown?: React.KeyboardEventHandler<HTMLButtonElement>;
-  onFocus?: React.FocusEventHandler<HTMLButtonElement>;
 }
 
 /**
@@ -159,46 +212,54 @@ export interface TreeItemRowProps {
  * content is provided via `children`, so each tree keeps its own icons, badges,
  * and action controls while sharing one shell.
  */
-export function TreeItemRow({
-  buttonRef,
-  indentPx,
-  ariaLevel,
-  tabIndex,
-  ariaSelected,
-  children,
-  dragging,
-  selected,
-  persistent,
-  reorderOver,
-  title,
-  testId,
-  dragAttributes,
-  dragListeners,
-  onClick,
-  onDoubleClick,
-  onKeyDown,
-  onFocus,
-}: TreeItemRowProps): React.ReactElement {
-  const className = treeItemClassName({ dragging, selected, persistent, reorderOver });
-  return (
-    <button
-      ref={buttonRef}
-      className={className}
-      style={{ paddingLeft: indentPx }}
-      onClick={onClick}
-      onDoubleClick={onDoubleClick}
-      title={title}
-      data-testid={testId}
-      {...(dragAttributes ?? {})}
-      {...(dragListeners ?? {})}
-      role="treeitem"
-      aria-level={ariaLevel}
-      aria-selected={ariaSelected}
-      tabIndex={tabIndex}
-      onKeyDown={onKeyDown}
-      onFocus={onFocus}
-    >
-      {children}
-    </button>
-  );
-}
+export const TreeItemRow = React.forwardRef<HTMLButtonElement, TreeItemRowProps>(
+  function TreeItemRow(
+    {
+      buttonRef,
+      indentPx,
+      ariaLevel,
+      tabIndex,
+      ariaSelected,
+      children,
+      dragging,
+      selected,
+      persistent,
+      reorderOver,
+      title,
+      testId,
+      dragAttributes,
+      dragListeners,
+      ...rest
+    },
+    ref
+  ) {
+    const composedRef = useComposedButtonRef(ref, buttonRef);
+    const className = treeItemClassName({ dragging, selected, persistent, reorderOver });
+    // Merge the dnd-kit attributes/listeners with any Radix `asChild`-injected
+    // props (`rest`), composing overlapping handlers (e.g. `onPointerDown` is set
+    // by both dnd-kit's activator and Radix's long-press detector). dnd sources
+    // come first so a composed handler fires dnd's before Radix's — matching the
+    // order Radix's own `Slot` used when the raw `<button>` was the trigger child.
+    const mergedProps = mergeButtonProps(
+      dragAttributes as unknown as Record<string, unknown> | undefined,
+      dragListeners as unknown as Record<string, unknown> | undefined,
+      rest as unknown as Record<string, unknown>
+    );
+    return (
+      <button
+        ref={composedRef}
+        {...mergedProps}
+        className={className}
+        style={{ paddingLeft: indentPx }}
+        title={title}
+        data-testid={testId}
+        role="treeitem"
+        aria-level={ariaLevel}
+        aria-selected={ariaSelected}
+        tabIndex={tabIndex}
+      >
+        {children}
+      </button>
+    );
+  }
+);

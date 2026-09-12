@@ -183,6 +183,76 @@ describe("TreeItemRow", () => {
     expect(btn.style.paddingLeft).toBe("32px");
   });
 
+  it("forwards a ref to the button and composes it with buttonRef (Radix asChild)", () => {
+    const forwarded = { current: null as HTMLButtonElement | null };
+    const viaButtonRef: HTMLButtonElement[] = [];
+    act(() =>
+      root.render(
+        <TreeItemRow
+          ref={forwarded}
+          buttonRef={(el) => {
+            if (el) viaButtonRef.push(el);
+          }}
+          indentPx={8}
+          ariaLevel={1}
+          tabIndex={0}
+        >
+          x
+        </TreeItemRow>
+      )
+    );
+    const btn = treeitem();
+    expect(forwarded.current).toBe(btn);
+    expect(viaButtonRef[0]).toBe(btn);
+  });
+
+  it("forwards injected props (e.g. onContextMenu, data-state) to the button", () => {
+    const onContextMenu = vi.fn();
+    act(() =>
+      root.render(
+        <TreeItemRow
+          buttonRef={() => {}}
+          indentPx={8}
+          ariaLevel={1}
+          tabIndex={0}
+          onContextMenu={onContextMenu}
+          data-state="open"
+        >
+          x
+        </TreeItemRow>
+      )
+    );
+    const btn = treeitem();
+    expect(btn.getAttribute("data-state")).toBe("open");
+    act(() => btn.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true })));
+    expect(onContextMenu).toHaveBeenCalledTimes(1);
+  });
+
+  it("composes an injected onPointerDown (Radix) with dnd-kit's onPointerDown", () => {
+    const radixPointerDown = vi.fn();
+    const dndPointerDown = vi.fn();
+    act(() =>
+      root.render(
+        <TreeItemRow
+          buttonRef={() => {}}
+          indentPx={8}
+          ariaLevel={1}
+          tabIndex={0}
+          onPointerDown={radixPointerDown}
+          dragListeners={{ onPointerDown: dndPointerDown }}
+        >
+          x
+        </TreeItemRow>
+      )
+    );
+    act(() => {
+      // jsdom lacks PointerEvent; React's onPointerDown fires from a pointerdown MouseEvent.
+      treeitem().dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    });
+    expect(radixPointerDown).toHaveBeenCalledTimes(1);
+    expect(dndPointerDown).toHaveBeenCalledTimes(1);
+  });
+
   it("spreads drag attributes/listeners while explicit tree ARIA wins over them", () => {
     act(() =>
       root.render(
