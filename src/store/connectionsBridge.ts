@@ -249,6 +249,48 @@ export function mirrorConnectionIntent(
   }
 }
 
+/** A granular `connection.*` intent to dispatch: the forward transition, or the
+ * compensating transition that reverts it (FES-005). */
+export interface ConnectionIntentSpec {
+  kind: ConnectionIntentKind;
+  payload: Record<string, unknown>;
+}
+
+/**
+ * Run a connection mutation atomically against the authoritative region and disk
+ * (FES-005): fire the granular optimistic `connection.*` intent (`forward`) so the
+ * region reflects the transition immediately, then await the paired persist
+ * command. If the persist **rejects**, fire the compensating `revert` intent so the
+ * region is rolled back to match the on-disk truth.
+ *
+ * The two backend writes a connection mutation performs — the region intent (applied
+ * to the in-memory `connections` region at once) and the persist command (which
+ * writes `connections.json` and re-folds the disk truth into the region on success,
+ * #2389 / #2394) — are otherwise uncoupled. A failed persist used to leave the region
+ * ahead of disk: the deleted connection stayed gone in the UI but was still on disk,
+ * so it "resurrected" on the next reseed (and the mirror image for a failed add —
+ * the added entry vanished on reload). Reverting the region on rejection closes that
+ * gap: the revert is the client-side twin of the inverse Rust store reducer,
+ * dispatched through the same shared region so the UI reverts synchronously rather
+ * than surfacing only a transient toast.
+ *
+ * The returned promise mirrors `persist`: it resolves with the persist result, or —
+ * after firing the revert — rejects with the persist error, so the caller keeps its
+ * own success / error toast handling. Never dispatch a `revert` that is not a true
+ * inverse of `forward`, or the region will diverge in the other direction.
+ */
+export function persistConnectionMutation<T>(
+  forward: ConnectionIntentSpec,
+  persist: () => Promise<T>,
+  revert: ConnectionIntentSpec
+): Promise<T> {
+  mirrorConnectionIntent(forward.kind, forward.payload);
+  return persist().catch((err: unknown) => {
+    mirrorConnectionIntent(revert.kind, revert.payload);
+    throw err;
+  });
+}
+
 /** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logConnectionBridgeFallback(kind: string, err: unknown): void {
   const message = err instanceof Error ? err.message : String(err);
