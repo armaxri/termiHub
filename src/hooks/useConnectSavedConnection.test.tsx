@@ -21,6 +21,7 @@ import {
   isSshKeyEncrypted,
 } from "@/services/api";
 import { frontendError } from "@/utils/frontendLog";
+import { toast } from "@/components/ui";
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("session-1")),
@@ -89,6 +90,9 @@ function makeFtpConn(id: string): SavedConnection {
 let container: HTMLDivElement;
 let root: Root;
 let addTabSpy: ReturnType<typeof vi.fn>;
+let loadingToastSpy: ReturnType<typeof vi.spyOn>;
+let dismissToastSpy: ReturnType<typeof vi.spyOn>;
+let infoToastSpy: ReturnType<typeof vi.spyOn>;
 
 async function renderHook(): Promise<ReturnType<typeof useConnectSavedConnection>> {
   let api: ReturnType<typeof useConnectSavedConnection> | undefined;
@@ -111,6 +115,12 @@ beforeEach(() => {
   mockedCreateTerminal.mockResolvedValue("session-1");
   mockedIsSshKeyEncrypted.mockResolvedValue(true);
   addTabSpy = vi.fn(() => "tab-1");
+  // Toast is the feedback surface for UX-011/UX-012. Stub the helpers so the
+  // hook's connecting-indicator lifecycle and cancel acknowledgement are
+  // observable without a mounted ToastProvider.
+  loadingToastSpy = vi.spyOn(toast, "loading").mockReturnValue("connecting-toast");
+  dismissToastSpy = vi.spyOn(toast, "dismiss").mockImplementation(() => {});
+  infoToastSpy = vi.spyOn(toast, "info").mockReturnValue("info-toast");
   useAppStore.setState({
     ...useAppStore.getInitialState(),
     addTab: addTabSpy as unknown as ReturnType<typeof useAppStore.getState>["addTab"],
@@ -123,6 +133,7 @@ afterEach(() => {
     root.unmount();
   });
   container.remove();
+  vi.restoreAllMocks();
 });
 
 describe("useConnectSavedConnection", () => {
@@ -347,5 +358,110 @@ describe("useConnectSavedConnection", () => {
       "key_passphrase",
       "my-passphrase"
     );
+  });
+
+  // UX-011: the pre-connect window (unlock → resolve → blocking pre-connect
+  // handshake) must not be a silent gap — a connecting indicator appears up
+  // front and is dismissed when the tab/overlay takes over or the prompt shows.
+  it("shows a connecting indicator during the slow pre-connect and dismisses it when the tab opens (UX-011)", async () => {
+    mockedResolveCredential.mockResolvedValue("stored-secret");
+    const { connect } = await renderHook();
+    await act(async () => {
+      await connect(makeSshConn("pw-slow", "password"));
+    });
+    expect(loadingToastSpy).toHaveBeenCalledWith("Connecting…");
+    // The opened tab (and its own connection overlay) takes over feedback, so
+    // the pre-connect indicator is cleared.
+    expect(dismissToastSpy).toHaveBeenCalledWith("connecting-toast");
+    expect(addTabSpy).toHaveBeenCalledOnce();
+  });
+
+  it("dismisses the connecting indicator before showing the password prompt (UX-011)", async () => {
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-prompt", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(loadingToastSpy).toHaveBeenCalledWith("Connecting…");
+    // The prompt modal is now the feedback surface — the toast is dismissed
+    // rather than left lingering behind the dialog.
+    expect(dismissToastSpy).toHaveBeenCalledWith("connecting-toast");
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+  });
+
+  // UX-012: cancelling the prompt must acknowledge the click (matching the
+  // editor path's toast.info) instead of returning silently.
+  it("toasts an acknowledgement when the password prompt is cancelled (UX-012)", async () => {
+    const { connect } = await renderHook();
+    let connectPromise: Promise<void> | undefined;
+    await act(async () => {
+      connectPromise = connect(makeSshConn("pw-cancel", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+    await act(async () => {
+      useAppStore.getState().dismissPasswordPrompt();
+      await connectPromise;
+    });
+    expect(infoToastSpy).toHaveBeenCalledWith("Connect canceled");
+    expect(addTabSpy).not.toHaveBeenCalled();
+  });
+
+  // UX-013: a rejected stored credential is cleared and the re-prompt carries
+  // an explanatory notice — surfaced IN the prompt, not as a separate error
+  // toast. The destructive clear still gates on the typed auth-failure code
+  // (I18N-001), never on English text.
+  it("re-prompts with an explanatory notice when a stored credential is rejected (UX-013)", async () => {
+    mockedResolveCredential.mockResolvedValue("stale-secret");
+    mockedCreateTerminal.mockRejectedValue(
+      new Error("[thub-code:auth_failed] Authentication failed")
+    );
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-reprompt", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockedRemoveCredential).toHaveBeenCalledWith("pw-reprompt", "password");
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+    expect(useAppStore.getState().passwordPromptNotice).toBe(
+      "Saved password was rejected — please re-enter."
+    );
+    // No separate mid-connect error toast — the reason rides inside the prompt.
+    expect(infoToastSpy).not.toHaveBeenCalled();
+  });
+
+  it("shows no re-prompt notice for an ordinary first-time password prompt (UX-013)", async () => {
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-first", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(useAppStore.getState().passwordPromptOpen).toBe(true);
+    expect(useAppStore.getState().passwordPromptNotice).toBe("");
+  });
+
+  it("adds no rejection notice on a non-auth error mentioning 'auth failed' (typed gating, I18N-001) (UX-013)", async () => {
+    mockedResolveCredential.mockResolvedValue("good-secret");
+    // Transport error whose text contains "auth failed" but carries NO typed
+    // code: the credential must survive and no notice must be raised.
+    mockedCreateTerminal.mockRejectedValue(
+      new Error("SSH error: ssh-agent auth failed: broken pipe")
+    );
+    const { connect } = await renderHook();
+    await act(async () => {
+      void connect(makeSshConn("pw-transport-notice", "password"));
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(mockedRemoveCredential).not.toHaveBeenCalled();
+    expect(useAppStore.getState().passwordPromptNotice).toBe("");
+    // Non-auth failure opens the tab to surface the error; no re-prompt.
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+    expect(addTabSpy).toHaveBeenCalledOnce();
   });
 });

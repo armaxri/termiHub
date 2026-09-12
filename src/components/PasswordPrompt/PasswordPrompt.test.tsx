@@ -48,6 +48,28 @@ describe("PasswordPrompt", () => {
     expect(query("password-prompt-cancel")).not.toBeNull();
   });
 
+  it("renders no notice for an ordinary prompt (UX-013)", async () => {
+    await act(async () => {
+      useAppStore.getState().requestPassword("example.com", "alice");
+    });
+    render();
+
+    expect(query("password-prompt-notice")).toBeNull();
+  });
+
+  it("renders the re-prompt notice when requestPassword carries one (UX-013)", async () => {
+    await act(async () => {
+      useAppStore
+        .getState()
+        .requestPassword("example.com", "alice", "Saved password was rejected — please re-enter.");
+    });
+    render();
+
+    const notice = query("password-prompt-notice");
+    expect(notice).not.toBeNull();
+    expect(notice?.textContent).toContain("Saved password was rejected");
+  });
+
   it("hides save checkbox when no credential store is configured", async () => {
     useAppStore.setState({
       credentialStoreStatus: { mode: "none", status: "unlocked" },

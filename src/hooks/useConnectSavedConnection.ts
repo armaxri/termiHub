@@ -8,6 +8,7 @@ import {
   storeCredential,
   isSshKeyEncrypted,
 } from "@/services/api";
+import { toast } from "@/components/ui";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
@@ -51,14 +52,31 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
       let config = connection.config;
       const cfg = config.config as unknown as Record<string, unknown>;
 
+      // UX-011: the credential-aware path below can run several slow steps —
+      // unlock, stored-credential resolve, and a blocking pre-connect SSH
+      // handshake — before any tab or overlay appears. Surface a lightweight,
+      // non-blocking "Connecting…" indicator during that window so a click is
+      // never met with a dead pause. Every exit dismisses it: `openTab` clears
+      // it when a tab (and its own connection overlay) takes over the feedback,
+      // and the prompt/cancel branches clear it explicitly.
+      let connectingToastId: string | number | undefined;
+      const dismissConnecting = () => {
+        if (connectingToastId !== undefined) {
+          toast.dismiss(connectingToastId);
+          connectingToastId = undefined;
+        }
+      };
+
       // Open a tab for this saved connection, always stamping its `connectionId`
       // so the on-connect workflow trigger (#1855) can match the freshly opened
       // session back to the connection it came from.
-      const openTab = (tabConfig: ConnectionConfig, opts: AddTabOptions = {}) =>
-        addTab(connection.name, connection.config.type, tabConfig, {
+      const openTab = (tabConfig: ConnectionConfig, opts: AddTabOptions = {}) => {
+        dismissConnecting();
+        return addTab(connection.name, connection.config.type, tabConfig, {
           connectionId: connection.id,
           ...opts,
         });
+      };
 
       // A terminal-less connection type (Capabilities.terminal === false, e.g.
       // FTP) opens into a browser-only tab instead of a terminal tab — no xterm,
@@ -123,12 +141,21 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           return;
         }
 
+        // UX-011: from here on the flow runs the genuinely slow steps (unlock,
+        // stored-credential resolve, blocking pre-connect handshake). Show the
+        // non-blocking connecting indicator now — before any of them — so the
+        // pre-tab window is never a silent gap.
+        connectingToastId = toast.loading("Connecting…");
+
         // Before attempting credential resolution, check whether the credential store
         // is locked. If it is, we can't read the stored credential and SSH would fall
         // back to interactive password prompts. Prompt for unlock first and wait —
         // on success the code continues and the credential resolves automatically.
         const proceed = await ensureCredentialStoreUnlocked({ authMethod, savePassword });
-        if (!proceed) return;
+        if (!proceed) {
+          dismissConnecting();
+          return;
+        }
 
         // Try to resolve credential from the store first
         const resolution = await resolveConnectionCredential(
@@ -136,6 +163,13 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           authMethod,
           savePassword
         );
+
+        // UX-013: when a stored credential is rejected by the server we clear it
+        // and fall through to re-prompt. Carry the reason INTO that re-prompt
+        // (as prompt context) rather than firing a separate mid-connect error
+        // toast (which the flow deliberately avoids as noise), so the user
+        // understands why they are being asked again. Empty until a rejection.
+        let rejectedCredentialNotice = "";
 
         if (resolution.usedStoredCredential && resolution.password) {
           // Pre-connect with stored credential to validate it
@@ -181,6 +215,12 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
                   `Failed to remove stale ${resolution.credentialType} credential for ${connection.id}: ${err}`
                 );
               });
+              // Explain the re-prompt: the saved secret was rejected and cleared.
+              // Worded per credential kind; surfaced as prompt context (UX-013).
+              rejectedCredentialNotice =
+                resolution.credentialType === "key_passphrase"
+                  ? "Saved passphrase was rejected — please re-enter."
+                  : "Saved password was rejected — please re-enter.";
             } else {
               // Non-auth failure — let the Terminal component handle the error
               openTab(config, {
@@ -196,8 +236,16 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         if (authMethod === "password") {
           const host = cfg.host as string;
           const username = (cfg.username as string) ?? "";
-          const password = await requestPassword(host, username);
-          if (password === null) return;
+          // The prompt modal is now the feedback surface — clear the pre-connect
+          // indicator before it appears (UX-011).
+          dismissConnecting();
+          const password = await requestPassword(host, username, rejectedCredentialNotice);
+          if (password === null) {
+            // Acknowledge the cancel so the click isn't silently dropped (UX-012),
+            // matching the editor path's toast.info on connect-cancel.
+            toast.info("Connect canceled");
+            return;
+          }
           config = { ...config, config: { ...cfg, password } } as typeof config;
           // Persist the entered password if the user opted in via the prompt checkbox
           if (useAppStore.getState().passwordPromptShouldSave) {
@@ -212,8 +260,15 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           // passphrase is then stored still follows the prompt's Save box.
           const host = cfg.host as string;
           const username = (cfg.username as string) ?? "";
-          const passphrase = await requestPassword(host, username);
-          if (passphrase === null) return;
+          // The prompt modal is now the feedback surface — clear the pre-connect
+          // indicator before it appears (UX-011).
+          dismissConnecting();
+          const passphrase = await requestPassword(host, username, rejectedCredentialNotice);
+          if (passphrase === null) {
+            // Acknowledge the cancel (UX-012), matching the editor path.
+            toast.info("Connect canceled");
+            return;
+          }
           config = { ...config, config: { ...cfg, password: passphrase } } as typeof config;
           if (useAppStore.getState().passwordPromptShouldSave) {
             await storeCredential(connection.id, "key_passphrase", passphrase).catch((err) => {
