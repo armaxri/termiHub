@@ -47,16 +47,16 @@ describe("ExportImportButtons", () => {
     const exportBtn = container.querySelector<HTMLButtonElement>(
       '[data-testid="macro-export-all-btn"]'
     );
-    const importBtn = container.querySelector<HTMLButtonElement>('[data-testid="macro-import-btn"]');
-    expect(exportBtn).not.toBeNull();
-    expect(importBtn).not.toBeNull();
-    expect(exportBtn?.getAttribute("aria-label")).toBe("Export All Macros");
-    expect(importBtn?.getAttribute("aria-label")).toBe("Import Macros");
-    expect(exportBtn?.disabled).toBe(true);
+    const importBtn = container.querySelector<HTMLButtonElement>(
+      '[data-testid="macro-import-btn"]'
+    );
+    if (!exportBtn || !importBtn) throw new Error("export/import buttons not rendered");
+    expect(exportBtn.getAttribute("aria-label")).toBe("Export All Macros");
+    expect(importBtn.getAttribute("aria-label")).toBe("Import Macros");
+    expect(exportBtn.disabled).toBe(true);
     // Export precedes import in document order.
     expect(
-      exportBtn?.compareDocumentPosition(importBtn as Node) &
-        Node.DOCUMENT_POSITION_FOLLOWING
+      exportBtn.compareDocumentPosition(importBtn) & Node.DOCUMENT_POSITION_FOLLOWING
     ).toBeTruthy();
   });
 

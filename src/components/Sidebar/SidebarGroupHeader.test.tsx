@@ -49,9 +49,9 @@ describe("SidebarGroupHeader", () => {
     const btn = toggle();
     expect(btn.getAttribute("data-testid")).toBe("connection-list-group-toggle");
     expect(btn.getAttribute("aria-expanded")).toBe("true");
-    expect(
-      container.querySelector(".connection-list__group-title")?.textContent
-    ).toBe("Connections");
+    expect(container.querySelector(".connection-list__group-title")?.textContent).toBe(
+      "Connections"
+    );
     // Expanded → chevron-down; the shared chevron class is present.
     expect(btn.querySelector(".connection-tree__chevron")).not.toBeNull();
     const actions = container.querySelector(".connection-list__group-actions");
@@ -60,9 +60,7 @@ describe("SidebarGroupHeader", () => {
 
   it("reflects collapsed state via aria-expanded", () => {
     act(() =>
-      root.render(
-        <SidebarGroupHeader title="Remote Agents" expanded={false} onToggle={() => {}} />
-      )
+      root.render(<SidebarGroupHeader title="Remote Agents" expanded={false} onToggle={() => {}} />)
     );
     expect(toggle().getAttribute("aria-expanded")).toBe("false");
   });
@@ -76,9 +74,7 @@ describe("SidebarGroupHeader", () => {
 
   it("invokes onToggle when the toggle is clicked", () => {
     const onToggle = vi.fn();
-    act(() =>
-      root.render(<SidebarGroupHeader title="Connections" expanded onToggle={onToggle} />)
-    );
+    act(() => root.render(<SidebarGroupHeader title="Connections" expanded onToggle={onToggle} />));
     act(() => {
       toggle().dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
