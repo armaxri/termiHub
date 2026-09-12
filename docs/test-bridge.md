@@ -118,8 +118,24 @@ the WebSocket client alongside the in-process bridge.
 
 ## Enabling test mode
 
-The bridge is **inert and uninstalled** in normal use. It activates only when one
-of these explicit opt-in signals is present:
+> **Compiled out of release builds (SEC-005).** The entire bridge — the backend
+> `utils::test_bridge` module, its CSP relaxation, and the frontend activation —
+> is gated so it cannot ship in, or be switched on within, a release binary:
+>
+> - **Backend:** gated behind the non-default `test-bridge` cargo feature. A
+>   release build compiles none of it, so `TERMIHUB_TEST_BRIDGE_PORT` is inert and
+>   the CSP is never relaxed. Opt in for test builds with `--features test-bridge`.
+> - **Frontend:** in a production build the runtime signals below are ignored
+>   unless the build was compiled with `VITE_TEST_BRIDGE=1`.
+>
+> Any hand-built test app therefore needs **both**:
+> `VITE_TEST_BRIDGE=1 pnpm tauri build --features test-bridge` (plus the usual
+> `--config src-tauri/tauri.test.conf.json` and `--features mock-remote-desktop`).
+> `./scripts/test-system-py.sh` and the nightly `system-integration.yml` pass all
+> of this for you.
+
+With the bridge compiled in, it is **inert and uninstalled** in normal use. It
+activates only when one of these explicit opt-in signals is present:
 
 - build flag `VITE_TEST_BRIDGE=1`,
 - a `?testBridge=1` query parameter,
