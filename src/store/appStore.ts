@@ -1504,11 +1504,19 @@ export interface AppState
    */
   launchingWorkspaceId: string | null;
   launchWorkspace: (workspaceId: string) => Promise<void>;
-  /** scope "all" captures all tab groups; "active" captures only the active group. */
+  /**
+   * scope "all" captures all tab groups; "active" captures only the active group.
+   *
+   * When `overwriteId` is supplied the current layout is written under that
+   * existing workspace's id — a genuine in-place update (the backend upserts by
+   * id) rather than a second, indistinguishable workspace with the same name
+   * (UX-027). Omit it to mint a fresh workspace.
+   */
   saveCurrentAsWorkspace: (
     name: string,
     scope: "all" | "active",
-    description?: string
+    description?: string,
+    overwriteId?: string
   ) => Promise<void>;
 
   // Last session (auto-saved layout restored on startup)
@@ -7735,7 +7743,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
     },
 
-    saveCurrentAsWorkspace: async (name, scope, description) => {
+    saveCurrentAsWorkspace: async (name, scope, description, overwriteId) => {
       try {
         const state = curLayout();
         const activeGroup = state.tabGroups.find((g) => g.id === state.activeTabGroupId);
@@ -7770,7 +7778,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
             activeGroupIndex
           ));
         }
-        const id = newId("ws");
+        // Reuse the caller-provided id to overwrite an existing same-named
+        // workspace in place (UX-027); otherwise mint a fresh one.
+        const id = overwriteId ?? newId("ws");
         await apiSaveWorkspace({
           id,
           name,
