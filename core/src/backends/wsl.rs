@@ -1032,7 +1032,7 @@ impl ConnectionType for Wsl {
 mod tests {
     use std::time::Duration;
 
-    use super::{wait_for_bytes, wait_for_shell_ready, INIT_SCRIPT_LINUX_PATH, *};
+    use super::{init_script_linux_path, wait_for_bytes, wait_for_shell_ready, *};
     use crate::connection::validate_settings;
 
     #[test]
@@ -1276,9 +1276,37 @@ mod tests {
     #[test]
     fn init_script_path_is_absolute() {
         assert!(
-            INIT_SCRIPT_LINUX_PATH.starts_with('/'),
-            "INIT_SCRIPT_LINUX_PATH must be an absolute Linux path"
+            init_script_linux_path().starts_with('/'),
+            "init script path must be an absolute Linux path"
         );
+    }
+
+    /// Regression test for CORE-019: the WSL init script must use an
+    /// unpredictable, per-session path (not the old fixed `/tmp/.termihub_init`),
+    /// which defeats the symlink/pre-creation race and the concurrent-session
+    /// clobber.
+    #[test]
+    fn init_script_path_is_per_session_and_unpredictable() {
+        let a = init_script_linux_path();
+        let b = init_script_linux_path();
+
+        // (a) absolute — required so the WSL shell `source` command resolves it.
+        assert!(a.starts_with('/'), "init script path must be absolute");
+
+        // (b) per-session unique — two generations must differ, so two
+        //     concurrent WSL sessions never share one file.
+        assert_ne!(a, b, "two generations must produce distinct paths");
+
+        // (c) unpredictable — never the old fixed constant, and the suffix is a
+        //     valid v4 UUID, so a local attacker cannot pre-create the path.
+        assert_ne!(
+            a, "/tmp/.termihub_init",
+            "must not reuse the old predictable path"
+        );
+        let suffix = a
+            .strip_prefix("/tmp/.termihub_init-")
+            .expect("path must have the expected /tmp/.termihub_init-<uuid> shape");
+        uuid::Uuid::parse_str(suffix).expect("path suffix must be a valid UUID");
     }
 
     #[tokio::test]
