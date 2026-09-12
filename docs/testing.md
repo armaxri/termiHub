@@ -185,6 +185,36 @@ pnpm test:ui
 pnpm test:coverage
 ```
 
+### Accessibility (a11y) regression net (TFE-012)
+
+Component tests double as an **automated accessibility net**: `jest-axe` + `axe-core`
+run the [axe](https://github.com/dequelabs/axe-core) rule set against a rendered
+component under jsdom and fail when a role, accessible name, `aria-*`, or invalid-attribute
+regression appears. The matcher (`toHaveNoViolations`) is registered globally in
+`src/test/setup.ts`; the shared helper lives in `src/test/axe.ts`.
+
+Add an a11y test alongside a component's other tests — render it, then assert zero
+violations:
+
+```tsx
+import { checkA11y } from "@/test/axe";
+
+it("has no a11y violations", async () => {
+  act(() => root.render(<MyComponent aria-label="…" />));
+  expect(await checkA11y()).toHaveNoViolations();
+});
+```
+
+`checkA11y()` audits `document.body` by default, which also covers Radix content that
+portals out of the render container (Modal, Select, dialogs). It disables only the
+page-scope landmark/heading rules (`region`, `landmark-one-main`, `page-has-heading-one`),
+which don't apply to a component rendered in isolation; every content rule stays on.
+`color-contrast` needs layout jsdom lacks, so axe reports it as _incomplete_ (never a false
+violation). The seed covers the shared `ui/` primitives plus key dialogs
+(`ShortcutsOverlay`, `TrustPrompt`) — extend it as components change. **Real violations
+must be fixed, never suppressed**: if one is too large to fix in scope, leave that component
+out of the net and file a `Ready2Implement` follow-up rather than shipping a red suite.
+
 ## 3. Rust Backend Tests
 
 **What it does**: Unit and integration tests for Rust code
