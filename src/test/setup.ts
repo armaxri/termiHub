@@ -1,4 +1,22 @@
-import { vi } from "vitest";
+import { expect, vi } from "vitest";
+import { toHaveNoViolations } from "jest-axe";
+
+// Register the jest-axe accessibility matcher globally so any test can assert
+// `expect(await checkA11y()).toHaveNoViolations()` (audit finding TFE-012). The
+// audit helper + the "how to add an a11y test" pattern live in `src/test/axe.ts`.
+// The matcher is framework-agnostic (a plain `{ pass, message }` result), so it
+// plugs straight into Vitest's `expect.extend`.
+expect.extend(toHaveNoViolations);
+
+declare module "vitest" {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- must mirror Vitest's own `Assertion<T = any>` signature for declaration merging.
+  interface Assertion<T = any> {
+    toHaveNoViolations(): T;
+  }
+  interface AsymmetricMatchersContaining {
+    toHaveNoViolations(): void;
+  }
+}
 
 // jsdom omits several DOM APIs that Radix primitives (Tooltip, Select) touch when
 // they measure, portal, or probe pointer capture. These shims are global,
