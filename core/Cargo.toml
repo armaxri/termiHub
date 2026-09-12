@@ -283,7 +283,7 @@ docker = [
     # depend on it non-optionally), so this adds no new supply-chain surface.
     "dep:base64",
 ]
-wsl = ["dep:portable-pty", "dep:tracing"]
+wsl = ["dep:portable-pty", "dep:tracing", "dep:uuid"]
 ftp = [
     "dep:suppaftp",
     "dep:tokio-rustls",
