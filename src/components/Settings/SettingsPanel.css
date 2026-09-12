@@ -1,3 +1,9 @@
+/* Placeholder shown while the lazily code-split Editor settings chunk loads
+   (PERF-001). Reserves a little vertical space to avoid a jump on first open. */
+.settings-panel__lazy-fallback {
+  min-height: var(--spacing-2xl);
+}
+
 /* === Layout === */
 .settings-panel {
   position: absolute;

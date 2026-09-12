@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from "react";
 import { frontendLog } from "@/utils/frontendLog";
 import {
   Settings2,
@@ -33,9 +33,6 @@ import { KeyboardSettings } from "./KeyboardSettings";
 import { SecuritySettings } from "./SecuritySettings";
 import { RdpTrustSettings } from "./RdpTrustSettings";
 import { SshTrustSettings } from "./SshTrustSettings";
-import { FileTypeSettings } from "./FileTypeSettings";
-import { LanguagePackagesSettings } from "./LanguagePackagesSettings";
-import { CustomGrammarsSettings } from "./CustomGrammarsSettings";
 import { SerialPortSettings } from "./SerialPortSettings";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
@@ -44,6 +41,17 @@ import { FrontendPluginGateSettings } from "./FrontendPluginGateSettings";
 import { TrustedPublishersSettings } from "./TrustedPublishersSettings";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import "./SettingsPanel.css";
+
+/**
+ * The Editor settings category (file types, language packages, custom grammars)
+ * is code-split out of the main bundle (PERF-001): it is the only Settings
+ * category that pulls in Monaco / Shiki. Loading it lazily keeps that machinery
+ * out of the eager Settings/entry chunk — it is fetched only when the user opens
+ * the Editor category (or searches for an editor setting).
+ */
+const EditorSettingsSection = lazy(() =>
+  import("./EditorSettingsSection").then((m) => ({ default: m.EditorSettingsSection }))
+);
 
 const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: Settings2,
@@ -338,12 +346,10 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         sections.push(<SshTrustSettings key="ssh-trust" visibleFields={visibleFields} />);
       }
       if (highlightedCategories?.has("editor")) {
-        sections.push(<FileTypeSettings key="editor" visibleFields={visibleFields} />);
         sections.push(
-          <LanguagePackagesSettings key="lang-packages" visibleFields={visibleFields} />
-        );
-        sections.push(
-          <CustomGrammarsSettings key="custom-grammars" visibleFields={visibleFields} />
+          <Suspense key="editor" fallback={<div className="settings-panel__lazy-fallback" />}>
+            <EditorSettingsSection visibleFields={visibleFields} />
+          </Suspense>
         );
       }
       if (highlightedCategories?.has("plugins")) {
@@ -390,11 +396,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         return <ExternalFilesSettings />;
       case "editor":
         return (
-          <>
-            <FileTypeSettings />
-            <LanguagePackagesSettings />
-            <CustomGrammarsSettings />
-          </>
+          <Suspense fallback={<div className="settings-panel__lazy-fallback" />}>
+            <EditorSettingsSection />
+          </Suspense>
         );
       case "plugins":
         return (
