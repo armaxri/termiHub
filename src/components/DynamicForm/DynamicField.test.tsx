@@ -288,7 +288,11 @@ describe("DynamicField", () => {
   // Command) silently dropped their authored guidance.
   describe("help affordance on non-boolean fields (UX-009)", () => {
     it("shows a help button for a text field with helpText", () => {
-      renderField(textField("onReconnectCommand", { helpText: "Runs after reconnect." }), "", vi.fn());
+      renderField(
+        textField("onReconnectCommand", { helpText: "Runs after reconnect." }),
+        "",
+        vi.fn()
+      );
       expect(query("field-onReconnectCommand-help")).toBeTruthy();
     });
 
@@ -329,7 +333,11 @@ describe("DynamicField", () => {
     });
 
     it("keeps the help button beside the label, not nested inside it", () => {
-      renderField(textField("onReconnectCommand", { helpText: "Runs after reconnect." }), "", vi.fn());
+      renderField(
+        textField("onReconnectCommand", { helpText: "Runs after reconnect." }),
+        "",
+        vi.fn()
+      );
       const button = query("field-onReconnectCommand-help") as HTMLElement;
       // A <button> must never be a descendant of a <label> (invalid + a11y).
       expect(button.closest("label")).toBeNull();
