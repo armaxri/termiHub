@@ -6142,14 +6142,20 @@ export const useAppStore = create<AppState>((set, get, store) => {
       })),
     reconnectTerminal: (tabId) =>
       set((state) => {
-        // Backend-driven agent reconnect (#2476): the backend park/retry loop is
-        // the sole driver and legitimately outlasts the fixed 90 s "connecting"
-        // deadline on a prolonged agent drop. Arming it here would let the client
-        // wall-clock timeout force-fail a tab the backend is still recovering, so
-        // this reconnect leaves the deadline cleared — the backend give-up fold,
-        // not a client timer, is what settles the tab (the give-up-aware wait in
-        // Terminal.tsx resolves it). Every other tab keeps the safety-net deadline.
-        const deferToBackendLoop = isBackendDrivenAgentReconnectTabId(tabId);
+        // Backend-driven resilient reconnect (#2476 agent, SM-004 direct SSH): the
+        // backend redrive is the sole reconnect authority for EVERY resilient tab
+        // since #2205 PR-B — its park/retry loop legitimately outlasts the fixed
+        // 90 s "connecting" deadline on a prolonged drop, and Terminal.tsx's
+        // region-`reconnecting` branch waits for the backend outcome for direct SSH
+        // just as it does for agent tabs. Arming a client wall-clock deadline here
+        // would let it force-fail a tab the backend is still legitimately
+        // recovering (agent AND direct SSH alike), so a resilient reconnect leaves
+        // the deadline cleared — the backend give-up fold, not a client timer, is
+        // what settles the tab (the give-up-aware wait in Terminal.tsx resolves
+        // it). A non-resilient tab has no backend retry loop, so it keeps the
+        // safety-net deadline (and a manual reconnect re-arms it via
+        // `setTerminalConnecting(true)` on the client `createTerminal` path).
+        const deferToBackendLoop = isResilientReconnectTabId(tabId);
         // The exited / exit-info / disconnect-error view-state now lives purely in
         // the region (#2625): a manual reconnect's `setTerminalConnecting(true)`
         // dispatches `session.connect` (region → connecting, clears `exit`); a
