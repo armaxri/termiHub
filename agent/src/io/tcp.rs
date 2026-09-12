@@ -191,7 +191,16 @@ pub async fn run_tcp_listener(
 /// This lets `agent/tests/tcp_listener_readiness.rs` reproduce the class of slow
 /// init (`SessionManager::new`'s #1551 binary byte-compare, session recovery)
 /// that made the accept-before-ready race observable, without depending on real
-/// machine load. Unset in production, so this is a single failed env lookup.
+/// machine load.
+///
+/// This is pure test scaffolding, so it is compiled **only into debug builds**
+/// (`#[cfg(debug_assertions)]`). The `agent/tests/tcp_listener_readiness.rs`
+/// integration test spawns `CARGO_BIN_EXE_termihub-agent`, which cargo builds in
+/// the same (debug) profile as the test, so the hook is present exactly where
+/// that regression test needs it. In `--release` builds the whole hook — env
+/// lookup and all — is gone, replaced by the empty no-op below (WA-RS-009), so
+/// no test scaffolding or env-var-triggered behaviour ships in the release agent.
+#[cfg(debug_assertions)]
 async fn startup_test_delay() {
     if let Some(ms) = std::env::var("TERMIHUB_TEST_STARTUP_DELAY_MS")
         .ok()
@@ -201,3 +210,8 @@ async fn startup_test_delay() {
         tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
     }
 }
+
+/// Release build of [`startup_test_delay`]: a no-op. The #1579 startup-delay
+/// scaffolding is compiled out of release agent binaries entirely (WA-RS-009).
+#[cfg(not(debug_assertions))]
+async fn startup_test_delay() {}
