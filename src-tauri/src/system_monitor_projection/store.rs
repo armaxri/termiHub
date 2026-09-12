@@ -26,7 +26,7 @@
 //! and frontend code dispatches the `monitor.*` transitions; the former `appStore`
 //! monitoring reducers were removed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -99,6 +99,32 @@ impl MonitorEntry {
 struct Inner {
     monitors: HashMap<String, MonitorEntry>,
     stats_cache: HashMap<String, SystemStats>,
+    /// Keys of `monitors` touched since the last [`SystemMonitorStore::drain_delta`]
+    /// (PERF-006). A superset of the actually-changed keys is always safe: an
+    /// unchanged key contributes an empty sub-diff and never reorders the rest.
+    dirty_monitors: HashSet<String>,
+    /// Keys of `stats_cache` touched since the last drain (PERF-006).
+    dirty_cache: HashSet<String>,
+}
+
+/// A serialized description of the region entries touched since the previous
+/// [`SystemMonitorStore::drain_delta`] — the input to the region's incremental
+/// publish (PERF-006). Built in O(touched entries), not O(whole region). A
+/// `None` value marks an entry that is now **absent** (removed), so the
+/// projection emits a `remove` for it.
+#[derive(Debug, Default)]
+pub struct RegionDelta {
+    /// `(key, Some(serialized MonitorEntry) | None-if-removed)`.
+    pub monitors: Vec<(String, Option<Value>)>,
+    /// `(key, Some(serialized SystemStats) | None-if-removed)`.
+    pub stats_cache: Vec<(String, Option<Value>)>,
+}
+
+impl RegionDelta {
+    /// True when no entry was touched since the last drain.
+    pub fn is_empty(&self) -> bool {
+        self.monitors.is_empty() && self.stats_cache.is_empty()
+    }
 }
 
 /// The shadow system-monitor authority. Owns one [`MonitorEntry`] per monitored
@@ -149,6 +175,7 @@ impl SystemMonitorStore {
         entry.stats = cached;
         entry.interval_ms = interval_ms.unwrap_or(DEFAULT_MONITORING_INTERVAL_MS);
         inner.monitors.insert(key.to_string(), entry);
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.opened` — the provider subscription is live. Settles the entry:
@@ -161,6 +188,7 @@ impl SystemMonitorStore {
             entry.status = Some(MonitorStatus::Live);
             entry.error = None;
         }
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.openFailed` — the initial connect errored. Clears the loading
@@ -174,6 +202,7 @@ impl SystemMonitorStore {
             entry.status = None;
             entry.error = error;
         }
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.stats` — a stats sample arrived. Updates the entry's stats,
@@ -182,10 +211,12 @@ impl SystemMonitorStore {
     pub fn stats(&self, key: &str, stats: SystemStats) {
         let mut inner = self.lock();
         inner.stats_cache.insert(key.to_string(), stats.clone());
+        inner.dirty_cache.insert(key.to_string());
         if let Some(entry) = inner.monitors.get_mut(key) {
             entry.stats = Some(stats);
             entry.sample_count = entry.sample_count.saturating_add(1);
         }
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.status` — an observable collector-loop status update arrived.
@@ -194,6 +225,7 @@ impl SystemMonitorStore {
         if let Some(entry) = inner.monitors.get_mut(key) {
             entry.status = Some(status);
         }
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.setPaused` — pause or resume one monitor (#1233). The transport
@@ -208,6 +240,7 @@ impl SystemMonitorStore {
                 MonitorStatus::Live
             });
         }
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.setInterval` — change one monitor's refresh interval (#1233).
@@ -216,6 +249,7 @@ impl SystemMonitorStore {
         if let Some(entry) = inner.monitors.get_mut(key) {
             entry.interval_ms = interval_ms;
         }
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.clearError` — dismiss a monitor's error banner. A no-op when the
@@ -225,13 +259,16 @@ impl SystemMonitorStore {
         if let Some(entry) = inner.monitors.get_mut(key) {
             entry.error = None;
         }
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.close` — disconnect one monitor and drop its entry. The stats
     /// cache is retained so a later reconnect can prime instantly (mirrors
     /// `disconnectMonitoring`, which keeps the cache). Idempotent.
     pub fn close(&self, key: &str) {
-        self.lock().monitors.remove(key);
+        let mut inner = self.lock();
+        inner.monitors.remove(key);
+        inner.dirty_monitors.insert(key.to_string());
     }
 
     /// `monitor.replace` — overwrite the whole monitor map and stats cache with a
@@ -246,8 +283,61 @@ impl SystemMonitorStore {
         stats_cache: HashMap<String, SystemStats>,
     ) {
         let mut inner = self.lock();
+        // Mark every key that could differ dirty: the old set (removals /
+        // changes) and the incoming set (adds / changes), for both maps
+        // (PERF-006). A whole-map replace is the one intrinsically O(region)
+        // fold; the reduced diff then equals the whole-region diff exactly.
+        let old_monitors: Vec<String> = inner.monitors.keys().cloned().collect();
+        inner.dirty_monitors.extend(old_monitors);
+        inner
+            .dirty_monitors
+            .extend(monitors.keys().cloned());
+        let old_cache: Vec<String> = inner.stats_cache.keys().cloned().collect();
+        inner.dirty_cache.extend(old_cache);
+        inner
+            .dirty_cache
+            .extend(stats_cache.keys().cloned());
         inner.monitors = monitors;
         inner.stats_cache = stats_cache;
+    }
+
+    /// Drain the dirty-key sets, serializing each touched entry's current value
+    /// (or `None` if it was removed) — the input to the region's incremental
+    /// publish (PERF-006). O(number of touched entries).
+    ///
+    /// Draining and serializing under the single store lock keeps the returned
+    /// [`RegionDelta`] a consistent view of the touched entries at one instant.
+    /// A serialization failure is treated as absence (matching [`Self::snapshot`],
+    /// which likewise omits an entry it cannot serialize), so the region converges
+    /// on the same result either way.
+    pub fn drain_delta(&self) -> RegionDelta {
+        let mut inner = self.lock();
+        let monitor_keys: Vec<String> = inner.dirty_monitors.drain().collect();
+        let cache_keys: Vec<String> = inner.dirty_cache.drain().collect();
+        let monitors = monitor_keys
+            .into_iter()
+            .map(|key| {
+                let value = inner
+                    .monitors
+                    .get(&key)
+                    .and_then(|entry| serde_json::to_value(entry).ok());
+                (key, value)
+            })
+            .collect();
+        let stats_cache = cache_keys
+            .into_iter()
+            .map(|key| {
+                let value = inner
+                    .stats_cache
+                    .get(&key)
+                    .and_then(|stats| serde_json::to_value(stats).ok());
+                (key, value)
+            })
+            .collect();
+        RegionDelta {
+            monitors,
+            stats_cache,
+        }
     }
 
     /// Read one monitor entry (test / diagnostics helper).
