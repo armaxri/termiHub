@@ -67,6 +67,26 @@ function entry(name: string, isDirectory = false): FileEntry {
   };
 }
 
+/** A promise whose resolution is controlled externally, for out-of-order tests. */
+function deferred<T>(): {
+  promise: Promise<T>;
+  resolve: (value: T) => void;
+  reject: (reason?: unknown) => void;
+} {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+/** Settle the microtask queue a few times so overlay + reflected dispatch land. */
+async function settle(): Promise<void> {
+  for (let i = 0; i < 4; i++) await Promise.resolve();
+}
+
 setupFileBrowsersRegion();
 
 beforeEach(() => {
@@ -230,5 +250,188 @@ describe("file-browser actions drive the authoritative region", () => {
     expectParity();
     useAppStore.getState().setFileBrowserMode("none");
     expectParity();
+  });
+});
+
+describe("stale directory-list responses are dropped by request order (SM-007)", () => {
+  // These tests drive the list mocks through per-call deferred promises. Fully
+  // reset them (not just clear call history) so a persistent `mockResolvedValue`
+  // left by an earlier test in this file cannot answer an unconsumed call.
+  beforeEach(() => {
+    vi.mocked(localListDir).mockReset();
+    vi.mocked(sessionListFiles).mockReset();
+  });
+
+  it("navigateSession: an earlier response resolving LAST does not clobber the latest", async () => {
+    const dA = deferred<FileEntry[]>();
+    const dB = deferred<FileEntry[]>();
+    vi.mocked(sessionListFiles)
+      .mockImplementationOnce(() => dA.promise)
+      .mockImplementationOnce(() => dB.promise);
+
+    // Fire A then B without awaiting — both list requests are in flight.
+    const pA = useAppStore.getState().navigateSession("sess-1", "/A");
+    const pB = useAppStore.getState().navigateSession("sess-1", "/B");
+
+    // The latest navigation (B) resolves first and wins.
+    dB.resolve([entry("b")]);
+    await pB;
+    await settle();
+    expect(currentFileBrowsersView().session.path).toBe("/B");
+
+    // The stale earlier navigation (A) resolves LAST — it must be dropped, so the
+    // view stays on B and A's listing never replaces it.
+    dA.resolve([entry("a")]);
+    await pA;
+    await settle();
+
+    expect(currentFileBrowsersView().session.path).toBe("/B");
+    expect(currentFileBrowsersView().session.entries.map((e) => e.name)).toEqual(["b"]);
+    expect(currentFileBrowsersView().session.loading).toBe(false);
+    expect(currentFileBrowsersView().session.error).toBeNull();
+    // Only B's terminal success is applied; A's stale success is dropped.
+    expect(fileBrowsersHarnessTransport().kinds()).toEqual([
+      "fileBrowser.loadStarted",
+      "fileBrowser.loadStarted",
+      "fileBrowser.loadSucceeded",
+    ]);
+    expectParity();
+  });
+
+  it("navigateSession: a stale response resolving FIRST does not clear the pending spinner", async () => {
+    const dA = deferred<FileEntry[]>();
+    const dB = deferred<FileEntry[]>();
+    vi.mocked(sessionListFiles)
+      .mockImplementationOnce(() => dA.promise)
+      .mockImplementationOnce(() => dB.promise);
+
+    const pA = useAppStore.getState().navigateSession("sess-1", "/A");
+    const pB = useAppStore.getState().navigateSession("sess-1", "/B");
+
+    // The superseded request (A) resolves first. It is dropped, and crucially it
+    // must NOT clear loading — the newest request (B) is still in flight and its
+    // own resolve is what clears the spinner.
+    dA.resolve([entry("a")]);
+    await pA;
+    await settle();
+    expect(currentFileBrowsersView().session.loading).toBe(true);
+    expect(currentFileBrowsersView().session.path).not.toBe("/A");
+
+    // B resolves and clears loading, landing the view on B.
+    dB.resolve([entry("b")]);
+    await pB;
+    await settle();
+    expect(currentFileBrowsersView().session.loading).toBe(false);
+    expect(currentFileBrowsersView().session.path).toBe("/B");
+    expect(currentFileBrowsersView().session.entries.map((e) => e.name)).toEqual(["b"]);
+    expectParity();
+  });
+
+  it("navigateSession: a stale FAILURE resolving last does not overwrite the latest success", async () => {
+    const dA = deferred<FileEntry[]>();
+    const dB = deferred<FileEntry[]>();
+    vi.mocked(sessionListFiles)
+      .mockImplementationOnce(() => dA.promise)
+      .mockImplementationOnce(() => dB.promise);
+
+    const pA = useAppStore.getState().navigateSession("sess-1", "/A");
+    const pB = useAppStore.getState().navigateSession("sess-1", "/B");
+
+    dB.resolve([entry("b")]);
+    await pB;
+    await settle();
+
+    // A fails late — its error must not surface over the successful newer view.
+    dA.reject(new Error("A failed"));
+    await pA;
+    await settle();
+
+    expect(currentFileBrowsersView().session.path).toBe("/B");
+    expect(currentFileBrowsersView().session.error).toBeNull();
+    expect(currentFileBrowsersView().session.loading).toBe(false);
+    expectParity();
+  });
+
+  it("refreshSession: a stale refresh response resolving last is dropped", async () => {
+    useAppStore.setState({ sessionFileBrowserId: "sess-1" });
+    seedFileBrowsers({ session: { path: "/srv", entries: [], loading: false, error: null } });
+
+    const d1 = deferred<FileEntry[]>();
+    const d2 = deferred<FileEntry[]>();
+    vi.mocked(sessionListFiles)
+      .mockImplementationOnce(() => d1.promise)
+      .mockImplementationOnce(() => d2.promise);
+
+    const p1 = useAppStore.getState().refreshSession();
+    const p2 = useAppStore.getState().refreshSession();
+
+    d2.resolve([entry("s"), entry("t")]);
+    await p2;
+    await settle();
+
+    d1.resolve([entry("stale")]);
+    await p1;
+    await settle();
+
+    expect(currentFileBrowsersView().session.entries.map((e) => e.name)).toEqual(["s", "t"]);
+    expect(currentFileBrowsersView().session.loading).toBe(false);
+    expectParity();
+  });
+
+  it("navigateLocal: an earlier response resolving last is dropped (local pane guarded too)", async () => {
+    const dA = deferred<FileEntry[]>();
+    const dB = deferred<FileEntry[]>();
+    vi.mocked(localListDir)
+      .mockImplementationOnce(() => dA.promise)
+      .mockImplementationOnce(() => dB.promise);
+
+    const pA = useAppStore.getState().navigateLocal("/a");
+    const pB = useAppStore.getState().navigateLocal("/b");
+
+    dB.resolve([entry("b")]);
+    await pB;
+    await settle();
+
+    dA.resolve([entry("a")]);
+    await pA;
+    await settle();
+
+    expect(currentFileBrowsersView().local.path).toBe("/b");
+    expect(currentFileBrowsersView().local.entries.map((e) => e.name)).toEqual(["b"]);
+    expect(currentFileBrowsersView().local.loading).toBe(false);
+    expectParity();
+  });
+
+  it("navigateSession and navigateLocal keep independent per-pane request counters", async () => {
+    const dLocal = deferred<FileEntry[]>();
+    const dSession = deferred<FileEntry[]>();
+    vi.mocked(localListDir).mockImplementationOnce(() => dLocal.promise);
+    vi.mocked(sessionListFiles).mockImplementationOnce(() => dSession.promise);
+
+    // Local and session navigations are concurrently in flight across the two panes.
+    const pLocal = useAppStore.getState().navigateLocal("/local");
+    const pSession = useAppStore.getState().navigateSession("sess-1", "/session");
+
+    dSession.resolve([entry("s")]);
+    await pSession;
+    await settle();
+    dLocal.resolve([entry("l")]);
+    await pLocal;
+    await settle();
+
+    // Because each pane owns an independent counter, neither in-flight request is
+    // the "latest" of the *other* pane, so BOTH terminal successes are applied —
+    // both `loadSucceeded` intents are dispatched. A single shared counter would
+    // treat the session navigation as superseding the local one (or vice-versa) and
+    // drop one of the successes, leaving only three intents here. `.kinds()` is
+    // recorded synchronously at dispatch, so this assertion is immune to
+    // projection-timing races. The per-pane last-write-wins behaviour itself is
+    // covered by the dedicated navigateSession / navigateLocal tests above.
+    expect(fileBrowsersHarnessTransport().kinds()).toEqual([
+      "fileBrowser.loadStarted",
+      "fileBrowser.loadStarted",
+      "fileBrowser.loadSucceeded",
+      "fileBrowser.loadSucceeded",
+    ]);
   });
 });
