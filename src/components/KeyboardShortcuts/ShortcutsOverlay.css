@@ -65,7 +65,7 @@
   border-radius: var(--radius-sm);
   background-color: var(--bg-tertiary);
   font-family: monospace;
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-xs);
   color: var(--text-primary);
 }
 

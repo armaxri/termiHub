@@ -18,6 +18,12 @@
   --activity-bar-inactive: #525d6e;
   --activity-bar-indicator: #3d7de8;
   --activity-bar-width: 48px;
+  /* Hover/active tint on activity-bar items. The activity bar stays dark in
+     every theme (see light.ts), so a subtle white overlay is the correct
+     lightening technique on both — kept as static :root values like the other
+     translucent-white chrome tokens (--scrollbar-thumb). */
+  --activity-bar-item-hover-bg: rgba(255, 255, 255, 0.06);
+  --activity-bar-item-active-bg: rgba(255, 255, 255, 0.1);
 
   /* Sidebar */
   --sidebar-bg: #161b24;

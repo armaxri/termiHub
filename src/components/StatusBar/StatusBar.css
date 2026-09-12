@@ -371,14 +371,14 @@
 }
 
 .update-indicator__dot--red {
-  background: var(--color-error, #f44336);
+  background: var(--color-error);
 }
 
 .update-indicator__develop-badge {
   display: inline-block;
   margin-left: 5px;
   padding: 0 4px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   font-size: var(--font-size-2xs);
   font-weight: 600;
   line-height: 14px;

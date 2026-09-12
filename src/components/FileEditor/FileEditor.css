@@ -89,7 +89,7 @@
 }
 
 .file-editor__error {
-  color: var(--color-error, #e05252);
+  color: var(--color-error);
 }
 
 /* Dismissible save-failure banner (does not replace the editor). */
@@ -98,9 +98,9 @@
   align-items: center;
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
-  background-color: var(--color-error-bg, rgba(224, 82, 82, 0.12));
-  border-bottom: 1px solid var(--color-error, #e05252);
-  color: var(--color-error, #e05252);
+  background-color: var(--color-error-bg);
+  border-bottom: 1px solid var(--color-error);
+  color: var(--color-error);
   font-size: var(--font-size-sm);
 }
 
