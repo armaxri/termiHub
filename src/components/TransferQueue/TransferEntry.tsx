@@ -1,6 +1,7 @@
 import { ArrowUp, ArrowDown, Clock } from "lucide-react";
 import { Progress } from "@/components/ui";
 import { formatThroughput, type TransferEntry, type TransferQueueState } from "@/types/transfer";
+import { formatBytes, formatElapsed } from "@/utils/formatters";
 import { TransferControls } from "./TransferControls";
 
 /** Props for {@link TransferEntryRow}. */
@@ -41,12 +42,26 @@ function statusLabel(entry: TransferEntry): string {
 }
 
 /**
+ * Byte-count readout for a row (UX-019): `"45 MB / 120 MB"` when the total is
+ * known, or just the transferred bytes (`"45 MB"`) when the size is
+ * indeterminate — so an unknown-total transfer still shows visible progress.
+ */
+function byteCountLabel(entry: TransferEntry): string {
+  const transferred = formatBytes(entry.transferred);
+  if (entry.totalBytes == null) return transferred;
+  return `${transferred} / ${formatBytes(entry.totalBytes)}`;
+}
+
+/**
  * A single Transfer Queue row (#1337): direction icon, name, remote path, a
- * per-state coloured progress bar, percent, throughput, a status label, and the
- * state-appropriate {@link TransferControls}.
+ * per-state coloured progress bar, percent, transferred/total bytes, throughput,
+ * an estimated time-remaining (UX-019), a status label, and the state-appropriate
+ * {@link TransferControls}.
  *
  * The progress bar composes the shared {@link Progress} primitive; per-state
  * colour comes from tokens via a BEM modifier class (`transfer-row__bar--*`).
+ * Byte counts and the ETA reuse the shared {@link formatBytes} /
+ * {@link formatElapsed} formatters.
  */
 export function TransferEntryRow({
   entry,
@@ -88,7 +103,19 @@ export function TransferEntryRow({
 
       <span className="transfer-row__pct">{entry.percent != null ? `${entry.percent}%` : ""}</span>
 
+      <span
+        className="transfer-row__bytes"
+        title={byteCountLabel(entry)}
+        data-testid="transfer-row-bytes"
+      >
+        {byteCountLabel(entry)}
+      </span>
+
       <span className="transfer-row__speed">{formatThroughput(entry.speedBytesPerSec)}</span>
+
+      <span className="transfer-row__eta" data-testid="transfer-row-eta">
+        {entry.etaSeconds != null ? `~${formatElapsed(entry.etaSeconds)} left` : ""}
+      </span>
 
       <span
         className={`transfer-row__status transfer-row__status--${state}`}
