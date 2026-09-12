@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { Button, toast } from "@/components/ui";
 import { requestAgentDeferredUpdate, requestAgentUpdate } from "@/services/api";
+import { awaitExpectedApplyDisconnect } from "./expectedApplyDisconnect";
 import "./AgentUpdateBanner.css";
 
 /** Props for {@link AgentUpdateBanner}. */
@@ -12,25 +13,6 @@ export interface AgentUpdateBannerProps {
   agentId: string;
   /** Display name of the agent, shown in the banner copy. */
   agentName: string;
-}
-
-/**
- * Connection-drop errors are expected while the agent swaps its own binary on
- * an immediate ("applied") update — the transport goes away as the process
- * restarts. Treat those as instructional success rather than a hard failure.
- */
-function isExpectedApplyDisconnect(error: unknown): boolean {
-  const raw = (error instanceof Error ? error.message : String(error)).toLowerCase();
-  return (
-    raw.includes("disconnect") ||
-    raw.includes("connection") ||
-    raw.includes("closed") ||
-    raw.includes("timeout") ||
-    raw.includes("reset") ||
-    raw.includes("eof") ||
-    raw.includes("not connected") ||
-    raw.includes("broken pipe")
-  );
 }
 
 /**
@@ -90,9 +72,13 @@ export function AgentUpdateBanner({ agentId, agentName }: AgentUpdateBannerProps
       }
       dismissAgentUpdate(agentId);
     } catch (err) {
-      // A dropped connection right after triggering an immediate apply is the
-      // binary swap in progress, not a real failure — report it as instructional.
-      if (isExpectedApplyDisconnect(err)) {
+      // An immediate apply re-execs the agent, tearing down its transport — so a
+      // failure here is expected *only if the agent's connection actually drops*.
+      // Decide from the agent's authoritative connection state (a transport drop
+      // within a short window after the apply request), not by parsing the error
+      // message: message parsing was locale-fragile and over-broad (I18N-008). If
+      // the connection stays up, this was a real update failure — surface it.
+      if (await awaitExpectedApplyDisconnect(agentId)) {
         toast.info("Agent is updating — it will reconnect automatically once the swap completes.");
         dismissAgentUpdate(agentId);
         return;
