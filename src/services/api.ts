@@ -1310,24 +1310,35 @@ export async function sftpCancelTransfer(transferId: string): Promise<void> {
 
 // --- Generic transfer-queue controls (#1336) ---
 
-/** Pause an in-flight transfer. Unknown ids are a no-op. */
-export async function transferPause(transferId: string): Promise<void> {
-  await invoke("transfer_pause", { transferId });
+/**
+ * Pause an in-flight transfer.
+ *
+ * Resolves `true` when the transfer accepted the pause (a live rich/FTP
+ * transfer) and `false` on a no-op — an unknown/finished id or a legacy SFTP
+ * transfer, which the queue does not yet support pausing. Callers must not
+ * report success on `false` (audit FEC-004 / UX-016).
+ */
+export async function transferPause(transferId: string): Promise<boolean> {
+  return await invoke<boolean>("transfer_pause", { transferId });
 }
 
-/** Resume a paused transfer. Unknown ids are a no-op. */
-export async function transferResume(transferId: string): Promise<void> {
-  await invoke("transfer_resume", { transferId });
+/** Resume a paused transfer. Resolves `true` on a real state change, `false` on
+ * a no-op (see {@link transferPause}). */
+export async function transferResume(transferId: string): Promise<boolean> {
+  return await invoke<boolean>("transfer_resume", { transferId });
 }
 
-/** Cancel a transfer (queued, active, or paused). Unknown ids are a no-op. */
-export async function transferCancel(transferId: string): Promise<void> {
-  await invoke("transfer_cancel", { transferId });
+/** Cancel a transfer (queued, active, or paused). Resolves `true` when a live
+ * transfer was cancelled, `false` for an unknown/already-finished id. Works for
+ * both legacy SFTP and rich FTP transfers. */
+export async function transferCancel(transferId: string): Promise<boolean> {
+  return await invoke<boolean>("transfer_cancel", { transferId });
 }
 
-/** Manually retry a failed transfer. Unknown ids are a no-op. */
-export async function transferRetry(transferId: string): Promise<void> {
-  await invoke("transfer_retry", { transferId });
+/** Manually retry a failed transfer. Resolves `true` on a real state change,
+ * `false` on a no-op (see {@link transferPause}). */
+export async function transferRetry(transferId: string): Promise<boolean> {
+  return await invoke<boolean>("transfer_retry", { transferId });
 }
 
 /** List queued transfers, optionally filtered by session. */
