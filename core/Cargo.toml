@@ -99,6 +99,13 @@ zune-jpeg = { version = "0.4", optional = true }
 # the internally-tagged `InputEvent` enum (which `bincode` cannot). Pulls no
 # crypto, so it cannot collide with the SSH RustCrypto pins.
 rmp-serde = { version = "1", optional = true }
+# PATH lookup for the RDP sidecar's bare-name fallback (CORE-011): resolve the
+# helper to the ABSOLUTE path `Command::new` would execute, so the pre-spawn
+# integrity check hashes the exact file that is spawned instead of a CWD-relative
+# name. The de-facto cross-platform `which` implementation (already in the tree,
+# used windows-only for shell detection) — library-first over hand-rolled PATH
+# scanning. Behind the optional `rdp-sidecar` feature.
+which = { version = "7", optional = true }
 ringbuf = "0.5.0"
 shellexpand = "3.1"
 vte = "0.13"
@@ -318,4 +325,7 @@ rdp-sidecar = [
     # Pre-spawn SHA-256 integrity verification of the bundled sidecar (#1762).
     "dep:sha2",
     "dep:hex",
+    # Resolve the bare-name helper fallback to an absolute PATH entry so the
+    # integrity check hashes the exact file that is spawned (CORE-011).
+    "dep:which",
 ]
