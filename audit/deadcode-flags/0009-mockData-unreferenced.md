@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/store/mockData.ts
 evidence:
   - src/store/mockData.ts
-status: open
+status: fixed
+resolution: "already-on-develop — src/store/mockData.ts already deleted by commit f42b9bc9 (delete dead frontend stubs). No PR — verified 2026-09-12"
 ---
 
 ## What

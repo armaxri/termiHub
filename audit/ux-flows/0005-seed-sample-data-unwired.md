@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src/store/mockData
 evidence:
   - src/store/mockData.ts:3
-status: open
+status: fixed
+resolution: "already-on-develop — same as DEAD-009 — dead seed data mockData.ts already removed (f42b9bc9); nothing to wire. No PR — verified 2026-09-12"
 ---
 
 ## What

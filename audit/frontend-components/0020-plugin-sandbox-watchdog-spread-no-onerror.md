@@ -9,7 +9,8 @@ subsystem: src/plugins/sandbox
 evidence:
   - src/plugins/sandbox/pluginSandboxHost.ts:185
   - src/plugins/sandbox/pluginSandboxHost.ts:87
-status: open
+status: fixed
+resolution: "#2856 — plugin-sandbox watchdog uses running-min iteration (no Math.min spread RangeError); worker error/messageerror handler force-drains + degrades to passthrough, tears down after 3 crashes → sync fast path. Auto-reload recovery → #2857"
 ---
 
 ## What

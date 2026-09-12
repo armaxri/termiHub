@@ -9,7 +9,8 @@ subsystem: src/components/ExportImport/ImportDialog
 evidence:
   - src/components/ExportImport/ImportDialog.tsx:62
   - src-tauri/src/credential/crypto.rs:295
-status: open
+status: fixed
+resolution: "#2860 — import dialog switches on typed DecryptError::WrongPassword code (reused XServerError serde-tagged IPC-error pattern) instead of english substring; classifies through anyhow context; german-message test proves text not parsed"
 ---
 
 ## What

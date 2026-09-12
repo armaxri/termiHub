@@ -9,7 +9,8 @@ subsystem: core/src/output/coalescer.rs
 evidence:
   - core/src/output/coalescer.rs:37
   - src-tauri/src/session/manager.rs:1870
-status: open
+status: fixed
+resolution: "already-on-develop — OutputCoalescer::try_coalesce removed; coalescer now push/flush/pending_len API, used in session/manager.rs:1888. No PR — verified 2026-09-12"
 ---
 
 ## What

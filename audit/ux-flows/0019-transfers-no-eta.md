@@ -9,7 +9,8 @@ subsystem: src/components/TransferQueue
 evidence:
   - src/types/transfer.ts:55
   - src/components/TransferQueue/TransferEntry.tsx:89
-status: open
+status: fixed
+resolution: "#2858 — transfer rows show ETA (backend etaSecs preferred, else bytes-remaining/speed EMA-smoothed) + transferred/total bytes (transferred-only when total unknown); reused formatBytes/formatElapsed. formatElapsed hour-bucket → #2859"
 ---
 
 ## What

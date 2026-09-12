@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/output/coalescer
 evidence:
   - core/src/output/coalescer.rs:41
-status: open
+status: fixed
+resolution: "already-on-develop — moot — the try_coalesce realloc-per-call path no longer exists; replaced by push/flush (no remainder copy). No PR — verified 2026-09-12"
 ---
 
 ## What
