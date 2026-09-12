@@ -491,6 +491,140 @@ mod tests {
     use super::*;
     use crate::credential::{CredentialStore, CredentialType, MasterPasswordStore};
 
+    // --- OBS-007: credential-migration failures must leave a durable trace. ---
+
+    /// A sentinel secret used only in the migration-logging tests. It must NEVER
+    /// appear in any emitted log line — see the assertions below.
+    const MIGRATION_TEST_SECRET: &str = "s3nsitive-passphrase-value-do-not-log";
+
+    /// Build a locked master-password manager whose `set` fails for every key,
+    /// so `migrate_credentials` takes the failure path for all inputs.
+    fn locked_manager(dir: &std::path::Path) -> CredentialManager {
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.to_path_buf());
+        mgr.with_master_password_store(|s| s.setup("test-pw"))
+            .unwrap()
+            .unwrap();
+        // Lock the store: subsequent `set` calls return Err (store is locked).
+        mgr.with_master_password_store(|s| s.lock()).unwrap();
+        mgr
+    }
+
+    /// OBS-007: every per-credential migration failure must be logged at WARN,
+    /// and the INFO summary must be emitted UNCONDITIONALLY — even in the worst,
+    /// most-silent case where every credential fails (`migrated_count == 0`).
+    ///
+    /// Uses the app's own log-capture layer (the LogViewer pipeline).
+    #[test]
+    fn migration_failures_emit_warn_and_unconditional_info() {
+        use crate::utils::log_capture::{create_log_buffer, LogCaptureLayer};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = locked_manager(dir.path());
+        let creds = vec![(
+            CredentialKey::new("conn-1", CredentialType::Password),
+            MIGRATION_TEST_SECRET.to_string(),
+        )];
+
+        let buffer = create_log_buffer();
+        let subscriber =
+            tracing_subscriber::registry().with(LogCaptureLayer::new(buffer.clone()));
+
+        let (migrated, warnings) = tracing::subscriber::with_default(subscriber, || {
+            migrate_credentials(&mgr, &creds)
+        });
+
+        // Worst case: nothing migrated, one warning surfaced to the frontend.
+        assert_eq!(migrated, 0, "a locked store migrates nothing");
+        assert_eq!(warnings.len(), 1, "the failed credential is surfaced");
+
+        let entries = buffer.lock().unwrap().get_recent(50);
+
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.level == "WARN" && e.message.contains("credential migration failed")),
+            "each migration failure must be logged at WARN, got: {entries:?}"
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.level == "INFO" && e.message.contains("credential migration complete")),
+            "the INFO summary must be emitted even when migrated_count == 0, got: {entries:?}"
+        );
+        // SECRET HYGIENE: no captured log line may contain the credential value.
+        assert!(
+            entries.iter().all(|e| !e.message.contains(MIGRATION_TEST_SECRET)),
+            "a credential value must NEVER be logged, got: {entries:?}"
+        );
+    }
+
+    /// OBS-007 secret hygiene, checked against the durable file-log format: the
+    /// per-failure WARN must carry the credential *key* (`connection_id:type`)
+    /// so a failure is reconstructable, while the secret *value* must never be
+    /// formatted into any log line. This mirrors what the INFO+ file log writes
+    /// (the `fmt` layer renders all structured fields, unlike the LogViewer
+    /// capture, which keeps only the message).
+    #[test]
+    fn migration_failure_logs_key_never_value() {
+        use std::io::Write;
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone)]
+        struct VecWriter(Arc<Mutex<Vec<u8>>>);
+        impl Write for VecWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(buf);
+                Ok(buf.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for VecWriter {
+            type Writer = VecWriter;
+            fn make_writer(&'a self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = locked_manager(dir.path());
+        let creds = vec![(
+            CredentialKey::new("conn-1", CredentialType::Password),
+            MIGRATION_TEST_SECRET.to_string(),
+        )];
+
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(VecWriter(buf.clone()))
+            .with_ansi(false)
+            .with_max_level(tracing::Level::TRACE)
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            migrate_credentials(&mgr, &creds);
+        });
+
+        let logged = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+
+        assert!(
+            logged.contains("credential migration failed"),
+            "per-failure WARN must be emitted, got: {logged}"
+        );
+        // The key (connection_id:type) identifies the failure without leaking a
+        // secret — it must be present so the failure is reconstructable.
+        assert!(
+            logged.contains("conn-1:password"),
+            "the WARN must log the credential key, got: {logged}"
+        );
+        // The secret value must NEVER be formatted into the durable log.
+        assert!(
+            !logged.contains(MIGRATION_TEST_SECRET),
+            "a credential value must NEVER reach the log, got: {logged}"
+        );
+    }
+
     // --- TAURI-011: switch must abort (not silently switch to empty) when the
     // source store is unreadable, but succeed for a readable source. ---
 
