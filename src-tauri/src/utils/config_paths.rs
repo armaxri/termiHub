@@ -1,15 +1,24 @@
 //! Shared resolution of termiHub's per-user config directory.
 //!
-//! The same three-branch rule is needed from many storage modules and from the
-//! pre-init CLI path, so it lives here once instead of being copy-pasted:
+//! The same rule is needed from many storage modules and from the pre-init CLI
+//! path, so it lives here once instead of being copy-pasted. In priority order:
 //!
-//! 1. an explicit `TERMIHUB_CONFIG_DIR` override always wins (this is also how
-//!    `run()`'s setup redirects storage to the portable `data/` directory — it
-//!    exports the var before any storage module resolves its path);
-//! 2. with a Tauri [`AppHandle`], defer to Tauri's own path resolver
+//! 1. a [`ConfigDirOverride`] published as Tauri managed state always wins when
+//!    a [`AppHandle`] is available. `run()`'s setup resolves the effective
+//!    config directory once — folding in the external override, portable mode,
+//!    and any temp-dir fallback — and manages it here, so every storage module
+//!    reads that one explicit value. This is the threaded channel that replaced
+//!    the app mutating a process-global `TERMIHUB_CONFIG_DIR` on itself
+//!    (WA-RS-011);
+//! 2. an explicit external `TERMIHUB_CONFIG_DIR` override (a public, documented
+//!    knob used by the system-test harness, the README, and power users). It is
+//!    read directly only before the managed override exists — the pre-init CLI
+//!    path, or during startup's own resolution — because the managed override
+//!    already folds it in;
+//! 3. with a Tauri [`AppHandle`], defer to Tauri's own path resolver
 //!    (`app_config_dir()`), which reads the bundle identifier from
 //!    `tauri.conf.json`;
-//! 3. without an `AppHandle` (pre-init CLI subcommands, which run before the
+//! 4. without an `AppHandle` (pre-init CLI subcommands, which run before the
 //!    Tauri app and its path resolver exist), detect portable mode directly and
 //!    otherwise fall back to the OS per-user config directory joined with
 //!    [`APP_IDENTIFIER`] — equivalent to what `app_config_dir()` would return.
@@ -21,6 +30,32 @@ use anyhow::{Context, Result};
 use tauri::{AppHandle, Manager};
 
 use super::portable::detect_app_mode;
+
+/// The effective config directory, resolved once at startup and published as
+/// Tauri managed state.
+///
+/// This is the explicit channel that replaced the app writing the portable
+/// `data/` directory (or a temp fallback) into its own process-global
+/// `TERMIHUB_CONFIG_DIR` environment variable (WA-RS-011). `run()`'s setup
+/// resolves the directory — external override → portable data dir → OS default,
+/// with a temp-dir fallback — and hands it here via `app.manage(..)`. Every
+/// storage module's [`resolve_config_dir`] then reads this one value instead of
+/// re-consulting a mutable global, so the portable/fallback directory is passed
+/// by explicit state rather than an invisible, order-dependent side channel.
+#[derive(Debug, Clone)]
+pub struct ConfigDirOverride(pub PathBuf);
+
+/// The OS per-user config directory via Tauri's own path resolver.
+///
+/// This is what installed mode uses, and what [`resolve_config_dir`]'s handle
+/// branch falls back to. Split out so startup can resolve it explicitly without
+/// going through the managed-override / external-env precedence.
+pub fn app_config_dir(handle: &AppHandle) -> Result<PathBuf> {
+    handle
+        .path()
+        .app_config_dir()
+        .context("Failed to resolve app config directory")
+}
 
 /// Application bundle identifier, mirroring `tauri.conf.json`'s `identifier`.
 ///
@@ -40,37 +75,53 @@ const APP_IDENTIFIER: &str = "com.termihub.app";
 /// This does not create the directory — callers that need it materialized
 /// should `fs::create_dir_all` the returned path.
 pub fn resolve_config_dir(app_handle: Option<&AppHandle>) -> Result<PathBuf> {
-    // 1. An explicit override always wins. `run()`'s setup also exports this for
-    //    portable mode, so the handle branch below never sees portable mode.
-    if let Ok(dir) = std::env::var("TERMIHUB_CONFIG_DIR") {
-        return Ok(PathBuf::from(dir));
-    }
-
-    // 2. With a handle, Tauri's resolver already knows the OS config dir joined
-    //    with the bundle identifier from `tauri.conf.json`.
+    // 1. The running app resolves the effective config directory once at startup
+    //    — folding in the external override, portable mode, and any temp-dir
+    //    fallback — and publishes it as managed `ConfigDirOverride` state. When
+    //    present it is authoritative: this is the explicit channel that replaced
+    //    the app self-mutating `TERMIHUB_CONFIG_DIR` (WA-RS-011).
     if let Some(handle) = app_handle {
-        return handle
-            .path()
-            .app_config_dir()
-            .context("Failed to resolve app config directory");
+        if let Some(override_dir) = handle.try_state::<ConfigDirOverride>() {
+            return Ok(override_dir.0.clone());
+        }
+
+        // 2. External `TERMIHUB_CONFIG_DIR` override (public: system-test
+        //    harness, README, power users). Reached only before the managed
+        //    override exists — i.e. during startup's own resolution.
+        if let Ok(dir) = std::env::var("TERMIHUB_CONFIG_DIR") {
+            return Ok(PathBuf::from(dir));
+        }
+
+        // 3. Tauri's resolver already knows the OS config dir joined with the
+        //    bundle identifier from `tauri.conf.json`.
+        return app_config_dir(handle);
     }
 
-    // 3. Pre-init: no handle. Detect portable mode ourselves, otherwise fall
-    //    back to the OS per-user config directory joined with the identifier.
+    // 4. Pre-init: no handle (CLI subcommands run before the Tauri app exists).
+    //    Apply the same precedence — external override → portable `data/` dir →
+    //    OS default — with each input passed explicitly for testability.
+    let external_override = std::env::var("TERMIHUB_CONFIG_DIR").ok().map(PathBuf::from);
     let portable_data_dir = detect_app_mode()
         .ok()
         .and_then(|mode| mode.data_dir().map(Path::to_path_buf));
-    standalone_config_dir(portable_data_dir, dirs::config_dir())
+    standalone_config_dir(external_override, portable_data_dir, dirs::config_dir())
 }
 
 /// Pure resolver for the no-`AppHandle` (pre-init) path, split out for testing.
 ///
-/// Prefers the portable `data/` directory when present; otherwise joins the OS
-/// per-user config base with [`APP_IDENTIFIER`].
+/// Mirrors the running-app precedence for the paths reachable without a Tauri
+/// handle: an explicit external override wins, then the portable `data/`
+/// directory when present, otherwise the OS per-user config base joined with
+/// [`APP_IDENTIFIER`]. Taking each input explicitly keeps the precedence
+/// testable without mutating the process environment.
 fn standalone_config_dir(
+    external_override: Option<PathBuf>,
     portable_data_dir: Option<PathBuf>,
     fallback_base: Option<PathBuf>,
 ) -> Result<PathBuf> {
+    if let Some(dir) = external_override {
+        return Ok(dir);
+    }
     if let Some(data_dir) = portable_data_dir {
         return Ok(data_dir);
     }
@@ -146,9 +197,25 @@ mod tests {
     }
 
     #[test]
+    fn standalone_external_override_wins_over_portable_and_base() {
+        // The external `TERMIHUB_CONFIG_DIR` override outranks both portable mode
+        // and the OS default. Threading it as an explicit argument lets this
+        // precedence be asserted without mutating the process environment.
+        let external = PathBuf::from("/explicit/override");
+        let resolved = standalone_config_dir(
+            Some(external.clone()),
+            Some(PathBuf::from("/usb/termiHub/data")),
+            Some(PathBuf::from("/home/u/.config")),
+        )
+        .expect("resolution succeeds");
+        assert_eq!(resolved, external);
+    }
+
+    #[test]
     fn standalone_prefers_portable_data_dir() {
         let portable = PathBuf::from("/usb/termiHub/data");
         let resolved = standalone_config_dir(
+            None,
             Some(portable.clone()),
             Some(PathBuf::from("/home/u/.config")),
         )
@@ -160,14 +227,23 @@ mod tests {
     fn standalone_falls_back_to_config_base_with_identifier() {
         let base = PathBuf::from("/home/u/.config");
         let resolved =
-            standalone_config_dir(None, Some(base.clone())).expect("resolution succeeds");
+            standalone_config_dir(None, None, Some(base.clone())).expect("resolution succeeds");
         assert_eq!(resolved, base.join(APP_IDENTIFIER));
     }
 
     #[test]
-    fn standalone_errors_without_portable_or_base() {
-        let result = standalone_config_dir(None, None);
+    fn standalone_errors_without_override_portable_or_base() {
+        let result = standalone_config_dir(None, None, None);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn config_dir_override_carries_its_path() {
+        // The managed-state newtype simply carries the resolved directory that
+        // `resolve_config_dir`'s handle branch returns verbatim.
+        let dir = PathBuf::from("/portable/data");
+        let override_state = ConfigDirOverride(dir.clone());
+        assert_eq!(override_state.0, dir);
     }
 
     #[test]
