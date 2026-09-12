@@ -1,11 +1,12 @@
 import { useCallback, useMemo, useState } from "react";
 import { Circle, Download, Search, Upload } from "lucide-react";
-import { save, open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import { Button, Input, toast, Tooltip } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { useListFilter, nameDescriptionTagsMatcher } from "@/hooks/useListFilter";
+import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
+import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { serializeMacros } from "@/services/macroIo";
 import type { Macro } from "@/types/macro";
 import { MacroListItem } from "./MacroListItem";
@@ -27,21 +28,15 @@ function slugifyMacroName(name: string): string {
   return slug || "macro";
 }
 
-/** True when the macro matches the (already lower-cased) query across name/description/tags. */
-function macroMatches(macro: Macro, query: string): boolean {
-  if (!query) return true;
-  if (macro.name.toLowerCase().includes(query)) return true;
-  if (macro.description?.toLowerCase().includes(query)) return true;
-  return macro.tags.some((tag) => tag.toLowerCase().includes(query));
-}
-
 /**
  * The Macro Manager panel: browse, search, edit, delete and launch stored
  * macros. Macros are recorded from the terminal toolbar and played back into the
  * active terminal; this panel is their home for organisation. Composed from the
  * shared UI primitives and the sidebar list-item shell, mirroring the workspace
  * and tunnel managers. Macros can also be exported to / imported from portable
- * JSON files, so they can be shared between machines (#1677).
+ * JSON files, so they can be shared between machines (#1677). The search,
+ * export/import, and delete-confirm flows come from the shared sidebar hooks
+ * (UISF-020).
  */
 export function MacroSidebar() {
   const macros = useAppStore((s) => s.macros);
@@ -51,14 +46,20 @@ export function MacroSidebar() {
   const playMacro = useAppStore((s) => s.playMacro);
   const startMacroRecording = useAppStore((s) => s.startMacroRecording);
 
-  const [query, setQuery] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return macros.filter((m) => macroMatches(m, q));
-  }, [macros, query]);
+  const { query, setQuery, filtered } = useListFilter(macros, nameDescriptionTagsMatcher);
+  const exportMacrosToFile = useJsonFileExport("macros");
+  const importMacrosFromFile = useJsonFileImport("macros");
+  const macroDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {
+    try {
+      await deleteMacroFromBackend(id);
+      toast.success(`Deleted macro "${name}"`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to delete macro: ${message}`);
+    }
+  });
+  const requestDelete = macroDelete.request;
 
   const editingMacro = useMemo(
     () => macros.find((m) => m.id === editingId) ?? null,
@@ -102,88 +103,42 @@ export function MacroSidebar() {
     [macros, saveMacroToBackend]
   );
 
-  // Write a serialized macro payload to a user-chosen file. A cancelled save
-  // dialog returns null before any write, so it is a silent no-op; only a real
-  // write failure surfaces an error toast.
-  const writeMacrosToFile = useCallback(
-    async (payload: Macro[], defaultPath: string, successMessage: string) => {
-      try {
-        const filePath = await save({
-          defaultPath,
-          filters: [{ name: "JSON", extensions: ["json"] }],
-        });
-        if (!filePath) return;
-        await writeTextFile(filePath, serializeMacros(payload));
-        toast.success(successMessage);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        toast.error(`Failed to export macros: ${message}`);
-      }
-    },
-    []
-  );
-
   const handleExportAll = useCallback(() => {
-    void writeMacrosToFile(
-      macros,
-      "termihub-macros.json",
-      `Exported ${macros.length} macro${macros.length === 1 ? "" : "s"}`
-    );
-  }, [macros, writeMacrosToFile]);
+    void exportMacrosToFile({
+      defaultPath: "termihub-macros.json",
+      content: () => serializeMacros(macros),
+      successMessage: `Exported ${macros.length} macro${macros.length === 1 ? "" : "s"}`,
+    });
+  }, [macros, exportMacrosToFile]);
 
   const handleExportOne = useCallback(
     (macroId: string) => {
       const macro = macros.find((m) => m.id === macroId);
       if (!macro) return;
-      void writeMacrosToFile(
-        [macro],
-        `termihub-macro-${slugifyMacroName(macro.name)}.json`,
-        `Exported "${macro.name}"`
-      );
+      void exportMacrosToFile({
+        defaultPath: `termihub-macro-${slugifyMacroName(macro.name)}.json`,
+        content: () => serializeMacros([macro]),
+        successMessage: `Exported "${macro.name}"`,
+      });
     },
-    [macros, writeMacrosToFile]
+    [macros, exportMacrosToFile]
   );
 
-  const handleImport = useCallback(async () => {
-    // A cancelled open dialog is a silent no-op. A parse/validation failure is
-    // reported so the user knows nothing was imported (and the library is left
-    // untouched — importMacros validates before any backend write).
-    const filePath = await open({
-      multiple: false,
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (!filePath || Array.isArray(filePath)) return;
-    try {
-      const json = await readTextFile(filePath);
+  const handleImport = useCallback(() => {
+    void importMacrosFromFile(async (json) => {
       const count = await importMacros(json);
       toast.success(`Imported ${count} macro${count === 1 ? "" : "s"}`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to import macros: ${message}`);
-    }
-  }, [importMacros]);
+    });
+  }, [importMacros, importMacrosFromFile]);
 
   const handleDelete = useCallback(
     (macroId: string) => {
       const macro = macros.find((m) => m.id === macroId);
       if (!macro) return;
-      setPendingDelete({ id: macro.id, name: macro.name });
+      requestDelete({ id: macro.id, name: macro.name });
     },
-    [macros]
+    [macros, requestDelete]
   );
-
-  const handleConfirmDelete = useCallback(async () => {
-    if (!pendingDelete) return;
-    const { id, name } = pendingDelete;
-    setPendingDelete(null);
-    try {
-      await deleteMacroFromBackend(id);
-      toast.success(`Deleted macro "${name}"`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to delete macro: ${message}`);
-    }
-  }, [pendingDelete, deleteMacroFromBackend]);
 
   const handleSaveEdit = useCallback(
     async (result: MacroEditorResult) => {
@@ -317,12 +272,12 @@ export function MacroSidebar() {
         onSave={handleSaveEdit}
       />
       <ConfirmDeleteDialog
-        open={pendingDelete !== null}
+        {...macroDelete.dialogProps}
         message={
-          pendingDelete ? `Delete macro "${pendingDelete.name}"? This cannot be undone.` : ""
+          macroDelete.pending
+            ? `Delete macro "${macroDelete.pending.name}"? This cannot be undone.`
+            : ""
         }
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setPendingDelete(null)}
       />
     </div>
   );
