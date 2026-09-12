@@ -264,13 +264,18 @@ pub fn decrypt_with_password(
     // `Nonce::from_slice`, and a corrupted salt would silently derive a wrong
     // key. Surface both as recoverable errors instead (#2049).
     if salt.len() != SALT_LEN {
-        return Err(anyhow::anyhow!("Invalid salt length: expected {SALT_LEN}, got {}", salt.len()).into());
+        return Err(anyhow::anyhow!(
+            "Invalid salt length: expected {SALT_LEN}, got {}",
+            salt.len()
+        )
+        .into());
     }
     if nonce_bytes.len() != NONCE_LEN {
-        return Err(
-            anyhow::anyhow!("Invalid nonce length: expected {NONCE_LEN}, got {}", nonce_bytes.len())
-                .into(),
-        );
+        return Err(anyhow::anyhow!(
+            "Invalid nonce length: expected {NONCE_LEN}, got {}",
+            nonce_bytes.len()
+        )
+        .into());
     }
 
     // Derive the key from the cost parameters carried *in the envelope*, not the

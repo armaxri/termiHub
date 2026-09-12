@@ -112,10 +112,7 @@ describe("ImportDialog", () => {
 
     const passwordInput = query("import-password") as HTMLInputElement;
     await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value"
-      )?.set;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
       setter?.call(passwordInput, "nope");
       passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
