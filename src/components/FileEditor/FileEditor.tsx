@@ -102,6 +102,11 @@ loader.config({ monaco });
 let monacoLinkOpenerRegistered = false;
 function registerSafeMonacoLinkOpener(): void {
   if (monacoLinkOpenerRegistered) return;
+  // `registerLinkOpener` exists in production Monaco (>= 0.44) but not in the
+  // lightweight monaco mock used by the vitest suite (nor in older Monaco), so
+  // guard the call: no-op cleanly when the API is absent and never throw on
+  // editor mount.
+  if (typeof monaco.editor.registerLinkOpener !== "function") return;
   monacoLinkOpenerRegistered = true;
   monaco.editor.registerLinkOpener({ open: openMonacoLink });
 }
