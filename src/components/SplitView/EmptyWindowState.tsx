@@ -1,17 +1,28 @@
 import { AppWindow, Plus, Network } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
+import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { Button, EmptyState } from "@/components/ui";
 import "./EmptyWindowState.css";
 
 /**
- * First-class empty-window call-to-action (#1902, epic #1899).
+ * First-class empty-window call-to-action (#1902, epic #1899; onboarding UX-003).
  *
  * A native window can exist with **zero tabs** — right after *New Window*, or
  * after its last tab is moved or closed. Rather than an accidental blank pane,
  * the content area shows a deliberate CTA so the window is immediately useful:
- * start a local shell here, or open a saved connection into this window. The
+ * start a local shell here, or reach a saved connection from this window. The
  * activity bar and sidebar stay mounted (they live outside this component), so a
  * connection can be launched straight into the empty window.
+ *
+ * Because this is also the closest thing to a first-run screen, the secondary
+ * CTA adapts to what the user actually has: with **≥1 saved connection** it opens
+ * the command palette so they can fuzzy-find and connect one (reusing the
+ * sidebar's exact connect/credential flow); with **zero connections** it routes
+ * straight to the new-connection editor rather than dead-ending on a blank
+ * Connections panel. The copy likewise speaks to a first-run user, and the
+ * power-user "Move to Window" hint is shown only when more than one window is
+ * actually open.
  *
  * Rendered by {@link SplitView} in place of the tab-group/tab-bar tree while the
  * window holds no tabs; both actions run against *this* window's store, so a
@@ -20,20 +31,30 @@ import "./EmptyWindowState.css";
  */
 export function EmptyWindowState() {
   const addTab = useAppStore((s) => s.addTab);
+  const openConnectionEditorTab = useAppStore((s) => s.openConnectionEditorTab);
+  const setCommandPaletteOpen = useAppStore((s) => s.setCommandPaletteOpen);
+  const { connections } = useProjectedConnections();
+  const { count: windowCount } = useWindowInfo();
+
+  const hasConnections = connections.length > 0;
+  const multiWindow = windowCount > 1;
 
   /** Launch a local shell into this window. */
   const handleNewTerminal = () => {
     addTab("Terminal", "local");
   };
 
-  /** Reveal the Connections sidebar so a saved connection can be opened here. */
+  /**
+   * Get the user to a connection from an empty window. With saved connections
+   * present, open the command palette (its ranked list includes every saved
+   * connection); with none, open the new-connection editor so a first-run user
+   * lands on the create flow instead of a blank Connections panel.
+   */
   const handleOpenConnection = () => {
-    const { sidebarView, sidebarCollapsed, setSidebarView } = useAppStore.getState();
-    // setSidebarView toggles the sidebar closed when the view is already the
-    // active, expanded one — so only call it when it would actually reveal the
-    // Connections panel rather than collapse it.
-    if (sidebarView !== "connections" || sidebarCollapsed) {
-      setSidebarView("connections");
+    if (hasConnections) {
+      setCommandPaletteOpen(true);
+    } else {
+      openConnectionEditorTab("new");
     }
   };
 
@@ -46,8 +67,18 @@ export function EmptyWindowState() {
         title="This window is empty"
         description={
           <>
-            Start a session here, or move a tab in from another window with{" "}
-            <strong>Tab ▸ Move to Window</strong>.
+            Start a local terminal now, or{" "}
+            {hasConnections
+              ? "open a saved connection"
+              : "create a connection to save it for next time"}
+            .
+            {multiWindow && (
+              <>
+                {" "}
+                You can also move a tab in from another window with{" "}
+                <strong>Tab ▸ Move to Window</strong>.
+              </>
+            )}
           </>
         }
         action={
