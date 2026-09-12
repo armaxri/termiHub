@@ -171,7 +171,7 @@ describe("WorkspaceSidebar", () => {
     openDialogAndConfirm("My Layout");
     await flush();
 
-    expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("My Layout", "all", undefined);
+    expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("My Layout", "all", undefined, undefined);
     // Dialog must stay open so the user does not falsely believe the save succeeded.
     expect(query("save-workspace-dialog")).not.toBeNull();
     expect(toastError).toHaveBeenCalledTimes(1);
@@ -189,10 +189,84 @@ describe("WorkspaceSidebar", () => {
     openDialogAndConfirm("My Layout");
     await flush();
 
-    expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("My Layout", "all", undefined);
+    expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("My Layout", "all", undefined, undefined);
     expect(query("save-workspace-dialog")).toBeNull();
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("prompts to overwrite instead of saving when the name collides with an existing workspace", async () => {
+    const saveCurrentAsWorkspace = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: sampleWorkspaces, saveCurrentAsWorkspace });
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    openDialogAndConfirm("Dev Setup");
+    await flush();
+
+    // The overwrite prompt appears; nothing has been persisted yet.
+    expect(query("confirm-overwrite-workspace-dialog")).not.toBeNull();
+    expect(saveCurrentAsWorkspace).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it("detects the collision case-insensitively", async () => {
+    const saveCurrentAsWorkspace = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: sampleWorkspaces, saveCurrentAsWorkspace });
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    openDialogAndConfirm("  dev setup  ");
+    await flush();
+
+    expect(query("confirm-overwrite-workspace-dialog")).not.toBeNull();
+    expect(saveCurrentAsWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("overwrites the existing workspace by id when the user confirms the prompt", async () => {
+    const saveCurrentAsWorkspace = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: sampleWorkspaces, saveCurrentAsWorkspace });
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    openDialogAndConfirm("Dev Setup");
+    await flush();
+
+    act(() => (query("confirm-overwrite-workspace-confirm") as HTMLButtonElement).click());
+    await flush();
+
+    // Reuses the existing workspace's id (ws-1) — a true update, not a duplicate.
+    expect(saveCurrentAsWorkspace).toHaveBeenCalledWith("Dev Setup", "all", undefined, "ws-1");
+    expect(query("confirm-overwrite-workspace-dialog")).toBeNull();
+    expect(query("save-workspace-dialog")).toBeNull();
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("keeps the save dialog open and saves nothing when the overwrite prompt is cancelled", async () => {
+    const saveCurrentAsWorkspace = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: sampleWorkspaces, saveCurrentAsWorkspace });
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    openDialogAndConfirm("Dev Setup");
+    await flush();
+
+    act(() => (query("confirm-overwrite-workspace-cancel") as HTMLButtonElement).click());
+    await flush();
+
+    expect(saveCurrentAsWorkspace).not.toHaveBeenCalled();
+    expect(query("confirm-overwrite-workspace-dialog")).toBeNull();
+    // The save dialog stays open so the user can rename and create a distinct workspace.
+    expect(query("save-workspace-dialog")).not.toBeNull();
   });
 
   it("asks for confirmation before deleting and does not delete on click alone", () => {
