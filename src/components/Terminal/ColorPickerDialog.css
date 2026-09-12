@@ -32,9 +32,16 @@
   border-color: var(--text-primary);
 }
 
-.color-picker__picker {
-  width: 100% !important;
-  height: 150px !important;
+/*
+  Size override for the react-colorful picker. The library injects its own
+  `.react-colorful { width: 200px; height: 200px }` into <head> at runtime,
+  which lands after this bundled sheet at equal specificity. Matching both the
+  library class and our own class (specificity 0,2,0 vs the library's 0,1,0)
+  wins by specificity regardless of injection order — no `!important` needed.
+*/
+.color-picker__picker.react-colorful {
+  width: 100%;
+  height: var(--color-picker-height);
 }
 
 .color-picker__hex-input {
