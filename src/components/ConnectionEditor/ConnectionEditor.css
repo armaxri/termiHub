@@ -86,6 +86,13 @@
   letter-spacing: 0.3px;
 }
 
+/* Row holding a field label next to its optional "?" help affordance (UX-009).
+   The help Button keeps its own inline margin, so no extra gap is set here. */
+.settings-form__label-row {
+  display: flex;
+  align-items: center;
+}
+
 /* Required-field marker (asterisk) appended to a field label. */
 .settings-form__required {
   color: var(--color-error);
