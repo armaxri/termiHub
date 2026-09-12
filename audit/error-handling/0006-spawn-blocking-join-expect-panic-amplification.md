@@ -9,7 +9,8 @@ subsystem: src-tauri/src/utils (ssh_auth, remote_exec)
 evidence:
   - src-tauri/src/utils/ssh_auth.rs:122
   - src-tauri/src/utils/remote_exec.rs:618
-status: open
+status: fixed
+resolution: "already-on-develop — production spawn_blocking join sites already return typed errors via map_err (session refactor: manager/remote_proxy/persistent_controller); remaining .expect sites are test-only (correct). No PR — verified 2026-09-12"
 ---
 
 ## What

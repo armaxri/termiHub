@@ -9,7 +9,8 @@ subsystem: src-tauri/src/commands/credential.rs
 evidence:
   - src-tauri/src/commands/credential.rs:298
   - src-tauri/src/commands/credential.rs:308
-status: open
+status: fixed
+resolution: "#2838 — per-credential migration failures now logged at WARN (key-only, no value); unconditional INFO summary already landed via TAURI-011 #2760. Return-status change → #2839"
 ---
 
 ## What

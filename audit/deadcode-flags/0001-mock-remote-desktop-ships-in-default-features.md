@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/session/registry.rs:81
   - core/Cargo.toml
   - core/src/backends/mock_remote_desktop.rs
-status: open
+status: fixed
+resolution: "#2833 — mock-remote-desktop dropped from src-tauri default features (feature kept for opt-in E2E); added --features to system-integration.yml + test-system-py.sh. WATCH: nightly graphical lane green post-merge"
 ---
 
 ## What

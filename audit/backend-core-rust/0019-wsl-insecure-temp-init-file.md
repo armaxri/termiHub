@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/wsl
 evidence:
   - core/src/backends/wsl.rs
-status: open
+status: fixed
+resolution: "#2836 — WSL init script now /tmp/.termihub_init-<uuid> (per-session) threaded through UNC write + source + rm; create_new (O_EXCL). mode-0600 unreachable over UNC → #2837"
 ---
 
 ## What
