@@ -1,13 +1,13 @@
 /**
- * First-connect failure-toast parity for the tunnel slice (#2169).
+ * Start/reconnect toast lifecycle for the tunnel slice (UX-023).
  *
  * After the projection migration (#2150) `tunnel.start` / `tunnel.reconnect` are
- * fire-and-forget: the ack only confirms the start was *accepted*, so a failure
- * during the SSH handshake arrives as a projected `error` status rather than the
- * old synchronous red toast. These tests pin that the slice re-raises the failure
- * toast — driven purely from the projected status transition — and only for a
- * start/reconnect THIS client dispatched (never a mid-session death or another
- * client's start, which surface only as the Error status badge).
+ * fire-and-forget. The success toast must NOT resolve on the intent ack (which
+ * only confirms the start was *accepted*) — a premature green "Started" would
+ * appear a beat before the real handshake, sometimes just ahead of a failure
+ * toast. These tests pin that the pending `loading` toast is held across the ack
+ * and only resolves in place: to success on the actual `connected` transition,
+ * or to error on a `→ error` transition (the #2169 first-connect failure path).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
@@ -100,14 +100,13 @@ function makeState(id: string, status: TunnelState["status"], error?: string): T
   };
 }
 
-/** Push a projected `tunnels` view through the region client's onChange listener. */
 function pushView(states: Record<string, TunnelState>, tunnels: TunnelConfig[]): void {
   clientHooks.listener?.({ version: 1, view: { tunnels, states } });
 }
 
 const accepted: IntentAck = { intentId: "intent-test", status: "accepted", produced: [] };
 
-describe("tunnelSlice — first-connect failure toast (#2169)", () => {
+describe("tunnelSlice — start/reconnect toast resolves on connected, not on ack (UX-023)", () => {
   beforeEach(() => {
     useAppStore.setState(useAppStore.getInitialState());
     clientHooks.listener = null;
@@ -119,88 +118,81 @@ describe("tunnelSlice — first-connect failure toast (#2169)", () => {
     vi.clearAllMocks();
   });
 
-  it("re-raises a failure toast when a client-started tunnel transitions to error", async () => {
+  it("holds the toast pending on ack and resolves to success only on connected", async () => {
     const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);
 
     await useAppStore.getState().startTunnel("t1");
-    toastMock.error.mockClear(); // ignore any ack-path toast; assert on the projected one
+    // Ack accepted, but the tunnel is not connected yet — no success toast.
+    expect(toastMock.loading).toHaveBeenCalledWith("Starting db…");
+    expect(toastMock.success).not.toHaveBeenCalled();
 
-    // Handshake in progress, then fails during the connect.
+    // Handshake in progress — still no success.
     pushView({ t1: makeState("t1", "connecting") }, [t1]);
-    expect(toastMock.error).not.toHaveBeenCalled();
+    expect(toastMock.success).not.toHaveBeenCalled();
 
-    pushView({ t1: makeState("t1", "error", "connection refused") }, [t1]);
-    expect(toastMock.error).toHaveBeenCalledTimes(1);
-    expect(toastMock.error.mock.calls[0][0]).toContain("Failed to start db");
-    expect(toastMock.error.mock.calls[0][0]).toContain("connection refused");
-  });
-
-  it("does not re-toast on a repeated/coalesced diff that still shows error", async () => {
-    const t1 = makeTunnel("t1", "db");
-    await useAppStore.getState().loadTunnels();
-    pushView({ t1: makeState("t1", "disconnected") }, [t1]);
-    await useAppStore.getState().startTunnel("t1");
-    toastMock.error.mockClear();
-
-    pushView({ t1: makeState("t1", "connecting") }, [t1]);
-    pushView({ t1: makeState("t1", "error", "connection refused") }, [t1]);
-    pushView({ t1: makeState("t1", "error", "connection refused") }, [t1]); // repeat
-    expect(toastMock.error).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not toast for a tunnel this client never started (mid-session death / other client)", async () => {
-    const t1 = makeTunnel("t1", "db");
-    await useAppStore.getState().loadTunnels();
-    // No startTunnel dispatched here — the tunnel was already connected and dies.
+    // Actually connected — the pending toast resolves in place to success.
     pushView({ t1: makeState("t1", "connected") }, [t1]);
-    pushView({ t1: makeState("t1", "error", "pipe broke") }, [t1]);
-    expect(toastMock.error).not.toHaveBeenCalled();
+    expect(toastMock.success).toHaveBeenCalledTimes(1);
+    expect(toastMock.success).toHaveBeenCalledWith("Started db", { id: "toast-id" });
   });
 
-  it("does not toast on a later mid-session death after a successful first connect", async () => {
+  it("resolves the same pending toast to error when the first connect fails", async () => {
     const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);
-    await useAppStore.getState().startTunnel("t1");
-    toastMock.error.mockClear();
 
-    // Connects successfully — the watch resolves.
+    await useAppStore.getState().startTunnel("t1");
+    expect(toastMock.success).not.toHaveBeenCalled();
+
     pushView({ t1: makeState("t1", "connecting") }, [t1]);
-    pushView({ t1: makeState("t1", "connected") }, [t1]);
-    // Later the tunnel dies mid-session: badge only, no first-connect toast.
-    pushView({ t1: makeState("t1", "error", "pipe broke") }, [t1]);
-    expect(toastMock.error).not.toHaveBeenCalled();
+    pushView({ t1: makeState("t1", "error", "connection refused") }, [t1]);
+    expect(toastMock.success).not.toHaveBeenCalled();
+    expect(toastMock.error).toHaveBeenCalledTimes(1);
+    expect(toastMock.error).toHaveBeenCalledWith("Failed to start db: connection refused", {
+      id: "toast-id",
+    });
   });
 
-  it("labels a failed reconnect as 'Failed to reconnect'", async () => {
+  it("resolves a reconnect toast to 'Reconnected' on connected", async () => {
     const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();
     pushView({ t1: makeState("t1", "connected") }, [t1]);
 
     await useAppStore.getState().reconnectTunnel("t1");
-    toastMock.error.mockClear();
+    expect(toastMock.loading).toHaveBeenCalledWith("Reconnecting db…");
+    expect(toastMock.success).not.toHaveBeenCalled();
 
-    // Reconnect tears down then fails on the fresh handshake.
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);
     pushView({ t1: makeState("t1", "connecting") }, [t1]);
-    pushView({ t1: makeState("t1", "error", "auth failed") }, [t1]);
-    expect(toastMock.error).toHaveBeenCalledTimes(1);
-    expect(toastMock.error.mock.calls[0][0]).toContain("Failed to reconnect db");
+    pushView({ t1: makeState("t1", "connected") }, [t1]);
+    expect(toastMock.success).toHaveBeenCalledWith("Reconnected db", { id: "toast-id" });
   });
 
-  it("scopes the watch to the current session — a re-subscribe clears pending watches", async () => {
+  it("does not resolve success again on a later mid-session reconnect blip", async () => {
     const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();
     pushView({ t1: makeState("t1", "disconnected") }, [t1]);
-    await useAppStore.getState().startTunnel("t1");
-    toastMock.error.mockClear();
 
-    // Re-init (e.g. a store re-subscribe) drops the pending watch with the client.
+    await useAppStore.getState().startTunnel("t1");
+    pushView({ t1: makeState("t1", "connected") }, [t1]);
+    expect(toastMock.success).toHaveBeenCalledTimes(1);
+
+    // A later disconnect/reconnect the user never initiated is a badge, not a toast.
+    pushView({ t1: makeState("t1", "disconnected") }, [t1]);
+    pushView({ t1: makeState("t1", "connected") }, [t1]);
+    expect(toastMock.success).toHaveBeenCalledTimes(1);
+  });
+
+  it("dismisses a still-pending toast when the session re-subscribes", async () => {
+    const t1 = makeTunnel("t1", "db");
     await useAppStore.getState().loadTunnels();
-    pushView({ t1: makeState("t1", "connecting") }, [t1]);
-    pushView({ t1: makeState("t1", "error", "connection refused") }, [t1]);
-    expect(toastMock.error).not.toHaveBeenCalled();
+    pushView({ t1: makeState("t1", "disconnected") }, [t1]);
+
+    await useAppStore.getState().startTunnel("t1");
+    // Re-subscribe before the connect settles: the orphaned loading toast is dismissed.
+    await useAppStore.getState().loadTunnels();
+    expect(toastMock.dismiss).toHaveBeenCalledWith("toast-id");
   });
 });
