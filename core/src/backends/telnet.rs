@@ -205,6 +205,7 @@ impl ConnectionType for Telnet {
     fn settings_schema(&self) -> SettingsSchema {
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "telnet".to_string(),
                 label: "Telnet".to_string(),
                 fields: vec![

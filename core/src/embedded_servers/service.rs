@@ -473,6 +473,7 @@ impl EmbeddedServerService {
         }
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "server".to_string(),
                 label: display_name_for(server_type).to_string(),
                 fields,
