@@ -6,6 +6,7 @@ import { KeyCombo, KeyBinding, ShortcutCategory } from "@/types/keybindings";
 import {
   getDefaultBindings,
   getEffectiveCombo,
+  serializeCombo,
   serializeBinding,
   setOverride,
   clearOverrides,
@@ -98,7 +99,7 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
   );
 
   const handleRecordComplete = useCallback(
-    (action: string, combo: KeyCombo | null) => {
+    (action: string, combo: KeyCombo | KeyCombo[] | null) => {
       setRecordingAction(null);
       setConflictWarning(null);
 
@@ -276,11 +277,22 @@ interface KeybindingRowProps {
   binding: KeyBinding;
   isRecording: boolean;
   onStartRecording: () => void;
-  onRecordComplete: (combo: KeyCombo | null) => void;
+  onRecordComplete: (combo: KeyCombo | KeyCombo[] | null) => void;
   onCancel: () => void;
   onReset: () => void;
   onUnbind: () => void;
 }
+
+/**
+ * How long the recorder waits after a single combo before finalizing it, giving
+ * the user a window to press a second combo and record a chord instead. A chord
+ * finalizes immediately on its second combo, so this delay only affects the
+ * common single-combo case. Mirrors the engine's chord timeout in spirit.
+ */
+const RECORD_CHORD_WINDOW_MS = 800;
+
+/** The engine matches chords of exactly two combos, so cap a recorded chord there. */
+const MAX_CHORD_LENGTH = 2;
 
 function KeybindingRow({
   binding,
@@ -296,39 +308,95 @@ function KeybindingRow({
   const displayStr = combo && !isUnboundCombo(combo) ? serializeBinding(combo) : "(unbound)";
   const cellRef = useRef<HTMLTableCellElement>(null);
 
+  // Live preview of the combos captured so far while recording (e.g. "Cmd+K"
+  // after the first key of a chord). Empty until the first non-modifier keypress.
+  const [recordingPreview, setRecordingPreview] = useState("");
+
+  // Keep the latest callbacks in refs so the keydown listener stays stable across
+  // re-renders — otherwise a new `onRecordComplete` identity each render would
+  // tear down and re-arm the listener mid-chord, dropping the accumulated combos.
+  const onRecordCompleteRef = useRef(onRecordComplete);
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => {
+    onRecordCompleteRef.current = onRecordComplete;
+    onCancelRef.current = onCancel;
+  });
+
   useEffect(() => {
     if (!isRecording) return;
+
+    // Combos accumulated so far this recording session, and the pending "single
+    // combo?" finalize timer.
+    const combos: KeyCombo[] = [];
+    let finishTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearFinishTimer = () => {
+      if (finishTimer !== null) {
+        clearTimeout(finishTimer);
+        finishTimer = null;
+      }
+    };
+
+    const finish = () => {
+      clearFinishTimer();
+      if (combos.length === 0) return;
+      // A single combo persists as a bare KeyCombo (matching the default shape);
+      // a chord persists as the KeyCombo[] the engine's chord matcher consumes.
+      onRecordCompleteRef.current(combos.length === 1 ? combos[0] : [...combos]);
+    };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       e.preventDefault();
       e.stopPropagation();
 
       if (e.key === "Escape") {
-        onCancel();
+        clearFinishTimer();
+        onCancelRef.current();
         return;
       }
       if (e.key === "Backspace") {
-        onRecordComplete(null);
+        clearFinishTimer();
+        if (combos.length > 0) {
+          // Undo the last captured combo instead of unbinding mid-chord.
+          combos.pop();
+          setRecordingPreview(combos.map(serializeCombo).join(" "));
+          return;
+        }
+        onRecordCompleteRef.current(null);
         return;
       }
 
       // Ignore lone modifier keys
       if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
 
-      const newCombo: KeyCombo = {
+      combos.push({
         key: e.key,
         ctrl: e.ctrlKey || undefined,
         shift: e.shiftKey || undefined,
         alt: e.altKey || undefined,
         meta: e.metaKey || undefined,
-      };
+      });
+      setRecordingPreview(combos.map(serializeCombo).join(" "));
 
-      onRecordComplete(newCombo);
+      if (combos.length >= MAX_CHORD_LENGTH) {
+        // A full chord — finalize immediately, no need to wait.
+        finish();
+        return;
+      }
+
+      // First combo: wait briefly for a possible second combo (chord) before
+      // committing this as a single-combo binding.
+      clearFinishTimer();
+      finishTimer = setTimeout(finish, RECORD_CHORD_WINDOW_MS);
     };
 
+    setRecordingPreview("");
     window.addEventListener("keydown", handleKeyDown, true);
-    return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, [isRecording, onRecordComplete, onCancel]);
+    return () => {
+      clearFinishTimer();
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [isRecording]);
 
   return (
     <tr data-testid={`keybinding-row-${binding.action}`}>
@@ -346,7 +414,11 @@ function KeybindingRow({
         data-testid={`keybinding-binding-${binding.action}`}
         data-unbound={!isRecording && isUnbound ? "true" : undefined}
       >
-        {isRecording ? "Press a key combination... (Backspace to unbind)" : displayStr}
+        {isRecording
+          ? recordingPreview
+            ? `${recordingPreview} … (press another key to chord)`
+            : "Press a key combination... (Backspace to unbind)"
+          : displayStr}
       </td>
       <td className="keyboard-settings__row-actions">
         {!isUnbound && (

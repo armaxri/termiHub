@@ -1,5 +1,7 @@
 import { useState, useMemo } from "react";
-import { Modal, Input } from "@/components/ui";
+import { Pencil } from "lucide-react";
+import { Modal, Input, Button } from "@/components/ui";
+import { useAppStore } from "@/store/appStore";
 import { ShortcutCategory, ShortcutScope } from "@/types/keybindings";
 import {
   getDefaultBindings,
@@ -41,8 +43,19 @@ interface ShortcutsOverlayProps {
 export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const currentPlatformIsMac = isMac();
+  const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   const bindings = getDefaultBindings();
+
+  /**
+   * Close the read-only overlay and deep-link to Settings → Keyboard, where the
+   * shortcuts can actually be rebound. This is the single discoverable bridge
+   * from the shortcuts cheat sheet to the editor (UX-031).
+   */
+  const handleEditShortcuts = () => {
+    onOpenChange(false);
+    openSettingsTab({ category: "keyboard" });
+  };
 
   const filteredBindings = useMemo(() => {
     if (!searchQuery.trim()) return bindings;
@@ -68,6 +81,17 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
       title="Keyboard Shortcuts"
       size="lg"
       data-testid="shortcuts-overlay"
+      footer={
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Pencil size={14} />}
+          onClick={handleEditShortcuts}
+          data-testid="shortcuts-overlay-edit"
+        >
+          Edit shortcuts…
+        </Button>
+      }
     >
       <div className="shortcuts-overlay__search">
         <Input

@@ -93,6 +93,27 @@ Pass-through is symmetric across host platforms: a Linux desktop SSH-ing to a
 Windows host, a macOS desktop SSH-ing to a Linux host, etc. all behave the
 same way.
 
+## Customizing shortcuts: the overlay and the recorder
+
+The shortcuts overlay (<kbd>F1</kbd> / <kbd>Cmd</kbd>+<kbd>K</kbd>
+<kbd>Cmd</kbd>+<kbd>S</kbd>) is a searchable, read-only cheat sheet. To change a
+binding, use its **Edit shortcuts…** button, which opens
+**Settings → Keyboard Shortcuts** — the panel with the interactive editor.
+
+In that editor, click a binding cell to **record** a new shortcut:
+
+- Press a single combination (e.g. <kbd>Cmd</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd>)
+  and it is captured after a brief pause.
+- To record a **chord** — a two-step sequence like the default
+  <kbd>Cmd</kbd>+<kbd>K</kbd> <kbd>Cmd</kbd>+<kbd>S</kbd> — press the first
+  combination, then the second before the pause elapses. The cell shows the
+  captured combos live while recording, and the chord finalizes as soon as the
+  second combination is pressed.
+- <kbd>Backspace</kbd> before any key unbinds the action; during a chord it
+  removes the last captured combo. <kbd>Esc</kbd> cancels recording.
+
+Recorded chords fire through the same chord matcher the built-in defaults use.
+
 ## Restoring the safer defaults
 
 If a user has previously customized their bindings into a conflicting state,

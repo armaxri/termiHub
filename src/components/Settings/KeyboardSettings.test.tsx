@@ -251,4 +251,73 @@ describe("KeyboardSettings", () => {
     });
     expect(container.textContent).not.toContain("Press a key combination...");
   });
+
+  it("captures a two-combo chord and persists it in the engine's chord shape", async () => {
+    renderComponent();
+    const bindingCell = container.querySelector(
+      '[data-testid="keybinding-binding-new-terminal"]'
+    ) as HTMLElement;
+
+    act(() => {
+      bindingCell.click();
+    });
+
+    // First combo of the chord — recording stays open showing live feedback.
+    act(() => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true })
+      );
+    });
+    expect(bindingCell.textContent).toContain("Ctrl+k");
+
+    // Second combo completes the chord and finalizes immediately.
+    await act(async () => {
+      window.dispatchEvent(
+        new KeyboardEvent("keydown", { key: "j", ctrlKey: true, bubbles: true })
+      );
+      await Promise.resolve();
+    });
+
+    const overrides = currentSettingsView().keybindingOverrides ?? [];
+    const entry = overrides.find((o) => o.action === "new-terminal");
+    expect(entry).toBeDefined();
+    // A chord serializes as space-separated combos — the shape processKeyEvent matches.
+    expect(entry?.key).toBe("Ctrl+k Ctrl+j");
+  });
+
+  it("records a single combo (no chord) once the finish timeout elapses", async () => {
+    vi.useFakeTimers();
+    try {
+      renderComponent();
+      const bindingCell = container.querySelector(
+        '[data-testid="keybinding-binding-new-terminal"]'
+      ) as HTMLElement;
+
+      act(() => {
+        bindingCell.click();
+      });
+
+      act(() => {
+        window.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "M", ctrlKey: true, shiftKey: true, bubbles: true })
+        );
+      });
+
+      // Before the timeout the single combo is not yet committed — it waits to see
+      // whether a chord follows.
+      expect(currentSettingsView().keybindingOverrides ?? []).toEqual([]);
+
+      await act(async () => {
+        vi.advanceTimersByTime(2000);
+        await Promise.resolve();
+      });
+
+      const overrides = currentSettingsView().keybindingOverrides ?? [];
+      const entry = overrides.find((o) => o.action === "new-terminal");
+      expect(entry).toBeDefined();
+      expect(entry?.key).toBe("Ctrl+Shift+M");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
