@@ -397,6 +397,111 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn list_dir_sync_symlink_to_directory_is_navigable() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("real_dir")).unwrap();
+        symlink(dir.path().join("real_dir"), dir.path().join("dir_link")).unwrap();
+
+        let entries = list_dir_sync(dir.path().to_str().unwrap()).unwrap();
+
+        let link = entries.iter().find(|e| e.name == "dir_link").unwrap();
+        assert!(link.is_symlink, "dir_link should be flagged as a symlink");
+        assert!(
+            link.is_directory,
+            "a symlink pointing at a directory must be navigable-as-directory"
+        );
+        assert!(
+            link.symlink_target
+                .as_deref()
+                .unwrap()
+                .ends_with("real_dir"),
+            "target should point at real_dir, got {:?}",
+            link.symlink_target
+        );
+    }
+
+    /// Full CORE-037 fixture: a real dir, a symlink→dir, a symlink→file and a
+    /// dangling symlink must each be labelled correctly, and the single bad
+    /// (dangling) link must never abort the whole listing.
+    #[cfg(unix)]
+    #[test]
+    fn list_dir_sync_labels_every_symlink_kind() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+
+        // (a) a real directory
+        std::fs::create_dir(dir.path().join("real_dir")).unwrap();
+        // (b) a symlink pointing to that directory
+        symlink(dir.path().join("real_dir"), dir.path().join("dir_link")).unwrap();
+        // (c) a symlink pointing to a regular file
+        std::fs::write(dir.path().join("real_file"), "hi").unwrap();
+        symlink(dir.path().join("real_file"), dir.path().join("file_link")).unwrap();
+        // (d) a dangling symlink (target never exists)
+        symlink(dir.path().join("does_not_exist"), dir.path().join("dangling_link")).unwrap();
+
+        let entries = list_dir_sync(dir.path().to_str().unwrap()).unwrap();
+
+        let real_dir = entries.iter().find(|e| e.name == "real_dir").unwrap();
+        assert!(real_dir.is_directory);
+        assert!(!real_dir.is_symlink);
+        assert_eq!(real_dir.symlink_target, None);
+
+        let dir_link = entries.iter().find(|e| e.name == "dir_link").unwrap();
+        assert!(dir_link.is_symlink);
+        assert!(dir_link.is_directory, "symlink→dir is a directory");
+        assert!(dir_link.symlink_target.is_some());
+
+        let file_link = entries.iter().find(|e| e.name == "file_link").unwrap();
+        assert!(file_link.is_symlink);
+        assert!(!file_link.is_directory, "symlink→file is not a directory");
+        assert!(file_link.symlink_target.is_some());
+
+        let dangling = entries.iter().find(|e| e.name == "dangling_link").unwrap();
+        assert!(dangling.is_symlink, "a dangling link is still a symlink");
+        assert!(
+            !dangling.is_directory,
+            "an unresolvable symlink is not a directory"
+        );
+        assert!(
+            dangling.symlink_target.is_some(),
+            "the link text is recorded even when the target is missing"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_sync_symlink_to_directory_is_navigable() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("real_dir")).unwrap();
+        let link_path = dir.path().join("dir_link");
+        symlink(dir.path().join("real_dir"), &link_path).unwrap();
+
+        let entry = stat_sync(link_path.to_str().unwrap()).unwrap();
+        assert!(entry.is_symlink);
+        assert!(entry.is_directory, "symlink→dir must stat as a directory");
+        assert!(entry.symlink_target.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_sync_dangling_symlink_does_not_error() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let link_path = dir.path().join("dangling_link");
+        symlink(dir.path().join("does_not_exist"), &link_path).unwrap();
+
+        // Following the target would fail (NotFound); stat must still succeed by
+        // describing the link itself.
+        let entry = stat_sync(link_path.to_str().unwrap()).unwrap();
+        assert!(entry.is_symlink);
+        assert!(!entry.is_directory);
+        assert!(entry.symlink_target.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn stat_sync_flags_symlink() {
         use std::os::unix::fs::symlink;
         let dir = tempfile::tempdir().unwrap();
