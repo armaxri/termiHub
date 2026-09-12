@@ -1,7 +1,5 @@
-import { ShieldCheck, ShieldAlert } from "lucide-react";
-import { Modal, Button } from "@/components/ui";
+import { TrustPrompt, type TrustFact } from "@/components/ui";
 import type { RemoteDesktopCertPromptPayload } from "@/types/remoteDesktop";
-import "./RemoteDesktopCertPrompt.css";
 
 interface RemoteDesktopCertPromptProps {
   /** The pending prompt, or `null` when no decision is needed. */
@@ -20,98 +18,50 @@ interface RemoteDesktopCertPromptProps {
  * *changed* for a previously-trusted host (`changed`), the dialog warns
  * prominently about a possible man-in-the-middle before offering to proceed.
  *
- * Composed from the shared {@link Modal} + {@link Button} primitives; the verdict
- * is routed back to the backend via `remoteDesktopCertDecision`.
+ * Rendered through the shared {@link TrustPrompt} primitive (UISF-007), so the
+ * MITM warning and three-verdict footer stay identical to the SSH host-key
+ * prompt; the verdict is routed back to the backend via
+ * `remoteDesktopCertDecision`.
  */
 export function RemoteDesktopCertPrompt({ prompt, onDecision }: RemoteDesktopCertPromptProps) {
-  const open = prompt !== null;
-  const changed = prompt?.changed ?? false;
+  const facts: TrustFact[] = prompt
+    ? [
+        { label: "Host", value: prompt.host, testId: "cert-host" },
+        ...(prompt.subject
+          ? [{ label: "Subject", value: prompt.subject, testId: "cert-subject" }]
+          : []),
+        ...(prompt.issuer
+          ? [{ label: "Issuer", value: prompt.issuer, testId: "cert-issuer" }]
+          : []),
+        {
+          label: "Fingerprint",
+          value: prompt.fingerprint,
+          mono: true,
+          copyable: true,
+          testId: "cert-fingerprint",
+          copyTestId: "cert-fingerprint-copy",
+        },
+      ]
+    : [];
 
   return (
-    <Modal
-      open={open}
-      // ESC / scrim / close all count as a rejection — the safe default.
-      onOpenChange={(next) => !next && onDecision(false, false)}
-      title={
-        <span className="rd-cert__title">
-          {changed ? (
-            <ShieldAlert size={16} className="rd-cert__title-icon rd-cert__title-icon--warn" />
-          ) : (
-            <ShieldCheck size={16} className="rd-cert__title-icon" />
-          )}
-          {changed ? "Certificate changed" : "Untrusted certificate"}
-        </span>
-      }
-      data-testid="remote-desktop-cert-prompt"
-      footer={
-        <div className="rd-cert__actions">
-          <Button
-            variant="ghost"
-            onClick={() => onDecision(false, false)}
-            data-testid="cert-reject"
-          >
-            Reject
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => onDecision(true, false)}
-            data-testid="cert-accept-once"
-          >
-            Accept once
-          </Button>
-          <Button
-            variant={changed ? "danger" : "primary"}
-            onClick={() => onDecision(true, true)}
-            data-testid="cert-accept-remember"
-          >
-            Accept for host
-          </Button>
-        </div>
-      }
-    >
-      {prompt && (
-        <div className="rd-cert__body">
-          {changed && (
-            <div className="rd-cert__warning" role="alert" data-testid="cert-mitm-warning">
-              <ShieldAlert size={16} className="rd-cert__warning-icon" aria-hidden="true" />
-              <span>
-                The certificate for this host <strong>changed</strong> since you last trusted it.
-                This can mean the server was reinstalled — or that someone is intercepting the
-                connection. Only continue if you expected this.
-              </span>
-            </div>
-          )}
-          <p className="rd-cert__lead">
-            {changed
-              ? "The RDP server presented a different certificate than the one you trusted for:"
-              : "The RDP server presented a certificate that is not yet trusted for:"}
-          </p>
-          <dl className="rd-cert__facts">
-            <dt>Host</dt>
-            <dd data-testid="cert-host">{prompt.host}</dd>
-            {prompt.subject && (
-              <>
-                <dt>Subject</dt>
-                <dd data-testid="cert-subject">{prompt.subject}</dd>
-              </>
-            )}
-            {prompt.issuer && (
-              <>
-                <dt>Issuer</dt>
-                <dd data-testid="cert-issuer">{prompt.issuer}</dd>
-              </>
-            )}
-            <dt>Fingerprint</dt>
-            <dd className="rd-cert__fingerprint" data-testid="cert-fingerprint">
-              {prompt.fingerprint}
-            </dd>
-          </dl>
-          <p className="rd-cert__hint">
-            Verify the fingerprint matches the one your server administrator reports. &ldquo;Accept
-            for host&rdquo; remembers it so you are not asked again.
-          </p>
-        </div>
-      )}
-    </Modal>
+    <TrustPrompt
+      open={prompt !== null}
+      changed={prompt?.changed ?? false}
+      unknownTitle="Untrusted certificate"
+      changedTitle="Certificate changed"
+      unknownLead="The RDP server presented a certificate that is not yet trusted for:"
+      changedLead="The RDP server presented a different certificate than the one you trusted for:"
+      changedWarningSubject="certificate for this host"
+      facts={facts}
+      onReject={() => onDecision(false, false)}
+      onAcceptOnce={() => onDecision(true, false)}
+      onAcceptForHost={() => onDecision(true, true)}
+      modalTestId="remote-desktop-cert-prompt"
+      rejectTestId="cert-reject"
+      acceptOnceTestId="cert-accept-once"
+      acceptForHostTestId="cert-accept-remember"
+      warningTestId="cert-mitm-warning"
+    />
   );
 }
