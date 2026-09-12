@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { RefreshCw } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { setUpdateAutoCheck } from "@/services/api";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
+import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { resolveUiLocale } from "@/utils/locale";
 import { Button, Spinner } from "@/components/ui";
 import "./UpdateSettings.css";
@@ -62,7 +62,10 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
   const handleOpenDownloads = async () => {
     if (!updateInfo?.releaseUrl) return;
     try {
-      await openUrl(updateInfo.releaseUrl);
+      const opened = await safeOpenExternal(updateInfo.releaseUrl);
+      if (!opened) {
+        throw new Error("Could not open the downloads page in your browser.");
+      }
     } catch (err) {
       frontendLog("update", `Failed to open release URL: ${err}`);
       throw err;
