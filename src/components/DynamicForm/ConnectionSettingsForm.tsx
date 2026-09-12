@@ -300,12 +300,10 @@ export function ConnectionSettingsForm({
 
 /**
  * One settings group section. A plain group renders its label as a static
- * heading with its fields below. A group flagged `collapsed` (progressive
- * disclosure, UX-008) renders instead as an expander: a real `<button>` header
- * with `aria-expanded`/`aria-controls` and a rotating chevron, starting
- * collapsed. The fields always stay mounted — collapsing toggles the `hidden`
- * attribute, so react-hook-form keeps every value and validation still runs
- * against the live form values; nothing is unregistered or dropped.
+ * heading with its fields below; a group flagged `collapsed` (progressive
+ * disclosure, UX-008) delegates to {@link CollapsibleGroupSection}. Kept as a
+ * thin switch so only genuinely-collapsible groups pay for the open/close
+ * state.
  */
 function FormGroupSection({
   group,
@@ -314,18 +312,33 @@ function FormGroupSection({
   group: SettingsGroup;
   children: React.ReactNode;
 }) {
-  const collapsible = group.collapsed === true;
-  const [open, setOpen] = useState(!collapsible);
-  const contentId = `${useId()}-group-content`;
-
-  if (!collapsible) {
-    return (
-      <div className="settings-panel__category" data-testid={`form-group-${group.key}`}>
-        <h3 className="settings-panel__category-title">{group.label}</h3>
-        {children}
-      </div>
-    );
+  if (group.collapsed === true) {
+    return <CollapsibleGroupSection group={group}>{children}</CollapsibleGroupSection>;
   }
+  return (
+    <div className="settings-panel__category" data-testid={`form-group-${group.key}`}>
+      <h3 className="settings-panel__category-title">{group.label}</h3>
+      {children}
+    </div>
+  );
+}
+
+/**
+ * A settings group rendered as an expander: a real `<button>` header with
+ * `aria-expanded`/`aria-controls` and a rotating chevron, starting collapsed.
+ * The fields always stay mounted — collapsing toggles the `hidden` attribute,
+ * so react-hook-form keeps every value and validation still runs against the
+ * live form values; nothing is unregistered or dropped.
+ */
+function CollapsibleGroupSection({
+  group,
+  children,
+}: {
+  group: SettingsGroup;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const contentId = `${useId()}-group-content`;
 
   return (
     <div

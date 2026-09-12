@@ -454,10 +454,9 @@ function BooleanField({
 }: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
-      <span className="settings-form__label-row">
-        <span className="settings-form__label">{field.label}</span>
-        <FieldHelp field={field} testIdBase={testIdBase} />
-      </span>
+      {/* No `htmlFor`: the Toggle is a Radix switch associated via `aria-label`,
+          so the shared label/help row carries the text without wiring a label. */}
+      <FieldLabel field={field} testIdBase={testIdBase} />
       <Toggle
         id={a11y.id}
         checked={(value as boolean) ?? (field.default as boolean) ?? false}
