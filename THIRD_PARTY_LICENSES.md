@@ -2,18 +2,19 @@
 
 termiHub itself is licensed under the [MIT License](LICENSE).
 
-This file documents third-party software that termiHub **redistributes or hosts
-for download**, together with the required license texts and source offers. It
-is the canonical attribution surface referenced from the in-app **About → Open
-Source Licenses** entry.
+This file documents third-party programs that termiHub **installs and invokes**
+(but does **not** bundle or redistribute), together with their license texts and
+upstream source pointers. It is the canonical attribution surface referenced
+from the in-app **About → Open Source Licenses** entry.
 
-> **Scope note.** This file covers redistributed/hosted _binary artifacts_ whose
-> licenses impose attribution or source-availability obligations — today, the X
-> servers used for SSH X11 forwarding (see the
+> **Scope note.** This file covers external _binary programs_ whose licenses
+> merit attribution — today, the X servers used for SSH X11 forwarding (see the
 > [X server provisioning concept](docs/concepts/implemented/x-server-provisioning.html)
-> and Epic #1047). Ordinary build-time Rust crates and npm packages are covered
-> by their own license metadata in `Cargo.toml` / `package.json` and are not
-> redistributed as standalone binaries by termiHub.
+> and Epic #1047). termiHub installs these via a package manager (winget /
+> Homebrew) or the user installs them, and runs them as separate processes;
+> termiHub ships no X-server binary of its own (#1318). Ordinary build-time Rust
+> crates and npm packages are covered by their own license metadata in
+> `Cargo.toml` / `package.json`.
 
 See [`docs/licensing.md`](docs/licensing.md) for the process-boundary rationale
 (why bundling these GPL/APSL programs does **not** change termiHub's own MIT
@@ -24,10 +25,10 @@ license) and the compliance checklist.
 ## VcXsrv (Windows X server)
 
 - **Component:** VcXsrv Windows X Server
-- **Pinned version:** 21.1.13
-- **Upstream / corresponding source:** <https://github.com/marchaesen/vcxsrv>
-  (release tag `21.1.13`). Historical releases are also mirrored at
-  <https://sourceforge.net/projects/vcxsrv/>.
+- **Version:** whatever the winget package `marha.VcXsrv` currently installs
+  (termiHub no longer pins or bundles a specific build — #1318).
+- **Upstream / corresponding source:** <https://github.com/marchaesen/vcxsrv>.
+  Releases are also mirrored at <https://sourceforge.net/projects/vcxsrv/>.
 - **License:** GNU General Public License, version 3.0 (GPL-3.0-or-later),
   with X.Org components under the MIT/X11 license.
 - **License text:** [`licenses/GPL-3.0.txt`](licenses/GPL-3.0.txt) (retained for
@@ -40,21 +41,20 @@ license) and the compliance checklist.
   upstream.
 
 > **Note (#1318).** termiHub no longer redistributes or hosts a VcXsrv binary, so
-> the GPL-3.0 redistribution obligations below (source offer for a pinned build)
-> no longer apply to termiHub's distribution — VcXsrv is now obtained via winget.
-> This entry is retained for reference; the full licensing reconciliation is
-> tracked in #1056.
+> the GPL-3.0 redistribution obligations (source offer for a pinned build) do not
+> apply to termiHub's distribution — VcXsrv is obtained via winget. This entry is
+> retained for attribution; the full licensing reconciliation is tracked in #1056.
 
-### Written offer for corresponding source (GPL-3.0 §6) — historical
+### Corresponding source (GPL-3.0) — for reference
 
-_No longer applicable: termiHub does not redistribute a VcXsrv binary as of #1318._
-The complete corresponding source for any VcXsrv version remains publicly
-available, at no charge, from the upstream repository above at the matching
-release tag.
+Because termiHub does not redistribute a VcXsrv binary (as of #1318), no written
+source offer is required from termiHub. The complete corresponding source for any
+VcXsrv version remains publicly available, at no charge, from the upstream
+repository above at the matching release tag.
 
-The pinned version string above **must** match `PINNED_VCXSRV.version` in
-`src-tauri/src/terminal/xserver/acquire.rs`; the download URL and SHA-256 for
-the hosted artifact live in that same pinned table.
+The winget install command termiHub runs is defined by
+`WINGET_INSTALL_VCXSRV_COMMAND` in `src-tauri/src/terminal/xserver/types.rs`
+(package id `marha.VcXsrv`).
 
 ---
 
@@ -79,9 +79,11 @@ the hosted artifact live in that same pinned table.
 
 ## Maintenance
 
-When the pinned version of any hosted X-server artifact changes:
+When the install command or upstream source for any X server changes:
 
-1. Update the pinned table in `src-tauri/src/terminal/xserver/acquire.rs`.
-2. Update the corresponding **Pinned version** and source link/tag in this file.
+1. Update `WINGET_INSTALL_VCXSRV_COMMAND` in
+   `src-tauri/src/terminal/xserver/types.rs` (the single source of truth for the
+   winget invocation).
+2. Update the corresponding entry and source link in this file to match.
 3. If the upstream license changed, refresh the text under `licenses/`.
 4. Re-run the compliance checklist in [`docs/licensing.md`](docs/licensing.md).
