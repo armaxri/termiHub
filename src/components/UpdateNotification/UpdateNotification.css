@@ -6,7 +6,7 @@
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  box-shadow: var(--shadow-md);
   z-index: var(--z-banner);
   font-size: var(--font-size-md);
   color: var(--text-primary);
