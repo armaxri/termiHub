@@ -67,7 +67,7 @@
 .status-bar__agent-updates {
   display: inline-flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   margin-left: var(--spacing-xs);
   color: var(--color-notice);
 }
@@ -192,7 +192,7 @@
 .monitoring-status__host {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -235,14 +235,14 @@
 .monitoring-status__stale-badge {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   color: var(--color-warning);
 }
 
 .monitoring-status__loading {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
 }
 
 .monitoring-status__error {
@@ -268,7 +268,7 @@
   display: flex;
   justify-content: space-between;
   gap: var(--spacing-md);
-  padding: 2px 0;
+  padding: var(--spacing-xxs) 0;
   font-size: var(--font-size-sm);
 }
 
@@ -320,13 +320,13 @@
 .monitoring-status__paused-badge {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   color: var(--text-secondary);
 }
 
 /* Header for the refresh-interval radio group in the detail dropdown (1233). */
 .monitoring-menu__interval-label {
-  padding: var(--spacing-xs) var(--spacing-md) 2px;
+  padding: var(--spacing-xs) var(--spacing-md) var(--spacing-xxs);
   font-size: var(--font-size-xs);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -361,7 +361,7 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  margin-left: 4px;
+  margin-left: var(--spacing-xs);
   vertical-align: middle;
   flex-shrink: 0;
 }
@@ -377,7 +377,7 @@
 .update-indicator__develop-badge {
   display: inline-block;
   margin-left: 5px;
-  padding: 0 4px;
+  padding: 0 var(--spacing-xs);
   border-radius: 3px;
   font-size: var(--font-size-2xs);
   font-weight: 600;

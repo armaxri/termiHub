@@ -34,7 +34,7 @@
   align-items: center;
   gap: 6px;
   height: 26px;
-  padding: 0 8px;
+  padding: 0 var(--spacing-sm);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   border-bottom: 1px solid var(--border-secondary);
@@ -55,7 +55,7 @@
 .transfer-queue__header-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   margin-left: auto;
 }
 
@@ -67,9 +67,9 @@
 .transfer-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   height: 30px;
-  padding: 0 8px;
+  padding: 0 var(--spacing-sm);
   border-bottom: 1px solid var(--border-secondary);
 }
 
@@ -159,7 +159,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 4px;
+  gap: var(--spacing-xs);
   text-align: right;
   color: var(--text-secondary);
 }
@@ -179,14 +179,14 @@
 .transfer-row__actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   flex: 0 0 auto;
 }
 
 .transfer-queue__footer {
   display: flex;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: var(--spacing-sm);
+  padding: 6px var(--spacing-sm);
   justify-content: flex-end;
 }
 
@@ -197,7 +197,7 @@
   justify-content: center;
   min-width: 16px;
   height: 16px;
-  padding: 0 4px;
+  padding: 0 var(--spacing-xs);
   border-radius: var(--radius-full);
   background: var(--accent-color);
   color: var(--text-on-accent);

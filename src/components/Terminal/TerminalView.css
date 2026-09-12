@@ -20,7 +20,7 @@
 .terminal-view__toolbar-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   margin-left: auto;
   flex-shrink: 0;
 }

@@ -116,8 +116,8 @@
 .zoom-overlay__header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
   background: var(--tab-bg);
   border-bottom: 1px solid var(--panel-border);
   flex-shrink: 0;
@@ -150,7 +150,7 @@
   color: var(--text-secondary);
   display: flex;
   align-items: center;
-  padding: 2px;
+  padding: var(--spacing-xxs);
   border-radius: var(--radius-xs);
   flex-shrink: 0;
 }

@@ -5,8 +5,8 @@
   z-index: var(--z-float);
   display: flex;
   align-items: center;
-  gap: 2px;
-  padding: 4px 6px;
+  gap: var(--spacing-xxs);
+  padding: var(--spacing-xs) 6px;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-sm);
@@ -15,7 +15,7 @@
 
 .terminal-search-bar__input {
   width: 180px;
-  padding: 2px 6px;
+  padding: var(--spacing-xxs) 6px;
   border: 1px solid var(--border-primary);
   border-radius: 3px;
   background: var(--bg-input);

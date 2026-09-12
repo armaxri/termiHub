@@ -45,7 +45,7 @@
      FitAddon reads this padding via getComputedStyle on the .xterm element
      and subtracts it from the available width, so column counts stay
      accurate. */
-  padding: 0 8px;
+  padding: 0 var(--spacing-sm);
 }
 
 /* In horizontal-scroll mode we set xterm width imperatively to the content
