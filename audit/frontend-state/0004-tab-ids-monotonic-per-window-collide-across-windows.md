@@ -11,7 +11,8 @@ evidence:
   - src/store/appStore.ts:2331
   - src/store/appStore.ts:3244
   - src/store/appStore.ts:3238
-status: open
+status: fixed
+resolution: "#2867 — tab ids now newId('tab') ULID (was per-window tab-${counter}) at all 3 mint sites (createTab/hydrateHandoffTab/workspaceLayout); counters retired; drop-in (nothing parses format, old ids coexist); two-window regression test. Panel-id same bug → #2868"
 ---
 
 ## What

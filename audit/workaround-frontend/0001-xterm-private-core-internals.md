@@ -9,7 +9,8 @@ subsystem: components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:168
   - src/components/Terminal/Terminal.tsx:169
-status: open
+status: fixed
+resolution: "#2829 — duplicate of FEC-001 — xterm private cell-width read isolated behind xtermDimensions typed adapter + loud shape-test. Verified 2026-09-12"
 ---
 
 ## What

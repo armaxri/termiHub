@@ -9,7 +9,8 @@ subsystem: src/components/Terminal, src/components/StatusBar
 evidence:
   - src/components/Terminal/ColorPickerDialog.css:36
   - src/components/StatusBar/StatusBar.css:236
-status: open
+status: fixed
+resolution: "#2863 — removed both !important via compound-class 0,2,0 specificity (color-picker__picker.react-colorful; monitoring-status__stat.--stale); 150px → --color-picker-height token; visual unchanged"
 ---
 
 ## What

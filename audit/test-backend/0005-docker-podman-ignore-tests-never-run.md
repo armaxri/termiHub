@@ -9,7 +9,8 @@ subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/mod.rs:1446
   - core/src/backends/docker/mod.rs:1513
-status: open
+status: fixed
+resolution: "#2853 — duplicate of WA-RS-013 — docker/podman runtime resolution extracted to pure fns + 12 unit tests (no live host). Verified 2026-09-12"
 ---
 
 ## What

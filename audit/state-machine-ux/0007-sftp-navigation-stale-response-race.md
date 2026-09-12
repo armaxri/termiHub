@@ -10,7 +10,8 @@ evidence:
   - src/store/appStore.ts:6612
   - src/store/appStore.ts:6627
   - src/components/FileBrowser.tsx:1373
-status: open
+status: fixed
+resolution: "#2862 — file-browser nav applies listings in order via per-pane monotonic request seq (navigate/refresh × session+local, independent counters); stale loadSucceeded/Failed dropped without touching loading; out-of-order RED→GREEN tests"
 ---
 
 ## What

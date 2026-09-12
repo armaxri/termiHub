@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/OpenConnectionsModal.tsx
 evidence:
   - src/components/OpenConnectionsModal.tsx:1
-status: open
+status: fixed
+resolution: "#2869 — Open Connections panel gains Embedded Servers section (per-row Stop + Stop All via existing stopEmbeddedServer action, reuses embeddedServers/embeddedServerStates; hides when none running) — honors 'every live subsystem' contract"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: test infra / a11y
 evidence:
   - package.json
   - src/test/setup.ts
-status: open
+status: fixed
+resolution: "#2866 — accessibility regression net: jest-axe+axe-core wired into vitest setup + checkA11y helper; 13 green a11y tests over ui primitives + Modal/ConfirmDialog/TrustPrompt/ShortcutsOverlay; page-scope rules disabled for isolated-component scans"
 ---
 
 ## What

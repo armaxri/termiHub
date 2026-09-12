@@ -9,7 +9,8 @@ subsystem: src-tauri/src/network + core/src/monitoring/http_monitor.rs
 evidence:
   - src/components/HttpMonitorPanel.tsx:71
   - core/src/monitoring/http_monitor.rs:154
-status: open
+status: fixed
+resolution: "#2870 — start_http_monitor now dedupes by exact URL server-side (active_monitor_id_for_url scans desktop+agent sets) → idempotent return-existing, no double poll loop; stopped/resume monitors unaffected; guard before persist"
 ---
 
 ## What

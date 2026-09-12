@@ -11,7 +11,8 @@ evidence:
   - src/store/appStore.ts:5723
   - src-tauri/src/session_projection/redrive.rs:1
   - src/utils/reconnectBackoff.ts:51
-status: open
+status: fixed
+resolution: "#2864 — client 90s connect deadline now deferred for ALL resilient tabs (isResilientReconnectTabId, was agent-only) so backend redrive give-up is authoritative — no force-fail of a legit reconnect; non-resilient tabs keep the deadline (no infinite hang)"
 ---
 
 ## What

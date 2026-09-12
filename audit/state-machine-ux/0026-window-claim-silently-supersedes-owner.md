@@ -9,7 +9,8 @@ subsystem: src-tauri/src/window/mod.rs
 evidence:
   - src-tauri/src/window/mod.rs:175
   - src-tauri/src/window/mod.rs:235
-status: open
+status: fixed
+resolution: "#2871 — claim_session emits targeted session-ownership-superseded event to prior owner's window (existing emit_to infra); frontend toast.info explains resize-disabled. Semantics unchanged. Persistent tab badge → #2872"
 ---
 
 ## What
