@@ -2797,6 +2797,89 @@ export const useAppStore = create<AppState>((set, get, store) => {
     reseedLayoutRegion(postLayoutSnapshot(get(), next));
   };
 
+  /**
+   * Referential-integrity sweep after saved connections are deleted (FES-009).
+   *
+   * `deleteConnection` / `bulkDeleteConnections` remove the entity from the
+   * `connections` region and persist the deletion, but several pieces of state are
+   * keyed off the connection id and were left dangling once it was gone: a live
+   * persistent/background session (an orphan reconnect target + badge), open tabs
+   * still pointing at the removed id, and SSH tunnels that reference it. This
+   * sweeps each dependent so a delete leaves no quiet inconsistency behind.
+   *
+   * **Ordering vs the FES-005 rollback.** The persistent-session teardown kills a
+   * backend process and is not revertible, so the sweep must run only once the
+   * delete is confirmed durable on disk — the callers invoke it from the persist
+   * `.then()`, per id, as each id's own persist resolves. A persist that *rejects*
+   * (region rolled back, the connection re-added) therefore never races an
+   * irreversible teardown of a session for a connection that is coming back.
+   *
+   * Per dependent:
+   * - **persistentSessions** — tear the live session down via the normal
+   *   {@link AppState.stopPersistentSession} path (kills the backend process), then
+   *   drop the map entry so no orphan remains even if the backend `stopped` event
+   *   is never delivered.
+   * - **open tabs** — clear the now-dangling `connectionId` /
+   *   `persistentConnectionId` from every tab's content (a content-only mutation,
+   *   #2562). The tab keeps running from its own captured config snapshot; it just
+   *   no longer points at a removed connection (the restore path already tolerates
+   *   every referenced connection having been deleted).
+   * - **tunnels** — the tunnels region is backend-authoritative (this slice holds
+   *   only a projected cache), so the frontend cannot repoint or remove a tunnel
+   *   here; it surfaces the dangling reference (the tunnel already renders as
+   *   "Unknown") so the inconsistency is not silent. The authoritative cascade is
+   *   backend-owned (tracked as a follow-up).
+   */
+  const sweepDeletedConnectionRefs = (deletedIds: readonly string[]): void => {
+    const idSet = new Set(deletedIds);
+
+    // 1. Persistent sessions — tear down live sessions, then drop their entries.
+    const staleSessionIds = Object.keys(get().persistentSessions).filter((id) => idSet.has(id));
+    for (const connectionId of staleSessionIds) {
+      void get().stopPersistentSession(connectionId);
+    }
+    if (staleSessionIds.length > 0) {
+      set((state) => {
+        const remaining = { ...state.persistentSessions };
+        for (const id of staleSessionIds) delete remaining[id];
+        return { persistentSessions: remaining };
+      });
+    }
+
+    // 2. Open tabs — clear the now-dangling connection references (content-only,
+    // #2562), leaving each tab running from its own captured config snapshot.
+    set((state) => {
+      let changed = false;
+      const nextContent: Record<string, TabContent> = { ...state.tabContent };
+      for (const [tabId, content] of Object.entries(state.tabContent)) {
+        const patch: Partial<TabContent> = {};
+        if (content.connectionId != null && idSet.has(content.connectionId)) {
+          patch.connectionId = undefined;
+        }
+        if (content.persistentConnectionId != null && idSet.has(content.persistentConnectionId)) {
+          patch.persistentConnectionId = undefined;
+        }
+        if (Object.keys(patch).length > 0) {
+          nextContent[tabId] = { ...content, ...patch };
+          changed = true;
+        }
+      }
+      return changed ? { tabContent: nextContent } : {};
+    });
+
+    // 3. Tunnels — surface any that now reference a deleted SSH connection. The
+    // tunnels region is backend-authoritative, so we cannot repoint/remove here;
+    // the tunnel stays (rendered "Unknown") and the user is told, rather than the
+    // reference silently rotting. The authoritative cascade is a backend follow-up.
+    const orphanedTunnels = get().tunnels.filter((t) => idSet.has(t.sshConnectionId));
+    if (orphanedTunnels.length > 0) {
+      const noun = orphanedTunnels.length === 1 ? "tunnel" : "tunnels";
+      toast.info(`${orphanedTunnels.length} ${noun} now reference a deleted SSH connection`, {
+        description: orphanedTunnels.map((t) => t.name).join(", "),
+      });
+    }
+  };
+
   return {
     // Domain slices (#2077) — extracted from this monolith, spread in first so
     // the root store keeps the same public shape and behavior.
@@ -5430,6 +5513,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
       deletePromise
         .then(() => {
           frontendLog("connection_sync", `deleteConnection: backend confirmed`);
+          // Referential-integrity sweep (FES-009): only now that the delete is
+          // durable — so a rejected persist (rolled back per FES-005) never tears
+          // down a live session for a connection that is coming back.
+          sweepDeletedConnectionRefs([connectionId]);
           toast.success(`Deleted ${conn?.name ?? "connection"}`);
         })
         .catch((err) => {
@@ -5454,13 +5541,23 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // its persist rejects, so a partial failure resurrects only the rows still on
       // disk rather than leaving every optimistic removal diverged until reload.
       Promise.all(
-        toDelete.map((c) =>
-          persistConnectionMutation(
+        toDelete.map((c) => {
+          const persistDone = persistConnectionMutation(
             { kind: "connection.remove", payload: { connectionId: c.id } },
             () => removeConnection(c.id, c.sourceFile),
             { kind: "connection.add", payload: { connection: c } }
-          )
-        )
+          );
+          // Sweep per id on its OWN durable success (FES-009): a sibling whose
+          // persist rejected is rolled back (FES-005) and must not be swept, so
+          // this cannot gate on the whole batch resolving. Kept as a side-effect
+          // branch (the unmodified promise is what the batch awaits) so the
+          // batch's own rejection timing / error toast is unchanged.
+          void persistDone.then(
+            () => sweepDeletedConnectionRefs([c.id]),
+            () => {}
+          );
+          return persistDone;
+        })
       )
         .then(() => {
           frontendLog("connection_sync", `bulkDeleteConnections: backend confirmed`);
