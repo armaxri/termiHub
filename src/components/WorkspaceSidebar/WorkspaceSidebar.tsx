@@ -30,6 +30,15 @@ export function WorkspaceSidebar() {
   const activeTabGroupId = useActiveTabGroupId();
 
   const [showSaveDialog, setShowSaveDialog] = useState(false);
+  // The save that is waiting on an overwrite confirmation because its name
+  // collides with an existing workspace (UX-027). `id` is the existing
+  // workspace's id, reused so overwriting is a true in-place update.
+  const [pendingOverwrite, setPendingOverwrite] = useState<{
+    id: string;
+    name: string;
+    scope: SaveWorkspaceScope;
+    description?: string;
+  } | null>(null);
   // The workspace pending deletion once the user confirms the destructive action.
   const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
   // The workspace pending launch once the user confirms tearing down live
@@ -113,12 +122,15 @@ export function WorkspaceSidebar() {
     }
   }, [pendingDelete, deleteWorkspace]);
 
-  const handleSaveCurrent = useCallback(
-    async (name: string, scope: SaveWorkspaceScope, description?: string) => {
+  // Persist the current layout as a workspace. `overwriteId` reuses an existing
+  // workspace's id so the save is a true update rather than a duplicate (UX-027).
+  const persistWorkspace = useCallback(
+    async (name: string, scope: SaveWorkspaceScope, description?: string, overwriteId?: string) => {
       try {
-        await saveCurrentAsWorkspace(name, scope, description);
+        await saveCurrentAsWorkspace(name, scope, description, overwriteId);
+        setPendingOverwrite(null);
         setShowSaveDialog(false);
-        toast.success(`Saved workspace ${name}`);
+        toast.success(overwriteId ? `Updated workspace ${name}` : `Saved workspace ${name}`);
       } catch (err) {
         // Keep the dialog open so the user does not falsely believe the save
         // succeeded (disk full / permission / lock poisoned would otherwise
@@ -130,6 +142,29 @@ export function WorkspaceSidebar() {
     },
     [saveCurrentAsWorkspace]
   );
+
+  const handleSaveCurrent = useCallback(
+    async (name: string, scope: SaveWorkspaceScope, description?: string) => {
+      // Saving over an existing name used to silently create a second,
+      // indistinguishable workspace (UX-027). Detect the collision (trimmed,
+      // case-insensitive — matching the connection editor's unique-name check)
+      // and defer to an overwrite confirmation instead of writing straight away.
+      const target = name.trim().toLowerCase();
+      const existing = workspaces.find((ws) => ws.name.trim().toLowerCase() === target);
+      if (existing) {
+        setPendingOverwrite({ id: existing.id, name, scope, description });
+        return;
+      }
+      await persistWorkspace(name, scope, description);
+    },
+    [workspaces, persistWorkspace]
+  );
+
+  const handleConfirmOverwrite = useCallback((): Promise<void> | undefined => {
+    if (!pendingOverwrite) return undefined;
+    const { id, name, scope, description } = pendingOverwrite;
+    return persistWorkspace(name, scope, description, id);
+  }, [pendingOverwrite, persistWorkspace]);
 
   const loadWorkspaces = useAppStore((s) => s.loadWorkspaces);
 
@@ -278,6 +313,25 @@ export function WorkspaceSidebar() {
           onCancel={() => setShowSaveDialog(false)}
         />
       )}
+      <ConfirmDialog
+        open={pendingOverwrite !== null}
+        variant="danger"
+        title="Overwrite workspace?"
+        description="Replace the existing workspace's saved layout with the current one."
+        message={
+          pendingOverwrite
+            ? `A workspace named "${pendingOverwrite.name}" already exists. Overwrite it with ` +
+              `the current layout, or cancel to save under a different name.`
+            : ""
+        }
+        confirmLabel="Overwrite"
+        confirmVariant="danger"
+        confirmErrorToast={false}
+        testIdBase="confirm-overwrite-workspace"
+        data-testid="confirm-overwrite-workspace-dialog"
+        onConfirm={handleConfirmOverwrite}
+        onCancel={() => setPendingOverwrite(null)}
+      />
       <ConfirmDeleteDialog
         open={pendingDelete !== null}
         message={
