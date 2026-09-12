@@ -373,6 +373,84 @@ describe("checkConflict", () => {
     const conflict = checkConflict({ key: "z", ctrl: true, shift: true });
     expect(conflict).toBeNull();
   });
+
+  it("detects a chord candidate colliding with an existing chord binding", () => {
+    // Bind "new-terminal" to the Ctrl+K Ctrl+S chord, then a fresh candidate for
+    // the same chord must report the collision.
+    setOverride("new-terminal", [
+      { key: "k", ctrl: true },
+      { key: "s", ctrl: true },
+    ]);
+    const conflict = checkConflict(
+      [
+        { key: "k", ctrl: true },
+        { key: "s", ctrl: true },
+      ],
+      "toggle-sidebar"
+    );
+    expect(conflict).toBe("new-terminal");
+  });
+
+  it("does not flag two chords that share a leader but differ in the second combo", () => {
+    setOverride("new-terminal", [
+      { key: "k", ctrl: true },
+      { key: "s", ctrl: true },
+    ]);
+    const conflict = checkConflict(
+      [
+        { key: "k", ctrl: true },
+        { key: "j", ctrl: true },
+      ],
+      "toggle-sidebar"
+    );
+    expect(conflict).toBeNull();
+  });
+});
+
+describe("recorded chord round-trips through the engine matcher", () => {
+  let originalAgent: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    clearOverrides();
+    cancelChord();
+    vi.useFakeTimers();
+    originalAgent = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+    Object.defineProperty(navigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    clearOverrides();
+    cancelChord();
+    vi.useRealTimers();
+    if (originalAgent) {
+      Object.defineProperty(navigator, "userAgent", originalAgent);
+    } else {
+      Object.defineProperty(navigator, "userAgent", {
+        value: "Mozilla/5.0 (jsdom)",
+        configurable: true,
+      });
+    }
+  });
+
+  it("fires the action for a user-recorded two-combo chord", () => {
+    // This is exactly the shape the settings recorder persists for a chord: an
+    // override whose combo is a KeyCombo[] of length 2.
+    setOverride("new-terminal", [
+      { key: "k", meta: true },
+      { key: "j", meta: true },
+    ]);
+
+    // First combo arms chord mode…
+    expect(processKeyEvent(makeKeyEvent("k", { meta: true }))).toBe("chord-pending");
+    expect(isChordPending()).toBe(true);
+
+    // …second combo completes it and fires the recorded action.
+    expect(processKeyEvent(makeKeyEvent("j", { meta: true }))).toBe("new-terminal");
+    expect(isChordPending()).toBe(false);
+  });
 });
 
 describe("getDefaultBindings", () => {

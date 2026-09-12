@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { ShortcutsOverlay } from "./ShortcutsOverlay";
+import { useAppStore } from "@/store/appStore";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -115,6 +116,32 @@ describe("ShortcutsOverlay", () => {
     });
     const row = document.querySelector('[data-testid="shortcut-row-find-in-terminal"]');
     expect(row?.querySelector(".shortcuts-overlay__scope")?.textContent).toBe("Terminal tabs");
+  });
+
+  it("renders an 'Edit shortcuts' action that links to the editor", () => {
+    act(() => {
+      root.render(<ShortcutsOverlay open={true} onOpenChange={vi.fn()} />);
+    });
+    const edit = document.querySelector('[data-testid="shortcuts-overlay-edit"]');
+    expect(edit).not.toBeNull();
+    expect(edit?.textContent).toContain("Edit shortcuts");
+  });
+
+  it("deep-links to the Keyboard settings category and closes the overlay on Edit", () => {
+    const openSettingsTab = vi.fn();
+    useAppStore.setState({ openSettingsTab });
+    const onOpenChange = vi.fn();
+    act(() => {
+      root.render(<ShortcutsOverlay open={true} onOpenChange={onOpenChange} />);
+    });
+
+    const edit = document.querySelector('[data-testid="shortcuts-overlay-edit"]') as HTMLElement;
+    act(() => {
+      edit.click();
+    });
+
+    expect(openSettingsTab).toHaveBeenCalledWith({ category: "keyboard" });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("calls onOpenChange when close button is clicked", () => {
