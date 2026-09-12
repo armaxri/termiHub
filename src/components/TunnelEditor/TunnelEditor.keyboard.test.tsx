@@ -63,6 +63,15 @@ function key(el: HTMLElement, k: string) {
   });
 }
 
+/** Set a value on a React-controlled <input> and fire the native input event. */
+function setValue(el: HTMLInputElement, value: string) {
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  act(() => {
+    setter?.call(el, value);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 setupConnectionsRegion();
 
 describe("TunnelEditor — keyboard interaction (#1341)", () => {
@@ -91,10 +100,20 @@ describe("TunnelEditor — keyboard interaction (#1341)", () => {
   it("saves the tunnel on Enter from the name field", async () => {
     render();
     await flush();
+    setValue(nameInput(), "Dev DB");
     key(nameInput(), "Enter");
     await flush();
     expect(useAppStore.getState().saveTunnel).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().startTunnel).not.toHaveBeenCalled();
+  });
+
+  it("does not save on Enter while the name is blank (UX-022)", async () => {
+    render();
+    await flush();
+    // Name starts empty — Save is disabled, so Enter is a no-op.
+    key(nameInput(), "Enter");
+    await flush();
+    expect(useAppStore.getState().saveTunnel).not.toHaveBeenCalled();
   });
 
   it("cancels (closes the tab) on Escape", async () => {
