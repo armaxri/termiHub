@@ -28,6 +28,7 @@ import { XServerConnectConsent } from "@/components/OpenConnections/XServerConne
 import { ErrorBoundary, ToastProvider, TooltipProvider } from "@/components/ui";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTransferEvents } from "@/hooks/useTransferEvents";
+import { useSessionOwnershipSuperseded } from "@/hooks/useSessionOwnershipSuperseded";
 import { useTransferReconcile } from "@/hooks/useTransferReconcile";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
@@ -52,6 +53,7 @@ import "./App.css";
 function App() {
   useKeyboardShortcuts();
   useTransferEvents();
+  useSessionOwnershipSuperseded();
   useTransferReconcile();
   useEmbeddedServerEvents();
   useCredentialStoreEvents();

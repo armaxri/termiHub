@@ -153,6 +153,52 @@ pub fn should_prevent_exit(code: Option<i32>) -> bool {
     cfg!(target_os = "macos") && code.is_none()
 }
 
+// ── Superseded-owner signal (SM-026) ─────────────────────────────────────────
+//
+// Ownership is intentionally single-owner (see [`WindowManager::claim`] /
+// [`WindowManager::may_resize`]): when two windows render the same session, the
+// last to claim it owns the PTY size and the other window's `resize` calls are
+// denied. That denial used to be silent — the user saw a terminal that
+// mysteriously would not resize. The pieces below let the claim call site push a
+// targeted event to the superseded window so it can *explain* the denial. They
+// change no semantics; they only make the transition observable.
+
+/// Payload for the `session-ownership-superseded` event pushed to a window that
+/// just lost ownership of a session because another window claimed it (SM-026).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OwnershipSupersededPayload {
+    /// The session whose ownership moved away from the notified window.
+    pub session_id: String,
+    /// The window label that now owns (and sizes) the session.
+    pub new_owner: String,
+}
+
+/// Decide whether a [`WindowManager::claim`] that returned `previous` superseded
+/// a *different* window, and if so, which window to notify and with what payload.
+///
+/// Returns `Some((target_label, payload))` only when there was a prior owner and
+/// it differs from the new owner — the case where a window silently loses resize
+/// rights. Returns `None` when the session had no prior owner (a first claim) or
+/// when the same window re-claimed its own session (an idempotent re-claim), so a
+/// window is never falsely told it lost a session it still owns.
+pub fn superseded_notification(
+    previous: Option<String>,
+    new_owner: &str,
+    session_id: &str,
+) -> Option<(String, OwnershipSupersededPayload)> {
+    match previous {
+        Some(prev) if prev != new_owner => Some((
+            prev,
+            OwnershipSupersededPayload {
+                session_id: session_id.to_string(),
+                new_owner: new_owner.to_string(),
+            },
+        )),
+        _ => None,
+    }
+}
+
 impl WindowManager {
     /// Create an empty manager (no extra windows, nothing claimed).
     pub fn new() -> Self {
@@ -513,6 +559,40 @@ mod tests {
         wm.claim("s1", "win-1");
         assert!(wm.may_resize("s1", "win-1"));
         assert!(!wm.may_resize("s1", "main"));
+    }
+
+    #[test]
+    fn superseded_notification_targets_prior_owner_when_a_different_window_claims() {
+        // A different window superseded "main": "main" is the loser to notify, and
+        // the payload names the session and the window that now owns (sizes) it.
+        let got = superseded_notification(Some("main".to_string()), "win-1", "s1");
+        assert_eq!(
+            got,
+            Some((
+                "main".to_string(),
+                OwnershipSupersededPayload {
+                    session_id: "s1".to_string(),
+                    new_owner: "win-1".to_string(),
+                }
+            )),
+            "the prior owner must be told which window took the session"
+        );
+    }
+
+    #[test]
+    fn superseded_notification_is_none_on_a_first_claim() {
+        // No prior owner (a session's first claim) → nobody lost it → no signal.
+        assert_eq!(superseded_notification(None, "main", "s1"), None);
+    }
+
+    #[test]
+    fn superseded_notification_is_none_when_the_same_window_reclaims() {
+        // The owning window re-claiming its own session must never tell *itself*
+        // it lost the session — that would explain a resize denial that isn't real.
+        assert_eq!(
+            superseded_notification(Some("win-1".to_string()), "win-1", "s1"),
+            None
+        );
     }
 
     #[test]
