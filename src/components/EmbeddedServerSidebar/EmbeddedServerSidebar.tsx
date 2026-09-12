@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useRunLocationStore } from "@/store/runLocationStore";
 import { Button, ConfirmDialog, toast } from "@/components/ui";
+import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { setEmbeddedServerRunLocation } from "@/services/embeddedServerApi";
@@ -160,7 +161,7 @@ export function EmbeddedServerSidebar() {
 
   return (
     <div className="server-sidebar" data-testid="server-sidebar">
-      <div className="server-sidebar__actions">
+      <SidebarToolbar>
         <Button
           variant="ghost"
           size="sm"
@@ -170,7 +171,7 @@ export function EmbeddedServerSidebar() {
         >
           New Service
         </Button>
-      </div>
+      </SidebarToolbar>
 
       {servers.length === 0 ? (
         <div className="server-sidebar__empty" data-testid="server-empty-message">
