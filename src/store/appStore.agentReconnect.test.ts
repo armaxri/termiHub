@@ -98,6 +98,19 @@ function makeSshTab(): string {
   );
 }
 
+/** A plain direct SSH tab that has NOT opted into resilient reconnect. */
+function makeNonResilientSshTab(): string {
+  return useAppStore.getState().addTab(
+    "db01",
+    "ssh",
+    {
+      type: "ssh",
+      config: { host: "db01.example.com", username: "deploy", resilientReconnect: false },
+    },
+    { contentType: "terminal", sessionId: "sess-ssh-plain" }
+  );
+}
+
 beforeEach(() => {
   useAppStore.setState(useAppStore.getInitialState());
 });
@@ -116,7 +129,7 @@ describe("agent tab resilient classification (#2476)", () => {
   });
 });
 
-describe("reconnectTerminal connect-deadline reconciliation (#2476)", () => {
+describe("reconnectTerminal connect-deadline reconciliation (#2476, SM-004)", () => {
   it("a backend-driven agent reconnect arms NO connecting deadline", () => {
     const tabId = makeAgentTab();
     useAppStore.getState().reconnectTerminal(tabId);
@@ -126,8 +139,25 @@ describe("reconnectTerminal connect-deadline reconciliation (#2476)", () => {
     expect(useAppStore.getState().terminalRetryCounters[tabId]).toBe(1);
   });
 
-  it("a direct SSH tab keeps the connecting deadline", () => {
+  // SM-004: a resilient direct-SSH tab's reconnect is backend-driven too (the
+  // redrive is the sole reconnect authority for every resilient tab since #2205
+  // PR-B, and Terminal.tsx's region-`reconnecting` branch waits for the backend
+  // outcome for direct SSH as well as agent tabs). Arming the fixed 90 s
+  // wall-clock deadline here would let the client force-fail a tab the backend is
+  // still legitimately reconnecting, so it must defer to the backend's give-up.
+  it("a resilient direct-SSH reconnect arms NO connecting deadline (SM-004)", () => {
     const tabId = makeSshTab();
+    useAppStore.getState().reconnectTerminal(tabId);
+    expect(useAppStore.getState().terminalConnectDeadline[tabId]).toBeUndefined();
+    // The reconnect still fired — the backend redrive owns the outcome.
+    expect(useAppStore.getState().terminalRetryCounters[tabId]).toBe(1);
+  });
+
+  // Preserve the deadline's legitimate purpose: a NON-resilient tab has no backend
+  // retry loop, so the client wall-clock safety net must still guard it from
+  // spinning forever on a hung connect.
+  it("a non-resilient direct-SSH tab keeps the connecting deadline", () => {
+    const tabId = makeNonResilientSshTab();
     useAppStore.getState().reconnectTerminal(tabId);
     expect(useAppStore.getState().terminalConnectDeadline[tabId]?.kind).toBe("connecting");
   });
