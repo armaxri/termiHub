@@ -101,6 +101,7 @@ pub async fn network_port_scan(
     // scan to that agent's `network.port_scan` and re-emits the same events.
     let location = manager.resolve_tool_location(agent_tools::tool::PORT_SCAN)?;
     let agent_client = agent_client_for(&manager, &location)?;
+    ensure_agent_client(&location, &agent_client)?;
 
     let (task_id, cancel) = manager.register_task();
 
@@ -115,7 +116,20 @@ pub async fn network_port_scan(
         match location {
             ResolvedLocation::Agent(agent_id) => {
                 let params = agent_tools::port_scan_params(&host, &ports, timeout_ms, concurrency);
-                let client = agent_client.expect("agent client present for agent location");
+                // Guarded by `ensure_agent_client` before spawning; emit a
+                // recoverable error instead of panicking should that invariant
+                // ever be bypassed (WA-RS-005).
+                let Some(client) = agent_client else {
+                    let _ = app.emit(
+                        "network-scan-error",
+                        serde_json::json!({
+                            "taskId": &tid,
+                            "error": "no agent client for agent-located request",
+                        }),
+                    );
+                    manager.complete_task(&tid);
+                    return;
+                };
                 let (app2, tid2) = (app.clone(), tid.clone());
                 let _ = tokio::task::spawn_blocking(move || {
                     agent_tools::dispatch_port_scan(&client, &agent_id, &app2, &tid2, params);
@@ -231,6 +245,7 @@ pub async fn network_ping_start(
     // re-emits the same events; no preference keeps the existing desktop path.
     let location = manager.resolve_tool_location(agent_tools::tool::PING)?;
     let agent_client = agent_client_for(&manager, &location)?;
+    ensure_agent_client(&location, &agent_client)?;
 
     let (task_id, cancel) = manager.register_task();
 
@@ -246,7 +261,20 @@ pub async fn network_ping_start(
         match location {
             ResolvedLocation::Agent(agent_id) => {
                 let params = agent_tools::ping_params(&host, interval_ms, count);
-                let client = agent_client.expect("agent client present for agent location");
+                // Guarded by `ensure_agent_client` before spawning; emit a
+                // recoverable error instead of panicking should that invariant
+                // ever be bypassed (WA-RS-005).
+                let Some(client) = agent_client else {
+                    let _ = app.emit(
+                        "network-ping-error",
+                        serde_json::json!({
+                            "taskId": &tid,
+                            "error": "no agent client for agent-located request",
+                        }),
+                    );
+                    manager.complete_task(&tid);
+                    return;
+                };
                 let (app2, tid2) = (app.clone(), tid.clone());
                 let _ = tokio::task::spawn_blocking(move || {
                     agent_tools::dispatch_ping(&client, &agent_id, &app2, &tid2, params);
@@ -559,6 +587,7 @@ pub async fn network_traceroute(
     // existing desktop path.
     let location = manager.resolve_tool_location(agent_tools::tool::TRACEROUTE)?;
     let agent_client = agent_client_for(&manager, &location)?;
+    ensure_agent_client(&location, &agent_client)?;
 
     let (task_id, cancel) = manager.register_task();
 
@@ -573,7 +602,20 @@ pub async fn network_traceroute(
         match location {
             ResolvedLocation::Agent(agent_id) => {
                 let params = agent_tools::traceroute_params(&host, max_hops);
-                let client = agent_client.expect("agent client present for agent location");
+                // Guarded by `ensure_agent_client` before spawning; emit a
+                // recoverable error instead of panicking should that invariant
+                // ever be bypassed (WA-RS-005).
+                let Some(client) = agent_client else {
+                    let _ = app.emit(
+                        "network-traceroute-error",
+                        serde_json::json!({
+                            "taskId": &tid,
+                            "error": "no agent client for agent-located request",
+                        }),
+                    );
+                    manager.complete_task(&tid);
+                    return;
+                };
                 let (app2, tid2) = (app.clone(), tid.clone());
                 let _ = tokio::task::spawn_blocking(move || {
                     agent_tools::dispatch_traceroute(&client, &agent_id, &app2, &tid2, params);
