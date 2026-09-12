@@ -210,6 +210,7 @@ describe("transferEntryFromSnapshot (#1645)", () => {
       totalBytes: 100,
       percent: 50,
       speedBytesPerSec: 1000,
+      etaSeconds: null,
       error: "earlier error",
       updatedAt: 0,
     };

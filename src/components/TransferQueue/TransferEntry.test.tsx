@@ -17,6 +17,7 @@ function entry(overrides: Partial<TransferEntry> = {}): TransferEntry {
     totalBytes: 100,
     percent: 78,
     speedBytesPerSec: 23 * 1024,
+    etaSeconds: null,
     updatedAt: 0,
     ...overrides,
   };
