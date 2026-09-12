@@ -85,11 +85,19 @@ impl AutoLockTimer {
     /// - `app_handle`: used to emit events when the store is auto-locked.
     /// - `credential_manager`: used to perform the actual lock operation.
     /// - `timeout_minutes`: initial timeout (`None` or `Some(0)` = disabled).
+    ///
+    /// Returns `Err` when the background thread cannot be spawned (e.g. resource
+    /// exhaustion). This must **not** panic (WA-RS-004): a dead timer would
+    /// never lock the store, so the store could stay unlocked indefinitely — the
+    /// opposite of fail-safe for a security feature. Propagating the error lets
+    /// the caller keep the store locked and refuse to unlock it until a timer is
+    /// available (see [`CredentialManager::has_auto_lock_timer`] and the unlock
+    /// commands).
     pub fn new(
         app_handle: AppHandle,
         credential_manager: Arc<CredentialManager>,
         timeout_minutes: Option<u32>,
-    ) -> Arc<Self> {
+    ) -> std::io::Result<Arc<Self>> {
         let timer = Arc::new(Self {
             inner: Mutex::new(TimerInner {
                 timeout_minutes,
@@ -105,10 +113,9 @@ impl AutoLockTimer {
             .name("auto-lock-timer".to_string())
             .spawn(move || {
                 timer_clone.run_loop(&app_handle, &credential_manager);
-            })
-            .expect("Failed to spawn auto-lock timer thread");
+            })?;
 
-        timer
+        Ok(timer)
     }
 
     /// Record credential activity, resetting the inactivity timer.

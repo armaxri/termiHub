@@ -189,6 +189,48 @@ fn reset_store_file(store: &MasterPasswordStore) -> Result<(), String> {
     store.reset().map_err(|e| e.to_string())
 }
 
+/// User-facing message shown when the master-password store cannot be unlocked
+/// because the auto-lock timer is unavailable (WA-RS-004).
+const AUTO_LOCK_UNAVAILABLE_MSG: &str =
+    "Auto-lock is unavailable, so the credential store cannot be unlocked safely. \
+     Restart the application and try again.";
+
+/// Fail-safe gate (WA-RS-004): the master-password store must not be unlocked
+/// while the auto-lock timer is absent. Without a live timer nothing would lock
+/// the store after inactivity, leaving credentials unlocked indefinitely — the
+/// opposite of fail-safe. Returns `Err` to refuse the unlock (keeping the store
+/// locked) when `timer_installed` is `false`.
+fn auto_lock_permits_unlock(timer_installed: bool) -> Result<(), &'static str> {
+    if timer_installed {
+        Ok(())
+    } else {
+        Err(AUTO_LOCK_UNAVAILABLE_MSG)
+    }
+}
+
+/// Unlock the master-password store behind the auto-lock fail-safe gate.
+///
+/// Refuses the unlock (leaving the store locked) when no auto-lock timer is
+/// installed, otherwise performs the classified unlock and notifies the timer.
+fn guarded_unlock(manager: &CredentialManager, password: &str) -> Result<(), UnlockError> {
+    auto_lock_permits_unlock(manager.has_auto_lock_timer()).map_err(|message| UnlockError {
+        message: message.to_string(),
+        corrupted: false,
+    })?;
+
+    let result = manager
+        .with_master_password_store(|store| unlock_store_classified(store, password))
+        .ok_or_else(|| UnlockError {
+            message: "Credential store is not in master password mode".to_string(),
+            corrupted: false,
+        })?;
+
+    result?;
+
+    manager.notify_auto_lock_unlocked();
+    Ok(())
+}
+
 /// Unlock the master password credential store.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
@@ -200,16 +242,7 @@ pub async fn unlock_credential_store(
 ) -> Result<(), UnlockError> {
     info!("Unlocking credential store");
 
-    let result = manager
-        .with_master_password_store(|store| unlock_store_classified(store, &password))
-        .ok_or_else(|| UnlockError {
-            message: "Credential store is not in master password mode".to_string(),
-            corrupted: false,
-        })?;
-
-    result?;
-
-    manager.notify_auto_lock_unlocked();
+    guarded_unlock(&manager, &password)?;
 
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
@@ -276,6 +309,11 @@ pub async fn setup_master_password(
     manager: State<'_, Arc<CredentialManager>>,
 ) -> Result<(), String> {
     info!("Setting up master password");
+
+    // Fail-safe gate (WA-RS-004): setting up a master password unlocks the store,
+    // so refuse it when no auto-lock timer is installed rather than create a
+    // freshly-unlocked store that nothing could auto-lock.
+    auto_lock_permits_unlock(manager.has_auto_lock_timer()).map_err(|m| m.to_string())?;
 
     let result = manager
         .with_master_password_store(|store| store.setup(&password).map_err(|e| e.to_string()))
@@ -745,6 +783,36 @@ mod tests {
     fn parse_credential_type_unknown() {
         let err = parse_credential_type("invalid").unwrap_err();
         assert!(err.contains("Unknown credential type"));
+    }
+
+    #[test]
+    fn auto_lock_permits_unlock_gate() {
+        // WA-RS-004: the gate refuses an unlock when no auto-lock timer is
+        // installed (thread-spawn failure) and permits it when one is present.
+        assert!(auto_lock_permits_unlock(true).is_ok());
+        assert!(auto_lock_permits_unlock(false).is_err());
+    }
+
+    #[test]
+    fn guarded_unlock_refused_when_no_auto_lock_timer_keeps_store_locked() {
+        // WA-RS-004 regression: with no auto-lock timer installed (mirroring a
+        // startup thread-spawn failure) the unlock MUST be refused and the store
+        // MUST remain locked — never unlocked with no mechanism to auto-lock it.
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+        mgr.with_master_password_store(|s| s.setup("pw"))
+            .unwrap()
+            .unwrap();
+        // Lock the store so we can attempt a real unlock through the gate.
+        mgr.with_master_password_store(|s| s.lock()).unwrap();
+        assert!(!mgr.with_master_password_store(|s| s.is_unlocked()).unwrap());
+
+        let result = guarded_unlock(&mgr, "pw");
+        assert!(result.is_err(), "unlock must be refused without a timer");
+        assert!(
+            !mgr.with_master_password_store(|s| s.is_unlocked()).unwrap(),
+            "store must remain locked after a refused unlock"
+        );
     }
 
     /// Regression test for #1144 (G6): unlocking an already-unlocked store

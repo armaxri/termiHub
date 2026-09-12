@@ -807,14 +807,33 @@ pub fn run() {
             let credential_manager = Arc::new(credential_manager);
             credential_manager.set_app_handle(app.handle().clone());
 
-            // Set up auto-lock timer for master password mode
+            // Set up auto-lock timer for master password mode.
+            //
+            // Fail-safe (WA-RS-004): a thread-spawn failure must not panic. If the
+            // timer thread cannot start we install no timer and force the store
+            // locked. The unlock commands refuse to unlock while no timer is
+            // installed (see `has_auto_lock_timer`), so credentials are never left
+            // unlocked with nothing to auto-lock them after inactivity.
             let auto_lock_minutes = settings.credential_auto_lock_minutes.or(Some(15));
-            let auto_lock_timer = AutoLockTimer::new(
+            match AutoLockTimer::new(
                 app.handle().clone(),
                 credential_manager.clone(),
                 auto_lock_minutes,
-            );
-            credential_manager.set_auto_lock_timer(auto_lock_timer);
+            ) {
+                Ok(auto_lock_timer) => {
+                    credential_manager.set_auto_lock_timer(auto_lock_timer);
+                }
+                Err(e) => {
+                    tracing::error!(
+                        error = %e,
+                        "Failed to spawn auto-lock timer thread; keeping credential store \
+                         locked and refusing unlock until the app is restarted"
+                    );
+                    // Belt-and-suspenders: ensure the store is locked even if a
+                    // credentials file existed and something had unlocked it.
+                    credential_manager.with_master_password_store(|s| s.lock());
+                }
+            }
 
             // Initialize connection manager with recovery loading.
             // On failure, the app still starts but with no connections.
