@@ -5,13 +5,6 @@
   overflow: hidden;
 }
 
-.macro-sidebar__actions {
-  display: flex;
-  padding: 4px 8px;
-  gap: 4px;
-  border-bottom: 1px solid var(--border-primary);
-}
-
 .macro-sidebar__search {
   position: relative;
   display: flex;

@@ -79,14 +79,6 @@
 }
 
 /* --- Toolbar + search --- */
-.recent-sessions__actions {
-  display: flex;
-  justify-content: flex-end;
-  padding: 4px 8px;
-  gap: 4px;
-  border-bottom: 1px solid var(--border-primary);
-}
-
 .recent-sessions__search {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border-primary);
