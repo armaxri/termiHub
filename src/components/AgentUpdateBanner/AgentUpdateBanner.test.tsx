@@ -7,10 +7,20 @@ import type { RemoteAgentDefinition } from "@/types/connection";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import * as api from "@/services/api";
 import { AgentUpdateBanner } from "./AgentUpdateBanner";
+import * as expectedApplyDisconnect from "./expectedApplyDisconnect";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
+}));
+
+// The expected-vs-real disconnect classification is unit-tested in
+// expectedApplyDisconnect.test.ts (it reads the agents region's connectionState
+// over a timed window). Here we mock it to a synchronous boolean so the component
+// tests assert the *wiring*: a true verdict → instructional success; a false
+// verdict → the real failure is surfaced (rethrown), never swallowed.
+vi.mock("./expectedApplyDisconnect", () => ({
+  awaitExpectedApplyDisconnect: vi.fn(),
 }));
 
 vi.mock("@/services/api", async (importOriginal) => {
@@ -37,6 +47,7 @@ vi.mock("@/components/ui", async (importOriginal) => {
 });
 
 const mockedApi = vi.mocked(api);
+const mockedDisconnect = vi.mocked(expectedApplyDisconnect);
 
 const AGENT_ID = "agent-1";
 const AGENT_NAME = "prod-box";
@@ -75,6 +86,8 @@ describe("AgentUpdateBanner", () => {
       agentUpdatesDismissed: {},
     });
     mockedApi.requestAgentDeferredUpdate.mockResolvedValue({ applied: true, activeSessions: 0 });
+    // Default: no transport drop observed (real-failure verdict) unless a test opts in.
+    mockedDisconnect.awaitExpectedApplyDisconnect.mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -124,14 +137,39 @@ describe("AgentUpdateBanner", () => {
     expect(toastMocks.success).not.toHaveBeenCalled();
   });
 
-  it("treats a post-apply connection drop as instructional, not an error", async () => {
-    mockedApi.requestAgentDeferredUpdate.mockRejectedValue(new Error("connection closed"));
+  it("treats a post-apply transport drop (flow-state verdict) as instructional, not an error", async () => {
+    // The apply RPC rejects because the transport died as the agent re-execs; the
+    // classifier confirms the agent's connection dropped → expected success. The
+    // rejection message is deliberately non-English to prove the decision does not
+    // depend on message text (I18N-008).
+    mockedApi.requestAgentDeferredUpdate.mockRejectedValue(new Error("Verbindung getrennt"));
+    mockedDisconnect.awaitExpectedApplyDisconnect.mockResolvedValue(true);
     await render();
     await act(async () => {
       byTestId(applyId)?.click();
     });
+    expect(mockedDisconnect.awaitExpectedApplyDisconnect).toHaveBeenCalledWith(AGENT_ID);
     expect(toastMocks.info).toHaveBeenCalledTimes(1);
-    expect(toastMocks.error).not.toHaveBeenCalled();
+    expect(useAppStore.getState().agentUpdatesDismissed[AGENT_ID]).toBe(true);
+  });
+
+  it("does NOT swallow a real update failure as success when the connection stays up", async () => {
+    // The apply RPC rejects with a message that mentions "connection"/"closed" — the
+    // old substring classifier would have misreported this as success. The connection
+    // did not drop (verdict false), so it must be surfaced as a real failure: no
+    // instructional toast, the staged update is not dismissed, the banner stays.
+    mockedApi.requestAgentDeferredUpdate.mockRejectedValue(
+      new Error("update failed: connection to release server closed")
+    );
+    mockedDisconnect.awaitExpectedApplyDisconnect.mockResolvedValue(false);
+    await render();
+    await act(async () => {
+      byTestId(applyId)?.click();
+    });
+    expect(mockedDisconnect.awaitExpectedApplyDisconnect).toHaveBeenCalledWith(AGENT_ID);
+    expect(toastMocks.info).not.toHaveBeenCalled();
+    expect(useAppStore.getState().agentUpdatesDismissed[AGENT_ID]).not.toBe(true);
+    expect(byTestId(bannerId)).not.toBeNull();
   });
 
   it("hides the banner on Dismiss without calling the update API", async () => {
