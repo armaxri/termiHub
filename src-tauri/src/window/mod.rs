@@ -516,6 +516,40 @@ mod tests {
     }
 
     #[test]
+    fn superseded_notification_targets_prior_owner_when_a_different_window_claims() {
+        // A different window superseded "main": "main" is the loser to notify, and
+        // the payload names the session and the window that now owns (sizes) it.
+        let got = superseded_notification(Some("main".to_string()), "win-1", "s1");
+        assert_eq!(
+            got,
+            Some((
+                "main".to_string(),
+                OwnershipSupersededPayload {
+                    session_id: "s1".to_string(),
+                    new_owner: "win-1".to_string(),
+                }
+            )),
+            "the prior owner must be told which window took the session"
+        );
+    }
+
+    #[test]
+    fn superseded_notification_is_none_on_a_first_claim() {
+        // No prior owner (a session's first claim) → nobody lost it → no signal.
+        assert_eq!(superseded_notification(None, "main", "s1"), None);
+    }
+
+    #[test]
+    fn superseded_notification_is_none_when_the_same_window_reclaims() {
+        // The owning window re-claiming its own session must never tell *itself*
+        // it lost the session — that would explain a resize denial that isn't real.
+        assert_eq!(
+            superseded_notification(Some("win-1".to_string()), "win-1", "s1"),
+            None
+        );
+    }
+
+    #[test]
     fn broadened_claim_keeps_single_window_resize_and_single_owner_on_move() {
         // #1939: every window now claims the sessions it renders, so a session in
         // a lone window is *claimed* (by "main") rather than left unclaimed. This
