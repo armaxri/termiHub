@@ -200,6 +200,35 @@ struct ConnectedState {
     resize: Box<dyn Fn(u16, u16) -> Result<(), SessionError> + Send + Sync>,
     kill: Box<dyn Fn() + Send + Sync>,
     alive: Arc<AtomicBool>,
+    /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
+    /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
+    /// The graceful path and the guard must never both kill the child.
+    disconnected: bool,
+}
+
+impl Drop for ConnectedState {
+    /// Best-effort synchronous teardown for CORE-020: guarantees the child
+    /// process is killed even when the connected state is dropped WITHOUT a
+    /// graceful [`disconnect()`](ConnectionType::disconnect) — a panic between
+    /// spawn and store, an early `?` return, or a manager that forgets.
+    ///
+    /// Killing the child is a synchronous operation (`SIGKILL` via the killer
+    /// handle split off in the spawner), so it is safe to do directly in `Drop`:
+    /// no runtime is required, nothing is awaited, and nothing blocks — which is
+    /// mandatory because `Drop` can run on a tokio worker thread where a
+    /// `block_on` would panic or deadlock. Errors are swallowed by the `kill`
+    /// closure itself, so this can never panic.
+    ///
+    /// When [`disconnect()`](ConnectionType::disconnect) already ran it set
+    /// `disconnected = true` and this is a no-op, so the graceful path and this
+    /// guard never both kill.
+    fn drop(&mut self) {
+        if self.disconnected {
+            return;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        (self.kill)();
+    }
 }
 
 // ── LocalShell ─────────────────────────────────────────────────────
@@ -612,6 +641,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             resize: spawned.resize,
             kill: spawned.kill,
             alive,
+            disconnected: false,
         });
 
         // Inject OSC 7 PROMPT_COMMAND hook for CWD tracking via stdin.
@@ -628,7 +658,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
-        if let Some(state) = self.state.take() {
+        if let Some(mut state) = self.state.take() {
+            // Mark the graceful path so the `Drop` guard on `state` (which runs
+            // when it goes out of scope at the end of this block) does not kill
+            // the child a second time (CORE-020 double-teardown guard).
+            state.disconnected = true;
             state.alive.store(false, Ordering::SeqCst);
             (state.kill)();
             // Clear the sender to signal the reader thread to stop.
@@ -781,6 +815,9 @@ mod tests {
         resize_log: Arc<Mutex<Vec<(u16, u16)>>>,
         /// Set to `true` when kill is invoked.
         killed: Arc<AtomicBool>,
+        /// Number of times `kill` was invoked. Lets a test distinguish a single
+        /// teardown from a double teardown (graceful `disconnect()` + Drop guard).
+        kill_count: Arc<std::sync::atomic::AtomicUsize>,
         /// Dropping this sender signals EOF to the `ChannelReader`.
         reader_tx: Arc<Mutex<Option<std::sync::mpsc::SyncSender<Vec<u8>>>>>,
         /// Captures the environment of the last spawned command.
@@ -797,6 +834,7 @@ mod tests {
                 write_log: Arc::new(Mutex::new(Vec::new())),
                 resize_log: Arc::new(Mutex::new(Vec::new())),
                 killed: Arc::new(AtomicBool::new(false)),
+                kill_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
                 reader_tx: Arc::new(Mutex::new(None)),
                 captured_env: Arc::new(Mutex::new(None)),
                 child_exit: Arc::new(Mutex::new(None)),
@@ -820,6 +858,7 @@ mod tests {
             let write_log = self.write_log.clone();
             let resize_log = self.resize_log.clone();
             let killed = self.killed.clone();
+            let kill_count = self.kill_count.clone();
             let reader_tx_slot = self.reader_tx.clone();
             let child_exit_for_kill = self.child_exit.clone();
 
@@ -844,6 +883,7 @@ mod tests {
                 }),
                 kill: Box::new(move || {
                     killed.store(true, Ordering::SeqCst);
+                    kill_count.fetch_add(1, Ordering::SeqCst);
                     // Drop the sender → ChannelReader.read() returns Ok(0) (EOF)
                     *reader_tx_slot.lock().unwrap() = None;
                     // Killing the process also ends the exit wait.
@@ -1214,6 +1254,63 @@ mod tests {
         assert!(
             killed.load(Ordering::SeqCst),
             "kill should be called on disconnect"
+        );
+    }
+
+    /// Regression for CORE-020. When a connected `LocalShell` is dropped WITHOUT
+    /// a graceful `disconnect()` — a panic between spawn and store, an early `?`
+    /// return, or a manager that forgets — the child process must still be killed
+    /// by the `Drop` guard on `ConnectedState`, so the OS resource never leaks.
+    #[tokio::test]
+    async fn drop_without_disconnect_kills_child() {
+        let mock = MockLocalShellSpawner::new();
+        let killed = mock.killed.clone();
+        let kill_count = mock.kill_count.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+        assert!(!killed.load(Ordering::SeqCst));
+
+        // Drop the whole backend without ever calling disconnect().
+        drop(shell);
+
+        assert!(
+            killed.load(Ordering::SeqCst),
+            "Drop must kill the child best-effort when disconnect() was skipped (CORE-020)"
+        );
+        assert_eq!(
+            kill_count.load(Ordering::SeqCst),
+            1,
+            "Drop guard should kill exactly once"
+        );
+    }
+
+    /// Double-teardown guard for CORE-020. A graceful `disconnect()` already
+    /// kills the child; the subsequent drop of the taken `ConnectedState` must
+    /// NOT kill again. Asserting the kill count stays at 1 across disconnect +
+    /// drop proves the guard (`disconnected` flag) makes Drop a no-op on the
+    /// graceful path — without it, disconnect's kill plus Drop's kill would be 2.
+    #[tokio::test]
+    async fn disconnect_then_drop_kills_only_once() {
+        let mock = MockLocalShellSpawner::new();
+        let kill_count = mock.kill_count.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        shell.connect(valid_settings()).await.expect("connect");
+
+        shell.disconnect().await.expect("disconnect");
+        assert_eq!(
+            kill_count.load(Ordering::SeqCst),
+            1,
+            "graceful disconnect kills once (Drop of the taken state must be a no-op)"
+        );
+
+        // Dropping the (now stateless) backend must not kill again.
+        drop(shell);
+        assert_eq!(
+            kill_count.load(Ordering::SeqCst),
+            1,
+            "Drop after a graceful disconnect must not kill again (double-teardown guard)"
         );
     }
 
