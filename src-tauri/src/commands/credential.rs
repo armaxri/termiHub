@@ -74,10 +74,23 @@ fn collect_credentials_for_migration(
     Ok(credentials_to_migrate)
 }
 
-/// Migrate collected credentials into the freshly-switched store, returning the
-/// count migrated and the human-readable warnings surfaced to the frontend in
-/// [`SwitchResult`]. The source store is left intact on any failure, so the user
-/// can recover.
+/// Migrate collected credentials into the freshly-switched store, logging the
+/// outcome to the durable tracing pipeline (OBS-007).
+///
+/// Observability contract:
+/// - **Every per-credential failure is logged at WARN** with the credential
+///   *key only* (`connection_id:type`) and the error — **never the secret
+///   value** — so a partial or total migration failure is reconstructable from
+///   the log after the fact. The key is safe to log: it carries no secret (see
+///   [`CredentialKey`]'s `Display`, which is what the rest of the credential
+///   logging already emits).
+/// - **The INFO summary is emitted unconditionally** (even when
+///   `migrated_count == 0`, the most silent failure mode), so both success and
+///   any shortfall land in the INFO+ durable file log.
+///
+/// Returns the count migrated and the human-readable warnings surfaced to the
+/// frontend in [`SwitchResult`]. The source store is left intact on any
+/// failure, so the user can recover.
 fn migrate_credentials(
     manager: &CredentialManager,
     credentials_to_migrate: &[(CredentialKey, String)],
@@ -91,6 +104,9 @@ fn migrate_credentials(
                 migrated_count += 1;
             }
             Err(e) => {
+                // SECRET HYGIENE: log the key (connection_id:type) and error
+                // only — NEVER the credential value.
+                warn!(key = %key, error = %e, "credential migration failed");
                 warnings.push(format!("Failed to migrate {}: {}", key, e));
             }
         }
