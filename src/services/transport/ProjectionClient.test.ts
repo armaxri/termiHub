@@ -186,6 +186,87 @@ describe("ProjectionClient", () => {
   });
 });
 
+// ── Subscribe-race frame buffering (CONC-012) ──────────────────────────────────
+
+/**
+ * A transport that reproduces the TauriTransport channel-vs-command race: it
+ * wires the frame handler and pushes a diff **before** the `subscribe` promise
+ * (carrying the initial snapshot) resolves. Real Tauri IPC has no cross-guarantee
+ * that the snapshot Promise settles before the first channel message reaches JS.
+ */
+class RacingTransport implements Transport {
+  resyncCount = 0;
+
+  constructor(
+    private readonly baseView: unknown,
+    private readonly baseVersion: number,
+    private readonly earlyDiff: DiffFrame
+  ) {}
+
+  async dispatch(): Promise<IntentAck> {
+    throw new Error("dispatch not exercised in these tests");
+  }
+
+  async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
+    // Deliver a diff on the channel before the snapshot is returned/adopted.
+    onFrame(this.earlyDiff);
+    const snapshot: SnapshotFrame = {
+      region,
+      kind: "snapshot",
+      version: this.baseVersion,
+      view: this.baseView,
+    };
+    return { snapshot, unsubscribe: () => {} };
+  }
+
+  async resync(): Promise<SnapshotFrame | null> {
+    this.resyncCount += 1;
+    return null;
+  }
+}
+
+describe("ProjectionClient · subscribe-race buffering (CONC-012)", () => {
+  it("buffers a diff that arrives before the snapshot is adopted, then applies it in order", async () => {
+    const earlyDiff: DiffFrame = {
+      region: "items",
+      kind: "diff",
+      baseVersion: 0,
+      version: 1,
+      ops: [{ op: "add", path: "/items/b", value: "streamed" }],
+    };
+    const transport = new RacingTransport(itemsView({ a: "base" }), 0, earlyDiff);
+    const client = new ProjectionClient(transport, "items");
+    const states: ProjectionCacheState[] = [];
+    client.onChange((s) => states.push(clone(s)));
+
+    await client.start();
+
+    // The pre-snapshot diff was buffered and flushed in order, not treated as a
+    // gap: no redundant resync, and the diff landed on the adopted baseline.
+    expect(transport.resyncCount).toBe(0);
+    expect(client.state.version).toBe(1);
+    expect(client.state.view).toEqual(itemsView({ a: "base", b: "streamed" }));
+  });
+
+  it("never regresses the version when a later snapshot arrives with an older version", () => {
+    const transport = new FakeTransport(itemsView({ a: "base" }), "items");
+    const client = new ProjectionClient(transport, "items");
+
+    // Advance the cache to v2 via two diffs.
+    return client.start().then(() => {
+      transport.publish(itemsView({ a: "base", b: "one" }));
+      transport.publish(itemsView({ a: "base", b: "two" }));
+      expect(client.state.version).toBe(2);
+
+      // A stale/racing snapshot at an older version must not roll the cache back.
+      const stale = client.state.view;
+      transport.emit({ region: "items", kind: "snapshot", version: 1, view: itemsView() });
+      expect(client.state.version).toBe(2);
+      expect(client.state.view).toEqual(stale);
+    });
+  });
+});
+
 // ── Optimistic client-side folding (#2533) ─────────────────────────────────────
 
 /** A tiny region view used for the overlay tests: `{ items: { <id>: value } }`. */

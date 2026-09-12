@@ -87,6 +87,16 @@ export class ProjectionClient {
   private readonly listeners = new Set<CacheListener>();
   private closed = false;
   private resyncing = false;
+  /** True once the initial snapshot has been adopted (baseline established). */
+  private snapshotAdopted = false;
+  /**
+   * Frames that arrived on the transport channel *before* the initial snapshot
+   * was adopted (CONC-012). The channel is wired before `subscribe` resolves, so
+   * a diff can reach {@link onFrame} while `version` is still `-1`; buffering it
+   * and flushing after {@link adoptSnapshot} keeps ordering without falling into
+   * a redundant resync.
+   */
+  private preSnapshotBuffer: ProjectionFrame[] = [];
 
   constructor(
     private readonly transport: Transport,
@@ -109,9 +119,12 @@ export class ProjectionClient {
   /** Attach to the region and adopt its snapshot as the baseline. */
   async start(): Promise<void> {
     this.closed = false;
+    this.snapshotAdopted = false;
+    this.preSnapshotBuffer = [];
     const onFrame: FrameHandler = (frame) => this.onFrame(frame);
     this.subscription = await this.transport.subscribe(this.region, onFrame);
     this.adoptSnapshot(this.subscription.snapshot);
+    this.flushPreSnapshotBuffer();
   }
 
   /** Detach and stop applying frames. Idempotent. */
@@ -172,6 +185,14 @@ export class ProjectionClient {
 
   private onFrame(frame: ProjectionFrame): void {
     if (this.closed) return;
+    if (!this.snapshotAdopted) {
+      // A frame reached the channel before the initial snapshot was adopted
+      // (the transport wires the handler before `subscribe` resolves). Buffer it
+      // and apply it in order once the baseline is set, instead of treating it
+      // as a gap and forcing a redundant resync (CONC-012).
+      this.preSnapshotBuffer.push(frame);
+      return;
+    }
     if (frame.kind === "snapshot") {
       this.adoptSnapshot(frame);
       return;
@@ -179,7 +200,23 @@ export class ProjectionClient {
     this.applyDiff(frame);
   }
 
+  /** Apply frames that arrived before the baseline, in arrival order. */
+  private flushPreSnapshotBuffer(): void {
+    if (this.preSnapshotBuffer.length === 0) return;
+    const buffered = this.preSnapshotBuffer;
+    this.preSnapshotBuffer = [];
+    for (const frame of buffered) {
+      if (this.closed) return;
+      this.onFrame(frame);
+    }
+  }
+
   private adoptSnapshot(snapshot: SnapshotFrame): void {
+    // Never regress: a late/racing snapshot (e.g. a resync that resolves after a
+    // newer diff already advanced the cache) must not roll the version backwards
+    // (CONC-012). The initial adoption always proceeds (`snapshotAdopted` false).
+    if (this.snapshotAdopted && snapshot.version < this.version) return;
+    this.snapshotAdopted = true;
     this.version = snapshot.version;
     this.baseView = snapshot.view;
     this.pruneConfirmed();

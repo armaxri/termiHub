@@ -29,7 +29,13 @@ export interface JsonRpcSocket {
 }
 
 export class WebSocketTransport implements Transport {
-  private readonly handlers = new Map<string, FrameHandler>();
+  /**
+   * Frame handlers keyed by region, each region holding a *set* of subscribers.
+   * Multiple consumers may attach to one region (matching {@link TauriTransport},
+   * which keys a distinct channel per `subscriptionId`); every frame fans out to
+   * all of them, and each unsubscribe removes only its own handler (FEC-007).
+   */
+  private readonly handlers = new Map<string, Set<FrameHandler>>();
   private notificationHandle?: () => void;
   private subCounter = 0;
 
@@ -45,7 +51,12 @@ export class WebSocketTransport implements Transport {
   async subscribe(region: string, onFrame: FrameHandler): Promise<Subscription> {
     this.ensureListener();
     const subscriptionId = `${this.clientId}:${region}:${this.subCounter++}`;
-    this.handlers.set(region, onFrame);
+    let regionHandlers = this.handlers.get(region);
+    if (!regionHandlers) {
+      regionHandlers = new Set<FrameHandler>();
+      this.handlers.set(region, regionHandlers);
+    }
+    regionHandlers.add(onFrame);
 
     const snapshot = await this.socket.request<SnapshotFrame>("projection.subscribe", {
       region,
@@ -59,7 +70,7 @@ export class WebSocketTransport implements Transport {
       unsubscribe: () => {
         if (!active) return;
         active = false;
-        this.handlers.delete(region);
+        this.removeHandler(region, onFrame);
         void this.socket
           .request("projection.unsubscribe", { region, subscriptionId })
           .catch(() => {});
@@ -74,12 +85,41 @@ export class WebSocketTransport implements Transport {
     });
   }
 
+  /**
+   * Tear down the transport: drop every subscriber and detach the underlying
+   * notification listener. Idempotent.
+   */
+  close(): void {
+    this.handlers.clear();
+    this.teardownListener();
+  }
+
+  /** Remove one subscriber; clean up the region and listener when empty. */
+  private removeHandler(region: string, onFrame: FrameHandler): void {
+    const regionHandlers = this.handlers.get(region);
+    if (!regionHandlers) return;
+    regionHandlers.delete(onFrame);
+    if (regionHandlers.size === 0) this.handlers.delete(region);
+    // Once the last subscriber across all regions has left, nothing is listening
+    // — detach the shared notification handler so it does not outlive its uses.
+    if (this.handlers.size === 0) this.teardownListener();
+  }
+
+  private teardownListener(): void {
+    this.notificationHandle?.();
+    this.notificationHandle = undefined;
+  }
+
   /** Route the single `projection.frame` notification stream by region. */
   private ensureListener(): void {
     if (this.notificationHandle) return;
     this.notificationHandle = this.socket.onNotification("projection.frame", (params) => {
       const frame = params as ProjectionFrame;
-      this.handlers.get(frame.region)?.(frame);
+      const regionHandlers = this.handlers.get(frame.region);
+      if (!regionHandlers) return;
+      // Snapshot the set so a handler that unsubscribes during dispatch does not
+      // perturb the in-flight iteration.
+      for (const handler of [...regionHandlers]) handler(frame);
     });
   }
 }
