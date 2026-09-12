@@ -131,9 +131,7 @@ describe("settingsRegistry", () => {
     });
 
     it("still finds X server provisioning and routes it to X Server", () => {
-      expect(
-        filterSettings("x11").some((s) => s.id === "provideXServerAutomatically")
-      ).toBe(true);
+      expect(filterSettings("x11").some((s) => s.id === "provideXServerAutomatically")).toBe(true);
       expect(getMatchingCategories("x server").has("x-server")).toBe(true);
     });
 
