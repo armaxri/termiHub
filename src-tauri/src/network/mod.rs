@@ -1383,6 +1383,62 @@ mod tests {
         assert_eq!(loaded[0].url, "https://new.example.com");
     }
 
+    // ── Server-side dedupe by URL (SM-019) ────────────────────────────────────
+
+    #[test]
+    fn start_http_monitor_dedupes_a_running_url_and_does_not_double_spawn() {
+        // SM-019: the backend is the authoritative guard against double-polling a
+        // URL — it must not rely on the client-side guard. If a monitor is already
+        // actively polling a URL and a second start for that same URL reaches the
+        // backend (client guard bypassed, a race, or a duplicate call), the backend
+        // must NOT spawn a second poll loop; it returns the already-running
+        // monitor's id, idempotently.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+
+        // An already-running monitor for the URL (a live poll loop).
+        let running_cfg = HttpMonitorConfig::new(
+            "https://dup.example/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let url = running_cfg.url.clone();
+        let existing_id = insert_dummy_monitor_config(&mgr, running_cfg);
+
+        // A second start for the SAME url but a DISTINCT id — as if the client
+        // guard was bypassed or a start raced. Before the fix this would spawn a
+        // second loop (or, without an app handle, error); after the fix it returns
+        // the existing id without spawning anything.
+        let dup_cfg = HttpMonitorConfig::new(url.clone(), 30_000, "GET".into(), 200, 5_000);
+        assert_ne!(
+            dup_cfg.id, existing_id,
+            "the duplicate start carries a fresh id"
+        );
+        let returned = mgr
+            .start_http_monitor(dup_cfg, RunLocation::ThisComputer)
+            .expect("dedupe returns the existing id, not an error");
+        assert_eq!(
+            returned, existing_id,
+            "start returns the already-running monitor's id"
+        );
+
+        // Exactly one monitor is tracked for that URL — no second poll loop.
+        let listed = mgr.list_http_monitors();
+        assert_eq!(
+            listed.iter().filter(|m| m.config.url == url).count(),
+            1,
+            "only one loop may poll a given URL"
+        );
+        assert_eq!(listed.len(), 1, "no second monitor was created");
+        // The duplicate config was never persisted — dedupe happens before persist.
+        assert!(
+            mgr.load_persisted_monitor_configs().is_empty(),
+            "a deduped start must not persist a duplicate config"
+        );
+    }
+
     // ── Stop vs. Remove (audit Gap #6) ────────────────────────────────────────
 
     #[test]
