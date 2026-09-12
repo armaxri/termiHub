@@ -1604,8 +1604,6 @@ export interface AppState
   clearSkippedUpdateVersion: () => Promise<void>;
 }
 
-let tabCounter = 0;
-
 /** UI-facing metadata describing an in-flight workflow run (#1852). */
 export interface WorkflowRunState {
   /** The workflow being run. */
@@ -2337,9 +2335,8 @@ function createTab(
   spawned?: boolean,
   initialCommand?: string
 ): TerminalTab {
-  tabCounter++;
   return {
-    id: `tab-${tabCounter}`,
+    id: newId("tab"),
     sessionId,
     title,
     connectionType,
@@ -3349,9 +3346,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const targetLeaf = getAllLeaves(state.rootPanel)[0];
         if (!targetLeaf) return state;
 
-        tabCounter++;
         const newTab: TerminalTab = {
-          id: `tab-${tabCounter}`,
+          id: newId("tab"),
           sessionId: h.sessionId,
           title: h.title,
           connectionType: h.connectionType,

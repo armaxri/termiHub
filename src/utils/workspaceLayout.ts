@@ -17,6 +17,7 @@ import {
   AgentErrorMeta,
 } from "@/types/terminal";
 import { SavedConnection } from "@/types/connection";
+import { newId } from "@/services/transport/ids";
 
 /** Minimal agent state passed in during workspace launch to resolve agentRef tabs. */
 export interface AgentContext {
@@ -402,11 +403,11 @@ function generatePanelId(): string {
   return `ws-panel-${panelIdCounter}`;
 }
 
-let tabIdCounter = 0;
-
 function generateTabId(): string {
-  tabIdCounter++;
-  return `ws-tab-${tabIdCounter}`;
+  // Globally unique by construction (FES-004): a per-window monotonic counter
+  // collides across desktop windows, and tab ids double as cross-window /
+  // shared-region keys. The `ws-tab-` prefix stays for debuggability.
+  return newId("ws-tab");
 }
 
 type ResolvedTab =
