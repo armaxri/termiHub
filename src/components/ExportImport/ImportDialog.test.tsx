@@ -85,4 +85,60 @@ describe("ImportDialog", () => {
     expect(mockedImport).toHaveBeenCalledWith("{}", null);
     expect(query("import-dialog-success")).not.toBeNull();
   });
+
+  it("shows the wrong-password affordance on a wrongPassword error code", async () => {
+    mockedPreview.mockResolvedValueOnce({
+      connectionCount: 1,
+      folderCount: 0,
+      agentCount: 0,
+      hasEncryptedCredentials: true,
+    });
+    // The backend rejects with a structured error carrying a stable `kind`,
+    // NOT an English message the dialog must parse (I18N-010). The message it
+    // does carry is deliberately non-English here to prove the dialog never
+    // reads it for classification.
+    mockedImport.mockRejectedValueOnce({
+      kind: "wrongPassword",
+      message: "Entschlüsselung fehlgeschlagen",
+    });
+
+    await open("{}");
+
+    const passwordInput = query("import-password") as HTMLInputElement;
+    await act(async () => {
+      passwordInput.value = "nope";
+      passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    const submit = query("import-with-credentials") as HTMLButtonElement;
+    await act(async () => {
+      submit.click();
+    });
+
+    expect(document.body.textContent).toContain("Wrong password. Please try again.");
+    expect(document.body.textContent).not.toContain("Entschlüsselung fehlgeschlagen");
+  });
+
+  it("shows the backend message on a non-password (other) error code", async () => {
+    mockedPreview.mockResolvedValueOnce({
+      connectionCount: 1,
+      folderCount: 0,
+      agentCount: 0,
+      hasEncryptedCredentials: false,
+    });
+    mockedImport.mockRejectedValueOnce({
+      kind: "other",
+      message: "Failed to parse import data",
+    });
+
+    await open("{}");
+
+    const submit = query("import-submit") as HTMLButtonElement;
+    await act(async () => {
+      submit.click();
+    });
+
+    expect(document.body.textContent).toContain("Failed to parse import data");
+    expect(document.body.textContent).not.toContain("Wrong password. Please try again.");
+  });
 });
