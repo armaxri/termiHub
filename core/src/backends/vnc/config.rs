@@ -206,6 +206,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
     let mut groups = shared_field_base(VNC_BASE_PORT);
 
     groups.push(SettingsGroup {
+        collapsed: false,
         key: "vnc".to_string(),
         label: "VNC Options".to_string(),
         fields: vec![
@@ -300,6 +301,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
     });
 
     groups.push(SettingsGroup {
+        collapsed: false,
         key: "sshTunnel".to_string(),
         label: "SSH Tunnel".to_string(),
         fields: vec![

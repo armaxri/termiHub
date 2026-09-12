@@ -178,6 +178,7 @@ mod tests {
         fn settings_schema(&self) -> SettingsSchema {
             SettingsSchema {
                 groups: vec![SettingsGroup {
+                    collapsed: false,
                     key: "test".to_string(),
                     label: "Test".to_string(),
                     fields: vec![SettingsField {

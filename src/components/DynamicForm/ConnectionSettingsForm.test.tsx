@@ -193,6 +193,53 @@ describe("ConnectionSettingsForm", () => {
     expect(shellInput!.value).toBe("");
   });
 
+  // Regression for FEC-019: on a connection-type switch the form calls `reset`
+  // and previously set an `isResetting` flag, expecting the ensuing `watch`
+  // emission to consume it. But when the parent hands a fresh `onChange`
+  // identity on that same render, React tears the watch subscription down and
+  // rebuilds it *around* the reset (cleanup runs before setup), so reset's
+  // synchronous watch echo reaches no subscriber and the flag is never
+  // consumed. It then swallowed the *next* genuine user edit — Save persisted
+  // the stale value. The fix drops the sticky flag for a value-snapshot
+  // comparison, so a real edit always propagates.
+  it("propagates a genuine edit after a schema switch that drops the reset watch echo (FEC-019)", () => {
+    const SCHEMA_A: SettingsSchema = {
+      groups: [
+        {
+          key: "ga",
+          label: "A",
+          fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: false }],
+        },
+      ],
+    };
+    const SCHEMA_B: SettingsSchema = {
+      groups: [
+        {
+          key: "gb",
+          label: "B",
+          fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: false }],
+        },
+      ],
+    };
+
+    // First render subscribes with one onChange identity.
+    renderForm(SCHEMA_A, { host: "x" }, vi.fn());
+    // Switch schema *and* pass a fresh onChange identity, forcing the watch
+    // subscription effect to re-run around the reset so the reset echo is lost.
+    const onChange = vi.fn();
+    renderForm(SCHEMA_B, { host: "x" }, onChange);
+
+    const input = query("field-host") as HTMLInputElement;
+    expect(input.value).toBe("x");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set;
+    act(() => {
+      setter?.call(input, "edited");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ host: "edited" }));
+  });
+
   it("hides fields when visibility condition is not met", () => {
     renderForm(SSH_SCHEMA, { authMethod: "password", port: 22 }, vi.fn());
     // Password visible when authMethod = "password"
@@ -377,6 +424,76 @@ describe("ConnectionSettingsForm", () => {
       });
 
       expect(hostInput.value).toBe("192.168.0.2:2222");
+    });
+  });
+
+  // UX-008: a group flagged `collapsed` renders behind an expander, starting
+  // closed, so a basic SSH connection shows only the essential groups.
+  describe("progressive disclosure of collapsed groups (UX-008)", () => {
+    const COLLAPSIBLE_SCHEMA: SettingsSchema = {
+      groups: [
+        {
+          key: "connection",
+          label: "Connection",
+          fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: true }],
+        },
+        {
+          key: "advanced",
+          label: "Advanced",
+          collapsed: true,
+          fields: [
+            { key: "shell", label: "Shell", fieldType: { type: "text" }, required: false },
+            {
+              key: "connectTimeoutSecs",
+              label: "Connect Timeout (s)",
+              fieldType: { type: "number", min: 1, max: 300 },
+              required: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    it("renders an accessible expander, collapsed by default, for a collapsed group", () => {
+      renderForm(COLLAPSIBLE_SCHEMA, { host: "h" }, vi.fn());
+      // Essential group has no toggle — it stays a static heading.
+      expect(query("form-group-connection-toggle")).toBeNull();
+      const toggle = query("form-group-advanced-toggle") as HTMLButtonElement;
+      expect(toggle).toBeTruthy();
+      expect(toggle.tagName).toBe("BUTTON");
+      expect(toggle.getAttribute("aria-expanded")).toBe("false");
+      // aria-controls points at the (currently hidden) content region.
+      const content = query("form-group-advanced-content") as HTMLElement;
+      expect(toggle.getAttribute("aria-controls")).toBe(content.id);
+      expect(content.hasAttribute("hidden")).toBe(true);
+    });
+
+    it("keeps collapsed fields mounted so their values/validation persist", () => {
+      // Even collapsed, the fields are in the DOM (hidden), never unregistered.
+      renderForm(COLLAPSIBLE_SCHEMA, { host: "h", shell: "/bin/zsh" }, vi.fn());
+      const shellInput = query("field-shell") as HTMLInputElement;
+      expect(shellInput).toBeTruthy();
+      expect(shellInput.value).toBe("/bin/zsh");
+    });
+
+    it("expands the group when the header button is clicked", () => {
+      renderForm(COLLAPSIBLE_SCHEMA, { host: "h" }, vi.fn());
+      const toggle = query("form-group-advanced-toggle") as HTMLButtonElement;
+      const content = query("form-group-advanced-content") as HTMLElement;
+      expect(content.hasAttribute("hidden")).toBe(true);
+      act(() => {
+        toggle.click();
+      });
+      expect(toggle.getAttribute("aria-expanded")).toBe("true");
+      expect(content.hasAttribute("hidden")).toBe(false);
+    });
+
+    it("does not collapse groups that omit the flag", () => {
+      renderForm(SSH_SCHEMA, { authMethod: "key", port: 22 }, vi.fn());
+      expect(query("form-group-connection-toggle")).toBeNull();
+      expect(query("form-group-authentication-toggle")).toBeNull();
+      expect(query("form-group-connection")).toBeTruthy();
+      expect(query("form-group-authentication")).toBeTruthy();
     });
   });
 

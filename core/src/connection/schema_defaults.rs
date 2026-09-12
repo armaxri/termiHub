@@ -178,6 +178,7 @@ pub fn filter_credential_fields(
             .groups
             .iter()
             .map(|group| SettingsGroup {
+                collapsed: false,
                 key: group.key.clone(),
                 label: group.label.clone(),
                 fields: group
@@ -217,6 +218,7 @@ pub fn filter_runtime_options(
             .groups
             .iter()
             .map(|group| SettingsGroup {
+                collapsed: false,
                 key: group.key.clone(),
                 label: group.label.clone(),
                 fields: group
@@ -297,6 +299,7 @@ mod tests {
         SettingsSchema {
             groups: vec![
                 SettingsGroup {
+                    collapsed: false,
                     key: "connection".to_string(),
                     label: "Connection".to_string(),
                     fields: vec![
@@ -319,6 +322,7 @@ mod tests {
                     ],
                 },
                 SettingsGroup {
+                    collapsed: false,
                     key: "authentication".to_string(),
                     label: "Authentication".to_string(),
                     fields: vec![
@@ -383,6 +387,7 @@ mod tests {
     fn build_defaults_provides_empty_arrays_for_list_fields() {
         let schema = SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "container".to_string(),
                 label: "Container".to_string(),
                 fields: vec![
@@ -424,6 +429,7 @@ mod tests {
     fn build_defaults_empty_when_no_defaults() {
         let schema = SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "basic".to_string(),
                 label: "Basic".to_string(),
                 fields: vec![text_field("host"), text_field("port")],
@@ -558,6 +564,7 @@ mod tests {
     fn no_password_prompt_without_password_fields() {
         let schema = SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "conn".to_string(),
                 label: "Connection".to_string(),
                 fields: vec![text_field("host")],
@@ -570,6 +577,7 @@ mod tests {
     fn password_prompt_for_unconditional_field() {
         let schema = SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "conn".to_string(),
                 label: "Connection".to_string(),
                 fields: vec![
@@ -675,6 +683,7 @@ mod tests {
     fn passphrase_prompt_falls_back_to_default_keys() {
         let schema = SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "conn".to_string(),
                 label: "Connection".to_string(),
                 fields: vec![text_field("foo")],
@@ -699,6 +708,7 @@ mod tests {
     fn credential_schema() -> SettingsSchema {
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "auth".to_string(),
                 label: "Authentication".to_string(),
                 fields: vec![
@@ -780,6 +790,7 @@ mod tests {
     fn runtime_schema() -> SettingsSchema {
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "container".to_string(),
                 label: "Container".to_string(),
                 fields: vec![
@@ -953,6 +964,7 @@ mod prop_tests {
             prop_assume!(mode != "none");
             let schema = SettingsSchema {
                 groups: vec![SettingsGroup {
+                    collapsed: false,
                     key: "auth".to_string(),
                     label: "Auth".to_string(),
                     fields: vec![
@@ -980,6 +992,7 @@ mod prop_tests {
         ) {
             let schema = SettingsSchema {
                 groups: vec![SettingsGroup {
+                    collapsed: false,
                     key: "container".to_string(),
                     label: "Container".to_string(),
                     fields: vec![SettingsField {

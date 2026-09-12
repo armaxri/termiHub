@@ -616,6 +616,7 @@ impl ConnectionType for Wsl {
 
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "wsl".to_string(),
                 label: "WSL".to_string(),
                 fields: vec![

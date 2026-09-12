@@ -295,6 +295,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 
         SettingsSchema {
             groups: vec![SettingsGroup {
+                collapsed: false,
                 key: "shell".to_string(),
                 label: "Shell".to_string(),
                 fields: vec![
@@ -386,6 +387,7 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                     ],
                 },
                 SettingsGroup {
+                    collapsed: false,
                     key: "environment".to_string(),
                     label: "Environment".to_string(),
                     fields: vec![SettingsField {

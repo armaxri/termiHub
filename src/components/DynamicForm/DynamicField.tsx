@@ -292,23 +292,75 @@ interface FieldA11y {
 }
 
 /**
- * Field label with a required marker for required fields. Renders a real
- * `<label htmlFor>` so screen readers associate the visible name with the
- * control (WCAG 1.3.1 / 3.3.2). List/group fields with no single control omit
- * `htmlFor`. The asterisk is `aria-hidden` (decorative); inputs also carry
- * `aria-required` for assistive tech.
+ * The "?" help affordance shared by every field type (UX-009). Renders a ghost
+ * icon Button that opens a {@link Modal} with the field's extended `helpText`,
+ * split on blank lines into paragraphs. Returns `null` when the field has no
+ * `helpText`, so it costs nothing for the common case. Test hooks:
+ * `${testIdBase}-help` (button) and `${testIdBase}-help-dialog` (modal).
  */
-function FieldLabel({ field, htmlFor }: { field: SettingsField; htmlFor?: string }) {
+function FieldHelp({ field, testIdBase }: { field: SettingsField; testIdBase: string }) {
+  const [dialogOpen, setDialogOpen] = useState(false);
+  if (!field.helpText) return null;
   return (
-    <label className="settings-form__label" htmlFor={htmlFor}>
-      {field.label}
-      {field.required && (
-        <span className="settings-form__required" aria-hidden="true">
-          {" "}
-          *
-        </span>
-      )}
-    </label>
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        iconOnly
+        className="settings-form__help"
+        icon={<HelpCircle size={13} />}
+        onClick={(e) => {
+          e.preventDefault();
+          setDialogOpen(true);
+        }}
+        title="Learn more"
+        data-testid={`${testIdBase}-help`}
+      />
+      <Modal
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        title={field.label}
+        data-testid={`${testIdBase}-help-dialog`}
+      >
+        {field.helpText.split("\n\n").map((paragraph, i) => (
+          <p key={i}>{paragraph}</p>
+        ))}
+      </Modal>
+    </>
+  );
+}
+
+/**
+ * Field label with a required marker for required fields, plus the shared "?"
+ * help affordance when the field declares `helpText` (UX-009). Renders a real
+ * `<label htmlFor>` so screen readers associate the visible name with the
+ * control (WCAG 1.3.1 / 3.3.2); the help {@link Button} sits *beside* the label
+ * (not nested inside it) so it is a separate interactive target. List/group
+ * fields with no single control omit `htmlFor`. The asterisk is `aria-hidden`
+ * (decorative); inputs also carry `aria-required` for assistive tech.
+ */
+function FieldLabel({
+  field,
+  htmlFor,
+  testIdBase,
+}: {
+  field: SettingsField;
+  htmlFor?: string;
+  testIdBase: string;
+}) {
+  return (
+    <div className="settings-form__label-row">
+      <label className="settings-form__label" htmlFor={htmlFor}>
+        {field.label}
+        {field.required && (
+          <span className="settings-form__required" aria-hidden="true">
+            {" "}
+            *
+          </span>
+        )}
+      </label>
+      <FieldHelp field={field} testIdBase={testIdBase} />
+    </div>
   );
 }
 
@@ -322,7 +374,7 @@ function TextField({
 }: FieldProps & { onBlur?: () => void; a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} />
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <Input
         id={a11y.id}
         type="text"
@@ -348,7 +400,7 @@ function PasswordField({
 }: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} />
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <PasswordInput
         id={a11y.id}
         value={(value as string) ?? ""}
@@ -376,7 +428,7 @@ function NumberField({
 }) {
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} />
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <NumberInput
         id={a11y.id}
         value={value != null ? Number(value) : ""}
@@ -400,28 +452,11 @@ function BooleanField({
   a11y,
   testIdBase,
 }: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
-  const [dialogOpen, setDialogOpen] = useState(false);
-
   return (
     <>
-      <span className="settings-form__label">
-        {field.label}
-        {field.helpText && (
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            className="settings-form__help"
-            icon={<HelpCircle size={13} />}
-            onClick={(e) => {
-              e.preventDefault();
-              setDialogOpen(true);
-            }}
-            title="Learn more"
-            data-testid={`${testIdBase}-help`}
-          />
-        )}
-      </span>
+      {/* No `htmlFor`: the Toggle is a Radix switch associated via `aria-label`,
+          so the shared label/help row carries the text without wiring a label. */}
+      <FieldLabel field={field} testIdBase={testIdBase} />
       <Toggle
         id={a11y.id}
         checked={(value as boolean) ?? (field.default as boolean) ?? false}
@@ -430,18 +465,6 @@ function BooleanField({
         aria-describedby={a11y.describedBy}
         data-testid={testIdBase}
       />
-      {field.helpText && (
-        <Modal
-          open={dialogOpen}
-          onOpenChange={setDialogOpen}
-          title={field.label}
-          data-testid={`${testIdBase}-help-dialog`}
-        >
-          {field.helpText.split("\n\n").map((paragraph, i) => (
-            <p key={i}>{paragraph}</p>
-          ))}
-        </Modal>
-      )}
     </>
   );
 }
@@ -461,7 +484,7 @@ function SelectField({
   const isLocked = fieldType.options.length <= 1;
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} />
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <Select
         id={a11y.id}
         value={(value as string) || undefined}
@@ -487,7 +510,7 @@ function PortField({
 }: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} />
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <NumberInput
         id={a11y.id}
         aria-describedby={a11y.describedBy}
@@ -532,7 +555,7 @@ function SerialPortField({
 
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} />
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <Input
         id={a11y.id}
         type="text"
@@ -576,7 +599,7 @@ function FilePathField({
   if (field.key === "keyPath") {
     return (
       <>
-        <FieldLabel field={field} htmlFor={a11y.id} />
+        <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
         <KeyPathInput
           id={a11y.id}
           value={(value as string) ?? ""}
@@ -603,7 +626,7 @@ function FilePathField({
 
   return (
     <>
-      <FieldLabel field={field} htmlFor={a11y.id} />
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
       <div className="settings-form__file-row">
         <Input
           id={a11y.id}
@@ -659,7 +682,7 @@ function KeyValueListField({
 
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} testIdBase={testIdBase} />
       {items.map((item, index) => (
         <div key={index} className="settings-form__list-row">
           <Input
@@ -749,7 +772,7 @@ function ObjectListField({
 
   return (
     <>
-      <FieldLabel field={field} />
+      <FieldLabel field={field} testIdBase={testIdBase} />
       {items.map((item, index) => (
         <div key={index} className="settings-form__list-row">
           {fieldType.fields.map((subField) => {
