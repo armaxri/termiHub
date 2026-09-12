@@ -58,17 +58,7 @@ import { useTerminalRegistry } from "@/components/Terminal/TerminalRegistry";
 import { TabBar } from "@/components/Terminal/TabBar";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { RenameDialog } from "@/components/Terminal/RenameDialog";
-import { SettingsPanel } from "@/components/Settings";
-import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
-import { LogViewer } from "@/components/LogViewer";
-import { TunnelEditor } from "@/components/TunnelEditor";
-import { WorkspaceEditor } from "@/components/WorkspaceEditor";
-import { NetworkDiagnosticPanel } from "@/components/NetworkTools/NetworkDiagnosticPanel";
-import { PluginDetailPanel } from "@/components/Plugins";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
-import { AgentErrorTab } from "@/components/Terminal/AgentErrorTab";
-import { FileBrowserTab } from "@/components/Terminal/FileBrowserTab";
-import { RemoteDesktopTab } from "@/components/RemoteDesktop/RemoteDesktopTab";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
@@ -159,6 +149,60 @@ export async function copyTerminalSelection(
  */
 const FileEditor = lazy(() =>
   import("@/components/FileEditor").then((m) => ({ default: m.FileEditor }))
+);
+
+/**
+ * The remaining non-terminal tab surfaces are code-split out of the eager entry
+ * chunk the same way (PERF-003). Each renders only when a tab of its content type
+ * exists, and none is needed on first paint — the common session opens straight to a
+ * terminal — yet a static import would pull every one (Settings and its whole
+ * registry, the schema-driven ConnectionEditor + DynamicForm, the network-diagnostic
+ * tooling, the remote-desktop canvas, the log viewer, the tunnel/workspace/plugin
+ * editors, the SFTP file browser) into the monolithic startup bundle. Loading each
+ * lazily fetches its chunk only the first time that surface is opened; every render
+ * site is wrapped in `<Suspense fallback={<LazyPanelFallback />}>` so the one-time
+ * fetch shows the same lightweight spinner as the editor. Behaviour is unchanged —
+ * the surfaces mount, stay mounted across tab switches, and render exactly as before.
+ * The terminal path (TabBar, TerminalSlot, search bar, connection/disconnect overlays)
+ * stays statically imported so a terminal-only session never waits on a chunk fetch.
+ */
+const SettingsPanel = lazy(() =>
+  import("@/components/Settings/SettingsPanel").then((m) => ({ default: m.SettingsPanel }))
+);
+const ConnectionEditor = lazy(() =>
+  import("@/components/ConnectionEditor/ConnectionEditor").then((m) => ({
+    default: m.ConnectionEditor,
+  }))
+);
+const LogViewer = lazy(() =>
+  import("@/components/LogViewer/LogViewer").then((m) => ({ default: m.LogViewer }))
+);
+const TunnelEditor = lazy(() =>
+  import("@/components/TunnelEditor/TunnelEditor").then((m) => ({ default: m.TunnelEditor }))
+);
+const WorkspaceEditor = lazy(() =>
+  import("@/components/WorkspaceEditor/WorkspaceEditor").then((m) => ({
+    default: m.WorkspaceEditor,
+  }))
+);
+const NetworkDiagnosticPanel = lazy(() =>
+  import("@/components/NetworkTools/NetworkDiagnosticPanel").then((m) => ({
+    default: m.NetworkDiagnosticPanel,
+  }))
+);
+const PluginDetailPanel = lazy(() =>
+  import("@/components/Plugins/PluginDetailPanel").then((m) => ({ default: m.PluginDetailPanel }))
+);
+const RemoteDesktopTab = lazy(() =>
+  import("@/components/RemoteDesktop/RemoteDesktopTab").then((m) => ({
+    default: m.RemoteDesktopTab,
+  }))
+);
+const FileBrowserTab = lazy(() =>
+  import("@/components/Terminal/FileBrowserTab").then((m) => ({ default: m.FileBrowserTab }))
+);
+const AgentErrorTab = lazy(() =>
+  import("@/components/Terminal/AgentErrorTab").then((m) => ({ default: m.AgentErrorTab }))
 );
 
 /**
@@ -521,41 +565,44 @@ export function SplitView() {
             </ContextMenu.Root>
             <div className="zoom-overlay__content">
               <PanelErrorBoundary label={`zoom ${zoomedTabId}`}>
-                {zoomedTab.contentType === "terminal" &&
-                (terminalSpawnErrors[zoomedTabId] ||
-                  terminalConnecting[zoomedTabId] ||
-                  (terminalAutoRetryCountZoom[zoomedTabId] ?? 0) > 0 ||
-                  !!terminalWaitingForAgentZoom[zoomedTabId] ||
-                  !!terminalReattachingZoom[zoomedTabId]) ? (
-                  <TerminalConnectionOverlay
-                    key={`zoom-${zoomedTabId}`}
-                    tabId={zoomedTabId}
-                    panelId={zoomedTab.panelId}
-                    tabTitle={zoomedTab.title}
-                    isVisible={true}
-                    sessionType={
-                      zoomedTab.config.type === "remote-session"
-                        ? readSessionType(zoomedTab.config.config)
-                        : zoomedTab.config.type
-                    }
-                  />
-                ) : zoomedTab.contentType === "terminal" ? (
-                  <>
-                    <TerminalSearchBar tabId={zoomedTabId} />
-                    {/* key forces a fresh mount on each zoomed-tab change so the
-                      adoption lifecycle always matches the initial-zoom case. */}
-                    <TerminalSlot
-                      key={`zoom-slot-${zoomedTabId}`}
+                {/* The zoom overlay shows exactly one tab, so a single Suspense
+                    boundary covers whichever lazy surface (settings, editors, network
+                    tools, remote desktop, …) is fetched on first open (PERF-003). */}
+                <Suspense fallback={<LazyPanelFallback />}>
+                  {zoomedTab.contentType === "terminal" &&
+                  (terminalSpawnErrors[zoomedTabId] ||
+                    terminalConnecting[zoomedTabId] ||
+                    (terminalAutoRetryCountZoom[zoomedTabId] ?? 0) > 0 ||
+                    !!terminalWaitingForAgentZoom[zoomedTabId] ||
+                    !!terminalReattachingZoom[zoomedTabId]) ? (
+                    <TerminalConnectionOverlay
+                      key={`zoom-${zoomedTabId}`}
                       tabId={zoomedTabId}
+                      panelId={zoomedTab.panelId}
+                      tabTitle={zoomedTab.title}
                       isVisible={true}
+                      sessionType={
+                        zoomedTab.config.type === "remote-session"
+                          ? readSessionType(zoomedTab.config.config)
+                          : zoomedTab.config.type
+                      }
                     />
-                  </>
-                ) : zoomedTab.contentType === "settings" ? (
-                  <SettingsPanel tabId={zoomedTabId} isVisible={true} />
-                ) : zoomedTab.contentType === "log-viewer" ? (
-                  <LogViewer isVisible={true} />
-                ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
-                  <Suspense fallback={<LazyPanelFallback />}>
+                  ) : zoomedTab.contentType === "terminal" ? (
+                    <>
+                      <TerminalSearchBar tabId={zoomedTabId} />
+                      {/* key forces a fresh mount on each zoomed-tab change so the
+                      adoption lifecycle always matches the initial-zoom case. */}
+                      <TerminalSlot
+                        key={`zoom-slot-${zoomedTabId}`}
+                        tabId={zoomedTabId}
+                        isVisible={true}
+                      />
+                    </>
+                  ) : zoomedTab.contentType === "settings" ? (
+                    <SettingsPanel tabId={zoomedTabId} isVisible={true} />
+                  ) : zoomedTab.contentType === "log-viewer" ? (
+                    <LogViewer isVisible={true} />
+                  ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
                     <FileEditor
                       key={`zoom-${zoomedTabId}`}
                       tabId={zoomedTabId}
@@ -563,63 +610,63 @@ export function SplitView() {
                       isVisible={true}
                       keepModel={true}
                     />
-                  </Suspense>
-                ) : zoomedTab.contentType === "connection-editor" &&
-                  zoomedTab.connectionEditorMeta ? (
-                  <ConnectionEditor
-                    key={`zoom-${zoomedTabId}`}
-                    tabId={zoomedTabId}
-                    meta={zoomedTab.connectionEditorMeta}
-                    isVisible={true}
-                  />
-                ) : zoomedTab.contentType === "tunnel-editor" && zoomedTab.tunnelEditorMeta ? (
-                  <TunnelEditor
-                    key={`zoom-${zoomedTabId}`}
-                    tabId={zoomedTabId}
-                    meta={zoomedTab.tunnelEditorMeta}
-                    isVisible={true}
-                  />
-                ) : zoomedTab.contentType === "workspace-editor" &&
-                  zoomedTab.workspaceEditorMeta ? (
-                  <WorkspaceEditor
-                    key={`zoom-${zoomedTabId}`}
-                    tabId={zoomedTabId}
-                    meta={zoomedTab.workspaceEditorMeta}
-                    isVisible={true}
-                  />
-                ) : zoomedTab.contentType === "network-diagnostic" &&
-                  zoomedTab.networkDiagnosticMeta ? (
-                  <NetworkDiagnosticPanel
-                    key={`zoom-${zoomedTabId}`}
-                    meta={zoomedTab.networkDiagnosticMeta}
-                    isVisible={true}
-                  />
-                ) : zoomedTab.contentType === "plugin-detail" && zoomedTab.pluginDetailMeta ? (
-                  <PluginDetailPanel
-                    key={`zoom-${zoomedTabId}`}
-                    meta={zoomedTab.pluginDetailMeta}
-                    isVisible={true}
-                  />
-                ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
-                  <AgentErrorTab
-                    key={`zoom-${zoomedTabId}`}
-                    tabId={zoomedTabId}
-                    meta={zoomedTab.agentErrorMeta}
-                    isVisible={true}
-                  />
-                ) : zoomedTab.contentType === "file-browser" ? (
-                  <FileBrowserTab
-                    key={`zoom-${zoomedTabId}`}
-                    tabId={zoomedTabId}
-                    isVisible={true}
-                  />
-                ) : zoomedTab.contentType === "remote-desktop" ? (
-                  <RemoteDesktopTab
-                    key={`zoom-${zoomedTabId}`}
-                    tabId={zoomedTabId}
-                    isVisible={true}
-                  />
-                ) : null}
+                  ) : zoomedTab.contentType === "connection-editor" &&
+                    zoomedTab.connectionEditorMeta ? (
+                    <ConnectionEditor
+                      key={`zoom-${zoomedTabId}`}
+                      tabId={zoomedTabId}
+                      meta={zoomedTab.connectionEditorMeta}
+                      isVisible={true}
+                    />
+                  ) : zoomedTab.contentType === "tunnel-editor" && zoomedTab.tunnelEditorMeta ? (
+                    <TunnelEditor
+                      key={`zoom-${zoomedTabId}`}
+                      tabId={zoomedTabId}
+                      meta={zoomedTab.tunnelEditorMeta}
+                      isVisible={true}
+                    />
+                  ) : zoomedTab.contentType === "workspace-editor" &&
+                    zoomedTab.workspaceEditorMeta ? (
+                    <WorkspaceEditor
+                      key={`zoom-${zoomedTabId}`}
+                      tabId={zoomedTabId}
+                      meta={zoomedTab.workspaceEditorMeta}
+                      isVisible={true}
+                    />
+                  ) : zoomedTab.contentType === "network-diagnostic" &&
+                    zoomedTab.networkDiagnosticMeta ? (
+                    <NetworkDiagnosticPanel
+                      key={`zoom-${zoomedTabId}`}
+                      meta={zoomedTab.networkDiagnosticMeta}
+                      isVisible={true}
+                    />
+                  ) : zoomedTab.contentType === "plugin-detail" && zoomedTab.pluginDetailMeta ? (
+                    <PluginDetailPanel
+                      key={`zoom-${zoomedTabId}`}
+                      meta={zoomedTab.pluginDetailMeta}
+                      isVisible={true}
+                    />
+                  ) : zoomedTab.contentType === "agent-error" && zoomedTab.agentErrorMeta ? (
+                    <AgentErrorTab
+                      key={`zoom-${zoomedTabId}`}
+                      tabId={zoomedTabId}
+                      meta={zoomedTab.agentErrorMeta}
+                      isVisible={true}
+                    />
+                  ) : zoomedTab.contentType === "file-browser" ? (
+                    <FileBrowserTab
+                      key={`zoom-${zoomedTabId}`}
+                      tabId={zoomedTabId}
+                      isVisible={true}
+                    />
+                  ) : zoomedTab.contentType === "remote-desktop" ? (
+                    <RemoteDesktopTab
+                      key={`zoom-${zoomedTabId}`}
+                      tabId={zoomedTabId}
+                      isVisible={true}
+                    />
+                  ) : null}
+                </Suspense>
               </PanelErrorBoundary>
             </div>
           </div>
@@ -848,16 +895,16 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
         )}
         {panel.tabs.map((tab) =>
           tab.contentType === "settings" ? (
-            <SettingsPanel
-              key={tab.id}
-              tabId={tab.id}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <SettingsPanel
+                tabId={tab.id}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "log-viewer" ? (
-            <LogViewer
-              key={tab.id}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <LogViewer isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id} />
+            </Suspense>
           ) : tab.contentType === "editor" && tab.editorMeta ? (
             <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
               <FileEditor
@@ -873,57 +920,65 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               />
             </Suspense>
           ) : tab.contentType === "connection-editor" && tab.connectionEditorMeta ? (
-            <ConnectionEditor
-              key={tab.id}
-              tabId={tab.id}
-              meta={tab.connectionEditorMeta}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <ConnectionEditor
+                tabId={tab.id}
+                meta={tab.connectionEditorMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "tunnel-editor" && tab.tunnelEditorMeta ? (
-            <TunnelEditor
-              key={tab.id}
-              tabId={tab.id}
-              meta={tab.tunnelEditorMeta}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <TunnelEditor
+                tabId={tab.id}
+                meta={tab.tunnelEditorMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "workspace-editor" && tab.workspaceEditorMeta ? (
-            <WorkspaceEditor
-              key={tab.id}
-              tabId={tab.id}
-              meta={tab.workspaceEditorMeta}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <WorkspaceEditor
+                tabId={tab.id}
+                meta={tab.workspaceEditorMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "network-diagnostic" && tab.networkDiagnosticMeta ? (
-            <NetworkDiagnosticPanel
-              key={tab.id}
-              meta={tab.networkDiagnosticMeta}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <NetworkDiagnosticPanel
+                meta={tab.networkDiagnosticMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "plugin-detail" && tab.pluginDetailMeta ? (
-            <PluginDetailPanel
-              key={tab.id}
-              meta={tab.pluginDetailMeta}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <PluginDetailPanel
+                meta={tab.pluginDetailMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "agent-error" && tab.agentErrorMeta ? (
-            <AgentErrorTab
-              key={tab.id}
-              tabId={tab.id}
-              meta={tab.agentErrorMeta}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <AgentErrorTab
+                tabId={tab.id}
+                meta={tab.agentErrorMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "file-browser" ? (
-            <FileBrowserTab
-              key={tab.id}
-              tabId={tab.id}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <FileBrowserTab
+                tabId={tab.id}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "remote-desktop" ? (
-            <RemoteDesktopTab
-              key={tab.id}
-              tabId={tab.id}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <RemoteDesktopTab
+                tabId={tab.id}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "terminal" &&
             (terminalSpawnErrors[tab.id] ||
               terminalConnecting[tab.id] ||
