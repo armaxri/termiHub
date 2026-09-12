@@ -268,6 +268,55 @@ impl Projector {
         self.publish(store.region_id(), store.snapshot())
     }
 
+    /// Publish a region **incrementally** via a caller-computed delta (PERF-006).
+    ///
+    /// The default [`publish`] re-serializes the whole region and diffs the
+    /// entire new tree against the old one — O(region size) per call, so a
+    /// per-entry stream over N entries is O(N²) even when a single entry
+    /// changed. `publish_delta` instead hands the closure mutable access to the
+    /// region's held view: the closure mutates only the changed subtrees **in
+    /// place** and returns exactly the ops that mutation implies, bounding the
+    /// cost to O(size of the change).
+    ///
+    /// The closure is the single writer of both the view and the emitted ops, so
+    /// the two cannot disagree: whatever it splices into `view` is what the
+    /// returned ops must describe. An empty result is a no-op — no version bump,
+    /// no frame — identical to [`publish`]. Otherwise the version is bumped by
+    /// one and a single [`DiffFrame`] (`base_version = V`, `version = V + 1`) is
+    /// fanned out to every current subscriber, reaping any whose sink is gone.
+    ///
+    /// The caller owns the equivalence contract: the ops MUST equal what
+    /// [`publish`] would have emitted for the same resulting view. The monitor
+    /// region (the pilot adopter) cross-checks that under `debug_assertions`.
+    pub fn publish_delta(
+        &self,
+        region: &str,
+        delta: impl FnOnce(&mut Value) -> Vec<DiffOp>,
+    ) -> Option<u64> {
+        let mut regions = self.lock();
+        let state = regions
+            .entry(region.to_string())
+            .or_insert_with(|| RegionState::new(Value::Null));
+
+        let ops = delta(&mut state.view);
+        if ops.is_empty() {
+            return None;
+        }
+        let base_version = state.version;
+        let version = base_version + 1;
+        state.version = version;
+
+        let frame = ProjectionFrame::Diff(DiffFrame {
+            kind: DiffKind::Diff,
+            region: region.to_string(),
+            base_version,
+            version,
+            ops,
+        });
+        Self::fan_out(state, &frame);
+        Some(version)
+    }
+
     /// The region's current snapshot (creates an empty region if absent).
     pub fn snapshot(&self, region: &str) -> SnapshotFrame {
         let mut regions = self.lock();
