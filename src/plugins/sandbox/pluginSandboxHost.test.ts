@@ -39,9 +39,11 @@ class FakeWorker {
   addEventListener(type: "error", handler: (e: ErrorEvent) => void): void;
   addEventListener(type: "messageerror", handler: (e: MessageEvent) => void): void;
   addEventListener(type: string, handler: (e: never) => void): void {
-    if (type === "message") this.handler = handler as (e: MessageEvent<WorkerToHostMessage>) => void;
+    if (type === "message")
+      this.handler = handler as (e: MessageEvent<WorkerToHostMessage>) => void;
     else if (type === "error") this.errorHandler = handler as (e: ErrorEvent) => void;
-    else if (type === "messageerror") this.messageErrorHandler = handler as (e: MessageEvent) => void;
+    else if (type === "messageerror")
+      this.messageErrorHandler = handler as (e: MessageEvent) => void;
   }
   postMessage(message: HostToWorkerMessage) {
     this.posted.push(message);
@@ -258,7 +260,10 @@ describe("worker error handling", () => {
     expect(sandboxSessionPending("s1")).toBe(false);
     expect(sandboxSessionPending("s2")).toBe(false);
     // Surfaced to the LogViewer (never console.*).
-    expect(mockedFrontendLog).toHaveBeenCalledWith("plugin_sandbox", expect.stringContaining("kaboom"));
+    expect(mockedFrontendLog).toHaveBeenCalledWith(
+      "plugin_sandbox",
+      expect.stringContaining("kaboom")
+    );
   });
 
   it("degrades: chunks after a worker error pass straight through", () => {
@@ -278,7 +283,10 @@ describe("worker error handling", () => {
     enqueueSandboxTransform("s1", enc("x"), (b) => out.push(dec(b)));
     fake.emitMessageError();
     expect(out).toEqual(["x"]);
-    expect(mockedFrontendLog).toHaveBeenCalledWith("plugin_sandbox", expect.stringContaining("messageerror"));
+    expect(mockedFrontendLog).toHaveBeenCalledWith(
+      "plugin_sandbox",
+      expect.stringContaining("messageerror")
+    );
   });
 
   it("tears down a repeatedly-crashing worker and falls back to the fast path", () => {
@@ -295,7 +303,8 @@ describe("worker error handling", () => {
 
   it("resets the crash counter once the worker makes progress again", () => {
     enqueueSandboxTransform("s1", enc("y"), () => {});
-    const req = fake.postsOfType("transform").at(-1)!;
+    const transforms = fake.postsOfType("transform");
+    const req = transforms[transforms.length - 1];
     fake.emitError();
     fake.emitError();
     // A transform result (any reply) proves the worker recovered → reset the count.
