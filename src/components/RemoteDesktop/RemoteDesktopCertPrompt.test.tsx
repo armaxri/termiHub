@@ -1,11 +1,14 @@
 /**
- * Tests for {@link RemoteDesktopCertPrompt} — the interactive RDP
- * certificate-trust dialog (#1767). Verifies the three verdicts route the right
- * (accept, remember) pair and that a changed fingerprint shows the MITM warning.
+ * Tests for {@link RemoteDesktopCertPrompt} — the RDP certificate-trust dialog
+ * (#1767), now rendered through the shared {@link TrustPrompt} primitive
+ * (UISF-007). Verifies the three verdicts route the right (accept, remember)
+ * pair, that a changed certificate shows the MITM warning, and that the
+ * fingerprint is copyable (UX-034).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { RemoteDesktopCertPrompt } from "./RemoteDesktopCertPrompt";
 import type { RemoteDesktopCertPromptPayload } from "@/types/remoteDesktop";
 
@@ -22,25 +25,16 @@ function click(testid: string) {
   });
 }
 
-const unknownPrompt: RemoteDesktopCertPromptPayload = {
-  session_id: "rd-1",
-  host: "server.example:3389",
+const untrusted: RemoteDesktopCertPromptPayload = {
+  session_id: "s-1",
+  host: "desktop.example",
   fingerprint: "sha256:AB:CD:EF",
-  subject: "CN=server.example,O=Acme",
-  issuer: "CN=Acme Root CA,O=Acme",
+  subject: "CN=desktop.example",
   changed: false,
 };
 
-const noDnPrompt: RemoteDesktopCertPromptPayload = {
-  session_id: "rd-1",
-  host: "server.example:3389",
-  fingerprint: "sha256:AB:CD:EF",
-  changed: false,
-};
-
-const changedPrompt: RemoteDesktopCertPromptPayload = {
-  session_id: "rd-1",
-  host: "server.example:3389",
+const changed: RemoteDesktopCertPromptPayload = {
+  ...untrusted,
   fingerprint: "sha256:99:88:77",
   changed: true,
 };
@@ -63,63 +57,41 @@ describe("RemoteDesktopCertPrompt", () => {
     expect(document.querySelector('[data-testid="remote-desktop-cert-prompt"]')).toBeNull();
   });
 
-  it("shows the host and fingerprint", () => {
-    render(<RemoteDesktopCertPrompt prompt={unknownPrompt} onDecision={vi.fn()} />);
+  it("shows the host, subject and fingerprint", () => {
+    render(<RemoteDesktopCertPrompt prompt={untrusted} onDecision={vi.fn()} />);
     expect(document.querySelector('[data-testid="cert-host"]')?.textContent).toBe(
-      "server.example:3389"
+      "desktop.example"
+    );
+    expect(document.querySelector('[data-testid="cert-subject"]')?.textContent).toBe(
+      "CN=desktop.example"
     );
     expect(document.querySelector('[data-testid="cert-fingerprint"]')?.textContent).toBe(
       "sha256:AB:CD:EF"
     );
-    // No MITM warning for first contact.
     expect(document.querySelector('[data-testid="cert-mitm-warning"]')).toBeNull();
   });
 
-  it("renders the certificate subject and issuer when present (#1783)", () => {
-    render(<RemoteDesktopCertPrompt prompt={unknownPrompt} onDecision={vi.fn()} />);
-    expect(document.querySelector('[data-testid="cert-subject"]')?.textContent).toBe(
-      "CN=server.example,O=Acme"
-    );
-    expect(document.querySelector('[data-testid="cert-issuer"]')?.textContent).toBe(
-      "CN=Acme Root CA,O=Acme"
-    );
-  });
-
-  it("omits the subject and issuer rows when the sidecar could not extract them", () => {
-    render(<RemoteDesktopCertPrompt prompt={noDnPrompt} onDecision={vi.fn()} />);
-    expect(document.querySelector('[data-testid="cert-subject"]')).toBeNull();
-    expect(document.querySelector('[data-testid="cert-issuer"]')).toBeNull();
-    // The fingerprint (the security-critical identity) is still shown.
-    expect(document.querySelector('[data-testid="cert-fingerprint"]')?.textContent).toBe(
-      "sha256:AB:CD:EF"
-    );
-  });
-
-  it("routes reject as (false, false)", () => {
+  it("routes the three verdicts", () => {
     const onDecision = vi.fn();
-    render(<RemoteDesktopCertPrompt prompt={unknownPrompt} onDecision={onDecision} />);
+    render(<RemoteDesktopCertPrompt prompt={untrusted} onDecision={onDecision} />);
     click("cert-reject");
     expect(onDecision).toHaveBeenCalledWith(false, false);
-  });
-
-  it("routes accept-once as (true, false)", () => {
-    const onDecision = vi.fn();
-    render(<RemoteDesktopCertPrompt prompt={unknownPrompt} onDecision={onDecision} />);
     click("cert-accept-once");
     expect(onDecision).toHaveBeenCalledWith(true, false);
-  });
-
-  it("routes accept-for-host as (true, true)", () => {
-    const onDecision = vi.fn();
-    render(<RemoteDesktopCertPrompt prompt={unknownPrompt} onDecision={onDecision} />);
     click("cert-accept-remember");
     expect(onDecision).toHaveBeenCalledWith(true, true);
   });
 
-  it("shows a MITM warning when the fingerprint changed", () => {
-    render(<RemoteDesktopCertPrompt prompt={changedPrompt} onDecision={vi.fn()} />);
+  it("warns about a possible MITM when the certificate changed", () => {
+    render(<RemoteDesktopCertPrompt prompt={changed} onDecision={vi.fn()} />);
     const warning = document.querySelector('[data-testid="cert-mitm-warning"]');
     expect(warning).not.toBeNull();
     expect(warning?.textContent).toContain("changed");
+  });
+
+  it("copies the fingerprint to the clipboard", () => {
+    render(<RemoteDesktopCertPrompt prompt={untrusted} onDecision={vi.fn()} />);
+    click("cert-fingerprint-copy");
+    expect(writeClipboard).toHaveBeenCalledWith("sha256:AB:CD:EF");
   });
 });

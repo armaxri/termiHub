@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import type { SshHostKeyPromptPayload } from "@/types/sshHostKey";
 
 // Capture the event callback the component registers so tests can fire prompts.
@@ -120,6 +121,13 @@ describe("SshHostKeyPrompt", () => {
     await fire(unknownPrompt);
     click("ssh-hostkey-accept-remember");
     expect(decisionMock).toHaveBeenCalledWith("p-1", true, true);
+  });
+
+  it("copies the fingerprint to the clipboard from the copy button", async () => {
+    render(<SshHostKeyPrompt />);
+    await fire(unknownPrompt);
+    click("ssh-hostkey-fingerprint-copy");
+    expect(writeClipboard).toHaveBeenCalledWith("SHA256:AABBCCDD");
   });
 
   it("shows a MITM warning when the key changed", async () => {
