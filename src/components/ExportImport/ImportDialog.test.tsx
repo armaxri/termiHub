@@ -4,10 +4,16 @@ import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { ImportDialog } from "./ImportDialog";
 
-vi.mock("@/services/api", () => ({
-  previewImport: vi.fn(),
-  importConnectionsWithCredentials: vi.fn(),
-}));
+vi.mock("@/services/api", async (importOriginal) => {
+  // Keep the real `isImportError` guard so the dialog classifies rejections the
+  // same way it does in production; only the IPC calls are stubbed.
+  const actual = await importOriginal<typeof import("@/services/api")>();
+  return {
+    previewImport: vi.fn(),
+    importConnectionsWithCredentials: vi.fn(),
+    isImportError: actual.isImportError,
+  };
+});
 
 import { previewImport, importConnectionsWithCredentials } from "@/services/api";
 
@@ -106,13 +112,18 @@ describe("ImportDialog", () => {
 
     const passwordInput = query("import-password") as HTMLInputElement;
     await act(async () => {
-      passwordInput.value = "nope";
+      const setter = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        "value"
+      )?.set;
+      setter?.call(passwordInput, "nope");
       passwordInput.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
     const submit = query("import-with-credentials") as HTMLButtonElement;
     await act(async () => {
       submit.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(document.body.textContent).toContain("Wrong password. Please try again.");
@@ -136,6 +147,7 @@ describe("ImportDialog", () => {
     const submit = query("import-submit") as HTMLButtonElement;
     await act(async () => {
       submit.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     expect(document.body.textContent).toContain("Failed to parse import data");

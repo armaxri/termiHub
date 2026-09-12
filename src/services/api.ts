@@ -1048,6 +1048,28 @@ export interface ImportResult {
   credentialsImported: number;
 }
 
+/**
+ * Structured failure from {@link importConnectionsWithCredentials}, mirroring
+ * the backend `ImportError`. The promise rejects with one of these shapes.
+ *
+ * - `wrongPassword` — the decryption password was wrong; safe to re-prompt.
+ * - `other` — any other failure, with a display-ready `message`.
+ *
+ * Callers branch on the stable `kind` rather than parsing `message`, so the
+ * classification survives localization or a reword of the backend text
+ * (I18N-010).
+ */
+export type ImportError =
+  | { kind: "wrongPassword"; message: string }
+  | { kind: "other"; message: string };
+
+/** Type guard: whether a caught rejection is a structured {@link ImportError}. */
+export function isImportError(err: unknown): err is ImportError {
+  if (typeof err !== "object" || err === null) return false;
+  const kind = (err as { kind?: unknown }).kind;
+  return kind === "wrongPassword" || kind === "other";
+}
+
 /** Preview the contents of an import file without performing the import. */
 export async function previewImport(json: string): Promise<ImportPreview> {
   return await invoke<ImportPreview>("preview_import", { json });
