@@ -73,6 +73,92 @@ struct ConnectedState {
     alive: Arc<AtomicBool>,
     /// Sender for writing to the exec stdin.
     stdin_tx: tokio::sync::mpsc::Sender<Vec<u8>>,
+    /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
+    /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
+    /// The graceful path and the guard must never both tear the container down.
+    disconnected: bool,
+}
+
+/// Best-effort stop (and optional force-remove) of a container that backed an
+/// active session. Shared by the graceful [`disconnect()`](ConnectionType::disconnect)
+/// path and the [`Drop`] guard on [`ConnectedState`] so both tear down a
+/// container identically. Every error is logged, never propagated — teardown is
+/// always best-effort. `t: 5` mirrors the stop timeout used elsewhere.
+///
+/// Distinct from [`cleanup_container`], which always force-removes because it
+/// runs for a container created during a *failed* connect that the user never
+/// wanted; here `remove_on_exit` is honoured for a container that served a real
+/// session.
+async fn teardown_container(client: &bollard::Docker, container_id: &str, remove_on_exit: bool) {
+    if let Err(e) = client
+        .stop_container(container_id, Some(StopContainerOptions { t: 5 }))
+        .await
+    {
+        warn!(container_id = %container_id, "Failed to stop container: {e}");
+    }
+
+    if remove_on_exit {
+        if let Err(e) = client
+            .remove_container(
+                container_id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+        {
+            warn!(container_id = %container_id, "Failed to remove container: {e}");
+        }
+    }
+}
+
+impl Drop for ConnectedState {
+    /// Best-effort teardown for CORE-020: guarantees the container is stopped
+    /// (and removed when `remove_on_exit`) even when the connected state is
+    /// dropped WITHOUT a graceful [`disconnect()`](ConnectionType::disconnect) —
+    /// a panic/early-return before it could run, or a manager that forgets.
+    ///
+    /// Stopping/removing a container is an async `bollard` round-trip that
+    /// **cannot be awaited** in a synchronous `Drop` (and `block_on` from a
+    /// `Drop` running on a tokio worker thread would panic or deadlock). So the
+    /// teardown is **detached** onto the current tokio runtime via
+    /// [`Handle::spawn`](tokio::runtime::Handle::spawn) — but only when a runtime
+    /// handle is actually available. With no runtime in scope there is no safe
+    /// way to reach the daemon from `Drop`, so we log and skip rather than risk a
+    /// panic; full container teardown then remains
+    /// [`disconnect()`](ConnectionType::disconnect)'s job (the graceful path).
+    /// The started-then-failed-connect leak window is already closed separately
+    /// by [`cleanup_container`] (CORE-009).
+    ///
+    /// When [`disconnect()`](ConnectionType::disconnect) already ran it set
+    /// `disconnected = true` and this is a no-op, so the container is never torn
+    /// down twice.
+    fn drop(&mut self) {
+        if self.disconnected {
+            return;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+
+        // A detached async teardown needs a runtime to run on. If Drop is not
+        // running under one (e.g. a plain thread), there is nothing safe to do
+        // here — never block, never panic.
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            warn!(
+                container_id = %self.container_id,
+                "Docker connected state dropped without disconnect and no tokio \
+                 runtime is available; container may leak (CORE-020)"
+            );
+            return;
+        };
+
+        let client = self.client.clone();
+        let container_id = self.container_id.clone();
+        let remove_on_exit = self.remove_on_exit;
+        handle.spawn(async move {
+            teardown_container(&client, &container_id, remove_on_exit).await;
+        });
+    }
 }
 
 impl Docker {
@@ -859,6 +945,7 @@ impl ConnectionType for Docker {
                 remove_on_exit: config.remove_on_exit,
                 alive,
                 stdin_tx,
+                disconnected: false,
             })
         }
         .await;
@@ -886,50 +973,24 @@ impl ConnectionType for Docker {
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         self.file_browser_provider = None;
 
-        if let Some(state) = self.state.take() {
+        if let Some(mut state) = self.state.take() {
+            // Mark the graceful path so the `Drop` guard on `state` (which runs
+            // when it goes out of scope at the end of this block) does not tear
+            // the container down a second time (CORE-020 double-teardown guard).
+            state.disconnected = true;
             state.alive.store(false, Ordering::SeqCst);
 
-            // Drop the stdin sender to signal the writer task to stop.
-            drop(state.stdin_tx);
-
-            // Clear the output sender to signal the reader task to stop.
+            // Clear the output sender to signal the reader task to stop. The
+            // stdin writer task stops when `state.stdin_tx` drops with `state`
+            // at the end of this block.
             if let Ok(mut guard) = self.output_tx.lock() {
                 *guard = None;
             }
 
-            // Stop the container (5-second timeout).
-            let stop_result = state
-                .client
-                .stop_container(&state.container_id, Some(StopContainerOptions { t: 5 }))
-                .await;
-
-            if let Err(e) = stop_result {
-                warn!(
-                    container_id = %state.container_id,
-                    "Failed to stop container: {e}"
-                );
-            }
-
-            // Optionally remove the container.
-            if state.remove_on_exit {
-                let remove_result = state
-                    .client
-                    .remove_container(
-                        &state.container_id,
-                        Some(RemoveContainerOptions {
-                            force: true,
-                            ..Default::default()
-                        }),
-                    )
-                    .await;
-
-                if let Err(e) = remove_result {
-                    warn!(
-                        container_id = %state.container_id,
-                        "Failed to remove container: {e}"
-                    );
-                }
-            }
+            // Stop (and optionally remove) the container — best-effort, errors
+            // logged not propagated. Shared with the `Drop` guard so both paths
+            // tear a container down identically.
+            teardown_container(&state.client, &state.container_id, state.remove_on_exit).await;
 
             debug!("Docker session disconnected");
         }
@@ -1485,6 +1546,57 @@ mod tests {
             "expected the default Podman machine pipe, got: {uri}"
         );
         assert!(!uri.contains("unix://"), "must not be a Unix socket: {uri}");
+    }
+
+    /// Build a `ConnectedState` for the Drop-guard tests. Uses a lazily
+    /// constructed bollard client (no live daemon needed — bollard connects on
+    /// first request) and a container id that does not exist, so any best-effort
+    /// teardown the guard detaches simply fails harmlessly against the daemon (or
+    /// against nothing). Returns `None` when a client cannot even be constructed
+    /// in this environment, so the test skips rather than failing spuriously.
+    fn fake_connected_state(disconnected: bool) -> Option<ConnectedState> {
+        let client = bollard::Docker::connect_with_local_defaults().ok()?;
+        let (stdin_tx, _stdin_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
+        Some(ConnectedState {
+            client,
+            container_id: "termihub-core020-drop-test-nonexistent".to_string(),
+            exec_id: "none".to_string(),
+            remove_on_exit: true,
+            alive: Arc::new(AtomicBool::new(true)),
+            stdin_tx,
+            disconnected,
+        })
+    }
+
+    /// Double-teardown guard for CORE-020: a `ConnectedState` already torn down
+    /// by a graceful `disconnect()` (which sets `disconnected = true`) must Drop
+    /// as a pure no-op — no detached teardown task, no panic. Constructing and
+    /// dropping such a state must be safe even with no container behind it.
+    #[tokio::test]
+    async fn drop_after_disconnect_flag_is_noop() {
+        let Some(state) = fake_connected_state(true) else {
+            return; // no client constructable here — skip
+        };
+        // `disconnected == true`, so Drop returns immediately without spawning.
+        drop(state);
+    }
+
+    /// CORE-020: dropping a connected state WITHOUT a graceful disconnect, while
+    /// a tokio runtime IS available, must not panic. The guard detaches a
+    /// best-effort stop/remove onto the runtime; because the container id does
+    /// not exist the task fails harmlessly (logged, never propagated). The point
+    /// is purely that `Drop` stays panic-free and non-blocking. Full teardown
+    /// verification against a live daemon is out of scope for a unit test.
+    #[tokio::test]
+    async fn drop_without_disconnect_does_not_panic_under_runtime() {
+        let Some(state) = fake_connected_state(false) else {
+            return; // no client constructable here — skip
+        };
+        // A runtime is present (this is a #[tokio::test]); Drop detaches a task.
+        drop(state);
+        // Give the detached best-effort teardown a chance to run and (harmlessly)
+        // fail before the runtime tears down at end of test.
+        tokio::task::yield_now().await;
     }
 
     #[tokio::test]
