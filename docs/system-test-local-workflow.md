@@ -42,7 +42,10 @@ the **frontend-testid → rebuild** back-edge. Everything else is seconds.
 ### One-time per session
 
 ```sh
-pnpm tauri build                    # repo root — build the app (release; slow, see roadmap)
+# repo root — build the app (release; slow, see roadmap). The test flags are
+# required: the test bridge + its CSP relaxation are compiled out of a plain
+# release build (SEC-005), so a bare `pnpm tauri build` cannot be driven.
+VITE_TEST_BRIDGE=1 pnpm tauri build --config src-tauri/tauri.test.conf.json --features "mock-remote-desktop test-bridge"
 cargo build --release -p termihub-agent   # only for agent tests
 # Bring up ONLY the fixtures a suite needs (they stay up across runs):
 docker compose -f tests/docker/docker-compose.yml up -d ssh-password ssh-keys

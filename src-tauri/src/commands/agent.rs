@@ -123,6 +123,11 @@ pub fn disconnect_agent(
 ///
 /// Returns `true` when a live agent received the sever, `false` for an unknown or
 /// already-dead agent.
+///
+/// Test-bridge-only (SEC-005): the command and its gate are compiled out of
+/// release builds along with the rest of the test bridge, so a shipped binary
+/// exposes no agent-transport-sever hook at all.
+#[cfg(feature = "test-bridge")]
 #[tauri::command]
 pub fn test_sever_agent_transport(
     agent_id: String,
@@ -140,6 +145,7 @@ pub fn test_sever_agent_transport(
 /// Refuses — **never invoking `do_sever`** — unless `bridge_enabled`. That
 /// short-circuit is the single seam keeping the sever unreachable in a production
 /// launch (test bridge off): the manager is not even consulted.
+#[cfg(feature = "test-bridge")]
 fn sever_transport_gated<F: FnOnce() -> bool>(
     bridge_enabled: bool,
     agent_id: &str,
@@ -1212,6 +1218,7 @@ mod tests {
     /// proven by a closure that panics if called. With it open the closure runs and
     /// its result is passed through verbatim. Together these prove the gate governs
     /// reachability, not merely the return value.
+    #[cfg(feature = "test-bridge")]
     #[test]
     fn sever_transport_is_gated_on_the_test_bridge() {
         // Gate closed → refuses without ever running the sever closure.

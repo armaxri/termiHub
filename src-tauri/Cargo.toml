@@ -29,6 +29,21 @@ ftp = ["termihub-core/ftp"]
 # system-integration.yml and scripts/test-system-py.sh pass it, and per-PR CI's
 # `cargo test/clippy --all-features` still exercises the gated Rust tests.
 mock-remote-desktop = ["termihub-core/mock-remote-desktop"]
+# Cross-platform WebSocket test bridge (#801) used to drive the app from the
+# Python system-test harness (`tests/system/`).
+#
+# NOT in `default` (SEC-005): the bridge injects scripts/flags into the webview
+# and, when active, relaxes the app's Content-Security-Policy to permit its
+# loopback `ws://` socket. That test scaffolding must never compile into a
+# shipping release, where merely setting `TERMIHUB_TEST_BRIDGE_PORT` would
+# otherwise switch on a CSP-relaxed, scriptable app. Everything test-bridge —
+# the `utils::test_bridge` module, its CSP relaxation, the always-on-top /
+# anti-throttle / webview-console / projection-diagnostics hooks, and the
+# `test_sever_agent_transport` command — is gated behind this feature. Opt in
+# for E2E/system-test builds with `--features test-bridge` (the test-app builds
+# in system-integration.yml and scripts/test-system-py.sh pass it); per-PR CI's
+# `cargo test/clippy --all-features` still exercises the gated Rust tests.
+test-bridge = []
 # VNC (RFB) graphical remote-desktop backend (#1681). Gated so the registration
 # is `#[cfg(feature = "vnc")]`. Ships experimental — hidden unless the user
 # enables experimental features (#1705).

@@ -403,7 +403,7 @@ pub fn run() {
     // frontend-driven agent-reconnect engine (#2480). setup() runs too late for
     // this default, so it must happen here. macOS-only, test-bridge-only, so
     // production/default is byte-identical.
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", feature = "test-bridge"))]
     if utils::test_bridge::is_test_bridge_enabled() {
         utils::macos_unthrottle::pre_launch_disable_occlusion_detection();
     }
@@ -474,6 +474,9 @@ pub fn run() {
     // connect. Shared between that command and the provisioner.
     let x_server_consent_registry = Arc::new(terminal::xserver::ConnectConsentRegistry::new());
 
+    // `mut` is only needed when the test-bridge plugin is conditionally added
+    // below (feature = "test-bridge"); release builds never reassign `builder`.
+    #[cfg_attr(not(feature = "test-bridge"), allow(unused_mut))]
     let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -508,7 +511,9 @@ pub fn run() {
 
     // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
     // the webview before boot so the in-app WebSocket client connects out to the
-    // runner — the cross-platform test transport (issue #801). No-op otherwise.
+    // runner — the cross-platform test transport (issue #801). Test-bridge-only
+    // (SEC-005): the whole block is compiled out of release builds.
+    #[cfg(feature = "test-bridge")]
     if let Some(plugin) = utils::test_bridge::test_bridge_plugin() {
         info!("Test bridge WebSocket transport enabled");
         builder = builder.plugin(plugin);
@@ -546,6 +551,7 @@ pub fn run() {
             // production windows are untouched. An operator can opt out via
             // TERMIHUB_TEST_NO_ALWAYS_ON_TOP so the window stays backgroundable
             // during a guided-manual grade (#2504).
+            #[cfg(feature = "test-bridge")]
             if utils::test_bridge::is_test_bridge_enabled() {
                 if utils::test_bridge::always_on_top_opt_out() {
                     info!(
@@ -1132,8 +1138,10 @@ pub fn run() {
                 // the projection-assertion harness (#2164) has a self-contained
                 // region to drive. Never registered in production launches. See
                 // `commands::projection_diag`.
-                let diagnostics = utils::test_bridge::is_test_bridge_enabled();
-                if diagnostics {
+                // Test-bridge-only (SEC-005): the diagnostic region + its routes
+                // are compiled out of release builds along with the bridge.
+                #[cfg(feature = "test-bridge")]
+                if utils::test_bridge::is_test_bridge_enabled() {
                     commands::projection_diag::register_diagnostic_routes(&mut registry);
                 }
                 let projection_state =
@@ -1249,7 +1257,8 @@ pub fn run() {
                         store.snapshot(),
                     );
                 }
-                if diagnostics {
+                #[cfg(feature = "test-bridge")]
+                if utils::test_bridge::is_test_bridge_enabled() {
                     projection_state.projector.register_region(
                         commands::projection_diag::DIAG_REGION,
                         commands::projection_diag::initial_view(),
@@ -1680,6 +1689,9 @@ pub fn run() {
             commands::agent::connect_agent,
             commands::agent::cancel_connect_agent,
             commands::agent::disconnect_agent,
+            // Test-bridge-only (SEC-005): registered only when the bridge is
+            // compiled in, so release builds expose no transport-sever command.
+            #[cfg(feature = "test-bridge")]
             commands::agent::test_sever_agent_transport,
             commands::agent::prune_dead_agents,
             commands::agent::shutdown_agent,
@@ -1836,14 +1848,20 @@ pub fn run() {
             commands::xserver::x_server_connect_consent_reply,
         ])
         .build({
+            // `mut` is only needed for the test-bridge CSP relaxation below
+            // (feature = "test-bridge"); release builds never mutate the context.
+            #[cfg_attr(not(feature = "test-bridge"), allow(unused_mut))]
             let mut context = tauri::generate_context!();
             // In WebSocket test-bridge mode, widen `connect-src` so the in-app
             // bridge's `ws://127.0.0.1:<port>` client (`src/testbridge/wsClient.ts`)
             // is permitted by the built bundle's secure-origin (`tauri://localhost`)
             // CSP — otherwise WebKit rejects the socket with `SecurityError` and the
-            // automated full-app system-test lane never connects (#2480). This is a
-            // no-op unless `TERMIHUB_TEST_BRIDGE_PORT` is set, so the production /
-            // release CSP is byte-identical to `tauri.conf.json`.
+            // automated full-app system-test lane never connects (#2480).
+            //
+            // Test-bridge-only (SEC-005): the relaxation is compiled out of release
+            // builds entirely, so no shipped binary can widen its CSP at runtime —
+            // the released CSP is byte-identical to `tauri.conf.json`.
+            #[cfg(feature = "test-bridge")]
             utils::test_bridge::relax_csp_if_test_bridge(&mut context.config_mut().app.security.csp);
             context
         })

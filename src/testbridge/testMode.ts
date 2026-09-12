@@ -28,13 +28,29 @@ export const TEST_BRIDGE_PORT_GLOBAL_KEY = "__TERMIHUB_TEST_BRIDGE_PORT__";
  *  - `localStorage["termihub.testBridge"] === "1"`,
  *  - a truthy `window.__TERMIHUB_TEST_BRIDGE__` global.
  *
+ * **Production build gate (SEC-005):** in a production build (`import.meta.env.PROD`)
+ * the runtime signals (query param, `localStorage`, injected global) are ignored
+ * unless the build was explicitly compiled with `VITE_TEST_BRIDGE=1`. A shipped
+ * release sets no such flag, so no query string, persisted value, or injected
+ * global can switch the bridge on — mirroring the backend `test-bridge` cargo
+ * feature that compiles the bridge out of release binaries. Dev builds and
+ * `VITE_TEST_BRIDGE=1` test/E2E builds remain fully activatable.
+ *
  * Every probe is guarded so a missing or throwing environment (e.g. blocked
  * storage) simply contributes `false` rather than breaking app startup.
  */
 export function isTestBridgeEnabled(): boolean {
+  // Build-time opt-in — baked into dev/test builds, never production by default.
+  const buildTimeEnabled = checkSignal(() => import.meta.env?.VITE_TEST_BRIDGE === "1");
+
+  // Hard gate: a production build with no VITE_TEST_BRIDGE=1 can never activate
+  // the bridge, whatever runtime signal is present.
+  if (checkSignal(() => import.meta.env?.PROD === true) && !buildTimeEnabled) {
+    return false;
+  }
+
   return (
-    // Build-time flag — baked into dev/test builds, never production by default.
-    checkSignal(() => import.meta.env?.VITE_TEST_BRIDGE === "1") ||
+    buildTimeEnabled ||
     // Runtime global, e.g. injected by the backend init script in test mode.
     checkSignal(() => !!(window as unknown as Record<string, unknown>)[TEST_BRIDGE_GLOBAL_KEY]) ||
     // URL query parameter.

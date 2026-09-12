@@ -255,7 +255,13 @@ jobs:
         # back into it here; without this flag the built app would not register
         # the "Mock Remote Desktop" connection type the integration lane relies
         # on for remote-desktop coverage.
-        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json --features mock-remote-desktop
+        #
+        # --features test-bridge + VITE_TEST_BRIDGE=1 (SEC-005): the WebSocket
+        # test bridge and its CSP relaxation are compiled out of release builds,
+        # and the frontend ignores the bridge activation signals in a production
+        # build unless VITE_TEST_BRIDGE=1. Both are required for the harness to
+        # drive the app over the bridge; keep in sync with scripts/test-system-py.sh.
+        run: VITE_TEST_BRIDGE=1 pnpm tauri build --debug --config src-tauri/tauri.test.conf.json --features "mock-remote-desktop test-bridge"
 
       - name: Bring up the Docker fixtures
         # Linux only. Pre-build and start the profile-less SSH/telnet fixtures so
@@ -512,8 +518,10 @@ jobs:
       - name: Build the desktop app (debug)
         # Same debug bundle + test-CSP overlay + mock-remote-desktop opt-in as
         # the bulk lane (see its note; DEAD-001 dropped that backend from the
-        # crate default, so the E2E app must opt back in).
-        run: pnpm tauri build --debug --config src-tauri/tauri.test.conf.json --features mock-remote-desktop
+        # crate default, so the E2E app must opt back in). --features test-bridge
+        # + VITE_TEST_BRIDGE=1 (SEC-005) opt the bridge back in — it is compiled
+        # out of release builds; see the bulk lane's note.
+        run: VITE_TEST_BRIDGE=1 pnpm tauri build --debug --config src-tauri/tauri.test.conf.json --features "mock-remote-desktop test-bridge"
 
       - name: Run the display-critical grades (Linux, headless via Xvfb)
         # dbus-run-session (#2646): same headless-portal hang fix as the bulk lane

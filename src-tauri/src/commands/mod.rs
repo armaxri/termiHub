@@ -12,6 +12,9 @@ pub mod network;
 pub mod plugin;
 pub mod portable;
 pub mod projection;
+// Test-bridge-only diagnostic projection region (#2164). Gated (SEC-005) so it
+// is compiled out of release builds along with the rest of the test bridge.
+#[cfg(feature = "test-bridge")]
 pub mod projection_diag;
 pub mod remote_desktop;
 pub mod restore_mode;
