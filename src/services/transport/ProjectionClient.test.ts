@@ -198,7 +198,6 @@ class RacingTransport implements Transport {
   resyncCount = 0;
 
   constructor(
-    private readonly region: string,
     private readonly baseView: unknown,
     private readonly baseVersion: number,
     private readonly earlyDiff: DiffFrame
@@ -235,7 +234,7 @@ describe("ProjectionClient · subscribe-race buffering (CONC-012)", () => {
       version: 1,
       ops: [{ op: "add", path: "/items/b", value: "streamed" }],
     };
-    const transport = new RacingTransport("items", itemsView({ a: "base" }), 0, earlyDiff);
+    const transport = new RacingTransport(itemsView({ a: "base" }), 0, earlyDiff);
     const client = new ProjectionClient(transport, "items");
     const states: ProjectionCacheState[] = [];
     client.onChange((s) => states.push(clone(s)));
