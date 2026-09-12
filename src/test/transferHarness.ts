@@ -53,6 +53,7 @@ export function fakeTransferEntry(
     totalBytes: 1000,
     percent: 50,
     speedBytesPerSec: null,
+    etaSeconds: null,
     updatedAt: 0,
     ...overrides,
   };

@@ -17,6 +17,7 @@ function entry(overrides: Partial<TransferEntry> = {}): TransferEntry {
     totalBytes: 100,
     percent: 78,
     speedBytesPerSec: 23 * 1024,
+    etaSeconds: null,
     updatedAt: 0,
     ...overrides,
   };
@@ -69,6 +70,46 @@ describe("TransferEntryRow", () => {
     expect(container.textContent).toContain("/pub/report.pdf");
     expect(container.textContent).toContain("78%");
     expect(container.textContent).toContain("23 KB/s");
+  });
+
+  it("shows transferred/total byte count and an ETA for an active determinate transfer", () => {
+    render(
+      entry({
+        transferred: 45 * 1024 * 1024,
+        totalBytes: 120 * 1024 * 1024,
+        percent: 37,
+        etaSeconds: 185,
+      })
+    );
+    const bytes = query("transfer-row-bytes");
+    expect(bytes?.textContent).toContain("MB / "); // both transferred and total
+    expect(bytes?.textContent).toContain("45");
+    expect(bytes?.textContent).toContain("120");
+    // formatElapsed(185) → "3m 05s"; wrapped as "~3m 05s left"
+    expect(query("transfer-row-eta")?.textContent).toContain("left");
+    expect(query("transfer-row-eta")?.textContent).toContain("3m");
+  });
+
+  it("shows transferred-only bytes and no ETA for an indeterminate transfer", () => {
+    render(
+      entry({
+        state: "active",
+        percent: null,
+        totalBytes: null,
+        transferred: 45 * 1024 * 1024,
+        etaSeconds: null,
+      })
+    );
+    const bytes = query("transfer-row-bytes");
+    expect(bytes?.textContent).toContain("45");
+    expect(bytes?.textContent).toContain("MB");
+    expect(bytes?.textContent).not.toContain(" / "); // no total → no separator
+    expect(query("transfer-row-eta")?.textContent?.trim()).toBe("");
+  });
+
+  it("shows no ETA for a completed transfer", () => {
+    render(entry({ state: "completed", percent: 100, transferred: 100, etaSeconds: null }));
+    expect(query("transfer-row-eta")?.textContent?.trim()).toBe("");
   });
 
   it("active state shows Pause + Cancel", () => {

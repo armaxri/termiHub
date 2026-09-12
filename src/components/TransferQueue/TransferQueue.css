@@ -127,11 +127,31 @@
   font-variant-numeric: tabular-nums;
 }
 
+.transfer-row__bytes {
+  flex: 0 0 118px;
+  text-align: right;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .transfer-row__speed {
   flex: 0 0 72px;
   text-align: right;
   color: var(--text-secondary);
   font-variant-numeric: tabular-nums;
+}
+
+.transfer-row__eta {
+  flex: 0 0 84px;
+  text-align: right;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 .transfer-row__status {

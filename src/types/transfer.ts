@@ -57,6 +57,12 @@ export interface TransferEntry {
   percent: number | null;
   /** Instantaneous throughput in bytes/sec, or `null` when not moving/unknown. */
   speedBytesPerSec: number | null;
+  /**
+   * Estimated time remaining in whole seconds (UX-019), or `null` when it cannot
+   * be known — the row is not actively moving, the total size is unknown
+   * (indeterminate), the throughput is zero/unknown, or no bytes remain.
+   */
+  etaSeconds: number | null;
   /** Human-readable error, only populated for the `failed` state. */
   error?: string;
   /** Current retry attempt (SI-5 / #1336), when reported. */
@@ -95,6 +101,66 @@ export interface TransferSeed {
 }
 
 /**
+ * EMA weight applied to a fresh, delta-derived ETA sample when blending it with
+ * the previous row's ETA. The delta-derived `speedBytesPerSec` is instantaneous
+ * and jumpy, so a raw bytes-remaining / speed estimate flickers second-to-second;
+ * a light exponential moving average (UX-019) keeps the readout steady while
+ * still tracking real changes. Lower = smoother/laggier.
+ */
+export const ETA_SMOOTHING_ALPHA = 0.4;
+
+/** Inputs to {@link computeEtaSeconds}. */
+export interface EtaInput {
+  /** Derived lifecycle state — ETA is only meaningful while `active`. */
+  state: TransferQueueState;
+  /** Bytes transferred so far. */
+  transferred: number;
+  /** Total bytes, or `null` when the size is unknown (indeterminate). */
+  totalBytes: number | null;
+  /** Current throughput in bytes/sec, or `null` when not moving/unknown. */
+  speedBytesPerSec: number | null;
+  /**
+   * Backend-measured seconds-remaining (`etaSecs`, #1336), authoritative when
+   * `> 0` — used verbatim (already smoothed backend-side) in preference to the
+   * local byte/speed estimate.
+   */
+  backendEtaSeconds?: number | null;
+  /** The previous row's ETA, for EMA smoothing of the local estimate. */
+  prevEtaSeconds?: number | null;
+}
+
+/**
+ * Estimate the time remaining for a transfer, in whole seconds (UX-019).
+ *
+ * Returns `null` whenever a meaningful estimate cannot be produced: the transfer
+ * is not actively moving, the total size is unknown, the throughput is
+ * zero/unknown, or no bytes remain. A backend-supplied ETA is preferred when
+ * present; otherwise the estimate is `bytes-remaining / speed`, lightly
+ * EMA-smoothed against {@link EtaInput.prevEtaSeconds} (see
+ * {@link ETA_SMOOTHING_ALPHA}) so a jumpy instantaneous speed does not make the
+ * readout flicker. The result is clamped to at least `1` second while a transfer
+ * is still moving, so an active row never shows `0s remaining`.
+ */
+export function computeEtaSeconds(input: EtaInput): number | null {
+  const { state, transferred, totalBytes, speedBytesPerSec, backendEtaSeconds, prevEtaSeconds } =
+    input;
+  if (state !== "active") return null;
+  if (backendEtaSeconds != null && backendEtaSeconds > 0) {
+    return Math.max(1, Math.round(backendEtaSeconds));
+  }
+  if (totalBytes == null || totalBytes <= 0) return null;
+  if (speedBytesPerSec == null || speedBytesPerSec <= 0) return null;
+  const remaining = totalBytes - transferred;
+  if (remaining <= 0) return null;
+  const raw = remaining / speedBytesPerSec;
+  const smoothed =
+    prevEtaSeconds != null && prevEtaSeconds > 0
+      ? ETA_SMOOTHING_ALPHA * raw + (1 - ETA_SMOOTHING_ALPHA) * prevEtaSeconds
+      : raw;
+  return Math.max(1, Math.round(smoothed));
+}
+
+/**
  * Build a `queued` {@link TransferEntry} from a {@link TransferSeed}, for the
  * pre-event registration seed (#1632). Progress/throughput are unknown until the
  * first `transfer-progress` event folds over this row.
@@ -112,6 +178,7 @@ export function transferEntryFromSeed(seed: TransferSeed, now: number): Transfer
     totalBytes,
     percent: null,
     speedBytesPerSec: null,
+    etaSeconds: null,
     updatedAt: now,
   };
 }
@@ -180,6 +247,15 @@ export function transferEntryFromProgress(
     }
   }
 
+  const etaSeconds = computeEtaSeconds({
+    state,
+    transferred: progress.transferred,
+    totalBytes,
+    speedBytesPerSec,
+    backendEtaSeconds: progress.etaSecs,
+    prevEtaSeconds: prev?.state === "active" ? prev.etaSeconds : null,
+  });
+
   return {
     id: progress.transferId,
     sessionId: progress.sessionId,
@@ -191,6 +267,7 @@ export function transferEntryFromProgress(
     totalBytes,
     percent,
     speedBytesPerSec,
+    etaSeconds,
     error: state === "failed" ? (progress.message ?? "Transfer failed") : undefined,
     attempt: progress.attempt ?? prev?.attempt,
     maxAttempts: progress.maxAttempts ?? prev?.maxAttempts,
@@ -227,6 +304,14 @@ export function transferEntryFromSnapshot(
     percent = null;
   }
 
+  const speedBytesPerSec = snapshot.speed > 0 ? snapshot.speed : null;
+  const etaSeconds = computeEtaSeconds({
+    state,
+    transferred: snapshot.transferred,
+    totalBytes,
+    speedBytesPerSec,
+  });
+
   return {
     id: snapshot.transferId,
     sessionId: snapshot.sessionId,
@@ -237,7 +322,8 @@ export function transferEntryFromSnapshot(
     transferred: snapshot.transferred,
     totalBytes,
     percent,
-    speedBytesPerSec: snapshot.speed > 0 ? snapshot.speed : null,
+    speedBytesPerSec,
+    etaSeconds,
     error: state === "failed" ? (prev?.error ?? "Transfer failed") : undefined,
     attempt: snapshot.attempt || prev?.attempt,
     maxAttempts: snapshot.maxAttempts || prev?.maxAttempts,
