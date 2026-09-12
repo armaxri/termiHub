@@ -193,6 +193,56 @@ describe("ConnectionSettingsForm", () => {
     expect(shellInput!.value).toBe("");
   });
 
+  // Regression for FEC-019: on a connection-type switch the form calls `reset`
+  // and previously set an `isResetting` flag, expecting the ensuing `watch`
+  // emission to consume it. But when the parent hands a fresh `onChange`
+  // identity on that same render, React tears the watch subscription down and
+  // rebuilds it *around* the reset (cleanup runs before setup), so reset's
+  // synchronous watch echo reaches no subscriber and the flag is never
+  // consumed. It then swallowed the *next* genuine user edit — Save persisted
+  // the stale value. The fix drops the sticky flag for a value-snapshot
+  // comparison, so a real edit always propagates.
+  it("propagates a genuine edit after a schema switch that drops the reset watch echo (FEC-019)", () => {
+    const SCHEMA_A: SettingsSchema = {
+      groups: [
+        {
+          key: "ga",
+          label: "A",
+          fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: false }],
+        },
+      ],
+    };
+    const SCHEMA_B: SettingsSchema = {
+      groups: [
+        {
+          key: "gb",
+          label: "B",
+          fields: [{ key: "host", label: "Host", fieldType: { type: "text" }, required: false }],
+        },
+      ],
+    };
+
+    // First render subscribes with one onChange identity.
+    renderForm(SCHEMA_A, { host: "x" }, vi.fn());
+    // Switch schema *and* pass a fresh onChange identity, forcing the watch
+    // subscription effect to re-run around the reset so the reset echo is lost.
+    const onChange = vi.fn();
+    renderForm(SCHEMA_B, { host: "x" }, onChange);
+
+    const input = query("field-host") as HTMLInputElement;
+    expect(input.value).toBe("x");
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )?.set;
+    act(() => {
+      setter?.call(input, "edited");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ host: "edited" }));
+  });
+
   it("hides fields when visibility condition is not met", () => {
     renderForm(SSH_SCHEMA, { authMethod: "password", port: 22 }, vi.fn());
     // Password visible when authMethod = "password"
