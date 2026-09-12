@@ -27,7 +27,6 @@ import {
   Globe,
   Wifi,
   Upload,
-  Folder,
   FolderPlus,
   Zap,
   Copy,
@@ -67,6 +66,7 @@ import { AgentSetupDialog } from "./AgentSetupDialog";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { PersistentStateDot } from "./PersistentStateDot";
+import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
 
 const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
@@ -196,11 +196,6 @@ function AgentConnectionItem({
     [setDragRef, rowRef]
   );
 
-  let className = "connection-tree__item";
-  if (isDragging) className += " connection-tree__item--dragging";
-  if (isSelected) className += " connection-tree__item--selected";
-  if (definition.persistent) className += " connection-tree__item--persistent";
-
   const isRunning = runState === "running" || runState === "attached";
   const isTransitioning = runState === "starting" || runState === "stopping";
   const hasError = runState === "error";
@@ -216,10 +211,18 @@ function AgentConnectionItem({
   return (
     <ContextMenu.Root>
       <ContextMenu.Trigger asChild>
-        <button
-          ref={setRowNode}
-          className={className}
-          style={{ paddingLeft: `${depth * 16 + 8}px` }}
+        <TreeItemRow
+          buttonRef={setRowNode}
+          indentPx={treeRowPaddingLeft(depth)}
+          ariaLevel={depth}
+          tabIndex={rowIndex === activeIndex ? 0 : -1}
+          ariaSelected={isSelected}
+          dragging={isDragging}
+          selected={isSelected}
+          persistent={definition.persistent}
+          title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
+          dragAttributes={attributes}
+          dragListeners={listeners}
           onClick={(e) => onConnectionClick(definition.id, e)}
           onDoubleClick={() => {
             if (definition.persistent) {
@@ -232,13 +235,6 @@ function AgentConnectionItem({
               onOpen(definition);
             }
           }}
-          title={`${definition.name} (${definition.sessionType}${definition.persistent ? ", persistent" : ""})`}
-          {...attributes}
-          {...listeners}
-          role="treeitem"
-          aria-level={depth}
-          aria-selected={isSelected}
-          tabIndex={rowIndex === activeIndex ? 0 : -1}
           onKeyDown={(e) => onTreeKeyDown(e, definition.id)}
           onFocus={() => onRowFocus(rowIndex)}
         >
@@ -329,7 +325,7 @@ function AgentConnectionItem({
           ) : (
             <span className="connection-tree__type">{definition.sessionType}</span>
           )}
-        </button>
+        </TreeItemRow>
       </ContextMenu.Trigger>
       <ContextMenu.Portal>
         <ContextMenu.Content className="context-menu__content">
@@ -456,7 +452,6 @@ function AgentFolderNode({
   // Under an active filter, matched folders are force-expanded regardless of
   // their stored state (auto-expand matches).
   const expanded = filter ? filter.visibleFolderIds.has(folder.id) : folder.isExpanded;
-  const Chevron = expanded ? ChevronDown : ChevronRight;
 
   const childFolders = useMemo(
     () => allFolders.filter((f) => f.parentId === folder.id),
@@ -498,22 +493,18 @@ function AgentFolderNode({
     <div>
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
-          <button
-            ref={setRowNode}
-            className={`connection-tree__folder${isAgentConnectionOver ? " connection-tree__folder--drop-over" : ""}`}
-            style={{ paddingLeft: `${depth * 16 + 8}px` }}
-            onClick={() => onToggleFolder(folder.id)}
-            role="treeitem"
-            aria-expanded={expanded}
-            aria-level={depth}
+          <TreeFolderRow
+            buttonRef={setRowNode}
+            label={folder.name}
+            expanded={expanded}
+            indentPx={treeRowPaddingLeft(depth)}
+            ariaLevel={depth}
             tabIndex={rowIndex === activeIndex ? 0 : -1}
+            dropOver={isAgentConnectionOver}
+            onClick={() => onToggleFolder(folder.id)}
             onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
             onFocus={() => onRowFocus(rowIndex)}
-          >
-            <Folder size={16} />
-            <span className="connection-tree__label">{folder.name}</span>
-            <Chevron size={16} className="connection-tree__chevron" />
-          </button>
+          />
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
@@ -1489,23 +1480,21 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
                   {agentSessions.map((session) => {
                     const rowIndex = getNodeIndex(session.sessionId);
                     return (
-                      <button
+                      <TreeItemRow
                         key={session.sessionId}
-                        ref={getRowRef(rowIndex)}
-                        className="connection-tree__item"
-                        style={{ paddingLeft: 32 }}
-                        onDoubleClick={() => handleAttachSession(session)}
-                        title={`${session.title} (${session.status})`}
-                        role="treeitem"
-                        aria-level={1}
+                        buttonRef={getRowRef(rowIndex)}
+                        indentPx={32}
+                        ariaLevel={1}
                         tabIndex={rowIndex === activeIndex ? 0 : -1}
+                        title={`${session.title} (${session.status})`}
+                        onDoubleClick={() => handleAttachSession(session)}
                         onKeyDown={(e) => handleTreeKeyDown(e, session.sessionId)}
                         onFocus={() => handleRowFocus(rowIndex)}
                       >
                         <SessionTypeIcon type={session.type} />
                         <span className="connection-tree__label">{session.title}</span>
                         <span className="connection-tree__type">{session.status}</span>
-                      </button>
+                      </TreeItemRow>
                     );
                   })}
                 </>

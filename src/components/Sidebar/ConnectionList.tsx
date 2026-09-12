@@ -17,7 +17,6 @@ import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable"
 import {
   ChevronRight,
   ChevronDown,
-  Folder,
   FolderPlus,
   Plus,
   Play,
@@ -68,6 +67,7 @@ import { FleetOnboardDialog } from "./FleetOnboardDialog";
 import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
+import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
 
@@ -143,7 +143,6 @@ function TreeNode({
   // Under an active filter, matched folders are force-expanded regardless of
   // their stored state (auto-expand matches).
   const expanded = filter ? filter.visibleFolderIds.has(folder.id) : folder.isExpanded;
-  const Chevron = expanded ? ChevronDown : ChevronRight;
   const visibleChildFolders = filter
     ? childFolders.filter((f) => filter.visibleFolderIds.has(f.id))
     : childFolders;
@@ -176,23 +175,19 @@ function TreeNode({
     <div className="connection-tree__node" role="none">
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
-          <button
-            ref={setRowNode}
-            className={`connection-tree__folder${isConnectionOver ? " connection-tree__folder--drop-over" : ""}`}
-            onClick={() => onToggle(folder.id)}
-            style={{ paddingLeft: `${depth * 16 + 8}px` }}
-            data-testid={`folder-toggle-${folder.id}`}
-            role="treeitem"
-            aria-expanded={expanded}
-            aria-level={depth + 1}
+          <TreeFolderRow
+            buttonRef={setRowNode}
+            label={folder.name}
+            expanded={expanded}
+            indentPx={treeRowPaddingLeft(depth)}
+            ariaLevel={depth + 1}
             tabIndex={rowIndex === activeIndex ? 0 : -1}
+            dropOver={isConnectionOver}
+            testId={`folder-toggle-${folder.id}`}
+            onClick={() => onToggle(folder.id)}
             onKeyDown={(e) => onTreeKeyDown(e, folder.id)}
             onFocus={() => onRowFocus(rowIndex)}
-          >
-            <Folder size={16} />
-            <span className="connection-tree__label">{folder.name}</span>
-            <Chevron size={16} className="connection-tree__chevron" />
-          </button>
+          />
         </ContextMenu.Trigger>
         <ContextMenu.Portal>
           <ContextMenu.Content className="context-menu__content">
@@ -389,12 +384,6 @@ function ConnectionItem({
     void stopPersistentSession(connection.id);
   }, [stopPersistentSession, connection.id]);
 
-  let className = "connection-tree__item";
-  if (isDragging) className += " connection-tree__item--dragging";
-  if (isSelected) className += " connection-tree__item--selected";
-  if (persistentCapable) className += " connection-tree__item--persistent";
-  if (isConnectionReorderOver) className += " connection-tree__item--reorder-over";
-
   const jumpHosts = getJumpHosts(connection.config);
   const [showConnectionPath, setShowConnectionPath] = useState(false);
 
@@ -410,20 +399,22 @@ function ConnectionItem({
       <ContextMenu.Root>
         <ContextMenu.Trigger asChild>
           <div className="connection-tree__item-row" role="none">
-            <button
-              ref={setRowNode}
-              className={className}
-              style={{ paddingLeft: `${depth * 16 + 8}px` }}
+            <TreeItemRow
+              buttonRef={setRowNode}
+              indentPx={treeRowPaddingLeft(depth)}
+              ariaLevel={depth + 1}
+              tabIndex={rowIndex === activeIndex ? 0 : -1}
+              ariaSelected={isSelected}
+              dragging={isDragging}
+              selected={isSelected}
+              persistent={persistentCapable}
+              reorderOver={isConnectionReorderOver}
+              title={`Double-click to connect: ${connection.name}`}
+              testId={`connection-item-${connection.id}`}
+              dragAttributes={attributes}
+              dragListeners={listeners}
               onClick={(e) => onConnectionClick(connection.id, e)}
               onDoubleClick={() => onConnect(connection)}
-              title={`Double-click to connect: ${connection.name}`}
-              data-testid={`connection-item-${connection.id}`}
-              {...attributes}
-              {...listeners}
-              role="treeitem"
-              aria-level={depth + 1}
-              aria-selected={isSelected}
-              tabIndex={rowIndex === activeIndex ? 0 : -1}
               onKeyDown={(e) => onTreeKeyDown(e, connection.id)}
               onFocus={() => onRowFocus(rowIndex)}
             >
@@ -498,7 +489,7 @@ function ConnectionItem({
                   )}
                 </span>
               )}
-            </button>
+            </TreeItemRow>
             {!persistentCapable && (
               <Tooltip content="Connect" side="right">
                 <Button
