@@ -23,8 +23,16 @@ pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> {
             continue;
         }
 
-        let metadata = entry.metadata()?;
-        let is_directory = metadata.is_dir();
+        // `DirEntry::metadata()` uses `symlink_metadata` semantics (it does NOT
+        // follow the link), so a symlink's own type/size lands here. Resolving
+        // through `resolve_entry_metadata` follows the link for `is_directory`
+        // (and stats) so a symlink-to-dir is navigable, while a dangling/looping
+        // link degrades to the link's own metadata instead of aborting the list.
+        let own_metadata = entry.metadata()?;
+        let file_type = entry.file_type().ok();
+        let is_symlink_entry = file_type.is_some_and(|ft| ft.is_symlink());
+        let (metadata, is_directory) =
+            resolve_entry_metadata(&entry.path(), is_symlink_entry, own_metadata);
         let size = metadata.len();
 
         let modified = metadata
@@ -39,11 +47,10 @@ pub fn list_dir_sync(path: &str) -> Result<Vec<FileEntry>, std::io::Error> {
 
         let permissions = get_permissions(&metadata);
 
-        // `DirEntry::file_type()` is cheap (backed by the readdir `d_type` where
-        // available) and does not follow the link, so it detects symlinks
-        // without an extra stat. `is_directory` above still reflects the
-        // followed target, so a symlink-to-dir stays navigable.
-        let (is_symlink, symlink_target) = read_symlink(entry.file_type().ok(), &entry.path());
+        // The non-following `file_type` detects the link and `read_link` records
+        // its target; `is_directory` above already reflects the followed target,
+        // so a symlink-to-dir is both flagged `is_symlink` and navigable.
+        let (is_symlink, symlink_target) = read_symlink(file_type, &entry.path());
 
         let full_path = normalize_path_separators(&entry.path().to_string_lossy());
 
@@ -97,7 +104,16 @@ fn map_io_error(e: std::io::Error, path: &str) -> FileError {
 pub fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
     let normalized = normalize_platform_path(path);
     let p = Path::new(&normalized);
-    let metadata = std::fs::metadata(p).map_err(|e| map_io_error(e, path))?;
+    // `symlink_metadata` never follows, so it succeeds even for a dangling or
+    // looping link and tells us whether the path itself is a symlink.
+    let own_metadata = std::fs::symlink_metadata(p).map_err(|e| map_io_error(e, path))?;
+    // `FileType` is `Copy`, so capture it before `own_metadata` is moved below.
+    let own_file_type = own_metadata.file_type();
+    let is_symlink_entry = own_file_type.is_symlink();
+    // Follow the link (when it is one) so `is_directory`/size/modified describe
+    // the target and a symlink-to-dir stats as navigable; a dangling/looping
+    // link degrades to the link's own metadata rather than erroring the stat.
+    let (metadata, is_directory) = resolve_entry_metadata(p, is_symlink_entry, own_metadata);
 
     let name = p
         .file_name()
@@ -116,15 +132,14 @@ pub fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
 
     let permissions = get_permissions(&metadata);
 
-    // `metadata` above follows the link; a separate `symlink_metadata` reveals
-    // whether the path itself is a symlink (and, if so, its target).
-    let symlink_type = std::fs::symlink_metadata(p).ok().map(|m| m.file_type());
-    let (is_symlink, symlink_target) = read_symlink(symlink_type, p);
+    // The non-following file type (from `own_metadata`) decides the symlink flag
+    // and `read_link` records its target.
+    let (is_symlink, symlink_target) = read_symlink(Some(own_file_type), p);
 
     Ok(FileEntry {
         name,
         path: normalize_path_separators(path),
-        is_directory: metadata.is_dir(),
+        is_directory,
         size: metadata.len(),
         modified,
         permissions,
@@ -133,6 +148,43 @@ pub fn stat_sync(path: &str) -> Result<FileEntry, FileError> {
         is_symlink,
         symlink_target,
     })
+}
+
+/// Resolve the metadata that describes an entry, following a symlink to its
+/// target so a symlink-to-directory is navigable-as-directory.
+///
+/// Returns the effective [`Metadata`](std::fs::Metadata) plus the `is_directory`
+/// flag. `own_metadata` is the entry's own (non-following) metadata:
+///
+/// - Not a symlink → the entry's own metadata already describes it.
+/// - Symlink whose target resolves → the target's metadata, so `is_directory`
+///   (and size/modified) reflect what the link points at.
+/// - Symlink that is dangling or forms a loop → following fails, so we degrade
+///   to the link's own metadata with `is_directory = false`. A single bad link
+///   therefore never aborts a directory listing or a stat.
+///
+/// This mirrors the shared [`FileEntry`] semantics used by the FTP listing
+/// parser (`is_symlink`/`symlink_target` flag the link; `is_directory` describes
+/// navigability), extended to follow the target because the local filesystem —
+/// unlike an FTP listing — can cheaply resolve it.
+fn resolve_entry_metadata(
+    path: &Path,
+    is_symlink: bool,
+    own_metadata: std::fs::Metadata,
+) -> (std::fs::Metadata, bool) {
+    if is_symlink {
+        match std::fs::metadata(path) {
+            Ok(target) => {
+                let is_dir = target.is_dir();
+                (target, is_dir)
+            }
+            // Dangling or looping link: keep the link's own metadata, not a dir.
+            Err(_) => (own_metadata, false),
+        }
+    } else {
+        let is_dir = own_metadata.is_dir();
+        (own_metadata, is_dir)
+    }
 }
 
 /// Derive `(is_symlink, symlink_target)` from a (non-following) file type.
@@ -393,6 +445,115 @@ mod tests {
         let real = entries.iter().find(|e| e.name == "real.txt").unwrap();
         assert!(!real.is_symlink);
         assert_eq!(real.symlink_target, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_dir_sync_symlink_to_directory_is_navigable() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("real_dir")).unwrap();
+        symlink(dir.path().join("real_dir"), dir.path().join("dir_link")).unwrap();
+
+        let entries = list_dir_sync(dir.path().to_str().unwrap()).unwrap();
+
+        let link = entries.iter().find(|e| e.name == "dir_link").unwrap();
+        assert!(link.is_symlink, "dir_link should be flagged as a symlink");
+        assert!(
+            link.is_directory,
+            "a symlink pointing at a directory must be navigable-as-directory"
+        );
+        assert!(
+            link.symlink_target
+                .as_deref()
+                .unwrap()
+                .ends_with("real_dir"),
+            "target should point at real_dir, got {:?}",
+            link.symlink_target
+        );
+    }
+
+    /// Full CORE-037 fixture: a real dir, a symlink→dir, a symlink→file and a
+    /// dangling symlink must each be labelled correctly, and the single bad
+    /// (dangling) link must never abort the whole listing.
+    #[cfg(unix)]
+    #[test]
+    fn list_dir_sync_labels_every_symlink_kind() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+
+        // (a) a real directory
+        std::fs::create_dir(dir.path().join("real_dir")).unwrap();
+        // (b) a symlink pointing to that directory
+        symlink(dir.path().join("real_dir"), dir.path().join("dir_link")).unwrap();
+        // (c) a symlink pointing to a regular file
+        std::fs::write(dir.path().join("real_file"), "hi").unwrap();
+        symlink(dir.path().join("real_file"), dir.path().join("file_link")).unwrap();
+        // (d) a dangling symlink (target never exists)
+        symlink(
+            dir.path().join("does_not_exist"),
+            dir.path().join("dangling_link"),
+        )
+        .unwrap();
+
+        let entries = list_dir_sync(dir.path().to_str().unwrap()).unwrap();
+
+        let real_dir = entries.iter().find(|e| e.name == "real_dir").unwrap();
+        assert!(real_dir.is_directory);
+        assert!(!real_dir.is_symlink);
+        assert_eq!(real_dir.symlink_target, None);
+
+        let dir_link = entries.iter().find(|e| e.name == "dir_link").unwrap();
+        assert!(dir_link.is_symlink);
+        assert!(dir_link.is_directory, "symlink→dir is a directory");
+        assert!(dir_link.symlink_target.is_some());
+
+        let file_link = entries.iter().find(|e| e.name == "file_link").unwrap();
+        assert!(file_link.is_symlink);
+        assert!(!file_link.is_directory, "symlink→file is not a directory");
+        assert!(file_link.symlink_target.is_some());
+
+        let dangling = entries.iter().find(|e| e.name == "dangling_link").unwrap();
+        assert!(dangling.is_symlink, "a dangling link is still a symlink");
+        assert!(
+            !dangling.is_directory,
+            "an unresolvable symlink is not a directory"
+        );
+        assert!(
+            dangling.symlink_target.is_some(),
+            "the link text is recorded even when the target is missing"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_sync_symlink_to_directory_is_navigable() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("real_dir")).unwrap();
+        let link_path = dir.path().join("dir_link");
+        symlink(dir.path().join("real_dir"), &link_path).unwrap();
+
+        let entry = stat_sync(link_path.to_str().unwrap()).unwrap();
+        assert!(entry.is_symlink);
+        assert!(entry.is_directory, "symlink→dir must stat as a directory");
+        assert!(entry.symlink_target.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn stat_sync_dangling_symlink_does_not_error() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let link_path = dir.path().join("dangling_link");
+        symlink(dir.path().join("does_not_exist"), &link_path).unwrap();
+
+        // Following the target would fail (NotFound); stat must still succeed by
+        // describing the link itself.
+        let entry = stat_sync(link_path.to_str().unwrap()).unwrap();
+        assert!(entry.is_symlink);
+        assert!(!entry.is_directory);
+        assert!(entry.symlink_target.is_some());
     }
 
     #[cfg(unix)]
