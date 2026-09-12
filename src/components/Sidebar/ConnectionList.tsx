@@ -15,8 +15,6 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import {
-  ChevronRight,
-  ChevronDown,
   FolderPlus,
   Plus,
   Play,
@@ -68,6 +66,7 @@ import { AgentNode } from "./AgentNode";
 import { ConnectionPathDialog } from "./ConnectionPathDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { TreeFolderRow, TreeItemRow, treeRowPaddingLeft } from "./TreeRow";
+import { SidebarGroupHeader } from "./SidebarGroupHeader";
 import { useExperimentalFeatures } from "@/hooks/useExperimentalFeatures";
 import "./ConnectionList.css";
 
@@ -1189,8 +1188,6 @@ export function ConnectionList() {
 
   const [localCollapsed, setLocalCollapsed] = useState(false);
   const [remoteAgentsCollapsed, setRemoteAgentsCollapsed] = useState(false);
-  const LocalChevron = localCollapsed ? ChevronRight : ChevronDown;
-  const RemoteAgentsChevron = remoteAgentsCollapsed ? ChevronRight : ChevronDown;
 
   // The Remote Agents section only occupies a flex slot when it is both
   // rendered (experimental) and expanded. Keying it on `experimental` alone
@@ -1261,69 +1258,64 @@ export function ConnectionList() {
           style={outerConnIdx >= 0 ? { flex: outerFlexValues[outerConnIdx] } : undefined}
           data-testid="connection-list-group-connections"
         >
-          <div
-            className="connection-list__group-header"
-            data-testid="sidebar-group-header-connections"
-          >
-            <button
-              className="connection-list__group-toggle"
-              onClick={() => setLocalCollapsed((v) => !v)}
-              aria-expanded={!localCollapsed}
-              data-testid="connection-list-group-toggle"
-            >
-              <LocalChevron size={16} className="connection-tree__chevron" />
-              <span className="connection-list__group-title">Connections</span>
-            </button>
-            <div className="connection-list__group-actions">
-              <Tooltip content="New Folder" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  icon={<FolderPlus size={16} />}
-                  onClick={() => {
-                    setLocalCollapsed(false);
-                    setCreatingFolder(true);
-                  }}
-                  aria-label="New Folder"
-                  data-testid="connection-list-new-folder"
-                />
-              </Tooltip>
-              <Tooltip content="New Connection" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  icon={<Plus size={16} />}
-                  onClick={handleNewConnection}
-                  aria-label="New Connection"
-                  data-testid="connection-list-new-connection"
-                />
-              </Tooltip>
-              <Tooltip content="Import from ~/.ssh/config" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  icon={<FileDown size={16} />}
-                  onClick={() => setBulkImportOpen(true)}
-                  aria-label="Import from ~/.ssh/config"
-                  data-testid="connection-list-import-ssh-config"
-                />
-              </Tooltip>
-              <Tooltip content="Onboard hosts from a CSV / inventory" side="top">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  iconOnly
-                  icon={<FileSpreadsheet size={16} />}
-                  onClick={handleImportCsv}
-                  aria-label="Onboard hosts from a CSV / inventory"
-                  data-testid="connection-list-import-csv"
-                />
-              </Tooltip>
-            </div>
-          </div>
+          <SidebarGroupHeader
+            title="Connections"
+            expanded={!localCollapsed}
+            onToggle={() => setLocalCollapsed((v) => !v)}
+            headerTestId="sidebar-group-header-connections"
+            toggleTestId="connection-list-group-toggle"
+            actions={
+              <>
+                <Tooltip content="New Folder" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<FolderPlus size={16} />}
+                    onClick={() => {
+                      setLocalCollapsed(false);
+                      setCreatingFolder(true);
+                    }}
+                    aria-label="New Folder"
+                    data-testid="connection-list-new-folder"
+                  />
+                </Tooltip>
+                <Tooltip content="New Connection" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<Plus size={16} />}
+                    onClick={handleNewConnection}
+                    aria-label="New Connection"
+                    data-testid="connection-list-new-connection"
+                  />
+                </Tooltip>
+                <Tooltip content="Import from ~/.ssh/config" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<FileDown size={16} />}
+                    onClick={() => setBulkImportOpen(true)}
+                    aria-label="Import from ~/.ssh/config"
+                    data-testid="connection-list-import-ssh-config"
+                  />
+                </Tooltip>
+                <Tooltip content="Onboard hosts from a CSV / inventory" side="top">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    iconOnly
+                    icon={<FileSpreadsheet size={16} />}
+                    onClick={handleImportCsv}
+                    aria-label="Onboard hosts from a CSV / inventory"
+                    data-testid="connection-list-import-csv"
+                  />
+                </Tooltip>
+              </>
+            }
+          />
           {!localCollapsed && (
             <div className="connection-list__filter">
               <Search size={14} className="connection-list__filter-icon" aria-hidden="true" />
@@ -1400,20 +1392,13 @@ export function ConnectionList() {
               className="connection-list__remote-agents"
               style={outerRemoteIdx >= 0 ? { flex: outerFlexValues[outerRemoteIdx] } : undefined}
             >
-              <div
-                className="connection-list__group-header"
-                data-testid="sidebar-group-header-remote-agents"
-              >
-                <button
-                  className="connection-list__group-toggle"
-                  onClick={() => setRemoteAgentsCollapsed((v) => !v)}
-                  aria-expanded={!remoteAgentsCollapsed}
-                  data-testid="connection-list-remote-agents-toggle"
-                >
-                  <RemoteAgentsChevron size={16} className="connection-tree__chevron" />
-                  <span className="connection-list__group-title">Remote Agents</span>
-                </button>
-                <div className="connection-list__group-actions">
+              <SidebarGroupHeader
+                title="Remote Agents"
+                expanded={!remoteAgentsCollapsed}
+                onToggle={() => setRemoteAgentsCollapsed((v) => !v)}
+                headerTestId="sidebar-group-header-remote-agents"
+                toggleTestId="connection-list-remote-agents-toggle"
+                actions={
                   <Tooltip content="New Remote Agent" side="top">
                     <Button
                       variant="ghost"
@@ -1425,8 +1410,8 @@ export function ConnectionList() {
                       data-testid="connection-list-new-agent"
                     />
                   </Tooltip>
-                </div>
-              </div>
+                }
+              />
               {!remoteAgentsCollapsed && (
                 <div className="connection-list__filter">
                   <Search size={14} className="connection-list__filter-icon" aria-hidden="true" />

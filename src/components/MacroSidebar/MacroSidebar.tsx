@@ -1,8 +1,10 @@
 import { useCallback, useMemo, useState } from "react";
-import { Circle, Download, Search, Upload } from "lucide-react";
+import { Circle, Search } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, Input, toast, Tooltip } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
+import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
+import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useListFilter, nameDescriptionTagsMatcher } from "@/hooks/useListFilter";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
@@ -175,7 +177,7 @@ export function MacroSidebar() {
 
   return (
     <div className="macro-sidebar" data-testid="macro-sidebar">
-      <div className="macro-sidebar__actions">
+      <SidebarToolbar>
         <Tooltip content="Record New Macro" side="top">
           <Button
             variant="ghost"
@@ -188,30 +190,16 @@ export function MacroSidebar() {
             Record New
           </Button>
         </Tooltip>
-        <Tooltip content="Export All Macros" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={<Download size={14} />}
-            onClick={handleExportAll}
-            disabled={macros.length === 0}
-            aria-label="Export All Macros"
-            data-testid="macro-export-all-btn"
-          />
-        </Tooltip>
-        <Tooltip content="Import Macros" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={<Upload size={14} />}
-            onClick={handleImport}
-            aria-label="Import Macros"
-            data-testid="macro-import-btn"
-          />
-        </Tooltip>
-      </div>
+        <ExportImportButtons
+          onExport={handleExportAll}
+          onImport={handleImport}
+          exportLabel="Export All Macros"
+          importLabel="Import Macros"
+          exportDisabled={macros.length === 0}
+          exportTestId="macro-export-all-btn"
+          importTestId="macro-import-btn"
+        />
+      </SidebarToolbar>
       <div className="macro-sidebar__search">
         <Search size={14} className="macro-sidebar__search-icon" aria-hidden="true" />
         <Input

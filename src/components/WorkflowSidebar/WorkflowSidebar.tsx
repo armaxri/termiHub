@@ -1,11 +1,13 @@
 import { useCallback, useState } from "react";
-import { Plus, Download, Upload, Search, ChevronDown, Play } from "lucide-react";
+import { Plus, Search, ChevronDown, Play } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
-import { Button, Input, toast, Tooltip } from "@/components/ui";
+import { Button, Input, toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
+import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
+import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useListFilter, nameDescriptionTagsMatcher } from "@/hooks/useListFilter";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
@@ -236,7 +238,7 @@ export function WorkflowSidebar() {
 
   return (
     <div className="workflow-sidebar" data-testid="workflow-sidebar">
-      <div className="workflow-sidebar__actions">
+      <SidebarToolbar align="center">
         <DropdownMenu.Root>
           <DropdownMenu.Trigger asChild>
             <Button
@@ -282,30 +284,16 @@ export function WorkflowSidebar() {
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu.Root>
-        <Tooltip content="Export All Workflows" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={<Download size={14} />}
-            onClick={handleExportAll}
-            disabled={workflows.length === 0}
-            aria-label="Export All Workflows"
-            data-testid="workflow-export-all-btn"
-          />
-        </Tooltip>
-        <Tooltip content="Import Workflows" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={<Upload size={14} />}
-            onClick={handleImport}
-            aria-label="Import Workflows"
-            data-testid="workflow-import-btn"
-          />
-        </Tooltip>
-      </div>
+        <ExportImportButtons
+          onExport={handleExportAll}
+          onImport={handleImport}
+          exportLabel="Export All Workflows"
+          importLabel="Import Workflows"
+          exportDisabled={workflows.length === 0}
+          exportTestId="workflow-export-all-btn"
+          importTestId="workflow-import-btn"
+        />
+      </SidebarToolbar>
       <div className="workflow-sidebar__search">
         <Search size={14} className="workflow-sidebar__search-icon" aria-hidden="true" />
         <Input

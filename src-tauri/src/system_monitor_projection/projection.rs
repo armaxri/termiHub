@@ -48,14 +48,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
 
 use termihub_core::monitoring::{MonitorStatus, SystemStats};
 
 use crate::commands::projection::ProjectionState;
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
-use crate::system_monitor_projection::store::{MonitorEntry, SystemMonitorStore};
+use crate::projection::{compute_ops, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::system_monitor_projection::store::{MonitorEntry, RegionDelta, SystemMonitorStore};
 
 /// The projection region id for the system-monitor domain (shared, per Open
 /// Design Decision #4).
@@ -64,13 +64,156 @@ pub const SYSTEM_MONITORS_REGION: &str = "system-monitors";
 /// Publish the `system-monitors` region from the store, fanning a diff out to
 /// every subscriber and returning the advanced region for the intent ack (empty
 /// when the view did not change).
+///
+/// # Incremental publish (PERF-006)
+///
+/// The region view is `{ "monitors": { <key>: MonitorEntry }, "statsCache": {
+/// <key>: SystemStats } }`. The naive path re-serialized **all** entries and
+/// diffed the whole tree on every fold — O(region) per fold, hence O(N²) over a
+/// per-entry stream. Instead the store hands us only the entries it touched
+/// ([`SystemMonitorStore::drain_delta`]); we diff just those against the held
+/// view and splice them in place, bounding the cost to O(size of the change).
+///
+/// The emitted diff is **byte-identical** to the whole-region diff — see
+/// [`apply_monitor_delta`] for why — so no subscriber can tell the two apart.
 pub fn publish_monitors(projector: &Projector, store: &SystemMonitorStore) -> Vec<ProducedRegion> {
-    match projector.publish(SYSTEM_MONITORS_REGION, store.snapshot()) {
+    let delta = store.drain_delta();
+    let published = projector.publish_delta(SYSTEM_MONITORS_REGION, |view| {
+        apply_monitor_delta(view, &delta, store)
+    });
+    match published {
         Some(version) => vec![ProducedRegion {
             region: SYSTEM_MONITORS_REGION.to_string(),
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Compute the RFC-6902 ops for a drained [`RegionDelta`] and splice its new
+/// subtrees into the held region `view` in place — the incremental core of
+/// [`publish_monitors`] (PERF-006).
+///
+/// ## Why the reduced diff is byte-identical to the whole-region diff
+///
+/// `json_patch::diff` has two properties this relies on: (1) object keys are
+/// visited in **sorted** order (`serde_json` maps are `BTreeMap`s — no
+/// `preserve_order`), and (2) each key's sub-diff depends **only** on that key's
+/// old/new subtrees. So restricting both sides of the diff to just the touched
+/// keys yields exactly the same ops — same paths, same values, same order — that
+/// diffing the whole region would: the untouched keys produce no ops and, being
+/// visited in the same sorted positions, never reorder the touched ones. The
+/// top-level `{ monitors, statsCache }` wrapper is preserved on both reduced
+/// sides so their own ordering (and absence of spurious top-level ops) matches
+/// too.
+///
+/// Under `debug_assertions` this is cross-checked against a fresh whole-region
+/// diff, so any dirty-tracking miss or ordering drift fails loudly in tests
+/// rather than silently corrupting a subscriber's cache.
+fn apply_monitor_delta(
+    view: &mut Value,
+    delta: &RegionDelta,
+    store: &SystemMonitorStore,
+) -> Vec<DiffOp> {
+    // Fallback: an unseeded / unexpected view shape (e.g. the region was never
+    // seeded with the empty-store baseline) → the original whole-region path,
+    // byte-for-byte. Production always seeds the region in `lib.rs::setup()`.
+    if !view.get("monitors").is_some_and(Value::is_object)
+        || !view.get("statsCache").is_some_and(Value::is_object)
+    {
+        let full = store.snapshot();
+        let ops = compute_ops(view, &full);
+        *view = full;
+        return ops;
+    }
+
+    #[cfg(debug_assertions)]
+    let old_full = view.clone();
+
+    let reduced_old = reduced_from_view(view, delta);
+    let reduced_new = reduced_from_delta(delta);
+    let ops = compute_ops(&reduced_old, &reduced_new);
+
+    splice_subtrees(view, "monitors", &delta.monitors);
+    splice_subtrees(view, "statsCache", &delta.stats_cache);
+
+    #[cfg(debug_assertions)]
+    {
+        // Ground truth: the whole-region diff and a fresh full snapshot. The
+        // incremental ops must equal the former, and the spliced view the latter
+        // — either mismatch is a dirty-tracking / ordering bug, not a perf tweak.
+        let fresh = store.snapshot();
+        debug_assert_eq!(
+            ops,
+            compute_ops(&old_full, &fresh),
+            "PERF-006: incremental monitor delta diverged from the whole-region diff"
+        );
+        debug_assert_eq!(
+            *view, fresh,
+            "PERF-006: spliced monitor view diverged from the store snapshot"
+        );
+    }
+
+    ops
+}
+
+/// Build the reduced *old* view: the held `view`'s subtrees for exactly the
+/// touched keys, wrapped in the `{ monitors, statsCache }` envelope.
+fn reduced_from_view(view: &Value, delta: &RegionDelta) -> Value {
+    json!({
+        "monitors": pick_keys(view.get("monitors"), delta.monitors.iter().map(|(k, _)| k)),
+        "statsCache": pick_keys(view.get("statsCache"), delta.stats_cache.iter().map(|(k, _)| k)),
+    })
+}
+
+/// Build the reduced *new* view from the drained subtrees. A `None` value is an
+/// absent (removed) entry and is simply omitted, so the diff emits a `remove`.
+fn reduced_from_delta(delta: &RegionDelta) -> Value {
+    json!({
+        "monitors": subtree_map(&delta.monitors),
+        "statsCache": subtree_map(&delta.stats_cache),
+    })
+}
+
+/// Collect the named keys that are present in `src` into a fresh object.
+fn pick_keys<'a>(src: Option<&Value>, keys: impl Iterator<Item = &'a String>) -> Value {
+    let mut out = Map::new();
+    if let Some(obj) = src.and_then(Value::as_object) {
+        for key in keys {
+            if let Some(value) = obj.get(key) {
+                out.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Value::Object(out)
+}
+
+/// Collect the present (`Some`) entries of a drained subtree into a fresh object.
+fn subtree_map(entries: &[(String, Option<Value>)]) -> Value {
+    let mut out = Map::new();
+    for (key, value) in entries {
+        if let Some(value) = value {
+            out.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+/// Splice the drained subtrees into `view[field]` in place: `Some` upserts the
+/// entry, `None` removes it. A no-op if the field is somehow not an object.
+fn splice_subtrees(view: &mut Value, field: &str, entries: &[(String, Option<Value>)]) {
+    let Some(obj) = view.get_mut(field).and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (key, value) in entries {
+        match value {
+            Some(value) => {
+                obj.insert(key.clone(), value.clone());
+            }
+            None => {
+                obj.remove(key);
+            }
+        }
     }
 }
 
