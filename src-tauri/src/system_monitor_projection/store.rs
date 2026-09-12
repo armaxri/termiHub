@@ -289,14 +289,10 @@ impl SystemMonitorStore {
         // fold; the reduced diff then equals the whole-region diff exactly.
         let old_monitors: Vec<String> = inner.monitors.keys().cloned().collect();
         inner.dirty_monitors.extend(old_monitors);
-        inner
-            .dirty_monitors
-            .extend(monitors.keys().cloned());
+        inner.dirty_monitors.extend(monitors.keys().cloned());
         let old_cache: Vec<String> = inner.stats_cache.keys().cloned().collect();
         inner.dirty_cache.extend(old_cache);
-        inner
-            .dirty_cache
-            .extend(stats_cache.keys().cloned());
+        inner.dirty_cache.extend(stats_cache.keys().cloned());
         inner.monitors = monitors;
         inner.stats_cache = stats_cache;
     }

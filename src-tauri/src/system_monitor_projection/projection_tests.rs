@@ -656,7 +656,10 @@ fn assert_incremental_equals_full(
     let diffs = sink.diffs();
 
     if expected_ops.is_empty() {
-        assert!(produced.is_empty(), "{label}: no region advanced on a no-op");
+        assert!(
+            produced.is_empty(),
+            "{label}: no region advanced on a no-op"
+        );
         assert_eq!(diffs.len(), before, "{label}: no diff on a no-op");
     } else {
         assert_eq!(diffs.len(), before + 1, "{label}: exactly one diff emitted");
@@ -670,7 +673,10 @@ fn assert_incremental_equals_full(
     // Cross-check the reference view converges exactly like a client cache would.
     let mut applied = prev.clone();
     apply_ops(&mut applied, &expected_ops).expect("diff applies cleanly");
-    assert_eq!(applied, new_full, "{label}: applying the diff reproduces the snapshot");
+    assert_eq!(
+        applied, new_full,
+        "{label}: applying the diff reproduces the snapshot"
+    );
 
     *prev = new_full;
 }
@@ -725,7 +731,11 @@ fn incremental_publish_is_byte_identical_to_the_whole_region_diff() {
 
     // The subscriber, fed only the incremental diffs, converges on the authority.
     let snap = projector.snapshot(SYSTEM_MONITORS_REGION);
-    assert_eq!(snap.view, store.snapshot(), "region view == store authority");
+    assert_eq!(
+        snap.view,
+        store.snapshot(),
+        "region view == store authority"
+    );
 }
 
 /// Two entries changing in the **same** publish must still diff byte-identically
