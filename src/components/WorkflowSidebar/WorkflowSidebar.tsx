@@ -1,14 +1,15 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { Plus, Download, Upload, Search, ChevronDown, Play } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { save, open } from "@tauri-apps/plugin-dialog";
-import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
 import { Button, Input, toast, Tooltip } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { useListFilter, nameDescriptionTagsMatcher } from "@/hooks/useListFilter";
+import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
+import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { serializeWorkflows } from "@/services/workflowIo";
 import type { Workflow } from "@/types/workflow";
 import { WorkflowListItem } from "./WorkflowListItem";
@@ -31,14 +32,6 @@ function slugifyWorkflowName(name: string): string {
   return slug || "workflow";
 }
 
-/** True when the workflow matches the (already lower-cased) query across name/description/tags. */
-function workflowMatches(workflow: Workflow, query: string): boolean {
-  if (!query) return true;
-  if (workflow.name.toLowerCase().includes(query)) return true;
-  if (workflow.description?.toLowerCase().includes(query)) return true;
-  return workflow.tags.some((tag) => tag.toLowerCase().includes(query));
-}
-
 /** Build a fresh, empty workflow draft (backend stamps the timestamps on save). */
 function blankWorkflow(): Workflow {
   return {
@@ -59,7 +52,8 @@ function blankWorkflow(): Workflow {
  * organisation. Composed from the shared UI primitives and the sidebar
  * list-item shell, mirroring the shipped `MacroSidebar`. Workflows can also be
  * exported to / imported from portable JSON, and a macro can be "promoted" into
- * a new single-step workflow.
+ * a new single-step workflow. The search, export/import, and delete-confirm
+ * flows come from the shared sidebar hooks (UISF-020).
  */
 export function WorkflowSidebar() {
   const workflows = useAppStore((s) => s.workflows);
@@ -74,15 +68,21 @@ export function WorkflowSidebar() {
   // projected `workflow-run` region (#2206 reducer-removal).
   const { workflowRun } = useProjectedWorkflowRun();
 
-  const [query, setQuery] = useState("");
   // The workflow being edited: an existing one (isNew=false) or a fresh draft.
   const [editing, setEditing] = useState<{ workflow: Workflow; isNew: boolean } | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; name: string } | null>(null);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return workflows.filter((w) => workflowMatches(w, q));
-  }, [workflows, query]);
+  const { query, setQuery, filtered } = useListFilter(workflows, nameDescriptionTagsMatcher);
+  const exportWorkflowsToFile = useJsonFileExport("workflows");
+  const importWorkflowsFromFile = useJsonFileImport("workflows");
+  const workflowDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {
+    try {
+      await deleteWorkflowFromBackend(id);
+      toast.success(`Deleted workflow "${name}"`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      toast.error(`Failed to delete workflow: ${message}`);
+    }
+  });
+  const requestDelete = workflowDelete.request;
 
   const handleNew = useCallback(() => {
     setEditing({ workflow: blankWorkflow(), isNew: true });
@@ -145,56 +145,29 @@ export function WorkflowSidebar() {
     [workflows, saveWorkflowToBackend]
   );
 
-  // Write serialized workflows to a user-chosen file. A cancelled save dialog
-  // returns null before any write (silent no-op); only a real write failure
-  // surfaces an error toast.
-  const writeWorkflowsToFile = useCallback(
-    async (payload: Workflow[], defaultPath: string, successMessage: string) => {
-      try {
-        const filePath = await save({
-          defaultPath,
-          filters: [{ name: "JSON", extensions: ["json"] }],
-        });
-        if (!filePath) return;
-        await writeTextFile(filePath, serializeWorkflows(payload));
-        toast.success(successMessage);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        toast.error(`Failed to export workflows: ${message}`);
-      }
-    },
-    []
-  );
-
   const handleExportAll = useCallback(() => {
-    void writeWorkflowsToFile(
-      workflows,
-      "termihub-workflows.json",
-      `Exported ${workflows.length} workflow${workflows.length === 1 ? "" : "s"}`
-    );
-  }, [workflows, writeWorkflowsToFile]);
+    void exportWorkflowsToFile({
+      defaultPath: "termihub-workflows.json",
+      content: () => serializeWorkflows(workflows),
+      successMessage: `Exported ${workflows.length} workflow${workflows.length === 1 ? "" : "s"}`,
+    });
+  }, [workflows, exportWorkflowsToFile]);
 
   const handleExportOne = useCallback(
     (workflowId: string) => {
       const workflow = workflows.find((w) => w.id === workflowId);
       if (!workflow) return;
-      void writeWorkflowsToFile(
-        [workflow],
-        `termihub-workflow-${slugifyWorkflowName(workflow.name)}.json`,
-        `Exported "${workflow.name}"`
-      );
+      void exportWorkflowsToFile({
+        defaultPath: `termihub-workflow-${slugifyWorkflowName(workflow.name)}.json`,
+        content: () => serializeWorkflows([workflow]),
+        successMessage: `Exported "${workflow.name}"`,
+      });
     },
-    [workflows, writeWorkflowsToFile]
+    [workflows, exportWorkflowsToFile]
   );
 
-  const handleImport = useCallback(async () => {
-    const filePath = await open({
-      multiple: false,
-      filters: [{ name: "JSON", extensions: ["json"] }],
-    });
-    if (!filePath || Array.isArray(filePath)) return;
-    try {
-      const json = await readTextFile(filePath);
+  const handleImport = useCallback(() => {
+    void importWorkflowsFromFile(async (json) => {
       const result = await importWorkflows(json);
       const summary = `Imported ${result.imported} workflow${result.imported === 1 ? "" : "s"}`;
       if (result.localProcessSteps > 0) {
@@ -215,33 +188,17 @@ export function WorkflowSidebar() {
       } else {
         toast.success(summary);
       }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to import workflows: ${message}`);
-    }
-  }, [importWorkflows]);
+    });
+  }, [importWorkflows, importWorkflowsFromFile]);
 
   const handleDelete = useCallback(
     (workflowId: string) => {
       const workflow = workflows.find((w) => w.id === workflowId);
       if (!workflow) return;
-      setPendingDelete({ id: workflow.id, name: workflow.name });
+      requestDelete({ id: workflow.id, name: workflow.name });
     },
-    [workflows]
+    [workflows, requestDelete]
   );
-
-  const handleConfirmDelete = useCallback(async () => {
-    if (!pendingDelete) return;
-    const { id, name } = pendingDelete;
-    setPendingDelete(null);
-    try {
-      await deleteWorkflowFromBackend(id);
-      toast.success(`Deleted workflow "${name}"`);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      toast.error(`Failed to delete workflow: ${message}`);
-    }
-  }, [pendingDelete, deleteWorkflowFromBackend]);
 
   const handleSaveEdit = useCallback(
     async (result: WorkflowEditorResult) => {
@@ -415,12 +372,12 @@ export function WorkflowSidebar() {
         onSave={handleSaveEdit}
       />
       <ConfirmDeleteDialog
-        open={pendingDelete !== null}
+        {...workflowDelete.dialogProps}
         message={
-          pendingDelete ? `Delete workflow "${pendingDelete.name}"? This cannot be undone.` : ""
+          workflowDelete.pending
+            ? `Delete workflow "${workflowDelete.pending.name}"? This cannot be undone.`
+            : ""
         }
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setPendingDelete(null)}
       />
     </div>
   );
