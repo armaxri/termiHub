@@ -42,22 +42,53 @@ export function TransferQueue() {
   const entries = useMemo(() => Object.values(transferQueue), [transferQueue]);
   const summary = useMemo(() => summarize(entries), [entries]);
 
-  const handlePause = async (id: string) => {
-    await transferPause(id);
-    toast.success("Transfer paused");
+  // Honest per-row feedback (audit FEC-004 / UX-016): the control commands
+  // resolve `true` only when the transfer really changed state. A `false`
+  // resolution is a silent backend no-op — an unknown/finished id, or a legacy
+  // SFTP transfer whose pause/resume/retry the queue does not yet implement —
+  // so we must NOT toast success for it. A rejection (backend error, session
+  // gone) surfaces an error toast rather than failing silently.
+  const runControl = async (
+    action: () => Promise<boolean>,
+    messages: { success: string; noop: string; error: string }
+  ) => {
+    try {
+      const changed = await action();
+      if (changed) {
+        toast.success(messages.success);
+      } else {
+        toast.info(messages.noop);
+      }
+    } catch (err) {
+      frontendLog("transfer_queue", `${messages.error}: ${String(err)}`);
+      toast.error(messages.error);
+    }
   };
-  const handleResume = async (id: string) => {
-    await transferResume(id);
-    toast.success("Transfer resumed");
-  };
-  const handleCancel = async (id: string) => {
-    await transferCancel(id);
-    toast.success("Transfer cancelled");
-  };
-  const handleRetry = async (id: string) => {
-    await transferRetry(id);
-    toast.success("Retrying transfer");
-  };
+
+  const handlePause = (id: string) =>
+    runControl(() => transferPause(id), {
+      success: "Transfer paused",
+      noop: "Pause isn't available for this transfer",
+      error: "Failed to pause transfer",
+    });
+  const handleResume = (id: string) =>
+    runControl(() => transferResume(id), {
+      success: "Transfer resumed",
+      noop: "Resume isn't available for this transfer",
+      error: "Failed to resume transfer",
+    });
+  const handleCancel = (id: string) =>
+    runControl(() => transferCancel(id), {
+      success: "Transfer cancelled",
+      noop: "Transfer already finished",
+      error: "Failed to cancel transfer",
+    });
+  const handleRetry = (id: string) =>
+    runControl(() => transferRetry(id), {
+      success: "Retrying transfer",
+      noop: "Retry isn't available for this transfer",
+      error: "Failed to retry transfer",
+    });
 
   const handleCancelAll = async () => {
     const pending = entries.filter((e) => !isTerminalTransferState(e.state));
