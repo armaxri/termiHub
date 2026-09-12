@@ -177,6 +177,31 @@ export async function onSessionOwnershipChanged(callback: () => void): Promise<U
   return await listen("session-ownership-changed", () => callback());
 }
 
+/** Payload for {@link onSessionOwnershipSuperseded} (SM-026). */
+export interface SessionOwnershipSupersededPayload {
+  /** The session whose ownership moved away from this window. */
+  sessionId: string;
+  /** The window label that now owns (and sizes) the session. */
+  newOwner: string;
+}
+
+/**
+ * Listen for a **targeted** `session-ownership-superseded` event (SM-026):
+ * another window just claimed a session this window was rendering, so this window
+ * has silently lost the right to resize that session's terminal (the backend
+ * `may_resize` guard now denies it). The backend emits this only to the
+ * superseded window, so it can explain the otherwise-mysterious "my terminal
+ * won't resize" to the user. Ownership/resize semantics are unchanged — this is
+ * purely an observability signal.
+ */
+export async function onSessionOwnershipSuperseded(
+  callback: (payload: SessionOwnershipSupersededPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SessionOwnershipSupersededPayload>("session-ownership-superseded", (event) =>
+    callback(event.payload)
+  );
+}
+
 /**
  * Singleton dispatcher that registers one global Tauri listener for each
  * terminal event type and routes events to per-session callbacks via Map

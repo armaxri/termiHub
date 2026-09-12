@@ -6,11 +6,16 @@
 //! freshly re-parented view. See [`crate::window`] for the coordinator.
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, EventTarget, Manager, State, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
+};
 
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
-use crate::window::{HandoffRecord, WindowLayoutReport, WindowManager, MAIN_WINDOW_LABEL};
+use crate::window::{
+    superseded_notification, HandoffRecord, WindowLayoutReport, WindowManager, MAIN_WINDOW_LABEL,
+};
 
 /// A window known to the app, as reported to the frontend window picker.
 ///
@@ -92,11 +97,27 @@ pub fn claim_session(
     window_manager: State<'_, WindowManager>,
 ) -> Option<String> {
     let previous = window_manager.claim(&session_id, window.label());
+    let app = window.app_handle();
     // Push the ownership change to every window (#1985) so a non-owning window
     // refreshes its `session → window` mirror immediately, instead of only once
     // a `transfer-progress` event happens to flow (which caused a brief flash).
-    if let Err(e) = window.app_handle().emit("session-ownership-changed", ()) {
+    if let Err(e) = app.emit("session-ownership-changed", ()) {
         tracing::warn!("Failed to emit session-ownership-changed on claim: {e}");
+    }
+    // SM-026: if this claim superseded a *different* window, tell that window it
+    // lost the session so its now-denied `resize` (`may_resize` → false) is
+    // explained to the user, instead of a terminal that silently won't resize.
+    // Single-owner semantics are unchanged — this only makes the loss observable.
+    if let Some((target, payload)) =
+        superseded_notification(previous.clone(), window.label(), &session_id)
+    {
+        if let Err(e) = app.emit_to(
+            EventTarget::labeled(&target),
+            "session-ownership-superseded",
+            payload,
+        ) {
+            tracing::warn!("Failed to emit session-ownership-superseded to {target}: {e}");
+        }
     }
     previous
 }
