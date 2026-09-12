@@ -88,6 +88,36 @@ struct ConnectedState {
     alive: Arc<AtomicBool>,
     /// Keeps opaque resources alive for the session lifetime (e.g. X11Forwarder).
     _extensions: Vec<Box<dyn std::any::Any + Send>>,
+    /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
+    /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
+    /// The graceful path and the guard must never both close the channel.
+    disconnected: bool,
+}
+
+impl Drop for ConnectedState {
+    /// Best-effort synchronous teardown for CORE-020: guarantees the SSH channel
+    /// is closed (EOF sent to the shell) and the session marked dead even when
+    /// the connected state is dropped WITHOUT a graceful
+    /// [`disconnect()`](ConnectionType::disconnect) — a panic between spawn and
+    /// store, an early `?` return, or a manager that forgets.
+    ///
+    /// `close` merely sends an `Eof` command over an unbounded channel to the
+    /// session task (non-blocking, callable from any thread), so it is safe to
+    /// invoke directly in `Drop`: no runtime is awaited and nothing blocks —
+    /// which is mandatory because `Drop` may run on a tokio worker thread where a
+    /// `block_on` would panic or deadlock. The `close` closure swallows its own
+    /// send error, so this can never panic.
+    ///
+    /// When [`disconnect()`](ConnectionType::disconnect) already ran it set
+    /// `disconnected = true` and this is a no-op, so the graceful path and this
+    /// guard never both close the channel.
+    fn drop(&mut self) {
+        if self.disconnected {
+            return;
+        }
+        self.alive.store(false, Ordering::SeqCst);
+        let _ = (self.close)();
+    }
 }
 
 impl Ssh {
@@ -687,6 +717,7 @@ impl ConnectionType for Ssh {
             close: handle.close,
             alive,
             _extensions: handle.extensions,
+            disconnected: false,
         });
 
         Ok(())
@@ -700,7 +731,11 @@ impl ConnectionType for Ssh {
         self.monitoring_provider = None;
         self.file_browser_provider = None;
 
-        if let Some(state) = self.state.take() {
+        if let Some(mut state) = self.state.take() {
+            // Mark the graceful path so the `Drop` guard on `state` (which runs
+            // when it goes out of scope at the end of this block) does not close
+            // the channel a second time (CORE-020 double-teardown guard).
+            state.disconnected = true;
             state.alive.store(false, Ordering::SeqCst);
             let _ = (state.close)();
             if let Ok(mut guard) = self.output_tx.lock() {
@@ -1779,6 +1814,75 @@ mod tests {
             .await
             .expect("disconnect on unconnected should not fail");
         assert!(!ssh.is_connected());
+    }
+
+    // --- Drop guard (CORE-020) --------------------------------------------
+
+    /// Build a `ConnectedState` with inert closures except `close`, which bumps
+    /// the shared counter so a test can observe whether the channel was closed.
+    fn drop_test_state(
+        disconnected: bool,
+        alive: Arc<AtomicBool>,
+        close_count: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> ConnectedState {
+        ConnectedState {
+            write: Arc::new(|_| Ok(())),
+            resize: Arc::new(|_, _| Ok(())),
+            _send_eof: Arc::new(|| Ok(())),
+            close: Arc::new(move || {
+                close_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }),
+            alive,
+            _extensions: Vec::new(),
+            disconnected,
+        }
+    }
+
+    /// Regression for CORE-020. Dropping a connected SSH state WITHOUT a graceful
+    /// `disconnect()` must still close the channel (send EOF to the shell) and
+    /// mark the session dead via the `Drop` guard, so the channel never leaks.
+    #[tokio::test]
+    async fn drop_without_disconnect_closes_channel() {
+        let alive = Arc::new(AtomicBool::new(true));
+        let close_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let state = drop_test_state(false, alive.clone(), close_count.clone());
+
+        // Drop the state without ever calling disconnect().
+        drop(state);
+
+        assert_eq!(
+            close_count.load(Ordering::SeqCst),
+            1,
+            "Drop must close the SSH channel best-effort when disconnect() was skipped (CORE-020)"
+        );
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "Drop must mark the session dead"
+        );
+    }
+
+    /// Double-teardown guard for CORE-020. A graceful `disconnect()` already
+    /// closed the channel and set `disconnected = true`; the subsequent drop of
+    /// the taken state must be a pure no-op — it must NOT close again nor touch
+    /// `alive`.
+    #[tokio::test]
+    async fn drop_after_disconnect_flag_is_noop() {
+        let alive = Arc::new(AtomicBool::new(true));
+        let close_count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let state = drop_test_state(true, alive.clone(), close_count.clone());
+
+        drop(state);
+
+        assert_eq!(
+            close_count.load(Ordering::SeqCst),
+            0,
+            "Drop with the disconnected flag set must not close the channel again"
+        );
+        assert!(
+            alive.load(Ordering::SeqCst),
+            "Drop with the disconnected flag set must not touch alive"
+        );
     }
 
     #[tokio::test]
