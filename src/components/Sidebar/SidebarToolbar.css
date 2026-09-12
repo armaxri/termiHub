@@ -1,0 +1,23 @@
+/**
+ * Shared sidebar toolbar (actions bar) chrome (UISF-019).
+ *
+ * Replaces the per-file `X-sidebar__actions` rule that every management sidebar
+ * duplicated (macro / tunnel / workflow / workspace / server / recent-sessions).
+ * The values match the previous inline rules exactly — `--spacing-xs` is 4px and
+ * `--spacing-sm` is 8px — so migrating a sidebar onto `<SidebarToolbar>` leaves
+ * its layout pixel-identical.
+ */
+.sidebar-toolbar {
+  display: flex;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.sidebar-toolbar--align-center {
+  align-items: center;
+}
+
+.sidebar-toolbar--justify-end {
+  justify-content: flex-end;
+}

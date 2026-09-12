@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { Button, toast, ConfirmDialog } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
+import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
 import {
@@ -184,7 +185,7 @@ export function TunnelSidebar() {
 
   return (
     <div className="tunnel-sidebar" data-testid="tunnel-sidebar">
-      <div className="tunnel-sidebar__actions">
+      <SidebarToolbar>
         <Button
           variant="ghost"
           size="sm"
@@ -195,7 +196,7 @@ export function TunnelSidebar() {
         >
           New Tunnel
         </Button>
-      </div>
+      </SidebarToolbar>
       {tunnels.length === 0 ? (
         <div className="tunnel-sidebar__empty" data-testid="tunnel-empty-message">
           <span>No SSH tunnels configured.</span>

@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { Plus, Save, Download, Upload } from "lucide-react";
+import { Plus, Save } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import {
   getAllTabsAcrossGroupTrees,
@@ -12,6 +12,8 @@ import { exportWorkspaces, importWorkspaces } from "@/services/workspaceApi";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
+import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
+import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
 import type { WorkspaceSummary } from "@/types/workspace";
 import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
@@ -208,7 +210,7 @@ export function WorkspaceSidebar() {
 
   return (
     <div className="workspace-sidebar" data-testid="workspace-sidebar">
-      <div className="workspace-sidebar__actions">
+      <SidebarToolbar>
         <Tooltip content="New Workspace" side="top">
           <Button
             variant="ghost"
@@ -233,29 +235,15 @@ export function WorkspaceSidebar() {
             Save Current
           </Button>
         </Tooltip>
-        <Tooltip content="Export Workspaces" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={<Download size={14} />}
-            onClick={handleExport}
-            aria-label="Export Workspaces"
-            data-testid="workspace-export-btn"
-          />
-        </Tooltip>
-        <Tooltip content="Import Workspaces" side="top">
-          <Button
-            variant="ghost"
-            size="sm"
-            iconOnly
-            icon={<Upload size={14} />}
-            onClick={handleImport}
-            aria-label="Import Workspaces"
-            data-testid="workspace-import-btn"
-          />
-        </Tooltip>
-      </div>
+        <ExportImportButtons
+          onExport={handleExport}
+          onImport={handleImport}
+          exportLabel="Export Workspaces"
+          importLabel="Import Workspaces"
+          exportTestId="workspace-export-btn"
+          importTestId="workspace-import-btn"
+        />
+      </SidebarToolbar>
       {workspaces.length === 0 ? (
         <div className="workspace-sidebar__empty" data-testid="workspace-empty-message">
           <span>No workspaces configured.</span>

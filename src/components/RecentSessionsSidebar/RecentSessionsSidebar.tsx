@@ -5,6 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { Button, ConfirmDialog, Input, Tooltip, toast } from "@/components/ui";
+import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
 import type { ConnectionConfig } from "@/types/terminal";
@@ -147,7 +148,7 @@ export function RecentSessionsSidebar() {
   return (
     <div className="recent-sessions" data-testid="recent-sessions-sidebar">
       <QuickConnectBar history={history} defaultUser={defaultUser} onConnect={openConnection} />
-      <div className="recent-sessions__actions">
+      <SidebarToolbar justify="end">
         <Tooltip content="Clear all history" side="top">
           <Button
             variant="ghost"
@@ -160,7 +161,7 @@ export function RecentSessionsSidebar() {
             data-testid="recent-sessions-clear"
           />
         </Tooltip>
-      </div>
+      </SidebarToolbar>
       {history.length > 0 && (
         <div className="recent-sessions__search">
           <Input
