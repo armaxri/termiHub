@@ -9,13 +9,31 @@
 //! hosts the tunnel (and thus resolves the forward target) moves (S3, part of
 //! #2139). See `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, MutexGuard};
+
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::backends::ssh::handler::{ForwardedChannelRegistry, IncomingChannel, SshSession};
 
 use super::config::{RemoteForwardConfig, TunnelStats};
 use super::local_forward::ForwarderStats;
 use super::MAX_CONCURRENT_FORWARDED_CONNECTIONS;
+
+/// Lock the forwarded-channel registry, recovering the guard if the mutex was
+/// poisoned by a panicking forwarder task (CORE-028).
+///
+/// The registry is a plain bound-port → sender `HashMap` that stays structurally
+/// valid across a panic, so recovering the guard is safe and — unlike
+/// `.lock().unwrap()` — stops one failed forwarder from cascading panics into
+/// every other tunnel that shares the registry.
+fn lock_registry(
+    registry: &ForwardedChannelRegistry,
+) -> MutexGuard<'_, HashMap<u32, UnboundedSender<IncomingChannel>>> {
+    registry
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// Manages a remote port forwarding tunnel.
 ///
@@ -78,7 +96,7 @@ impl RemoteForwarder {
         );
 
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<IncomingChannel>();
-        registry.lock().unwrap().insert(bound_port, tx);
+        lock_registry(&registry).insert(bound_port, tx);
 
         let stats = Arc::new(ForwarderStats::new());
         let stats_clone = Arc::clone(&stats);
@@ -123,9 +141,9 @@ impl RemoteForwarder {
         if let Some(handle) = self.task_handle.take() {
             handle.abort();
         }
-        if let Ok(mut reg) = self.registry.lock() {
-            reg.remove(&self.bound_port);
-        }
+        // Recover the guard on poison so deregistration still runs even after a
+        // sibling forwarder panicked while holding the lock (CORE-028).
+        lock_registry(&self.registry).remove(&self.bound_port);
     }
 
     async fn forward_loop(
@@ -304,5 +322,39 @@ mod tests {
         let snap = stats.to_tunnel_stats();
         assert_eq!(snap.bytes_sent, 0);
         assert_eq!(snap.bytes_received, 0);
+    }
+
+    /// CORE-028: a forwarder task panicking while it holds the registry lock
+    /// must not turn every later registry access into a panic. The production
+    /// accessor recovers the poisoned guard, so `start`'s insert and `stop`'s
+    /// remove keep working for all the other tunnels sharing the registry.
+    #[test]
+    fn lock_registry_recovers_from_poison() {
+        use std::sync::Mutex;
+
+        let registry: ForwardedChannelRegistry = Arc::new(Mutex::new(HashMap::new()));
+
+        // Poison the mutex the way a panicking forwarder task would: panic while
+        // holding the lock. `catch_unwind` keeps the test process alive.
+        let to_poison = Arc::clone(&registry);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = to_poison.lock().expect("first lock");
+            panic!("simulated forwarder panic while holding registry lock");
+        }));
+        assert!(result.is_err(), "closure should have panicked");
+        assert!(
+            registry.lock().is_err(),
+            "mutex must be poisoned after the panic"
+        );
+
+        // The production accessor still yields a usable guard instead of
+        // propagating the poison as another panic.
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        lock_registry(&registry).insert(4242, tx);
+        assert_eq!(
+            lock_registry(&registry).len(),
+            1,
+            "recovered guard must expose the inserted entry"
+        );
     }
 }
