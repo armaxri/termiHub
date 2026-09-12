@@ -204,7 +204,7 @@ tempfile = "3"
 # (#2192) without binding a real socket.
 tower = { version = "0.5", features = ["util"] }
 temp-env = "0.3"
-tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net"] }
+tokio = { version = "1", features = ["rt", "macros", "time", "sync", "net", "test-util"] }
 serde_json = { workspace = true }
 russh = { workspace = true }
 # Property-based testing for the panel-tree algebra (#2143) — its pure-function

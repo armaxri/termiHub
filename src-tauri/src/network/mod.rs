@@ -93,8 +93,8 @@ pub struct NetworkManager {
     /// Per-monitor run-location preference — which machine hosts each monitor
     /// (#2592). Keyed by monitor id. In-memory today (like the embedded-server
     /// preference, #2214); an absent entry means [`RunLocation::ThisComputer`],
-    /// the desktop default and today's behaviour. Persisted configs auto-start
-    /// on this computer after a relaunch, exactly as before.
+    /// the desktop default and today's behaviour. Persisted configs load stopped
+    /// on this computer after a relaunch (PERF-008); a resume runs them locally.
     monitor_run_locations: Mutex<HashMap<String, RunLocation>>,
     /// Handle to the single periodic agent `service.status` poller task (#2592).
     /// `Some` while at least one agent-hosted monitor exists; the task self-reaps
@@ -230,14 +230,15 @@ impl NetworkManager {
                 error!("Failed to load WoL devices: {e}");
             }
         }
-        // Reload persisted HTTP monitor configs and auto-start a poll loop for
-        // each, so a monitor configured before the last shutdown resumes on
-        // launch instead of silently vanishing.
+        // Reload persisted HTTP monitor configs and list each as a *stopped*
+        // monitor (PERF-008): a saved monitor is no longer auto-started into a
+        // continuously-polling loop on launch. It still appears in the UI (so it
+        // does not silently vanish and can be resumed) but does zero network work
+        // until the user starts/resumes it. This removes the steady-state
+        // CPU/network cost of every saved monitor firing requests from launch,
+        // forever, whether or not the monitors view is ever opened.
         for config in self.load_persisted_monitor_configs() {
-            let id = config.id.clone();
-            if let Err(e) = self.spawn_http_monitor(config) {
-                error!(monitor_id = %id, "Failed to auto-start persisted HTTP monitor: {e}");
-            }
+            self.load_http_monitor_stopped(config);
         }
     }
 
@@ -332,8 +333,9 @@ impl NetworkManager {
     /// `run_location` records where the monitor should run (default:
     /// [`RunLocation::ThisComputer`]); an agent choice hosts the monitor on that
     /// agent (#2592). The config is written to disk (see [`http_monitor_storage`])
-    /// so the monitor is auto-restarted on the next launch. Runtime state (last
-    /// result, running flag) and the run-location choice are never persisted.
+    /// so the monitor survives a relaunch — where it loads *stopped* and is
+    /// resumed on demand (PERF-008), rather than auto-starting. Runtime state
+    /// (last result, running flag) and the run-location choice are never persisted.
     pub fn start_http_monitor(
         &self,
         config: HttpMonitorConfig,
@@ -348,9 +350,10 @@ impl NetworkManager {
     }
 
     /// Spawn the poll loop for a config and track its service, **without**
-    /// touching disk. Used both by [`start_http_monitor`](Self::start_http_monitor)
-    /// (after persisting) and by [`init`](Self::init) when auto-starting the
-    /// persisted monitors on launch.
+    /// touching disk. Used by [`start_http_monitor`](Self::start_http_monitor)
+    /// (after persisting) and on resume. On launch, [`init`](Self::init) instead
+    /// loads persisted monitors *stopped* via
+    /// [`load_http_monitor_stopped`](Self::load_http_monitor_stopped) (PERF-008).
     ///
     /// The monitor's run-location is resolved through the [`RunLocationResolver`]
     /// from its recorded preference (default: local). A monitor resolving to an
@@ -392,6 +395,32 @@ impl NetworkManager {
             monitors.insert(id.clone(), service);
         }
         Ok(id)
+    }
+
+    /// Load a persisted monitor as **stopped-but-listed** on launch, without
+    /// starting its poll loop (PERF-008).
+    ///
+    /// Unlike [`spawn_http_monitor`](Self::spawn_http_monitor) this does no
+    /// network work: the monitor is listed as `running: false` and only resumes
+    /// polling once the user starts it. The event bridge is wired up front (when
+    /// an app handle is available) so check results reach the frontend the moment
+    /// the monitor is resumed — a resume re-spawns the loop on the same channel.
+    /// Persisted monitors always resolve to this computer on launch (the
+    /// run-location preference is in-memory and starts empty), so only the desktop
+    /// path is needed here.
+    fn load_http_monitor_stopped(&self, config: HttpMonitorConfig) {
+        let id = config.id.clone();
+        let service = HttpMonitorService::stopped_with(config);
+        // Wire the bridge now so a later resume forwards events without a
+        // re-subscribe; skipped only when there is no app handle (e.g. in unit
+        // tests), where the stopped monitor emits nothing anyway.
+        if let Some(app) = self.app_handle() {
+            let events = service.subscribe_events();
+            spawn_event_bridge(app, events);
+        }
+        if let Ok(mut monitors) = self.http_monitors.lock() {
+            monitors.insert(id, service);
+        }
     }
 
     // ── Agent-hosted monitors (#2592) ────────────────────────────────────────
@@ -1277,6 +1306,37 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].id, id);
         assert_eq!(loaded[0].url, "https://example.com/health");
+    }
+
+    #[test]
+    fn persisted_monitors_load_stopped_not_auto_started() {
+        // PERF-008: on launch a saved monitor must be *listed* but *stopped* — it
+        // must not auto-start a continuously-polling loop. The user resumes it
+        // when they actually want it running.
+        let dir = tempfile::TempDir::new().expect("tempdir");
+        let mgr = manager_with_config_dir(dir.path());
+        let cfg = HttpMonitorConfig::new(
+            "https://example.com/health".into(),
+            30_000,
+            "GET".into(),
+            200,
+            5_000,
+        );
+        let id = cfg.id.clone();
+        mgr.persist_monitor_config(cfg).expect("persist config");
+
+        // Mirror what `init` does at launch: load each persisted config stopped.
+        for config in mgr.load_persisted_monitor_configs() {
+            mgr.load_http_monitor_stopped(config);
+        }
+
+        let listed = mgr.list_http_monitors();
+        assert_eq!(listed.len(), 1, "the saved monitor is still listed");
+        assert_eq!(listed[0].config.id, id);
+        assert!(
+            !listed[0].running,
+            "a saved monitor must load stopped, not auto-started (PERF-008)"
+        );
     }
 
     #[test]
