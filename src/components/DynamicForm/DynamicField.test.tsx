@@ -282,6 +282,60 @@ describe("DynamicField", () => {
     });
   });
 
+  // UX-009: extended `helpText` must surface a "?" affordance on *every* field
+  // type, not only booleans. Previously non-boolean fields (number, key-value,
+  // text such as SSH's Connect Timeout / Environment Variables / On-reconnect
+  // Command) silently dropped their authored guidance.
+  describe("help affordance on non-boolean fields (UX-009)", () => {
+    it("shows a help button for a text field with helpText", () => {
+      renderField(textField("onReconnectCommand", { helpText: "Runs after reconnect." }), "", vi.fn());
+      expect(query("field-onReconnectCommand-help")).toBeTruthy();
+    });
+
+    it("shows no help button for a text field without helpText", () => {
+      renderField(textField("host"), "", vi.fn());
+      expect(query("field-host-help")).toBeNull();
+    });
+
+    it("opens a modal with the field's helpText paragraphs from a number field", () => {
+      const field: SettingsField = {
+        key: "connectTimeoutSecs",
+        label: "Connect Timeout (s)",
+        fieldType: { type: "number", min: 1, max: 300 },
+        required: false,
+        helpText: "First paragraph.\n\nSecond paragraph.",
+      };
+      renderField(field, undefined, vi.fn());
+      act(() => {
+        (query("field-connectTimeoutSecs-help") as HTMLElement).click();
+      });
+      const dialog = document.querySelector('[role="dialog"]') as HTMLElement;
+      expect(dialog).toBeTruthy();
+      expect(dialog.textContent).toContain("Connect Timeout (s)");
+      expect(dialog.textContent).toContain("First paragraph.");
+      expect(dialog.textContent).toContain("Second paragraph.");
+    });
+
+    it("shows a help button for a key-value list field with helpText", () => {
+      const field: SettingsField = {
+        key: "env",
+        label: "Environment Variables",
+        fieldType: { type: "keyValueList" },
+        required: false,
+        helpText: "Extra env vars for the remote shell.",
+      };
+      renderField(field, [], vi.fn());
+      expect(query("field-env-help")).toBeTruthy();
+    });
+
+    it("keeps the help button beside the label, not nested inside it", () => {
+      renderField(textField("onReconnectCommand", { helpText: "Runs after reconnect." }), "", vi.fn());
+      const button = query("field-onReconnectCommand-help") as HTMLElement;
+      // A <button> must never be a descendant of a <label> (invalid + a11y).
+      expect(button.closest("label")).toBeNull();
+    });
+  });
+
   describe("select field", () => {
     it("renders select with options", () => {
       const field: SettingsField = {
