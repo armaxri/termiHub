@@ -93,13 +93,24 @@ pub const HELPER_BIN_NAME: &str = "termihub-rdp-helper.exe";
 #[cfg(not(windows))]
 pub const HELPER_BIN_NAME: &str = "termihub-rdp-helper";
 
-/// Resolve the sidecar binary path: `$TERMIHUB_RDP_HELPER`, then next to the
-/// running executable (where Tauri places a bundled sidecar), then the bare
-/// name (resolved on `PATH` at spawn time).
+/// Resolve the sidecar binary to a single **absolute** path: `$TERMIHUB_RDP_HELPER`,
+/// then next to the running executable (where Tauri places a bundled sidecar),
+/// then a `PATH` lookup of the bare name.
 ///
-/// Only the first two are validated to exist; the bare-name fallback defers to
-/// the OS so a helper on `PATH` still works, and a genuinely-missing binary
-/// surfaces as an actionable spawn error.
+/// Resolving the bare-name fallback to an absolute path here — rather than
+/// deferring it to the OS at spawn — is a security requirement, not a
+/// convenience (CORE-011). The pre-spawn integrity check hashes this exact path
+/// and `Command::new` spawns it: if it were a bare name, `sha256_hex_of_file`
+/// would open it **relative to CWD** while spawn resolves it via **`PATH`** —
+/// potentially two different files, so the digest would verify one binary and a
+/// different one would run. A `which`-style `PATH` lookup pins the exact file
+/// the OS would execute, guaranteeing hash-file == spawn-file.
+///
+/// When the helper is on none of these, the bare name is returned unchanged so a
+/// genuinely-missing binary still surfaces as an actionable spawn error — and,
+/// in a release build with an embedded digest, hashing that name fails and
+/// refuses to spawn (fail-closed). No divergent binary can execute: spawn of a
+/// bare name searches `PATH` (never CWD), which we just proved is empty.
 pub fn resolve_helper_binary() -> PathBuf {
     if let Some(p) = std::env::var_os(HELPER_PATH_ENV) {
         let p = PathBuf::from(p);
@@ -119,7 +130,10 @@ pub fn resolve_helper_binary() -> PathBuf {
             }
         }
     }
-    PathBuf::from(HELPER_BIN_NAME)
+    // Resolve the bare name to the absolute path `Command::new` would execute, so
+    // hashing and spawning reference the same file (CORE-011). Fall back to the
+    // bare name only when it is on no `PATH` entry (fail-closed, see above).
+    which::which(HELPER_BIN_NAME).unwrap_or_else(|_| PathBuf::from(HELPER_BIN_NAME))
 }
 
 /// Wrap a message as a [`SessionError::Io`] (its inner type is a
@@ -541,12 +555,23 @@ impl ConnectionType for SidecarRdp {
         let cfg = Self::parse_config(settings)?;
         let view_only = cfg.view_only;
 
+        // Resolve to a single ABSOLUTE path once, then hash and spawn *that same
+        // path* — never the bare name — so the integrity check verifies the exact
+        // file `Command::new` executes (CORE-011). See [`resolve_helper_binary`].
         let helper = resolve_helper_binary();
         // Refuse to launch a sidecar whose bytes do not match the SHA-256
         // embedded at build time (#1762) — a tampered/corrupted/wrong-arch
         // helper fails the connection here, before it can run. The check is
         // skipped when the $TERMIHUB_RDP_HELPER override is set (dev/test) or no
         // digest was embedded (dev/branch builds); see [`integrity`].
+        //
+        // This hash runs immediately before the spawn below, off the same
+        // absolute path, minimising the check→exec window. A narrow TOCTOU window
+        // remains — an attacker able to replace the on-disk file between this hash
+        // and the spawn could still swap it; closing it fully needs a single file
+        // handle hashed and exec'd via fexecve/`/proc/self/fd` (Unix), tracked as
+        // a follow-up. Replacing the file requires write access to a trusted
+        // install location, so this residual window is narrow.
         let override_active = std::env::var_os(HELPER_PATH_ENV).is_some();
         integrity::verify_helper_integrity(
             &helper,
