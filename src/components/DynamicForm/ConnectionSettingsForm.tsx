@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useForm, useWatch, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
-import type { SettingsSchema } from "@/types/schema";
+import { ChevronRight } from "lucide-react";
+import type { SettingsSchema, SettingsGroup } from "@/types/schema";
 import { isFieldVisible } from "@/utils/schemaDefaults";
 import { parseHostPort } from "@/utils/parseHostPort";
 import { ftpPortForTlsMode } from "@/utils/ftpSecurity";
@@ -258,12 +259,7 @@ export function ConnectionSettingsForm({
         const visibleFields = group.fields.filter((f) => isFieldVisible(f, watchedValues));
         if (visibleFields.length === 0) return null;
         return (
-          <div
-            className="settings-panel__category"
-            key={group.key}
-            data-testid={`form-group-${group.key}`}
-          >
-            <h3 className="settings-panel__category-title">{group.label}</h3>
+          <FormGroupSection key={group.key} group={group}>
             {visibleFields.map((field) =>
               // Display-only notice fields carry no value, so they render
               // standalone rather than through a react-hook-form Controller.
@@ -295,9 +291,73 @@ export function ConnectionSettingsForm({
                 />
               )
             )}
-          </div>
+          </FormGroupSection>
         );
       })}
+    </div>
+  );
+}
+
+/**
+ * One settings group section. A plain group renders its label as a static
+ * heading with its fields below. A group flagged `collapsed` (progressive
+ * disclosure, UX-008) renders instead as an expander: a real `<button>` header
+ * with `aria-expanded`/`aria-controls` and a rotating chevron, starting
+ * collapsed. The fields always stay mounted — collapsing toggles the `hidden`
+ * attribute, so react-hook-form keeps every value and validation still runs
+ * against the live form values; nothing is unregistered or dropped.
+ */
+function FormGroupSection({
+  group,
+  children,
+}: {
+  group: SettingsGroup;
+  children: React.ReactNode;
+}) {
+  const collapsible = group.collapsed === true;
+  const [open, setOpen] = useState(!collapsible);
+  const contentId = `${useId()}-group-content`;
+
+  if (!collapsible) {
+    return (
+      <div className="settings-panel__category" data-testid={`form-group-${group.key}`}>
+        <h3 className="settings-panel__category-title">{group.label}</h3>
+        {children}
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="settings-panel__category settings-panel__category--collapsible"
+      data-testid={`form-group-${group.key}`}
+    >
+      <button
+        type="button"
+        className="settings-panel__category-toggle"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setOpen((prev) => !prev)}
+        data-testid={`form-group-${group.key}-toggle`}
+      >
+        <ChevronRight
+          size={14}
+          className="settings-panel__category-chevron"
+          data-open={open || undefined}
+          aria-hidden="true"
+        />
+        <span className="settings-panel__category-title settings-panel__category-title--button">
+          {group.label}
+        </span>
+      </button>
+      <div
+        id={contentId}
+        className="settings-panel__category-content"
+        hidden={!open}
+        data-testid={`form-group-${group.key}-content`}
+      >
+        {children}
+      </div>
     </div>
   );
 }

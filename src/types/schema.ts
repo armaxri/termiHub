@@ -16,6 +16,15 @@ export interface SettingsGroup {
   key: string;
   label: string;
   fields: SettingsField[];
+  /**
+   * Progressive-disclosure hint (UX-008): when `true` the form renders this
+   * group collapsed by default behind an "Advanced"-style expander, so a basic
+   * connection surfaces only the essential groups. Absent/`false` means the
+   * group is expanded (the backend omits the field entirely when false), so
+   * groups that don't opt in are unaffected. Collapsing only hides the group
+   * visually — its fields stay registered and their values/validation persist.
+   */
+  collapsed?: boolean;
 }
 
 /** A single settings field with metadata for UI rendering and validation. */

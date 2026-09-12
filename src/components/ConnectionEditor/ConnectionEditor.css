@@ -459,6 +459,79 @@
   vertical-align: middle;
 }
 
+/* === Collapsible settings group (progressive disclosure, UX-008) === */
+
+/* The expander header for a collapsed-by-default group (e.g. SSH "Advanced").
+   A real <button> so it is keyboard-focusable and announces aria-expanded;
+   styled to read like the static category heading it replaces. */
+.settings-panel__category-toggle {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  width: 100%;
+  padding: 0 0 var(--spacing-xs);
+  margin: 0 0 var(--spacing-md);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border-secondary);
+  color: var(--text-secondary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-panel__category-toggle:hover {
+  color: var(--text-primary);
+}
+
+/* The group label inside the expander button. Explicit type styling so it does
+   not depend on the static category-title rule being loaded in this context. */
+.settings-panel__category-title--button {
+  margin: 0;
+  padding: 0;
+  border: none;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.settings-panel__category-chevron {
+  flex-shrink: 0;
+  transition: transform var(--transition-fast);
+}
+
+/* Rotate the chevron from pointing right (collapsed) to down (expanded). */
+.settings-panel__category-chevron[data-open] {
+  transform: rotate(90deg);
+}
+
+/* Gentle reveal when the group opens; the fields stay mounted while hidden. */
+.settings-panel__category-content:not([hidden]) {
+  animation: settings-group-reveal var(--transition-normal);
+}
+
+@keyframes settings-group-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .settings-panel__category-chevron {
+    transition: none;
+  }
+
+  .settings-panel__category-content:not([hidden]) {
+    animation: none;
+  }
+}
+
 /* A plugin-provided connection type in the type selector (#2002): its name
    preceded by a puzzle-piece badge, distinguishing it from the built-ins. */
 .connection-editor__plugin-type {
