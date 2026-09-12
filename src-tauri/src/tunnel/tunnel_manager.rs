@@ -21,6 +21,7 @@ use super::dynamic_forward::DynamicForwarder;
 use super::local_forward::LocalForwarder;
 use super::remote_forward::RemoteForwarder;
 use super::storage::TunnelStorage;
+use crate::agent_service::{agent_rpc_client, AgentStatusPollDelegate, AgentStatusPoller};
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
 use crate::run_location::{Locality, ResolvedLocation, RunLocationResolver};
@@ -273,6 +274,65 @@ fn snapshot_active_stats(active: &HashMap<String, ActiveTunnel>) -> Vec<TunnelSt
         .collect()
 }
 
+/// The tunnel side of the shared agent status poller (DUP-020).
+///
+/// Supplies the tunnel-specific pieces to [`AgentStatusPoller`]: the live
+/// agent-tunnel targets, the `tunnel.status` batch (via
+/// [`poll_agent_tunnel_stats`]), and the write-back that refreshes each handle's
+/// stats then republishes the `tunnels` region (#2199). `bound_address` /
+/// `reachable_from` are fixed at bind time (from the start reply), so only the
+/// stats are refreshed. `publish_tunnels` runs every polled tick, matching the
+/// prior poller — its diff makes an unchanged tick a no-op.
+struct AgentTunnelPoll {
+    agent_tunnels: Arc<Mutex<HashMap<String, AgentTunnelHandle>>>,
+    app: AppHandle,
+}
+
+impl AgentStatusPollDelegate for AgentTunnelPoll {
+    type Sample = (String, TunnelStats);
+
+    fn interval(&self) -> Duration {
+        STATS_EMIT_INTERVAL
+    }
+
+    fn client(&self) -> Option<Arc<dyn AgentRpcClient>> {
+        agent_rpc_client(&self.app)
+    }
+
+    fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
+        match self.agent_tunnels.lock() {
+            Ok(map) => {
+                let targets = map
+                    .iter()
+                    .map(|(id, handle)| (id.clone(), handle.agent_id.clone()))
+                    .collect();
+                (targets, !map.is_empty())
+            }
+            // A poisoned lock stops the poller, exactly as the old `break` did.
+            Err(_) => (Vec::new(), false),
+        }
+    }
+
+    fn poll(
+        client: Arc<dyn AgentRpcClient>,
+        targets: &[(String, String)],
+    ) -> Vec<(String, TunnelStats)> {
+        poll_agent_tunnel_stats(client, targets)
+    }
+
+    fn apply(&self, samples: Vec<(String, TunnelStats)>) {
+        if let Ok(mut map) = self.agent_tunnels.lock() {
+            for (tunnel_id, stats) in samples {
+                if let Some(handle) = map.get_mut(&tunnel_id) {
+                    handle.stats = stats;
+                }
+            }
+        }
+        // Project the refreshed stats onto the `tunnels` region (#2199).
+        crate::tunnel::projection::publish_tunnels(&self.app);
+    }
+}
+
 /// Poll each agent-hosted tunnel's live `tunnel.status` over the agent RPC,
 /// returning the fresh stats per still-running tunnel (#2199).
 ///
@@ -416,13 +476,13 @@ pub struct TunnelManager {
     /// `Some` while at least one tunnel is active; the task self-reaps and clears
     /// this slot once no tunnel remains, and `stop_all` aborts it on shutdown.
     stats_emitter: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
-    /// Handle to the single periodic agent `tunnel.status` poller task (#2199).
-    /// `Some` while at least one agent-hosted tunnel exists; the task self-reaps
-    /// and clears this slot once none remain, and `stop_all` aborts it on
-    /// shutdown. Distinct from `stats_emitter` because agent tunnels live in
-    /// their own track (`agent_tunnels`) and are sampled over the agent RPC
-    /// rather than from a local forwarder.
-    agent_stats_poller: Arc<Mutex<Option<tokio::task::JoinHandle<()>>>>,
+    /// The single periodic agent `tunnel.status` poller (#2199). Runs while at
+    /// least one agent-hosted tunnel exists, self-reaping once none remain.
+    /// Distinct from `stats_emitter` because agent tunnels live in their own track
+    /// (`agent_tunnels`) and are sampled over the agent RPC rather than from a
+    /// local forwarder; the shared [`AgentStatusPoller`] owns the task lifecycle
+    /// (DUP-020).
+    agent_stats_poller: AgentStatusPoller,
 }
 
 impl TunnelManager {
@@ -447,7 +507,7 @@ impl TunnelManager {
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
             stats_emitter: Arc::new(Mutex::new(None)),
-            agent_stats_poller: Arc::new(Mutex::new(None)),
+            agent_stats_poller: AgentStatusPoller::new(),
         })
     }
 
@@ -821,12 +881,9 @@ impl TunnelManager {
             }
         };
 
-        let agent_manager = self
-            .app_handle
-            .try_state::<Arc<dyn AgentRpcClient>>()
-            .ok_or_else(|| {
-                TerminalError::TunnelError("Agent manager is not available".to_string())
-            })?;
+        let agent_manager = agent_rpc_client(&self.app_handle).ok_or_else(|| {
+            TerminalError::TunnelError("Agent manager is not available".to_string())
+        })?;
 
         // Send the tunnel.start request. `forward` is the agent's
         // internally-tagged `TunnelForwardSpec` shape (built above): the
@@ -866,7 +923,7 @@ impl TunnelManager {
                 self.emit_status(tunnel_id, TunnelStatus::Connected, None);
                 // Sample the agent's live stats periodically so the projection's
                 // ↑/↓ bytes + conn count update instead of resting at zero (#2199).
-                self.ensure_agent_stats_poller();
+                self.ensure_status_poller();
                 tracing::info!(
                     "Tunnel {} started on agent {} (bound {} on the agent, reachable from {:?})",
                     tunnel_id,
@@ -899,7 +956,7 @@ impl TunnelManager {
         let Some(handle) = handle else {
             return false;
         };
-        if let Some(agent_manager) = self.app_handle.try_state::<Arc<dyn AgentRpcClient>>() {
+        if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
             let params = serde_json::json!({ "tunnelId": tunnel_id });
             if let Err(e) = agent_manager.send_request(&handle.agent_id, "tunnel.stop", params) {
                 tracing::warn!(
@@ -974,102 +1031,15 @@ impl TunnelManager {
         *slot = Some(handle);
     }
 
-    /// Ensure the single periodic agent `tunnel.status` poller task is running
-    /// (#2199).
-    ///
-    /// Idempotent, mirroring [`Self::ensure_stats_emitter`] but for agent-hosted
-    /// tunnels: every [`STATS_EMIT_INTERVAL`] it snapshots the live agent-tunnel
-    /// set, polls each one's `tunnel.status` over the agent RPC **off** the
-    /// projection's single-writer dispatcher (a plain background task, with the
-    /// blocking RPC batch on a `spawn_blocking` thread), writes the fresh stats
-    /// back into the handles, and republishes the `tunnels` region so
-    /// subscribers see live ↑/↓ bytes + connection counts. The task self-reaps
-    /// (clearing this slot) once no agent tunnel remains, so a stopped tunnel
-    /// naturally ends the polling.
-    fn ensure_agent_stats_poller(&self) {
-        let mut slot = match self.agent_stats_poller.lock() {
-            Ok(slot) => slot,
-            Err(_) => return,
-        };
-        // Already running (and not yet finished) — nothing to do.
-        if slot.as_ref().is_some_and(|handle| !handle.is_finished()) {
-            return;
-        }
-
-        let agent_tunnels = Arc::clone(&self.agent_tunnels);
-        let app_handle = self.app_handle.clone();
-        let poller_slot = Arc::clone(&self.agent_stats_poller);
-
-        let handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(STATS_EMIT_INTERVAL).await;
-
-                // Snapshot the (tunnel id, agent id) targets under the lock, then
-                // release it before any RPC so a slow agent never blocks a
-                // start/stop that also touches this map.
-                let targets: Vec<(String, String)> = match agent_tunnels.lock() {
-                    Ok(map) => map
-                        .iter()
-                        .map(|(id, handle)| (id.clone(), handle.agent_id.clone()))
-                        .collect(),
-                    Err(_) => break,
-                };
-
-                // No agent-hosted tunnel left: stop polling and clear the slot so
-                // a later start re-spawns the task.
-                if targets.is_empty() {
-                    break;
-                }
-
-                // Resolve the agent RPC client fresh each tick (an agent may
-                // connect after the poller started). Absent → skip this tick.
-                let Some(client) = app_handle
-                    .try_state::<Arc<dyn AgentRpcClient>>()
-                    .map(|state| (*state).clone())
-                else {
-                    continue;
-                };
-
-                // `tunnel.status` is a blocking RPC; run the whole batch on a
-                // blocking thread so no async worker is stalled (mirrors how the
-                // agent-tunnel start path runs its blocking RPC).
-                let samples =
-                    tokio::task::spawn_blocking(move || poll_agent_tunnel_stats(client, &targets))
-                        .await
-                        .unwrap_or_default();
-
-                // Write the fresh samples back into the live handles under the
-                // lock. `bound_address` / `reachable_from` are fixed at bind time
-                // (from the start reply), so only the stats are refreshed here.
-                if let Ok(mut map) = agent_tunnels.lock() {
-                    for (tunnel_id, stats) in samples {
-                        if let Some(handle) = map.get_mut(&tunnel_id) {
-                            handle.stats = stats;
-                        }
-                    }
-                }
-
-                // Project the refreshed stats onto the `tunnels` region (#2199).
-                // `publish` diffs, so an unchanged tick is a no-op.
-                crate::tunnel::projection::publish_tunnels(&app_handle);
-            }
-
-            // Self-reap: drop our own handle so a later start re-spawns the task.
-            if let Ok(mut slot) = poller_slot.lock() {
-                *slot = None;
-            }
+    /// Ensure the single periodic agent `tunnel.status` poller is running
+    /// (#2199). Idempotent; the shared [`AgentStatusPoller`] owns the task
+    /// lifecycle and the [`AgentTunnelPoll`] delegate supplies the tunnel-specific
+    /// poll + stats write-back / projection republish (DUP-020).
+    fn ensure_status_poller(&self) {
+        self.agent_stats_poller.ensure(AgentTunnelPoll {
+            agent_tunnels: Arc::clone(&self.agent_tunnels),
+            app: self.app_handle.clone(),
         });
-
-        *slot = Some(handle);
-    }
-
-    /// Abort the agent `tunnel.status` poller task (if any) and clear its slot.
-    fn stop_agent_stats_poller(&self) {
-        if let Ok(mut slot) = self.agent_stats_poller.lock() {
-            if let Some(handle) = slot.take() {
-                handle.abort();
-            }
-        }
     }
 
     /// Build the forwarder for a tunnel config, performing the SSH handshake.
@@ -1454,7 +1424,7 @@ impl TunnelManager {
         // for its next tick to observe the now-empty active set (GAP 6, #1248).
         self.stop_stats_emitter();
         // Likewise abort the agent `tunnel.status` poller (#2199).
-        self.stop_agent_stats_poller();
+        self.agent_stats_poller.stop();
     }
 
     /// Abort the live-stats emitter task (if any) and clear its tracking slot.

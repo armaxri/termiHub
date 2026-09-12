@@ -1,3 +1,7 @@
+/// Shared "desktop controls a service hosted on a remote agent" control layer:
+/// the periodic agent `*.status` poller lifecycle reused by the embedded-server,
+/// HTTP-monitor, and tunnel managers (DUP-020).
+mod agent_service;
 /// Agents authority (#2226, Phase 5 of #2139): the shared `agents`
 /// projection region + `agent.*` intents modeling the agents slice
 /// (the ordered agent list + per-agent sessions/definitions/folders). Drives the
