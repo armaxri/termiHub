@@ -165,6 +165,10 @@
   --control-height-md: 28px;
   --control-height-lg: 32px;
 
+  /* Tab-color picker (react-colorful) saturation/hue area height. The library
+     ships a 200px square; we constrain it to fit the compact dialog. */
+  --color-picker-height: 150px;
+
   /* Overlay / modal scrim (static: a dark scrim + blur reads correctly in all
      four current themes) */
   --overlay-bg: rgba(6, 7, 10, 0.66);
