@@ -9,6 +9,7 @@ import { useElapsed } from "@/hooks/useElapsed";
 import { getPlatform } from "@/utils/platform";
 import { backendFamilyFromSessionType, connectionErrorHint } from "@/utils/connectionErrorHints";
 import { sshAgentStartCommand } from "@/utils/sshAgentSetup";
+import { formatElapsed } from "@/utils/formatters";
 import "./TerminalConnectionOverlay.css";
 
 interface TerminalConnectionOverlayProps {
@@ -48,14 +49,6 @@ const SERIAL_PERMISSION_HINT: Record<"windows" | "macos", string> = {
 
 /** Seconds after which a still-pending connect is flagged as unusually slow. */
 const SLOW_CONNECT_THRESHOLD_SECONDS = 20;
-
-/** Formats whole seconds as a compact `mm:ss`-ish readout: `5s`, `1m 05s`. */
-function formatElapsed(seconds: number): string {
-  if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}m ${String(secs).padStart(2, "0")}s`;
-}
 
 /**
  * Copy a suggested fix command to the clipboard so the user can paste and run it

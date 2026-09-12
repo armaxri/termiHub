@@ -9,6 +9,7 @@ import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem"
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
 import { serverStatusLabel } from "@/utils/statusLabel";
+import { formatBytes } from "@/utils/formatters";
 import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
@@ -45,12 +46,6 @@ function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   if (typeof err === "string") return err;
   return String(err);
-}
-
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function serverUrl(config: EmbeddedServerConfig): string {
@@ -135,7 +130,7 @@ export function EmbeddedServerItem({
   };
 
   const statsLine = (stats: ServerStats) =>
-    `${stats.activeConnections} conn · ↑ ${formatBytes(stats.bytesSent)} ↓ ${formatBytes(stats.bytesReceived)}`;
+    `${stats.activeConnections} conn · ↑ ${formatBytes(stats.bytesSent, { maxUnit: "MB" })} ↓ ${formatBytes(stats.bytesReceived, { maxUnit: "MB" })}`;
 
   return (
     <ContextMenu.Root>

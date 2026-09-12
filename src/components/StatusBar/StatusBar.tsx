@@ -30,6 +30,7 @@ import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { summarizeAgentUpdates } from "@/utils/agentVersion";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
+import { formatBytes } from "@/utils/formatters";
 import type { ConnectionTypeInfo } from "@/services/api";
 import {
   SystemStats,
@@ -64,11 +65,13 @@ function formatIntervalLabel(intervalMs: number): string {
   return `${Math.round(intervalMs / 1000)}s`;
 }
 
-/** Format kB into a human-readable size. */
+/**
+ * Format a kB count (as reported by the system monitor) into a human-readable,
+ * locale-aware size. Delegates to the shared {@link formatBytes} after scaling
+ * kB → bytes, so every byte-size readout shares one implementation (LIBFE-002).
+ */
 function formatKb(kb: number): string {
-  if (kb < 1024) return `${kb} KB`;
-  if (kb < 1024 * 1024) return `${(kb / 1024).toFixed(1)} MB`;
-  return `${(kb / (1024 * 1024)).toFixed(1)} GB`;
+  return formatBytes(kb * 1024);
 }
 
 /** Check if a connection type supports monitoring.
