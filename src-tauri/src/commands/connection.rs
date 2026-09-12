@@ -10,6 +10,7 @@ use crate::connection::config::{
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::recovery::RecoveryWarning;
 use crate::connection::settings::AppSettings;
+use crate::credential::crypto::DecryptError;
 use crate::credential::CredentialManager;
 
 /// Response containing all connections (unified), folders, and agents.
@@ -323,24 +324,69 @@ pub fn preview_import(json: String) -> Result<ImportPreview, String> {
     manager::preview_import_json(&json).map_err(|e| e.to_string())
 }
 
+/// A structured import failure surfaced to the frontend.
+///
+/// Serializes adjacently-tagged as `{ "kind": "wrongPassword", "message": … }`
+/// or `{ "kind": "other", "message": … }`, so the import dialog offers the
+/// re-promptable wrong-password affordance by branching on a stable `kind`
+/// rather than substring-matching the English error text (I18N-010). The
+/// `message` stays populated for display/logging in every case.
+#[derive(Debug, Serialize, thiserror::Error)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum ImportError {
+    /// The supplied decryption password was wrong — safe to re-prompt.
+    #[error("{message}")]
+    WrongPassword { message: String },
+    /// Any other import failure, with a display-ready message.
+    #[error("{message}")]
+    Other { message: String },
+}
+
+impl ImportError {
+    /// Classify an `import_encrypted_json` failure by a locale-invariant signal.
+    ///
+    /// Walks the error chain for a [`DecryptError::WrongPassword`] — the AEAD
+    /// authentication failure raised by the decrypt path — instead of matching
+    /// the English message, so classification survives a reword or localization.
+    /// The original chain message is preserved for display/logging.
+    fn from_import_failure(err: anyhow::Error) -> Self {
+        let message = err.to_string();
+        let wrong_password = err.chain().any(|cause| {
+            matches!(
+                cause.downcast_ref::<DecryptError>(),
+                Some(DecryptError::WrongPassword)
+            )
+        });
+        if wrong_password {
+            ImportError::WrongPassword { message }
+        } else {
+            ImportError::Other { message }
+        }
+    }
+}
+
 /// Import connections with optional credential decryption.
 ///
 /// If the import file contains an `$encrypted` section and
 /// `import_password` is provided, credentials are decrypted and stored.
+///
+/// A wrong decryption password surfaces as a typed
+/// [`ImportError::WrongPassword`] (stable `kind`), so the frontend can offer a
+/// tailored re-prompt without parsing the English message (I18N-010).
 #[tauri::command]
 pub fn import_connections_with_credentials(
     json: String,
     import_password: Option<String>,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<ImportResult, String> {
+) -> Result<ImportResult, ImportError> {
     info!(
         "Importing connections (with_credentials={})",
         import_password.is_some()
     );
     let result = manager
         .import_encrypted_json(&json, import_password.as_deref())
-        .map_err(|e| e.to_string())?;
+        .map_err(ImportError::from_import_failure)?;
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(result)
 }
@@ -356,4 +402,46 @@ pub fn get_recovery_warnings(
         .lock()
         .map(|mut w| w.drain(..).collect())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_wrong_password_through_context_wrapping() {
+        // Mirror how `import_encrypted_json` wraps the decrypt failure: a
+        // `DecryptError::WrongPassword` surfaced through anyhow `.context(...)`.
+        // The classifier must find the variant in the chain despite the wrapper.
+        let err = anyhow::Error::new(DecryptError::WrongPassword)
+            .context("Failed to decrypt credentials — wrong password?");
+
+        assert!(matches!(
+            ImportError::from_import_failure(err),
+            ImportError::WrongPassword { .. }
+        ));
+    }
+
+    #[test]
+    fn wrong_password_serializes_to_stable_kind() {
+        let value = serde_json::to_value(ImportError::WrongPassword {
+            message: "irrelevant".to_string(),
+        })
+        .unwrap();
+        assert_eq!(value["kind"], "wrongPassword");
+    }
+
+    #[test]
+    fn non_decrypt_failures_classify_as_other() {
+        // A structural failure with no `DecryptError` in the chain must never be
+        // mistaken for a wrong password.
+        let err = anyhow::anyhow!("Failed to parse import data");
+
+        let classified = ImportError::from_import_failure(err);
+        assert!(matches!(classified, ImportError::Other { .. }));
+
+        let value = serde_json::to_value(&classified).unwrap();
+        assert_eq!(value["kind"], "other");
+        assert_eq!(value["message"], "Failed to parse import data");
+    }
 }

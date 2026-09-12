@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
-import { previewImport, importConnectionsWithCredentials } from "@/services/api";
+import { previewImport, importConnectionsWithCredentials, isImportError } from "@/services/api";
 import type { ImportPreview } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
@@ -58,11 +58,15 @@ export function ImportDialog() {
         setSuccess(message);
         await loadFromBackend();
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (msg.includes("wrong password")) {
-          setError("Wrong password. Please try again.");
+        // Classify by the backend's stable error `kind`, never by the English
+        // message — so a localized or reworded backend string still yields the
+        // tailored wrong-password affordance (I18N-010).
+        if (isImportError(err)) {
+          setError(
+            err.kind === "wrongPassword" ? "Wrong password. Please try again." : err.message
+          );
         } else {
-          setError(msg);
+          setError(err instanceof Error ? err.message : String(err));
         }
       } finally {
         setImporting(false);
