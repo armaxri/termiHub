@@ -4,10 +4,9 @@ import { ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
-import { resolveRestoreMode, type RestoreLastSessionMode } from "@/utils/restoreMode";
 import { isWindows } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
-import { Button, NumberInput, Select, SelectItem, Toggle, toast } from "@/components/ui";
+import { Select, SelectItem, Toggle } from "@/components/ui";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
 import { KeyPathInput } from "./KeyPathInput";
 import { SettingsField } from "./SettingsField";
@@ -58,26 +57,6 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
   const [availableShells, setAvailableShells] = useState<ShellType[]>([]);
   const [gitBashSetupOpen, setGitBashSetupOpen] = useState(false);
   const platformDefaultShell = useAppStore((s) => s.defaultShell);
-  const historyCount = useAppStore((s) => s.sessionHistory.length);
-  const clearSessionHistory = useAppStore((s) => s.clearSessionHistory);
-
-  // The restore-mode decision now lives in `core::restore_mode` (#2200), so the
-  // dropdown value is resolved asynchronously via the `restore_resolve_mode`
-  // command. Seed with the explicit mode when set (the common case, no flicker);
-  // the effect below then authoritatively resolves the legacy-boolean migration.
-  const explicitMode = settings.restoreLastSessionMode;
-  const [restoreMode, setRestoreMode] = useState<RestoreLastSessionMode>(
-    explicitMode === "never" || explicitMode === "always" ? explicitMode : "ask"
-  );
-  useEffect(() => {
-    let active = true;
-    void resolveRestoreMode(settings).then((mode) => {
-      if (active) setRestoreMode(mode);
-    });
-    return () => {
-      active = false;
-    };
-  }, [settings]);
 
   const refreshShells = useCallback(() => {
     detectAvailableShells().then(setAvailableShells);
@@ -172,81 +151,6 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           </SettingsField>
         )}
 
-        {show("confirmCloseTabOnShortcut") && (
-          <SettingsField
-            label="Confirm Close Tab on Shortcut"
-            hint="Ask for confirmation when closing a tab or tab group via keyboard shortcut."
-          >
-            <Toggle
-              checked={settings.confirmCloseTabOnShortcut ?? true}
-              onCheckedChange={(checked) =>
-                onChange((prev) => ({ ...prev, confirmCloseTabOnShortcut: checked }))
-              }
-              data-testid="settings-confirm-close-tab-on-shortcut"
-            />
-          </SettingsField>
-        )}
-
-        {show("confirmCloseLiveSession") && (
-          <SettingsField
-            label="Confirm Closing a Live Session"
-            hint="Ask for confirmation before closing a tab (X or middle-click) or split panel that holds a live SSH, serial, or shell session."
-          >
-            <Toggle
-              checked={settings.confirmCloseLiveSession ?? true}
-              onCheckedChange={(checked) =>
-                onChange((prev) => ({ ...prev, confirmCloseLiveSession: checked }))
-              }
-              data-testid="settings-confirm-close-live-session"
-            />
-          </SettingsField>
-        )}
-
-        {show("confirmCloseAttachedTab") && (
-          <SettingsField
-            label="Notify When Closing a Persistent-Session Tab"
-            hint="Show a one-time notice that a persistent session keeps running in the background when its tab is closed (X or middle-click)."
-          >
-            <Toggle
-              checked={settings.confirmCloseAttachedTab ?? true}
-              onCheckedChange={(checked) =>
-                onChange((prev) => ({ ...prev, confirmCloseAttachedTab: checked }))
-              }
-              data-testid="settings-confirm-close-attached-tab"
-            />
-          </SettingsField>
-        )}
-
-        {show("warnLargePortScan") && (
-          <SettingsField
-            label="Warn Before a Large Port Scan"
-            hint="Show a warning before starting a Port Scanner scan that probes a very large number of host/port combinations."
-          >
-            <Toggle
-              checked={settings.warnLargePortScan ?? true}
-              onCheckedChange={(checked) =>
-                onChange((prev) => ({ ...prev, warnLargePortScan: checked }))
-              }
-              data-testid="settings-warn-large-port-scan"
-            />
-          </SettingsField>
-        )}
-
-        {show("warnLargePingSweep") && (
-          <SettingsField
-            label="Warn Before a Large Ping Sweep"
-            hint="Show a warning before starting a Ping Sweep across a very large number of hosts (e.g. a wide CIDR block)."
-          >
-            <Toggle
-              checked={settings.warnLargePingSweep ?? true}
-              onCheckedChange={(checked) =>
-                onChange((prev) => ({ ...prev, warnLargePingSweep: checked }))
-              }
-              data-testid="settings-warn-large-ping-sweep"
-            />
-          </SettingsField>
-        )}
-
         {show("experimentalFeaturesEnabled") && (
           <SettingsField
             label="Allow Experimental Features"
@@ -262,109 +166,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             />
           </SettingsField>
         )}
-
-        {show("restoreLastSessionOnStartup") && (
-          <SettingsField
-            label="Restore Last Session on Startup"
-            hint="Choose how the tabs and panel layout from your previous session are handled when the app starts. Never starts fresh; Ask offers a restore dialog; Always restores silently. Sessions that can no longer reconnect are shown in a disconnected state."
-          >
-            <Select
-              value={restoreMode}
-              onChange={(value) =>
-                onChange((prev) => ({
-                  ...prev,
-                  restoreLastSessionMode: value as "never" | "ask" | "always",
-                }))
-              }
-              options={[
-                { value: "never", label: "Never" },
-                { value: "ask", label: "Ask each time" },
-                { value: "always", label: "Always" },
-              ]}
-              aria-label="Restore last session on startup"
-              data-testid="settings-restore-last-session-mode"
-            />
-          </SettingsField>
-        )}
       </div>
-
-      {(show("sessionHistoryEnabled") ||
-        show("sessionHistoryLimit") ||
-        show("showRecentSessions")) && (
-        <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">Session History</h3>
-
-          {show("sessionHistoryEnabled") && (
-            <SettingsField
-              label="Auto-Save Sessions to History"
-              hint="Record every session you open so it can be reconnected from the Recent Sessions panel. Passwords are never stored in history."
-            >
-              <Toggle
-                checked={settings.sessionHistoryEnabled ?? true}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, sessionHistoryEnabled: checked }))
-                }
-                data-testid="settings-session-history-enabled"
-              />
-            </SettingsField>
-          )}
-
-          {show("sessionHistoryLimit") && (
-            <SettingsField
-              label="Session History Limit"
-              hint="Maximum number of recent sessions to keep (10–500). When the limit is reached, the least-recently-used unpinned entry is removed."
-            >
-              <NumberInput
-                value={settings.sessionHistoryLimit ?? 50}
-                onValueChange={(value) =>
-                  onChange((prev) => ({
-                    ...prev,
-                    sessionHistoryLimit: value === "" ? undefined : value,
-                  }))
-                }
-                min={10}
-                max={500}
-                data-testid="settings-session-history-limit"
-              />
-            </SettingsField>
-          )}
-
-          {show("showRecentSessions") && (
-            <SettingsField
-              label="Show Recent Sessions Panel"
-              hint="Show the Recent Sessions sidebar panel and its activity-bar icon."
-            >
-              <Toggle
-                checked={settings.showRecentSessions ?? true}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, showRecentSessions: checked }))
-                }
-                data-testid="settings-show-recent-sessions"
-              />
-            </SettingsField>
-          )}
-
-          {show("sessionHistoryEnabled") && (
-            <SettingsField
-              label="Clear Session History"
-              hint="Remove all recorded sessions, including pinned entries."
-            >
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={historyCount === 0}
-                data-testid="settings-clear-session-history"
-                onClick={async () => {
-                  await clearSessionHistory();
-                  toast.success("Cleared session history");
-                }}
-              >
-                Clear All History
-              </Button>
-            </SettingsField>
-          )}
-        </div>
-      )}
 
       {(show("defaultShellIntegration") || show("defaultX11Forwarding")) && (
         <div className="settings-panel__category">
@@ -396,42 +198,6 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
                   onChange((prev) => ({ ...prev, defaultX11Forwarding: checked }))
                 }
                 data-testid="settings-default-x11-forwarding"
-              />
-            </SettingsField>
-          )}
-        </div>
-      )}
-
-      {(show("provideXServerAutomatically") || show("stopXServerWhenIdle")) && (
-        <div className="settings-panel__category">
-          <h3 className="settings-panel__category-title">X Server</h3>
-
-          {show("provideXServerAutomatically") && (
-            <SettingsField
-              label="Provide X Server Automatically"
-              hint="Windows: download & run VcXsrv automatically. macOS/Linux: use the detected/guided server."
-            >
-              <Toggle
-                checked={settings.provideXServerAutomatically ?? isWindows()}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, provideXServerAutomatically: checked }))
-                }
-                data-testid="settings-provide-x-server"
-              />
-            </SettingsField>
-          )}
-
-          {show("stopXServerWhenIdle") && (
-            <SettingsField
-              label="Stop X Server When Idle"
-              hint="Shut the managed X server down once no connection is using it."
-            >
-              <Toggle
-                checked={settings.stopXServerWhenIdle ?? true}
-                onCheckedChange={(checked) =>
-                  onChange((prev) => ({ ...prev, stopXServerWhenIdle: checked }))
-                }
-                data-testid="settings-stop-x-server-idle"
               />
             </SettingsField>
           )}

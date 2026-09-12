@@ -4,9 +4,13 @@ import {
   Settings2,
   Palette,
   TerminalSquare,
+  Cable,
   Accessibility,
   SquareMenu,
   Keyboard,
+  History,
+  MessageCircleWarning,
+  Monitor,
   Shield,
   FileJson,
   FileCode2,
@@ -25,6 +29,9 @@ import { filterSettings, getMatchingCategories } from "./settingsRegistry";
 import { SettingsNav } from "./SettingsNav";
 import { SettingsSearch } from "./SettingsSearch";
 import { GeneralSettings, type SettingsUpdate } from "./GeneralSettings";
+import { SessionSettings } from "./SessionSettings";
+import { SafetyPromptSettings } from "./SafetyPromptSettings";
+import { XServerSettings } from "./XServerSettings";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { TerminalSettings } from "./TerminalSettings";
 import { AccessibilitySettings } from "./AccessibilitySettings";
@@ -57,9 +64,13 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   general: Settings2,
   appearance: Palette,
   terminal: TerminalSquare,
+  serial: Cable,
   accessibility: Accessibility,
   "shell-integration": SquareMenu,
   keyboard: Keyboard,
+  sessions: History,
+  "safety-prompts": MessageCircleWarning,
+  "x-server": Monitor,
   security: Shield,
   "external-files": FileJson,
   editor: FileCode2,
@@ -302,6 +313,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             visibleFields={visibleFields}
           />
         );
+      }
+      if (highlightedCategories?.has("serial")) {
         sections.push(<SerialPortSettings key="serial-ports" visibleFields={visibleFields} />);
       }
       if (highlightedCategories?.has("appearance")) {
@@ -340,6 +353,36 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       if (highlightedCategories?.has("keyboard")) {
         sections.push(<KeyboardSettings key="keyboard" visibleFields={visibleFields} />);
       }
+      if (highlightedCategories?.has("sessions")) {
+        sections.push(
+          <SessionSettings
+            key="sessions"
+            settings={settings}
+            onChange={handleSettingsChange}
+            visibleFields={visibleFields}
+          />
+        );
+      }
+      if (highlightedCategories?.has("safety-prompts")) {
+        sections.push(
+          <SafetyPromptSettings
+            key="safety-prompts"
+            settings={settings}
+            onChange={handleSettingsChange}
+            visibleFields={visibleFields}
+          />
+        );
+      }
+      if (highlightedCategories?.has("x-server")) {
+        sections.push(
+          <XServerSettings
+            key="x-server"
+            settings={settings}
+            onChange={handleSettingsChange}
+            visibleFields={visibleFields}
+          />
+        );
+      }
       if (highlightedCategories?.has("security")) {
         sections.push(<SecuritySettings key="security" visibleFields={visibleFields} />);
         sections.push(<RdpTrustSettings key="rdp-trust" visibleFields={visibleFields} />);
@@ -368,12 +411,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
 
     switch (activeCategory) {
       case "general":
-        return (
-          <>
-            <GeneralSettings settings={settings} onChange={handleSettingsChange} />
-            <SerialPortSettings />
-          </>
-        );
+        return <GeneralSettings settings={settings} onChange={handleSettingsChange} />;
+      case "serial":
+        return <SerialPortSettings />;
       case "appearance":
         return <AppearanceSettings settings={settings} onChange={handleSettingsChange} />;
       case "terminal":
@@ -384,6 +424,12 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         return <ShellIntegrationSettings />;
       case "keyboard":
         return <KeyboardSettings />;
+      case "sessions":
+        return <SessionSettings settings={settings} onChange={handleSettingsChange} />;
+      case "safety-prompts":
+        return <SafetyPromptSettings settings={settings} onChange={handleSettingsChange} />;
+      case "x-server":
+        return <XServerSettings settings={settings} onChange={handleSettingsChange} />;
       case "security":
         return (
           <>

@@ -2,9 +2,13 @@ export type SettingsCategory =
   | "general"
   | "appearance"
   | "terminal"
+  | "serial"
   | "accessibility"
   | "shell-integration"
   | "keyboard"
+  | "sessions"
+  | "safety-prompts"
+  | "x-server"
   | "security"
   | "external-files"
   | "editor"
@@ -28,9 +32,13 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "general", label: "General" },
   { id: "appearance", label: "Appearance" },
   { id: "terminal", label: "Terminal" },
+  { id: "serial", label: "Serial" },
   { id: "accessibility", label: "Accessibility" },
   { id: "shell-integration", label: "Shell Integration" },
   { id: "keyboard", label: "Keyboard" },
+  { id: "sessions", label: "Sessions" },
+  { id: "safety-prompts", label: "Safety Prompts" },
+  { id: "x-server", label: "X Server" },
   { id: "security", label: "Security" },
   { id: "external-files", label: "External Files" },
   { id: "editor", label: "Editor" },
@@ -346,7 +354,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Serial Port Scan Prefixes",
     description:
       "Linux /dev prefixes scanned to discover serial ports that the system library may not enumerate (e.g. ttyAMA* on Raspberry Pi)",
-    category: "general",
+    category: "serial",
     keywords: [
       "serial",
       "port",
@@ -365,9 +373,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "confirmCloseTabOnShortcut",
-    label: "Confirm Close Tab on Shortcut",
+    label: "Confirm before closing a tab via keyboard shortcut",
     description: "Ask for confirmation when closing a tab via keyboard shortcut",
-    category: "general",
+    category: "safety-prompts",
     keywords: [
       "confirm",
       "close",
@@ -382,10 +390,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "confirmCloseLiveSession",
-    label: "Confirm Closing a Live Session",
+    label: "Confirm before closing a tab with a live session",
     description:
       "Ask for confirmation before closing a tab or split panel that holds a live session",
-    category: "general",
+    category: "safety-prompts",
     keywords: [
       "confirm",
       "close",
@@ -405,10 +413,10 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "confirmCloseAttachedTab",
-    label: "Notify When Closing a Persistent-Session Tab",
+    label: "Show a one-time notice when closing a persistent-session tab",
     description:
       "Show a one-time notice that a persistent session keeps running when its tab is closed",
-    category: "general",
+    category: "safety-prompts",
     keywords: [
       "confirm",
       "notice",
@@ -429,7 +437,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Warn Before a Large Port Scan",
     description:
       "Show a warning before starting a Port Scanner scan that probes a very large number of host/port combinations",
-    category: "general",
+    category: "safety-prompts",
     keywords: [
       "warn",
       "port",
@@ -448,7 +456,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Warn Before a Large Ping Sweep",
     description:
       "Show a warning before starting a Ping Sweep across a very large number of hosts (e.g. a wide CIDR block)",
-    category: "general",
+    category: "safety-prompts",
     keywords: [
       "warn",
       "ping",
@@ -495,7 +503,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     label: "Restore Last Session on Startup",
     description:
       "Never, ask, or always reopen the tabs and layout from your previous session when the app starts",
-    category: "general",
+    category: "sessions",
     keywords: [
       "restore",
       "session",
@@ -517,35 +525,35 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "sessionHistoryEnabled",
     label: "Auto-Save Sessions to History",
     description: "Record every session opened so it can be reconnected from Recent Sessions",
-    category: "general",
+    category: "sessions",
     keywords: ["session", "history", "recent", "record", "auto-save", "mobaxterm", "quick connect"],
   },
   {
     id: "sessionHistoryLimit",
     label: "Session History Limit",
     description: "Maximum number of recent sessions to keep before the oldest is evicted",
-    category: "general",
+    category: "sessions",
     keywords: ["session", "history", "limit", "recent", "max", "count", "evict"],
   },
   {
     id: "showRecentSessions",
     label: "Show Recent Sessions Panel",
     description: "Show the Recent Sessions sidebar panel and its activity-bar icon",
-    category: "general",
+    category: "sessions",
     keywords: ["session", "history", "recent", "sidebar", "panel", "show", "hide"],
   },
   {
     id: "provideXServerAutomatically",
     label: "Provide X Server Automatically",
     description: "Start a local X server automatically for X11 forwarding",
-    category: "general",
+    category: "x-server",
     keywords: ["x server", "x11", "xserver", "display", "vcxsrv", "forwarding", "gui"],
   },
   {
     id: "stopXServerWhenIdle",
     label: "Stop X Server When Idle",
     description: "Shut down the auto-provided X server when no connection uses it",
-    category: "general",
+    category: "x-server",
     keywords: ["x server", "x11", "idle", "stop", "shutdown", "display"],
   },
   {

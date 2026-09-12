@@ -87,6 +87,18 @@ async function clickCheckbox(checkbox: HTMLElement) {
   });
 }
 
+/**
+ * Switch the panel to a settings category by clicking its nav item. Needed since
+ * X Server provisioning now lives in its own top-level category (UX-029) rather
+ * than under General, so it only renders once that category is selected.
+ */
+function selectCategory(id: string) {
+  act(() => {
+    const btn = container.querySelector(`[data-testid='settings-nav-${id}']`) as HTMLElement | null;
+    btn?.click();
+  });
+}
+
 setupSettingsRegion();
 
 describe("SettingsPanel — dirty state on revert to default", () => {
@@ -199,6 +211,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
   it("marks settings dirty when toggling Provide X Server Automatically", async () => {
     seedSettings(FULL_SETTINGS);
     render();
+    selectCategory("x-server");
 
     const checkbox = findProvideXServerCheckbox();
     expect(checkbox).not.toBeNull();
@@ -223,6 +236,7 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     // that as checked so the decision is visible and reversible in one place.
     seedSettings({ ...FULL_SETTINGS, provideXServerAutomatically: true });
     render();
+    selectCategory("x-server");
     expect(isChecked(findProvideXServerCheckbox()!)).toBe(true);
 
     // A persisted decline (Some(false)) shows as unchecked.
@@ -230,12 +244,14 @@ describe("SettingsPanel — dirty state on revert to default", () => {
     root = createRoot(container);
     seedSettings({ ...FULL_SETTINGS, provideXServerAutomatically: false });
     render();
+    selectCategory("x-server");
     expect(isChecked(findProvideXServerCheckbox()!)).toBe(false);
   });
 
   it("marks settings dirty when toggling Stop X Server When Idle", async () => {
     seedSettings(FULL_SETTINGS);
     render();
+    selectCategory("x-server");
 
     const checkbox = findStopXServerIdleCheckbox();
     expect(checkbox).not.toBeNull();
