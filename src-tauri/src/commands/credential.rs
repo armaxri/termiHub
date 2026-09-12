@@ -747,6 +747,36 @@ mod tests {
         assert!(err.contains("Unknown credential type"));
     }
 
+    #[test]
+    fn auto_lock_permits_unlock_gate() {
+        // WA-RS-004: the gate refuses an unlock when no auto-lock timer is
+        // installed (thread-spawn failure) and permits it when one is present.
+        assert!(auto_lock_permits_unlock(true).is_ok());
+        assert!(auto_lock_permits_unlock(false).is_err());
+    }
+
+    #[test]
+    fn guarded_unlock_refused_when_no_auto_lock_timer_keeps_store_locked() {
+        // WA-RS-004 regression: with no auto-lock timer installed (mirroring a
+        // startup thread-spawn failure) the unlock MUST be refused and the store
+        // MUST remain locked — never unlocked with no mechanism to auto-lock it.
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+        mgr.with_master_password_store(|s| s.setup("pw"))
+            .unwrap()
+            .unwrap();
+        // Lock the store so we can attempt a real unlock through the gate.
+        mgr.with_master_password_store(|s| s.lock()).unwrap();
+        assert!(!mgr.with_master_password_store(|s| s.is_unlocked()).unwrap());
+
+        let result = guarded_unlock(&mgr, "pw");
+        assert!(result.is_err(), "unlock must be refused without a timer");
+        assert!(
+            !mgr.with_master_password_store(|s| s.is_unlocked()).unwrap(),
+            "store must remain locked after a refused unlock"
+        );
+    }
+
     /// Regression test for #1144 (G6): unlocking an already-unlocked store
     /// must be a benign no-op (`Ok`), not an error, so racing connect flows
     /// don't surface a spurious "already unlocked" failure.

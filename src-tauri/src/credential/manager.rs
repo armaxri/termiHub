@@ -303,6 +303,17 @@ mod tests {
     }
 
     #[test]
+    fn has_auto_lock_timer_false_before_install() {
+        // WA-RS-004: when the auto-lock timer thread fails to spawn, no timer is
+        // installed. `has_auto_lock_timer` must report `false` so callers can
+        // refuse to unlock the store (fail-safe) rather than leave credentials
+        // unlocked with nothing to auto-lock them.
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+        assert!(!mgr.has_auto_lock_timer());
+    }
+
+    #[test]
     fn switch_store_changes_mode() {
         let dir = tempfile::tempdir().unwrap();
         let mgr = CredentialManager::new(StorageMode::None, dir.path().to_path_buf());
