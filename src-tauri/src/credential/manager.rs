@@ -99,6 +99,20 @@ impl CredentialManager {
         *guard = Some(timer);
     }
 
+    /// Returns whether an auto-lock timer is installed for this manager.
+    ///
+    /// The timer is installed once at startup; a `false` result means its
+    /// background thread failed to spawn (WA-RS-004). Callers use this to gate
+    /// unlocking the master-password store: without a live timer the store
+    /// cannot be auto-locked after inactivity, so it must stay locked rather
+    /// than be left unlocked with no mechanism to re-lock it.
+    pub fn has_auto_lock_timer(&self) -> bool {
+        self.auto_lock_timer
+            .read()
+            .map(|guard| guard.is_some())
+            .unwrap_or(false)
+    }
+
     /// Notify the auto-lock timer that the store was unlocked.
     pub fn notify_auto_lock_unlocked(&self) {
         if let Ok(guard) = self.auto_lock_timer.read() {
