@@ -1,3 +1,5 @@
+import { formatRelativeAgo } from "@/utils/formatters";
+
 /**
  * Staleness helpers for HTTP monitors (audit gap #11).
  *
@@ -39,14 +41,8 @@ export function isMonitorStale(
  * @param now - current epoch millis (defaults to `Date.now()`)
  */
 export function formatCheckedAgo(timestampMs: number, now: number = Date.now()): string {
-  const diffMs = Math.max(0, now - timestampMs);
-  const diffSecs = Math.floor(diffMs / 1000);
-  if (diffSecs < 2) return "just now";
-  if (diffSecs < 60) return `${diffSecs}s ago`;
-  const diffMins = Math.floor(diffSecs / 60);
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  return `${diffDays}d ago`;
+  // Delegates to the shared relative-time helper with second granularity
+  // (LIBFE-002). Unlike `formatRelativeTime`, monitors keep the compact
+  // "Nd ago" form indefinitely rather than falling back to an absolute date.
+  return formatRelativeAgo(now - timestampMs, { seconds: true });
 }

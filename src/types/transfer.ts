@@ -1,4 +1,5 @@
 import type { TransferProgress, TransferQueueState, TransferSnapshot } from "@/services/api";
+import { formatRate } from "@/utils/formatters";
 
 /**
  * The connection-type-agnostic state space of a queued file transfer, as shown
@@ -244,16 +245,12 @@ export function transferEntryFromSnapshot(
   };
 }
 
-/** Format a byte/sec throughput as a compact human-readable rate (e.g. `112 KB/s`). */
+/**
+ * Format a byte/sec throughput as a compact human-readable rate (e.g. `112 KB/s`).
+ *
+ * Thin wrapper over the shared, locale-aware {@link formatRate} so the transfer
+ * queue and every other byte-rate readout share one implementation (LIBFE-002).
+ */
 export function formatThroughput(bytesPerSec: number | null): string {
-  if (bytesPerSec == null || bytesPerSec <= 0) return "";
-  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
-  let value = bytesPerSec;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  const rounded = value >= 100 || unit === 0 ? Math.round(value) : Math.round(value * 10) / 10;
-  return `${rounded} ${units[unit]}`;
+  return formatRate(bytesPerSec);
 }
