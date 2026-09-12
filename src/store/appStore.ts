@@ -2722,6 +2722,22 @@ function generateGroupId(): string {
   return `group-${Date.now()}-${groupCounter}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+// Per-pane monotonic request sequence for the file-browser list operations
+// (SM-007). A directory listing is async: if the user navigates from folder A to
+// folder B while A's listing is still in flight and A's response resolves *last*,
+// its terminal `loadSucceeded`/`loadFailed` would clobber B and land the browser
+// back on the folder the user already left. Each navigate/refresh captures the
+// counter it issued under and, on resolve, applies its terminal transition only
+// when that value is still the latest issued for the pane — otherwise the response
+// is a stale sibling and is dropped silently (last-write-wins by request order,
+// not by resolution order). The counters are per-pane and independent so an
+// interleaved local-vs-session navigation never cross-cancels. Dropping a stale
+// response deliberately does NOT touch loading state: the newest still-pending
+// request's own resolve is what clears the spinner, so a stale drop must leave
+// `loading` untouched rather than falsely clear it.
+let localFileBrowserRequestSeq = 0;
+let sessionFileBrowserRequestSeq = 0;
+
 export const useAppStore = create<AppState>((set, get, store) => {
   // Connection-tree state is region-authoritative (#2401, PR B): the saved
   // connections / folders live only in the shared `connections` projection
@@ -6743,15 +6759,20 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (/^[A-Za-z]:$/.test(normalizedPath)) {
         normalizedPath = normalizedPath + "/";
       }
+      // Claim the latest local-pane request slot (SM-007): a slower earlier
+      // listing that resolves after this one must not overwrite it.
+      const requestSeq = ++localFileBrowserRequestSeq;
       mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
       try {
         const entries = await localListDir(normalizedPath);
+        if (requestSeq !== localFileBrowserRequestSeq) return;
         mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
           pane: "local",
           path: normalizedPath,
           entries,
         });
       } catch (err) {
+        if (requestSeq !== localFileBrowserRequestSeq) return;
         const message = err instanceof Error ? err.message : String(err);
         mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
       }
@@ -6759,15 +6780,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
     refreshLocal: async () => {
       const localCurrentPath = currentFileBrowsersView().local.path;
+      const requestSeq = ++localFileBrowserRequestSeq;
       mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "local" });
       try {
         const entries = await localListDir(localCurrentPath);
+        if (requestSeq !== localFileBrowserRequestSeq) return;
         mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
           pane: "local",
           path: localCurrentPath,
           entries,
         });
       } catch (err) {
+        if (requestSeq !== localFileBrowserRequestSeq) return;
         const message = err instanceof Error ? err.message : String(err);
         mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
       }
@@ -6778,15 +6802,20 @@ export const useAppStore = create<AppState>((set, get, store) => {
     setSessionFileBrowserId: (sessionId) => set({ sessionFileBrowserId: sessionId }),
 
     navigateSession: async (sessionId: string, path: string) => {
+      // Claim the latest session-pane request slot (SM-007): a slower earlier
+      // listing that resolves after this one must not overwrite it.
+      const requestSeq = ++sessionFileBrowserRequestSeq;
       mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
       try {
         const entries = await sessionListFiles(sessionId, path);
+        if (requestSeq !== sessionFileBrowserRequestSeq) return;
         mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
           pane: "session",
           path,
           entries,
         });
       } catch (err) {
+        if (requestSeq !== sessionFileBrowserRequestSeq) return;
         const message = err instanceof Error ? err.message : String(err);
         mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
       }
@@ -6796,15 +6825,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const { sessionFileBrowserId } = useAppStore.getState();
       if (!sessionFileBrowserId) return;
       const sessionCurrentPath = currentFileBrowsersView().session.path;
+      const requestSeq = ++sessionFileBrowserRequestSeq;
       mirrorFileBrowserIntent("fileBrowser.loadStarted", { pane: "session" });
       try {
         const entries = await sessionListFiles(sessionFileBrowserId, sessionCurrentPath);
+        if (requestSeq !== sessionFileBrowserRequestSeq) return;
         mirrorFileBrowserIntent("fileBrowser.loadSucceeded", {
           pane: "session",
           path: sessionCurrentPath,
           entries,
         });
       } catch (err) {
+        if (requestSeq !== sessionFileBrowserRequestSeq) return;
         const message = err instanceof Error ? err.message : String(err);
         mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
       }
