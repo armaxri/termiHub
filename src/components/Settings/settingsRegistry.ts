@@ -373,7 +373,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "confirmCloseTabOnShortcut",
-    label: "Confirm Close Tab on Shortcut",
+    label: "Confirm before closing a tab via keyboard shortcut",
     description: "Ask for confirmation when closing a tab via keyboard shortcut",
     category: "safety-prompts",
     keywords: [
@@ -390,7 +390,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "confirmCloseLiveSession",
-    label: "Confirm Closing a Live Session",
+    label: "Confirm before closing a tab with a live session",
     description:
       "Ask for confirmation before closing a tab or split panel that holds a live session",
     category: "safety-prompts",
@@ -413,7 +413,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   },
   {
     id: "confirmCloseAttachedTab",
-    label: "Notify When Closing a Persistent-Session Tab",
+    label: "Show a one-time notice when closing a persistent-session tab",
     description:
       "Show a one-time notice that a persistent session keeps running when its tab is closed",
     category: "safety-prompts",
