@@ -1,5 +1,6 @@
 mod client_registry;
 mod daemon;
+mod file_log;
 mod files;
 mod fs;
 mod handler;
@@ -201,14 +202,57 @@ async fn run() -> anyhow::Result<()> {
     }
 }
 
-/// Initialize the tracing subscriber with stderr output.
+/// Build the env-filter for the stderr sink.
+///
+/// Unchanged from the agent's original behavior: honors `RUST_LOG`, defaulting
+/// to `info`. Kept as the stderr layer so the `--stdio` capture path (the
+/// desktop reads the agent's stderr and re-logs it) keeps working exactly as
+/// before.
+fn stderr_env_filter() -> EnvFilter {
+    EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
+}
+
+/// Initialize the tracing subscriber.
+///
+/// Installs two layers on one registry (audit OBS-003):
+///
+/// - a **stderr** layer (`RUST_LOG`, default `info`) — unchanged, so the
+///   interactive `--stdio` role keeps its desktop-captured stderr logging;
+/// - a **durable rotating file** layer ([`file_log`]) written for *every* role,
+///   so the `--daemon` / `--listen` / `--registry-daemon` roles — whose stderr
+///   goes to the remote host with no capture path — leave a retrievable,
+///   size-bounded trace next to the agent's `state.json`.
+///
+/// Opening the log file is best-effort: if it cannot be opened (read-only home,
+/// no config dir), the agent logs a warning to stderr and runs with the stderr
+/// layer alone rather than failing to start.
 fn init_tracing() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
+
+    let stderr_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
-        .init();
+        .with_filter(stderr_env_filter());
+    let registry = tracing_subscriber::registry().with(stderr_layer);
+
+    match file_log::RotatingLogFile::with_defaults() {
+        Ok(file) => {
+            let file_layer = tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(file)
+                .with_filter(file_log::file_env_filter());
+            registry.with(file_layer).init();
+            info!("agent log file at {}", file_log::log_file_path().display());
+        }
+        Err(e) => {
+            registry.init();
+            tracing::warn!(
+                "could not open the agent log file at {}: {e}; logging to stderr only",
+                file_log::log_file_path().display()
+            );
+        }
+    }
 }
 
 /// Set up signal handlers for graceful shutdown.
