@@ -7,7 +7,6 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
 import "./styles/global.css";
-import { registerCustomMonacoLanguages } from "./utils/monacoCustomLanguages";
 import { installCspViolationReporter } from "./security/cspViolationReporter";
 import { installGlobalErrorHandlers } from "./utils/globalErrorHandlers";
 
@@ -23,9 +22,22 @@ installCspViolationReporter();
 // before React mounts so early failures are captured (ERR-002).
 installGlobalErrorHandlers();
 
-// Start loading TextMate grammars via Shiki in the background.
-// Editors show uncoloured text briefly until the grammars are ready.
-void registerCustomMonacoLanguages();
+// Preload the editor's TextMate grammars (Shiki) in the background — but via a
+// deferred dynamic import, and only once the app is idle (PERF-001). This keeps
+// monaco-editor + Shiki out of the eager entry chunk (they are fetched as a
+// separate chunk), so cold start / time-to-interactive no longer pays the
+// editor's download+parse+eval cost up front on the common terminal-only path.
+// Editors show uncoloured text briefly until the grammars are ready — the same
+// behaviour as before, just started after first paint instead of at module eval.
+const preloadEditorGrammars = (): void => {
+  void import("./utils/monacoCustomLanguages").then((m) => m.registerCustomMonacoLanguages());
+};
+if (typeof requestIdleCallback === "function") {
+  requestIdleCallback(preloadEditorGrammars);
+} else {
+  // WKWebView on older macOS lacks requestIdleCallback; defer past first paint.
+  setTimeout(preloadEditorGrammars, 0);
+}
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>

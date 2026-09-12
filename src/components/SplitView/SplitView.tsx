@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useState, useCallback, useEffect, useRef, useMemo, lazy, Suspense } from "react";
 import { Group, Panel, Separator } from "react-resizable-panels";
 import {
   DndContext,
@@ -59,7 +59,6 @@ import { TabBar } from "@/components/Terminal/TabBar";
 import { ColorPickerDialog } from "@/components/Terminal/ColorPickerDialog";
 import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { SettingsPanel } from "@/components/Settings";
-import { FileEditor } from "@/components/FileEditor";
 import { ConnectionEditor } from "@/components/ConnectionEditor/ConnectionEditor";
 import { LogViewer } from "@/components/LogViewer";
 import { TunnelEditor } from "@/components/TunnelEditor";
@@ -74,7 +73,7 @@ import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnect
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
-import { toast } from "@/components/ui";
+import { toast, Spinner } from "@/components/ui";
 import { PanelDropZone } from "./PanelDropZone";
 import { EmptyWindowState } from "./EmptyWindowState";
 import { PanelErrorBoundary } from "./PanelErrorBoundary";
@@ -145,6 +144,35 @@ export async function copyTerminalSelection(
   } catch (err) {
     deps.reportError(`Failed to copy selection: ${String(err)}`);
   }
+}
+
+/**
+ * The file editor is code-split out of the main bundle (PERF-001). It statically
+ * pulls in Monaco (`monaco-editor` + `@monaco-editor/react`) and, transitively,
+ * Shiki — several MB of editor machinery. SplitView is always mounted, so a static
+ * import would drag all of that into the eager entry chunk even for the common
+ * terminal-only session that never opens a file. Loading it lazily means the Monaco
+ * chunk is fetched only the first time an editor tab is actually rendered; the
+ * `<Suspense>` fallback below covers that one-time fetch. All editor behaviour
+ * (zoom dormancy, shared-model lifecycle, dirty/save guards, the large-file guard)
+ * lives inside FileEditor and is unchanged by loading it this way.
+ */
+const FileEditor = lazy(() =>
+  import("@/components/FileEditor").then((m) => ({ default: m.FileEditor }))
+);
+
+/**
+ * Lightweight loading state shown while a lazily-loaded panel chunk (the file
+ * editor) is being fetched. Deliberately free of any Monaco/Shiki import so it can
+ * render before the editor chunk arrives; its styling lives in the eager
+ * SplitView.css.
+ */
+function LazyPanelFallback() {
+  return (
+    <div className="split-view__lazy-fallback">
+      <Spinner size="md" label={null} />
+    </div>
+  );
 }
 
 export function SplitView() {
@@ -527,13 +555,15 @@ export function SplitView() {
                 ) : zoomedTab.contentType === "log-viewer" ? (
                   <LogViewer isVisible={true} />
                 ) : zoomedTab.contentType === "editor" && zoomedTab.editorMeta ? (
-                  <FileEditor
-                    key={`zoom-${zoomedTabId}`}
-                    tabId={zoomedTabId}
-                    meta={zoomedTab.editorMeta}
-                    isVisible={true}
-                    keepModel={true}
-                  />
+                  <Suspense fallback={<LazyPanelFallback />}>
+                    <FileEditor
+                      key={`zoom-${zoomedTabId}`}
+                      tabId={zoomedTabId}
+                      meta={zoomedTab.editorMeta}
+                      isVisible={true}
+                      keepModel={true}
+                    />
+                  </Suspense>
                 ) : zoomedTab.contentType === "connection-editor" &&
                   zoomedTab.connectionEditorMeta ? (
                   <ConnectionEditor
@@ -829,18 +859,19 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
               isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
             />
           ) : tab.contentType === "editor" && tab.editorMeta ? (
-            <FileEditor
-              key={tab.id}
-              tabId={tab.id}
-              meta={tab.editorMeta}
-              isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
-              // While this tab is zoomed, the zoom overlay mounts the authoritative
-              // FileEditor for it (`keepModel`). This in-panel copy stays mounted to
-              // own the shared Monaco model's lifecycle, but goes dormant so it does
-              // not run a second OS file watch or fight the overlay for the global
-              // editor status bar (FEC-018).
-              supersededByZoom={zoomedTabId === tab.id}
-            />
+            <Suspense key={tab.id} fallback={<LazyPanelFallback />}>
+              <FileEditor
+                tabId={tab.id}
+                meta={tab.editorMeta}
+                isVisible={tab.id === panel.activeTabId && zoomedTabId !== tab.id}
+                // While this tab is zoomed, the zoom overlay mounts the authoritative
+                // FileEditor for it (`keepModel`). This in-panel copy stays mounted to
+                // own the shared Monaco model's lifecycle, but goes dormant so it does
+                // not run a second OS file watch or fight the overlay for the global
+                // editor status bar (FEC-018).
+                supersededByZoom={zoomedTabId === tab.id}
+              />
+            </Suspense>
           ) : tab.contentType === "connection-editor" && tab.connectionEditorMeta ? (
             <ConnectionEditor
               key={tab.id}

@@ -220,10 +220,6 @@ import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import { onPersistentSessionStateChanged } from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
-import {
-  registerAdditionalLanguagePackages,
-  registerCustomGrammars,
-} from "@/utils/monacoCustomLanguages";
 import { fireAndForget, frontendError, frontendLog } from "@/utils/frontendLog";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { quotePath } from "@/utils/quotePath";
@@ -5052,16 +5048,27 @@ export const useAppStore = create<AppState>((set, get, store) => {
         if (settings.keybindingOverrides) {
           setKeybindingOverrides(settings.keybindingOverrides);
         }
+        // Register user-installed language packages / custom grammars via a
+        // deferred dynamic import (PERF-001): this keeps monaco-editor + Shiki out
+        // of the eager appStore/entry chunk. Only users who actually have custom
+        // packages or grammars pull the editor chunk here; the common case never
+        // touches it. Idempotent with the editor's own registration.
         if (settings.installedLanguagePackages?.length) {
-          void registerAdditionalLanguagePackages(settings.installedLanguagePackages);
+          const packages = settings.installedLanguagePackages;
+          void import("@/utils/monacoCustomLanguages").then((m) =>
+            m.registerAdditionalLanguagePackages(packages)
+          );
         }
         if (settings.customLanguageGrammars?.length) {
-          registerCustomGrammars(settings.customLanguageGrammars).catch((err: unknown) => {
-            frontendLog(
-              "app_store",
-              `Failed to register custom grammars on startup: ${err instanceof Error ? err.message : String(err)}`
-            );
-          });
+          const grammars = settings.customLanguageGrammars;
+          void import("@/utils/monacoCustomLanguages")
+            .then((m) => m.registerCustomGrammars(grammars))
+            .catch((err: unknown) => {
+              frontendLog(
+                "app_store",
+                `Failed to register custom grammars on startup: ${err instanceof Error ? err.message : String(err)}`
+              );
+            });
         }
         // Re-render terminals when OS theme changes in system mode
         onThemeChange(() => {
