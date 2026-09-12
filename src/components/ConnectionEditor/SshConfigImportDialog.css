@@ -38,7 +38,7 @@
   width: 100%;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--text-primary);
   text-align: left;
@@ -47,7 +47,7 @@
 
 .ssh-config-import__row:hover,
 .ssh-config-import__row:focus-visible {
-  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+  background: var(--bg-hover);
   border-color: var(--border-primary);
 }
 
@@ -71,7 +71,7 @@
 .ssh-config-import__row-chain {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

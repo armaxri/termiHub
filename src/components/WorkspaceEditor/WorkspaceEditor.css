@@ -547,7 +547,7 @@
 }
 
 .connection-picker__agent-warning-icon {
-  color: var(--color-warning, #e8a838);
+  color: var(--color-warning);
   flex-shrink: 0;
 }
 

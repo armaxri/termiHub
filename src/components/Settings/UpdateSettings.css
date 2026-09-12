@@ -38,16 +38,16 @@
   letter-spacing: 0.04em;
   padding: 1px 5px;
   border-radius: var(--radius-sm);
-  background: var(--color-error, #f44336);
+  background: var(--color-error);
   color: var(--text-on-accent);
 }
 
 .update-settings__up-to-date {
-  color: var(--color-success, #7dcf88);
+  color: var(--color-success);
 }
 
 .update-settings__error {
-  color: var(--color-warning, #d4a843);
+  color: var(--color-warning);
 }
 
 .update-settings__skipped-row {
@@ -59,7 +59,7 @@
 }
 
 .update-settings__build-hash {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }

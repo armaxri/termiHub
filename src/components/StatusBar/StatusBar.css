@@ -371,7 +371,7 @@
 }
 
 .update-indicator__dot--red {
-  background: var(--color-error, #f44336);
+  background: var(--color-error);
 }
 
 .update-indicator__develop-badge {

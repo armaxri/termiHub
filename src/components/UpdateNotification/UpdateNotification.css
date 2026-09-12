@@ -13,7 +13,7 @@
 }
 
 .update-notification--security {
-  border-color: var(--color-error, #f44336);
+  border-color: var(--color-error);
 }
 
 .update-notification__header {
@@ -40,7 +40,7 @@
 }
 
 .update-notification__icon--security {
-  color: var(--color-error, #f44336);
+  color: var(--color-error);
   flex-shrink: 0;
 }
 
@@ -97,7 +97,7 @@
   margin: 0;
   padding: 8px;
   font-size: var(--font-size-xs);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   white-space: pre-wrap;
   word-break: break-word;
   color: var(--text-secondary);

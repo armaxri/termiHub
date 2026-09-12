@@ -6,7 +6,7 @@
   align-items: center;
   justify-content: center;
   /* Semi-transparent scrim so scrollback is still faintly visible */
-  background: color-mix(in srgb, var(--terminal-bg, #1e1e1e) 60%, transparent);
+  background: color-mix(in srgb, var(--terminal-bg) 60%, transparent);
   pointer-events: all;
 }
 
@@ -15,10 +15,10 @@
   flex-direction: column;
   align-items: center;
   gap: var(--spacing-md);
-  padding: var(--spacing-xl) var(--spacing-2xl, 32px);
-  background: var(--bg-secondary, #252526);
+  padding: var(--spacing-xl) var(--spacing-2xl);
+  background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
-  border-radius: var(--radius-lg, 8px);
+  border-radius: var(--radius-lg);
   box-shadow: var(--shadow-dropdown);
   text-align: center;
   max-width: 320px;
@@ -26,7 +26,7 @@
 }
 
 .terminal-reconnect-prompt__icon {
-  color: var(--color-warning, #e8a838);
+  color: var(--color-warning);
   opacity: 0.9;
 }
 

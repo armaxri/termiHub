@@ -4,7 +4,7 @@
   height: 100%;
   background-color: var(--terminal-bg);
   color: var(--text-primary);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   overflow: hidden;
 }
@@ -30,7 +30,7 @@
 }
 
 .file-browser-tab__icon--error {
-  color: var(--color-error, #e05252);
+  color: var(--color-error);
 }
 
 .file-browser-tab__heading {
@@ -48,7 +48,7 @@
 }
 
 .file-browser-tab__error {
-  color: var(--color-error, #e05252);
+  color: var(--color-error);
   max-width: 480px;
   margin: 0;
   word-break: break-word;

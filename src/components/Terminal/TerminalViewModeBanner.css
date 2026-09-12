@@ -8,16 +8,16 @@
   align-items: center;
   gap: var(--spacing-xs);
   padding: 3px var(--spacing-md);
-  background: color-mix(in srgb, var(--color-warning, #e8a838) 12%, var(--terminal-bg, #1e1e1e));
-  border-top: 1px solid color-mix(in srgb, var(--color-warning, #e8a838) 30%, transparent);
-  font-family: var(--font-mono, monospace);
-  font-size: var(--font-size-xs, 11px);
+  background: color-mix(in srgb, var(--color-warning) 12%, var(--terminal-bg));
+  border-top: 1px solid color-mix(in srgb, var(--color-warning) 30%, transparent);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   pointer-events: all;
 }
 
 .terminal-view-mode-banner__icon {
-  color: var(--color-warning, #e8a838);
+  color: var(--color-warning);
   flex-shrink: 0;
 }
 
