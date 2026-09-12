@@ -12,7 +12,8 @@ evidence:
   - src/components/FileEditor/FileEditor.css:92
   - src/components/UpdateNotification/UpdateNotification.css:16
   - src/components/Terminal/TerminalViewModeBanner.css:11
-status: open
+status: fixed
+resolution: "#2887 — removed all stale/inconsistent literal var(--token,#fallback) fallbacks in component CSS"
 ---
 
 ## What

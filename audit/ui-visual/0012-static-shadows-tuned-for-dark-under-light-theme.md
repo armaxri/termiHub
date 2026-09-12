@@ -10,7 +10,8 @@ evidence:
   - src/styles/variables.css:129
   - src/styles/variables.css:132
   - src/styles/variables.css:135
-status: open
+status: fixed
+resolution: "#2887 — elevation shadow tokens now per-colorScheme (softer light-theme shadows, dark unchanged)"
 ---
 
 ## What

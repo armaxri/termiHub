@@ -10,7 +10,8 @@ evidence:
   - src/components/Settings/SettingsPanel.tsx:180
   - src/components/Settings/PluginSettingsSection.tsx:10
   - src/components/Settings/KeyPathInput.tsx:8
-status: open
+status: fixed
+resolution: "#2892 — extracted shared useDebounce/useDebouncedCallback (cancel/flush/cleanup); migrated KeyPathInput; SettingsPanel/PluginSettings bespoke debounce → #2893"
 ---
 
 ## What

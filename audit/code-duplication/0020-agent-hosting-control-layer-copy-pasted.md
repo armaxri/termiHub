@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/embedded_servers/server_manager.rs:732
   - src-tauri/src/network/mod.rs:915
   - src-tauri/src/tunnel/tunnel_manager.rs:989
-status: open
+status: fixed
+resolution: "#2885 — extracted shared AgentStatusPoller + AgentStatusPollDelegate + agent_rpc_client (agent_service.rs); embedded-server/http-monitor/tunnel managers migrated (~170 dup lines → 55 generic + 3 delegates). start/stop control paths (semantically divergent) → #2884"
 ---
 
 ## What

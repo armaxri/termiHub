@@ -12,7 +12,8 @@ evidence:
   - src/components/WorkspaceEditor/WorkspaceEditor.css:401
   - src/components/Terminal/TabGroupChips.css:18
   - src/components/Plugins/Plugins.css:255
-status: open
+status: fixed
+resolution: "#2887 — border-radius drift snapped to radius tokens; both pill spellings unified to --radius-full"
 ---
 
 ## What

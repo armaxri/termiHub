@@ -11,7 +11,8 @@ evidence:
   - src/hooks/useLocalFileSystem.ts
   - src/hooks/useFileSystem.ts
   - coverage/clover.xml
-status: open
+status: fixed
+resolution: "#2892 — file-system hooks coverage raised (useSessionFileSystem 8→55%B, useLocalFileSystem 37→68%B); useFileSystem retired"
 ---
 
 ## What

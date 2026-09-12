@@ -12,7 +12,8 @@ evidence:
   - src/components/ActivityBar/ActivityBar.css:53
   - src/components/UpdateNotification/UpdateNotification.css:9
   - src/components/Terminal/TerminalReconnectPrompt.css:22
-status: open
+status: fixed
+resolution: "#2887 — raw rgba scrims/drop-shadows/white overlays → tokens (--overlay-bg/--shadow-*/new activity-bar tokens)"
 ---
 
 ## What

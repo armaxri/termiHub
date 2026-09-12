@@ -9,7 +9,8 @@ subsystem: src-tauri/src/system_monitor_projection, src-tauri/src/projection
 evidence:
   - src-tauri/src/system_monitor_projection/store.rs:125
   - src-tauri/src/projection/mod.rs:246
-status: open
+status: fixed
+resolution: "#2879 — system-monitors region publishes incrementally (publish_delta + dirty-key drain, O(change)) vs whole-region re-serialize+diff (O(N²)); byte-identical wire ops proven 3 ways (debug cross-check + equivalence tests + json-patch sorted-key review). Other regions → #2878"
 ---
 
 ## What

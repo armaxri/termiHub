@@ -11,7 +11,8 @@ evidence:
   - src/services/events.ts:273
   - src/services/events.ts:384
   - src/services/events.ts:392
-status: open
+status: fixed
+resolution: "#2891 — removed dead onAgentDeployProgress wrapper+payload (no consumers; backend still emits) — orphaned by projection migration"
 ---
 
 ## What

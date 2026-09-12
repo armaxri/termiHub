@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: rdp-sidecar
 evidence:
   - rdp-sidecar/src/drive.rs:824
-status: open
+status: fixed
+resolution: "#2895 — rdp-sidecar DR_READ handler caps length at 16MiB (STATUS_INVALID_PARAMETER) before allocating; regression test"
 ---
 
 ## What

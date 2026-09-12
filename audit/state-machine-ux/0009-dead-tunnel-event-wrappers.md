@@ -9,7 +9,8 @@ subsystem: src/services/events.ts
 evidence:
   - src/services/events.ts:607
   - src/store/slices/tunnelSlice.ts:157
-status: open
+status: fixed
+resolution: "#2891 — removed dead onTunnelStatusChanged/onTunnelStatsUpdated wrappers+payload (tunnel state via projection region now); tsc-clean zero-consumer proof"
 ---
 
 ## What

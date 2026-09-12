@@ -10,7 +10,8 @@ evidence:
   - scripts/build-rdp-sidecar.sh:5
   - .github/workflows/release.yml:189
   - src-tauri/tauri.sidecar.conf.json:4
-status: open
+status: fixed
+resolution: "#2895 — workspace-excluded rdp-sidecar now has CI gate (fmt/clippy/test/cargo-deny on its own lockfile) + deny.toml; fixed chacha20/h2 advisories; quick-xml build-dep → #2894"
 ---
 
 ## What

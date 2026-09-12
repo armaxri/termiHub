@@ -9,7 +9,8 @@ subsystem: vite.config.ts, src/App.tsx
 evidence:
   - vite.config.ts:18
   - src/App.tsx:1
-status: open
+status: fixed
+resolution: "#2882 — code-split 10 heavy surfaces via React.lazy+Suspense (per-surface boundaries); entry chunk 4445→2874kB (gzip 1079→712, -367kB); terminal path kept eager. manualChunks vendor-split → #2883"
 ---
 
 ## What

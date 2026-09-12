@@ -14,7 +14,8 @@ evidence:
   - src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.tsx:145
   - src/components/RecentSessionsSidebar/RecentSessionsSidebar.tsx:147
   - src/components/Sidebar/ConnectionList.tsx:1271
-status: open
+status: fixed
+resolution: "#2877 — extracted SidebarToolbar/SidebarGroupHeader/ExportImportButtons chrome primitives; all 6 management sidebars + ConnectionList's 2 group headers migrated; per-file __actions CSS consolidated. Completes sidebar-consolidation cluster (017/019/020)"
 ---
 
 ## What

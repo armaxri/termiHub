@@ -10,7 +10,8 @@ evidence:
   - src/store/appStore.ts:1
   - src/store/appStore.ts:469
   - src/store/projectionCache.ts:9
-status: open
+status: in-progress
+resolution: "#2880 — appStore god-module split STARTED — file-browser domain extracted to fileBrowsersSlice.ts (SM-007 guards intact, behavior-preserving, 8364→8216 lines). Remaining domains mapped in #2881 for one-slice-per-PR. FES-011 same finding."
 ---
 
 ## What

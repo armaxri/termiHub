@@ -14,7 +14,8 @@ evidence:
   - THIRD_PARTY_LICENSES.md:55
   - src-tauri/src/terminal/xserver/windows.rs:1
   - src-tauri/src/terminal/xserver/types.rs:23
-status: open
+status: fixed
+resolution: "#2896 — licensing.md/THIRD_PARTY_LICENSES/architecture.md reconciled to winget-install-not-redistribute VcXsrv reality; dead acquire.rs/PINNED_VCXSRV refs fixed. Counsel sign-off left for maintainer"
 ---
 
 ## What

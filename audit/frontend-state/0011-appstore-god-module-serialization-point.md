@@ -9,7 +9,8 @@ subsystem: src/store/appStore
 evidence:
   - src/store/appStore.ts:1
   - src/store/appStore.ts:1604
-status: open
+status: in-progress
+resolution: "#2880 — see ARCH-001 — appStore god-module split in progress, first slice (file-browser) extracted; remaining domains → #2881"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - src/styles/variables.css:138
   - src/styles/global.css:122
   - src/components/ui/ui.css:35
-status: open
+status: fixed
+resolution: "already-on-develop — focus ring already tracks theme via per-theme --focus-border (A11Y-007); focusRing.a11y.test guards it. Verified 2026-09-13"
 ---
 
 ## What

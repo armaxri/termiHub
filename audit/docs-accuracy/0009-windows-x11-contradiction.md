@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/terminal/xserver/windows.rs:1
   - core/src/backends/ssh/x11.rs:24
   - docs/licensing.md:62
-status: open
+status: fixed
+resolution: "#2896 — README corrected: Windows X11 IS supported (winget VcXsrv + TCP 127.0.0.1:6000)"
 ---
 
 ## What
