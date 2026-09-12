@@ -123,6 +123,30 @@ describe("UpdateNotification (Button migration)", () => {
     expect(dismiss).not.toHaveBeenCalled();
   });
 
+  it("does not open a disallowed-scheme release URL and does not dismiss (SEC-012)", async () => {
+    useAppStore.setState({
+      updateInfo: {
+        available: true,
+        latestVersion: "2.0.0",
+        releaseUrl: "javascript:alert(1)",
+        releaseNotes: "Fixed things.",
+        isSecurity: false,
+      },
+    });
+    const dismiss = vi.fn();
+    useAppStore.setState({ dismissUpdateNotification: dismiss });
+    await render();
+
+    await act(async () => {
+      byTestId("update-notification-open-downloads")!.click();
+    });
+    await flush();
+
+    expect(mockedOpenUrl).not.toHaveBeenCalled();
+    expect(dismiss).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalled();
+  });
+
   it("skips this version via the migrated ghost button", async () => {
     const skip = vi.fn(() => Promise.resolve());
     useAppStore.setState({ skipUpdate: skip });

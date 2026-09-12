@@ -106,6 +106,24 @@ describe("UpdateSettings", () => {
     expect(mockedOpenUrl).toHaveBeenCalledWith("https://example.com/release");
   });
 
+  it("does not hand a disallowed-scheme release URL to the OS opener (SEC-012)", async () => {
+    useAppStore.setState({
+      updateCheckState: "available",
+      updateInfo: {
+        available: true,
+        latestVersion: "9.9.9",
+        releaseUrl: "file:///etc/passwd",
+        releaseNotes: "",
+        isSecurity: false,
+      },
+    });
+    render();
+    await act(async () => {
+      (query("update-open-downloads") as HTMLElement).click();
+    });
+    expect(mockedOpenUrl).not.toHaveBeenCalled();
+  });
+
   it("renders a 'Clear' button for a skipped version and clears it", () => {
     const clearSkippedUpdateVersion = vi.fn().mockResolvedValue(undefined);
     useAppStore.setState({ clearSkippedUpdateVersion });
