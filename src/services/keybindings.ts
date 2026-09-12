@@ -511,10 +511,18 @@ export function isActionUnbound(action: string): boolean {
 }
 
 /**
- * Check for conflicts: returns the action that already uses the given combo,
- * or null if no conflict exists.
+ * Check for conflicts: returns the action that already uses the given binding,
+ * or null if no conflict exists. Accepts either a single {@link KeyCombo} or a
+ * chord sequence (`KeyCombo[]`), so a chord recorded in Settings is validated the
+ * same way a single combo is.
  */
-export function checkConflict(combo: KeyCombo, excludeAction?: string): string | null {
+export function checkConflict(
+  candidate: KeyCombo | KeyCombo[],
+  excludeAction?: string
+): string | null {
+  const candidateSeq = normalizeSequence(candidate);
+  if (candidateSeq.length === 0) return null;
+
   for (const binding of DEFAULT_BINDINGS) {
     if (binding.action === excludeAction) continue;
 
@@ -522,14 +530,31 @@ export function checkConflict(combo: KeyCombo, excludeAction?: string): string |
     if (!effective) continue;
     if (isUnboundCombo(effective)) continue;
 
-    const single = Array.isArray(effective) ? effective[0] : effective;
-    if (!Array.isArray(effective) || effective.length === 1) {
-      if (combosEqual(single, combo)) {
-        return binding.action;
-      }
+    if (bindingsCollide(candidateSeq, normalizeSequence(effective))) {
+      return binding.action;
     }
   }
   return null;
+}
+
+/** Normalize a binding to a combo sequence (single combos become a length-1 array). */
+function normalizeSequence(binding: KeyCombo | KeyCombo[]): KeyCombo[] {
+  return Array.isArray(binding) ? binding : [binding];
+}
+
+/**
+ * Whether two bindings collide. Two chords collide only when their full
+ * sequences are identical (a shared leader with a different second combo is
+ * fine — both coexist). Otherwise — at least one side is a single combo — they
+ * collide when their leading combos match, because a single combo equal to a
+ * chord's leader is swallowed by chord mode before it can fire (see
+ * {@link processKeyEvent}).
+ */
+function bindingsCollide(a: KeyCombo[], b: KeyCombo[]): boolean {
+  if (a.length >= 2 && b.length >= 2) {
+    return combosEqual(a[0], b[0]) && combosEqual(a[1], b[1]);
+  }
+  return combosEqual(a[0], b[0]);
 }
 
 /** Check if two combos are equal. */
