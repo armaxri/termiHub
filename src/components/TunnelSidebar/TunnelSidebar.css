@@ -8,7 +8,7 @@
 .tunnel-sidebar__list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--spacing-xs) 0;
 }
 
 .tunnel-sidebar__empty {
@@ -17,11 +17,11 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  padding: 24px;
+  padding: var(--spacing-xl);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   text-align: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 /*
@@ -32,15 +32,15 @@
  */
 .tunnel-item__stats {
   display: flex;
-  gap: 8px;
+  gap: var(--spacing-sm);
   color: var(--text-secondary);
-  padding-top: 2px;
+  padding-top: var(--spacing-xxs);
 }
 
 .tunnel-item__error {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   color: var(--color-error);
   min-width: 0;
 }
@@ -62,7 +62,7 @@
 .tunnel-item__reconnecting {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   color: var(--color-warning);
   min-width: 0;
 }
@@ -99,7 +99,7 @@
 .tunnel-item__reach {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   color: var(--text-secondary);
   min-width: 0;
 }
@@ -141,7 +141,7 @@
 .tunnel-item__pair {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   color: var(--text-secondary);
 }
 
@@ -159,7 +159,7 @@
   display: inline-flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: var(--spacing-xs);
   color: var(--color-warning);
 }
 

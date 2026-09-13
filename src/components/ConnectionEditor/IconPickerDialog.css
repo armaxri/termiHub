@@ -1,7 +1,7 @@
 .icon-picker__grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
-  gap: 4px;
+  gap: var(--spacing-xs);
   overflow-y: auto;
   max-height: 320px;
   padding: var(--spacing-xs);

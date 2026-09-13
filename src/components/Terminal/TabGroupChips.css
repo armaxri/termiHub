@@ -2,7 +2,7 @@
 .tab-group-chips {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   overflow-x: auto;
   flex: 1;
   min-width: 0;
@@ -13,8 +13,8 @@
 .tab-group-chip {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 2px 10px;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xxs) 10px;
   border-radius: var(--radius-full);
   border: 1px solid transparent;
   font-size: var(--font-size-sm);

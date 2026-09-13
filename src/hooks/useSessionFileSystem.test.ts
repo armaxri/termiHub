@@ -284,6 +284,7 @@ import {
   localDelete,
 } from "@/services/api";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
+import { toast } from "@/components/ui";
 
 describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () => {
   let container: HTMLDivElement;
@@ -496,6 +497,29 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     });
     expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("docker-1", "/remote/dir/file.txt");
     expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
+  });
+
+  // UX-017: a byte-based download is a blocking round-trip with no
+  // transfer-progress event, so it must surface its own success/error toast.
+  it("surfaces a success toast when a byte-based download succeeds", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.downloadFile("/remote/dir/file.txt", "file.txt");
+    });
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.success).mock.calls[0][0])).toContain("file.txt");
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error toast when a byte-based download fails", async () => {
+    vi.mocked(sessionReadFile).mockRejectedValueOnce(new Error("permission denied"));
+    const api = await mountHook();
+    await act(async () => {
+      await api.downloadFile("/remote/dir/file.txt", "file.txt");
+    });
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("permission denied");
   });
 
   it("makes openInVscode a no-op (VS Code remote open unavailable)", async () => {

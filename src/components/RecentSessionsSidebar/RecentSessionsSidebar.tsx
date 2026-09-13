@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { Trash2 } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { useAppStore } from "@/store/appStore";
@@ -8,6 +8,7 @@ import { Button, ConfirmDialog, Input, Tooltip, toast } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { useListFilter } from "@/hooks/useListFilter";
 import type { ConnectionConfig } from "@/types/terminal";
 import type { SavedConnection } from "@/types/connection";
 import type { SessionHistoryEntry } from "@/types/sessionHistory";
@@ -18,7 +19,12 @@ import { fireAndForget } from "@/utils/frontendLog";
 import { connectionString } from "./connectionString";
 import "./RecentSessionsSidebar.css";
 
-/** True when the entry matches the (already lower-cased) query. */
+/**
+ * Recent-sessions list matcher: matches the (already lower-cased) query against
+ * a session's title, dedup key, or connection type. A custom matcher passed to
+ * {@link useListFilter} — the recent-sessions entries carry title/dedupKey/
+ * connectionType rather than the default name/description/tags shape (UISF-020).
+ */
 function entryMatches(entry: SessionHistoryEntry, query: string): boolean {
   if (!query) return true;
   return (
@@ -47,14 +53,10 @@ export function RecentSessionsSidebar() {
   const splitPanel = useAppStore((s) => s.splitPanel);
   const { connect } = useConnectSavedConnection();
 
-  const [query, setQuery] = useState("");
   const [saveEntry, setSaveEntry] = useState<SessionHistoryEntry | null>(null);
   const [confirmClear, setConfirmClear] = useState(false);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return history.filter((e) => entryMatches(e, q));
-  }, [history, query]);
+  const { query, setQuery, filtered } = useListFilter(history, entryMatches);
 
   // Reconnect by reusing the credential-aware saved-connection flow with a
   // synthetic (unsaved) connection: SSH password/passphrase prompts and stored

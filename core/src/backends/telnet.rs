@@ -25,9 +25,6 @@ use crate::monitoring::MonitoringProvider;
 /// Channel capacity for output data from the telnet reader thread.
 const OUTPUT_CHANNEL_CAPACITY: usize = 64;
 
-/// Connection timeout for TCP connect.
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-
 /// Read timeout for the reader thread (allows periodic alive checks).
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
 
@@ -271,6 +268,28 @@ impl ConnectionType for Telnet {
                         supports_tilde_expansion: false,
                         visible_when: None,
                     },
+                    SettingsField {
+                        key: "connectTimeoutSecs".to_string(),
+                        label: "Connect Timeout (s)".to_string(),
+                        description: Some(
+                            "Seconds to wait for the TCP connection before giving up".to_string(),
+                        ),
+                        help_text: Some(
+                            "Bounds how long a connection to an unreachable host blocks before \
+                             failing. Leave empty to use the default (10 s)."
+                                .to_string(),
+                        ),
+                        field_type: FieldType::Number {
+                            min: Some(1.0),
+                            max: Some(300.0),
+                        },
+                        required: false,
+                        default: None,
+                        placeholder: Some("10".to_string()),
+                        supports_env_expansion: false,
+                        supports_tilde_expansion: false,
+                        visible_when: None,
+                    },
                 ],
             }],
         }
@@ -306,8 +325,19 @@ impl ConnectionType for Telnet {
                     .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
             })
             .unwrap_or(23);
+        // Accept the connect timeout as a JSON number or a numeric string (the
+        // schema-driven form emits numbers as strings); absent/invalid falls
+        // back to the default budget via `TelnetConfig::connect_timeout`.
+        let connect_timeout_secs: Option<u64> = settings.get("connectTimeoutSecs").and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+        });
 
-        let config = TelnetConfig { host, port };
+        let config = TelnetConfig {
+            host,
+            port,
+            connect_timeout_secs,
+        };
 
         // Expand ${VAR} placeholders.
         let config = config.expand();
@@ -324,9 +354,12 @@ impl ConnectionType for Telnet {
         // an already-resolved `SocketAddr`, so a hostname (`router.local`,
         // `bbs.example.com`) must be resolved first — a bare IP-literal parse
         // would reject every hostname (CORE-015).
-        let stream =
-            crate::net::connect_timeout_resolved(&config.host, config.port, CONNECT_TIMEOUT)
-                .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))?;
+        let stream = crate::net::connect_timeout_resolved(
+            &config.host,
+            config.port,
+            config.connect_timeout(),
+        )
+        .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))?;
 
         // Enable TCP keepalive so a half-open connection (peer vanishes with no
         // FIN/RST — cable pull, NAT timeout, crashed host) is eventually torn
@@ -520,7 +553,8 @@ mod tests {
         let keys: Vec<&str> = fields.iter().map(|f| f.key.as_str()).collect();
         assert!(keys.contains(&"host"));
         assert!(keys.contains(&"port"));
-        assert_eq!(keys.len(), 2);
+        assert!(keys.contains(&"connectTimeoutSecs"));
+        assert_eq!(keys.len(), 3);
     }
 
     #[test]
@@ -553,6 +587,23 @@ mod tests {
         assert!(!port_field.supports_env_expansion);
         assert!(matches!(port_field.field_type, FieldType::Port));
         assert_eq!(port_field.default, Some(serde_json::json!(23)));
+    }
+
+    #[test]
+    fn schema_connect_timeout_field_properties() {
+        // Mirrors the SSH `connectTimeoutSecs` field so the connect-timeout
+        // surface is consistent across backends (PARITY-006): optional, numeric,
+        // no default (empty falls back to the backend default).
+        let telnet = Telnet::new();
+        let schema = telnet.settings_schema();
+        let field = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "connectTimeoutSecs")
+            .expect("telnet schema must expose connectTimeoutSecs");
+        assert!(!field.required);
+        assert!(field.default.is_none());
+        assert!(matches!(field.field_type, FieldType::Number { .. }));
     }
 
     #[test]
