@@ -43,7 +43,7 @@ struct PingParams {
 }
 
 fn default_ping_interval() -> u64 {
-    1000
+    defaults::PING_INTERVAL_MS
 }
 
 /// ICMP ping (with TCP fallback), streaming one `result` event per echo.
@@ -91,10 +91,10 @@ struct PortScanParams {
 }
 
 fn default_scan_timeout() -> u64 {
-    2000
+    defaults::PORT_SCAN_TIMEOUT_MS
 }
 fn default_scan_concurrency() -> usize {
-    100
+    defaults::PORT_SCAN_CONCURRENCY
 }
 
 /// TCP connect port scanner, streaming one `result` event per probed port.
@@ -142,14 +142,20 @@ struct PingSweepParams {
     targets: Vec<String>,
     #[serde(default = "default_sweep_timeout")]
     timeout_ms: u64,
-    #[serde(default = "default_scan_concurrency")]
+    #[serde(default = "default_sweep_concurrency")]
     concurrency: usize,
-    #[serde(default)]
+    #[serde(default = "default_sweep_resolve_hostnames")]
     resolve_hostnames: bool,
 }
 
 fn default_sweep_timeout() -> u64 {
-    1000
+    defaults::PING_SWEEP_TIMEOUT_MS
+}
+fn default_sweep_concurrency() -> usize {
+    defaults::PING_SWEEP_CONCURRENCY
+}
+fn default_sweep_resolve_hostnames() -> bool {
+    defaults::PING_SWEEP_RESOLVE_HOSTNAMES
 }
 
 /// Subnet / IP-range ping sweep, streaming one `result` event per responding host.
@@ -195,7 +201,7 @@ struct TracerouteParams {
 }
 
 fn default_max_hops() -> u8 {
-    30
+    defaults::TRACEROUTE_MAX_HOPS
 }
 
 /// Hop-by-hop traceroute, streaming one `hop` event per hop.
@@ -241,7 +247,7 @@ struct DnsParams {
 }
 
 fn default_record_type() -> String {
-    "A".to_string()
+    defaults::DNS_DEFAULT_RECORD_TYPE.to_string()
 }
 
 /// DNS record lookup (one-shot; returns the whole [`DnsResult`]).
@@ -310,7 +316,7 @@ struct WolParams {
 }
 
 fn default_wol_port() -> u16 {
-    9
+    defaults::WOL_PORT
 }
 
 /// Send a Wake-on-LAN magic packet (one-shot; returns `{}`).

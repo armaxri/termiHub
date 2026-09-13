@@ -17,6 +17,7 @@
 //! | [`wol`] | Wake-on-LAN magic packet |
 //! | [`open_ports`] | Local listening ports |
 
+pub mod defaults;
 pub mod dns;
 pub mod error;
 pub mod open_ports;
