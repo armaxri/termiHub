@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from "react";
-import { Circle, Search } from "lucide-react";
+import { Circle } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, Input, toast, Tooltip } from "@/components/ui";
+import { Button, SearchInput, toast, Tooltip } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
@@ -201,12 +201,12 @@ export function MacroSidebar() {
         />
       </SidebarToolbar>
       <div className="macro-sidebar__search">
-        <Search size={14} className="macro-sidebar__search-icon" aria-hidden="true" />
-        <Input
+        <SearchInput
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onValueChange={setQuery}
           placeholder="Search macros"
           aria-label="Search macros"
+          clearLabel="Clear macro search"
           data-testid="macro-search"
         />
       </div>

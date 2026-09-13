@@ -6,22 +6,10 @@
 }
 
 .macro-sidebar__search {
-  position: relative;
   display: flex;
   align-items: center;
   padding: 6px var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
-}
-
-.macro-sidebar__search-icon {
-  position: absolute;
-  left: 16px;
-  color: var(--text-secondary);
-  pointer-events: none;
-}
-
-.macro-sidebar__search .ui-input {
-  padding-left: 26px;
 }
 
 .macro-sidebar__list {
