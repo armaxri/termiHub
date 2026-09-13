@@ -120,12 +120,12 @@ mod tests {
         assert_eq!(parsed["id"], 1);
     }
 
-    /// The framer-level unit tests for the NDJSON reader (fragmented
-    /// reassembly, over-cap rejection without unbounded buffering, recovery
-    /// after an over-cap line, and cancellation safety) now live with the
-    /// shared implementation in `termihub_core::ipc::ndjson`. The loop-level
-    /// regressions below exercise `run_transport_loop` end-to-end against that
-    /// shared reader.
+    // The framer-level unit tests for the NDJSON reader (fragmented
+    // reassembly, over-cap rejection without unbounded buffering, recovery
+    // after an over-cap line, and cancellation safety) now live with the
+    // shared implementation in `termihub_core::ipc::ndjson`. The loop-level
+    // regressions below exercise `run_transport_loop` end-to-end against that
+    // shared reader.
 
     /// End-to-end regression for #1559 at the transport-loop level: a request
     /// split across the wire while an outbound notification is delivered must
