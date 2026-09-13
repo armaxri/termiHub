@@ -71,6 +71,15 @@ describe("TerminalSearchBar (Button migration)", () => {
     expect(buttonByLabel("Close search").className).toContain("ui-btn");
   });
 
+  it("renders the query field as the shared ui/Input primitive", async () => {
+    await render();
+    const field = container.querySelector<HTMLInputElement>(".terminal-search-bar__input")!;
+    // Migrated from a raw <input> to ui/Input: carries the primitive class and
+    // preserves the placeholder + testable behavior.
+    expect(field.className).toContain("ui-input");
+    expect(field.getAttribute("placeholder")).toBe("Find...");
+  });
+
   it("reflects toggle state through the Button variant and aria-pressed", async () => {
     await render();
     const matchCase = buttonByLabel("Match Case");
