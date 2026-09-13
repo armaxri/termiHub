@@ -420,7 +420,10 @@ mod tests {
         let outcome = read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
             .await
             .expect("eof");
-        assert!(matches!(outcome, LineOutcome::Eof), "clean EOF after trailing line");
+        assert!(
+            matches!(outcome, LineOutcome::Eof),
+            "clean EOF after trailing line"
+        );
     }
 
     #[tokio::test]
@@ -454,7 +457,10 @@ mod tests {
         let outcome = read_line_resumable(&mut reader, &mut pending, CAP - 1)
             .await
             .expect("over cap");
-        assert!(matches!(outcome, LineOutcome::TooLarge), "one byte over the cap is rejected");
+        assert!(
+            matches!(outcome, LineOutcome::TooLarge),
+            "one byte over the cap is rejected"
+        );
     }
 
     #[tokio::test]
@@ -475,8 +481,14 @@ mod tests {
         let outcome = read_line_resumable(&mut reader, &mut pending, CAP)
             .await
             .expect("read");
-        assert!(matches!(outcome, LineOutcome::TooLarge), "over-size line rejected");
-        assert!(pending.is_empty(), "accumulator cleared, not left holding the blob");
+        assert!(
+            matches!(outcome, LineOutcome::TooLarge),
+            "over-size line rejected"
+        );
+        assert!(
+            pending.is_empty(),
+            "accumulator cleared, not left holding the blob"
+        );
         let _client = writer.await.expect("writer task");
     }
 
@@ -496,14 +508,20 @@ mod tests {
         let first = read_line_resumable(&mut reader, &mut pending, CAP)
             .await
             .expect("first");
-        assert!(matches!(first, LineOutcome::TooLarge), "over-size line rejected");
+        assert!(
+            matches!(first, LineOutcome::TooLarge),
+            "over-size line rejected"
+        );
 
         let second = expect_line(
             read_line_resumable(&mut reader, &mut pending, CAP)
                 .await
                 .expect("second"),
         );
-        assert_eq!(second, r#"{"ok":true}"#, "line after over-size still parses");
+        assert_eq!(
+            second, r#"{"ok":true}"#,
+            "line after over-size still parses"
+        );
     }
 
     #[tokio::test]
