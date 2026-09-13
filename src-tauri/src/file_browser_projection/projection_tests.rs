@@ -264,8 +264,16 @@ fn a_clear_error_intent_dismisses_the_error_and_keeps_the_listing() {
         cache.apply(&diff);
     }
     assert_eq!(cache.view, store.snapshot("A"), "cache converges");
-    assert_eq!(cache.view["session"]["error"], Value::Null, "error dismissed");
-    assert_eq!(cache.view["session"]["path"], json!("/srv"), "path retained");
+    assert_eq!(
+        cache.view["session"]["error"],
+        Value::Null,
+        "error dismissed"
+    );
+    assert_eq!(
+        cache.view["session"]["path"],
+        json!("/srv"),
+        "path retained"
+    );
     assert_eq!(cache.view["session"]["entries"][0]["name"], json!("a"));
 }
 

@@ -108,7 +108,11 @@ fn load_failed_keeps_the_last_good_listing_and_records_the_error() {
 fn clear_error_dismisses_the_error_but_keeps_the_listing() {
     let store = FileBrowserStore::new();
     store.load_succeeded(C, FileBrowserKind::Session, "/srv", vec![entry("a", false)]);
-    store.load_failed(C, FileBrowserKind::Session, Some("permission denied".to_string()));
+    store.load_failed(
+        C,
+        FileBrowserKind::Session,
+        Some("permission denied".to_string()),
+    );
     // Dismiss (SM-008): the error goes, the last-good path/listing stays put.
     store.clear_error(C, FileBrowserKind::Session);
     let view = store.snapshot(C);
