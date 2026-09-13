@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_UI_LOCALE,
+  compareNames,
   ensureValidNavigatorLocale,
   isValidLocale,
   resolveUiLocale,
@@ -137,5 +138,31 @@ describe("ensureValidNavigatorLocale", () => {
   it("never throws", () => {
     stubNavigatorLanguage("C", ["C"]);
     expect(() => ensureValidNavigatorLocale()).not.toThrow();
+  });
+});
+
+/**
+ * I18N-014: user-facing name sorts (filenames, hostnames, connection names)
+ * previously used a bare `localeCompare`, giving lexicographic number ordering
+ * and case/diacritic-dependent results. `compareNames` uses a shared numeric,
+ * base-sensitivity collator.
+ */
+describe("compareNames", () => {
+  it("orders embedded numbers naturally (file2 before file10)", () => {
+    const names = ["file10", "file2", "file1"];
+    expect([...names].sort(compareNames)).toEqual(["file1", "file2", "file10"]);
+  });
+
+  it("treats case as equivalent for ordering (base sensitivity)", () => {
+    expect(compareNames("alpha", "Alpha")).toBe(0);
+    expect(compareNames("café", "cafe")).toBe(0);
+  });
+
+  it("sorts a mixed-case list without fragmenting by case", () => {
+    const names = ["Banana", "apple", "Apple", "cherry"];
+    const sorted = [...names].sort(compareNames);
+    // apple/Apple compare equal, so both lead (stable order preserved), then
+    // Banana, then cherry — not the ASCII order (uppercase before lowercase).
+    expect(sorted.map((s) => s.toLowerCase())).toEqual(["apple", "apple", "banana", "cherry"]);
   });
 });
