@@ -292,6 +292,26 @@ fn rpc_err_data(code: i64, message: impl Into<String>, data: Value) -> ErrorObje
     ErrorObjectOwned::owned(code as i32, message.into(), Some(data))
 }
 
+/// Serialize a method result into a JSON [`Value`], turning the
+/// (practically impossible) serialization failure into a clean JSON-RPC
+/// internal-error response instead of panicking.
+///
+/// Every protocol result type is a plain `#[derive(Serialize)]` struct, so
+/// `serde_json::to_value` cannot realistically fail here — but the
+/// request-handling hot path must never `.unwrap()`/`.expect()` in production
+/// (see the "no `.unwrap()` in production" rule). This helper centralizes the
+/// one non-panicking conversion so every method handler shares it instead of
+/// hand-writing a match. On success the produced value is byte-for-byte the
+/// same as the previous `to_value(..).unwrap()`.
+fn to_result_value<T: serde::Serialize>(value: &T) -> Result<Value, ErrorObjectOwned> {
+    serde_json::to_value(value).map_err(|e| {
+        rpc_err(
+            errors::INTERNAL_ERROR,
+            format!("Failed to serialize response: {e}"),
+        )
+    })
+}
+
 fn not_initialized() -> ErrorObjectOwned {
     rpc_err(
         errors::NOT_INITIALIZED,
@@ -693,9 +713,7 @@ fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyh
             })
             .collect();
 
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(SessionListResult { sessions: entries }).unwrap(),
-        )
+        to_result_value(&SessionListResult { sessions: entries })
     })?;
     Ok(())
 }
@@ -875,7 +893,7 @@ fn register_connection_types(module: &mut RpcModule<Mutex<HandlerState>>) -> any
             })
             .collect();
 
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(ConnectionTypesResult { types }).unwrap())
+        to_result_value(&ConnectionTypesResult { types })
     })?;
     Ok(())
 }
@@ -937,7 +955,7 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
         };
 
         let snapshot = connection_store.create(conn).await;
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(snapshot).unwrap())
+        to_result_value(&snapshot)
     })?;
     Ok(())
 }
@@ -981,7 +999,7 @@ fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             )
             .await
         {
-            Some(snapshot) => Ok::<_, ErrorObjectOwned>(serde_json::to_value(snapshot).unwrap()),
+            Some(snapshot) => to_result_value(&snapshot),
             None => Err(rpc_err_data(
                 errors::CONNECTION_NOT_FOUND,
                 "Connection not found",
@@ -1033,7 +1051,7 @@ fn register_connections_folders_create(
             };
 
             let snapshot = connection_store.create_folder(folder).await;
-            Ok::<_, ErrorObjectOwned>(serde_json::to_value(snapshot).unwrap())
+            to_result_value(&snapshot)
         },
     )?;
     Ok(())
@@ -1063,9 +1081,7 @@ fn register_connections_folders_update(
                 .update_folder(&p.id, p.name, parent_id, p.is_expanded)
                 .await
             {
-                Some(snapshot) => {
-                    Ok::<_, ErrorObjectOwned>(serde_json::to_value(snapshot).unwrap())
-                }
+                Some(snapshot) => to_result_value(&snapshot),
                 None => Err(rpc_err_data(
                     errors::FOLDER_NOT_FOUND,
                     "Folder not found",
@@ -1162,8 +1178,8 @@ fn register_files_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
         browser
             .list_dir(&p.path)
             .await
-            .map(|entries| serde_json::to_value(FilesListResult { entries }).unwrap())
             .map_err(map_file_error)
+            .and_then(|entries| to_result_value(&FilesListResult { entries }))
     })?;
     Ok(())
 }
@@ -1271,7 +1287,7 @@ fn register_files_stat(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
             resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
         let result = browser.stat(&p.path).await.map_err(map_file_error)?;
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).unwrap())
+        to_result_value(&result)
     })?;
     Ok(())
 }
@@ -1395,8 +1411,8 @@ fn register_network_port_scan(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 
         network::handle_port_scan(p)
             .await
-            .map(|r| serde_json::to_value(r).unwrap())
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+            .and_then(|r| to_result_value(&r))
     })?;
     Ok(())
 }
@@ -1411,8 +1427,8 @@ fn register_network_ping(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 
         network::handle_ping(p)
             .await
-            .map(|r| serde_json::to_value(r).unwrap())
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+            .and_then(|r| to_result_value(&r))
     })?;
     Ok(())
 }
@@ -1427,8 +1443,8 @@ fn register_network_dns_lookup(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 
         network::handle_dns_lookup(p)
             .await
-            .map(|r| serde_json::to_value(r).unwrap())
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+            .and_then(|r| to_result_value(&r))
     })?;
     Ok(())
 }
@@ -1438,8 +1454,8 @@ fn register_network_open_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> a
         check_initialized(&ctx).await?;
 
         network::handle_open_ports()
-            .map(|r| serde_json::to_value(r).unwrap())
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+            .and_then(|r| to_result_value(&r))
     })?;
     Ok(())
 }
@@ -1454,8 +1470,8 @@ fn register_network_traceroute(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 
         network::handle_traceroute(p)
             .await
-            .map(|r| serde_json::to_value(r).unwrap())
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+            .and_then(|r| to_result_value(&r))
     })?;
     Ok(())
 }
@@ -1566,7 +1582,7 @@ fn register_service_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
             .parse()
             .map_err(|e| invalid_params("service.stop", e))?;
         let stopped = registry.stop(&p.instance_id).await;
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(ServiceStopResult { stopped }).unwrap())
+        to_result_value(&ServiceStopResult { stopped })
     })?;
     Ok(())
 }
@@ -1588,7 +1604,7 @@ fn register_service_pause(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow
             .pause(&p.instance_id)
             .await
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(ServicePauseResult { paused }).unwrap())
+        to_result_value(&ServicePauseResult { paused })
     })?;
     Ok(())
 }
@@ -1603,7 +1619,7 @@ fn register_service_resume(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
             .resume(&p.instance_id)
             .await
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(ServiceResumeResult { resumed }).unwrap())
+        to_result_value(&ServiceResumeResult { resumed })
     })?;
     Ok(())
 }
@@ -1626,7 +1642,7 @@ fn register_service_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
                 state: None,
             },
         };
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).unwrap())
+        to_result_value(&result)
     })?;
     Ok(())
 }
@@ -1678,7 +1694,7 @@ fn register_tunnel_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
             .parse()
             .map_err(|e| invalid_params("tunnel.stop", e))?;
         let stopped = registry.stop(&p.tunnel_id).await;
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(TunnelStopResult { stopped }).unwrap())
+        to_result_value(&TunnelStopResult { stopped })
     })?;
     Ok(())
 }
@@ -1703,7 +1719,7 @@ fn register_tunnel_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow
                 reachable_from: None,
             },
         };
-        Ok::<_, ErrorObjectOwned>(serde_json::to_value(result).unwrap())
+        to_result_value(&result)
     })?;
     Ok(())
 }
@@ -1965,7 +1981,7 @@ fn register_agent_request_deferred_update(
                 }
             };
 
-            serde_json::to_value(result).map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
+            to_result_value(&result)
         },
     )?;
     Ok(())
@@ -2028,9 +2044,7 @@ fn register_agent_list_connections(
             }
         };
 
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(ConnectionListResult { connections }).unwrap(),
-        )
+        to_result_value(&ConnectionListResult { connections })
     })?;
     Ok(())
 }
@@ -2201,6 +2215,38 @@ mod tests {
     use super::*;
     use crate::session::manager::SessionManager;
     use serde_json::json;
+
+    // ── to_result_value helper tests (WA-RS-007) ───────────────────
+
+    /// A type whose `Serialize` always fails, standing in for the
+    /// (practically impossible) real serialization failure so we can prove the
+    /// helper returns a clean error instead of panicking.
+    struct AlwaysFailsToSerialize;
+
+    impl serde::Serialize for AlwaysFailsToSerialize {
+        fn serialize<S: serde::Serializer>(&self, _s: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("intentional serialize failure"))
+        }
+    }
+
+    #[test]
+    fn to_result_value_round_trips_a_normal_value() {
+        // A plain result value serializes to the identical JSON the previous
+        // `to_value(..).unwrap()` produced — the success path is unchanged.
+        let value = to_result_value(&ServiceStopResult { stopped: true })
+            .expect("normal value must serialize");
+        assert_eq!(value, json!({ "stopped": true }));
+    }
+
+    #[test]
+    fn to_result_value_returns_internal_error_instead_of_panicking() {
+        // A serialization failure must become a JSON-RPC internal error, not a
+        // panic that aborts the request-handling loop.
+        let err = to_result_value(&AlwaysFailsToSerialize)
+            .expect_err("failing serialize must yield an error");
+        assert_eq!(err.code() as i64, errors::INTERNAL_ERROR);
+        assert!(err.message().contains("Failed to serialize response"));
+    }
 
     // ── Docker availability probe tests ────────────────────────────
 
