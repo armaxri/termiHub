@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use termihub_core::network::{
-    dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol, DnsRecordType, PingSweepResult,
-    PortScanResult, WolDevice,
+    defaults, dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol, DnsRecordType,
+    ParseDnsRecordTypeError, PingSweepResult, PortScanResult, WolDevice,
 };
 use termihub_core::service::ServiceInfo;
 
@@ -157,8 +157,8 @@ pub async fn network_port_scan(
                 let summary = port_scan::scan_targets(
                     &targets,
                     &port_list,
-                    timeout_ms.unwrap_or(2000),
-                    concurrency.unwrap_or(100),
+                    timeout_ms.unwrap_or(defaults::PORT_SCAN_TIMEOUT_MS),
+                    concurrency.unwrap_or(defaults::PORT_SCAN_CONCURRENCY),
                     on_result,
                     cancel,
                 )
@@ -293,9 +293,14 @@ pub async fn network_ping_start(
                     }
                 };
 
-                let result =
-                    ping::ping_stream(&host, interval_ms.unwrap_or(1000), count, on_result, cancel)
-                        .await;
+                let result = ping::ping_stream(
+                    &host,
+                    interval_ms.unwrap_or(defaults::PING_INTERVAL_MS),
+                    count,
+                    on_result,
+                    cancel,
+                )
+                .await;
                 // Check cancellation *after* the stream ends so Stop is reported
                 // as canceled rather than completed (the token is set while it
                 // runs).
@@ -387,9 +392,9 @@ pub async fn network_ping_sweep(
 
         let summary = ping_sweep::ping_sweep(
             &targets,
-            timeout_ms.unwrap_or(1000),
-            concurrency.unwrap_or(64),
-            resolve_hostnames.unwrap_or(true),
+            timeout_ms.unwrap_or(defaults::PING_SWEEP_TIMEOUT_MS),
+            concurrency.unwrap_or(defaults::PING_SWEEP_CONCURRENCY),
+            resolve_hostnames.unwrap_or(defaults::PING_SWEEP_RESOLVE_HOSTNAMES),
             on_result,
             cancel,
         )
@@ -534,7 +539,9 @@ pub async fn network_dns_lookup(
 ) -> Result<serde_json::Value, TerminalError> {
     // Validate the record type locally so the error is identical regardless of
     // where the lookup runs.
-    let rtype = parse_record_type(&record_type)?;
+    let rtype: DnsRecordType = record_type
+        .parse()
+        .map_err(|e: ParseDnsRecordTypeError| TerminalError::NetworkError(e.to_string()))?;
 
     match manager.resolve_tool_location(agent_tools::tool::DNS)? {
         ResolvedLocation::Agent(agent_id) => {
@@ -634,8 +641,13 @@ pub async fn network_traceroute(
                     }
                 };
 
-                let result =
-                    traceroute::traceroute(&host, max_hops.unwrap_or(30), on_hop, cancel).await;
+                let result = traceroute::traceroute(
+                    &host,
+                    max_hops.unwrap_or(defaults::TRACEROUTE_MAX_HOPS),
+                    on_hop,
+                    cancel,
+                )
+                .await;
 
                 match result {
                     Ok(()) => {
@@ -833,24 +845,4 @@ pub fn network_http_monitor_list(
 #[tauri::command]
 pub fn network_services_list(manager: State<'_, Arc<NetworkManager>>) -> Vec<ServiceInfo> {
     manager.available_services()
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-fn parse_record_type(s: &str) -> Result<DnsRecordType, TerminalError> {
-    match s.to_uppercase().as_str() {
-        "A" => Ok(DnsRecordType::A),
-        "AAAA" => Ok(DnsRecordType::Aaaa),
-        "MX" => Ok(DnsRecordType::Mx),
-        "CNAME" => Ok(DnsRecordType::Cname),
-        "NS" => Ok(DnsRecordType::Ns),
-        "TXT" => Ok(DnsRecordType::Txt),
-        "SRV" => Ok(DnsRecordType::Srv),
-        "SOA" => Ok(DnsRecordType::Soa),
-        "PTR" => Ok(DnsRecordType::Ptr),
-        "ANY" => Ok(DnsRecordType::Any),
-        other => Err(TerminalError::NetworkError(format!(
-            "unknown DNS record type: '{other}'"
-        ))),
-    }
 }

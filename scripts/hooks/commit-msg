@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Git commit-msg hook (issue TOOL-007). Runs commitlint on the message being
+# written, so a bad type/case or an over-long header (the failures the team keeps
+# hitting in the Lint Commit Messages CI job) is caught at commit time, not after
+# a push. Config: commitlint.config.js. Enabled via core.hooksPath (scripts/setup.sh).
+#
+# Bypass with `git commit --no-verify` or `export TERMIHUB_SKIP_HOOKS=1`.
+set -euo pipefail
+
+if [ -n "${TERMIHUB_SKIP_HOOKS:-}" ]; then
+  exit 0
+fi
+
+cd "$(git rev-parse --show-toplevel)"
+
+# $1 is the path to the file holding the proposed commit message.
+pnpm exec commitlint --edit "$1"
