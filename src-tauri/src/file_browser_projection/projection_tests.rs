@@ -65,6 +65,12 @@ fn registry_for(store: Arc<FileBrowserStore>) -> HandlerRegistry {
     });
 
     let s = store.clone();
+    registry.route("fileBrowser.clearError", move |intent, projector| {
+        s.clear_error(&intent.client_id, parse_pane(intent)?);
+        Ok(publish_file_browser(projector, &s, &intent.client_id))
+    });
+
+    let s = store.clone();
     registry.route("fileBrowser.reset", move |intent, projector| {
         s.reset_pane(&intent.client_id, parse_pane(intent)?);
         Ok(publish_file_browser(projector, &s, &intent.client_id))
@@ -224,6 +230,51 @@ fn a_load_succeeded_intent_produces_one_diff_fanned_to_two_subscribers() {
     assert_eq!(cache_a.view, store.snapshot("A"), "cache converges");
     assert_eq!(cache_a.view["session"]["path"], json!("/var"));
     assert_eq!(cache_a.view["session"]["entries"][0]["name"], json!("log"));
+}
+
+#[test]
+fn a_clear_error_intent_dismisses_the_error_and_keeps_the_listing() {
+    let store = Arc::new(FileBrowserStore::new());
+    let region = file_browser_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(&region, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    // A committed listing that then fails, then a dismiss (SM-008).
+    for (kind, payload) in [
+        (
+            "fileBrowser.loadSucceeded",
+            json!({ "pane": "session", "path": "/srv", "entries": [entry_json("a", false)] }),
+        ),
+        (
+            "fileBrowser.loadFailed",
+            json!({ "pane": "session", "error": "permission denied" }),
+        ),
+        ("fileBrowser.clearError", json!({ "pane": "session" })),
+    ] {
+        let ack = dispatcher.dispatch(intent(kind, "A", payload));
+        assert_eq!(ack.status, IntentStatus::Accepted, "{kind} accepted");
+    }
+
+    for diff in sink.diffs() {
+        cache.apply(&diff);
+    }
+    assert_eq!(cache.view, store.snapshot("A"), "cache converges");
+    assert_eq!(
+        cache.view["session"]["error"],
+        Value::Null,
+        "error dismissed"
+    );
+    assert_eq!(
+        cache.view["session"]["path"],
+        json!("/srv"),
+        "path retained"
+    );
+    assert_eq!(cache.view["session"]["entries"][0]["name"], json!("a"));
 }
 
 #[test]

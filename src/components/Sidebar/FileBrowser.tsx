@@ -883,6 +883,51 @@ function useFileBrowserSync() {
   return { navigateToCwd, hasCwd: !!cwd, cdToCurrentPath, canCd };
 }
 
+/** Props for {@link FileBrowserErrorActions}. */
+interface FileBrowserErrorActionsProps {
+  /** Re-invoke the directory listing. Returns a promise so Retry shows a pending state. */
+  onRetry: () => void | Promise<void>;
+  /** Dismiss the error and return the browser to a usable state. */
+  onDismiss: () => void;
+  /** Root for the two controls' `data-testid`s (`<prefix>-retry` / `<prefix>-dismiss`). */
+  testIdPrefix: string;
+}
+
+/**
+ * Recovery controls shown on a failed directory listing (SM-008): a **Retry**
+ * that re-invokes the listing (driving the Button's async pending state) and a
+ * **Dismiss** that clears the error so the placeholder/banner is no longer a
+ * dead-end. Composed from the shared `Button` primitive.
+ */
+function FileBrowserErrorActions({
+  onRetry,
+  onDismiss,
+  testIdPrefix,
+}: FileBrowserErrorActionsProps) {
+  return (
+    <div className="file-browser__error-actions">
+      <Button
+        variant="secondary"
+        size="sm"
+        icon={<RefreshCw size={14} />}
+        onClick={onRetry}
+        data-testid={`${testIdPrefix}-retry`}
+      >
+        Retry
+      </Button>
+      <Button
+        variant="ghost"
+        size="sm"
+        icon={<X size={14} />}
+        onClick={onDismiss}
+        data-testid={`${testIdPrefix}-dismiss`}
+      >
+        Dismiss
+      </Button>
+    </div>
+  );
+}
+
 export function FileBrowser() {
   const { navigateToCwd, hasCwd, cdToCurrentPath, canCd } = useFileBrowserSync();
 
@@ -895,6 +940,7 @@ export function FileBrowser() {
     navigateTo,
     navigateUp,
     refresh,
+    dismissError,
     downloadFile,
     uploadFile,
     uploadFileFromPath,
@@ -1411,6 +1457,11 @@ export function FileBrowser() {
             <>
               <AlertCircle size={20} />
               <span>{error}</span>
+              <FileBrowserErrorActions
+                onRetry={refresh}
+                onDismiss={dismissError}
+                testIdPrefix="file-browser-connect"
+              />
             </>
           ) : (
             <span>Waiting for session...</span>
@@ -1628,8 +1679,15 @@ export function FileBrowser() {
 
       {error && (
         <div className="file-browser__error">
-          <AlertCircle size={14} />
-          <span>{error}</span>
+          <div className="file-browser__error-message">
+            <AlertCircle size={14} />
+            <span>{error}</span>
+          </div>
+          <FileBrowserErrorActions
+            onRetry={refresh}
+            onDismiss={dismissError}
+            testIdPrefix="file-browser-error"
+          />
         </div>
       )}
 

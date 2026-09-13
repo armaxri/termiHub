@@ -61,6 +61,7 @@ export function useSessionFileSystem() {
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const navigateSession = useAppStore((s) => s.navigateSession);
   const refreshSession = useAppStore((s) => s.refreshSession);
+  const clearFileBrowserError = useAppStore((s) => s.clearFileBrowserError);
 
   // Whether the current session's backend is SFTP-backed and can therefore drive
   // the dedicated transfer channel + VS Code remote open (#2421). Determined by
@@ -130,9 +131,10 @@ export function useSessionFileSystem() {
     navigateTo(parentPath);
   }, [sessionCurrentPath, navigateTo]);
 
-  const refresh = useCallback(() => {
-    refreshSession();
-  }, [refreshSession]);
+  // Return the promise so a Retry Button can drive its async pending state.
+  const refresh = useCallback(() => refreshSession(), [refreshSession]);
+
+  const dismissError = useCallback(() => clearFileBrowserError("session"), [clearFileBrowserError]);
 
   const downloadFile = useCallback(
     async (remotePath: string, fileName: string) => {
@@ -409,6 +411,7 @@ export function useSessionFileSystem() {
     navigateTo,
     navigateUp,
     refresh,
+    dismissError,
     downloadFile,
     uploadFile,
     uploadFileFromPath,

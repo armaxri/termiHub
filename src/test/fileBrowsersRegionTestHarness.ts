@@ -133,6 +133,11 @@ export class FakeFileBrowsersTransport implements Transport {
         pane.error = (p.error as string | null) ?? null;
         break;
       }
+      case "fileBrowser.clearError": {
+        const pane = this.view[this.paneOf(p.pane)];
+        pane.error = null;
+        break;
+      }
       case "fileBrowser.setClipboard":
         this.view.clipboard = (p.clipboard as FileClipboard | null) ?? null;
         break;

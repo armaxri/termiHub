@@ -54,6 +54,7 @@ export function useFileBrowser() {
     navigateTo: async () => {},
     navigateUp: async () => {},
     refresh: async () => {},
+    dismissError: () => {},
     downloadFile: async () => {},
     uploadFile: async () => {},
     uploadFileFromPath: async () => {},

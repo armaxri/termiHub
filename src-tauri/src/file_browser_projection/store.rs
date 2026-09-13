@@ -358,6 +358,21 @@ impl FileBrowserStore {
         p.error = error;
     }
 
+    /// `fileBrowser.clearError` — dismiss a pane's failed-listing error without
+    /// re-listing: clear its `error`, leaving the last-good path/listing and the
+    /// `loading` flag untouched. The client-originated twin of the system
+    /// monitor's `clear_error` — it has no backend command (nothing to re-fetch),
+    /// it only dismisses the banner so the browser returns to a usable state
+    /// (SM-008).
+    pub fn clear_error(&self, client_id: &str, pane: FileBrowserKind) {
+        let mut clients = self.lock();
+        clients
+            .entry(client_id.to_string())
+            .or_default()
+            .pane_mut(pane)
+            .error = None;
+    }
+
     /// `fileBrowser.reset` — reset a pane to the idle baseline (root path, empty
     /// listing, not loading, no error), mirroring the `set({ *FileEntries: [],
     /// *CurrentPath: "/" })` resets on disconnect / tab close.

@@ -32,6 +32,7 @@ export function useLocalFileSystem() {
   const error = local.error;
   const navigateLocal = useAppStore((s) => s.navigateLocal);
   const refreshLocal = useAppStore((s) => s.refreshLocal);
+  const clearFileBrowserError = useAppStore((s) => s.clearFileBrowserError);
 
   const navigateTo = useCallback(
     (path: string) => {
@@ -56,9 +57,10 @@ export function useLocalFileSystem() {
     navigateTo(parentPath);
   }, [currentPath, navigateTo]);
 
-  const refresh = useCallback(() => {
-    refreshLocal();
-  }, [refreshLocal]);
+  // Return the promise so a Retry Button can drive its async pending state.
+  const refresh = useCallback(() => refreshLocal(), [refreshLocal]);
+
+  const dismissError = useCallback(() => clearFileBrowserError("local"), [clearFileBrowserError]);
 
   const createDirectory = useCallback(
     async (name: string) => {
@@ -201,6 +203,7 @@ export function useLocalFileSystem() {
     navigateTo,
     navigateUp,
     refresh,
+    dismissError,
     downloadFile,
     uploadFile: async () => {
       /* no-op: files are already local */

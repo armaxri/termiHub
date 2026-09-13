@@ -57,6 +57,13 @@ export interface FileBrowsersSlice {
   // File browser mode
   setFileBrowserMode: (mode: "local" | "session" | "none") => void;
 
+  /**
+   * Dismiss a pane's failed-listing error banner without re-listing (SM-008).
+   * Clears only the pane's `error`, leaving its last-good path/listing intact —
+   * the recovery counterpart to `refreshLocal`/`refreshSession` (Retry).
+   */
+  clearFileBrowserError: (pane: "local" | "session") => void;
+
   // File clipboard (copy/cut)
   setFileClipboard: (clipboard: FileClipboard | null) => void;
 }
@@ -169,6 +176,12 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
   // File browser mode
   setFileBrowserMode: (mode) => {
     mirrorFileBrowserIntent("fileBrowser.setMode", { mode });
+  },
+
+  // Dismiss a pane's failed-listing error (SM-008) — a client-originated
+  // transition with no async list op, unlike navigate/refresh.
+  clearFileBrowserError: (pane) => {
+    mirrorFileBrowserIntent("fileBrowser.clearError", { pane });
   },
 
   // File clipboard (copy/cut)

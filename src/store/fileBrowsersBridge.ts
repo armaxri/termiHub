@@ -317,6 +317,7 @@ export type FileBrowserIntentKind =
   | "fileBrowser.loadStarted"
   | "fileBrowser.loadSucceeded"
   | "fileBrowser.loadFailed"
+  | "fileBrowser.clearError"
   | "fileBrowser.setClipboard";
 
 /** Dispatch a granular `fileBrowser.*` intent, resolving with the ack (parity tests). */
@@ -378,6 +379,12 @@ function foldFor(
           ...v,
           [pane]: { ...v[pane], loading: false, error: (payload.error as string | null) ?? null },
         };
+      };
+    case "fileBrowser.clearError":
+      return (view) => {
+        const v = normalizeView(view as Partial<FileBrowsersView>);
+        const pane = paneOf(payload.pane);
+        return { ...v, [pane]: { ...v[pane], error: null } };
       };
     case "fileBrowser.setClipboard":
       return (view) => ({
