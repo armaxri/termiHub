@@ -47,6 +47,9 @@ use crate::protocol::methods::{
     TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
     UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
+// Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
+// in the `register_async_method` calls so agent and desktop cannot drift.
+use crate::protocol::methods as pm;
 use crate::registry_daemon::client::RegistryClient;
 use crate::registry_daemon::protocol::{BroadcastEnvelope, ClientRecord};
 use crate::service::AgentServiceRegistry;
@@ -508,7 +511,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
 // ── initialize ────────────────────────────────────────────────────
 
 fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("initialize", |params, ctx, _ext| async move {
+    module.register_async_method(pm::INITIALIZE, |params, ctx, _ext| async move {
         let p: InitializeParams = params
             .parse()
             .map_err(|e| invalid_params("initialize", e))?;
@@ -645,7 +648,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 // ── connection.* ──────────────────────────────────────────────────
 
 fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.create", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_CREATE, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionCreateParams = params
@@ -695,7 +698,7 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 }
 
 fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.list", |_params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_LIST, |_params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let sessions = session_manager.list().await;
@@ -719,7 +722,7 @@ fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyh
 }
 
 fn register_connection_close(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.close", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_CLOSE, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionCloseParams = params
@@ -740,7 +743,7 @@ fn register_connection_close(module: &mut RpcModule<Mutex<HandlerState>>) -> any
 }
 
 fn register_connection_attach(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.attach", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_ATTACH, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionAttachParams = params
@@ -761,7 +764,7 @@ fn register_connection_attach(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 }
 
 fn register_connection_detach(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.detach", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_DETACH, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionDetachParams = params
@@ -782,7 +785,7 @@ fn register_connection_detach(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 }
 
 fn register_connection_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.write", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_WRITE, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionInputParams = params
@@ -811,7 +814,7 @@ fn register_connection_write(module: &mut RpcModule<Mutex<HandlerState>>) -> any
 }
 
 fn register_connection_resize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.resize", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_RESIZE, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionResizeParams = params
@@ -838,7 +841,7 @@ fn register_connection_resize(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 /// stream (#1727). Routed to the matching relay connection; unknown streams are
 /// a benign no-op (the stream may have already closed).
 fn register_agent_forward_data(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("agent.forward.data", |params, ctx, _ext| async move {
+    module.register_async_method(pm::AGENT_FORWARD_DATA, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: AgentForwardDataParams = params
@@ -862,7 +865,7 @@ fn register_agent_forward_data(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 /// `agent.forward.close`: the desktop closed a forwarded ssh-agent stream
 /// (#1727). Drops the relay connection so the daemon's bridge sees EOF.
 fn register_agent_forward_close(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("agent.forward.close", |params, ctx, _ext| async move {
+    module.register_async_method(pm::AGENT_FORWARD_CLOSE, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: AgentForwardCloseParams = params
@@ -877,7 +880,7 @@ fn register_agent_forward_close(module: &mut RpcModule<Mutex<HandlerState>>) -> 
 }
 
 fn register_connection_types(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.types", |_params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_TYPES, |_params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let monitoring_ok = detect_monitoring_supported();
@@ -899,7 +902,7 @@ fn register_connection_types(module: &mut RpcModule<Mutex<HandlerState>>) -> any
 }
 
 fn register_session_get_buffer(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("session.getBuffer", |params, ctx, _ext| async move {
+    module.register_async_method(pm::SESSION_GET_BUFFER, |params, ctx, _ext| async move {
         let session_manager = get_session_manager(&ctx).await?;
 
         let p: SessionGetBufferParams = params
@@ -926,7 +929,7 @@ fn register_session_get_buffer(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 // ── connections.* ─────────────────────────────────────────────────
 
 fn register_connections_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connections.list", |_params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTIONS_LIST, |_params, ctx, _ext| async move {
         let connection_store = get_connection_store(&ctx).await?;
 
         let (connections, folders) = connection_store.list().await;
@@ -936,7 +939,7 @@ fn register_connections_list(module: &mut RpcModule<Mutex<HandlerState>>) -> any
 }
 
 fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connections.create", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTIONS_CREATE, |params, ctx, _ext| async move {
         let connection_store = get_connection_store(&ctx).await?;
 
         let p: ConnectionCreateParams = params
@@ -961,7 +964,7 @@ fn register_connections_create(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 }
 
 fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connections.update", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTIONS_UPDATE, |params, ctx, _ext| async move {
         let connection_store = get_connection_store(&ctx).await?;
 
         let p: ConnectionUpdateParams = params
@@ -1011,7 +1014,7 @@ fn register_connections_update(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 }
 
 fn register_connections_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connections.delete", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTIONS_DELETE, |params, ctx, _ext| async move {
         let connection_store = get_connection_store(&ctx).await?;
 
         let p: ConnectionDeleteParams = params
@@ -1035,7 +1038,7 @@ fn register_connections_folders_create(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method(
-        "connections.folders.create",
+        pm::CONNECTIONS_FOLDERS_CREATE,
         |params, ctx, _ext| async move {
             let connection_store = get_connection_store(&ctx).await?;
 
@@ -1061,7 +1064,7 @@ fn register_connections_folders_update(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method(
-        "connections.folders.update",
+        pm::CONNECTIONS_FOLDERS_UPDATE,
         |params, ctx, _ext| async move {
             let connection_store = get_connection_store(&ctx).await?;
 
@@ -1097,7 +1100,7 @@ fn register_connections_folders_delete(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method(
-        "connections.folders.delete",
+        pm::CONNECTIONS_FOLDERS_DELETE,
         |params, ctx, _ext| async move {
             let connection_store = get_connection_store(&ctx).await?;
 
@@ -1165,7 +1168,7 @@ async fn resolve_file_browser(
 }
 
 fn register_files_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.files.list", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_FILES_LIST, |params, ctx, _ext| async move {
         let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesListParams = params
@@ -1185,7 +1188,7 @@ fn register_files_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 }
 
 fn register_files_read(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.files.read", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_FILES_READ, |params, ctx, _ext| async move {
         let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesReadParams = params
@@ -1210,7 +1213,7 @@ fn register_files_read(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 }
 
 fn register_files_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.files.write", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_FILES_WRITE, |params, ctx, _ext| async move {
         let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesWriteParams = params
@@ -1235,7 +1238,7 @@ fn register_files_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
 }
 
 fn register_files_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.files.delete", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_FILES_DELETE, |params, ctx, _ext| async move {
         let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesDeleteParams = params
@@ -1256,7 +1259,7 @@ fn register_files_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 }
 
 fn register_files_rename(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.files.rename", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_FILES_RENAME, |params, ctx, _ext| async move {
         let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesRenameParams = params
@@ -1276,7 +1279,7 @@ fn register_files_rename(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 }
 
 fn register_files_stat(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.files.stat", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_FILES_STAT, |params, ctx, _ext| async move {
         let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesStatParams = params
@@ -1293,7 +1296,7 @@ fn register_files_stat(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
 }
 
 fn register_files_mkdir(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("connection.files.mkdir", |params, ctx, _ext| async move {
+    module.register_async_method(pm::CONNECTION_FILES_MKDIR, |params, ctx, _ext| async move {
         let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
         let p: FilesMkdirParams = params
@@ -1313,7 +1316,7 @@ fn register_files_set_permissions(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method(
-        "connection.files.set_permissions",
+        pm::CONNECTION_FILES_SET_PERMISSIONS,
         |params, ctx, _ext| async move {
             let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
@@ -1352,7 +1355,7 @@ fn register_monitoring_subscribe(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method(
-        "connection.monitoring.subscribe",
+        pm::CONNECTION_MONITORING_SUBSCRIBE,
         |params, ctx, _ext| async move {
             let (session_manager, monitoring_manager) = get_monitoring_managers(&ctx).await?;
 
@@ -1382,7 +1385,7 @@ fn register_monitoring_unsubscribe(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method(
-        "connection.monitoring.unsubscribe",
+        pm::CONNECTION_MONITORING_UNSUBSCRIBE,
         |params, ctx, _ext| async move {
             let (session_manager, monitoring_manager) = get_monitoring_managers(&ctx).await?;
 
@@ -1402,7 +1405,7 @@ fn register_monitoring_unsubscribe(
 // ── network.* ─────────────────────────────────────────────────────
 
 fn register_network_port_scan(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("network.port_scan", |params, ctx, _ext| async move {
+    module.register_async_method(pm::NETWORK_PORT_SCAN, |params, ctx, _ext| async move {
         check_initialized(&ctx).await?;
 
         let p: NetworkPortScanParams = params
@@ -1418,7 +1421,7 @@ fn register_network_port_scan(module: &mut RpcModule<Mutex<HandlerState>>) -> an
 }
 
 fn register_network_ping(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("network.ping", |params, ctx, _ext| async move {
+    module.register_async_method(pm::NETWORK_PING, |params, ctx, _ext| async move {
         check_initialized(&ctx).await?;
 
         let p: NetworkPingParams = params
@@ -1434,7 +1437,7 @@ fn register_network_ping(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 }
 
 fn register_network_dns_lookup(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("network.dns_lookup", |params, ctx, _ext| async move {
+    module.register_async_method(pm::NETWORK_DNS_LOOKUP, |params, ctx, _ext| async move {
         check_initialized(&ctx).await?;
 
         let p: NetworkDnsLookupParams = params
@@ -1450,7 +1453,7 @@ fn register_network_dns_lookup(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 }
 
 fn register_network_open_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("network.open_ports", |_params, ctx, _ext| async move {
+    module.register_async_method(pm::NETWORK_OPEN_PORTS, |_params, ctx, _ext| async move {
         check_initialized(&ctx).await?;
 
         network::handle_open_ports()
@@ -1461,7 +1464,7 @@ fn register_network_open_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 }
 
 fn register_network_traceroute(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("network.traceroute", |params, ctx, _ext| async move {
+    module.register_async_method(pm::NETWORK_TRACEROUTE, |params, ctx, _ext| async move {
         check_initialized(&ctx).await?;
 
         let p: NetworkTracerouteParams = params
@@ -1477,7 +1480,7 @@ fn register_network_traceroute(module: &mut RpcModule<Mutex<HandlerState>>) -> a
 }
 
 fn register_network_wol(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("network.wol", |params, ctx, _ext| async move {
+    module.register_async_method(pm::NETWORK_WOL, |params, ctx, _ext| async move {
         check_initialized(&ctx).await?;
 
         let p: NetworkWolParams = params
@@ -1500,7 +1503,7 @@ fn register_network_wol(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
 // exists before S2 lifts concrete services onto the agent.
 
 fn register_tool_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("tool.list", |_params, ctx, _ext| async move {
+    module.register_async_method(pm::TOOL_LIST, |_params, ctx, _ext| async move {
         let registry = get_tool_registry(&ctx).await?;
         Ok::<_, ErrorObjectOwned>(json!({ "tools": registry.available_tools() }))
     })?;
@@ -1508,7 +1511,7 @@ fn register_tool_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Re
 }
 
 fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("tool.run", |params, ctx, _ext| async move {
+    module.register_async_method(pm::TOOL_RUN, |params, ctx, _ext| async move {
         let registry = get_tool_registry(&ctx).await?;
 
         let p: Value = params.parse().map_err(|e| invalid_params("tool.run", e))?;
@@ -1540,7 +1543,7 @@ fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Res
 }
 
 fn register_service_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("service.list", |_params, ctx, _ext| async move {
+    module.register_async_method(pm::SERVICE_LIST, |_params, ctx, _ext| async move {
         let registry = get_service_registry(&ctx).await?;
         Ok::<_, ErrorObjectOwned>(json!({ "services": registry.available_services() }))
     })?;
@@ -1555,7 +1558,7 @@ fn register_service_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 // `service.stop` tears it down; `service.status` reports its streamed status.
 
 fn register_service_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("service.start", |params, ctx, _ext| async move {
+    module.register_async_method(pm::SERVICE_START, |params, ctx, _ext| async move {
         let registry = get_service_registry(&ctx).await?;
         let p: ServiceStartParams = params
             .parse()
@@ -1576,7 +1579,7 @@ fn register_service_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow
 }
 
 fn register_service_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("service.stop", |params, ctx, _ext| async move {
+    module.register_async_method(pm::SERVICE_STOP, |params, ctx, _ext| async move {
         let registry = get_service_registry(&ctx).await?;
         let p: ServiceStopParams = params
             .parse()
@@ -1595,7 +1598,7 @@ fn register_service_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 // no pause concept (the embedded servers) treats it as a no-op.
 
 fn register_service_pause(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("service.pause", |params, ctx, _ext| async move {
+    module.register_async_method(pm::SERVICE_PAUSE, |params, ctx, _ext| async move {
         let registry = get_service_registry(&ctx).await?;
         let p: ServicePauseParams = params
             .parse()
@@ -1610,7 +1613,7 @@ fn register_service_pause(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow
 }
 
 fn register_service_resume(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("service.resume", |params, ctx, _ext| async move {
+    module.register_async_method(pm::SERVICE_RESUME, |params, ctx, _ext| async move {
         let registry = get_service_registry(&ctx).await?;
         let p: ServiceResumeParams = params
             .parse()
@@ -1625,7 +1628,7 @@ fn register_service_resume(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
 }
 
 fn register_service_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("service.status", |params, ctx, _ext| async move {
+    module.register_async_method(pm::SERVICE_STATUS, |params, ctx, _ext| async move {
         let registry = get_service_registry(&ctx).await?;
         let p: ServiceStatusParams = params
             .parse()
@@ -1655,7 +1658,7 @@ fn register_service_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
 // semantics: `docs/concepts/future/stateless-ui-agent-tunnel-endpoints.html`.
 
 fn register_tunnel_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("tunnel.start", |params, ctx, _ext| async move {
+    module.register_async_method(pm::TUNNEL_START, |params, ctx, _ext| async move {
         let registry = get_tunnel_registry(&ctx).await?;
         let p: TunnelStartParams = params
             .parse()
@@ -1688,7 +1691,7 @@ fn register_tunnel_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 }
 
 fn register_tunnel_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("tunnel.stop", |params, ctx, _ext| async move {
+    module.register_async_method(pm::TUNNEL_STOP, |params, ctx, _ext| async move {
         let registry = get_tunnel_registry(&ctx).await?;
         let p: TunnelStopParams = params
             .parse()
@@ -1700,7 +1703,7 @@ fn register_tunnel_stop(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
 }
 
 fn register_tunnel_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("tunnel.status", |params, ctx, _ext| async move {
+    module.register_async_method(pm::TUNNEL_STATUS, |params, ctx, _ext| async move {
         let registry = get_tunnel_registry(&ctx).await?;
         let p: TunnelStatusParams = params
             .parse()
@@ -1727,7 +1730,7 @@ fn register_tunnel_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow
 // ── health.check / agent.* ────────────────────────────────────────
 
 fn register_health_check(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("health.check", |_params, ctx, _ext| async move {
+    module.register_async_method(pm::HEALTH_CHECK, |_params, ctx, _ext| async move {
         let (session_manager, uptime) = {
             let s = ctx.lock().await;
             if !s.initialized {
@@ -1750,7 +1753,7 @@ fn register_health_check(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
 }
 
 fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method("agent.shutdown", |params, ctx, _ext| async move {
+    module.register_async_method(pm::AGENT_SHUTDOWN, |params, ctx, _ext| async move {
         let (session_manager, monitoring_manager, service_registry, tunnel_registry, shutdown_flag) = {
             let s = ctx.lock().await;
             if !s.initialized {
@@ -1792,7 +1795,7 @@ fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
 fn register_agent_settings_update(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
-    module.register_async_method("agent.settingsUpdate", |params, ctx, _ext| async move {
+    module.register_async_method(pm::AGENT_SETTINGS_UPDATE, |params, ctx, _ext| async move {
         // Init check before params parse (protocol: NOT_INITIALIZED takes priority).
         // A second lock below applies the settings — initialized is monotone so
         // there is no TOCTOU hazard.
@@ -1861,7 +1864,7 @@ const ESTIMATED_RESTART_SECS: u64 = 5;
 fn register_agent_request_update(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
-    module.register_async_method("agent.request_update", |params, ctx, _ext| async move {
+    module.register_async_method(pm::AGENT_REQUEST_UPDATE, |params, ctx, _ext| async move {
         let p: AgentRequestUpdateParams = params
             .parse()
             .map_err(|e| invalid_params("agent.request_update", e))?;
@@ -1955,7 +1958,7 @@ fn register_agent_request_deferred_update(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
     module.register_async_method(
-        "agent.request_deferred_update",
+        pm::AGENT_REQUEST_DEFERRED_UPDATE,
         |params, ctx, _ext| async move {
             let session_manager = get_session_manager(&ctx).await?;
 
@@ -1992,7 +1995,7 @@ fn register_agent_request_deferred_update(
 fn register_agent_list_connections(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
-    module.register_async_method("agent.list_connections", |_params, ctx, _ext| async move {
+    module.register_async_method(pm::AGENT_LIST_CONNECTIONS, |_params, ctx, _ext| async move {
         // Read-only. Requires `initialize` first so the caller is already
         // recorded in both registries.
         let (local_registry, host_registry) = {
