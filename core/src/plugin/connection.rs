@@ -47,8 +47,7 @@ use super::host::LoadedLibrary;
 use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
 
-/// Channel capacity for output forwarded from the plugin to the terminal.
-const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
 /// A [`ConnectionType`] backed by a dynamically-loaded plugin library.
 ///

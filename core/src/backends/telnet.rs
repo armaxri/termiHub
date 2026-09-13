@@ -22,8 +22,7 @@ use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
-/// Channel capacity for output data from the telnet reader thread.
-const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
 /// Read timeout for the reader thread (allows periodic alive checks).
 const READ_TIMEOUT: Duration = Duration::from_millis(100);

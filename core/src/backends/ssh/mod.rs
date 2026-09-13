@@ -47,8 +47,7 @@ use crate::session::ssh::validate_ssh_config;
 use self::connector::{RusshSshConnector, SshConnector};
 use self::monitoring::SshMonitoringProvider;
 
-/// Channel capacity for output data from the SSH reader thread.
-const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
 /// SSH backend using `russh`, implementing [`ConnectionType`].
 ///
