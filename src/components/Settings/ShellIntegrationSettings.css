@@ -96,7 +96,7 @@
 
 .shell-integration__badge {
   margin-left: auto;
-  padding: 2px var(--spacing-sm);
+  padding: var(--spacing-xxs) var(--spacing-sm);
   border-radius: var(--radius-sm);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);

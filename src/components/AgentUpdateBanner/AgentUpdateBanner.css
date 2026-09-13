@@ -22,7 +22,7 @@
 .agent-update-banner__text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   min-width: 0;
   flex: 1;
 }

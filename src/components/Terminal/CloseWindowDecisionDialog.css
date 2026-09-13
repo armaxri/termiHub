@@ -74,7 +74,7 @@
   display: inline-flex;
   gap: var(--spacing-xs);
   align-items: center;
-  padding: 2px var(--spacing-sm);
+  padding: var(--spacing-xxs) var(--spacing-sm);
   border-radius: var(--radius-full);
   font-size: var(--font-size-xs);
   white-space: nowrap;

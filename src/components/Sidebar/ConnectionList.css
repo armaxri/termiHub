@@ -122,7 +122,7 @@
 .connection-list__group-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   flex-shrink: 0;
 }
 
@@ -151,7 +151,7 @@
   flex: 1;
   overflow-y: auto;
   min-height: 40px;
-  padding-bottom: 8px;
+  padding-bottom: var(--spacing-sm);
 }
 
 /*
@@ -165,7 +165,7 @@
   flex: 0 0 auto;
   overflow: visible;
   min-height: 0;
-  padding-bottom: 4px;
+  padding-bottom: var(--spacing-xs);
 }
 
 .connection-tree__folder,
@@ -325,7 +325,7 @@
   flex: 1;
   min-width: 0;
   height: 18px;
-  padding: 0 4px;
+  padding: 0 var(--spacing-xs);
   border: 1px solid var(--accent-color);
   border-radius: var(--radius-xs);
   background-color: var(--bg-input, var(--bg-secondary));
@@ -460,7 +460,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
-  padding: 4px 8px;
+  padding: var(--spacing-xs) var(--spacing-sm);
   background-color: var(--bg-dropdown);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
@@ -496,27 +496,27 @@
 .agent-node__hint {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  padding: 2px 0;
+  padding: var(--spacing-xxs) 0;
   user-select: none;
 }
 
 .agent-node__hint--reconnecting {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   color: var(--state-connecting);
-  padding: 4px 0;
+  padding: var(--spacing-xs) 0;
 }
 
 .agent-node__section-label {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
-  padding: 6px 0 2px;
+  padding: 6px 0 var(--spacing-xxs);
   user-select: none;
 }
 
@@ -560,7 +560,7 @@
   left: 5px;
   min-width: 11px;
   height: 11px;
-  padding: 0 2px;
+  padding: 0 var(--spacing-xxs);
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
@@ -596,7 +596,7 @@
 .connection-tree__persistent-actions {
   display: none;
   align-items: center;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   margin-left: auto;
   flex-shrink: 0;
 }
