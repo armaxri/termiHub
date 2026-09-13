@@ -123,14 +123,6 @@ pub(super) struct PersistentRecord {
     pub(super) agent_id: Option<String>,
 }
 
-/// Error event emitted when a session-level error occurs.
-#[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)]
-pub struct TerminalErrorEvent {
-    pub session_id: String,
-    pub message: String,
-}
-
 // ── EventEmitter trait ─────────────────────────────────────────────
 
 /// Abstracts frontend event delivery for dependency injection in tests.
