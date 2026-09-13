@@ -32,8 +32,7 @@ use crate::session::docker::validate_docker_config;
 
 use self::file_browser::DockerFileBrowser;
 
-/// Channel capacity for output data from the Docker reader task.
-const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
 /// Default container name prefix.
 const CONTAINER_PREFIX: &str = "termihub";

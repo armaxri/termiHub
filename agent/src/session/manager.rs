@@ -21,6 +21,7 @@ use crate::io::transport::NotificationSender;
 use crate::session::agent_forward::AgentForwardRelay;
 use crate::session::types::{SessionBackend, SessionInfo, SessionSnapshot, SessionStatus};
 use crate::transport::JsonRpcOutputSink;
+use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
 use termihub_core::session::traits::OutputSink;
 
@@ -345,8 +346,9 @@ where
     }
 }
 
-/// Default persistent session ring-buffer size (1 MiB).
-const DEFAULT_PERSISTENT_BUFFER_SIZE: usize = 1_048_576;
+/// Default persistent session ring-buffer size (1 MiB); derived from the shared
+/// core [`DEFAULT_BUFFER_CAPACITY`] so there is one source of truth (DUP-006).
+const DEFAULT_PERSISTENT_BUFFER_SIZE: usize = DEFAULT_BUFFER_CAPACITY;
 
 /// In-memory session manager.
 ///

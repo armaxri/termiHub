@@ -26,16 +26,14 @@ use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use termihub_core::backends::ssh::agent_forward::{connect_local_agent_boxed, LocalAgentStream};
+use termihub_core::backends::ssh::agent_forward::{
+    connect_local_agent_boxed, LocalAgentStream, AGENT_FORWARD_CHUNK_SIZE,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc::{self, UnboundedSender};
 use tracing::debug;
 
 use super::agent_manager::AgentIoCommand;
-
-/// Max bytes read from the local agent per relay data frame; matches the
-/// agent-side chunk so neither side exceeds the transport's NDJSON line cap.
-const CHUNK_SIZE: usize = 65536;
 
 /// A one-shot factory that connects to the operator's local ssh-agent, yielding
 /// a duplex byte stream (or a `NotFound`-style error when no agent is
@@ -149,7 +147,7 @@ async fn pump_local_agent(
     });
 
     // Reader: local agent replies → agent, as forward-data requests.
-    let mut buf = vec![0u8; CHUNK_SIZE];
+    let mut buf = vec![0u8; AGENT_FORWARD_CHUNK_SIZE];
     loop {
         match read_half.read(&mut buf).await {
             Ok(0) => break,

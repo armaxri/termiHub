@@ -21,6 +21,14 @@ use russh::Channel;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::debug;
 
+/// Max bytes per forwarded ssh-agent relay data frame (64 KiB).
+///
+/// Both ends of the JSON-RPC agent-forward tunnel (the desktop relay in
+/// `src-tauri` and the agent-side relay) chunk at this size so a burst stays
+/// under the transport's 1 MiB NDJSON line cap (#1727). Single source of truth
+/// so the two ends cannot drift apart.
+pub const AGENT_FORWARD_CHUNK_SIZE: usize = 65536;
+
 /// A raw, bidirectional connection to the local SSH agent, type-erased so callers
 /// in other crates can pump bytes without naming the platform stream type.
 ///

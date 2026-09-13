@@ -284,9 +284,10 @@ pub struct RemoteStateChangeEvent {
     pub error: Option<String>,
 }
 
-/// Bounded channel capacity for output data from backends.
-/// Provides backpressure to prevent a fast-producing terminal from flooding memory.
-pub const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+/// Bounded channel capacity for output data from backends. Re-exported from
+/// [`termihub_core::output::OUTPUT_CHANNEL_CAPACITY`] so the desktop and core
+/// share a single source of truth.
+pub use termihub_core::output::OUTPUT_CHANNEL_CAPACITY;
 
 /// Channel sender type for output data from backends (bounded, blocking when full).
 pub type OutputSender = mpsc::SyncSender<Vec<u8>>;

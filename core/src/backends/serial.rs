@@ -19,8 +19,7 @@ use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 use crate::session::serial::{open_serial_port, parse_serial_config};
 
-/// Channel capacity for output data from the serial reader task.
-const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
 /// Channel capacity for write data sent to the serial writer task.
 const WRITE_CHANNEL_CAPACITY: usize = 256;

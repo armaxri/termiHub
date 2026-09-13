@@ -23,8 +23,7 @@ use crate::files::{FileBrowser, FileEntry};
 use crate::monitoring::MonitoringProvider;
 use crate::session::shell::{detect_wsl_distros, osc7_setup_command, shell_to_command};
 
-/// Channel capacity for output data from the PTY reader thread.
-const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
 /// WSL backend using portable-pty, implementing [`ConnectionType`].
 ///

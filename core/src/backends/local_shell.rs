@@ -25,8 +25,7 @@ use crate::session::shell::{
 };
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
-/// Channel capacity for output data from the PTY reader thread.
-const OUTPUT_CHANNEL_CAPACITY: usize = 64;
+use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
 /// Parse the `envVars` key-value list from connection settings into a map of
 /// environment variables to apply to the spawned shell.
