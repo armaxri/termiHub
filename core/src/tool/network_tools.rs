@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use super::{Tool, ToolError, ToolEvent, ToolHost};
-use crate::network::types::DnsRecordType;
-use crate::network::{dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol};
+use crate::network::types::{DnsRecordType, ParseDnsRecordTypeError};
+use crate::network::{defaults, dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol};
 
 /// Decode a tool's params, mapping a serde failure onto [`ToolError::InvalidParams`].
 fn decode<T: for<'de> Deserialize<'de>>(tool: &str, params: Value) -> Result<T, ToolError> {
@@ -43,7 +43,7 @@ struct PingParams {
 }
 
 fn default_ping_interval() -> u64 {
-    1000
+    defaults::PING_INTERVAL_MS
 }
 
 /// ICMP ping (with TCP fallback), streaming one `result` event per echo.
@@ -91,10 +91,10 @@ struct PortScanParams {
 }
 
 fn default_scan_timeout() -> u64 {
-    2000
+    defaults::PORT_SCAN_TIMEOUT_MS
 }
 fn default_scan_concurrency() -> usize {
-    100
+    defaults::PORT_SCAN_CONCURRENCY
 }
 
 /// TCP connect port scanner, streaming one `result` event per probed port.
@@ -142,14 +142,20 @@ struct PingSweepParams {
     targets: Vec<String>,
     #[serde(default = "default_sweep_timeout")]
     timeout_ms: u64,
-    #[serde(default = "default_scan_concurrency")]
+    #[serde(default = "default_sweep_concurrency")]
     concurrency: usize,
-    #[serde(default)]
+    #[serde(default = "default_sweep_resolve_hostnames")]
     resolve_hostnames: bool,
 }
 
 fn default_sweep_timeout() -> u64 {
-    1000
+    defaults::PING_SWEEP_TIMEOUT_MS
+}
+fn default_sweep_concurrency() -> usize {
+    defaults::PING_SWEEP_CONCURRENCY
+}
+fn default_sweep_resolve_hostnames() -> bool {
+    defaults::PING_SWEEP_RESOLVE_HOSTNAMES
 }
 
 /// Subnet / IP-range ping sweep, streaming one `result` event per responding host.
@@ -195,7 +201,7 @@ struct TracerouteParams {
 }
 
 fn default_max_hops() -> u8 {
-    30
+    defaults::TRACEROUTE_MAX_HOPS
 }
 
 /// Hop-by-hop traceroute, streaming one `hop` event per hop.
@@ -241,7 +247,7 @@ struct DnsParams {
 }
 
 fn default_record_type() -> String {
-    "A".to_string()
+    defaults::DNS_DEFAULT_RECORD_TYPE.to_string()
 }
 
 /// DNS record lookup (one-shot; returns the whole [`DnsResult`]).
@@ -262,29 +268,15 @@ impl Tool for DnsTool {
         _cancel: CancellationToken,
     ) -> Result<Value, ToolError> {
         let p: DnsParams = decode(self.tool_id(), params)?;
-        let record_type = parse_record_type(&p.record_type)?;
+        let record_type: DnsRecordType =
+            p.record_type
+                .parse()
+                .map_err(|e: ParseDnsRecordTypeError| ToolError::InvalidParams {
+                    tool: "dns".to_string(),
+                    reason: e.to_string(),
+                })?;
         let result = dns::dns_lookup(&p.hostname, record_type, p.server.as_deref()).await?;
         aggregate(result)
-    }
-}
-
-/// Parse a textual DNS record type into its [`DnsRecordType`] variant.
-fn parse_record_type(s: &str) -> Result<DnsRecordType, ToolError> {
-    match s.to_uppercase().as_str() {
-        "A" => Ok(DnsRecordType::A),
-        "AAAA" => Ok(DnsRecordType::Aaaa),
-        "MX" => Ok(DnsRecordType::Mx),
-        "CNAME" => Ok(DnsRecordType::Cname),
-        "NS" => Ok(DnsRecordType::Ns),
-        "TXT" => Ok(DnsRecordType::Txt),
-        "SRV" => Ok(DnsRecordType::Srv),
-        "SOA" => Ok(DnsRecordType::Soa),
-        "PTR" => Ok(DnsRecordType::Ptr),
-        "ANY" => Ok(DnsRecordType::Any),
-        other => Err(ToolError::InvalidParams {
-            tool: "dns".to_string(),
-            reason: format!("Unknown DNS record type: {other}"),
-        }),
     }
 }
 
@@ -324,7 +316,7 @@ struct WolParams {
 }
 
 fn default_wol_port() -> u16 {
-    9
+    defaults::WOL_PORT
 }
 
 /// Send a Wake-on-LAN magic packet (one-shot; returns `{}`).
@@ -443,8 +435,11 @@ mod tests {
 
     #[test]
     fn dns_record_type_parsing() {
-        assert!(matches!(parse_record_type("a"), Ok(DnsRecordType::A)));
-        assert!(matches!(parse_record_type("AAAA"), Ok(DnsRecordType::Aaaa)));
-        assert!(parse_record_type("nonsense").is_err());
+        assert!(matches!("a".parse::<DnsRecordType>(), Ok(DnsRecordType::A)));
+        assert!(matches!(
+            "AAAA".parse::<DnsRecordType>(),
+            Ok(DnsRecordType::Aaaa)
+        ));
+        assert!("nonsense".parse::<DnsRecordType>().is_err());
     }
 }

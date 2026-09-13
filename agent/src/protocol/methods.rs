@@ -624,11 +624,11 @@ pub struct NetworkWolParams {
 }
 
 fn default_broadcast() -> String {
-    "255.255.255.255".to_string()
+    termihub_core::network::defaults::WOL_BROADCAST.to_string()
 }
 
 fn default_wol_port() -> u16 {
-    9
+    termihub_core::network::defaults::WOL_PORT
 }
 
 // ── monitoring.subscribe ────────────────────────────────────────────
