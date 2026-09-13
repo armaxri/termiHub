@@ -516,13 +516,13 @@ impl ConnectionType for Ftp {
             "Connecting FTP session"
         );
 
-        let stream = tokio::time::timeout(config.timeout(), establish(&config))
+        let stream = tokio::time::timeout(config.connect_timeout(), establish(&config))
             .await
             .map_err(|_| {
                 SessionError::SpawnFailed(connection_timeout_message(
                     &config.host,
                     config.port,
-                    config.timeout_secs,
+                    config.connect_timeout_secs,
                 ))
             })??;
 
