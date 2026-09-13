@@ -11,6 +11,7 @@ import {
   ROOT_FOLDER_VALUE,
 } from "@/services/sshConfigImport";
 import { buildTemplatedConnections } from "@/services/fleetOnboard";
+import { compareNames } from "@/utils/locale";
 import "./BulkSshImportDialog.css";
 import "./FleetOnboardDialog.css";
 
@@ -59,7 +60,7 @@ export function FleetOnboardDialog({
     () =>
       connections
         .map((c) => ({ value: c.id, label: `${c.name} (${c.config.type})` }))
-        .sort((a, b) => a.label.localeCompare(b.label)),
+        .sort((a, b) => compareNames(a.label, b.label)),
     [connections]
   );
   const folderOptions = useMemo(() => importFolderOptions(folders), [folders]);

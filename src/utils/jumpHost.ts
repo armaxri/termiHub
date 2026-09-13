@@ -12,6 +12,7 @@
 import { ConnectionFolder, JumpHostConfig, SavedConnection } from "@/types/connection";
 import { ConnectionConfig } from "@/types/terminal";
 import type { SettingsField, SettingsSchema } from "@/types/schema";
+import { compareNames } from "@/utils/locale";
 
 /**
  * Extract the jump-host chain from a connection config.
@@ -157,7 +158,7 @@ export function sshJumpHostOptions(
   return connections
     .filter((c) => c.config.type === "ssh" && c.id !== excludeId)
     .map((c) => ({ id: c.id, label: connectionPathLabel(c, folders) }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+    .sort((a, b) => compareNames(a.label, b.label));
 }
 
 /**

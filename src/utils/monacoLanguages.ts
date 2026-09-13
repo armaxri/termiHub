@@ -7,6 +7,7 @@
 
 import * as monaco from "monaco-editor";
 import { LanguageInfo } from "@/types/terminal";
+import { compareNames } from "@/utils/locale";
 
 /** Cached sorted list (populated on first call). */
 let cached: LanguageInfo[] | null = null;
@@ -28,7 +29,7 @@ export function getAvailableLanguages(): LanguageInfo[] {
     cached = monaco.languages
       .getLanguages()
       .map((lang) => ({ id: lang.id, name: lang.aliases?.[0] ?? lang.id }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+      .sort((a, b) => compareNames(a.name, b.name));
   }
   return cached;
 }
