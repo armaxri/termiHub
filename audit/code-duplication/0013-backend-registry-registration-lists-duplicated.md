@@ -9,7 +9,8 @@ subsystem: src-tauri/session/registry.rs vs agent/registry.rs
 evidence:
   - src-tauri/src/session/registry.rs:14
   - agent/src/registry.rs:14
-status: open
+status: fixed
+resolution: "#2911 — shared register_core_backends in core; desktop+agent registries call it (desktop keeps FTP/graphical extras). Copy-pasted lists gone"
 ---
 
 ## What

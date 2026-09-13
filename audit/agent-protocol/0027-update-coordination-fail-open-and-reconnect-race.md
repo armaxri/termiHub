@@ -9,7 +9,8 @@ subsystem: agent/src/update/coordinate.rs
 evidence:
   - agent/src/update/coordinate.rs:164
   - agent/src/update/coordinate.rs:203
-status: open
+status: fixed
+resolution: "#2913 — coordinated update fail-safe: requires peer-set empty across 2 consecutive polls before treating as ack (was fail-open on first blip); reappearance/blind-poll resets; ACK_TIMEOUT still bounds"
 ---
 
 ## What

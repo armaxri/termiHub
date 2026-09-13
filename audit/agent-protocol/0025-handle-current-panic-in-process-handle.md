@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: agent/src/daemon/client.rs
 evidence:
   - agent/src/daemon/client.rs:329
-status: open
+status: fixed
+resolution: "#2913 — ProcessHandle sync methods use Handle::try_current() (no panic outside runtime): write/resize return recoverable Io err, close no-ops+marks dead; unchanged with runtime"
 ---
 
 ## What

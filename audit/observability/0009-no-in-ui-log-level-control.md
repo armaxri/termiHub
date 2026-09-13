@@ -9,7 +9,8 @@ subsystem: src-tauri/src/utils/file_log.rs, src-tauri/src/utils/log_capture.rs
 evidence:
   - src-tauri/src/utils/file_log.rs:99
   - src-tauri/src/utils/log_capture.rs:26
-status: open
+status: fixed
+resolution: "#2914 — in-UI log-level control: file EnvFilter wrapped in reload::Layer + set_file_log_level command (live, no restart); persisted AppSettings.fileLogLevel; env>persisted>INFO; russh clamped WARN; Settings→Diagnostics Select"
 ---
 
 ## What

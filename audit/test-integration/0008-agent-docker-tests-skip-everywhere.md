@@ -11,7 +11,8 @@ evidence:
   - agent/tests/self_update_integration.rs:30
   - .github/workflows/integration-fixtures.yml:604
   - .github/workflows/agent.yml:107
-status: open
+status: fixed
+resolution: "#2912 — agent Docker real-daemon integration tests #[ignore]d out of per-PR gate + run in new nightly agent-docker-integration job; self-skip kept as safety net"
 ---
 
 ## What

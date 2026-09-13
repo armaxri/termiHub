@@ -9,7 +9,8 @@ subsystem: Cargo.toml (profiles), core/src (as-casts / arithmetic)
 evidence:
   - Cargo.toml:45
   - core/src/backends
-status: open
+status: fixed
+resolution: "#2915 — [profile.release] overflow-checks=true — unintended integer overflow now panics (fail-fast) not silently wraps; audit found all intended wraps already use wrapping_*/checked_*. as-cast truncation audit → #2916"
 ---
 
 ## What

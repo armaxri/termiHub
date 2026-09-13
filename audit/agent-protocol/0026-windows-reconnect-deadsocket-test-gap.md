@@ -9,7 +9,8 @@ subsystem: agent/src/daemon/transport.rs
 evidence:
   - agent/src/daemon/transport.rs:489
   - agent/src/daemon/transport.rs:337
-status: open
+status: fixed
+resolution: "#2917 — added Windows-gated regression test for named-pipe reconnect fast-fail/detach (was unix-only); unbound-pipe faithfully reproduces dead-daemon state. Test-only"
 ---
 
 ## What

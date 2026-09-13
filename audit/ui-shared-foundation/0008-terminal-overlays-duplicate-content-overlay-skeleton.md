@@ -11,7 +11,8 @@ evidence:
   - src/components/Terminal/TerminalDisconnectOverlay.tsx:92
   - src/components/Terminal/TerminalConnectionOverlay.tsx:225
   - src/components/RemoteDesktop/RemoteDesktopOverlay.tsx:33
-status: open
+status: fixed
+resolution: "#2910 — extracted shared ui/ContentOverlay; 5 connection-overlay sites migrated; per-component overlay-body CSS consolidated"
 ---
 
 ## What

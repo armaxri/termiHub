@@ -10,7 +10,8 @@ evidence:
   - plugin-api/src/info.rs:64
   - core/src/plugin/manager.rs:643
   - core/src/plugin/connection.rs:309
-status: open
+status: fixed
+resolution: "#2908 — plugin manifest settings now delivered to native backend at connect via appended PluginSessionConfig.settings_json FFI field (back-compat, no API-version bump); resolved defaults+overrides at load; e2e dlopen test"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: docs
 evidence:
   - docs/testing.md:3267
-status: open
+status: fixed
+resolution: "#2914 — README Logs & Troubleshooting section: log-viewer, per-platform termihub.log path, rotation/no-secrets, verbosity control + TERMIHUB_FILE_LOG"
 ---
 
 ## What

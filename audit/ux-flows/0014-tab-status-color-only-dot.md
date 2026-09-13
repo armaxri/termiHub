@@ -10,7 +10,8 @@ evidence:
   - src/components/Terminal/Tab.tsx:171
   - src/components/Terminal/Tab.tsx:33
   - src/components/Terminal/TabBar.css:140
-status: open
+status: fixed
+resolution: "#2910 — tab status now distinct lucide icon per state + persistent aria-label (not color/hover-only); reduced-motion-safe spinner"
 ---
 
 ## What

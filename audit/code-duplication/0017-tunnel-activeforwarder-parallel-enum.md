@@ -9,7 +9,8 @@ subsystem: src-tauri/tunnel/tunnel_manager.rs vs agent/tunnel/mod.rs
 evidence:
   - src-tauri/src/tunnel/tunnel_manager.rs:254
   - agent/src/tunnel/mod.rs:44
-status: open
+status: fixed
+resolution: "#2911 — shared core::tunnel::ActiveForwarder enum+get_stats/take_death_signal/stop dispatch; both tunnel managers migrated (per-side teardown kept)"
 ---
 
 ## What
