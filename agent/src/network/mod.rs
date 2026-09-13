@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 use termihub_core::network::types::{
     DnsRecordType, DnsResult, PingResult, PortScanResult, TracerouteHop,
 };
-use termihub_core::network::{dns, open_ports, ping, port_scan, traceroute, wol};
+use termihub_core::network::{defaults, dns, open_ports, ping, port_scan, traceroute, wol};
 
 use crate::protocol::methods::{
     NetworkDnsLookupParams, NetworkOpenPortsResponse, NetworkPingParams, NetworkPingResponse,
@@ -25,8 +25,10 @@ pub async fn handle_port_scan(params: NetworkPortScanParams) -> Result<NetworkPo
     let port_list = port_scan::parse_port_spec(&params.ports)
         .map_err(|e| anyhow::anyhow!("Invalid port spec: {e}"))?;
 
-    let timeout_ms = params.timeout_ms.unwrap_or(2000);
-    let concurrency = params.concurrency.unwrap_or(100);
+    let timeout_ms = params.timeout_ms.unwrap_or(defaults::PORT_SCAN_TIMEOUT_MS);
+    let concurrency = params
+        .concurrency
+        .unwrap_or(defaults::PORT_SCAN_CONCURRENCY);
     let cancel = CancellationToken::new();
 
     let results: Arc<Mutex<Vec<PortScanResult>>> = Arc::new(Mutex::new(Vec::new()));
@@ -60,7 +62,7 @@ pub async fn handle_port_scan(params: NetworkPortScanParams) -> Result<NetworkPo
 /// Run a ping session with a fixed count, collecting all results.
 pub async fn handle_ping(params: NetworkPingParams) -> Result<NetworkPingResponse> {
     let count = params.count;
-    let interval_ms = params.interval_ms.unwrap_or(1000);
+    let interval_ms = params.interval_ms.unwrap_or(defaults::PING_INTERVAL_MS);
     let cancel = CancellationToken::new();
 
     let results: Arc<Mutex<Vec<PingResult>>> = Arc::new(Mutex::new(Vec::new()));
@@ -85,7 +87,10 @@ pub async fn handle_ping(params: NetworkPingParams) -> Result<NetworkPingRespons
 
 /// Perform a DNS lookup.
 pub async fn handle_dns_lookup(params: NetworkDnsLookupParams) -> Result<DnsResult> {
-    let record_type = parse_record_type(&params.record_type)?;
+    let record_type: DnsRecordType = params
+        .record_type
+        .parse()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     dns::dns_lookup(&params.hostname, record_type, params.server.as_deref())
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
@@ -101,7 +106,7 @@ pub fn handle_open_ports() -> Result<NetworkOpenPortsResponse> {
 pub async fn handle_traceroute(
     params: NetworkTracerouteParams,
 ) -> Result<NetworkTracerouteResponse> {
-    let max_hops = params.max_hops.unwrap_or(30);
+    let max_hops = params.max_hops.unwrap_or(defaults::TRACEROUTE_MAX_HOPS);
     let cancel = CancellationToken::new();
 
     let hops: Arc<Mutex<Vec<TracerouteHop>>> = Arc::new(Mutex::new(Vec::new()));
@@ -125,22 +130,6 @@ pub async fn handle_traceroute(
 pub fn handle_wol(params: NetworkWolParams) -> Result<()> {
     wol::send_magic_packet(&params.mac, &params.broadcast, params.port)
         .map_err(|e| anyhow::anyhow!("{e}"))
-}
-
-fn parse_record_type(s: &str) -> Result<DnsRecordType> {
-    match s.to_uppercase().as_str() {
-        "A" => Ok(DnsRecordType::A),
-        "AAAA" => Ok(DnsRecordType::Aaaa),
-        "MX" => Ok(DnsRecordType::Mx),
-        "CNAME" => Ok(DnsRecordType::Cname),
-        "NS" => Ok(DnsRecordType::Ns),
-        "TXT" => Ok(DnsRecordType::Txt),
-        "SRV" => Ok(DnsRecordType::Srv),
-        "SOA" => Ok(DnsRecordType::Soa),
-        "PTR" => Ok(DnsRecordType::Ptr),
-        "ANY" => Ok(DnsRecordType::Any),
-        _ => anyhow::bail!("Unknown DNS record type: {s}"),
-    }
 }
 
 #[cfg(test)]
