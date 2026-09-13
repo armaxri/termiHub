@@ -22,11 +22,19 @@ use suppaftp::FtpError;
 pub(crate) const MAX_RECONNECT_RETRIES: usize = 3;
 
 /// Backoff before the `attempt`-th reconnect (0-based): an exponential ramp
-/// (100ms, 200ms, 400ms, …) capped at 2s to bound worst-case latency.
+/// (100ms, 200ms, 400ms, 800ms, 1600ms) that plateaus at 1600ms to bound
+/// worst-case latency.
+///
+/// Uses the shared capped-exponential MATH (DUP-007). The historical
+/// hand-rolled form capped the *shift* at 4, so the delay plateaued at
+/// `100ms * 2^4 = 1600ms` (its nominal 2s clamp was never reached); passing a
+/// `1600ms` cap here reproduces that exact sequence.
 pub(crate) fn reconnect_backoff(attempt: usize) -> Duration {
-    let shift = attempt.min(4) as u32;
-    let ms = 100u64.saturating_mul(1u64 << shift);
-    Duration::from_millis(ms.min(2000))
+    crate::util::backoff::capped_exponential_delay(
+        Duration::from_millis(100),
+        attempt.min(u32::MAX as usize) as u32,
+        Duration::from_millis(1600),
+    )
 }
 
 /// Whether a [`FtpError`] indicates a broken control connection that a
@@ -111,19 +119,28 @@ mod tests {
 
     #[test]
     fn backoff_is_monotonic_and_capped() {
-        let d0 = reconnect_backoff(0);
-        let d1 = reconnect_backoff(1);
-        let d2 = reconnect_backoff(2);
-        assert_eq!(d0, Duration::from_millis(100));
-        assert_eq!(d1, Duration::from_millis(200));
-        assert_eq!(d2, Duration::from_millis(400));
-        assert!(d1 > d0 && d2 > d1, "backoff must grow");
-        // Far-out attempts plateau (shift is capped) and never exceed 2s.
+        // Exact sequence (DUP-007 bit-identity guard): 100, 200, 400, 800, 1600.
+        assert_eq!(reconnect_backoff(0), Duration::from_millis(100));
+        assert_eq!(reconnect_backoff(1), Duration::from_millis(200));
+        assert_eq!(reconnect_backoff(2), Duration::from_millis(400));
+        assert_eq!(reconnect_backoff(3), Duration::from_millis(800));
+        assert_eq!(reconnect_backoff(4), Duration::from_millis(1600));
+        assert!(
+            reconnect_backoff(2) > reconnect_backoff(1)
+                && reconnect_backoff(1) > reconnect_backoff(0),
+            "backoff must grow"
+        );
+        // Far-out attempts plateau at 1600ms and never exceed 2s.
         let far = reconnect_backoff(100);
         assert_eq!(
             far,
+            Duration::from_millis(1600),
+            "backoff plateaus at 1600ms once doubling reaches the cap"
+        );
+        assert_eq!(
+            far,
             reconnect_backoff(4),
-            "backoff plateaus once shift caps"
+            "plateau equals the last growing step"
         );
         assert!(
             far <= Duration::from_millis(2000),
