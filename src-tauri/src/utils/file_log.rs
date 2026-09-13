@@ -101,7 +101,7 @@ pub const SELECTABLE_FILE_LOG_LEVELS: &[&str] = &["off", "error", "warn", "info"
 /// Returns `None` for an unrecognized level. Every level except `"off"` keeps
 /// the [`RUSSH_CLAMP`], so raising verbosity from the UI can never leak russh's
 /// per-packet cipher logs into the durable, user-shared file — the same safety
-/// property [`file_env_filter`] enforces for the env-var override. `"off"`
+/// property [`file_env_filter_with`] enforces for the env-var override. `"off"`
 /// silences the file entirely, russh included.
 ///
 /// Case- and whitespace-insensitive, so a stored `" Debug "` still resolves.
@@ -124,13 +124,6 @@ pub fn directive_for_level(level: &str) -> Option<String> {
 pub fn env_filter_for_level(level: &str) -> Option<EnvFilter> {
     let directive = directive_for_level(level)?;
     EnvFilter::try_new(directive).ok()
-}
-
-/// Build the [`EnvFilter`] for the file sink, honoring `TERMIHUB_FILE_LOG`.
-///
-/// Convenience wrapper over [`file_env_filter_with`] with no persisted level.
-pub fn file_env_filter() -> EnvFilter {
-    file_env_filter_with(None)
 }
 
 /// Build the [`EnvFilter`] for the file sink, honoring (in priority order):
@@ -568,14 +561,29 @@ mod tests {
     #[test]
     fn directive_for_level_maps_known_levels_and_clamps_russh() {
         // Every non-off level carries the russh clamp (safety, not just noise).
-        assert_eq!(directive_for_level("error").as_deref(), Some("error,russh=warn"));
-        assert_eq!(directive_for_level("info").as_deref(), Some("info,russh=warn"));
-        assert_eq!(directive_for_level("debug").as_deref(), Some("debug,russh=warn"));
-        assert_eq!(directive_for_level("trace").as_deref(), Some("trace,russh=warn"));
+        assert_eq!(
+            directive_for_level("error").as_deref(),
+            Some("error,russh=warn")
+        );
+        assert_eq!(
+            directive_for_level("info").as_deref(),
+            Some("info,russh=warn")
+        );
+        assert_eq!(
+            directive_for_level("debug").as_deref(),
+            Some("debug,russh=warn")
+        );
+        assert_eq!(
+            directive_for_level("trace").as_deref(),
+            Some("trace,russh=warn")
+        );
         // "off" silences everything, russh included.
         assert_eq!(directive_for_level("off").as_deref(), Some("off"));
         // Case- and whitespace-insensitive so a stored value still resolves.
-        assert_eq!(directive_for_level(" Debug ").as_deref(), Some("debug,russh=warn"));
+        assert_eq!(
+            directive_for_level(" Debug ").as_deref(),
+            Some("debug,russh=warn")
+        );
         // Unknown levels are rejected rather than guessed at.
         assert_eq!(directive_for_level("verbose"), None);
         assert_eq!(directive_for_level(""), None);
@@ -667,7 +675,9 @@ mod tests {
         let (_layer, handle): (_, FileLogReloadHandle) =
             reload::Layer::new(env_filter_for_level("info").unwrap());
         assert!(
-            handle.reload(env_filter_for_level("debug").unwrap()).is_ok(),
+            handle
+                .reload(env_filter_for_level("debug").unwrap())
+                .is_ok(),
             "reloading to a valid level must succeed"
         );
     }
@@ -691,7 +701,7 @@ mod tests {
             tracing_subscriber::fmt::layer()
                 .with_ansi(false)
                 .with_writer(log.clone())
-                .with_filter(file_env_filter()),
+                .with_filter(file_env_filter_with(None)),
         );
         tracing::subscriber::with_default(subscriber, || {
             tracing::info!(target: "termihub_lib::session", "session opened");
