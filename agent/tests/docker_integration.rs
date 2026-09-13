@@ -278,6 +278,7 @@ fn temp_socket_path(label: &str) -> (tempfile::TempDir, PathBuf) {
 /// Test basic Docker session: spawn daemon with Docker backend, connect,
 /// send input, verify output from inside the container.
 #[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_session_basic() {
     if !docker_available() {
         eprintln!("Skipping test: Docker not available");
@@ -319,6 +320,7 @@ async fn test_docker_session_basic() {
 /// Each daemon creates its own container via the Docker backend, so this
 /// tests that a new session can be started after the first one is killed.
 #[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_session_recovery() {
     if !docker_available() {
         eprintln!("Skipping test: Docker not available");
@@ -384,6 +386,7 @@ async fn test_docker_session_recovery() {
 
 /// Test resize works inside a Docker session.
 #[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_resize() {
     if !docker_available() {
         eprintln!("Skipping test: Docker not available");
@@ -419,6 +422,7 @@ async fn test_docker_resize() {
 
 /// Test killing a Docker daemon session via MSG_KILL.
 #[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn test_docker_kill() {
     if !docker_available() {
         eprintln!("Skipping test: Docker not available");
