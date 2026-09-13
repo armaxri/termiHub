@@ -4,7 +4,7 @@ import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manage
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { Button, ConfirmDialog, Input, Tooltip, toast } from "@/components/ui";
+import { Button, ConfirmDialog, SearchInput, Tooltip, toast } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
@@ -166,11 +166,12 @@ export function RecentSessionsSidebar() {
       </SidebarToolbar>
       {history.length > 0 && (
         <div className="recent-sessions__search">
-          <Input
+          <SearchInput
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onValueChange={setQuery}
             placeholder="Search history"
             aria-label="Search history"
+            clearLabel="Clear history search"
             data-testid="recent-sessions-search"
           />
         </div>

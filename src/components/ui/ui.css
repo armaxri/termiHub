@@ -1060,3 +1060,72 @@
   flex-wrap: wrap;
   justify-content: center;
 }
+
+/* -------------------------------------------------------------------------- */
+/* SearchInput — Input skin with a leading search icon and a clear button.    */
+/* -------------------------------------------------------------------------- */
+
+.ui-search-input {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.ui-search-input__icon {
+  position: absolute;
+  left: var(--spacing-sm);
+  display: flex;
+  color: var(--text-secondary);
+  pointer-events: none;
+}
+
+/* Room for the leading icon; extra room on the right when the clear button is
+   present so the query text never slides under it. */
+.ui-search-input .ui-input {
+  padding-left: calc(var(--spacing-sm) + 18px);
+}
+
+.ui-search-input--clearable .ui-input {
+  padding-right: calc(var(--spacing-sm) + 18px);
+}
+
+/* Suppress the browser's native search decorations in favour of our own. */
+.ui-search-input .ui-input::-webkit-search-cancel-button,
+.ui-search-input .ui-input::-webkit-search-decoration {
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.ui-search-input__clear {
+  position: absolute;
+  right: var(--spacing-xs);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition:
+    color var(--transition-fast),
+    background var(--transition-fast);
+}
+
+.ui-search-input__clear:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.ui-search-input__clear:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ui-search-input__clear {
+    transition: none;
+  }
+}

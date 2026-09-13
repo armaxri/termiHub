@@ -1,10 +1,10 @@
 import { useCallback, useState } from "react";
-import { Plus, Search, ChevronDown, Play } from "lucide-react";
+import { Plus, ChevronDown, Play } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
-import { Button, Input, toast } from "@/components/ui";
+import { Button, SearchInput, toast } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { ExportImportButtons } from "@/components/Sidebar/ExportImportButtons";
@@ -295,12 +295,12 @@ export function WorkflowSidebar() {
         />
       </SidebarToolbar>
       <div className="workflow-sidebar__search">
-        <Search size={14} className="workflow-sidebar__search-icon" aria-hidden="true" />
-        <Input
+        <SearchInput
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onValueChange={setQuery}
           placeholder="Search workflows"
           aria-label="Search workflows"
+          clearLabel="Clear workflow search"
           data-testid="workflow-search"
         />
       </div>
