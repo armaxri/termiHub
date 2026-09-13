@@ -72,7 +72,8 @@ function renderWith(settings: AppSettings, visibleFields?: Set<string>): Mock {
 }
 
 function applied(onChange: Mock, prev: AppSettings): AppSettings {
-  const update = onChange.mock.calls.at(-1)![0] as SettingsUpdate;
+  const calls = onChange.mock.calls;
+  const update = calls[calls.length - 1][0] as SettingsUpdate;
   return typeof update === "function" ? update(prev) : update;
 }
 

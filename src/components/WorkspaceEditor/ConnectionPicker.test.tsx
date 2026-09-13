@@ -55,16 +55,11 @@ function def(id: string, name: string, sessionType = "ssh"): AgentDefinitionInfo
   return { id, name, sessionType } as unknown as AgentDefinitionInfo;
 }
 
-interface Handlers {
-  onSelect: ReturnType<typeof vi.fn>;
-  onCancel: ReturnType<typeof vi.fn>;
-}
-
-function render(h: Handlers = { onSelect: vi.fn(), onCancel: vi.fn() }): Handlers {
+function render(onSelect = vi.fn(), onCancel = vi.fn()) {
   act(() => {
-    root.render(<ConnectionPicker onSelect={h.onSelect} onCancel={h.onCancel} />);
+    root.render(<ConnectionPicker onSelect={onSelect} onCancel={onCancel} />);
   });
-  return h;
+  return { onSelect, onCancel };
 }
 
 /** Type into the controlled search box, driving the native onChange → setSearch. */

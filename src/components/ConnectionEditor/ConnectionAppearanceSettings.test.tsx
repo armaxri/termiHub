@@ -16,26 +16,22 @@ function query(testId: string): HTMLElement | null {
   return container.querySelector(`[data-testid="${testId}"]`);
 }
 
-interface Handlers {
-  onColorChange: ReturnType<typeof vi.fn>;
-  onIconChange: ReturnType<typeof vi.fn>;
-}
-
 function render(
   props: { color?: string; icon?: string },
-  h: Handlers = { onColorChange: vi.fn(), onIconChange: vi.fn() }
-): Handlers {
+  onColorChange = vi.fn(),
+  onIconChange = vi.fn()
+) {
   act(() => {
     root.render(
       <ConnectionAppearanceSettings
         color={props.color}
-        onColorChange={h.onColorChange}
+        onColorChange={onColorChange}
         icon={props.icon}
-        onIconChange={h.onIconChange}
+        onIconChange={onIconChange}
       />
     );
   });
-  return h;
+  return { onColorChange, onIconChange };
 }
 
 describe("ConnectionAppearanceSettings", () => {
