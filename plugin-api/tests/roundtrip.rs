@@ -139,6 +139,30 @@ fn session_config_borrows_json() {
 }
 
 #[test]
+fn session_config_new_delivers_empty_settings_for_back_compat() {
+    // The single-arg constructor (an old caller) must deliver *empty* plugin-level
+    // settings, not garbage, so a plugin reading `settings_json` sees "" and falls
+    // back to its defaults — existing plugin sessions are unaffected (PLG-008).
+    let json = r#"{"pod":"nginx"}"#.to_owned();
+    let config = PluginSessionConfig::new(&json);
+    // SAFETY: `json` outlives this borrow; the settings side owns no backing str.
+    assert_eq!(unsafe { config.config_json.as_str() }, json);
+    assert_eq!(unsafe { config.settings_json.as_str() }, "");
+}
+
+#[test]
+fn session_config_with_settings_carries_both_documents() {
+    // The plugin-level settings are delivered alongside the per-connection config
+    // at session creation (PLG-008), each borrowing its own backing string.
+    let config_json = r#"{"pod":"nginx"}"#.to_owned();
+    let settings_json = r#"{"defaultNamespace":"kube-system"}"#.to_owned();
+    let config = PluginSessionConfig::with_settings(&config_json, &settings_json);
+    // SAFETY: both source strings outlive these borrows.
+    assert_eq!(unsafe { config.config_json.as_str() }, config_json);
+    assert_eq!(unsafe { config.settings_json.as_str() }, settings_json);
+}
+
+#[test]
 fn ffi_string_round_trips() {
     let s = FfiString::from_string("héllo".to_owned());
     assert_eq!(s.as_str(), "héllo");
