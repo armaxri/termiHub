@@ -9,8 +9,8 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter, State};
 
 use termihub_core::network::{
-    dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol, DnsRecordType, PingSweepResult,
-    PortScanResult, WolDevice,
+    defaults, dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol, DnsRecordType,
+    ParseDnsRecordTypeError, PingSweepResult, PortScanResult, WolDevice,
 };
 use termihub_core::service::ServiceInfo;
 
@@ -534,7 +534,9 @@ pub async fn network_dns_lookup(
 ) -> Result<serde_json::Value, TerminalError> {
     // Validate the record type locally so the error is identical regardless of
     // where the lookup runs.
-    let rtype = parse_record_type(&record_type)?;
+    let rtype: DnsRecordType = record_type
+        .parse()
+        .map_err(|e: ParseDnsRecordTypeError| TerminalError::NetworkError(e.to_string()))?;
 
     match manager.resolve_tool_location(agent_tools::tool::DNS)? {
         ResolvedLocation::Agent(agent_id) => {
@@ -833,24 +835,4 @@ pub fn network_http_monitor_list(
 #[tauri::command]
 pub fn network_services_list(manager: State<'_, Arc<NetworkManager>>) -> Vec<ServiceInfo> {
     manager.available_services()
-}
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
-
-fn parse_record_type(s: &str) -> Result<DnsRecordType, TerminalError> {
-    match s.to_uppercase().as_str() {
-        "A" => Ok(DnsRecordType::A),
-        "AAAA" => Ok(DnsRecordType::Aaaa),
-        "MX" => Ok(DnsRecordType::Mx),
-        "CNAME" => Ok(DnsRecordType::Cname),
-        "NS" => Ok(DnsRecordType::Ns),
-        "TXT" => Ok(DnsRecordType::Txt),
-        "SRV" => Ok(DnsRecordType::Srv),
-        "SOA" => Ok(DnsRecordType::Soa),
-        "PTR" => Ok(DnsRecordType::Ptr),
-        "ANY" => Ok(DnsRecordType::Any),
-        other => Err(TerminalError::NetworkError(format!(
-            "unknown DNS record type: '{other}'"
-        ))),
-    }
 }

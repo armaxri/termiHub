@@ -85,7 +85,10 @@ pub async fn handle_ping(params: NetworkPingParams) -> Result<NetworkPingRespons
 
 /// Perform a DNS lookup.
 pub async fn handle_dns_lookup(params: NetworkDnsLookupParams) -> Result<DnsResult> {
-    let record_type = parse_record_type(&params.record_type)?;
+    let record_type: DnsRecordType = params
+        .record_type
+        .parse()
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     dns::dns_lookup(&params.hostname, record_type, params.server.as_deref())
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))
@@ -125,22 +128,6 @@ pub async fn handle_traceroute(
 pub fn handle_wol(params: NetworkWolParams) -> Result<()> {
     wol::send_magic_packet(&params.mac, &params.broadcast, params.port)
         .map_err(|e| anyhow::anyhow!("{e}"))
-}
-
-fn parse_record_type(s: &str) -> Result<DnsRecordType> {
-    match s.to_uppercase().as_str() {
-        "A" => Ok(DnsRecordType::A),
-        "AAAA" => Ok(DnsRecordType::Aaaa),
-        "MX" => Ok(DnsRecordType::Mx),
-        "CNAME" => Ok(DnsRecordType::Cname),
-        "NS" => Ok(DnsRecordType::Ns),
-        "TXT" => Ok(DnsRecordType::Txt),
-        "SRV" => Ok(DnsRecordType::Srv),
-        "SOA" => Ok(DnsRecordType::Soa),
-        "PTR" => Ok(DnsRecordType::Ptr),
-        "ANY" => Ok(DnsRecordType::Any),
-        _ => anyhow::bail!("Unknown DNS record type: {s}"),
-    }
 }
 
 #[cfg(test)]

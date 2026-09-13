@@ -120,6 +120,46 @@ pub enum DnsRecordType {
     Any,
 }
 
+/// Error returned when a string cannot be parsed into a [`DnsRecordType`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParseDnsRecordTypeError {
+    /// The unrecognized input token.
+    pub input: String,
+}
+
+impl std::fmt::Display for ParseDnsRecordTypeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "unknown DNS record type: {}", self.input)
+    }
+}
+
+impl std::error::Error for ParseDnsRecordTypeError {}
+
+impl std::str::FromStr for DnsRecordType {
+    type Err = ParseDnsRecordTypeError;
+
+    /// Parse a textual DNS record type (case-insensitive) into its
+    /// [`DnsRecordType`] variant. This is the single canonical parser shared by
+    /// every network-tool wrapper.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_uppercase().as_str() {
+            "A" => Ok(Self::A),
+            "AAAA" => Ok(Self::Aaaa),
+            "MX" => Ok(Self::Mx),
+            "CNAME" => Ok(Self::Cname),
+            "NS" => Ok(Self::Ns),
+            "TXT" => Ok(Self::Txt),
+            "SRV" => Ok(Self::Srv),
+            "SOA" => Ok(Self::Soa),
+            "PTR" => Ok(Self::Ptr),
+            "ANY" => Ok(Self::Any),
+            _ => Err(ParseDnsRecordTypeError {
+                input: s.to_string(),
+            }),
+        }
+    }
+}
+
 /// A single DNS resource record.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -187,4 +227,24 @@ pub struct WolDevice {
     pub mac: String,
     pub broadcast: String,
     pub port: u16,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dns_record_type_from_str_is_case_insensitive() {
+        assert_eq!("a".parse::<DnsRecordType>(), Ok(DnsRecordType::A));
+        assert_eq!("AAAA".parse::<DnsRecordType>(), Ok(DnsRecordType::Aaaa));
+        assert_eq!("Cname".parse::<DnsRecordType>(), Ok(DnsRecordType::Cname));
+        assert_eq!("any".parse::<DnsRecordType>(), Ok(DnsRecordType::Any));
+    }
+
+    #[test]
+    fn dns_record_type_from_str_rejects_unknown() {
+        let err = "nonsense".parse::<DnsRecordType>().unwrap_err();
+        assert_eq!(err.input, "nonsense");
+        assert!(err.to_string().contains("nonsense"));
+    }
 }

@@ -13,8 +13,8 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use super::{Tool, ToolError, ToolEvent, ToolHost};
-use crate::network::types::DnsRecordType;
-use crate::network::{dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol};
+use crate::network::types::{DnsRecordType, ParseDnsRecordTypeError};
+use crate::network::{defaults, dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol};
 
 /// Decode a tool's params, mapping a serde failure onto [`ToolError::InvalidParams`].
 fn decode<T: for<'de> Deserialize<'de>>(tool: &str, params: Value) -> Result<T, ToolError> {
@@ -262,29 +262,15 @@ impl Tool for DnsTool {
         _cancel: CancellationToken,
     ) -> Result<Value, ToolError> {
         let p: DnsParams = decode(self.tool_id(), params)?;
-        let record_type = parse_record_type(&p.record_type)?;
+        let record_type: DnsRecordType =
+            p.record_type
+                .parse()
+                .map_err(|e: ParseDnsRecordTypeError| ToolError::InvalidParams {
+                    tool: "dns".to_string(),
+                    reason: e.to_string(),
+                })?;
         let result = dns::dns_lookup(&p.hostname, record_type, p.server.as_deref()).await?;
         aggregate(result)
-    }
-}
-
-/// Parse a textual DNS record type into its [`DnsRecordType`] variant.
-fn parse_record_type(s: &str) -> Result<DnsRecordType, ToolError> {
-    match s.to_uppercase().as_str() {
-        "A" => Ok(DnsRecordType::A),
-        "AAAA" => Ok(DnsRecordType::Aaaa),
-        "MX" => Ok(DnsRecordType::Mx),
-        "CNAME" => Ok(DnsRecordType::Cname),
-        "NS" => Ok(DnsRecordType::Ns),
-        "TXT" => Ok(DnsRecordType::Txt),
-        "SRV" => Ok(DnsRecordType::Srv),
-        "SOA" => Ok(DnsRecordType::Soa),
-        "PTR" => Ok(DnsRecordType::Ptr),
-        "ANY" => Ok(DnsRecordType::Any),
-        other => Err(ToolError::InvalidParams {
-            tool: "dns".to_string(),
-            reason: format!("Unknown DNS record type: {other}"),
-        }),
     }
 }
 
@@ -443,8 +429,11 @@ mod tests {
 
     #[test]
     fn dns_record_type_parsing() {
-        assert!(matches!(parse_record_type("a"), Ok(DnsRecordType::A)));
-        assert!(matches!(parse_record_type("AAAA"), Ok(DnsRecordType::Aaaa)));
-        assert!(parse_record_type("nonsense").is_err());
+        assert!(matches!("a".parse::<DnsRecordType>(), Ok(DnsRecordType::A)));
+        assert!(matches!(
+            "AAAA".parse::<DnsRecordType>(),
+            Ok(DnsRecordType::Aaaa)
+        ));
+        assert!("nonsense".parse::<DnsRecordType>().is_err());
     }
 }
