@@ -10,24 +10,29 @@ pub fn list_dir(path: &str) -> Result<Vec<FileEntry>, TerminalError> {
 }
 
 /// Create a directory.
+///
+/// Delegates to `termihub_core::files::local::mkdir_sync()` — `create_dir` (a
+/// single directory, no parents), so an existing name or missing parent surfaces
+/// an error, which the "New Folder" UI relies on.
 pub fn mkdir(path: &str) -> Result<(), TerminalError> {
-    std::fs::create_dir(path)?;
+    termihub_core::files::local::mkdir_sync(path)?;
     Ok(())
 }
 
 /// Delete a file or directory.
+///
+/// Delegates to `termihub_core::files::local::delete_sync()`; the `is_directory`
+/// flag selects `remove_dir_all` vs `remove_file`.
 pub fn delete(path: &str, is_directory: bool) -> Result<(), TerminalError> {
-    if is_directory {
-        std::fs::remove_dir_all(path)?;
-    } else {
-        std::fs::remove_file(path)?;
-    }
+    termihub_core::files::local::delete_sync(path, is_directory)?;
     Ok(())
 }
 
 /// Rename a file or directory.
+///
+/// Delegates to `termihub_core::files::local::rename_sync()`.
 pub fn rename(old_path: &str, new_path: &str) -> Result<(), TerminalError> {
-    std::fs::rename(old_path, new_path)?;
+    termihub_core::files::local::rename_sync(old_path, new_path)?;
     Ok(())
 }
 
@@ -38,8 +43,7 @@ pub fn rename(old_path: &str, new_path: &str) -> Result<(), TerminalError> {
 /// permission model, so it returns an unsupported error.
 #[cfg(unix)]
 pub fn set_permissions(path: &str, mode: u32) -> Result<(), TerminalError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode & 0o7777))?;
+    termihub_core::files::local::set_permissions_sync(path, mode)?;
     Ok(())
 }
 
