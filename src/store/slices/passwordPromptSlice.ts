@@ -19,6 +19,14 @@ import type { AppState } from "../appStore";
  * (#2113/#2114/#2115/#2299/#2300).
  */
 
+/**
+ * Which kind of secret the prompt is asking for. An SSH **key passphrase**
+ * unlocks a private key file; it is not the remote account's login password, so
+ * the prompt must be labeled accordingly (UX-010). `"password"` covers the
+ * ordinary account/host password.
+ */
+export type PasswordPromptKind = "password" | "key_passphrase";
+
 export interface PasswordPromptSlice {
   passwordPromptOpen: boolean;
   passwordPromptHost: string;
@@ -33,7 +41,18 @@ export interface PasswordPromptSlice {
    * opened for an ordinary first-time credential entry.
    */
   passwordPromptNotice: string;
-  requestPassword: (host: string, username: string, notice?: string) => Promise<string | null>;
+  /**
+   * Which secret is being requested, so the prompt can label itself correctly
+   * (UX-010): a key passphrase is not the account password. Defaults to
+   * `"password"`.
+   */
+  passwordPromptKind: PasswordPromptKind;
+  requestPassword: (
+    host: string,
+    username: string,
+    notice?: string,
+    kind?: PasswordPromptKind
+  ) => Promise<string | null>;
   submitPassword: (password: string, shouldSave?: boolean) => void;
   dismissPasswordPrompt: () => void;
 }
@@ -48,8 +67,9 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
   passwordPromptResolve: null,
   passwordPromptShouldSave: false,
   passwordPromptNotice: "",
+  passwordPromptKind: "password",
 
-  requestPassword: (host, username, notice = "") => {
+  requestPassword: (host, username, notice = "", kind = "password") => {
     return new Promise<string | null>((resolve) => {
       set({
         passwordPromptOpen: true,
@@ -58,6 +78,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
         passwordPromptResolve: resolve,
         passwordPromptShouldSave: false,
         passwordPromptNotice: notice,
+        passwordPromptKind: kind,
       });
     });
   },
@@ -72,6 +93,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
       passwordPromptResolve: null,
       passwordPromptShouldSave: shouldSave,
       passwordPromptNotice: "",
+      passwordPromptKind: "password",
     });
   },
 
@@ -85,6 +107,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
       passwordPromptResolve: null,
       passwordPromptShouldSave: false,
       passwordPromptNotice: "",
+      passwordPromptKind: "password",
     });
   },
 });

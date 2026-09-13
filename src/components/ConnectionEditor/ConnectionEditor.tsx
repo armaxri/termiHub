@@ -1001,7 +1001,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         }
 
         if (!resolvedPassword) {
-          resolvedPassword = await requestPassword(host, username);
+          resolvedPassword = await requestPassword(host, username, "", credentialType);
           if (resolvedPassword === null) {
             // Same recoverable-state handling as the unlock gate above (#1344):
             // the save persisted, so inform the user the connect was canceled

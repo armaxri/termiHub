@@ -51,6 +51,24 @@ describe("appStore password prompt", () => {
     expect(s.passwordPromptShouldSave).toBe(false);
   });
 
+  it("defaults the prompt kind to password and carries an explicit kind (UX-010)", () => {
+    useAppStore.getState().requestPassword("example.com", "alice");
+    expect(useAppStore.getState().passwordPromptKind).toBe("password");
+
+    useAppStore.getState().requestPassword("example.com", "alice", "", "key_passphrase");
+    expect(useAppStore.getState().passwordPromptKind).toBe("key_passphrase");
+  });
+
+  it("resets the prompt kind to password on submit and dismiss (UX-010)", () => {
+    useAppStore.getState().requestPassword("example.com", "alice", "", "key_passphrase");
+    useAppStore.getState().submitPassword("secret");
+    expect(useAppStore.getState().passwordPromptKind).toBe("password");
+
+    useAppStore.getState().requestPassword("example.com", "alice", "", "key_passphrase");
+    useAppStore.getState().dismissPasswordPrompt();
+    expect(useAppStore.getState().passwordPromptKind).toBe("password");
+  });
+
   it("submitPassword resolves the pending promise with the password and closes the prompt", async () => {
     const pending = useAppStore.getState().requestPassword("example.com", "alice");
     useAppStore.getState().submitPassword("hunter2", true);
