@@ -96,6 +96,22 @@ describe("SearchInput", () => {
     expect(clear.getAttribute("aria-label")).toBe("Clear filter");
   });
 
+  it("forwards clearTestId to the clear button when the value is non-empty", () => {
+    render(
+      <SearchInput value="prod" onValueChange={() => {}} clearTestId="connection-filter-clear" />
+    );
+    const clear = document.querySelector(
+      '[data-testid="connection-filter-clear"]'
+    ) as HTMLButtonElement;
+    expect(clear).toBeTruthy();
+    expect(clear.classList.contains("ui-search-input__clear")).toBe(true);
+  });
+
+  it("does not render the clear button (or its testid) when the value is empty", () => {
+    render(<SearchInput value="" onValueChange={() => {}} clearTestId="connection-filter-clear" />);
+    expect(document.querySelector('[data-testid="connection-filter-clear"]')).toBeNull();
+  });
+
   it("clears the query when the clear button is clicked", () => {
     const onValueChange = vi.fn();
     render(<SearchInput value="prod" onValueChange={onValueChange} />);
