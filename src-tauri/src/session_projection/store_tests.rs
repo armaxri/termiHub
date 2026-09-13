@@ -662,3 +662,138 @@ fn exit_is_omitted_from_the_snapshot_when_absent() {
     assert_eq!(exit["reason"], "clean");
     assert_eq!(exit["code"], 0);
 }
+
+// ── Reconnect / cancellation race guards (TBE-011) ───────────────────────────
+//
+// Fast, deterministic coverage for the "still-current-run" guard and the
+// double-cancel / cancel-after-complete no-ops the reconnect state machine must
+// uphold. A reconnect attempt runs asynchronously (the backend redrive spawns
+// the connect), so a user cancel / a fresh success can land *while* an older
+// attempt is still in flight. When that older attempt finally settles, its
+// event (`reconnectFailed`) must not resurrect or corrupt a loop that has since
+// been cancelled or settled — otherwise a tab the user stopped strands in
+// `Reconnecting` with an idle loop and no armed timer.
+
+#[test]
+fn stale_reconnect_failed_after_cancel_does_not_resurrect_the_loop() {
+    // Regression (TBE-011): user hits Stop mid-attempt, then the superseded
+    // in-flight connect finally errors and the redrive folds `reconnectFailed`.
+    // A `Failure` from a non-`Connecting` loop is a reducer no-op; the store must
+    // honour that and leave the user-cancelled `Disconnected` state intact rather
+    // than flipping it back to `Reconnecting`.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1"); // waiting
+    store.reconnect_attempt("s1"); // connecting, attempt 1
+    store.cancel_reconnect("s1"); // user Stop → idle / Disconnected(User)
+
+    store.reconnect_failed("s1", Some("connect aborted".to_string()));
+
+    let s = store.get("s1").unwrap();
+    assert_eq!(
+        s.status,
+        SessionStatus::Disconnected,
+        "a stale failure must not resurrect a user-cancelled tab"
+    );
+    assert_eq!(s.end_reason, Some(EndReason::User));
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+}
+
+#[test]
+fn stale_reconnect_failed_after_a_successful_connect_is_a_noop() {
+    // Regression (TBE-011): a newer attempt already reconnected the tab
+    // (`Connected`) when an older, superseded attempt errors late. The stale
+    // failure must not knock a live session back into `Reconnecting`.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    store.reconnect_attempt("s1"); // connecting, attempt 1
+    store.connected("s1"); // the attempt succeeded → Connected
+
+    store.reconnect_failed(
+        "s1",
+        Some("late error from a superseded attempt".to_string()),
+    );
+
+    let s = store.get("s1").unwrap();
+    assert_eq!(
+        s.status,
+        SessionStatus::Connected,
+        "a stale failure must not disturb an already-connected session"
+    );
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Connected);
+    assert_eq!(s.error, None, "no error leaks onto the live session");
+}
+
+#[test]
+fn reconnect_failed_on_an_unknown_session_is_a_noop() {
+    // A late failure for a session that no longer exists (tab closed / removed)
+    // must not lazily materialise a phantom `Reconnecting` entry.
+    let store = deterministic_store();
+    store.reconnect_failed("ghost", Some("boom".to_string()));
+    assert!(store.get("ghost").is_none());
+}
+
+#[test]
+fn reconnect_attempt_outside_waiting_is_a_noop() {
+    // The backoff timer can fire a `reconnectAttempt` that races a cancel/settle.
+    // From any non-`Waiting` phase the reducer is a no-op and the status guard
+    // keeps a settled session settled (never a spurious `Reconnecting`).
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1"); // idle loop, Connected
+
+    store.reconnect_attempt("s1"); // stray attempt
+
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.status, SessionStatus::Connected);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+}
+
+#[test]
+fn double_cancel_reconnect_is_idempotent() {
+    // Two Stop clicks (or a Stop that races the tab-close) must settle to the
+    // same user-cancelled idle state, never a corrupted one.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    store.reconnect_attempt("s1");
+
+    store.cancel_reconnect("s1");
+    store.cancel_reconnect("s1");
+
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.status, SessionStatus::Disconnected);
+    assert_eq!(s.end_reason, Some(EndReason::User));
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+}
+
+#[test]
+fn cancel_reconnect_after_giveup_lands_the_user_dismissed_idle_state() {
+    // A cancel arriving after the loop already exhausted its budget (terminal
+    // `Failed`) is a no-op on the loop (already `Gaveup`) and simply records the
+    // user-dismissed idle state — it must not panic or leave an active loop.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    // Exhaust the DEFAULT_BACKOFF budget (10 attempts) → terminal Failed / Gaveup.
+    for _ in 0..10 {
+        store.reconnect_attempt("s1");
+        store.reconnect_failed("s1", None);
+    }
+    assert_eq!(
+        store.get("s1").unwrap().reconnect.phase,
+        ReconnectPhase::Gaveup
+    );
+
+    store.cancel_reconnect("s1");
+
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+    assert_eq!(s.status, SessionStatus::Disconnected);
+    assert_eq!(s.end_reason, Some(EndReason::User));
+}
