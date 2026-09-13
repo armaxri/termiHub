@@ -78,22 +78,13 @@
   background-color: var(--bg-hover);
 }
 
+/* The toolbar filter composes the shared SearchInput primitive; this class
+   sizes its wrapper within the flex toolbar (the field skin comes from the
+   primitive). */
 .log-viewer__search {
   flex: 1;
   min-width: 100px;
   max-width: 300px;
-  height: 24px;
-  padding: 0 var(--spacing-sm);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  background-color: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: var(--font-size-xs);
-  outline: none;
-}
-
-.log-viewer__search:focus {
-  border-color: var(--accent-color);
 }
 
 /* Toolbar icon actions compose the ghost icon Button primitive; only the
