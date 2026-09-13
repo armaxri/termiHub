@@ -475,8 +475,18 @@ impl SessionLifecycleStore {
     /// or gives up (terminal `Failed` with the message).
     pub fn reconnect_failed(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
-        inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
+        // Still-current-run guard (TBE-011): a `Failure` only settles an attempt
+        // that is actually in flight (`Connecting`). A stale failure arriving
+        // after the loop was cancelled, settled, or superseded by a newer run
+        // finds the reducer a no-op — but without this guard the `else` branch
+        // below would still flip the resolved session back to `Reconnecting` with
+        // an idle loop (and no armed timer), stranding a tab the user stopped.
+        // Mirrors `reconnect_attempt`'s phase guard.
+        if current.phase != ReconnectPhase::Connecting {
+            return;
+        }
+        inner.dirty.insert(session_id.to_string());
         let reconnect = inner.reconnect_event(current, ReconnectEvent::Failure);
         if let Some(entry) = inner.sessions.get_mut(session_id) {
             entry.reconnect = reconnect;
