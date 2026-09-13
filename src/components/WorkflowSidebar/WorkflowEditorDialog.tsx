@@ -16,6 +16,7 @@ import {
   newWorkflowStep,
 } from "./workflowStepMeta";
 import { newId } from "@/services/transport/ids";
+import { parseTags } from "@/utils/parseTags";
 import "./WorkflowEditorDialog.css";
 
 /** The editable fields the dialog collects before saving a workflow. */
@@ -46,20 +47,6 @@ export interface WorkflowEditorDialogProps {
    * user can retry without losing edits.
    */
   onSave: (result: WorkflowEditorResult) => void | Promise<void>;
-}
-
-/** Split a comma-separated tag string into a trimmed, de-duplicated list. */
-function parseTags(raw: string): string[] {
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const part of raw.split(",")) {
-    const tag = part.trim();
-    if (tag && !seen.has(tag)) {
-      seen.add(tag);
-      tags.push(tag);
-    }
-  }
-  return tags;
 }
 
 /** Generate a transient uid for a working step entry (React key + dnd id). */

@@ -14,20 +14,12 @@ import type { Macro } from "@/types/macro";
 import { MacroListItem } from "./MacroListItem";
 import { MacroEditorDialog, type MacroEditorResult } from "./MacroEditorDialog";
 import { newId } from "@/services/transport/ids";
+import { slugify } from "@/utils/slugify";
 import "./MacroSidebar.css";
 
 /** Generate a unique macro id for a duplicated macro. */
 function generateMacroId(): string {
   return newId("macro");
-}
-
-/** Turn a macro name into a filesystem-friendly slug for the default filename. */
-function slugifyMacroName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "macro";
 }
 
 /**
@@ -118,7 +110,7 @@ export function MacroSidebar() {
       const macro = macros.find((m) => m.id === macroId);
       if (!macro) return;
       void exportMacrosToFile({
-        defaultPath: `termihub-macro-${slugifyMacroName(macro.name)}.json`,
+        defaultPath: `termihub-macro-${slugify(macro.name, "macro")}.json`,
         content: () => serializeMacros([macro]),
         successMessage: `Exported "${macro.name}"`,
       });
