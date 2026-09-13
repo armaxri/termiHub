@@ -123,6 +123,79 @@ jobs:
           test -f target/plugin-dist/solarized-night-1.0.0.termihub-plugin
           test -f target/plugin-dist/echo-backend-1.0.0.termihub-plugin
 
+  # RDP Sidecar Quality + Supply-Chain Checks (PKG-013)
+  #
+  # The RDP sidecar (`termihub-rdp-helper`, #1747) is a workspace-EXCLUDED crate
+  # with its OWN Cargo.lock — IronRDP's CredSSP crypto and russh pin incompatible
+  # RustCrypto pre-releases, so it cannot live in the workspace lockfile. It is
+  # cross-built and bundled into every release via Tauri `externalBin` (#1754),
+  # so it SHIPS to users — yet the workspace `rust-quality` / `security-audit`
+  # jobs above never see it (they operate on the workspace lockfile). This job
+  # closes that gap: it gates the sidecar's own lockfile with the same checks the
+  # workspace gets — fmt, clippy (`-D warnings`), tests, and the cargo-deny
+  # supply-chain gate (advisories/bans/licenses/sources against rdp-sidecar's own
+  # Cargo.lock + rdp-sidecar/deny.toml). All steps run in rdp-sidecar/.
+  rdp-sidecar-quality:
+    name: RDP Sidecar Quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rdp-sidecar
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Pin the clippy/rustfmt toolchain to match the workspace rust-quality job
+      # (issue #2549): a floating `@stable` lets a new Rust release introduce
+      # clippy lints that fire under `-D warnings` and red the job with no code
+      # change. Bump deliberately as a "bump toolchain" chore.
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0 branch
+        with:
+          components: rustfmt, clippy
+
+      # The sidecar links libasound2 (cpal/rodio audio); build-essential provides
+      # the C toolchain its sys-crates need. Mirrors the release build's Ubuntu
+      # deps for this crate.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libasound2-dev
+        working-directory: .
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # The sidecar has its own lockfile/target, separate from the workspace.
+          workspaces: rdp-sidecar
+          # Same reader/writer split as the other Rust jobs: only develop/main
+          # (push events) write the cache; PRs restore it read-only.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run Clippy (linter)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Run tests
+        run: cargo test
+
+      # Prebuilt binary download (~seconds) instead of compiling from source.
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-deny
+
+      # Supply-chain gate over the sidecar's OWN lockfile. Config:
+      # rdp-sidecar/deny.toml. Covers RUSTSEC vulnerability + yanked-crate
+      # advisories (equivalent to cargo-audit, both use the RustSec DB), the
+      # license allowlist for the shipped binary, and the crates.io-only source
+      # gate. Accepted advisories are documented in rdp-sidecar/deny.toml.
+      - name: Cargo Deny (supply-chain gate)
+        run: cargo deny check advisories bans licenses sources
+
   # Frontend Quality Checks
   frontend-quality:
     name: Frontend Code Quality

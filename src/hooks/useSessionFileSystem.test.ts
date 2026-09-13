@@ -28,11 +28,13 @@ vi.mock("@/services/api", () => ({
   sftpListDir: vi.fn(),
   localListDir: vi.fn(),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
+  sessionListFiles: vi.fn(() => Promise.resolve([])),
   sessionReadFile: vi.fn(() => Promise.resolve(new Uint8Array())),
   sessionWriteFile: vi.fn(() => Promise.resolve()),
   sessionDeleteFile: vi.fn(() => Promise.resolve()),
   sessionRenameFile: vi.fn(() => Promise.resolve()),
   sessionMkdir: vi.fn(() => Promise.resolve()),
+  sessionSetPermissions: vi.fn(() => Promise.resolve()),
   sessionDownload: vi.fn(() => Promise.resolve(0)),
   sessionUpload: vi.fn(() => Promise.resolve(0)),
   sessionVscodeOpenRemote: vi.fn(() => Promise.resolve()),
@@ -538,5 +540,217 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     );
     expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
     expect(vi.mocked(sessionUpload)).not.toHaveBeenCalled();
+  });
+});
+
+// ── Mutation wiring: each transport-agnostic action targets the session id ─────
+// createDirectory / createFile / delete / rename / setPermissions and the
+// clipboard actions behave identically regardless of SFTP capability, so they
+// are exercised once with a resolved (SFTP-backed) probe.
+import {
+  sessionMkdir,
+  sessionDeleteFile,
+  sessionRenameFile,
+  sessionSetPermissions,
+} from "@/services/api";
+
+describe("useSessionFileSystem — mutation + clipboard wiring", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(path = "/remote/dir"): Promise<SessionFs> {
+    useAppStore.setState({ sessionFileBrowserId: "ssh-1" });
+    seedFileBrowsers({ session: { path, entries: [], loading: false, error: null } });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    return api!;
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("supportsPermissions tracks the resolved SFTP-backed probe", async () => {
+    const api = await mountHook();
+    expect(api.isConnected).toBe(true);
+    expect(api.supportsPermissions).toBe(true);
+  });
+
+  it("createDirectory calls sessionMkdir with the joined remote path", async () => {
+    const api = await mountHook("/remote/dir");
+    await act(async () => {
+      await api.createDirectory("sub");
+    });
+    expect(vi.mocked(sessionMkdir)).toHaveBeenCalledWith("ssh-1", "/remote/dir/sub");
+  });
+
+  it("createFile writes an empty byte array at the joined remote path", async () => {
+    const api = await mountHook("/remote/dir");
+    await act(async () => {
+      await api.createFile("empty.txt");
+    });
+    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith("ssh-1", "/remote/dir/empty.txt", []);
+  });
+
+  it("deleteEntry forwards the path to sessionDeleteFile", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.deleteEntry("/remote/dir/old", false);
+    });
+    expect(vi.mocked(sessionDeleteFile)).toHaveBeenCalledWith("ssh-1", "/remote/dir/old");
+  });
+
+  it("renameEntry rebuilds the sibling path from the parent directory", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.renameEntry("/remote/dir/old.txt", "new.txt");
+    });
+    expect(vi.mocked(sessionRenameFile)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/remote/dir/old.txt",
+      "/remote/dir/new.txt"
+    );
+  });
+
+  it("setPermissions forwards session id, path and mode", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.setPermissions("/remote/dir/script.sh", 0o750);
+    });
+    expect(vi.mocked(sessionSetPermissions)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/remote/dir/script.sh",
+      0o750
+    );
+  });
+
+  it("copyEntry stores a session copy clipboard tagged with the session id", async () => {
+    const api = await mountHook("/remote/dir");
+    act(() => {
+      api.copyEntry([
+        {
+          name: "a.txt",
+          path: "/remote/dir/a.txt",
+          isDirectory: false,
+          size: 1,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ]);
+    });
+    const clip = currentFileBrowsersView().clipboard;
+    expect(clip?.operation).toBe("copy");
+    expect(clip?.sourceMode).toBe("session");
+    expect(clip?.terminalSessionId).toBe("ssh-1");
+    expect(clip?.sourcePath).toBe("/remote/dir");
+  });
+
+  it("cutEntry stores a session cut clipboard", async () => {
+    const api = await mountHook("/remote/dir");
+    act(() => {
+      api.cutEntry([
+        {
+          name: "a.txt",
+          path: "/remote/dir/a.txt",
+          isDirectory: false,
+          size: 1,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ]);
+    });
+    expect(currentFileBrowsersView().clipboard?.operation).toBe("cut");
+  });
+
+  it("pasteEntry moves a same-session cut via a single sessionRenameFile", async () => {
+    const api = await mountHook("/remote/dir");
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "a.txt",
+          path: "/remote/src/a.txt",
+          isDirectory: false,
+          size: 1,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "cut",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "ssh-1",
+    });
+    await act(async () => {
+      await api.pasteEntry();
+    });
+    expect(vi.mocked(sessionRenameFile)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/remote/src/a.txt",
+      "/remote/dir/a.txt"
+    );
+    expect(currentFileBrowsersView().clipboard).toBeNull();
+  });
+
+  it("pasteEntry uploads a local→session clipboard over the SFTP channel", async () => {
+    const api = await mountHook("/remote/dir");
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "a.txt",
+          path: "/local/a.txt",
+          isDirectory: false,
+          size: 1,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "local",
+      sourcePath: "/local",
+    });
+    await act(async () => {
+      await api.pasteEntry();
+    });
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/local/a.txt",
+      "/remote/dir/a.txt",
+      expect.any(Function)
+    );
+  });
+
+  it("navigateTo commits the target path to the session pane", async () => {
+    const api = await mountHook("/remote/dir");
+    await act(async () => {
+      api.navigateTo("/remote/other");
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(currentFileBrowsersView().session.path).toBe("/remote/other");
   });
 });

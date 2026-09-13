@@ -4,7 +4,6 @@
 
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import { LogEntry } from "@/types/terminal";
-import { TunnelState, TunnelStats } from "@/types/tunnel";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
 import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
@@ -413,27 +412,6 @@ export async function onAgentSetupProgress(
   });
 }
 
-interface AgentDeployProgressPayload {
-  agent_id: string;
-  step: string;
-  message: string;
-  progress: number;
-}
-
-/** Subscribe to agent deploy progress events. */
-export async function onAgentDeployProgress(
-  callback: (agentId: string, step: string, message: string, progress: number) => void
-): Promise<UnlistenFn> {
-  return await listen<AgentDeployProgressPayload>("agent-deploy-progress", (event) => {
-    callback(
-      event.payload.agent_id,
-      event.payload.step,
-      event.payload.message,
-      event.payload.progress
-    );
-  });
-}
-
 /**
  * Payload of an `agent-update-available` event (#1352). The desktop backend
  * forwards the agent's `agent.update_available` JSON-RPC notification, tagging
@@ -570,29 +548,6 @@ export async function onLocalDirChanged(
 export async function onLogEntry(callback: (entry: LogEntry) => void): Promise<UnlistenFn> {
   return await listen<LogEntry>("log-entry", (event) => {
     callback(event.payload);
-  });
-}
-
-/** Subscribe to tunnel status change events. */
-export async function onTunnelStatusChanged(
-  callback: (state: TunnelState) => void
-): Promise<UnlistenFn> {
-  return await listen<TunnelState>("tunnel-status-changed", (event) => {
-    callback(event.payload);
-  });
-}
-
-interface TunnelStatsPayload {
-  tunnel_id: string;
-  stats: TunnelStats;
-}
-
-/** Subscribe to tunnel stats update events. */
-export async function onTunnelStatsUpdated(
-  callback: (tunnelId: string, stats: TunnelStats) => void
-): Promise<UnlistenFn> {
-  return await listen<TunnelStatsPayload>("tunnel-stats-updated", (event) => {
-    callback(event.payload.tunnel_id, event.payload.stats);
   });
 }
 
