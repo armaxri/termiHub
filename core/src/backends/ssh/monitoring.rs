@@ -24,7 +24,7 @@ use crate::monitoring::{
     parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatus,
     MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
     MonitoringSubscription, BACKOFF_CAP, DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS,
-    DEFAULT_STALE_THRESHOLD, MONITORING_COMMAND,
+    DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD, MONITORING_COMMAND,
 };
 
 use super::handler::{ForwardedChannelRegistry, SshSession};
@@ -34,7 +34,7 @@ use super::jump_host::{connect_target, GatewayHold};
 ///
 /// Live-overridable per subscription via [`MonitoringProvider::set_interval`]
 /// (#1233); this is only the starting value.
-const MONITORING_INTERVAL: Duration = Duration::from_secs(2);
+const MONITORING_INTERVAL: Duration = Duration::from_millis(DEFAULT_MONITORING_INTERVAL_MS);
 
 /// How often a paused loop wakes to re-check whether it should resume (#1233).
 ///

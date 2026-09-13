@@ -25,6 +25,13 @@ pub use types::{CpuCounters, SystemStats};
 
 use crate::errors::CoreError;
 
+/// Default interval between system-monitoring stat collections, in milliseconds.
+///
+/// The single source of truth for the monitoring cadence, shared by the desktop
+/// SSH monitor and the agent monitoring manager so the default is defined once.
+/// Live-overridable per subscription; this is only the starting value.
+pub const DEFAULT_MONITORING_INTERVAL_MS: u64 = 2000;
+
 /// Stats collection trait — sync collection, consumers wrap as needed.
 ///
 /// Desktop: SSH exec to remote host, parse output.

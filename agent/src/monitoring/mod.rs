@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 
 use termihub_core::monitoring::{
     BackoffSchedule, CollectLoopState, MonitorStatus, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
-    DEFAULT_MAX_RECONNECT_ATTEMPTS,
+    DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
 };
 
 use crate::io::transport::NotificationSender;
@@ -35,9 +35,6 @@ use self::collector::{LocalCollector, SshCollector, StatsCollector};
 /// (#1230, gap G2). Each call runs on a blocking thread (SSH connect is
 /// blocking).
 type CollectorFactory = Arc<dyn Fn() -> Result<Box<dyn StatsCollector>> + Send + Sync + 'static>;
-
-/// Default collection interval in milliseconds.
-const DEFAULT_INTERVAL_MS: u64 = 2000;
 
 /// Minimum allowed collection interval in milliseconds.
 const MIN_INTERVAL_MS: u64 = 500;
@@ -107,7 +104,7 @@ impl MonitoringManager {
     /// replaced (unsubscribed then re-subscribed).
     pub async fn subscribe(&self, host: &str, interval_ms: Option<u64>) -> Result<()> {
         let interval = interval_ms
-            .unwrap_or(DEFAULT_INTERVAL_MS)
+            .unwrap_or(DEFAULT_MONITORING_INTERVAL_MS)
             .max(MIN_INTERVAL_MS);
 
         // If already subscribed, cancel the old subscription first
