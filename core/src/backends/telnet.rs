@@ -42,12 +42,18 @@ const DEFAULT_PORT: u16 = 23;
 
 /// Parse the `port` setting into a `u16`, defaulting to [`DEFAULT_PORT`].
 ///
-/// Accepts either a JSON number or a numeric string.
+/// Accepts either a JSON number or a numeric string. An out-of-range value is
+/// **rejected** rather than silently rewritten: the numeric branch uses a
+/// checked [`u16::try_from`] instead of a wrapping `as` cast, so a numeric
+/// `70000` falls back to the default exactly as the string `"70000"` already
+/// did — the two branches now agree (#2916, the `as`-cast half of ERR-010).
+/// Previously `n as u16` truncated (`65536` → `0`, `70000` → `4464`), silently
+/// targeting the wrong port. Mirrors the SSH backend's CORE-006 fix.
 fn parse_port_setting(port: Option<&serde_json::Value>) -> u16 {
     port.and_then(|v| {
         v.as_u64()
-            .map(|n| n as u16)
-            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+            .and_then(|n| u16::try_from(n).ok())
+            .or_else(|| v.as_str().and_then(|s| s.parse::<u16>().ok()))
     })
     .unwrap_or(DEFAULT_PORT)
 }
