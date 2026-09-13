@@ -17,11 +17,12 @@ use tracing::{debug, info, warn};
 
 use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter, DaemonListener};
-use termihub_core::buffer::RingBuffer;
+use termihub_core::buffer::{RingBuffer, DEFAULT_BUFFER_CAPACITY};
 use termihub_core::connection::{ConnectionType, OutputReceiver};
 
-/// Default ring buffer size: 1 MiB.
-const DEFAULT_BUFFER_SIZE: usize = 1_048_576;
+/// Default ring buffer size (1 MiB); derived from the shared core default so the
+/// daemon and core agree on a single value (DUP-006).
+const DEFAULT_BUFFER_SIZE: usize = DEFAULT_BUFFER_CAPACITY;
 
 /// Configuration for the session daemon, read from environment variables.
 #[derive(Debug)]
