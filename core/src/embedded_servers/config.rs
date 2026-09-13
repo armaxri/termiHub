@@ -3,6 +3,8 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use crate::service::ServiceStatus;
+
 /// Protocol type for an embedded server.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +68,40 @@ pub enum ServerStatus {
     Running,
     Stopping,
     Error,
+}
+
+impl ServerStatus {
+    /// Project a generic [`ServiceStatus`] lifecycle onto the embedded-server
+    /// `(ServerStatus, error)` representation.
+    ///
+    /// The embedded servers live behind the core [`Service`] trait, whose
+    /// lifecycle is [`ServiceStatus`], but the desktop→frontend projection (and
+    /// the persisted [`ServerState`]) speak [`ServerStatus`] plus a separate
+    /// `error` string. The two enums therefore model one lifecycle in two shapes
+    /// and must keep their distinct serialized forms (agent RPC's adjacently
+    /// tagged `{ "state": … }` vs the frontend's plain string). This is the
+    /// single source of truth for the variant relationship between them, so it is
+    /// no longer hand-maintained at each transition site (DUP-022):
+    ///
+    /// | [`ServiceStatus`]        | [`ServerStatus`] | `error`         |
+    /// | ------------------------ | ---------------- | --------------- |
+    /// | `Stopped`                | `Stopped`        | `None`          |
+    /// | `Starting`               | `Starting`       | `None`          |
+    /// | `Running`                | `Running`        | `None`          |
+    /// | `Stopping`               | `Stopping`       | `None`          |
+    /// | `Failed(reason)`         | `Error`          | `Some(reason)`  |
+    ///
+    /// [`Service`]: crate::service::Service
+    /// [`ServerState`]: crate::embedded_servers::config::ServerState
+    pub fn from_service_status(status: &ServiceStatus) -> (ServerStatus, Option<String>) {
+        match status {
+            ServiceStatus::Stopped => (ServerStatus::Stopped, None),
+            ServiceStatus::Starting => (ServerStatus::Starting, None),
+            ServiceStatus::Running => (ServerStatus::Running, None),
+            ServiceStatus::Stopping => (ServerStatus::Stopping, None),
+            ServiceStatus::Failed(reason) => (ServerStatus::Error, Some(reason.clone())),
+        }
+    }
 }
 
 /// Live traffic statistics for an active server.
@@ -190,6 +226,47 @@ mod tests {
         let store = EmbeddedServerStore::default();
         assert_eq!(store.version, "1");
         assert!(store.servers.is_empty());
+    }
+
+    #[test]
+    fn server_status_wire_form_is_plain_camel_case_strings() {
+        // The frontend/persisted projection is a plain string, distinct from the
+        // agent-RPC ServiceStatus adjacently-tagged object. Lock every variant.
+        for (status, wire) in [
+            (ServerStatus::Stopped, "\"stopped\""),
+            (ServerStatus::Starting, "\"starting\""),
+            (ServerStatus::Running, "\"running\""),
+            (ServerStatus::Stopping, "\"stopping\""),
+            (ServerStatus::Error, "\"error\""),
+        ] {
+            assert_eq!(serde_json::to_string(&status).unwrap(), wire);
+            let back: ServerStatus = serde_json::from_str(wire).unwrap();
+            assert_eq!(back, status);
+        }
+    }
+
+    #[test]
+    fn from_service_status_covers_every_variant() {
+        assert_eq!(
+            ServerStatus::from_service_status(&ServiceStatus::Stopped),
+            (ServerStatus::Stopped, None)
+        );
+        assert_eq!(
+            ServerStatus::from_service_status(&ServiceStatus::Starting),
+            (ServerStatus::Starting, None)
+        );
+        assert_eq!(
+            ServerStatus::from_service_status(&ServiceStatus::Running),
+            (ServerStatus::Running, None)
+        );
+        assert_eq!(
+            ServerStatus::from_service_status(&ServiceStatus::Stopping),
+            (ServerStatus::Stopping, None)
+        );
+        assert_eq!(
+            ServerStatus::from_service_status(&ServiceStatus::Failed("boom".to_string())),
+            (ServerStatus::Error, Some("boom".to_string()))
+        );
     }
 
     #[test]
