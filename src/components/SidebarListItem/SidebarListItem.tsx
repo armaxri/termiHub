@@ -1,45 +1,19 @@
 import React from "react";
+import { StatusDot } from "../ui/StatusDot";
+import type { StatusDotProps, StatusTone } from "../ui/StatusDot";
 import "./SidebarListItem.css";
 
-/** Semantic tone for a {@link SidebarStatusDot}, mapped to a design token. */
-export type SidebarStatusTone = "neutral" | "success" | "warning" | "error";
-
-/** Props for {@link SidebarStatusDot}. */
-export interface SidebarStatusDotProps {
-  /** Colour tone of the dot. */
-  tone: SidebarStatusTone;
-  /**
-   * Accessible name describing the status the dot conveys (e.g. "Running",
-   * "Stopped", "Error"). Rendered as the dot's `aria-label` so screen-reader
-   * and colourblind users perceive the state without relying on colour alone
-   * (WCAG 1.4.1 / 1.1.1). Strongly encouraged for every caller.
-   */
-  label?: string;
-  /** Test hook forwarded to the dot element. */
-  testId?: string;
-}
-
 /**
- * A small coloured status dot for sidebar rows. Colours come from design tokens
- * via the `--tone` modifier so every sidebar renders the same status affordance.
- *
- * When `label` is supplied the dot becomes an `img`-role graphic named by that
- * label, so its meaning survives without colour (WCAG 1.4.1 / 1.1.1).
+ * @deprecated The sidebar status dot was promoted to the shared {@link StatusDot}
+ * primitive in `src/components/ui/` (UISF-003). Import `StatusDot` from
+ * `@/components/ui` for new call sites; these aliases keep existing sidebar rows
+ * working.
  */
-export function SidebarStatusDot({
-  tone,
-  label,
-  testId,
-}: SidebarStatusDotProps): React.ReactElement {
-  return (
-    <span
-      className={`sidebar-list-item__status sidebar-list-item__status--${tone}`}
-      role={label ? "img" : undefined}
-      aria-label={label}
-      data-testid={testId}
-    />
-  );
-}
+export type SidebarStatusTone = StatusTone;
+/** @deprecated Alias of {@link StatusDotProps}. See {@link SidebarStatusTone}. */
+export type SidebarStatusDotProps = StatusDotProps;
+/** @deprecated Alias of {@link StatusDot}. See {@link SidebarStatusTone}. */
+export const SidebarStatusDot = StatusDot;
 
 /**
  * Props for the shared {@link SidebarListItem} shell. Extends the native `div`

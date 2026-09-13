@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { X, Shield, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { Button } from "@/components/ui";
+import { Button, StatusDot } from "@/components/ui";
 import { useDesktopVersion } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
@@ -74,7 +74,7 @@ export function UpdateNotification() {
               className="update-notification__icon update-notification__icon--security"
             />
           ) : (
-            <span className="update-notification__dot update-notification__dot--amber" />
+            <StatusDot tone="notice" />
           )}
           <span id="update-notification-title" className="update-notification__title">
             {isSecurity
