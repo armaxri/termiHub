@@ -1,6 +1,6 @@
 import React from "react";
 import { AlertCircle, ArrowUp } from "lucide-react";
-import { Button, Modal, toast } from "@/components/ui";
+import { ConfirmDialog, toast } from "@/components/ui";
 import { formatRelativeTime } from "@/utils/formatters";
 import { frontendLog } from "@/utils/frontendLog";
 import {
@@ -111,31 +111,17 @@ export function UpdateAgentDialog({
   };
 
   return (
-    <Modal
+    <ConfirmDialog
       open={open}
-      onOpenChange={onOpenChange}
       title={`Update agent on ${agentName}`}
       description={`Update the termiHub agent on ${agentName}`}
       data-testid="update-agent-dialog"
-      footer={
-        <>
-          <Button
-            variant="secondary"
-            onClick={() => onOpenChange(false)}
-            data-testid="update-agent-cancel"
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            icon={<ArrowUp size={13} aria-hidden="true" />}
-            onClick={handleConfirm}
-            data-testid="update-agent-confirm"
-          >
-            {hasOtherHosts ? "Notify Others & Update" : "Update"}
-          </Button>
-        </>
-      }
+      testIdBase="update-agent"
+      confirmVariant="primary"
+      confirmIcon={<ArrowUp size={13} aria-hidden="true" />}
+      confirmLabel={hasOtherHosts ? "Notify Others & Update" : "Update"}
+      onConfirm={handleConfirm}
+      onCancel={() => onOpenChange(false)}
     >
       <div className="update-agent-dialog__versions">
         <div className="update-agent-dialog__ver-line">
@@ -175,6 +161,6 @@ export function UpdateAgentDialog({
           No other hosts are connected. The update applies immediately.
         </p>
       )}
-    </Modal>
+    </ConfirmDialog>
   );
 }

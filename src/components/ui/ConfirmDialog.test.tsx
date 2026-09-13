@@ -319,6 +319,27 @@ describe("ConfirmDialog", () => {
     });
   });
 
+  it("renders a caller-supplied confirmIcon inside the confirm button", () => {
+    render(
+      <ConfirmDialog
+        open
+        title="Update agent"
+        message="M"
+        confirmLabel="Update"
+        confirmIcon={<svg data-testid="confirm-icon" />}
+        onConfirm={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    );
+    const confirmBtn = document.querySelector('[data-testid="confirm-dialog-confirm"]');
+    expect(confirmBtn).toBeTruthy();
+    // The icon renders inside the confirm button, before its label.
+    expect(confirmBtn!.querySelector('[data-testid="confirm-icon"]')).toBeTruthy();
+    expect(confirmBtn!.textContent).toContain("Update");
+    // The confirm-button icon is distinct from the title accent icon.
+    expect(document.querySelector('[data-testid="confirm-dialog-title-icon"]')).toBeNull();
+  });
+
   // WAI-ARIA: Space activates a checkbox, Enter does not. Enter inside the
   // dialog stays the confirm shortcut rather than ticking the opt-out.
   it("confirms rather than ticking the opt-out when Enter is pressed on it", () => {
