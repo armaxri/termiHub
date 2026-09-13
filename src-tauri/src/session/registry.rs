@@ -4,64 +4,25 @@
 //! backends from `termihub_core` so the desktop can create local connections
 //! generically by `type_id`.
 
-use termihub_core::connection::ConnectionTypeRegistry;
+use termihub_core::connection::{register_core_backends, ConnectionTypeRegistry};
 
 /// Build a [`ConnectionTypeRegistry`] with all backends available on this
 /// platform.
 ///
-/// All non-platform-gated backends are registered unconditionally.
-/// WSL is gated to Windows only.
+/// The shared core backends (local shell, serial, SSH, telnet, Docker, plus WSL
+/// on Windows) are registered via
+/// [`register_core_backends`](termihub_core::connection::register_core_backends),
+/// the single source the desktop and the agent both draw from (DUP-013). On top
+/// of that shared set the desktop adds its own feature-gated backends — FTP and
+/// the graphical remote-desktop types — which the agent does not host.
 pub fn build_desktop_registry() -> ConnectionTypeRegistry {
     let mut registry = ConnectionTypeRegistry::new();
 
-    // Local shell (PTY-based)
-    registry.register(
-        "local",
-        "Local Shell",
-        "terminal",
-        Box::new(|| Box::new(termihub_core::backends::local_shell::LocalShell::new())),
-    );
+    // Backends shared with the agent (local/serial/ssh/telnet/docker + WSL on
+    // Windows).
+    register_core_backends(&mut registry);
 
-    // Serial port
-    registry.register(
-        "serial",
-        "Serial Port",
-        "serial",
-        Box::new(|| Box::new(termihub_core::backends::serial::Serial::new())),
-    );
-
-    // SSH
-    registry.register(
-        "ssh",
-        "SSH",
-        "ssh",
-        Box::new(|| Box::new(termihub_core::backends::ssh::Ssh::new())),
-    );
-
-    // Telnet
-    registry.register(
-        "telnet",
-        "Telnet",
-        "telnet",
-        Box::new(|| Box::new(termihub_core::backends::telnet::Telnet::new())),
-    );
-
-    // Docker
-    registry.register(
-        "docker",
-        "Docker",
-        "docker",
-        Box::new(|| Box::new(termihub_core::backends::docker::Docker::new())),
-    );
-
-    // WSL (Windows only)
-    #[cfg(windows)]
-    registry.register(
-        "wsl",
-        "WSL",
-        "wsl",
-        Box::new(|| Box::new(termihub_core::backends::wsl::Wsl::new())),
-    );
+    // ── Desktop-only additions below ────────────────────────────────────────
 
     // FTP / FTPS (gated behind the `ftp` feature; enabled by default)
     #[cfg(feature = "ftp")]

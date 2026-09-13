@@ -24,7 +24,9 @@ pub use graphical::{
     CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
     GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
 };
-pub use registry::{ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry};
+pub use registry::{
+    register_core_backends, ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry,
+};
 pub use schema::*;
 pub use validation::{validate_settings, ValidationError};
 

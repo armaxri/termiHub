@@ -152,6 +152,77 @@ impl Default for ConnectionTypeRegistry {
     }
 }
 
+/// Register the connection-type backends shared by every termiHub host.
+///
+/// The desktop (`src-tauri`) and the remote agent both create the same set of
+/// core connection types — local shell, serial, SSH, telnet, Docker, plus WSL
+/// on Windows — so this is the single source both call at startup instead of
+/// maintaining parallel copy-pasted lists (DUP-013). Each registration is gated
+/// on the core feature that provides its backend module, so a host that builds
+/// core without a given feature simply does not register that type (both hosts
+/// enable all of these features today, so the registered set is unchanged).
+///
+/// A host registers its own additional, optional backends on top of these — the
+/// desktop, for example, adds its feature-gated FTP and remote-desktop types.
+pub fn register_core_backends(registry: &mut ConnectionTypeRegistry) {
+    // Local shell (PTY-based)
+    #[cfg(feature = "local-shell")]
+    registry.register(
+        "local",
+        "Local Shell",
+        "terminal",
+        Box::new(|| Box::new(crate::backends::local_shell::LocalShell::new())),
+    );
+
+    // Serial port
+    #[cfg(feature = "serial")]
+    registry.register(
+        "serial",
+        "Serial Port",
+        "serial",
+        Box::new(|| Box::new(crate::backends::serial::Serial::new())),
+    );
+
+    // SSH.
+    //
+    // Both hosts reuse the core SSH backend verbatim, so SSH agent forwarding
+    // (`forwardAgent`, #1699) is honored identically on either side (#1719).
+    #[cfg(feature = "ssh")]
+    registry.register(
+        "ssh",
+        "SSH",
+        "ssh",
+        Box::new(|| Box::new(crate::backends::ssh::Ssh::new())),
+    );
+
+    // Telnet
+    #[cfg(feature = "telnet")]
+    registry.register(
+        "telnet",
+        "Telnet",
+        "telnet",
+        Box::new(|| Box::new(crate::backends::telnet::Telnet::new())),
+    );
+
+    // Docker
+    #[cfg(feature = "docker")]
+    registry.register(
+        "docker",
+        "Docker",
+        "docker",
+        Box::new(|| Box::new(crate::backends::docker::Docker::new())),
+    );
+
+    // WSL (Windows only)
+    #[cfg(all(feature = "wsl", windows))]
+    registry.register(
+        "wsl",
+        "WSL",
+        "wsl",
+        Box::new(|| Box::new(crate::backends::wsl::Wsl::new())),
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
