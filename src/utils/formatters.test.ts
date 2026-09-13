@@ -6,6 +6,7 @@ import {
   formatRelativeAgo,
   formatRelativeTime,
   formatAbsoluteTime,
+  truncate,
 } from "./formatters";
 import * as locale from "./locale";
 
@@ -160,5 +161,22 @@ describe("formatAbsoluteTime", () => {
     expect(formatAbsoluteTime(null)).toBe("");
     expect(formatAbsoluteTime("")).toBe("");
     expect(formatAbsoluteTime("not a date")).toBe("");
+  });
+});
+
+describe("truncate", () => {
+  it("returns the string unchanged when within the limit", () => {
+    expect(truncate("hello", 10)).toBe("hello");
+    expect(truncate("hello", 5)).toBe("hello");
+  });
+
+  it("truncates with an ellipsis when over the limit", () => {
+    expect(truncate("hello world", 5)).toBe("hell…");
+  });
+
+  it("defaults to a max length of 60", () => {
+    const long = "x".repeat(70);
+    expect(truncate(long)).toBe("x".repeat(59) + "…");
+    expect(truncate("x".repeat(60))).toBe("x".repeat(60));
   });
 });
