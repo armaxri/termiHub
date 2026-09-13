@@ -14,6 +14,7 @@ import type { LucideIcon, IconNode } from "lucide-react";
 import * as labIcons from "@lucide/lab";
 import type { ConnectionConfig, ShellType } from "@/types/terminal";
 import lucideTags from "@/data/lucide-tags.json";
+import { compareNames } from "@/utils/locale";
 
 /** Default icon by connection type (non-local or local without special shell) */
 const TYPE_ICONS: Record<string, LucideIcon> = {
@@ -183,7 +184,7 @@ export function getIconCatalog(): IconCatalogEntry[] {
     entries.push({ name: `lab:${name}`, displayName: toDisplayName(name), tags });
   }
 
-  entries.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  entries.sort((a, b) => compareNames(a.displayName, b.displayName));
   _catalog = entries;
   return entries;
 }

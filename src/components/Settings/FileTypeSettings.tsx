@@ -5,6 +5,7 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils/languageMapping";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
 import { Button, Tooltip, EmptyState } from "@/components/ui";
+import { compareNames } from "@/utils/locale";
 
 /** Combined view of a built-in mapping row (shown in the reference table). */
 interface BuiltInRow {
@@ -28,7 +29,7 @@ const ALL_BUILT_IN_ROWS: BuiltInRow[] = [
   // Strip leading dot so ".gitignore" sorts near "g", ".zshrc" near "z", etc.
   const keyA = a.pattern.replace(/^\./, "").toLowerCase();
   const keyB = b.pattern.replace(/^\./, "").toLowerCase();
-  return keyA.localeCompare(keyB);
+  return compareNames(keyA, keyB);
 });
 
 interface FileTypeSettingsProps {
