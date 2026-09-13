@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/files/local.rs:13
   - core/src/files/local.rs:240
   - src-tauri/src/commands/files.rs:67
-status: open
+status: fixed
+resolution: "#2939 — extracted sync mkdir/delete/rename/set_permissions into core::files::local (*_sync); both LocalFileBrowser (spawn_blocking) + desktop wrappers share them; raw io::Error preserves each caller mapping"
 ---
 
 ## What

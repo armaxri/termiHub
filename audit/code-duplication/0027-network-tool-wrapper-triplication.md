@@ -10,7 +10,8 @@ evidence:
   - core/src/tool/network_tools.rs:357
   - agent/src/network/mod.rs
   - src-tauri/src/commands/network.rs:66
-status: open
+status: partial
+resolution: "#2951 — consolidated duplicated Tauri event names/payloads (local vs agent-proxy) into src-tauri/network/events.rs (shape-locked). Deeper core::tool routing deferred -> #2949 (overlaps #2139 epic)"
 ---
 
 ## What

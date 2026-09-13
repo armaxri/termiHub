@@ -11,7 +11,7 @@ evidence:
   - src/store/appStore.ts:469
   - src/store/projectionCache.ts:9
 status: in-progress
-resolution: "#2920/#2923 — appStore split ongoing: workspaces (#2920) + workflows (#2923) slices MERGED; prior monitoring/transfers/connectionTree/fileBrowsers/settings done; prior monitoring/transfers/connectionTree/fileBrowsers/settings done; tab/panel-tree+session core deferred (#2881)"
+resolution: "#2920/#2923 — appStore split ongoing: workspaces (#2920) + workflows (#2923) + credential-store (#2938) slices MERGED; prior monitoring/transfers/connectionTree/fileBrowsers/settings done; prior monitoring/transfers/connectionTree/fileBrowsers/settings done; tab/panel-tree+session core deferred (#2881)"
 ---
 
 ## What

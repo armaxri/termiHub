@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/files/local.rs:38
   - src-tauri/src/files/local.rs:59
   - core/src/files/browser.rs:27
-status: open
+status: fixed
+resolution: "#2939 — recursive local copy moved to core::files::local::copy_sync (free fn); desktop delegates. Edge-case tests live once in core"
 ---
 
 ## What

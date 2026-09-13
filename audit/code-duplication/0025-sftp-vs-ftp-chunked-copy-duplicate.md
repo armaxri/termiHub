@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/files/transfer/mod.rs:251
   - src-tauri/src/files/transfer/mod.rs:50
   - core/src/backends/ftp/transfer.rs:27
-status: open
+status: deferred
+resolution: "#2940 — SFTP/FTP chunked reader->writer copy loop still duplicated; out of scope of #2939, follow-up filed"
 ---
 
 ## What
