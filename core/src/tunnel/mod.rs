@@ -13,12 +13,14 @@
 //! sites are unchanged; the agent uses them to forward on the agent (#2198
 //! completed the trilogy with `-D`).
 
+pub mod active_forwarder;
 pub mod channel;
 pub mod config;
 pub mod dynamic_forward;
 pub mod local_forward;
 pub mod remote_forward;
 
+pub use active_forwarder::ActiveForwarder;
 pub use channel::{ChannelOpener, SshChannelOpener};
 pub use config::{DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats};
 pub use dynamic_forward::DynamicForwarder;

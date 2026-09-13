@@ -6,10 +6,24 @@ import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
 import { isWindows } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
-import { Select, SelectItem, Toggle } from "@/components/ui";
+import { Select, SelectItem, Toggle, toast } from "@/components/ui";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
+import { setFileLogLevel, getLogFilePath } from "@/services/api";
+import { frontendError } from "@/utils/frontendLog";
 import { KeyPathInput } from "./KeyPathInput";
 import { SettingsField } from "./SettingsField";
+
+/** Human-readable labels for the file-log verbosity levels (OBS-009). */
+const LOG_LEVEL_LABELS: Record<string, string> = {
+  off: "Off",
+  error: "Error",
+  warn: "Warning",
+  info: "Info",
+  debug: "Debug",
+  trace: "Trace",
+};
+
+type FileLogLevel = NonNullable<AppSettings["fileLogLevel"]>;
 
 /** Sentinel value for the "platform default" shell option (Radix Select forbids empty-string item values). */
 const PLATFORM_DEFAULT_SHELL = "__platform_default__";
@@ -56,7 +70,32 @@ interface GeneralSettingsProps {
 export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSettingsProps) {
   const [availableShells, setAvailableShells] = useState<ShellType[]>([]);
   const [gitBashSetupOpen, setGitBashSetupOpen] = useState(false);
+  const [logFilePath, setLogFilePath] = useState<string | null>(null);
   const platformDefaultShell = useAppStore((s) => s.defaultShell);
+
+  // Resolve the log file location once so the control can point a user/supporter
+  // straight at the file to read or attach to a bug report (OBS-011).
+  useEffect(() => {
+    getLogFilePath()
+      .then(setLogFilePath)
+      .catch(() => setLogFilePath(null));
+  }, []);
+
+  // Changing the log level both persists it (through the normal settings
+  // document, via onChange) and applies it live to the running app (OBS-009).
+  const handleLogLevelChange = useCallback(
+    (value: FileLogLevel) => {
+      onChange((prev) => ({ ...prev, fileLogLevel: value }));
+      setFileLogLevel(value)
+        .then(() => toast.success(`Log verbosity set to ${LOG_LEVEL_LABELS[value] ?? value}`))
+        .catch((err) => {
+          const message = err instanceof Error ? err.message : String(err);
+          frontendError("general_settings", `failed to set log level: ${message}`);
+          toast.error(`Failed to change log verbosity: ${message}`);
+        });
+    },
+    [onChange]
+  );
 
   const refreshShells = useCallback(() => {
     detectAvailableShells().then(setAvailableShells);
@@ -201,6 +240,37 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               />
             </SettingsField>
           )}
+        </div>
+      )}
+
+      {show("fileLogLevel") && (
+        <div className="settings-panel__category">
+          <h3 className="settings-panel__category-title">Diagnostics</h3>
+
+          <SettingsField
+            label="Log File Verbosity"
+            hint={
+              "How much detail termiHub writes to its log file. Raise it to Debug when reporting a bug, then attach or paste the file. " +
+              "Info is the default; changes apply immediately and persist across restarts. " +
+              (logFilePath ? `Log file: ${logFilePath}. ` : "") +
+              "The TERMIHUB_FILE_LOG environment variable overrides this at startup."
+            }
+          >
+            <Select
+              value={settings.fileLogLevel ?? "info"}
+              onChange={(value) => handleLogLevelChange(value as FileLogLevel)}
+              options={[
+                { value: "off", label: "Off" },
+                { value: "error", label: "Error" },
+                { value: "warn", label: "Warning" },
+                { value: "info", label: "Info (default)" },
+                { value: "debug", label: "Debug" },
+                { value: "trace", label: "Trace" },
+              ]}
+              aria-label="Log file verbosity"
+              data-testid="settings-file-log-level"
+            />
+          </SettingsField>
         </div>
       )}
 

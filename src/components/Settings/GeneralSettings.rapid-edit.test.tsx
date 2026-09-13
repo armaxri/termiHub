@@ -29,6 +29,7 @@ vi.mock("@/themes", () => ({
 
 vi.mock("@/utils/frontendLog", () => ({
   frontendLog: vi.fn(),
+  frontendError: vi.fn(),
 }));
 
 vi.mock("@/utils/shell-detection", () => ({
@@ -46,6 +47,8 @@ vi.mock("@/hooks/useSshKeyFiles", () => ({
 
 vi.mock("@/services/api", () => ({
   validateSshKey: vi.fn().mockResolvedValue({ status: "valid", message: "" }),
+  getLogFilePath: vi.fn().mockResolvedValue(null),
+  setFileLogLevel: vi.fn().mockResolvedValue(undefined),
 }));
 
 const BASE_SETTINGS: AppSettings = {

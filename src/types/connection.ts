@@ -615,6 +615,14 @@ export interface AppSettings {
    */
   frontendPluginsEnabled?: boolean;
   updates?: UpdateSettings;
+  /**
+   * Durable log-file verbosity (OBS-009). Controls how much detail termiHub
+   * writes to `termihub.log`. Unset → the built-in default (`"info"`). Applied
+   * live via `set_file_log_level` and re-applied from this persisted value at
+   * startup; the `TERMIHUB_FILE_LOG` environment variable overrides it at
+   * startup. `"off"` disables the file log entirely.
+   */
+  fileLogLevel?: "off" | "error" | "warn" | "info" | "debug" | "trace";
   /** Linux `/dev` prefixes used when scanning for serial ports. Always present after `get_settings` (expanded from built-in defaults if never saved). */
   serialPortScanPrefixes?: SerialPortScanPrefix[];
   /** Shell context-menu / CLI-spawn integration configuration (epic #1363). */
