@@ -1,4 +1,4 @@
-import { Modal, Button } from "@/components/ui";
+import { ConfirmDialog } from "@/components/ui";
 import { resolveUiLocale } from "@/utils/locale";
 
 interface LargePasteDialogProps {
@@ -8,27 +8,25 @@ interface LargePasteDialogProps {
   onCancel: () => void;
 }
 
-/** Confirmation dialog shown when pasting text larger than the threshold. */
+/**
+ * Confirmation dialog shown when pasting text larger than the threshold.
+ * Composes the shared {@link ConfirmDialog} primitive so it inherits the
+ * safe-default focus/Enter wiring and standard footer.
+ */
 export function LargePasteDialog({ open, charCount, onConfirm, onCancel }: LargePasteDialogProps) {
   return (
-    <Modal
+    <ConfirmDialog
       open={open}
-      onOpenChange={(isOpen) => !isOpen && onCancel()}
       title="Large Paste"
+      message={`You are about to paste ${charCount.toLocaleString(
+        resolveUiLocale()
+      )} characters into the terminal. Are you sure?`}
+      confirmLabel="Paste"
+      confirmVariant="primary"
+      testIdBase="large-paste"
       data-testid="large-paste-dialog"
-      footer={
-        <>
-          <Button variant="secondary" onClick={onCancel} data-testid="large-paste-cancel">
-            Cancel
-          </Button>
-          <Button variant="primary" onClick={onConfirm} data-testid="large-paste-confirm">
-            Paste
-          </Button>
-        </>
-      }
-    >
-      You are about to paste {charCount.toLocaleString(resolveUiLocale())} characters into the
-      terminal. Are you sure?
-    </Modal>
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }
