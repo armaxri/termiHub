@@ -4,10 +4,13 @@
 //! follow-up to the file-ops seam #2076) to keep the manager focused on session
 //! lifecycle. Every method here is the exact logic that lived inline on the
 //! manager: resolve the session's monitoring provider, forward the call, and map
-//! errors to [`TerminalError`]. The behavior, error messages, event names
-//! (`session-monitoring-stats` / `session-monitoring-status`), lock discipline,
+//! errors to [`TerminalError`]. The behavior, error messages, lock discipline,
 //! and — crucially — the background push-task lifecycle (spawn / abort /
-//! cancellation) are exactly what lived on the manager.
+//! cancellation) are exactly what lived on the manager. The push task folds
+//! every stats/status sample into the shared `SystemMonitorStore` at the source;
+//! the system-monitor projection region is the sole consumer (the legacy
+//! `session-monitoring-stats` / `session-monitoring-status` Tauri events had no
+//! frontend listener and were removed, PERF-007).
 //!
 //! Unlike [`FileOps`](super::file_ops::FileOps), which borrows only the
 //! `sessions` map, this facade borrows a *second* map — the manager's
@@ -22,7 +25,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::Emitter;
 use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 use tracing::{info, warn};
@@ -35,7 +37,7 @@ use crate::system_monitor_projection::projection::fold_monitor_transition;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
-use super::manager::{SessionEntry, SessionMonitoringStatusEvent};
+use super::manager::SessionEntry;
 
 /// Receive from an optional status receiver for use inside `tokio::select!`.
 ///
@@ -96,14 +98,14 @@ impl<'a> MonitoringController<'a> {
             .cloned()
     }
 
-    /// Subscribe to a session's monitoring provider and forward stats and
-    /// status as Tauri events.
+    /// Subscribe to a session's monitoring provider and fold stats and status
+    /// into the shared `SystemMonitorStore` at the source.
     ///
     /// Spawns a background task that reads the subscription's stats and status
-    /// channels and emits `session-monitoring-stats` and
-    /// `session-monitoring-status` events to the frontend. The status stream
-    /// lets the UI surface an explicit `Stale` arm on a mid-stream drop instead
-    /// of rendering frozen stats as live (#1229, audit gap G1). Call
+    /// channels and folds each sample into the store, fanning the
+    /// system-monitor region diff out to subscribers. The status stream lets the
+    /// UI surface an explicit `Stale` arm on a mid-stream drop instead of
+    /// rendering frozen stats as live (#1229, audit gap G1). Call
     /// [`stop_session_monitoring`](Self::stop_session_monitoring) to cancel the
     /// task and unsubscribe.
     pub(super) async fn start_session_monitoring<R: tauri::Runtime>(
@@ -206,18 +208,12 @@ impl<'a> MonitoringController<'a> {
                             Some(status) => {
                                 // Server-authority fold (#2376): mirror the
                                 // collector-produced status transition into the
-                                // shared store at the source (additive; see the
-                                // stats arm above).
+                                // shared store at the source (the region diff is
+                                // the sole consumer; see the stats arm above and
+                                // PERF-007).
                                 fold_monitor_transition(&app_handle, |store| {
                                     store.set_status(&sid, status);
                                 });
-                                let event = SessionMonitoringStatusEvent {
-                                    session_id: sid.clone(),
-                                    status,
-                                };
-                                if app_handle.emit("session-monitoring-status", &event).is_err() {
-                                    break;
-                                }
                             }
                             // Status channel closed: stop polling it, keep
                             // forwarding stats. Only a closed stats channel ends
