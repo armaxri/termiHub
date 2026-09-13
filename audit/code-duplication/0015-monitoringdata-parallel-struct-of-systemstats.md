@@ -10,7 +10,8 @@ evidence:
   - agent/src/protocol/methods.rs:648
   - core/src/monitoring/types.rs:11
   - agent/src/monitoring/mod.rs:351
-status: open
+status: fixed
+resolution: "#2936 — MonitoringData embeds core SystemStats via serde(flatten)+MonitoringData::new; wire shape identical (flat camelCase). No hand-copied field set"
 ---
 
 ## What

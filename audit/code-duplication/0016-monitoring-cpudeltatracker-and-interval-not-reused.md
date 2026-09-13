@@ -11,7 +11,8 @@ evidence:
   - core/src/monitoring/mod.rs:44
   - agent/src/monitoring/mod.rs:40
   - src-tauri/src/system_monitor_projection/store.rs:41
-status: open
+status: fixed
+resolution: "#2936 — agent SshCollector uses core CpuDeltaTracker; single core::monitoring::DEFAULT_MONITORING_INTERVAL_MS shared by agent+desktop"
 ---
 
 ## What

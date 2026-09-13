@@ -10,7 +10,8 @@ evidence:
   - src/utils/monacoCustomLanguages.ts:205
   - src/utils/monacoCustomLanguages.ts:208
   - src/utils/monacoCustomLanguages.ts:209
-status: open
+status: fixed
+resolution: "#2931 — removed production shiki-tokenization diagnostic block (only as-any in file, fed only a frontendLog). WA-FE-006 already clean on develop (0 console.* in prod)"
 ---
 
 ## What

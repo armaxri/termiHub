@@ -11,7 +11,8 @@ evidence:
   - agent/src/handler/dispatch.rs:874
   - agent/src/handler/dispatch.rs:936
   - agent/src/handler/dispatch.rs:2003
-status: open
+status: fixed
+resolution: "#2933 — 20 production agent dispatch to_value().unwrap() sites -> shared to_result_value() returning JSON-RPC INTERNAL_ERROR; test-only sites left"
 ---
 
 ## What

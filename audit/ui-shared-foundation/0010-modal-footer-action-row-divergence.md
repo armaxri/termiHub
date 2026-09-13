@@ -12,7 +12,8 @@ evidence:
   - src/components/SshHostKeyPrompt/SshHostKeyPrompt.tsx:77
   - src/components/Sidebar/ConnectionErrorDialog.tsx:47
   - src/components/ConnectionEditor/UnsavedChangesDialog.tsx:24
-status: open
+status: fixed
+resolution: "#2925 — modal footers already on shared Modal footer slot; remaining bespoke __actions markup is non-modal (sidebars/settings) - out of scope"
 ---
 
 ## What

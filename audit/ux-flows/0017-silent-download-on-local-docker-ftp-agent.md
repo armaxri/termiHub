@@ -10,7 +10,8 @@ evidence:
   - src/components/Sidebar/FileBrowser.tsx:1027
   - src/hooks/useLocalFileSystem.ts:116
   - src/hooks/useSessionFileSystem.ts:150
-status: open
+status: fixed
+resolution: "develop — already fixed on develop (6a370eec): shared runBlockingTransfer loading->success/error toast across local/Docker/FTP/agent downloads; SFTP via transfer channel; FileBrowser.actionfeedback.test covers all four"
 ---
 
 ## What

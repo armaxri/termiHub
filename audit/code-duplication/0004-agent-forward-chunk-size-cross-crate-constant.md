@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/terminal/agent_forward.rs:38
   - agent/src/session/agent_forward.rs:69
   - agent/src/io/transport.rs:11
-status: open
+status: fixed
+resolution: "#2922 — centralized agent-forward 64KiB CHUNK_SIZE in core::backends::ssh::agent_forward::AGENT_FORWARD_CHUNK_SIZE; both sides reference it"
 ---
 
 ## What

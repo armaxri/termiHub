@@ -11,7 +11,8 @@ evidence:
   - agent/src/daemon/process.rs:22
   - agent/src/session/manager.rs:338
   - agent/src/io/transport.rs:11
-status: open
+status: fixed
+resolution: "#2922 — agent ring-buf defaults derive from core::buffer::DEFAULT_BUFFER_CAPACITY; NDJSON MAX_LINE_SIZE left (distinct protocol limit)"
 ---
 
 ## What

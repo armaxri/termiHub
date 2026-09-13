@@ -10,7 +10,8 @@ evidence:
   - src/components/PasswordPrompt/PasswordPrompt.tsx:52
   - src/components/PasswordPrompt/PasswordPrompt.tsx:68
   - src/components/ConnectionEditor/ConnectionEditor.tsx:961
-status: open
+status: fixed
+resolution: "#2930 — threaded prompt kind (password|key_passphrase) through PasswordPrompt+slice; key-passphrase callers relabel title/desc/placeholder/aria; genuine password prompts unchanged"
 ---
 
 ## What

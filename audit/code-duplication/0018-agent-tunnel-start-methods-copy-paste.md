@@ -10,7 +10,8 @@ evidence:
   - agent/src/tunnel/mod.rs:126
   - agent/src/tunnel/mod.rs:149
   - src-tauri/src/tunnel/tunnel_manager.rs:1097
-status: open
+status: fixed
+resolution: "#2926 — extracted shared AgentTunnelRegistry::start scaffold; start_local/remote/dynamic differ only in a prepare closure. DUP-019 deferred (distinct wire contracts + dev-dep boundary)"
 ---
 
 ## What

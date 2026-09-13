@@ -10,7 +10,8 @@ evidence:
   - core/src/backends/local_shell.rs:29
   - core/src/backends/ssh/mod.rs:51
   - src-tauri/src/terminal/backend.rs:281
-status: open
+status: fixed
+resolution: "#2922 — OUTPUT_CHANNEL_CAPACITY defined once in core::output; 7 core modules import it, desktop backend.rs re-exports"
 ---
 
 ## What

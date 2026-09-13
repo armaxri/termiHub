@@ -11,7 +11,8 @@ evidence:
   - agent/src/io/transport.rs:150
   - src-tauri/src/terminal/agent_manager.rs:1788
   - src-tauri/src/terminal/agent_manager.rs:2146
-status: open
+status: fixed
+resolution: "#2929 — agent read path on core::ipc::ndjson::read_line_resumable (cap-param, cancel-safe). Daemon binary frames + sync jsonrpc handshake reader deferred (different framing)"
 ---
 
 ## What
