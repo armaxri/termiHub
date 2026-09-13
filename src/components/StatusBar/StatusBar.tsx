@@ -41,7 +41,7 @@ import {
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
 import { TransferQueueIndicator } from "@/components/TransferQueue";
-import { Tooltip, Spinner, EmptyState, toast } from "@/components/ui";
+import { Tooltip, Spinner, EmptyState, SearchInput, toast } from "@/components/ui";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
@@ -1104,14 +1104,16 @@ function LanguageSelector({
           onCloseAutoFocus={(e) => e.preventDefault()}
         >
           <div className="lang-menu__search-wrapper">
-            <input
-              className="lang-menu__search"
+            <SearchInput
+              size="sm"
               placeholder="Search languages..."
+              aria-label="Search languages"
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onValueChange={setSearch}
               onKeyDown={(e) => e.stopPropagation()}
               autoFocus
               data-testid="lang-menu-search"
+              clearLabel="Clear language search"
             />
           </div>
           <div className="lang-menu__list">
