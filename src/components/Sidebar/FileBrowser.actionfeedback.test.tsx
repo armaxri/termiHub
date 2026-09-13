@@ -48,6 +48,13 @@ vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({
   writeText: (text: string) => writeClipboardMock(text),
 }));
 
+// The local download Save-as dialog; defaults to a chosen path so the copy runs.
+const saveMock = vi.fn((): Promise<string | null> => Promise.resolve("/downloads/report.pdf"));
+vi.mock("@tauri-apps/plugin-dialog", () => ({
+  save: () => saveMock(),
+  open: vi.fn(() => Promise.resolve(null)),
+}));
+
 vi.mock("@tauri-apps/api/window", () => ({
   getCurrentWindow: () => ({
     onDragDropEvent: vi.fn(() => Promise.resolve(vi.fn())),
@@ -167,6 +174,8 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     toastError.mockClear();
     writeClipboardMock.mockClear();
     writeClipboardMock.mockImplementation(() => Promise.resolve());
+    saveMock.mockClear();
+    saveMock.mockImplementation(() => Promise.resolve("/downloads/report.pdf"));
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === "local_list_dir") return Promise.resolve(entries);
       return Promise.resolve(undefined);
@@ -337,5 +346,49 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
 
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).toHaveBeenCalledTimes(1);
+  });
+
+  // --- Local download (Save-as copy) feedback (UX-017) ---
+  //
+  // The local Save-as copy is a blocking round-trip with no transfer-progress
+  // event, so it must surface its own success/error toast — previously it
+  // resolved silently.
+
+  it("shows a success toast when a local download (Save-as) succeeds", async () => {
+    await renderLocal();
+    await invokeContextAction("report.pdf", "context-file-download");
+
+    expect(mockedInvoke).toHaveBeenCalledWith("local_copy", {
+      srcPath: "/home/report.pdf",
+      destPath: "/downloads/report.pdf",
+      isDirectory: false,
+    });
+    expect(toastSuccess).toHaveBeenCalledTimes(1);
+    expect(String(toastSuccess.mock.calls[0][0])).toContain("report.pdf");
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("shows an error toast when a local download (Save-as) fails", async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "local_list_dir") return Promise.resolve(entries);
+      if (cmd === "local_copy") return Promise.reject(new Error("permission denied"));
+      return Promise.resolve(undefined);
+    });
+    await renderLocal();
+    await invokeContextAction("report.pdf", "context-file-download");
+
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).toHaveBeenCalledTimes(1);
+    expect(String(toastError.mock.calls[0][0])).toContain("permission denied");
+  });
+
+  it("does not copy or toast when the Save-as dialog is cancelled", async () => {
+    saveMock.mockImplementation(() => Promise.resolve(null));
+    await renderLocal();
+    await invokeContextAction("report.pdf", "context-file-download");
+
+    expect(mockedInvoke).not.toHaveBeenCalledWith("local_copy", expect.anything());
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
   });
 });

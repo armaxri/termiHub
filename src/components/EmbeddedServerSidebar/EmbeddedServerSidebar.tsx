@@ -6,6 +6,7 @@ import { useRunLocationStore } from "@/store/runLocationStore";
 import { Button, ConfirmDialog, toast } from "@/components/ui";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { EmbeddedServerConfig } from "@/types/embeddedServer";
 import { setEmbeddedServerRunLocation } from "@/services/embeddedServerApi";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
@@ -47,8 +48,21 @@ export function EmbeddedServerSidebar() {
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingConfig, setEditingConfig] = useState<EmbeddedServerConfig | null>(null);
-  // Id of the server pending delete confirmation (null when no confirm is open).
-  const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+
+  // Delete confirmation for a server (running servers are stopped first). The
+  // target is the server id; the dialog message depends on the live running
+  // state, so that derivation stays caller-side (see `pendingIsRunning`).
+  const serverDelete = useDeleteConfirm<string>(async (id) => {
+    const name = servers.find((s) => s.id === id)?.name ?? "";
+    try {
+      await deleteEmbeddedServer(id);
+      toast.success(`Deleted "${name}"`);
+    } catch (err) {
+      toast.error(`Failed to delete "${name}"`, {
+        description: err instanceof Error ? err.message : String(err),
+      });
+    }
+  });
 
   const handleNew = useCallback(() => {
     setEditingConfig(null);
@@ -117,31 +131,16 @@ export function EmbeddedServerSidebar() {
 
   // Delete is destructive (and stops a running server), so gate it behind an
   // explicit confirmation — consistent with tunnels and workspaces (#1393).
-  const handleDelete = useCallback((id: string) => {
-    setPendingDeleteId(id);
-  }, []);
+  const requestDelete = serverDelete.request;
+  const handleDelete = useCallback((id: string) => requestDelete(id), [requestDelete]);
 
   const pendingServer = useMemo(
-    () => servers.find((s) => s.id === pendingDeleteId) ?? null,
-    [servers, pendingDeleteId]
+    () => servers.find((s) => s.id === serverDelete.pending) ?? null,
+    [servers, serverDelete.pending]
   );
-  const pendingIsRunning = pendingDeleteId
-    ? serverStates[pendingDeleteId]?.status === "running"
+  const pendingIsRunning = serverDelete.pending
+    ? serverStates[serverDelete.pending]?.status === "running"
     : false;
-
-  const handleConfirmDelete = useCallback(async () => {
-    if (!pendingServer) return;
-    const { id, name } = pendingServer;
-    setPendingDeleteId(null);
-    try {
-      await deleteEmbeddedServer(id);
-      toast.success(`Deleted "${name}"`);
-    } catch (err) {
-      toast.error(`Failed to delete "${name}"`, {
-        description: err instanceof Error ? err.message : String(err),
-      });
-    }
-  }, [pendingServer, deleteEmbeddedServer]);
 
   // Activating a row (Enter / double-click) opens the server for editing,
   // matching the sibling management sidebars (workspaces, tunnels).
@@ -217,7 +216,7 @@ export function EmbeddedServerSidebar() {
       />
 
       <ConfirmDialog
-        open={pendingServer !== null}
+        {...serverDelete.dialogProps}
         title="Delete service"
         message={
           pendingIsRunning
@@ -225,8 +224,6 @@ export function EmbeddedServerSidebar() {
             : `Delete "${pendingServer?.name}"? This cannot be undone.`
         }
         confirmLabel="Delete"
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setPendingDeleteId(null)}
         data-testid="server-delete-confirm"
       />
     </div>

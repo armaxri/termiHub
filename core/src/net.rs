@@ -7,6 +7,22 @@
 //! indefinitely. Enabling TCP keepalive lets the OS probe the dead peer and
 //! eventually fail the socket, which surfaces to the reader as an error and
 //! drives the normal disconnect path (`terminal-exit` -> disconnect overlay).
+//!
+//! # Per-backend liveness/keepalive policy (PARITY-012)
+//!
+//! Liveness detection is deliberately **not** identical across every backend —
+//! different transports need different mechanisms — but the shared surface and
+//! defaults live here so the policy is consistent and discoverable:
+//!
+//! - **Telnet** and **SSH** (raw TCP stream transports): OS-level TCP keepalive
+//!   via [`TcpKeepalivePolicy`] / [`enable_tcp_keepalive`]. A dead peer is torn
+//!   down by the kernel and surfaces as a read error.
+//! - **FTP**: an application-level periodic `NOOP` on the control connection
+//!   (`FtpConfig::keep_alive_secs`, default 60 s) rather than TCP keepalive —
+//!   idle FTP control connections are commonly dropped by servers, so a
+//!   protocol-level probe is required.
+//! - **Serial / local shell / Docker / WSL**: no network liveness probe applies
+//!   (no remote TCP peer to detect).
 
 use std::io;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -14,45 +30,54 @@ use std::time::Duration;
 
 use socket2::TcpKeepalive;
 
-/// Idle time before the first keepalive probe is sent.
-const KEEPALIVE_IDLE: Duration = Duration::from_secs(2);
-
-/// Interval between keepalive probes once probing has started.
-const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
-
-/// Number of unanswered probes before the connection is considered dead.
+/// Shared TCP keepalive/liveness policy for raw-TCP stream backends.
 ///
-/// Not configurable on Windows (the platform derives the retry count from the
-/// registry), so the `.with_retries` call is gated below.
-#[cfg(not(target_os = "windows"))]
-const KEEPALIVE_RETRIES: u32 = 1;
+/// The single source of truth for the socket-level keepalive tuning applied by
+/// every backend that owns a raw TCP stream — currently the **telnet** and
+/// **SSH** transports, which both call [`enable_tcp_keepalive`] on their
+/// connected socket. Probe after a short idle period, retry a couple of times,
+/// then give up so a half-open connection is torn down promptly rather than
+/// hanging. See the module docs for the per-backend mechanism map.
+pub struct TcpKeepalivePolicy;
 
-/// Build the shared [`TcpKeepalive`] configuration used by all TCP backends.
-///
-/// Mirrors the SSH transport tuning: probe after a short idle period, retry a
-/// couple of times, then give up so a half-open connection is torn down
-/// promptly rather than hanging.
-fn keepalive_config() -> TcpKeepalive {
-    let base = TcpKeepalive::new()
-        .with_time(KEEPALIVE_IDLE)
-        .with_interval(KEEPALIVE_INTERVAL);
+impl TcpKeepalivePolicy {
+    /// Idle time before the first keepalive probe is sent.
+    pub const IDLE: Duration = Duration::from_secs(2);
+
+    /// Interval between keepalive probes once probing has started.
+    pub const INTERVAL: Duration = Duration::from_secs(2);
+
+    /// Number of unanswered probes before the connection is considered dead.
+    ///
+    /// Not configurable on Windows (the platform derives the retry count from
+    /// the registry), so the `.with_retries` call is gated accordingly.
     #[cfg(not(target_os = "windows"))]
-    let base = base.with_retries(KEEPALIVE_RETRIES);
-    base
+    pub const RETRIES: u32 = 1;
+
+    /// Build the [`socket2::TcpKeepalive`] configuration for this policy.
+    fn to_socket2() -> TcpKeepalive {
+        let base = TcpKeepalive::new()
+            .with_time(Self::IDLE)
+            .with_interval(Self::INTERVAL);
+        #[cfg(not(target_os = "windows"))]
+        let base = base.with_retries(Self::RETRIES);
+        base
+    }
 }
 
 /// Enable TCP keepalive on a connected socket so half-open connections are
 /// detected and torn down instead of hanging forever.
 ///
-/// Accepts anything convertible to a [`socket2::SockRef`] (e.g. a
-/// [`std::net::TcpStream`] or [`tokio::net::TcpStream`]). Failure is logged and
-/// swallowed: keepalive is a robustness improvement, not a hard requirement for
-/// the connection to function.
+/// Applies the shared [`TcpKeepalivePolicy`]. Accepts anything convertible to a
+/// [`socket2::SockRef`] (e.g. a [`std::net::TcpStream`] or
+/// [`tokio::net::TcpStream`]). Failure is logged and swallowed: keepalive is a
+/// robustness improvement, not a hard requirement for the connection to
+/// function.
 pub fn enable_tcp_keepalive<'s, S>(stream: &'s S)
 where
     socket2::SockRef<'s>: From<&'s S>,
 {
-    let ka = keepalive_config();
+    let ka = TcpKeepalivePolicy::to_socket2();
     if let Err(e) = socket2::SockRef::from(stream).set_tcp_keepalive(&ka) {
         tracing::warn!("TCP keepalive setup failed: {e}");
     }
@@ -107,6 +132,15 @@ pub fn connect_timeout_resolved(host: &str, port: u16, timeout: Duration) -> io:
 mod tests {
     use super::*;
     use std::net::TcpListener;
+
+    /// The shared policy exposes the documented liveness defaults (PARITY-012).
+    #[test]
+    fn tcp_keepalive_policy_has_expected_defaults() {
+        assert_eq!(TcpKeepalivePolicy::IDLE, Duration::from_secs(2));
+        assert_eq!(TcpKeepalivePolicy::INTERVAL, Duration::from_secs(2));
+        #[cfg(not(target_os = "windows"))]
+        assert_eq!(TcpKeepalivePolicy::RETRIES, 1);
+    }
 
     /// A connected socket has keepalive enabled after calling the helper.
     #[test]

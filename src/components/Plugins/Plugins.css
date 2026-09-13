@@ -17,7 +17,7 @@
 }
 
 .plugin-manager__search {
-  padding: 8px;
+  padding: var(--spacing-sm);
   border-bottom: 1px solid var(--border-secondary);
 }
 
@@ -25,14 +25,14 @@
   flex: 1 1 auto;
   overflow-y: auto;
   min-height: 0;
-  padding: 4px 0;
+  padding: var(--spacing-xs) 0;
 }
 
 .plugin-manager__sep {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px 4px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-xs);
   font-size: var(--font-size-xs);
   font-weight: 600;
   text-transform: uppercase;
@@ -48,7 +48,7 @@
 }
 
 .plugin-manager__empty {
-  padding: 12px;
+  padding: var(--spacing-md);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   text-align: center;
@@ -57,9 +57,9 @@
 .plugin-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   width: 100%;
-  padding: 6px 12px;
+  padding: 6px var(--spacing-md);
   border: none;
   background: none;
   color: var(--text-primary);
@@ -109,7 +109,7 @@
 }
 
 .plugin-manager__footer {
-  padding: 8px;
+  padding: var(--spacing-sm);
   border-top: 1px solid var(--border-secondary);
 }
 
@@ -143,7 +143,7 @@
 .plugin-detail__head {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--spacing-md);
   padding-bottom: 14px;
   border-bottom: 1px solid var(--border-secondary);
 }
@@ -168,14 +168,14 @@
   font-weight: 600;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   flex-wrap: wrap;
 }
 
 .plugin-detail__meta {
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
-  margin-top: 2px;
+  margin-top: var(--spacing-xxs);
 }
 
 .plugin-detail__meta code {
@@ -195,7 +195,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-secondary);
-  margin: 0 0 8px;
+  margin: 0 0 var(--spacing-sm);
 }
 
 .plugin-detail__block {
@@ -214,7 +214,7 @@
 .plugin-detail__item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   padding: 7px 10px;
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius-md);
@@ -251,7 +251,7 @@
   gap: 6px;
   font-size: var(--font-size-xs);
   font-weight: 600;
-  padding: 2px 8px;
+  padding: var(--spacing-xxs) var(--spacing-sm);
   border-radius: var(--radius-full);
 }
 
@@ -273,8 +273,8 @@
 .plugin-detail__error {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--spacing-sm);
+  padding: 10px var(--spacing-md);
   margin: 14px 0 18px;
   border: 1px solid color-mix(in srgb, var(--color-error) 40%, var(--border-secondary));
   border-radius: var(--radius-md);
@@ -294,7 +294,7 @@
 
 .plugin-detail__actions {
   display: flex;
-  gap: 8px;
+  gap: var(--spacing-sm);
   margin-top: 6px;
   flex-wrap: wrap;
 }
@@ -303,7 +303,7 @@
   display: grid;
   place-items: center;
   height: 100%;
-  padding: 24px;
+  padding: var(--spacing-xl);
   color: var(--text-secondary);
   font-size: var(--font-size-md);
   text-align: center;
@@ -313,9 +313,9 @@
 .plugin-install__banner {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
+  gap: var(--spacing-sm);
+  padding: 10px var(--spacing-md);
+  margin-bottom: var(--spacing-md);
   border: 1px solid var(--banner-tone);
   border-left-width: 3px;
   border-radius: var(--radius-md);
@@ -357,7 +357,7 @@
 .plugin-install__trust-check {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--spacing-sm);
   margin-top: 10px;
   cursor: pointer;
 }
@@ -370,15 +370,15 @@
   display: flex;
   flex-direction: column;
   gap: 3px;
-  padding-bottom: 12px;
-  margin-bottom: 12px;
+  padding-bottom: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
   border-bottom: 1px solid var(--border-secondary);
   font-size: var(--font-size-sm);
 }
 
 .plugin-install__row {
   display: flex;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 .plugin-install__label {
@@ -409,7 +409,7 @@
   text-transform: uppercase;
   letter-spacing: 0.05em;
   color: var(--text-secondary);
-  margin: 0 0 8px;
+  margin: 0 0 var(--spacing-sm);
 }
 
 .plugin-install__perm-empty {
@@ -420,7 +420,7 @@
 .plugin-install__perm {
   display: flex;
   align-items: flex-start;
-  gap: 8px;
+  gap: var(--spacing-sm);
   padding: 6px 0;
   font-size: var(--font-size-sm);
 }

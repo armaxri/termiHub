@@ -5,7 +5,7 @@
 .sidebar-list-item {
   display: flex;
   flex-direction: column;
-  padding: 6px 12px;
+  padding: 6px var(--spacing-md);
   cursor: pointer;
   user-select: none;
 }
@@ -51,7 +51,7 @@
 
 .sidebar-list-item__badge {
   font-size: var(--font-size-xs);
-  padding: 1px 4px;
+  padding: 1px var(--spacing-xs);
   border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-secondary);
@@ -71,7 +71,7 @@
 
 .sidebar-list-item__actions {
   display: flex;
-  gap: 2px;
+  gap: var(--spacing-xxs);
   opacity: 0;
 }
 
@@ -83,8 +83,8 @@
 .sidebar-list-item__details {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  padding: 2px 0 0 14px;
+  gap: var(--spacing-xxs);
+  padding: var(--spacing-xxs) 0 0 14px;
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
