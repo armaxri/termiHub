@@ -147,11 +147,37 @@ The `scripts/` directory has cross-platform helpers (`.sh` + `.cmd`) for all com
 ./scripts/build.sh     # Build for production
 ./scripts/test.sh      # Run all unit tests (frontend + backend + agent)
 ./scripts/check.sh     # Pre-push quality checks (mirrors CI)
+./scripts/ci-local.sh  # Reproduce the WHOLE per-PR CI gate in one command
 ./scripts/format.sh    # Auto-fix formatting (Prettier + cargo fmt)
 ./scripts/clean.sh     # Remove all build artifacts
 ```
 
 See [scripts/README.md](../scripts/README.md) for the full list. On Windows, use the `.cmd` variants (e.g., `scripts\dev.cmd`).
+
+### Reproducing CI locally
+
+`./scripts/ci-local.sh` runs the same checks as the per-PR **Code Quality** workflow
+([`.github/workflows/code-quality.yml`](../.github/workflows/code-quality.yml)) in one
+command — formatting, ESLint, `tsc`, markdownlint, `cargo fmt`, Clippy (incl. the isolated
+`ftp` feature build), `cargo test`, the frontend coverage floors, `cargo audit`/`cargo deny`,
+the production `pnpm audit` gate, the Python machinery suite, plugin packaging, and commitlint.
+A clean run means a green PR gate. Use `./scripts/ci-local.sh --quick` for the quality-only
+subset (skips the slow test/audit/build gates); this is what the pre-push hook runs. Missing
+optional tools (`cargo-audit`, `cargo-deny`, `uv`) are skipped with a warning, not a failure.
+
+### Git hooks
+
+Committed git hooks (in [`scripts/hooks/`](../scripts/hooks/)) are enabled by `./scripts/setup.sh`
+via git's native `core.hooksPath` — no extra dependency, and opt-in per clone. To enable them in
+an existing clone, run `git config core.hooksPath scripts/hooks`.
+
+- **pre-commit** — Prettier + ESLint on staged `src/`/`docs/` files (fast).
+- **commit-msg** — commitlint on your message, so a bad type/case or an over-long header fails
+  locally instead of in the Lint Commit Messages CI job.
+- **pre-push** — `./scripts/ci-local.sh --quick`.
+
+Bypass one action with `--no-verify` (e.g. `git commit --no-verify`), or disable all hooks for a
+shell with `export TERMIHUB_SKIP_HOOKS=1`.
 
 ### Dev Server with Hot Reload
 
