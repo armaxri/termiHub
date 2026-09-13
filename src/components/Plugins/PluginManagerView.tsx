@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import { FileUp } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import { assessPluginTrust, validatePlugin } from "@/services/api";
-import type { PluginManifest, PluginTrustInfo } from "@/types/plugin";
-import { Button, Input, toast } from "@/components/ui";
+import type { InstalledPlugin, PluginManifest, PluginTrustInfo } from "@/types/plugin";
+import { Button, SearchInput, toast } from "@/components/ui";
+import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
 import { frontendLog } from "@/utils/frontendLog";
 import { pluginDotState, pluginTypeIcon } from "./pluginPresentation";
 import { PluginInstallDialog } from "./PluginInstallDialog";
@@ -16,6 +17,15 @@ interface PendingInstall {
   manifest: PluginManifest;
   trust: PluginTrustInfo;
 }
+
+/**
+ * Case-insensitive match of a plugin against the (already normalized) query on
+ * its manifest name. Module-level so the {@link useListFilter} memo stays stable.
+ */
+const pluginNameMatches: ListFilterMatcher<InstalledPlugin> = (plugin, query) => {
+  if (!query) return true;
+  return plugin.manifest.name.toLowerCase().includes(query);
+};
 
 /**
  * The Plugins sidebar view (#1997): a search box, the installed-plugin list, and
@@ -32,14 +42,9 @@ export function PluginManagerView() {
   const selectedPluginId = useAppStore((s) => s.selectedPluginId);
   const selectPlugin = useAppStore((s) => s.selectPlugin);
 
-  const [query, setQuery] = useState("");
   const [pending, setPending] = useState<PendingInstall | null>(null);
 
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return plugins;
-    return plugins.filter((p) => p.manifest.name.toLowerCase().includes(q));
-  }, [plugins, query]);
+  const { query, setQuery, filtered } = useListFilter(plugins, pluginNameMatches);
 
   const handlePickFile = useCallback(async () => {
     let filePath: string | null;
@@ -76,13 +81,13 @@ export function PluginManagerView() {
   return (
     <div className="plugin-manager" data-testid="plugin-manager">
       <div className="plugin-manager__search">
-        <Input
+        <SearchInput
           size="sm"
-          type="search"
           placeholder="Search plugins…"
           aria-label="Search plugins"
           value={query}
-          onChange={(e) => setQuery(e.target.value)}
+          onValueChange={setQuery}
+          clearLabel="Clear plugin search"
           data-testid="plugin-search"
         />
       </div>

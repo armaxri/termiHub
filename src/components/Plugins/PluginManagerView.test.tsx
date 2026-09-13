@@ -145,6 +145,37 @@ describe("PluginManagerView (#1997)", () => {
     expect(container.querySelector(".plugin-manager__sep")?.textContent).toBe("Installed (2)");
   });
 
+  it("clears the query and restores the full list via the SearchInput clear button", () => {
+    useAppStore.setState({
+      plugins: [
+        plugin("k8s", "Kubernetes Exec", "1.2.0", "active"),
+        plugin("logcol", "Log Colorizer", "0.3.0", "disabled"),
+      ],
+    });
+    render();
+
+    const search = container.querySelector<HTMLInputElement>('[data-testid="plugin-search"]')!;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    act(() => {
+      setter.call(search, "color");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // Only the matching row is shown, and the clear button is now present.
+    expect(container.querySelector('[data-testid="plugin-row-k8s"]')).toBeNull();
+    const clear = container.querySelector<HTMLButtonElement>(".ui-search-input__clear")!;
+    expect(clear).not.toBeNull();
+
+    act(() => clear.click());
+
+    // Clearing restores the full list.
+    expect(container.querySelector('[data-testid="plugin-row-k8s"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="plugin-row-logcol"]')).not.toBeNull();
+    expect(container.querySelector(".ui-search-input__clear")).toBeNull();
+  });
+
   it("dispatches selectPlugin when a row is clicked", () => {
     const selectPlugin = vi.fn();
     useAppStore.setState({

@@ -1,8 +1,8 @@
-import { useState, useMemo } from "react";
 import { Pencil } from "lucide-react";
-import { Modal, Input, Button } from "@/components/ui";
+import { Modal, Button, SearchInput } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
-import { ShortcutCategory, ShortcutScope } from "@/types/keybindings";
+import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
+import { ShortcutCategory, ShortcutScope, KeyBinding } from "@/types/keybindings";
 import {
   getDefaultBindings,
   getEffectiveCombo,
@@ -11,6 +11,20 @@ import {
 } from "@/services/keybindings";
 import { isMac } from "@/utils/platform";
 import "./ShortcutsOverlay.css";
+
+/**
+ * Case-insensitive match of a keybinding against the (already normalized) query
+ * on its label, action id, or category. Module-level so the {@link useListFilter}
+ * memo stays stable across renders.
+ */
+const shortcutMatches: ListFilterMatcher<KeyBinding> = (binding, query) => {
+  if (!query) return true;
+  return (
+    binding.label.toLowerCase().includes(query) ||
+    binding.action.toLowerCase().includes(query) ||
+    binding.category.toLowerCase().includes(query)
+  );
+};
 
 /** Human-readable "Active in" hint derived from an action's scope. */
 const SCOPE_HINTS: Record<ShortcutScope, string> = {
@@ -41,11 +55,11 @@ interface ShortcutsOverlayProps {
 }
 
 export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) {
-  const [searchQuery, setSearchQuery] = useState("");
   const currentPlatformIsMac = isMac();
   const openSettingsTab = useAppStore((s) => s.openSettingsTab);
 
   const bindings = getDefaultBindings();
+  const { query, setQuery, filtered: filteredBindings } = useListFilter(bindings, shortcutMatches);
 
   /**
    * Close the read-only overlay and deep-link to Settings → Keyboard, where the
@@ -56,17 +70,6 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
     onOpenChange(false);
     openSettingsTab({ category: "keyboard" });
   };
-
-  const filteredBindings = useMemo(() => {
-    if (!searchQuery.trim()) return bindings;
-    const q = searchQuery.toLowerCase();
-    return bindings.filter(
-      (b) =>
-        b.label.toLowerCase().includes(q) ||
-        b.action.toLowerCase().includes(q) ||
-        b.category.toLowerCase().includes(q)
-    );
-  }, [bindings, searchQuery]);
 
   const groupedBindings = CATEGORY_ORDER.map((cat) => ({
     category: cat,
@@ -94,11 +97,12 @@ export function ShortcutsOverlay({ open, onOpenChange }: ShortcutsOverlayProps) 
       }
     >
       <div className="shortcuts-overlay__search">
-        <Input
+        <SearchInput
           placeholder="Search shortcuts..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
+          value={query}
+          onValueChange={setQuery}
           data-testid="shortcuts-overlay-search"
+          clearLabel="Clear shortcut search"
           autoFocus
         />
       </div>
