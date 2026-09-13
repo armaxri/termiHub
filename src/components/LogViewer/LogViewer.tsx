@@ -4,7 +4,7 @@ import * as ContextMenu from "@radix-ui/react-context-menu";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { LogEntry } from "@/types/terminal";
-import { Button } from "@/components/ui";
+import { Button, SearchInput } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
 import { onFrontendLog } from "@/utils/frontendLog";
@@ -159,12 +159,14 @@ export function LogViewer({ isVisible }: LogViewerProps) {
             </button>
           ))}
         </div>
-        <input
+        <SearchInput
           className="log-viewer__search"
-          type="text"
+          size="sm"
           placeholder="Search logs..."
+          aria-label="Search logs"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onValueChange={setSearch}
+          clearLabel="Clear log search"
         />
         <Button
           variant="ghost"

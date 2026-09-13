@@ -3036,10 +3036,16 @@ async fn reconnect_agent(
     const MAX_BACKOFF_SECS: u64 = 30;
 
     for attempt in 0..MAX_RETRIES {
-        let backoff_secs = std::cmp::min(2u64.pow(attempt), MAX_BACKOFF_SECS);
+        // Capped exponential backoff (1s, 2s, 4s, …, capped at 30s) via the
+        // shared MATH (DUP-007). `attempt` is 0-based, matching the helper.
+        let backoff = termihub_core::util::backoff::capped_exponential_delay(
+            tokio::time::Duration::from_secs(1),
+            attempt,
+            tokio::time::Duration::from_secs(MAX_BACKOFF_SECS),
+        );
 
         // Sleep in small increments so we can respect the alive flag promptly
-        let deadline = tokio::time::Instant::now() + tokio::time::Duration::from_secs(backoff_secs);
+        let deadline = tokio::time::Instant::now() + backoff;
         loop {
             if !alive.load(Ordering::SeqCst) {
                 return Err("Reconnect stopped by user".to_string());

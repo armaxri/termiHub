@@ -430,31 +430,6 @@
   border-bottom: 1px solid var(--border-secondary);
 }
 
-.file-browser__filter {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: 0 var(--spacing-sm);
-  background: var(--bg-primary);
-  border: 1px solid var(--border-secondary);
-  border-radius: var(--radius-sm);
-}
-
-.file-browser__filter:focus-within {
-  border-color: var(--text-accent);
-}
-
-.file-browser__filter-icon {
-  flex-shrink: 0;
-  color: var(--text-secondary);
-}
-
-.file-browser__filter-input {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--font-size-xs);
-}
-
 /* Sortable column headers */
 .file-browser__columns {
   display: flex;
