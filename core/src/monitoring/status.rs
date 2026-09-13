@@ -108,11 +108,12 @@ impl BackoffSchedule {
         if self.attempt >= self.max_attempts {
             return None;
         }
-        // Double `base` `attempt` times, then clamp to `cap`. Saturating
-        // arithmetic keeps a large attempt count from overflowing; once the
-        // delay exceeds `cap` the exact pre-clamp value is irrelevant anyway.
-        let factor = 2u32.saturating_pow(self.attempt);
-        let delay = self.base.saturating_mul(factor).min(self.cap);
+        // Double `base` `attempt` times, then clamp to `cap` — the shared
+        // capped-exponential MATH (DUP-007). Saturating arithmetic keeps a large
+        // attempt count from overflowing; once the delay exceeds `cap` the exact
+        // pre-clamp value is irrelevant anyway.
+        let delay =
+            crate::util::backoff::capped_exponential_delay(self.base, self.attempt, self.cap);
         self.attempt = self.attempt.saturating_add(1);
         Some(delay)
     }
