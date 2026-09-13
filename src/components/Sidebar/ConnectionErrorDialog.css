@@ -21,7 +21,7 @@
 
 .connection-error-dialog__details {
   margin-top: var(--spacing-md);
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
 }
 
@@ -36,8 +36,8 @@
   padding: var(--spacing-xs) var(--spacing-sm);
   background: var(--bg-primary);
   border-radius: var(--radius-sm);
-  font-family: var(--font-mono, monospace);
-  font-size: var(--font-size-xs, 11px);
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
   word-break: break-all;
   white-space: pre-wrap;
 }

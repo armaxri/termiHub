@@ -49,13 +49,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::commands::projection::ProjectionState;
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{compute_ops, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector};
 use crate::transfers_projection::store::{
-    TransferEntry, TransferProgress, TransferSeed, TransferSnapshot, TransferStore,
+    RegionDelta, TransferEntry, TransferProgress, TransferSeed, TransferSnapshot, TransferStore,
 };
 
 /// The projection region id for the transfer-queue domain (shared, per Open
@@ -74,13 +74,149 @@ fn now_ms() -> u64 {
 /// Publish the `transfers` region from the store, fanning a diff out to every
 /// subscriber and returning the advanced region for the intent ack (empty when
 /// the view did not change).
+///
+/// # Incremental publish (PERF-006, rollout of #2878)
+///
+/// The region view is `{ "queue": { <id>: TransferEntry }, "minimized": bool }`.
+/// The naive path re-serialized **all** rows and diffed the whole tree on every
+/// fold — O(region) per fold, hence O(N²) over a per-row progress stream. Instead
+/// the store hands us only the rows it touched ([`TransferStore::drain_delta`]);
+/// we diff just those (plus the O(1) `minimized` scalar) against the held view
+/// and splice them in place, bounding the cost to O(size of the change).
+///
+/// The emitted diff is **byte-identical** to the whole-region diff — see
+/// [`apply_transfer_delta`] for why — so no subscriber can tell the two apart.
 pub fn publish_transfers(projector: &Projector, store: &TransferStore) -> Vec<ProducedRegion> {
-    match projector.publish(TRANSFERS_REGION, store.snapshot()) {
+    let delta = store.drain_delta();
+    let published = projector.publish_delta(TRANSFERS_REGION, |view| {
+        apply_transfer_delta(view, &delta, store)
+    });
+    match published {
         Some(version) => vec![ProducedRegion {
             region: TRANSFERS_REGION.to_string(),
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Compute the RFC-6902 ops for a drained [`RegionDelta`] and splice its new
+/// subtrees into the held region `view` in place — the incremental core of
+/// [`publish_transfers`] (PERF-006, rollout of #2878).
+///
+/// ## Why the reduced diff is byte-identical to the whole-region diff
+///
+/// `json_patch::diff` has two properties this relies on: (1) object keys are
+/// visited in **sorted** order (`serde_json` maps are `BTreeMap`s — no
+/// `preserve_order`), and (2) each key's sub-diff depends **only** on that key's
+/// old/new subtrees. So restricting the `queue` map's diff to just the touched
+/// keys yields exactly the same ops — same paths, same values, same order — the
+/// whole-region diff would: the untouched keys produce no ops and, visited in the
+/// same sorted positions, never reorder the touched ones. The scalar `minimized`
+/// is always carried on both reduced sides at its true old/new value, so its own
+/// op (a `replace /minimized`, if it changed) matches the whole-region diff both
+/// in presence and in sorted position (`"minimized"` sorts before `"queue"`), and
+/// no spurious top-level op appears.
+///
+/// Under `debug_assertions` this is cross-checked against a fresh whole-region
+/// diff, so any dirty-tracking miss or ordering drift fails loudly in tests
+/// rather than silently corrupting a subscriber's cache.
+fn apply_transfer_delta(
+    view: &mut Value,
+    delta: &RegionDelta,
+    store: &TransferStore,
+) -> Vec<DiffOp> {
+    // Fallback: an unseeded / unexpected view shape (e.g. the region was never
+    // seeded with the empty-store baseline) → the original whole-region path,
+    // byte-for-byte. Production always seeds the region in `lib.rs::setup()`.
+    if !view.get("queue").is_some_and(Value::is_object) || view.get("minimized").is_none() {
+        let full = store.snapshot();
+        let ops = compute_ops(view, &full);
+        *view = full;
+        return ops;
+    }
+
+    #[cfg(debug_assertions)]
+    let old_full = view.clone();
+
+    let old_minimized = view.get("minimized").cloned().unwrap_or(Value::Bool(false));
+    let reduced_old = json!({
+        "queue": pick_keys(view.get("queue"), &delta.queue),
+        "minimized": old_minimized,
+    });
+    let reduced_new = json!({
+        "queue": subtree_map(&delta.queue),
+        "minimized": delta.minimized,
+    });
+    let ops = compute_ops(&reduced_old, &reduced_new);
+
+    splice_subtrees(view, "queue", &delta.queue);
+    if let Some(obj) = view.as_object_mut() {
+        obj.insert("minimized".to_string(), Value::Bool(delta.minimized));
+    }
+
+    #[cfg(debug_assertions)]
+    {
+        // Ground truth: the whole-region diff and a fresh full snapshot. The
+        // incremental ops must equal the former, and the spliced view the latter
+        // — either mismatch is a dirty-tracking / ordering bug, not a perf tweak.
+        let fresh = store.snapshot();
+        debug_assert_eq!(
+            ops,
+            compute_ops(&old_full, &fresh),
+            "PERF-006: incremental transfer delta diverged from the whole-region diff"
+        );
+        debug_assert_eq!(
+            *view, fresh,
+            "PERF-006: spliced transfer view diverged from the store snapshot"
+        );
+    }
+
+    ops
+}
+
+/// Collect the touched keys that are present in `src` into a fresh object — the
+/// reduced *old* subtree.
+fn pick_keys(src: Option<&Value>, entries: &[(String, Option<Value>)]) -> Value {
+    let mut out = Map::new();
+    if let Some(obj) = src.and_then(Value::as_object) {
+        for (key, _) in entries {
+            if let Some(value) = obj.get(key) {
+                out.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Value::Object(out)
+}
+
+/// Collect the present (`Some`) entries of a drained subtree into a fresh object —
+/// the reduced *new* subtree. A `None` value is an absent (removed) entry and is
+/// simply omitted, so the diff emits a `remove`.
+fn subtree_map(entries: &[(String, Option<Value>)]) -> Value {
+    let mut out = Map::new();
+    for (key, value) in entries {
+        if let Some(value) = value {
+            out.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+/// Splice the drained subtrees into `view[field]` in place: `Some` upserts the
+/// entry, `None` removes it. A no-op if the field is somehow not an object.
+fn splice_subtrees(view: &mut Value, field: &str, entries: &[(String, Option<Value>)]) {
+    let Some(obj) = view.get_mut(field).and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (key, value) in entries {
+        match value {
+            Some(value) => {
+                obj.insert(key.clone(), value.clone());
+            }
+            None => {
+                obj.remove(key);
+            }
+        }
     }
 }
 

@@ -20,8 +20,8 @@ use tauri::Manager;
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
-    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    apply_ops, compute_ops, DiffFrame, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus,
+    ProjectionError, ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
 use crate::transfers_projection::projection::{
     fold_transfer_progress, publish_transfers, TRANSFERS_REGION,
@@ -560,4 +560,177 @@ fn server_side_fold_is_a_noop_without_managed_state() {
     let app = tauri::test::mock_app();
     // Nothing managed — reaching the assert without panicking is the contract.
     fold_transfer_progress(app.handle(), &progress_payload("t1", "active", 1));
+}
+
+// ── Incremental publish equivalence (PERF-006, rollout of #2878) ──────────────
+//
+// The incremental publish (`drain_delta` → reduced diff → in-place splice) must
+// emit a diff **byte-identical** to the old whole-region path (re-serialize the
+// whole store + `compute_ops` of the two full trees). These tests pin that: at
+// each fold they assert the fanned-out ops equal `compute_ops(prev_full,
+// new_full)`, and that the subscriber cache converges on the store snapshot. The
+// scalar `minimized` field is exercised alongside the `queue` map.
+
+/// A progress event of a given state parsed into the store's `TransferProgress`.
+fn progress(id: &str, state: &str, transferred: u64) -> TransferProgress {
+    serde_json::from_value(progress_payload(id, state, transferred)).unwrap()
+}
+
+/// Publish `store` and assert the emitted diff equals the whole-region diff
+/// between `prev` (the region view before the fold) and the store's fresh
+/// snapshot. Advances `prev` to the new snapshot. A `None` publish (no change) is
+/// asserted to coincide with an empty whole-region diff.
+fn assert_incremental_equals_full(
+    projector: &Projector,
+    store: &TransferStore,
+    sink: &VecSink,
+    prev: &mut Value,
+    label: &str,
+) {
+    let before = sink.diffs().len();
+    let new_full = store.snapshot();
+    let expected_ops: Vec<DiffOp> = compute_ops(prev, &new_full);
+
+    let produced = publish_transfers(projector, store);
+    let diffs = sink.diffs();
+
+    if expected_ops.is_empty() {
+        assert!(
+            produced.is_empty(),
+            "{label}: no region advanced on a no-op"
+        );
+        assert_eq!(diffs.len(), before, "{label}: no diff on a no-op");
+    } else {
+        assert_eq!(diffs.len(), before + 1, "{label}: exactly one diff emitted");
+        assert_eq!(
+            &diffs.last().unwrap().ops,
+            &expected_ops,
+            "{label}: incremental ops must equal the whole-region diff"
+        );
+    }
+
+    // Cross-check the reference view converges exactly like a client cache would.
+    let mut applied = prev.clone();
+    apply_ops(&mut applied, &expected_ops).expect("diff applies cleanly");
+    assert_eq!(
+        applied, new_full,
+        "{label}: applying the diff reproduces the snapshot"
+    );
+
+    *prev = new_full;
+}
+
+/// The representative fold sequence the finding calls out — add a row, update one
+/// field of one row among many (the hot per-progress path), remove a row, toggle
+/// the `minimized` scalar, and a no-op — each producing exactly the whole-region
+/// diff, over a populated (O(N)) queue.
+#[test]
+fn incremental_publish_is_byte_identical_to_the_whole_region_diff() {
+    let store = TransferStore::new();
+    // A populated queue: several active transfers, so a whole-region rebuild would
+    // be O(N) per fold and a single-row progress must not touch the rest.
+    for i in 0..6 {
+        let id = format!("t{i}");
+        store.seed(&seed(&id), NOW);
+        store.progress(&progress(&id, "active", 100), NOW + 1);
+    }
+
+    let projector = Projector::new();
+    projector.register_region(TRANSFERS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
+
+    // Clear the seed dirty set; the region baseline already equals the store, so
+    // this drains without emitting (a no-op publish).
+    assert!(publish_transfers(&projector, &store).is_empty());
+
+    let mut prev = store.snapshot();
+
+    // 1) Update one field of one row among many (the hot per-progress path).
+    store.progress(&progress("t3", "active", 500), NOW + 2);
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "update-one-of-many");
+
+    // 2) Add a brand-new row.
+    store.seed(&seed("t42"), NOW + 3);
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "add-entry");
+
+    // 3) The scalar `minimized` flips alone (no queue key touched).
+    store.set_minimized(true);
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "minimized-only");
+
+    // 4) A completed row, then clear it (a `remove` under /queue).
+    store.progress(&progress("t0", "completed", 1000), NOW + 4);
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "complete-row");
+    store.clear_completed();
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "clear-completed");
+
+    // 5) Remove a row directly.
+    store.remove("t1");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "remove-entry");
+
+    // 6) A genuine no-op: `seed` for an id already present is ignored.
+    store.seed(&seed("t2"), NOW + 5);
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "no-op");
+
+    // The subscriber, fed only the incremental diffs, converges on the authority.
+    let snap = projector.snapshot(TRANSFERS_REGION);
+    assert_eq!(
+        snap.view,
+        store.snapshot(),
+        "region view == store authority"
+    );
+}
+
+/// Multiple rows plus the `minimized` scalar changing in the **same** publish must
+/// still diff byte-identically to the whole-region path, exercising multi-key
+/// ordering (and the scalar's sorted position before `queue`) within one reduced
+/// diff.
+#[test]
+fn incremental_publish_coalesces_multi_entry_changes_identically() {
+    let store = TransferStore::new();
+    for i in 0..4 {
+        let id = format!("t{i}");
+        store.seed(&seed(&id), NOW);
+        store.progress(&progress(&id, "active", 100), NOW + 1);
+    }
+    let projector = Projector::new();
+    projector.register_region(TRANSFERS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
+    assert!(publish_transfers(&projector, &store).is_empty());
+
+    let mut prev = store.snapshot();
+
+    // Mutate three rows and the scalar before a single publish → one coalesced diff.
+    store.progress(&progress("t2", "active", 700), NOW + 2);
+    store.remove("t0");
+    store.seed(&seed("t9"), NOW + 3);
+    store.set_minimized(true);
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "coalesced-multi");
+}
+
+/// The whole-map `replace` mirror (the one intrinsically O(region) fold) also
+/// stays byte-identical: adds for the new keys, removes for the gone ones, plus
+/// the `minimized` scalar.
+#[test]
+fn incremental_publish_replace_matches_the_whole_region_diff() {
+    let store = seeded_store();
+    let projector = Projector::new();
+    projector.register_region(TRANSFERS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(TRANSFERS_REGION, "sub", "A", sink.clone());
+    assert!(publish_transfers(&projector, &store).is_empty());
+
+    let mut prev = store.snapshot();
+
+    let source = TransferStore::new();
+    source.seed(&seed("t9"), NOW);
+    source.progress(&progress("t9", "active", 250), NOW + 1);
+    source.set_minimized(true);
+    let mirror = source.snapshot();
+    let queue = serde_json::from_value(mirror["queue"].clone()).unwrap();
+    store.replace(queue, mirror["minimized"].as_bool().unwrap());
+
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "replace");
+    assert_eq!(prev, source.snapshot(), "region mirrors the replace source");
 }
