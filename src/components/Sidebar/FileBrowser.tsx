@@ -31,7 +31,6 @@ import {
   Globe,
   Terminal,
   X,
-  Ban,
   Search,
   ChevronUp,
   ChevronDown,
@@ -44,6 +43,7 @@ import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { Button, Tooltip, Progress, Input, Spinner, EmptyState, toast } from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
+import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, sendInput } from "@/services/api";
 import { FileEntry } from "@/types/connection";
@@ -931,9 +931,11 @@ export function FileBrowser() {
   useLocalDirWatch(mode === "local", mode === "local" ? currentPath : null, refresh);
 
   // In-flight SFTP transfers (#1247); the footer shows those owned by the
-  // active browser session, and Cancel fires sftp_cancel_transfer.
+  // active browser session. Cancel routes through the shared transfer-control
+  // handler so the footer offers the same control language as the docked
+  // Transfer Queue panel (UX-020), not a divergent one.
   const transfers = useAppStore((s) => s.transfers);
-  const cancelTransfer = useAppStore((s) => s.cancelTransfer);
+  const { handleCancel } = useTransferControls();
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   // Render cut (#2228): the copy-cut clipboard is sourced from the projected
   // client-scoped file-browser region (mirror-gated, falls back to appStore).
@@ -1430,15 +1432,6 @@ export function FileBrowser() {
     ? Object.values(transfers).filter((t) => t.sessionId === footerSessionId)
     : [];
 
-  const handleCancelTransfer = async (transferId: string) => {
-    try {
-      await cancelTransfer(transferId);
-      toast.success("Transfer cancelled");
-    } catch (err) {
-      toast.error(`Failed to cancel transfer: ${err}`);
-    }
-  };
-
   return (
     <div
       className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
@@ -1844,13 +1837,15 @@ export function FileBrowser() {
                   <span className="file-browser__transfer-pct">
                     {indeterminate ? formatBytes(t.transferred) : `${pct}%`}
                   </span>
-                  <Tooltip content="Cancel transfer" side="top">
+                  <Tooltip content="Cancel" side="top">
                     <Button
-                      variant="danger"
+                      iconOnly
+                      variant="ghost"
                       size="sm"
-                      icon={<Ban size={12} />}
+                      icon={<X size={14} />}
                       className="file-browser__transfer-cancel"
-                      onClick={() => handleCancelTransfer(t.transferId)}
+                      data-testid="transfer-cancel"
+                      onClick={() => handleCancel(t.transferId)}
                       aria-label={`Cancel transfer of ${t.fileName}`}
                     />
                   </Tooltip>

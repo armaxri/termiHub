@@ -3,8 +3,9 @@ import { ArrowDownUp, Minus } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedTransfers } from "@/store/useProjectedTransfers";
+import { useTransferControls } from "@/hooks/useTransferControls";
 import { frontendLog } from "@/utils/frontendLog";
-import { transferPause, transferResume, transferCancel, transferRetry } from "@/services/api";
+import { transferCancel } from "@/services/api";
 import { isTerminalTransferState, type TransferEntry } from "@/types/transfer";
 import { TransferEntryRow } from "./TransferEntry";
 import "./TransferQueue.css";
@@ -42,53 +43,11 @@ export function TransferQueue() {
   const entries = useMemo(() => Object.values(transferQueue), [transferQueue]);
   const summary = useMemo(() => summarize(entries), [entries]);
 
-  // Honest per-row feedback (audit FEC-004 / UX-016): the control commands
-  // resolve `true` only when the transfer really changed state. A `false`
-  // resolution is a silent backend no-op — an unknown/finished id, or a legacy
-  // SFTP transfer whose pause/resume/retry the queue does not yet implement —
-  // so we must NOT toast success for it. A rejection (backend error, session
-  // gone) surfaces an error toast rather than failing silently.
-  const runControl = async (
-    action: () => Promise<boolean>,
-    messages: { success: string; noop: string; error: string }
-  ) => {
-    try {
-      const changed = await action();
-      if (changed) {
-        toast.success(messages.success);
-      } else {
-        toast.info(messages.noop);
-      }
-    } catch (err) {
-      frontendLog("transfer_queue", `${messages.error}: ${String(err)}`);
-      toast.error(messages.error);
-    }
-  };
-
-  const handlePause = (id: string) =>
-    runControl(() => transferPause(id), {
-      success: "Transfer paused",
-      noop: "Pause isn't available for this transfer",
-      error: "Failed to pause transfer",
-    });
-  const handleResume = (id: string) =>
-    runControl(() => transferResume(id), {
-      success: "Transfer resumed",
-      noop: "Resume isn't available for this transfer",
-      error: "Failed to resume transfer",
-    });
-  const handleCancel = (id: string) =>
-    runControl(() => transferCancel(id), {
-      success: "Transfer cancelled",
-      noop: "Transfer already finished",
-      error: "Failed to cancel transfer",
-    });
-  const handleRetry = (id: string) =>
-    runControl(() => transferRetry(id), {
-      success: "Retrying transfer",
-      noop: "Retry isn't available for this transfer",
-      error: "Failed to retry transfer",
-    });
+  // The per-row control handlers are shared with the file-browser footer so both
+  // surfaces drive one control language (UX-020) with honest FEC-004 / UX-016
+  // feedback (success only on a real state change, info on a no-op, error toast
+  // on rejection). See {@link useTransferControls}.
+  const { handlePause, handleResume, handleCancel, handleRetry } = useTransferControls();
 
   const handleCancelAll = async () => {
     const pending = entries.filter((e) => !isTerminalTransferState(e.state));
