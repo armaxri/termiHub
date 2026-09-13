@@ -1115,6 +1115,24 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
 }
 
 /**
+ * Change the durable log file's verbosity live, without a restart (OBS-009).
+ *
+ * `level` is one of `off`/`error`/`warn`/`info`/`debug`/`trace`. Persistence is
+ * separate — the caller also writes `fileLogLevel` into the settings document so
+ * the level survives a restart.
+ */
+export async function setFileLogLevel(
+  level: NonNullable<AppSettings["fileLogLevel"]>
+): Promise<void> {
+  await invoke("set_file_log_level", { level });
+}
+
+/** Absolute path of the current application log file, or `null` if unresolved. */
+export async function getLogFilePath(): Promise<string | null> {
+  return await invoke<string | null>("get_log_file_path");
+}
+
+/**
  * Get the current shell-integration registration + staleness status
  * (registered state, whether the recorded exe path matches the current
  * executable, portable-mode flag, and detected file managers).
