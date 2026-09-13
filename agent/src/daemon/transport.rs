@@ -696,4 +696,68 @@ mod tests {
 
         let _ = std::fs::remove_file(&address);
     }
+
+    /// Windows analog of
+    /// [`connect_for_recovery_fast_fails_dead_lingering_socket`] (AGT-026):
+    /// recovery must fast-fail a dead daemon over the **named-pipe** transport,
+    /// bounded by the short [`RECOVERY_CONNECT_TIMEOUT`] rather than the 30s
+    /// spawn-path [`CONNECT_TIMEOUT`].
+    ///
+    /// The dead-daemon *state* differs by platform, so the faithful simulation
+    /// does too. A unix daemon's socket **file lingers** on disk after the
+    /// process dies, so the unix test must bind-and-exit a child to reproduce a
+    /// genuinely-dead-but-present socket. A Windows named pipe has no such
+    /// artifact: every instance is closed by the OS when its owning process
+    /// exits, so a killed daemon leaves **no pipe at all** — `remove_session_files`
+    /// is a no-op on windows and `endpoint_alive` reports the name as absent. A
+    /// pipe name that was never bound is therefore the faithful reproduction of
+    /// the exact state production recovery meets on windows: a dead session whose
+    /// pipe is gone.
+    ///
+    /// Against that state `connect` fails with `ERROR_FILE_NOT_FOUND`, which the
+    /// core transport treats as a retryable "endpoint not ready yet" error.
+    /// Before the #2476/#2491 recovery fix, `recover_sessions` connected via the
+    /// spawn-path 30s timeout and retried that error for the full window,
+    /// stalling the fresh agent's startup — and thus the desktop's `initialize`
+    /// handshake — after a reconnect ("transport restored but stuck
+    /// Reconnecting"). [`connect_for_recovery`] must give up well within
+    /// [`CONNECT_TIMEOUT`]. If it ever regresses to the long timeout, connecting
+    /// to this absent pipe would retry `ERROR_FILE_NOT_FOUND` for ~30s and trip
+    /// the elapsed-time assertion below.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn connect_for_recovery_fast_fails_dead_named_pipe() {
+        use std::time::Instant;
+
+        // A per-run-unique pipe name that no daemon ever bound: the faithful
+        // windows analog of a killed daemon's now-gone pipe (see above).
+        let address = session_endpoint(&unique_session("recovery-dead"));
+
+        // Precondition: nothing owns this pipe (endpoint_alive false), exactly
+        // the state production recovery meets for a dead windows session.
+        assert!(
+            !endpoint_alive(&address),
+            "no daemon should own the freshly-generated pipe name {address}"
+        );
+
+        let start = Instant::now();
+        let result = connect_for_recovery(&address).await;
+        let elapsed = start.elapsed();
+
+        // Two guarantees mirroring the unix regression, both from #2476/#2491:
+        //  (1) a dead daemon (gone pipe) is rejected, not silently connected to;
+        assert!(
+            result.is_err(),
+            "connecting to a dead daemon's absent pipe must fail, not succeed"
+        );
+        //  (2) it fast-fails nowhere near the 30s spawn-path timeout. Generous
+        //      bound (well above RECOVERY_CONNECT_TIMEOUT + retry jitter, well
+        //      below CONNECT_TIMEOUT) so it never flakes on a loaded CI runner yet
+        //      still trips if recovery ever regresses to the long path.
+        assert!(
+            elapsed < Duration::from_secs(10),
+            "connect_for_recovery took {elapsed:?} — a dead daemon's absent pipe \
+             must fast-fail, not pay the {CONNECT_TIMEOUT:?} spawn-path timeout (#2476)"
+        );
+    }
 }
