@@ -53,6 +53,49 @@ fn is_port_reachable(port: u16) -> bool {
         .unwrap_or(false)
 }
 
+/// Env var that flips a missing fixture from a silent skip to a hard failure
+/// (TBE-006). Mirrors `core/tests/common`'s `REQUIRE_DOCKER_ENV`; a CI lane that
+/// brings the sftp-stress fixture up sets it (`=1`) so an absent/broken
+/// container reds the lane instead of skipping to a false green.
+const REQUIRE_DOCKER_ENV: &str = "TERMIHUB_REQUIRE_DOCKER";
+
+/// Interpret a raw `TERMIHUB_REQUIRE_DOCKER` value as a boolean (truthy: `1`,
+/// `true`, `yes`, `on`, case-insensitive; unset / everything else is falsey, so
+/// local and per-PR runs never hard-fail).
+fn parse_required(val: Option<&str>) -> bool {
+    matches!(
+        val.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
+        Some("1") | Some("true") | Some("yes") | Some("on")
+    )
+}
+
+/// Whether this process requires the Docker fixture to be present.
+fn docker_required() -> bool {
+    parse_required(std::env::var(REQUIRE_DOCKER_ENV).ok().as_deref())
+}
+
+/// Resolve whether a fixture-gated test body should run. Returns `true` to run;
+/// `false` after a visible `SKIPPED:` line when the fixture is absent and not
+/// required; **panics** when absent but required (`TERMIHUB_REQUIRE_DOCKER`
+/// set), so a Docker-backed lane reds instead of going falsely green (TBE-006).
+fn require_fixture(reachable: bool, required: bool, port: u16) -> bool {
+    match (reachable, required) {
+        (true, _) => true,
+        (false, false) => {
+            eprintln!(
+                "SKIPPED: sftp-stress container not reachable on port {port} \
+                 (start with `docker compose -f tests/docker/docker-compose.yml --profile stress up -d`)"
+            );
+            false
+        }
+        (false, true) => panic!(
+            "REQUIRED fixture unavailable: sftp-stress container not reachable on \
+             port {port} but {REQUIRE_DOCKER_ENV} is set — a missing/broken \
+             fixture is a hard failure here, not a skip (TBE-006)"
+        ),
+    }
+}
+
 /// Register a process-wide host-key verifier that trusts the local Docker
 /// fixture containers, so these desktop SFTP integration tests connect
 /// deterministically under the strict default host-key policy (#1969, #2032).
@@ -86,19 +129,23 @@ fn trust_fixture_host_keys() {
     let _ = set_host_key_verifier(Arc::new(TrustLocalFixtures));
 }
 
-/// Skip the current test if the sftp-stress container is not reachable.
+/// Skip *or hard-fail* the current test based on the sftp-stress container's
+/// port. Not reachable normally prints a visible `SKIPPED:` line and returns —
+/// but under `TERMIHUB_REQUIRE_DOCKER=1` it panics instead, so an absent/broken
+/// fixture reds a Docker-backed lane rather than skipping to a false green
+/// (TBE-006). See [`require_fixture`].
 macro_rules! require_sftp_stress {
     ($port:expr) => {
         // Trust the loopback fixture host key before connecting, so the strict
         // default host-key policy (#1969) does not refuse the freshly-built
         // fixture container with "Unknown server key" (#2105, sibling of #2032).
         trust_fixture_host_keys();
-        if !is_port_reachable($port) {
-            eprintln!(
-                "SKIPPED: sftp-stress container not reachable on port {} \
-                 (start with `docker compose -f tests/docker/docker-compose.yml --profile stress up -d`)",
-                $port
-            );
+        let __require_port = $port;
+        if !require_fixture(
+            is_port_reachable(__require_port),
+            docker_required(),
+            __require_port,
+        ) {
             return;
         }
     };
@@ -360,4 +407,48 @@ async fn browsing_stays_live_during_transfer() {
     // Let the transfer finish / clean up.
     let _ = tokio::time::timeout(Duration::from_secs(60), transfer).await;
     let _ = std::fs::remove_file(&dest);
+}
+
+// --- require_sftp_stress! gate logic (TBE-006) ---
+//
+// These verify the skip-vs-hard-fail decision the macro switches on, without
+// touching Docker or the network, so they always run in the ordinary test
+// gate — the path that must never regress to a silent return-as-pass.
+
+#[test]
+fn parse_required_recognizes_truthy_values() {
+    for v in ["1", "true", "TRUE", "yes", "on", " 1 "] {
+        assert!(parse_required(Some(v)), "{v:?} should be truthy");
+    }
+}
+
+#[test]
+fn parse_required_treats_unset_and_falsey_as_not_required() {
+    assert!(!parse_required(None), "unset should be falsey");
+    for v in ["", "0", "false", "no", "off"] {
+        assert!(!parse_required(Some(v)), "{v:?} should be falsey");
+    }
+}
+
+#[test]
+fn require_fixture_runs_when_reachable() {
+    assert!(require_fixture(true, false, 2210));
+    assert!(require_fixture(true, true, 2210));
+}
+
+#[test]
+fn require_fixture_skips_when_absent_and_not_required() {
+    assert!(!require_fixture(false, false, 2210));
+}
+
+#[test]
+fn require_fixture_panics_when_absent_but_required() {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(|_| {}));
+    let outcome = std::panic::catch_unwind(|| require_fixture(false, true, 2210));
+    std::panic::set_hook(prev);
+    assert!(
+        outcome.is_err(),
+        "require_fixture must panic when the fixture is absent but required"
+    );
 }
