@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { X, ChevronUp, ChevronDown, CaseSensitive, Regex } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, Input, Tooltip } from "@/components/ui";
 import { useTerminalRegistry } from "./TerminalRegistry";
 import "./TerminalSearchBar.css";
 
@@ -78,10 +78,10 @@ export function TerminalSearchBar({ tabId }: TerminalSearchBarProps) {
 
   return (
     <div className="terminal-search-bar" onKeyDown={handleKeyDown}>
-      <input
+      <Input
         ref={inputRef}
         className="terminal-search-bar__input"
-        type="text"
+        size="sm"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
         placeholder="Find..."

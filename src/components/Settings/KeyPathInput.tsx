@@ -3,7 +3,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useSshKeyFiles, SshKeyFile } from "@/hooks/useSshKeyFiles";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { validateSshKey, SshKeyValidation } from "@/services/api";
-import { Tooltip } from "@/components/ui";
+import { Input, Tooltip } from "@/components/ui";
 import "./KeyPathInput.css";
 
 /** Debounce (ms) before validating a typed key path against the backend. */
@@ -160,10 +160,9 @@ export function KeyPathInput({
   return (
     <>
       <div className="key-path-input" ref={wrapperRef} onBlur={handleBlur}>
-        <input
+        <Input
           ref={inputRef}
           id={id}
-          type="text"
           className="key-path-input__field"
           value={value}
           onChange={(e) => {
