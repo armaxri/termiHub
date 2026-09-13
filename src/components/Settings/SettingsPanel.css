@@ -159,25 +159,19 @@
   white-space: nowrap;
 }
 
+/* Composed on the shared ui/Input primitive (UISF-013): border, background,
+   radius, and the focus ring come from `.ui-input`. This class only carries the
+   dense settings-row layout — flex sizing plus the compact 28px height / 12px
+   font that differ from the primitive default. The compound selector wins over
+   `.ui-input` regardless of stylesheet order. */
 .settings-panel__create-input {
   flex: 1;
   min-width: 0;
-  height: 28px;
-  padding: 0 var(--spacing-sm);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-md);
-  background-color: var(--bg-input);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-  transition:
-    border-color var(--transition-fast),
-    box-shadow var(--transition-fast);
 }
 
-.settings-panel__create-input:focus {
-  border-color: var(--accent-color);
-  box-shadow: var(--shadow-focus);
+.settings-panel__create-input.ui-input {
+  height: var(--control-height-md);
+  font-size: var(--font-size-sm);
 }
 
 /* === File list === */

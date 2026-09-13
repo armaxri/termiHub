@@ -4,7 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { BUILT_IN_FILENAME_MAPPINGS, BUILT_IN_EXTENSION_MAPPINGS } from "@/utils/languageMapping";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
-import { Button, Tooltip, EmptyState } from "@/components/ui";
+import { Button, Input, Tooltip, EmptyState } from "@/components/ui";
 
 /** Combined view of a built-in mapping row (shown in the reference table). */
 interface BuiltInRow {
@@ -148,9 +148,8 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
 
             {/* Add new mapping */}
             <div className="settings-panel__create-prompt">
-              <input
+              <Input
                 className="settings-panel__create-input"
-                type="text"
                 value={newPattern}
                 onChange={(e) => {
                   setNewPattern(e.target.value);
@@ -162,10 +161,9 @@ export function FileTypeSettings({ visibleFields }: FileTypeSettingsProps) {
                 placeholder="Filename or .ext"
                 data-testid="file-type-pattern-input"
               />
-              <input
+              <Input
                 ref={languageInputRef}
                 className="settings-panel__create-input"
-                type="text"
                 value={newLanguage}
                 onChange={(e) => {
                   setNewLanguage(e.target.value);
