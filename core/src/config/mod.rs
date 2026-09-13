@@ -1275,7 +1275,10 @@ mod tests {
         assert_eq!(back.connect_timeout_secs, Some(15));
         // Unset is omitted so existing saved connections stay byte-stable.
         let default_json = serde_json::to_string(&TelnetConfig::default()).unwrap();
-        assert!(!default_json.contains("connectTimeoutSecs"), "{default_json}");
+        assert!(
+            !default_json.contains("connectTimeoutSecs"),
+            "{default_json}"
+        );
     }
 
     #[test]
