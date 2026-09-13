@@ -27,6 +27,12 @@ export interface SearchInputProps extends Omit<
    * clear button only renders when `value` is non-empty.
    */
   clearLabel?: string;
+  /**
+   * Optional `data-testid` forwarded to the clear button. Lets a migrating site
+   * keep the clear-button test hook its vitest tests or the Python system
+   * harness (`tests/system/`) depend on (e.g. `connection-filter-clear`).
+   */
+  clearTestId?: string;
 }
 
 /**
@@ -42,7 +48,7 @@ export interface SearchInputProps extends Omit<
  * pair it with the `useListFilter` hook for the query state + filtered list.
  */
 export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(function SearchInput(
-  { value, onValueChange, clearLabel = "Clear search", className, ...rest },
+  { value, onValueChange, clearLabel = "Clear search", clearTestId, className, ...rest },
   ref
 ) {
   const wrapperClasses = [
@@ -68,6 +74,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
           type="button"
           className="ui-search-input__clear"
           aria-label={clearLabel}
+          data-testid={clearTestId}
           onClick={() => onValueChange("")}
         >
           <X size={14} aria-hidden="true" />
