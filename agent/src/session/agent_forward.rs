@@ -54,6 +54,8 @@ use serde_json::json;
 use tokio::sync::Mutex;
 use tracing::debug;
 
+use termihub_core::backends::ssh::agent_forward::AGENT_FORWARD_CHUNK_SIZE;
+
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
 
@@ -63,10 +65,6 @@ pub const AGENT_FORWARD_OPEN: &str = "agent.forward.open";
 pub const AGENT_FORWARD_DATA: &str = "agent.forward.data";
 /// Both directions: a forwarded ssh-agent stream ended.
 pub const AGENT_FORWARD_CLOSE: &str = "agent.forward.close";
-
-/// Max bytes per data notification — mirrors `JsonRpcOutputSink`'s 64 KiB chunk
-/// so a burst stays under the transport's 1 MiB NDJSON line cap.
-const CHUNK_SIZE: usize = 65536;
 
 /// Sender that feeds desktop→socket bytes to one accepted relay connection.
 type StreamSink = tokio::sync::mpsc::UnboundedSender<Vec<u8>>;
@@ -322,7 +320,7 @@ impl AgentForwardRelay {
     {
         use tokio::io::AsyncReadExt;
         let b64 = base64::engine::general_purpose::STANDARD;
-        let mut buf = vec![0u8; CHUNK_SIZE];
+        let mut buf = vec![0u8; AGENT_FORWARD_CHUNK_SIZE];
         loop {
             match read_half.read(&mut buf).await {
                 Ok(0) => break,
