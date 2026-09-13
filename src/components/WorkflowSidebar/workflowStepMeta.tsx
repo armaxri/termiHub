@@ -11,6 +11,7 @@ import type { ComponentType } from "react";
 import { Terminal, FileCode, Play, Clock, Cpu } from "lucide-react";
 import type { WorkflowStep, WorkflowStepKind } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
+import { truncate } from "@/utils/formatters";
 
 /** The step kinds, in the order they appear in the "Add step…" menu. */
 export const WORKFLOW_STEP_KINDS: readonly WorkflowStepKind[] = [
@@ -38,11 +39,6 @@ export function stepKindIcon(kind: WorkflowStepKind): ComponentType<{ size?: num
 /** Human-readable label shown in the "Add step…" menu and each step row. */
 export function stepKindLabel(kind: WorkflowStepKind): string {
   return kind;
-}
-
-/** Truncate a single-line string to `maxLength`, appending an ellipsis. */
-function truncate(text: string, maxLength = 60): string {
-  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
 /**

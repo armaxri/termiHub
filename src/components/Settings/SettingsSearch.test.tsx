@@ -8,11 +8,13 @@ let container: HTMLDivElement;
 let root: Root;
 
 function input(): HTMLInputElement {
-  return container.querySelector(".settings-search__input") as HTMLInputElement;
+  const el = container.querySelector<HTMLInputElement>(".settings-search input.ui-input");
+  if (!el) throw new Error("search input not found");
+  return el;
 }
 
 function clearButton(): HTMLButtonElement | null {
-  return container.querySelector(".settings-search__clear");
+  return container.querySelector<HTMLButtonElement>(".settings-search .ui-search-input__clear");
 }
 
 function render(query: string, onQueryChange = vi.fn()) {
