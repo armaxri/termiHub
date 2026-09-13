@@ -337,9 +337,29 @@ impl DaemonClient {
 // to be called from `spawn_blocking` contexts where `Handle::block_on()`
 // is safe (we are on a blocking thread, not inside an async task).
 
+/// Fetch the current Tokio runtime handle for a synchronous [`ProcessHandle`]
+/// call, degrading to a recoverable error instead of panicking when there is no
+/// runtime (AGT-025).
+///
+/// The synchronous `ProcessHandle` methods normally run on a `spawn_blocking`
+/// thread, where a runtime handle is in scope and `Handle::current()` is fine.
+/// But `Handle::current()` *panics* if a method is ever invoked with no runtime
+/// at all; `try_current` lets us surface that as an `Err` on the write paths
+/// rather than unwinding across the FFI/trait boundary.
+fn current_runtime_handle(
+    op: &str,
+) -> Result<tokio::runtime::Handle, termihub_core::errors::SessionError> {
+    tokio::runtime::Handle::try_current().map_err(|_| {
+        warn!("DaemonClient::{op} called outside a Tokio runtime; cannot reach daemon");
+        termihub_core::errors::SessionError::Io(std::io::Error::other(format!(
+            "no Tokio runtime available for daemon {op}"
+        )))
+    })
+}
+
 impl termihub_core::session::traits::ProcessHandle for DaemonClient {
     fn write_input(&self, data: &[u8]) -> Result<(), termihub_core::errors::SessionError> {
-        let handle = tokio::runtime::Handle::current();
+        let handle = current_runtime_handle("write_input")?;
         handle
             .block_on(async {
                 let mut guard = self.writer.lock().await;
@@ -357,7 +377,7 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
     }
 
     fn resize(&self, cols: u16, rows: u16) -> Result<(), termihub_core::errors::SessionError> {
-        let handle = tokio::runtime::Handle::current();
+        let handle = current_runtime_handle("resize")?;
         handle
             .block_on(async {
                 let mut guard = self.writer.lock().await;
@@ -376,15 +396,24 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
     }
 
     fn close(&self) -> Result<(), termihub_core::errors::SessionError> {
-        let handle = tokio::runtime::Handle::current();
-        handle.block_on(async {
-            let mut guard = self.writer.lock().await;
-            if let Some(ref mut writer) = *guard {
-                let _ = protocol::write_frame_async(writer, MSG_KILL, &[]).await;
-            }
-            // Drop the writer half — the reader task will exit on EOF.
-            *guard = None;
-        });
+        // close is best-effort cleanup: without a runtime we cannot send the
+        // kill frame, but we can still mark the session dead. Degrade to a
+        // logged no-op instead of panicking (AGT-025).
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle.block_on(async {
+                let mut guard = self.writer.lock().await;
+                if let Some(ref mut writer) = *guard {
+                    let _ = protocol::write_frame_async(writer, MSG_KILL, &[]).await;
+                }
+                // Drop the writer half — the reader task will exit on EOF.
+                *guard = None;
+            }),
+            Err(_) => warn!(
+                "DaemonClient::close called outside a Tokio runtime; \
+                 skipping kill frame, marking session {} dead",
+                self.session_id
+            ),
+        }
         self.alive.store(false, Ordering::SeqCst);
         Ok(())
     }
