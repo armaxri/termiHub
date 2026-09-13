@@ -11,10 +11,6 @@
 //! The serialized wire shape is authoritative — the serde attributes here are
 //! the contract. See `docs/remote-protocol.md`.
 
-// Some fields are only deserialized (never read) by one side; kept for protocol
-// completeness and forward compatibility.
-#![allow(dead_code)]
-
 use crate::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use crate::connection::ConnectionTypeInfo;
 use crate::monitoring::SystemStats;
@@ -27,8 +23,7 @@ use crate::tunnel::config::{
 use crate::tunnel::ReachableFrom;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-// Used by shell/session modules on unix; re-exported for test access on all platforms.
-#[allow(unused_imports)]
+// Re-exported for shell/session modules and test access on all platforms.
 pub use crate::config::ShellConfig;
 pub use crate::files::FileEntry;
 
