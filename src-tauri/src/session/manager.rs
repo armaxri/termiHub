@@ -1885,31 +1885,59 @@ impl SessionManager {
         }
 
         // Phase 2: normal streaming with coalescing.
+        //
+        // Fast path (the common case, PERF-012): when a chunk arrives and no
+        // further chunk is already buffered, the owned `Vec` received from the
+        // channel is handed straight to the sink — it is never copied through
+        // the coalescer's pending buffer. The coalescer only takes a copy when
+        // 2+ chunks must be concatenated into a single event, where that
+        // concatenation copy is load-bearing (it produces the contiguous batch).
+        //
+        // Framing stays byte-for-byte identical to the always-coalesce form: a
+        // chunk merges with the next only when that next chunk is already
+        // available AND the running batch is still under MAX_COALESCE_BYTES —
+        // exactly the guard the original loop applied. A first chunk already at
+        // or above the cap is delivered alone, matching the original loop whose
+        // `pending_len() < MAX_COALESCE_BYTES` guard would never pull a follow-up
+        // after such a chunk.
         let mut coalescer = OutputCoalescer::new();
         while let Some(first_chunk) = output_rx.recv().await {
-            coalescer.push(&first_chunk);
-
-            // Drain any immediately available chunks.
-            while coalescer.pending_len() < MAX_COALESCE_BYTES {
+            let data = if first_chunk.len() >= MAX_COALESCE_BYTES {
+                first_chunk
+            } else {
                 match output_rx.try_recv() {
-                    Ok(chunk) => {
-                        coalescer.push(&chunk);
+                    // Nothing else buffered: pass the owned chunk through uncopied.
+                    Err(_) => first_chunk,
+                    // More output waiting: concatenate into one contiguous batch.
+                    Ok(second) => {
+                        coalescer.push(&first_chunk);
+                        coalescer.push(&second);
+                        while coalescer.pending_len() < MAX_COALESCE_BYTES {
+                            match output_rx.try_recv() {
+                                Ok(chunk) => coalescer.push(&chunk),
+                                Err(_) => break,
+                            }
+                        }
+                        // Two non-empty chunks were pushed, so flush is Some;
+                        // fall back to the owned first chunk without panicking.
+                        coalescer.flush().unwrap_or(first_chunk)
                     }
-                    Err(_) => break,
                 }
+            };
+
+            if data.is_empty() {
+                continue;
             }
 
-            if let Some(data) = coalescer.flush() {
-                Self::capture_bytes(&capture, &data);
-                Self::log_output(&session_loggers, &session_id, &data);
-                let event = TerminalOutputEvent {
-                    session_id: session_id.clone(),
-                    data,
-                };
-                if !emitter.emit_output(&event) {
-                    error!("Failed to emit terminal-output event");
-                    break;
-                }
+            Self::capture_bytes(&capture, &data);
+            Self::log_output(&session_loggers, &session_id, &data);
+            let event = TerminalOutputEvent {
+                session_id: session_id.clone(),
+                data,
+            };
+            if !emitter.emit_output(&event) {
+                error!("Failed to emit terminal-output event");
+                break;
             }
         }
 
