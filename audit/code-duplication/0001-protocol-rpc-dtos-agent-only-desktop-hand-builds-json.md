@@ -13,7 +13,8 @@ evidence:
   - src-tauri/src/session/remote_proxy.rs:457
   - src-tauri/src/session/remote_proxy.rs:542
   - src-tauri/Cargo.toml:87
-status: open
+status: partial
+resolution: "#2944 — moved JSON-RPC req/resp DTOs to core::protocol::methods (agent re-exports); wire bytes locked by tests. Desktop still parses some responses ad-hoc via Value -> follow-up #2945"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - src/components/EmbeddedServerSidebar/EmbeddedServerSidebar.tsx:163
   - src/components/EmbeddedServerSidebar/EmbeddedServerItem.tsx:20
   - src/hooks/useFlatRovingNav.ts
-status: open
+status: fixed
+resolution: "develop — already fixed on develop (29e84e5a, a11y-008): EmbeddedServerSidebar uses shared useFlatRovingNav; role=tree/treeitem, roving tabindex, arrow/Home/End/Enter/Space; keyboard test present"
 ---
 
 ## What

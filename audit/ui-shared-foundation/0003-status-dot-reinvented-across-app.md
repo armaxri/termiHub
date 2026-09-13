@@ -15,7 +15,8 @@ evidence:
   - src/components/UpdateNotification/UpdateNotification.tsx:73
   - src/components/Settings/ShellIntegrationSettings.tsx:173
   - src/components/Plugins/PluginDetailPanel.tsx:101
-status: open
+status: partial
+resolution: "#2942 — promoted SidebarStatusDot->shared ui/StatusDot (notice tone + size prop); migrated update-indicator/settings/notification dots. State-palette dots (agent/connection-tree/plugin) -> follow-up #2943"
 ---
 
 ## What

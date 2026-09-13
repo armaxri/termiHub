@@ -10,7 +10,8 @@ evidence:
   - agent/src/handler/dispatch.rs
   - src-tauri/src/session/remote_proxy.rs:457
   - agent/src/session/agent_forward.rs:70
-status: open
+status: fixed
+resolution: "#2944 — method + notification names are pub const in core::protocol::methods; agent (52 register sites) + desktop call sites + handshake all reference them"
 ---
 
 ## What
