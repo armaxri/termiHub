@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Trash2 } from "lucide-react";
 import { Modal, Button, Input, Field, NumberInput } from "@/components/ui";
 import type { Macro, MacroStep } from "@/types/macro";
+import { parseTags } from "@/utils/parseTags";
 import { formatMacroStepData } from "./macroStepFormat";
 import "./MacroEditorDialog.css";
 
@@ -26,20 +27,6 @@ export interface MacroEditorDialogProps {
    * user can retry without losing edits.
    */
   onSave: (result: MacroEditorResult) => void | Promise<void>;
-}
-
-/** Split a comma-separated tag string into a trimmed, de-duplicated list. */
-function parseTags(raw: string): string[] {
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const part of raw.split(",")) {
-    const tag = part.trim();
-    if (tag && !seen.has(tag)) {
-      seen.add(tag);
-      tags.push(tag);
-    }
-  }
-  return tags;
 }
 
 /**
