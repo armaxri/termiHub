@@ -949,6 +949,57 @@ mod tests {
         server.await.expect("mock daemon task");
     }
 
+    /// Build a `DaemonClient` with no live transport, for unit tests that only
+    /// exercise the synchronous [`ProcessHandle`](termihub_core::session::traits::ProcessHandle)
+    /// methods (which touch only `writer`/`alive`, never the network).
+    fn disconnected_client() -> DaemonClient {
+        DaemonClient {
+            session_id: "test-session".into(),
+            endpoint: "test-endpoint".into(),
+            writer: Arc::new(Mutex::new(None)),
+            reader_task: None,
+            alive: Arc::new(AtomicBool::new(true)),
+            notification_tx: make_notification_tx(),
+            pending_buffer_reply: Arc::new(Mutex::new(None)),
+            on_exit: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// AGT-025: the synchronous `ProcessHandle` methods must **not panic** when
+    /// invoked outside a Tokio runtime. `Handle::current()` panics there; the
+    /// fixed methods use `Handle::try_current()` and degrade gracefully — a
+    /// recoverable error for the write paths, a logged no-op for `close`.
+    ///
+    /// This is a plain `#[test]` on purpose: it runs with no runtime in scope,
+    /// which is exactly the condition that used to unwind.
+    #[test]
+    fn sync_process_handle_methods_do_not_panic_without_a_runtime() {
+        use termihub_core::session::traits::ProcessHandle;
+
+        let client = disconnected_client();
+
+        // write_input / resize surface a recoverable error rather than panicking.
+        assert!(
+            client.write_input(b"hello").is_err(),
+            "write_input must return an error, not panic, without a runtime"
+        );
+        assert!(
+            client.resize(80, 24).is_err(),
+            "resize must return an error, not panic, without a runtime"
+        );
+
+        // close degrades to a no-op that still marks the session dead.
+        assert!(client.is_alive(), "sanity: starts alive");
+        assert!(
+            client.close().is_ok(),
+            "close must be an infallible no-op, not panic, without a runtime"
+        );
+        assert!(
+            !client.is_alive(),
+            "close must still mark the session dead even without a runtime"
+        );
+    }
+
     /// AGT-015 (client half): a normal (spawn / re-attach) connect declares
     /// [`INTENT_TAKEOVER`] as its first frame, preserving evict-on-accept.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
