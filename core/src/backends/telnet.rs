@@ -37,6 +37,21 @@ const WONT: u8 = 252;
 const DO: u8 = 253;
 const DONT: u8 = 254;
 
+/// Default telnet port used when the `port` setting is absent or invalid.
+const DEFAULT_PORT: u16 = 23;
+
+/// Parse the `port` setting into a `u16`, defaulting to [`DEFAULT_PORT`].
+///
+/// Accepts either a JSON number or a numeric string.
+fn parse_port_setting(port: Option<&serde_json::Value>) -> u16 {
+    port.and_then(|v| {
+        v.as_u64()
+            .map(|n| n as u16)
+            .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+    })
+    .unwrap_or(DEFAULT_PORT)
+}
+
 /// Telnet backend using a raw TCP socket, implementing [`ConnectionType`].
 ///
 /// # Lifecycle
@@ -317,14 +332,7 @@ impl ConnectionType for Telnet {
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        let port: u16 = settings
-            .get("port")
-            .and_then(|v| {
-                v.as_u64()
-                    .map(|n| n as u16)
-                    .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
-            })
-            .unwrap_or(23);
+        let port: u16 = parse_port_setting(settings.get("port"));
         // Accept the connect timeout as a JSON number or a numeric string (the
         // schema-driven form emits numbers as strings); absent/invalid falls
         // back to the default budget via `TelnetConfig::connect_timeout`.
@@ -518,6 +526,44 @@ mod tests {
     fn type_id() {
         let telnet = Telnet::new();
         assert_eq!(telnet.type_id(), "telnet");
+    }
+
+    #[test]
+    fn parse_port_setting_valid_numeric() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(2323))), 2323);
+    }
+
+    #[test]
+    fn parse_port_setting_valid_string() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!("2323"))), 2323);
+    }
+
+    #[test]
+    fn parse_port_setting_missing_defaults_to_23() {
+        assert_eq!(parse_port_setting(None), 23);
+    }
+
+    #[test]
+    fn parse_port_setting_max_valid_port() {
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(65535))), 65535);
+    }
+
+    #[test]
+    fn parse_port_setting_out_of_range_numeric_does_not_wrap() {
+        // A numeric port above u16::MAX must fall back to the default, never
+        // silently wrap (65536 -> 0, 70000 -> 4464) and target the wrong port.
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(65536))), 23);
+        assert_eq!(parse_port_setting(Some(&serde_json::json!(70000))), 23);
+    }
+
+    #[test]
+    fn parse_port_setting_out_of_range_numeric_and_string_agree() {
+        // The numeric and string branches must treat an out-of-range value
+        // identically — both reject and fall back to the default.
+        assert_eq!(
+            parse_port_setting(Some(&serde_json::json!(70000))),
+            parse_port_setting(Some(&serde_json::json!("70000"))),
+        );
     }
 
     #[test]
