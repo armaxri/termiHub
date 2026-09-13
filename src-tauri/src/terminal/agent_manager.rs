@@ -2833,7 +2833,12 @@ async fn list_recovered_session_ids(
 ) -> Option<std::collections::HashSet<String>> {
     *request_id += 1;
     let req_id = *request_id;
-    let line = serialize_request(req_id, "connection.list", serde_json::json!({})).ok()?;
+    let line = serialize_request(
+        req_id,
+        termihub_core::protocol::methods::CONNECTION_LIST,
+        serde_json::json!({}),
+    )
+    .ok()?;
     channel.data(line.as_bytes()).await.ok()?;
 
     const MAX_SKIPPED: u32 = 1000;
@@ -3099,7 +3104,11 @@ async fn reconnect_agent(
             .map(|f| f.path.as_str())
             .collect();
         let init_params = build_initialize_params(agent_settings, &enabled_files);
-        let req_line = match serialize_request(*request_id, "initialize", init_params) {
+        let req_line = match serialize_request(
+            *request_id,
+            termihub_core::protocol::methods::INITIALIZE,
+            init_params,
+        ) {
             Ok(l) => l,
             Err(e) => {
                 warn!(
