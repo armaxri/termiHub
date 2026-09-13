@@ -126,7 +126,8 @@ mod tests {
         assert_eq!(reconnect_backoff(3), Duration::from_millis(800));
         assert_eq!(reconnect_backoff(4), Duration::from_millis(1600));
         assert!(
-            reconnect_backoff(2) > reconnect_backoff(1) && reconnect_backoff(1) > reconnect_backoff(0),
+            reconnect_backoff(2) > reconnect_backoff(1)
+                && reconnect_backoff(1) > reconnect_backoff(0),
             "backoff must grow"
         );
         // Far-out attempts plateau at 1600ms and never exceed 2s.
@@ -136,7 +137,11 @@ mod tests {
             Duration::from_millis(1600),
             "backoff plateaus at 1600ms once doubling reaches the cap"
         );
-        assert_eq!(far, reconnect_backoff(4), "plateau equals the last growing step");
+        assert_eq!(
+            far,
+            reconnect_backoff(4),
+            "plateau equals the last growing step"
+        );
         assert!(
             far <= Duration::from_millis(2000),
             "backoff is bounded at 2s"
