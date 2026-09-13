@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use termihub_core::backends::ssh::auth::connect_and_authenticate;
-use termihub_core::backends::ssh::handler::SshSession;
+use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, SshSession};
 use termihub_core::config::SshConfig;
 use termihub_core::tunnel::config::{
     DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats,
@@ -74,6 +74,25 @@ pub struct TunnelStatusSnapshot {
     pub reachable_from: ReachableFrom,
 }
 
+/// Everything a forward-kind-specific setup produces once the agent's SSH
+/// session is up: the live forwarder, the session to hold for the tunnel's
+/// lifetime (if any), and the bound-address / reachability to record and report.
+///
+/// This is the only part that differs between local (`-L`), remote (`-R`), and
+/// dynamic (`-D`) starts — the connect / duplicate-check / register scaffold
+/// around it is shared (see [`AgentTunnelRegistry::start`]).
+struct PreparedForward {
+    /// The live forward engine, wrapped in its [`ActiveForwarder`] variant.
+    forwarder: ActiveForwarder,
+    /// The SSH session to hold for the tunnel's lifetime, or `None` when the
+    /// forwarder owns its own session (the remote/`-R` case).
+    session: Option<Arc<SshSession>>,
+    /// The `host:port` the listen socket bound.
+    bound_address: String,
+    /// Who can reach the listen socket.
+    reachable_from: ReachableFrom,
+}
+
 /// Registry of tunnels currently forwarding on this agent, keyed by tunnel id.
 ///
 /// Long-lived, id-keyed, and behind an async `Mutex` — the same shape as the
@@ -91,6 +110,64 @@ impl AgentTunnelRegistry {
         Self::default()
     }
 
+    /// Shared scaffold for the three `start_*` entry points.
+    ///
+    /// Every kind of agent-hosted tunnel is started the same way: reject a
+    /// duplicate `tunnel_id`, open the agent's SSH session (the agent runs the
+    /// SSH client — this is the hop that moves in-network, agent ↔ server,
+    /// instead of desktop ↔ server), hand the session and its forwarded-channel
+    /// registry to `prepare` for the forward-kind-specific setup, then register
+    /// the running tunnel and report its outcome. Only `prepare` differs between
+    /// local (`-L`), remote (`-R`), and dynamic (`-D`); it returns the live
+    /// forwarder plus the bound-address / reachability to record (see
+    /// [`PreparedForward`]).
+    ///
+    /// Fails if a tunnel with `tunnel_id` is already running here, if the SSH
+    /// connect fails, or if `prepare` fails (e.g. bind or forward-request error).
+    async fn start<F, Fut>(
+        &self,
+        tunnel_id: &str,
+        ssh_config: &SshConfig,
+        prepare: F,
+    ) -> Result<TunnelStartOutcome>
+    where
+        F: FnOnce(SshSession, ForwardedChannelRegistry) -> Fut,
+        Fut: std::future::Future<Output = Result<PreparedForward>>,
+    {
+        {
+            let tunnels = self.tunnels.lock().await;
+            if tunnels.contains_key(tunnel_id) {
+                anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
+            }
+        }
+
+        let (session, registry) = connect_and_authenticate(ssh_config)
+            .await
+            .context("agent SSH connect for tunnel failed")?;
+
+        let prepared = prepare(session, registry).await?;
+
+        let mut tunnels = self.tunnels.lock().await;
+        // Re-check under the write lock in case a concurrent start raced us.
+        if tunnels.contains_key(tunnel_id) {
+            anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
+        }
+        tunnels.insert(
+            tunnel_id.to_string(),
+            RunningTunnel {
+                forwarder: prepared.forwarder,
+                _session: prepared.session,
+                bound_address: prepared.bound_address.clone(),
+                reachable_from: prepared.reachable_from,
+            },
+        );
+
+        Ok(TunnelStartOutcome {
+            bound_address: prepared.bound_address,
+            reachable_from: prepared.reachable_from,
+        })
+    }
+
     /// Start a local (`ssh -L`) forward on this agent.
     ///
     /// Opens an SSH session to `ssh_config`'s server, binds the listen socket on
@@ -104,45 +181,18 @@ impl AgentTunnelRegistry {
         ssh_config: &SshConfig,
         forward: &LocalForwardConfig,
     ) -> Result<TunnelStartOutcome> {
-        {
-            let tunnels = self.tunnels.lock().await;
-            if tunnels.contains_key(tunnel_id) {
-                anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
-            }
-        }
-
-        // The agent runs the SSH client — this is the hop that moves in-network
-        // (agent ↔ server) instead of desktop ↔ server.
-        let (session, _registry) = connect_and_authenticate(ssh_config)
-            .await
-            .context("agent SSH connect for tunnel failed")?;
-        let session = Arc::new(session);
-
-        let forwarder = LocalForwarder::start(forward, Arc::clone(&session))
-            .context("failed to bind agent-hosted local forwarder")?;
-
-        let bound_address = format!("{}:{}", forward.local_host, forward.local_port);
-        let reachable_from = classify_reachability(&forward.local_host);
-
-        let mut tunnels = self.tunnels.lock().await;
-        // Re-check under the write lock in case a concurrent start raced us.
-        if tunnels.contains_key(tunnel_id) {
-            anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
-        }
-        tunnels.insert(
-            tunnel_id.to_string(),
-            RunningTunnel {
+        self.start(tunnel_id, ssh_config, |session, _registry| async move {
+            let session = Arc::new(session);
+            let forwarder = LocalForwarder::start(forward, Arc::clone(&session))
+                .context("failed to bind agent-hosted local forwarder")?;
+            Ok(PreparedForward {
                 forwarder: ActiveForwarder::Local(forwarder),
-                _session: Some(session),
-                bound_address: bound_address.clone(),
-                reachable_from,
-            },
-        );
-
-        Ok(TunnelStartOutcome {
-            bound_address,
-            reachable_from,
+                session: Some(session),
+                bound_address: format!("{}:{}", forward.local_host, forward.local_port),
+                reachable_from: classify_reachability(&forward.local_host),
+            })
         })
+        .await
     }
 
     /// Start a remote (`ssh -R`) forward on this agent.
@@ -162,47 +212,23 @@ impl AgentTunnelRegistry {
         ssh_config: &SshConfig,
         forward: &RemoteForwardConfig,
     ) -> Result<TunnelStartOutcome> {
-        {
-            let tunnels = self.tunnels.lock().await;
-            if tunnels.contains_key(tunnel_id) {
-                anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
-            }
-        }
-
-        // The agent runs the SSH client. `-R` needs the forwarded-channel
-        // registry from the same session, so a dedicated (non-shared) session is
-        // used — `RemoteForwarder` takes ownership of it.
-        let (session, registry) = connect_and_authenticate(ssh_config)
-            .await
-            .context("agent SSH connect for tunnel failed")?;
-
-        let forwarder = RemoteForwarder::start_async(forward, session, registry)
-            .await
-            .context("failed to request agent-hosted remote forward")?;
-
-        // The listen socket lives on the SSH server; report the port it actually
-        // bound (an ephemeral port when `remote_port == 0` was requested).
-        let bound_address = format!("{}:{}", forward.remote_host, forwarder.bound_port());
-        let reachable_from = ReachableFrom::SshServer;
-
-        let mut tunnels = self.tunnels.lock().await;
-        if tunnels.contains_key(tunnel_id) {
-            anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
-        }
-        tunnels.insert(
-            tunnel_id.to_string(),
-            RunningTunnel {
+        // `-R` needs the forwarded-channel registry from the same session, so a
+        // dedicated (non-shared) session is used — `RemoteForwarder` takes
+        // ownership of it, hence `session: None` below.
+        self.start(tunnel_id, ssh_config, |session, registry| async move {
+            let forwarder = RemoteForwarder::start_async(forward, session, registry)
+                .await
+                .context("failed to request agent-hosted remote forward")?;
+            // The listen socket lives on the SSH server; report the port it
+            // actually bound (an ephemeral port when `remote_port == 0`).
+            Ok(PreparedForward {
+                bound_address: format!("{}:{}", forward.remote_host, forwarder.bound_port()),
                 forwarder: ActiveForwarder::Remote(forwarder),
-                _session: None,
-                bound_address: bound_address.clone(),
-                reachable_from,
-            },
-        );
-
-        Ok(TunnelStartOutcome {
-            bound_address,
-            reachable_from,
+                session: None,
+                reachable_from: ReachableFrom::SshServer,
+            })
         })
+        .await
     }
 
     /// Start a dynamic (`ssh -D`, SOCKS5) forward on this agent.
@@ -224,45 +250,18 @@ impl AgentTunnelRegistry {
         ssh_config: &SshConfig,
         forward: &DynamicForwardConfig,
     ) -> Result<TunnelStartOutcome> {
-        {
-            let tunnels = self.tunnels.lock().await;
-            if tunnels.contains_key(tunnel_id) {
-                anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
-            }
-        }
-
-        // The agent runs the SSH client — this is the hop that moves in-network
-        // (agent ↔ server) instead of desktop ↔ server.
-        let (session, _registry) = connect_and_authenticate(ssh_config)
-            .await
-            .context("agent SSH connect for tunnel failed")?;
-        let session = Arc::new(session);
-
-        let forwarder = DynamicForwarder::start(forward, Arc::clone(&session))
-            .context("failed to bind agent-hosted dynamic (SOCKS5) forwarder")?;
-
-        let bound_address = format!("{}:{}", forward.local_host, forward.local_port);
-        let reachable_from = classify_reachability(&forward.local_host);
-
-        let mut tunnels = self.tunnels.lock().await;
-        // Re-check under the write lock in case a concurrent start raced us.
-        if tunnels.contains_key(tunnel_id) {
-            anyhow::bail!("tunnel '{tunnel_id}' is already running on this agent");
-        }
-        tunnels.insert(
-            tunnel_id.to_string(),
-            RunningTunnel {
+        self.start(tunnel_id, ssh_config, |session, _registry| async move {
+            let session = Arc::new(session);
+            let forwarder = DynamicForwarder::start(forward, Arc::clone(&session))
+                .context("failed to bind agent-hosted dynamic (SOCKS5) forwarder")?;
+            Ok(PreparedForward {
                 forwarder: ActiveForwarder::Dynamic(forwarder),
-                _session: Some(session),
-                bound_address: bound_address.clone(),
-                reachable_from,
-            },
-        );
-
-        Ok(TunnelStartOutcome {
-            bound_address,
-            reachable_from,
+                session: Some(session),
+                bound_address: format!("{}:{}", forward.local_host, forward.local_port),
+                reachable_from: classify_reachability(&forward.local_host),
+            })
         })
+        .await
     }
 
     /// Stop a running tunnel, returning whether one was found.
