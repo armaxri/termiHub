@@ -486,6 +486,36 @@ mod tests {
         assert!(!cfg.ignore_cert_errors);
     }
 
+    // A secret containing `$`, `${VAR}`, and a leading `~` — all valid password
+    // characters. If the config layer ran it through shell/env/tilde expansion
+    // the `${VAR}` would resolve to the process-environment value (a secret-leak
+    // channel) and the leading `~` would become a home path (corruption), so a
+    // verbatim round-trip is the guarantee this locks (TBE-013 / SEC-001).
+    const SECRET_WITH_METACHARS: &str = "~p@$$${TERMIHUB_TEST_SECRET_LEAK}w0rd";
+
+    #[test]
+    fn rdp_password_is_never_shell_expanded() {
+        // RdpConfig has no `expand()`: the credential deserialized from the
+        // connection settings must reach the sidecar verbatim. Set the leak var
+        // so any accidental `${VAR}` expansion would be caught red-handed.
+        temp_env::with_var(
+            "TERMIHUB_TEST_SECRET_LEAK",
+            Some("leaked-env-value"),
+            || {
+                let cfg: RdpConfig = serde_json::from_value(serde_json::json!({
+                    "host": "h",
+                    "username": "user",
+                    "password": SECRET_WITH_METACHARS,
+                }))
+                .unwrap();
+                assert_eq!(
+                    cfg.password, SECRET_WITH_METACHARS,
+                    "RDP password must be preserved verbatim (no expansion, no env leak)"
+                );
+            },
+        );
+    }
+
     #[test]
     fn zero_port_falls_back_to_default() {
         let cfg = RdpConfig {
