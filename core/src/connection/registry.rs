@@ -164,6 +164,23 @@ impl Default for ConnectionTypeRegistry {
 ///
 /// A host registers its own additional, optional backends on top of these — the
 /// desktop, for example, adds its feature-gated FTP and remote-desktop types.
+///
+/// Every registration below is `#[cfg(feature = "...")]`-gated, so when core is
+/// built with *none* of the backend features (e.g. CI's `ftp`-only isolation
+/// build, which guards #1499) the body is empty and `registry` is legitimately
+/// unused — allow it only in that case. When any backend feature is on the
+/// parameter is used, so a genuinely-unused-param regression would still fire.
+#[cfg_attr(
+    not(any(
+        feature = "local-shell",
+        feature = "serial",
+        feature = "ssh",
+        feature = "telnet",
+        feature = "docker",
+        feature = "wsl",
+    )),
+    allow(unused_variables)
+)]
 pub fn register_core_backends(registry: &mut ConnectionTypeRegistry) {
     // Local shell (PTY-based)
     #[cfg(feature = "local-shell")]
