@@ -56,23 +56,57 @@ impl PluginInfo {
 
 /// Configuration handed to a plugin when creating a new terminal session.
 ///
-/// `config_json` is a **borrowed** JSON document (owned by the host for the
-/// duration of the `plugin_create_backend` call) whose shape matches the
-/// plugin's declared `configSchema` in its manifest. The plugin parses it and
-/// copies out whatever it needs before the call returns; it must not retain the
-/// borrowed pointer afterwards.
+/// Both fields are **borrowed** JSON documents (owned by the host for the
+/// duration of the `plugin_create_backend` call). The plugin parses what it
+/// needs and copies it out before the call returns; it must not retain the
+/// borrowed pointers afterwards.
+///
+/// * `config_json` is the **per-connection** configuration, whose shape matches
+///   the plugin's declared `configSchema`.
+/// * `settings_json` is the **plugin-level** user settings (the manifest's
+///   `settings` block, with the user's stored overrides applied), shared by
+///   every session of the plugin — e.g. a declared `defaultNamespace`. It is an
+///   empty string when the plugin declares no settings and the user set none.
+///
+/// # ABI compatibility
+///
+/// `settings_json` is **appended** after `config_json`, so the layout of the
+/// pre-existing field is unchanged: a plugin built against the earlier
+/// single-field struct that reads only `config_json` keeps working unchanged
+/// (it simply ignores the new field), and the host always writes the full
+/// struct. Because the addition is layout-compatible for readers of the earlier
+/// field, it does not bump [`crate::CURRENT_PLUGIN_API_VERSION`].
 #[repr(C)]
 pub struct PluginSessionConfig {
-    /// JSON configuration for the session, matching the plugin's `configSchema`.
+    /// Per-connection JSON configuration, matching the plugin's `configSchema`.
     pub config_json: FfiStr,
+    /// Plugin-level user settings JSON (manifest `settings` defaults overlaid
+    /// with the user's stored overrides), shared across the plugin's sessions.
+    /// Empty when the plugin declares no settings and none are stored.
+    pub settings_json: FfiStr,
 }
 
 impl PluginSessionConfig {
-    /// Borrow a JSON string as a session config. The result borrows `config_json`.
+    /// Borrow a JSON config string as a session config, delivering **empty**
+    /// plugin-level settings. Preserved for backward compatibility; prefer
+    /// [`with_settings`](Self::with_settings) to also deliver the plugin's
+    /// stored settings. The result borrows `config_json`.
     #[must_use]
     pub fn new(config_json: &str) -> Self {
         Self {
             config_json: FfiStr::new(config_json),
+            settings_json: FfiStr::empty(),
+        }
+    }
+
+    /// Borrow a per-connection `config_json` and the plugin-level `settings_json`
+    /// as a session config. The result borrows both strings, which must outlive
+    /// the `plugin_create_backend` call.
+    #[must_use]
+    pub fn with_settings(config_json: &str, settings_json: &str) -> Self {
+        Self {
+            config_json: FfiStr::new(config_json),
+            settings_json: FfiStr::new(settings_json),
         }
     }
 }

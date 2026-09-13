@@ -23,5 +23,12 @@
         }
       }
     }
+  },
+  "settings": {
+    "defaultPrefix": {
+      "type": "string",
+      "default": "",
+      "description": "Plugin-level prefix used when a connection does not set echoPrefix. Demonstrates a plugin-level setting delivered to the backend at session creation."
+    }
   }
 }

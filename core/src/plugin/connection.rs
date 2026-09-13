@@ -78,6 +78,12 @@ pub struct PluginConnectionType {
     /// (#2028). Defaults to [`ConnectionPolicy::default`]; the host derives it
     /// from the plugin's manifest via [`with_connection_policy`](Self::with_connection_policy).
     connection_policy: ConnectionPolicy,
+    /// The plugin-level user settings JSON delivered to every session of this
+    /// plugin at connect (PLG-008) — the manifest `settings` with the user's
+    /// stored overrides applied. Defaults to `"{}"` (no settings); the host
+    /// resolves it once at load time via
+    /// [`with_plugin_settings`](Self::with_plugin_settings).
+    plugin_settings_json: String,
     /// Current output sink; swapped by
     /// [`subscribe_output`](ConnectionType::subscribe_output). The forwarding
     /// thread reads the latest value each iteration.
@@ -125,9 +131,25 @@ impl PluginConnectionType {
             settings_schema,
             permissions,
             connection_policy: ConnectionPolicy::default(),
+            plugin_settings_json: "{}".to_string(),
             backend: None,
             output_tx: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// Set the plugin-level user settings delivered to every session of this
+    /// type at connect (PLG-008).
+    ///
+    /// The host resolves the effective settings — the manifest `settings`
+    /// defaults overlaid with the user's stored overrides — once at load time
+    /// (see [`resolve_plugin_settings_json`](super::resolve_plugin_settings_json))
+    /// and applies them to every session the factory makes, so a declared
+    /// setting like `defaultNamespace` reaches the backend. Without this call the
+    /// default `"{}"` (no settings) is delivered, so an old plugin is unaffected.
+    #[must_use]
+    pub fn with_plugin_settings(mut self, settings_json: String) -> Self {
+        self.plugin_settings_json = settings_json;
+        self
     }
 
     /// Set the host-side [`ConnectionPolicy`] for sessions of this type (#2028).
@@ -358,7 +380,7 @@ impl ConnectionType for PluginConnectionType {
 
         let backend = self
             .library
-            .create_backend(&config_json, output, bridge)
+            .create_backend(&config_json, &self.plugin_settings_json, output, bridge)
             .map_err(map_plugin_error)?;
 
         let output_tx = Arc::clone(&self.output_tx);

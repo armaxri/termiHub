@@ -128,6 +128,90 @@ fn install(
     }
 }
 
+/// A manifest like [`manifest_json`], but additionally declaring a plugin-level
+/// `settings` block (the `defaultNamespace` shape from the PLG-008 finding).
+fn manifest_json_with_settings(id: &str, name: &str, connection_type: &str) -> String {
+    format!(
+        r#"{{
+            "id": "{id}",
+            "name": "{name}",
+            "version": "1.0.0",
+            "author": "test",
+            "description": "echo backend fixture",
+            "license": "MIT",
+            "apiVersion": "1.0",
+            "platforms": ["windows", "linux", "macos"],
+            "permissions": ["terminal"],
+            "extensions": {{
+                "terminalBackend": {{
+                    "connectionType": "{connection_type}",
+                    "displayName": "Echo",
+                    "configSchema": {{ "type": "object", "properties": {{}} }}
+                }}
+            }},
+            "settings": {{
+                "defaultNamespace": {{
+                    "type": "string",
+                    "default": "default",
+                    "description": "Namespace used when none is set."
+                }}
+            }}
+        }}"#
+    )
+}
+
+/// Install a plugin from an explicit manifest source (so tests can vary the
+/// `settings` block), copying the built `lib` into `backend/` and returning the
+/// [`InstalledPlugin`] the host consumes.
+fn install_with_manifest(root: &Path, lib: &Path, id: &str, manifest_src: &str) -> InstalledPlugin {
+    let dir = root.join(id);
+    let backend = dir.join("backend");
+    std::fs::create_dir_all(&backend).expect("create plugin backend dir");
+    std::fs::copy(lib, backend.join(artifact_name())).expect("copy backend library");
+    std::fs::write(dir.join("manifest.json"), manifest_src).expect("write manifest");
+
+    let manifest = parse_manifest(manifest_src).expect("fixture manifest should parse");
+    manifest
+        .validate()
+        .expect("fixture manifest should validate");
+    InstalledPlugin {
+        manifest,
+        state: PluginState::Installed,
+        error_message: None,
+        installed_at: 0,
+    }
+}
+
+/// Write the per-plugin stored settings store (`plugin-settings.json`) under
+/// `root`, mapping each plugin id to its stored settings object.
+fn write_settings_store(root: &Path, id: &str, settings: serde_json::Value) {
+    let store = serde_json::json!({ "plugins": { id: settings } });
+    std::fs::write(
+        root.join("plugin-settings.json"),
+        serde_json::to_string_pretty(&store).unwrap(),
+    )
+    .expect("write plugin-settings.json");
+}
+
+/// Connect a plugin session with the `settings` probe and return the plugin-level
+/// settings JSON the backend reported it received (the `SETTINGS:<json>` line),
+/// parsed back into a JSON value.
+async fn probe_delivered_settings(conn: &mut Box<dyn ConnectionType>) -> serde_json::Value {
+    let mut rx = conn.subscribe_output();
+    conn.connect(serde_json::json!({ "probe": "settings" }))
+        .await
+        .expect("connect should succeed");
+    let out = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("settings line should arrive within the timeout")
+        .expect("output channel should yield the settings line");
+    let text = String::from_utf8(out).expect("settings line is UTF-8");
+    let json = text
+        .strip_prefix("SETTINGS:")
+        .expect("line should start with SETTINGS:");
+    serde_json::from_str(json).expect("delivered settings should be valid JSON")
+}
+
 /// Lay down a plugin `id` on disk with a valid manifest that declares a terminal
 /// backend but **no** backend library, so loading it fails with
 /// `LibraryNotFound` — used to prove a broken enabled plugin surfaces as `Error`
@@ -336,4 +420,70 @@ async fn sessions_are_independent_so_closing_one_leaves_the_other_running() {
     assert_eq!(out, b"still alive");
 
     second.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn declared_plugin_settings_are_delivered_to_the_backend_at_connect() {
+    // PLG-008: a plugin that declares plugin-level `settings` (e.g.
+    // `defaultNamespace`) must have those settings — manifest defaults overlaid
+    // with the user's stored overrides — delivered to its native backend at
+    // session creation. Before the fix, only the per-connection config reached
+    // the backend, so a declared setting silently did nothing.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let lib = build_fixture(&tmp.path().join("target"));
+    let root = tmp.path().join("plugins");
+    std::fs::create_dir_all(&root).unwrap();
+
+    // The user overrode `defaultNamespace`; a stored value must win over the
+    // manifest default. Write the store BEFORE loading, since the host resolves
+    // the effective settings once at load time.
+    write_settings_store(
+        &root,
+        "echo-a",
+        serde_json::json!({ "defaultNamespace": "kube-system" }),
+    );
+
+    let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
+    let host = PluginHost::new(root.clone(), Arc::clone(&registry));
+    let plugin = install_with_manifest(
+        &root,
+        &lib,
+        "echo-a",
+        &manifest_json_with_settings("echo-a", "Echo A", "echo"),
+    );
+    host.load(&plugin).expect("plugin should load");
+
+    let mut conn = registry.lock().unwrap().create("echo").unwrap();
+    let delivered = probe_delivered_settings(&mut conn).await;
+    assert_eq!(
+        delivered.get("defaultNamespace").and_then(|v| v.as_str()),
+        Some("kube-system"),
+        "the stored override must be delivered to the backend, got {delivered:?}"
+    );
+    conn.disconnect().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_plugin_without_declared_settings_still_creates_a_session() {
+    // Back-compat: a plugin that declares no `settings` and has none stored must
+    // still create a session fine; an empty `{}` object reaches the backend.
+    let tmp = tempfile::TempDir::new().unwrap();
+    let lib = build_fixture(&tmp.path().join("target"));
+    let root = tmp.path().join("plugins");
+    std::fs::create_dir_all(&root).unwrap();
+
+    let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
+    let host = PluginHost::new(root.clone(), Arc::clone(&registry));
+    // `install` uses the settings-less manifest; no plugin-settings.json is written.
+    host.load(&install(&root, &lib, "echo-a", "Echo A", "echo"))
+        .expect("plugin should load");
+
+    let mut conn = registry.lock().unwrap().create("echo").unwrap();
+    let delivered = probe_delivered_settings(&mut conn).await;
+    assert!(
+        delivered.as_object().is_some_and(|m| m.is_empty()),
+        "a plugin with no settings should receive an empty object, got {delivered:?}"
+    );
+    assert!(conn.is_connected());
+    conn.disconnect().await.unwrap();
 }
