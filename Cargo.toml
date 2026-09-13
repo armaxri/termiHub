@@ -45,6 +45,24 @@ resolver = "2"
 [profile.dev]
 debug = 0
 
+# Fail fast on integer overflow in shipping (release) builds.
+#
+# Cargo's default release profile sets `overflow-checks = false`, so a `+`/`-`/`*`
+# that would panic in debug/tests silently *wraps* to a wrong value in the
+# shipped binary. termiHub is a safety-critical build (ventilator-grade): a
+# silent wrap to a corrupt value is strictly worse than a fail-fast panic. So we
+# opt release into the same overflow checks debug already runs (ERR-010).
+#
+# Intended wrap-around (tftp block counters, mock frame index, backoff/hash math)
+# already uses explicit `wrapping_*` / `saturating_*` / `checked_*`, so it is
+# unaffected — only *un*intended overflow now panics instead of corrupting.
+#
+# Note: this covers arithmetic operators only, not `as` casts (which truncate
+# regardless of this flag). Perf cost is a couple of extra bounds per arithmetic
+# op — negligible for a terminal hub, and not on any measured hot loop.
+[profile.release]
+overflow-checks = true
+
 [workspace.dependencies]
 async-trait = "0.1"
 serde = { version = "1", features = ["derive"] }
