@@ -205,6 +205,28 @@ impl EmbeddedServerService {
             .emit(ServiceEvent::new(STATUS_EVENT_KIND, state));
     }
 
+    /// Set the lifecycle [`ServiceStatus`] and broadcast the matching
+    /// [`ServerState`] in one step.
+    ///
+    /// The [`ServerStatus`]/`error` pair is derived from `status` via the single
+    /// [`ServerStatus::from_service_status`] projection, so the two enums that
+    /// model this one lifecycle can never drift apart at a transition site
+    /// (DUP-022). The emit is skipped before the first start (no config yet);
+    /// `self.status` is always updated.
+    fn set_status_and_emit(
+        &mut self,
+        status: ServiceStatus,
+        stats: ServerStats,
+        started_at: Option<String>,
+    ) {
+        self.status = status.clone();
+        if let Some(config) = &self.config {
+            let (server_status, error) = ServerStatus::from_service_status(&status);
+            let state = build_status_state(&config.id, server_status, error, stats, started_at);
+            self.emit_state(state);
+        }
+    }
+
     /// Attempt a quick bind to check whether a config's port is available.
     ///
     /// Static so the pre-flight check can be exercised without a live service.
@@ -249,15 +271,8 @@ impl EmbeddedServerService {
         // "port already in use" case.
         Self::check_port_config(&config)?;
 
-        self.status = ServiceStatus::Starting;
         self.config = Some(config.clone());
-        self.emit_state(build_status_state(
-            &config.id,
-            ServerStatus::Starting,
-            None,
-            ServerStats::default(),
-            None,
-        ));
+        self.set_status_and_emit(ServiceStatus::Starting, ServerStats::default(), None);
 
         let shutdown = ShutdownSignal::new();
         let stats = AtomicServerStats::new();
@@ -320,14 +335,7 @@ impl EmbeddedServerService {
                     started_at: started_at.clone(),
                     error: error_slot,
                 });
-                self.status = ServiceStatus::Running;
-                self.emit_state(build_status_state(
-                    &config.id,
-                    ServerStatus::Running,
-                    None,
-                    snapshot,
-                    Some(started_at),
-                ));
+                self.set_status_and_emit(ServiceStatus::Running, snapshot, Some(started_at));
                 tracing::info!(server_id = %config.id, "Embedded server started");
                 Ok(())
             }
@@ -336,15 +344,12 @@ impl EmbeddedServerService {
                 // did bind but timed out) and leave nothing active, so the server
                 // is reported as Error rather than a stuck Running.
                 shutdown.trigger();
-                self.status = ServiceStatus::Failed(reason.clone());
                 tracing::warn!(server_id = %config.id, "Embedded server failed to start: {reason}");
-                self.emit_state(build_status_state(
-                    &config.id,
-                    ServerStatus::Error,
-                    Some(reason.clone()),
+                self.set_status_and_emit(
+                    ServiceStatus::Failed(reason.clone()),
                     ServerStats::default(),
                     None,
-                ));
+                );
                 Err(EmbeddedServerError::new(reason))
             }
         }
@@ -359,19 +364,9 @@ impl EmbeddedServerService {
     pub fn shutdown(&mut self) {
         if let Some(active) = self.active.take() {
             active.shutdown.trigger();
-            if let Some(config) = &self.config {
-                self.status = ServiceStatus::Stopped;
-                self.events.emit(ServiceEvent::new(
-                    STATUS_EVENT_KIND,
-                    build_status_state(
-                        &config.id,
-                        ServerStatus::Stopped,
-                        None,
-                        ServerStats::default(),
-                        None,
-                    ),
-                ));
-                tracing::info!(server_id = %config.id, "Embedded server stopped");
+            if let Some(id) = self.config.as_ref().map(|c| c.id.clone()) {
+                self.set_status_and_emit(ServiceStatus::Stopped, ServerStats::default(), None);
+                tracing::info!(server_id = %id, "Embedded server stopped");
             }
         }
         self.status = ServiceStatus::Stopped;

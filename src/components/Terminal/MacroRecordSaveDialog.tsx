@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Modal, Button, Input, Field } from "@/components/ui";
+import { parseTags } from "@/utils/parseTags";
 import "./MacroRecordSaveDialog.css";
 
 /** Metadata the user supplies when saving a recorded macro. */
@@ -18,20 +19,6 @@ export interface MacroRecordSaveDialogProps {
   onSave: (meta: RecordedMacroMeta) => void;
   /** Called when the user cancels — the recording is discarded. */
   onCancel: () => void;
-}
-
-/** Split a comma-separated tag string into a trimmed, de-duplicated list. */
-function parseTags(raw: string): string[] {
-  const seen = new Set<string>();
-  const tags: string[] = [];
-  for (const part of raw.split(",")) {
-    const tag = part.trim();
-    if (tag && !seen.has(tag)) {
-      seen.add(tag);
-      tags.push(tag);
-    }
-  }
-  return tags;
 }
 
 /**

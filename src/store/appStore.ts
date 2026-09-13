@@ -69,9 +69,6 @@ import {
   AgentDefinitionInfo,
   getConnectionTypes,
   getAppMode as apiGetAppMode,
-  checkForUpdates as apiCheckForUpdates,
-  skipUpdateVersion as apiSkipUpdateVersion,
-  clearSkippedVersion as apiClearSkippedVersion,
   startPersistentSession as apiStartPersistentSession,
   stopPersistentSession as apiStopPersistentSession,
   attachPersistentTab as apiAttachPersistentTab,
@@ -133,6 +130,7 @@ import { createConnectionTreeSlice, ConnectionTreeSlice } from "./slices/connect
 import { createMonitoringSlice, MonitoringSlice } from "./slices/monitoringSlice";
 import { createWorkflowsSlice, WorkflowsSlice } from "./slices/workflowsSlice";
 import { createCredentialStoreSlice, CredentialStoreSlice } from "./slices/credentialStoreSlice";
+import { createUpdateCheckerSlice, UpdateCheckerSlice } from "./slices/updateCheckerSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -393,7 +391,8 @@ export interface AppState
     MonitoringSlice,
     WorkflowsSlice,
     WorkspacesSlice,
-    CredentialStoreSlice {
+    CredentialStoreSlice,
+    UpdateCheckerSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -1330,14 +1329,11 @@ export interface AppState
   portableDataDir: string | null;
   loadAppMode: () => Promise<void>;
 
-  // Update checker
-  updateCheckState: "idle" | "checking" | "up-to-date" | "available" | "error";
-  updateInfo: import("@/types/connection").UpdateInfo | null;
-  updateNotificationDismissed: boolean;
-  checkForUpdates: (force: boolean) => Promise<void>;
-  dismissUpdateNotification: () => void;
-  skipUpdate: () => Promise<void>;
-  clearSkippedUpdateVersion: () => Promise<void>;
+  // Update checker — the app-update availability probe + skip/dismiss lifecycle
+  // (updateCheckState / updateInfo / updateNotificationDismissed /
+  // checkForUpdates / dismissUpdateNotification / skipUpdate /
+  // clearSkippedUpdateVersion) live in UpdateCheckerSlice (ARCH-001/FES-011,
+  // extracted under #2077 via #2881).
 }
 
 let layoutPersistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -2447,6 +2443,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createWorkflowsSlice(set, get, store),
     ...createWorkspacesSlice(set, get, store),
     ...createCredentialStoreSlice(set, get, store),
+    ...createUpdateCheckerSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -6676,63 +6673,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
           "app_store",
           `Failed to load app mode: ${err instanceof Error ? err.message : String(err)}`
         );
-      }
-    },
-
-    // Update checker
-    updateCheckState: "idle",
-    updateInfo: null,
-    updateNotificationDismissed: false,
-    checkForUpdates: async (force: boolean) => {
-      set({ updateCheckState: "checking" });
-      try {
-        const info = await apiCheckForUpdates(force);
-        if (info.available) {
-          const currentSettings = currentSettingsView();
-          const skippedVersion = currentSettings.updates?.skippedVersion;
-          // If the update is available but the user previously skipped this exact
-          // version (and it's not a security patch), keep the dot visible but don't
-          // reset the dismissed flag so no popup re-appears.
-          const isSkipped = !info.isSecurity && skippedVersion === info.latestVersion;
-          set({
-            updateCheckState: "available",
-            updateInfo: info,
-            // Reset dismissed flag so the popup shows for newly detected versions,
-            // unless the user already skipped this version.
-            updateNotificationDismissed: isSkipped,
-          });
-        } else {
-          set({ updateCheckState: "up-to-date", updateInfo: info });
-        }
-      } catch {
-        set({ updateCheckState: "error" });
-        frontendLog("update", "Update check failed");
-      }
-    },
-    dismissUpdateNotification: () => set({ updateNotificationDismissed: true }),
-    skipUpdate: async () => {
-      const { updateInfo } = get();
-      if (!updateInfo) return;
-      try {
-        await apiSkipUpdateVersion(updateInfo.latestVersion);
-        // Refresh the persisted settings so skippedVersion is current, then reflect
-        // it into the authoritative region (#2404) — no `appStore` slice to set.
-        const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
-        set({ updateNotificationDismissed: true });
-        mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
-      } catch (err) {
-        frontendLog("update", `Failed to skip version: ${err}`);
-      }
-    },
-    clearSkippedUpdateVersion: async () => {
-      try {
-        await apiClearSkippedVersion();
-        const updatedSettings = await import("@/services/storage").then((m) => m.getSettings());
-        // Reflect the refreshed persisted document into the authoritative region
-        // (#2404) — no `appStore` slice to set.
-        mirrorSettingsIntent("settings.replace", { settings: updatedSettings });
-      } catch (err) {
-        frontendLog("update", `Failed to clear skipped version: ${err}`);
       }
     },
   };

@@ -34,3 +34,4 @@ pub mod session;
 pub mod tool;
 #[cfg(feature = "ssh")]
 pub mod tunnel;
+pub mod util;
