@@ -1,0 +1,103 @@
+# cargo-deny configuration for the workspace-EXCLUDED rdp-sidecar crate.
+# https://embarkstudios.github.io/cargo-deny/
+#
+# The sidecar (`termihub-rdp-helper`) is deliberately kept out of the Cargo
+# workspace and carries its OWN Cargo.lock (IronRDP's CredSSP crypto and russh
+# pin incompatible RustCrypto pre-releases). It is cross-built and bundled into
+# every release via Tauri `externalBin`, so it ships to users — but because it
+# is workspace-excluded, the root `cargo deny` / `cargo audit` / clippy jobs
+# never see it. This config gives the sidecar its own supply-chain gate over its
+# independent lockfile, mirroring the workspace gate in the repo-root deny.toml
+# (see .github/workflows/code-quality.yml). CI runs, from `rdp-sidecar/`:
+#   cargo deny check advisories bans licenses sources
+#
+# Four gates:
+#   - advisories: YANKED-crate gate + RUSTSEC vulnerabilities. A silently
+#     withdrawn or vulnerable transitive dep surfaces loudly instead of shipping.
+#   - bans: multiple versions are allowed (a large tree naturally carries them).
+#   - licenses: every crate must resolve to an allowed license, so an
+#     unknown/restrictive license cannot slip into the distributed binary.
+#   - sources: every crate must come from crates.io.
+
+[advisories]
+# A yanked crate in the lockfile fails CI (this is how the chacha20 0.10.1 yank
+# surfaced; resolved to 0.10.2 via `cargo update -p chacha20`).
+yanked = "deny"
+
+# Unmaintained-crate advisories are NOT gated here, matching the root config:
+# the tree carries a set of them no local change can clear (gtk3 bindings,
+# proc-macro-error, ...). cargo-audit likewise does not fail on unmaintained.
+unmaintained = "none"
+
+# RUSTSEC advisories accepted as a conscious release sign-off. Each has a
+# documented rationale below; keep this list minimal and revisit at each
+# dependency bump.
+ignore = [
+    # RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (transitive via
+    # picky/sspi -> IronRDP's CredSSP auth). Accepted as a release sign-off, same
+    # as the workspace (repo-root deny.toml + .cargo/audit.toml). "No safe
+    # upgrade is available" — `rsa` here is a pre-release `0.10.0-rc.x` pinned by
+    # the IronRDP/sspi stack, and the advisory has no fixed release on that line.
+    # The sidechannel is a private-key RSA *decryption* timing leak; the RDP
+    # CredSSP client validates the server's public key and does not perform
+    # attacker-observable private-key decryption through this crate.
+    "RUSTSEC-2023-0071",
+    # RUSTSEC-2026-0194 / RUSTSEC-2026-0195: quadratic attribute-name check and
+    # unbounded namespace-declaration allocation in `quick-xml < 0.41.0`. Both
+    # are memory/CPU DoS reachable only when quick-xml parses UNTRUSTED XML at
+    # runtime. In this tree quick-xml is a *build-time proc-macro* dependency
+    # only: it is pulled via wayland-scanner (wl-clipboard-rs -> wayland-*) to
+    # generate Wayland protocol bindings from the trusted, in-crate protocol XML
+    # at compile time on Linux. It never sees RDP-server or other untrusted
+    # input in the shipped binary, so neither advisory is reachable at runtime.
+    # The fix needs quick-xml >= 0.41.0, a semver-incompatible bump gated behind
+    # an upstream wayland-scanner release (wayland-scanner 0.31.10 pins ^0.39),
+    # so `cargo update -p quick-xml` cannot resolve it. Tracked for a dependency
+    # bump in the follow-up filed with PKG-013.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+]
+
+[licenses]
+# License allowlist for the distributed sidecar binary. Mirrors the root
+# workspace allowlist; every license currently in the sidecar's transitive tree
+# resolves to one of these. A crate with a disallowed (e.g. GPL/AGPL) license
+# fails CI. `r-efi` is `MIT OR Apache-2.0 OR LGPL-2.1-or-later`, so it resolves
+# to MIT/Apache and its LGPL arm is never selected.
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+# The first-party crates (termihub-rdp-sidecar, termihub-core) carry no
+# `license` field and read as "Unlicensed". They are `publish = false`, covered
+# by the repository's MIT LICENSE, and not a third-party licensing concern.
+private = { ignore = true }
+
+[sources]
+# Every crate must come from crates.io. An unexpected registry or a git
+# dependency (a common supply-chain injection vector) fails CI.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+
+[bans]
+# Multiple versions of a crate are common in a large tree (Cargo allows one
+# version per major) and are not a supply-chain signal on their own, so they do
+# not gate CI here — matching the root config.
+multiple-versions = "allow"
+wildcards = "allow"
