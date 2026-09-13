@@ -399,6 +399,51 @@ mod tests {
         assert!(!cfg.prefers_raw());
     }
 
+    // A secret containing `$`, `${VAR}`, and a leading `~` — all valid password
+    // characters. If any field were run through shell/env/tilde expansion the
+    // `${VAR}` would resolve to the process-environment value (a secret-leak
+    // channel) and the leading `~` would become a home path (corruption), so a
+    // verbatim round-trip is the guarantee this locks (TBE-013 / SEC-001).
+    const SECRET_WITH_METACHARS: &str = "~p@$$${TERMIHUB_TEST_SECRET_LEAK}w0rd";
+
+    #[test]
+    fn vnc_secret_fields_are_never_shell_expanded() {
+        // VncConfig has no `expand()`: neither the RFB `password` nor the SSH
+        // tunnel `ssh_password` may ever be env/tilde-expanded. Set the leak var
+        // so any accidental `${VAR}` expansion would be caught red-handed.
+        temp_env::with_var(
+            "TERMIHUB_TEST_SECRET_LEAK",
+            Some("leaked-env-value"),
+            || {
+                let cfg: VncConfig = serde_json::from_value(serde_json::json!({
+                    "host": "h",
+                    "password": SECRET_WITH_METACHARS,
+                    "useSshTunnel": true,
+                    "sshHost": "gateway",
+                    "sshUsername": "admin",
+                    "sshAuthMethod": "password",
+                    "sshPassword": SECRET_WITH_METACHARS,
+                }))
+                .unwrap();
+                assert_eq!(
+                    cfg.password, SECRET_WITH_METACHARS,
+                    "VNC RFB password must be preserved verbatim (no expansion, no env leak)"
+                );
+                assert_eq!(
+                    cfg.ssh_password, SECRET_WITH_METACHARS,
+                    "VNC SSH-tunnel password must be preserved verbatim (no expansion, no env leak)"
+                );
+                // The gateway secret reaches SSH auth via `tunnel_ssh_config()`;
+                // that builder must carry it through untouched too.
+                assert_eq!(
+                    cfg.tunnel_ssh_config().password.as_deref(),
+                    Some(SECRET_WITH_METACHARS),
+                    "tunnel SSH config must carry the gateway password verbatim"
+                );
+            },
+        );
+    }
+
     #[test]
     fn display_overrides_port() {
         let cfg: VncConfig = serde_json::from_value(serde_json::json!({
