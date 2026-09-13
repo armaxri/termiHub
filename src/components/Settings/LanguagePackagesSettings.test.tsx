@@ -159,6 +159,7 @@ describe("LanguagePackagesSettings", () => {
     render();
 
     const searchInput = query("lang-pkg-search") as HTMLInputElement;
+    expect(searchInput.classList.contains("ui-input")).toBe(true);
     act(() => {
       searchInput.value = "astro";
       searchInput.dispatchEvent(new Event("input", { bubbles: true }));
@@ -168,6 +169,32 @@ describe("LanguagePackagesSettings", () => {
 
     // astro install button should still exist
     expect(query("lang-pkg-install-astro")).not.toBeNull();
+  });
+
+  it("clears the query via the SearchInput clear button", () => {
+    render();
+
+    const searchInput = query("lang-pkg-search") as HTMLInputElement;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    act(() => {
+      setter.call(searchInput, "zzz-no-such-language");
+      searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    render();
+
+    // A non-matching query narrows the list to nothing and reveals the clear button.
+    const clear = container.querySelector<HTMLButtonElement>(".ui-search-input__clear")!;
+    expect(clear).not.toBeNull();
+
+    act(() => clear.click());
+    render();
+
+    // Clearing restores the full catalog (a built-in package row is present again).
+    expect((query("lang-pkg-search") as HTMLInputElement).value).toBe("");
+    expect(container.querySelector(".ui-search-input__clear")).toBeNull();
   });
 
   it("hides all content when installedLanguagePackages not in visibleFields", () => {
