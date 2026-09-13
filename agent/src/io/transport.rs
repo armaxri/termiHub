@@ -1,5 +1,4 @@
-use std::io;
-
+use termihub_core::ipc::{read_line_resumable, LineOutcome};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
@@ -37,7 +36,7 @@ where
     // Bytes of a not-yet-complete NDJSON line, carried across loop iterations.
     // Because it lives *outside* the `select!` future, it survives that future
     // being dropped when the notification branch wins the race — see
-    // [`read_ndjson_line`] for why that matters (#1559).
+    // [`termihub_core::ipc::read_line_resumable`] for why that matters (#1559).
     let mut pending: Vec<u8> = Vec::new();
 
     loop {
@@ -47,7 +46,7 @@ where
                 break;
             }
 
-            result = read_ndjson_line(reader, &mut pending, MAX_LINE_SIZE) => {
+            result = read_line_resumable(reader, &mut pending, MAX_LINE_SIZE) => {
                 let line = match result? {
                     LineOutcome::Eof => {
                         debug!("Reader closed (EOF), exiting transport loop");
@@ -89,127 +88,6 @@ where
     Ok(())
 }
 
-/// Read one newline-delimited line, **cancellation-safe** in a `select!`.
-///
-/// This exists because [`AsyncBufReadExt::read_line`] is *not* cancellation
-/// safe: when it is used as a `select!` branch and another branch (here, an
-/// outbound notification) completes first, the bytes it has already consumed
-/// from the reader are appended to its output buffer and then lost — silently
-/// dropping the front of an in-flight request. Under a client that fragments a
-/// request across several TCP segments (and any request can be split under
-/// load), the surviving tail is then parsed as its own frame, e.g. a bare
-/// `"id"` where a `Request` struct was expected. That is the #1559 flake: rare
-/// locally, but a hard failure whenever a notification races a partially
-/// received `connection.close`.
-///
-/// The fix is to keep the partial-line accumulator (`pending`) *outside* the
-/// future and to only ever `await` on [`AsyncBufReadExt::fill_buf`], which is
-/// cancellation safe — it never consumes bytes it does not hand back. Bytes are
-/// `consume`d synchronously, with no intervening await, so cancelling this
-/// future can never lose data: whatever was consumed is already in `pending`.
-///
-/// Outcome of reading one NDJSON line under a size cap.
-#[derive(Debug)]
-enum LineOutcome {
-    /// A complete line — newline-terminated, or a trailing line delivered at
-    /// EOF — whose length is within the cap. The trailing newline is stripped.
-    Line(String),
-    /// The line exceeded the cap. Any buffered bytes were dropped and the rest
-    /// of the over-long line was discarded up to (and including) its terminating
-    /// newline, so the caller can reject it and keep serving the connection
-    /// without ever having buffered the whole thing.
-    TooLarge,
-    /// Clean EOF with no buffered bytes.
-    Eof,
-}
-
-/// Read one newline-delimited line, **cancellation-safe** in a `select!` and
-/// **bounded** to `max_len` resident bytes.
-///
-/// The cap is enforced *while reading*, not after: once the current line would
-/// exceed `max_len`, `pending` is cleared and subsequent bytes are discarded
-/// (never buffered) until the terminating newline. This keeps resident memory at
-/// ~`max_len` regardless of how much a peer sends before a newline. A peer that
-/// streams bytes without ever sending one used to grow `pending` without limit —
-/// the 1 MiB size check ran only in the caller, *after* the whole line had been
-/// assembled — which was a memory-exhaustion denial-of-service against a daemon
-/// that parses framed bytes straight off a socket (#2352). The sibling binary
-/// frame protocol ([`crate::daemon::protocol`]) already rejects an over-limit
-/// length before allocating; this brings the NDJSON path in line.
-///
-/// Returns [`LineOutcome::Line`] for a complete line within the cap,
-/// [`LineOutcome::TooLarge`] when the cap was exceeded (bytes discarded to the
-/// next newline; the connection may continue), or [`LineOutcome::Eof`] at a
-/// clean EOF with no buffered bytes.
-///
-/// Cancellation safety (the #1559 property) is preserved for lines within the
-/// cap: bytes are appended to `pending` before the reader is `consume`d, with no
-/// intervening await, so a cancelled future never loses buffered data. In the
-/// over-size discard path bytes are dropped rather than retained, but those
-/// belong to an already-rejected line, so no valid message is ever lost.
-async fn read_ndjson_line<R>(
-    reader: &mut R,
-    pending: &mut Vec<u8>,
-    max_len: usize,
-) -> io::Result<LineOutcome>
-where
-    R: AsyncBufReadExt + Unpin,
-{
-    // Whether the current line has already crossed the cap. A partial line
-    // carried over from a cancelled read is always within the cap, but never
-    // trust that blindly.
-    let mut over = pending.len() > max_len;
-    loop {
-        let available = reader.fill_buf().await?;
-        if available.is_empty() {
-            // EOF.
-            if over {
-                pending.clear();
-                return Ok(LineOutcome::TooLarge);
-            }
-            // A trailing line without a newline is still delivered once; an
-            // empty accumulator means a clean close.
-            if pending.is_empty() {
-                return Ok(LineOutcome::Eof);
-            }
-            let line = String::from_utf8(std::mem::take(pending))
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            return Ok(LineOutcome::Line(line));
-        }
-
-        if let Some(idx) = available.iter().position(|&b| b == b'\n') {
-            // A complete line ends here. If it (or an earlier chunk) crossed the
-            // cap, discard it up to and including the newline and report the
-            // overflow; otherwise hand it back.
-            if over || pending.len().saturating_add(idx) > max_len {
-                reader.consume(idx + 1);
-                pending.clear();
-                return Ok(LineOutcome::TooLarge);
-            }
-            pending.extend_from_slice(&available[..idx]);
-            reader.consume(idx + 1);
-            let line = String::from_utf8(std::mem::take(pending))
-                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
-            return Ok(LineOutcome::Line(line));
-        }
-
-        // No newline yet. Buffer the chunk unless doing so would cross the cap,
-        // in which case drop what we have and switch to discard-until-newline
-        // mode. `available` is a borrow of the reader, so finish using it before
-        // consuming.
-        let len = available.len();
-        if over {
-            // Already discarding: drop this chunk.
-        } else if pending.len().saturating_add(len) > max_len {
-            over = true;
-            pending.clear();
-        } else {
-            pending.extend_from_slice(available);
-        }
-        reader.consume(len);
-    }
-}
-
 /// Write a pre-serialised JSON string as an NDJSON line to the writer.
 ///
 /// Delegates to the shared [`termihub_core::ipc::write_line`] framing helper so
@@ -242,144 +120,12 @@ mod tests {
         assert_eq!(parsed["id"], 1);
     }
 
-    /// [`read_ndjson_line`] reassembles a request delivered in several chunks.
-    #[tokio::test]
-    async fn read_ndjson_line_reassembles_fragmented_line() {
-        let (mut client, server) = tokio::io::duplex(1024);
-        let mut reader = BufReader::new(server);
-        let mut pending = Vec::new();
-
-        client.write_all(b"{\"a\":1").await.unwrap();
-        client.write_all(b",\"b\":2}\n").await.unwrap();
-
-        let line = match read_ndjson_line(&mut reader, &mut pending, MAX_LINE_SIZE)
-            .await
-            .unwrap()
-        {
-            LineOutcome::Line(line) => line,
-            other => panic!("expected a complete line, got {other:?}"),
-        };
-        assert_eq!(line, r#"{"a":1,"b":2}"#);
-        assert!(
-            pending.is_empty(),
-            "accumulator must be drained after a line"
-        );
-    }
-
-    /// A line larger than the cap, delivered without a newline, must be rejected
-    /// as [`LineOutcome::TooLarge`] and never fully buffered — the
-    /// memory-exhaustion regression for #2352. Uses a tiny cap and a body many
-    /// times larger so the pre-fix unbounded accumulation would have retained
-    /// the whole 100 KiB blob.
-    #[tokio::test]
-    async fn read_ndjson_line_rejects_oversize_line_without_unbounded_buffering() {
-        const CAP: usize = 64;
-        let (mut client, server) = tokio::io::duplex(64 * 1024);
-        let mut reader = BufReader::new(server);
-        let mut pending = Vec::new();
-
-        // Stream far more than the cap with no newline, then terminate the line.
-        // Written from a task because the reader must drain the pipe concurrently.
-        let writer = tokio::spawn(async move {
-            client.write_all(&vec![b'x'; 100_000]).await.unwrap();
-            client.write_all(b"\n").await.unwrap();
-            client // keep the writer alive until the read completes
-        });
-
-        let outcome = read_ndjson_line(&mut reader, &mut pending, CAP)
-            .await
-            .unwrap();
-        assert!(
-            matches!(outcome, LineOutcome::TooLarge),
-            "over-size line must be rejected, got {outcome:?}"
-        );
-        assert!(
-            pending.is_empty(),
-            "accumulator must be cleared after an over-size line, not left holding it"
-        );
-        let _client = writer.await.unwrap();
-    }
-
-    /// After an over-size line is rejected, the connection must keep working: a
-    /// normal line that follows still parses. Guards the "reject and continue"
-    /// contract for #2352.
-    #[tokio::test]
-    async fn read_ndjson_line_recovers_after_oversize_line() {
-        const CAP: usize = 32;
-        let (mut client, server) = tokio::io::duplex(64 * 1024);
-        let mut reader = BufReader::new(server);
-        let mut pending = Vec::new();
-
-        // An over-size line, then a normal one — both newline-terminated.
-        client.write_all(&vec![b'A'; 1000]).await.unwrap();
-        client.write_all(b"\n").await.unwrap();
-        client.write_all(b"{\"ok\":true}\n").await.unwrap();
-
-        let first = read_ndjson_line(&mut reader, &mut pending, CAP)
-            .await
-            .unwrap();
-        assert!(
-            matches!(first, LineOutcome::TooLarge),
-            "first (over-size) line must be rejected, got {first:?}"
-        );
-
-        match read_ndjson_line(&mut reader, &mut pending, CAP)
-            .await
-            .unwrap()
-        {
-            LineOutcome::Line(line) => assert_eq!(line, r#"{"ok":true}"#),
-            other => panic!("line after an over-size one must still parse, got {other:?}"),
-        }
-    }
-
-    /// The #1559 mechanism, isolated: a partially received line must survive
-    /// [`read_ndjson_line`]'s future being **dropped** mid-read (as happens when
-    /// a `select!` notification branch wins). Simulated by letting a `sleep`
-    /// branch win the race while only the first fragment has arrived, then
-    /// delivering the rest. With the old non-cancellation-safe `read_line`, the
-    /// consumed prefix would be lost and the tail would frame as a bad request.
-    #[tokio::test]
-    async fn read_ndjson_line_is_cancellation_safe() {
-        let (mut client, server) = tokio::io::duplex(1024);
-        let mut reader = BufReader::new(server);
-        let mut pending = Vec::new();
-
-        // Only the front of the request is on the wire, with no newline.
-        client
-            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"conn")
-            .await
-            .unwrap();
-
-        // A concurrent branch wins the race and cancels the in-flight read.
-        tokio::select! {
-            _ = read_ndjson_line(&mut reader, &mut pending, MAX_LINE_SIZE) => {
-                panic!("read must not complete before the newline arrives");
-            }
-            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
-        }
-
-        // The consumed prefix is preserved across the cancellation.
-        assert_eq!(pending, b"{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"conn");
-
-        // The rest of the line arrives; the full request reassembles intact.
-        client
-            .write_all(b"ection.close\",\"params\":{}}\n")
-            .await
-            .unwrap();
-        let line = match read_ndjson_line(&mut reader, &mut pending, MAX_LINE_SIZE)
-            .await
-            .unwrap()
-        {
-            LineOutcome::Line(line) => line,
-            other => panic!("expected a complete line, got {other:?}"),
-        };
-        assert_eq!(
-            line,
-            r#"{"jsonrpc":"2.0","id":7,"method":"connection.close","params":{}}"#
-        );
-        let parsed: serde_json::Value = serde_json::from_str(&line).unwrap();
-        assert_eq!(parsed["method"], "connection.close");
-    }
+    /// The framer-level unit tests for the NDJSON reader (fragmented
+    /// reassembly, over-cap rejection without unbounded buffering, recovery
+    /// after an over-cap line, and cancellation safety) now live with the
+    /// shared implementation in `termihub_core::ipc::ndjson`. The loop-level
+    /// regressions below exercise `run_transport_loop` end-to-end against that
+    /// shared reader.
 
     /// End-to-end regression for #1559 at the transport-loop level: a request
     /// split across the wire while an outbound notification is delivered must
