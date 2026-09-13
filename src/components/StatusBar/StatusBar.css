@@ -133,22 +133,6 @@
   padding: var(--spacing-xs) var(--spacing-sm);
 }
 
-.lang-menu__search {
-  width: 100%;
-  padding: var(--spacing-xs) var(--spacing-sm);
-  background-color: var(--bg-primary);
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-  box-sizing: border-box;
-}
-
-.lang-menu__search:focus {
-  border-color: var(--accent-color);
-}
-
 .lang-menu__list {
   max-height: 300px;
   overflow-y: auto;
