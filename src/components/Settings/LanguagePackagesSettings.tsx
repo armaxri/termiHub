@@ -1,14 +1,29 @@
 import { useState, useMemo, useCallback } from "react";
-import { PackagePlus, PackageMinus, Search } from "lucide-react";
+import { PackagePlus, PackageMinus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { ALL_LANGUAGE_PACKAGES, BUILTIN_PACKAGE_IDS } from "@/utils/monacoLanguagePackages";
+import {
+  ALL_LANGUAGE_PACKAGES,
+  BUILTIN_PACKAGE_IDS,
+  type LanguagePackageInfo,
+} from "@/utils/monacoLanguagePackages";
 import { registerAdditionalLanguagePackages } from "@/utils/monacoCustomLanguages";
-import { Button, Tooltip, EmptyState } from "@/components/ui";
+import { Button, Tooltip, EmptyState, SearchInput } from "@/components/ui";
+import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
 
 interface LanguagePackagesSettingsProps {
   visibleFields?: Set<string>;
 }
+
+/**
+ * Case-insensitive match of a language package against the (already normalized)
+ * query on its id or display name. Module-level so the {@link useListFilter}
+ * memo stays stable across renders.
+ */
+const languagePackageMatches: ListFilterMatcher<LanguagePackageInfo> = (pkg, query) => {
+  if (!query) return true;
+  return pkg.id.toLowerCase().includes(query) || pkg.name.toLowerCase().includes(query);
+};
 
 /**
  * Settings panel for installing additional Shiki language packages.
@@ -22,8 +37,12 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
   const settings = useProjectedSettings();
   const updateSettings = useAppStore((s) => s.updateSettings);
 
-  const [searchQuery, setSearchQuery] = useState("");
   const [pendingUninstall, setPendingUninstall] = useState<Set<string>>(new Set());
+  const {
+    query: searchQuery,
+    setQuery: setSearchQuery,
+    filtered: filteredPackages,
+  } = useListFilter(ALL_LANGUAGE_PACKAGES, languagePackageMatches);
 
   const show = (field: string) => !visibleFields || visibleFields.has(field);
 
@@ -52,14 +71,6 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
     },
     [settings, updateSettings]
   );
-
-  const filteredPackages = useMemo(() => {
-    const q = searchQuery.toLowerCase().trim();
-    if (!q) return ALL_LANGUAGE_PACKAGES;
-    return ALL_LANGUAGE_PACKAGES.filter(
-      (p) => p.id.toLowerCase().includes(q) || p.name.toLowerCase().includes(q)
-    );
-  }, [searchQuery]);
 
   const installedPackages = useMemo(
     () => ALL_LANGUAGE_PACKAGES.filter((p) => installed.has(p.id)),
@@ -146,28 +157,13 @@ export function LanguagePackagesSettings({ visibleFields }: LanguagePackagesSett
             </p>
 
             <div className="settings-panel__create-prompt">
-              <div style={{ position: "relative", flex: 1 }}>
-                <Search
-                  size={14}
-                  style={{
-                    position: "absolute",
-                    left: "8px",
-                    top: "50%",
-                    transform: "translateY(-50%)",
-                    opacity: 0.5,
-                    pointerEvents: "none",
-                  }}
-                />
-                <input
-                  className="settings-panel__create-input"
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search languages…"
-                  style={{ paddingLeft: "28px", width: "100%", boxSizing: "border-box" }}
-                  data-testid="lang-pkg-search"
-                />
-              </div>
+              <SearchInput
+                value={searchQuery}
+                onValueChange={setSearchQuery}
+                placeholder="Search languages…"
+                clearLabel="Clear language search"
+                data-testid="lang-pkg-search"
+              />
             </div>
 
             <ul

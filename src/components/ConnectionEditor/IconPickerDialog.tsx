@@ -1,6 +1,7 @@
-import { useState, useEffect, useMemo, useRef } from "react";
-import { Modal, Button, Input, EmptyState } from "@/components/ui";
-import { getIconCatalog, IconByName } from "@/utils/connectionIcons";
+import { useState, useEffect, useMemo } from "react";
+import { Modal, Button, SearchInput, EmptyState } from "@/components/ui";
+import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
+import { getIconCatalog, IconByName, type IconCatalogEntry } from "@/utils/connectionIcons";
 import "./IconPickerDialog.css";
 
 interface IconPickerDialogProps {
@@ -11,6 +12,19 @@ interface IconPickerDialogProps {
 }
 
 /**
+ * Case-insensitive match of an icon catalog entry against the (already
+ * normalized) query on its display name or any tag. Module-level so the
+ * {@link useListFilter} memo stays stable across renders.
+ */
+const iconMatches: ListFilterMatcher<IconCatalogEntry> = (entry, query) => {
+  if (!query) return true;
+  return (
+    entry.displayName.toLowerCase().includes(query) ||
+    entry.tags.some((tag) => tag.toLowerCase().includes(query))
+  );
+};
+
+/**
  * Dialog for picking a connection icon with text search and scrollable grid.
  */
 export function IconPickerDialog({
@@ -19,28 +33,17 @@ export function IconPickerDialog({
   currentIcon,
   onIconChange,
 }: IconPickerDialogProps) {
-  const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(currentIcon ?? null);
-  const searchRef = useRef<HTMLInputElement>(null);
+
+  const catalog = useMemo(() => getIconCatalog(), []);
+  const { query, setQuery, filtered } = useListFilter(catalog, iconMatches);
 
   useEffect(() => {
     if (open) {
-      setSearch("");
+      setQuery("");
       setSelected(currentIcon ?? null);
     }
-  }, [open, currentIcon]);
-
-  const catalog = useMemo(() => getIconCatalog(), []);
-
-  const filtered = useMemo(() => {
-    if (!search.trim()) return catalog;
-    const q = search.toLowerCase();
-    return catalog.filter(
-      (e) =>
-        e.displayName.toLowerCase().includes(q) ||
-        e.tags.some((tag) => tag.toLowerCase().includes(q))
-    );
-  }, [catalog, search]);
+  }, [open, currentIcon, setQuery]);
 
   const handleApply = () => {
     onIconChange(selected);
@@ -68,11 +71,11 @@ export function IconPickerDialog({
         </>
       }
     >
-      <Input
-        ref={searchRef}
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
+      <SearchInput
+        value={query}
+        onValueChange={setQuery}
         placeholder="Search icons..."
+        clearLabel="Clear icon search"
         autoFocus
         data-testid="icon-picker-search"
       />

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { X, AlertTriangle } from "lucide-react";
+import { SearchInput } from "@/components/ui";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { WorkspaceTabDef } from "@/types/workspace";
@@ -83,12 +84,12 @@ export function ConnectionPicker({ onSelect, onCancel }: ConnectionPickerProps) 
           </button>
         </div>
 
-        <input
+        <SearchInput
           className="connection-picker__search"
-          type="text"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onValueChange={setSearch}
           placeholder="Search connections…"
+          clearLabel="Clear connection search"
           autoFocus
           data-testid="connection-picker-search"
         />
