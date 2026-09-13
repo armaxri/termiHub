@@ -1,6 +1,5 @@
-import { useCallback, useRef } from "react";
-import { Search, X } from "lucide-react";
-import { Tooltip } from "@/components/ui";
+import { useCallback } from "react";
+import { SearchInput } from "@/components/ui";
 
 interface SettingsSearchProps {
   query: string;
@@ -8,13 +7,6 @@ interface SettingsSearchProps {
 }
 
 export function SettingsSearch({ query, onQueryChange }: SettingsSearchProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const handleClear = useCallback(() => {
-    onQueryChange("");
-    inputRef.current?.focus();
-  }, [onQueryChange]);
-
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Escape") {
@@ -27,28 +19,14 @@ export function SettingsSearch({ query, onQueryChange }: SettingsSearchProps) {
 
   return (
     <div className="settings-search">
-      <Search size={14} className="settings-search__icon" />
-      <input
-        ref={inputRef}
-        className="settings-search__input"
-        type="text"
+      <SearchInput
         value={query}
-        onChange={(e) => onQueryChange(e.target.value)}
+        onValueChange={onQueryChange}
         onKeyDown={handleKeyDown}
         placeholder="Search settings..."
+        aria-label="Search settings"
+        clearLabel="Clear search"
       />
-      {query && (
-        <Tooltip content="Clear search">
-          <button
-            className="settings-search__clear"
-            onClick={handleClear}
-            aria-label="Clear search"
-            type="button"
-          >
-            <X size={14} />
-          </button>
-        </Tooltip>
-      )}
     </div>
   );
 }
