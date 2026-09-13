@@ -421,26 +421,45 @@ pub fn run() {
     // without this sink the app leaves no evidence of what it was doing. Kept
     // best-effort: an unwritable log directory must never stop the app booting,
     // so the failure is recorded and startup continues.
-    let (file_layer, file_log_status) = match file_log::RotatingLogFile::with_defaults() {
-        Ok(writer) => (
-            Some(
-                tracing_subscriber::fmt::layer()
+    // File-log verbosity persisted from the in-app control (OBS-009), read
+    // best-effort before the Tauri app (and its path resolver) exist — the
+    // standalone resolver detects portable mode itself. `TERMIHUB_FILE_LOG` still
+    // wins at startup (handled inside `file_env_filter_with`); an absent or
+    // unreadable settings file simply leaves the level at the INFO default.
+    let persisted_file_log_level: Option<String> = SettingsStorage::new_standalone()
+        .ok()
+        .and_then(|s| s.load_with_recovery().ok())
+        .and_then(|r| r.data.file_log_level);
+
+    let (file_layer, file_reload_handle, file_log_status) =
+        match file_log::RotatingLogFile::with_defaults() {
+            Ok(writer) => {
+                // Reloadable per-layer filter so the Settings control can change
+                // the file verbosity live, without a restart (OBS-009).
+                let (filter, handle) = tracing_subscriber::reload::Layer::new(
+                    file_log::file_env_filter_with(persisted_file_log_level.as_deref()),
+                );
+                let layer = tracing_subscriber::fmt::layer()
                     // No terminal on the other end of a file: escape codes would
                     // just make it unreadable.
                     .with_ansi(false)
                     .with_writer(writer)
-                    .with_filter(file_log::file_env_filter()),
-            ),
-            Ok(()),
-        ),
-        Err(e) => (None, Err(e)),
-    };
+                    .with_filter(filter);
+                (Some(layer), Some(handle), Ok(()))
+            }
+            Err(e) => (None, None, Err(e)),
+        };
 
     tracing_subscriber::registry()
+        // The file layer is attached first so its reloadable per-layer filter's
+        // `S` type is `Registry` (see `file_log::FileLogReloadHandle`) — which is
+        // what lets the handle be stored as Tauri state. Attachment order does
+        // not change the global `default_env_filter` envelope, which still caps
+        // every sink, so this is behavior-preserving.
+        .with(file_layer)
         .with(default_env_filter())
         .with(tracing_subscriber::fmt::layer())
         .with(capture_layer)
-        .with(file_layer)
         .init();
 
     // The first lines of every run: they mark the run boundary in an appended
@@ -505,6 +524,10 @@ pub fn run() {
         // `tunnel.*` intents. Wired beside the existing typed commands (strangler).
         .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
         .manage(log_buffer)
+        // Live file-log verbosity control (OBS-009): the reload handle captured
+        // when the subscriber was built, or `None` if the log file could not be
+        // opened this run.
+        .manage(file_log::FileLogReload(file_reload_handle))
         // App-controlled origin for installed plugin files (#2251): serves
         // `<app-data>/plugins/<id>/<path>` over `plugin://localhost/<id>/<path>`
         // (macOS/Linux) / `http://plugin.localhost/...` (Windows), plus the wrapped
@@ -1723,6 +1746,8 @@ pub fn run() {
             commands::logs::get_logs,
             commands::logs::clear_logs,
             commands::logs::record_frontend_log,
+            commands::logs::set_file_log_level,
+            commands::logs::get_log_file_path,
             // Tunnels
             commands::tunnel::get_tunnels,
             commands::tunnel::save_tunnel,

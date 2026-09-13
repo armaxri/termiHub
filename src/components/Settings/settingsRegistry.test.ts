@@ -106,12 +106,13 @@ describe("settingsRegistry", () => {
       }
     });
 
-    it("keeps only connection/shell defaults and the experimental flag in General", () => {
+    it("keeps only connection/shell defaults, the log-level control, and the experimental flag in General", () => {
       const general = SETTINGS_REGISTRY.filter((s) => s.category === "general").map((s) => s.id);
       expect(general).toEqual([
         "defaultUser",
         "defaultSshKeyPath",
         "defaultShell",
+        "fileLogLevel",
         "experimentalFeaturesEnabled",
       ]);
     });

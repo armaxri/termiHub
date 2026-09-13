@@ -473,6 +473,28 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "fileLogLevel",
+    label: "Log File Verbosity",
+    description: "How much detail termiHub writes to its log file; raise it when reporting a bug",
+    category: "general",
+    keywords: [
+      "log",
+      "logs",
+      "logging",
+      "log level",
+      "verbosity",
+      "debug",
+      "trace",
+      "diagnostics",
+      "troubleshoot",
+      "troubleshooting",
+      "bug report",
+      "termihub.log",
+      "file log",
+      "support",
+    ],
+  },
+  {
     id: "experimentalFeaturesEnabled",
     label: "Allow Experimental Features",
     description:

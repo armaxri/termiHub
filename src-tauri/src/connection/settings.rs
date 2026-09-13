@@ -324,6 +324,15 @@ pub struct AppSettings {
     /// imported workflow can never add an entry.
     #[serde(default)]
     pub workflow_local_process_allowlist: Vec<String>,
+    /// Durable log file verbosity chosen in Settings (OBS-009).
+    ///
+    /// One of `"off"`/`"error"`/`"warn"`/`"info"`/`"debug"`/`"trace"` (see
+    /// [`crate::utils::file_log::SELECTABLE_FILE_LOG_LEVELS`]). `None` → the
+    /// built-in default (INFO). The backend only persists it; it is applied to
+    /// `termihub.log` at startup and live via the `set_file_log_level` command.
+    /// The `TERMIHUB_FILE_LOG` env var overrides it at startup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_log_level: Option<String>,
     /// Forward-compatibility catch-all (#2311).
     ///
     /// Preserves any field the frontend `AppSettings` interface
@@ -391,6 +400,7 @@ impl Default for AppSettings {
             syntax_highlighting: None,
             workflow_local_process_enabled: false,
             workflow_local_process_allowlist: Vec::new(),
+            file_log_level: None,
             extra: serde_json::Map::new(),
         }
     }
@@ -1080,6 +1090,30 @@ mod tests {
         let deserialized: AppSettings = serde_json::from_str(json).unwrap();
         assert!(!deserialized.workflow_local_process_enabled);
         assert!(deserialized.workflow_local_process_allowlist.is_empty());
+    }
+
+    #[test]
+    fn file_log_level_round_trips_and_defaults_to_none() {
+        // Absent by default and omitted from serialized JSON (OBS-009).
+        let defaults = AppSettings::default();
+        assert!(defaults.file_log_level.is_none());
+        let default_json = serde_json::to_string(&defaults).unwrap();
+        assert!(!default_json.contains("fileLogLevel"));
+
+        // A chosen level survives a serialize/deserialize round-trip.
+        let settings = AppSettings {
+            file_log_level: Some("debug".to_string()),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("fileLogLevel"));
+        let deserialized: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.file_log_level.as_deref(), Some("debug"));
+
+        // A legacy file without the key deserializes to None.
+        let legacy = r#"{"version":"1","externalConnectionFiles":[]}"#;
+        let legacy_settings: AppSettings = serde_json::from_str(legacy).unwrap();
+        assert!(legacy_settings.file_log_level.is_none());
     }
 
     #[test]
