@@ -22,7 +22,12 @@ import {
   Plus,
   ChevronRight,
   Radio,
+  Circle,
+  LoaderCircle,
+  TriangleAlert,
+  Unplug,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
 import { TabStatus } from "@/utils/tabStatus";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -36,6 +41,21 @@ const STATUS_LABELS: Record<TabStatus, string> = {
   connected: "Connected",
   failed: "Connection failed",
   disconnected: "Disconnected",
+};
+
+/**
+ * A distinct icon shape per status (UX-014). The status indicator was previously
+ * a colour-only dot, legible only on hover — failing the WCAG "use of colour"
+ * criterion and unclear at a glance. Each state now has its own silhouette
+ * (filled disc / spinner / warning triangle / unplugged) so it is distinguishable
+ * without relying on colour or a tooltip; colour and the persistent `aria-label`
+ * remain as redundant cues.
+ */
+const STATUS_ICON: Record<TabStatus, LucideIcon> = {
+  connecting: LoaderCircle,
+  connected: Circle,
+  failed: TriangleAlert,
+  disconnected: Unplug,
 };
 
 interface TabProps {
@@ -168,15 +188,25 @@ export function Tab({
       ) : (
         <ConnectionIcon config={tab.config} size={14} className="tab__icon" />
       )}
-      {status && (
-        <span
-          className={`tab__state-dot tab__state-dot--${status}`}
-          role="img"
-          aria-label={STATUS_LABELS[status]}
-          title={STATUS_LABELS[status]}
-          data-testid={`tab-state-dot-${tab.id}`}
-        />
-      )}
+      {status &&
+        (() => {
+          const StatusIcon = STATUS_ICON[status];
+          return (
+            <span
+              className={`tab__state-dot tab__state-dot--${status}`}
+              role="img"
+              aria-label={STATUS_LABELS[status]}
+              title={STATUS_LABELS[status]}
+              data-testid={`tab-state-dot-${tab.id}`}
+            >
+              <StatusIcon
+                size={11}
+                aria-hidden
+                className={status === "connecting" ? "motion-essential-spinner" : undefined}
+              />
+            </span>
+          );
+        })()}
       <span className="tab__title">
         {isDirty && <span className="tab__dirty-dot" />}
         {shownTitle}

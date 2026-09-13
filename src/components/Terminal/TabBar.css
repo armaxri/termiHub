@@ -128,33 +128,53 @@
   vertical-align: middle;
 }
 
+/* Connection-status indicator (UX-014). Each state renders a distinct lucide
+   icon (see STATUS_ICON in Tab.tsx) so status is legible by shape — not colour
+   alone and not only on hover. The per-state colour below is a redundant cue on
+   top of the shape; the icon inherits it via `currentColor`. */
 .tab__state-dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  background-color: var(--text-secondary);
+  color: var(--text-secondary);
+}
+
+.tab__state-dot svg {
+  display: block;
 }
 
 .tab__state-dot--connected {
-  background-color: var(--state-connected);
+  color: var(--state-connected);
+}
+
+/* Connected is a filled disc (the familiar "live" dot); the other states use
+   open/alert silhouettes so they never read as the same shape. */
+.tab__state-dot--connected svg {
+  fill: currentColor;
 }
 
 .tab__state-dot--reconnecting,
 .tab__state-dot--connecting {
-  background-color: var(--state-connecting);
-  animation: pulse-dot 1.2s ease-in-out infinite;
+  color: var(--state-connecting);
+}
+
+/* The connecting spinner is the sole progress cue, so it carries
+   `.motion-essential-spinner` (Tab.tsx) — under reduced motion it degrades to a
+   gentle pulse instead of freezing (animations.css). */
+.tab__state-dot--connecting svg {
+  animation: th-spin 1s linear infinite;
 }
 
 .tab__state-dot--disconnected {
-  background-color: var(--state-disconnected);
+  color: var(--state-disconnected);
 }
 
 /* A failed connect/reconnect uses the same alert color as a plain disconnect,
-   but pulses to draw the eye to the actionable error state. */
+   but pulses (and shows a warning-triangle shape) to draw the eye to the
+   actionable error state. */
 .tab__state-dot--failed {
-  background-color: var(--state-disconnected);
+  color: var(--state-disconnected);
   animation: pulse-dot 1.2s ease-in-out infinite;
 }
 
