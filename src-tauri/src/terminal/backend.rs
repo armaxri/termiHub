@@ -208,6 +208,9 @@ impl RemoteAgentConfig {
     /// credential sent to the remote host. `key_path` is a *path* to a key
     /// file, not the key itself, so it still expands. (CORE-031 / SEC-001 /
     /// PER-007.)
+    // allow(dead_code): config-model expansion API for `RemoteAgentConfig`, mirroring
+    // the sibling configs that are `.expand()`-ed on the spawn path; retained for the
+    // agent-config spawn path, which does not yet route through it.
     #[allow(dead_code)]
     pub fn expand(mut self) -> Self {
         self.host = expand_config_value(&self.host);

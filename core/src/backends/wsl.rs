@@ -344,6 +344,9 @@ impl FileBrowser for WslFileBrowser {
 ///
 /// Returns `None` if the path does not start with a drive-letter prefix.
 /// Used to build `/mnt/` paths for WSL env-var values that reference Windows files.
+// allow(dead_code): this whole module is `#[cfg(windows)]`, and the helper is
+// exercised only by the unit tests below, so it has no non-test caller in the
+// Windows lib build. Cannot be observed from a non-windows host.
 #[allow(dead_code)]
 pub(crate) fn windows_path_to_wsl_path(win_path: &str) -> Option<String> {
     use std::path::{Component, Path};
