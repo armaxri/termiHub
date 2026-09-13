@@ -348,20 +348,7 @@ async fn monitoring_task(
                         if let Some(status) = loop_state.on_success() {
                             debug!("Monitoring status for '{host}': {status:?}");
                         }
-                        let data = MonitoringData {
-                            host: host.clone(),
-                            hostname: stats.hostname,
-                            uptime_seconds: stats.uptime_seconds,
-                            load_average: stats.load_average,
-                            cpu_usage_percent: stats.cpu_usage_percent,
-                            memory_total_kb: stats.memory_total_kb,
-                            memory_available_kb: stats.memory_available_kb,
-                            memory_used_percent: stats.memory_used_percent,
-                            disk_total_kb: stats.disk_total_kb,
-                            disk_used_kb: stats.disk_used_kb,
-                            disk_used_percent: stats.disk_used_percent,
-                            os_info: stats.os_info,
-                        };
+                        let data = MonitoringData::new(host.clone(), *stats);
                         match serde_json::to_value(&data) {
                             Ok(value) => {
                                 let notification = JsonRpcNotification::new(
