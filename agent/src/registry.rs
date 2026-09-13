@@ -4,76 +4,21 @@
 //! backends from `termihub_core` so the agent can create connections
 //! generically by `type_id`.
 
-use termihub_core::connection::ConnectionTypeRegistry;
+use termihub_core::connection::{register_core_backends, ConnectionTypeRegistry};
 
 /// Build a [`ConnectionTypeRegistry`] with all backends available on this
 /// platform.
 ///
-/// All core backends are registered unconditionally (the agent enables all
-/// core features). WSL is additionally gated to Windows.
+/// The agent registers exactly the shared core backends (local shell, serial,
+/// SSH, telnet, Docker, plus WSL on Windows) via
+/// [`register_core_backends`](termihub_core::connection::register_core_backends),
+/// the single source it and the desktop both draw from (DUP-013). The agent
+/// adds no host-specific types of its own — the SSH backend it registers is the
+/// same core one the desktop uses, so SSH agent forwarding (`forwardAgent`,
+/// #1699) is honored on the agent's SSH leg exactly as on the desktop (#1719).
 pub fn build_registry() -> ConnectionTypeRegistry {
     let mut registry = ConnectionTypeRegistry::new();
-
-    // Local shell (PTY-based)
-    registry.register(
-        "local",
-        "Local Shell",
-        "terminal",
-        Box::new(|| Box::new(termihub_core::backends::local_shell::LocalShell::new())),
-    );
-
-    // Serial port
-    registry.register(
-        "serial",
-        "Serial Port",
-        "serial",
-        Box::new(|| Box::new(termihub_core::backends::serial::Serial::new())),
-    );
-
-    // SSH.
-    //
-    // The agent reuses the core SSH backend verbatim, so SSH **agent
-    // forwarding** (`forwardAgent`, #1699) is honored on the agent's SSH leg by
-    // the same connector/handler as the desktop path (#1719). The forwarded
-    // agent channel is bridged to the ssh-agent **local to the agent host**
-    // (`$SSH_AUTH_SOCK` / the Windows OpenSSH pipe); the session daemon inherits
-    // the agent's environment, so when the desktop→agent SSH leg itself forwards
-    // the agent, that host-local socket transparently chains back to the
-    // operator's own agent end to end — no bespoke JSON-RPC relay. Absence of a
-    // host-local agent is a graceful no-op. See `docs/testing.md` → "SSH agent
-    // forwarding through the remote agent".
-    registry.register(
-        "ssh",
-        "SSH",
-        "ssh",
-        Box::new(|| Box::new(termihub_core::backends::ssh::Ssh::new())),
-    );
-
-    // Telnet
-    registry.register(
-        "telnet",
-        "Telnet",
-        "telnet",
-        Box::new(|| Box::new(termihub_core::backends::telnet::Telnet::new())),
-    );
-
-    // Docker
-    registry.register(
-        "docker",
-        "Docker",
-        "docker",
-        Box::new(|| Box::new(termihub_core::backends::docker::Docker::new())),
-    );
-
-    // WSL (Windows only)
-    #[cfg(windows)]
-    registry.register(
-        "wsl",
-        "WSL",
-        "wsl",
-        Box::new(|| Box::new(termihub_core::backends::wsl::Wsl::new())),
-    );
-
+    register_core_backends(&mut registry);
     registry
 }
 

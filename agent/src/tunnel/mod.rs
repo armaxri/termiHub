@@ -34,33 +34,8 @@ use termihub_core::tunnel::config::{
 use termihub_core::tunnel::dynamic_forward::DynamicForwarder;
 use termihub_core::tunnel::local_forward::LocalForwarder;
 use termihub_core::tunnel::remote_forward::RemoteForwarder;
-use termihub_core::tunnel::{classify_reachability, ReachableFrom};
+use termihub_core::tunnel::{classify_reachability, ActiveForwarder, ReachableFrom};
 use tokio::sync::Mutex;
-
-/// The live forward engine backing a running agent-hosted tunnel.
-///
-/// Both variants stop on `Drop` (each forwarder aborts its task and releases its
-/// SSH resources), so `stop`/`stop_all` need only remove the map entry.
-enum ActiveForwarder {
-    /// A local (`ssh -L`) forward; the listen socket binds on the agent.
-    Local(LocalForwarder),
-    /// A remote (`ssh -R`) forward; the SSH server binds the listen socket and
-    /// the [`RemoteForwarder`] owns the SSH session it rides.
-    Remote(RemoteForwarder),
-    /// A dynamic (`ssh -D`, SOCKS5) forward; the SOCKS proxy listen socket binds
-    /// on the agent.
-    Dynamic(DynamicForwarder),
-}
-
-impl ActiveForwarder {
-    fn get_stats(&self) -> TunnelStats {
-        match self {
-            ActiveForwarder::Local(f) => f.get_stats(),
-            ActiveForwarder::Remote(f) => f.get_stats(),
-            ActiveForwarder::Dynamic(f) => f.get_stats(),
-        }
-    }
-}
 
 /// A tunnel currently forwarding on this agent: the live forwarder plus any SSH
 /// session it rides.

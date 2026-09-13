@@ -9,6 +9,7 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_wit
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
 use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool, SshGateway};
+use termihub_core::tunnel::ActiveForwarder;
 use tokio_util::sync::CancellationToken;
 
 use crate::terminal::backend::SshConfig;
@@ -251,13 +252,6 @@ struct TunnelStatsUpdate {
     stats: TunnelStats,
 }
 
-/// An active tunnel with its forwarder.
-enum ActiveForwarder {
-    Local(LocalForwarder),
-    Remote(RemoteForwarder),
-    Dynamic(DynamicForwarder),
-}
-
 /// Build the per-tunnel stats payloads for one emit tick from the active set.
 ///
 /// Pure helper (no locking, no IO) so it is unit-testable: given the current
@@ -269,7 +263,7 @@ fn snapshot_active_stats(active: &HashMap<String, ActiveTunnel>) -> Vec<TunnelSt
         .iter()
         .map(|(tunnel_id, tunnel)| TunnelStatsUpdate {
             tunnel_id: tunnel_id.clone(),
-            stats: tunnel.forwarder.stats(),
+            stats: tunnel.forwarder.get_stats(),
         })
         .collect()
 }
@@ -374,26 +368,6 @@ fn stats_from_status_reply(result: &serde_json::Value) -> Option<TunnelStats> {
         return None;
     }
     serde_json::from_value::<TunnelStats>(result["stats"].clone()).ok()
-}
-
-impl ActiveForwarder {
-    /// Take the forwarder's death receiver (once) for the tunnel supervisor.
-    fn take_death_signal(&mut self) -> Option<tokio::sync::oneshot::Receiver<()>> {
-        match self {
-            ActiveForwarder::Local(f) => f.take_death_signal(),
-            ActiveForwarder::Remote(f) => f.take_death_signal(),
-            ActiveForwarder::Dynamic(f) => f.take_death_signal(),
-        }
-    }
-
-    /// Read a live snapshot of this forwarder's traffic / connection counters.
-    fn stats(&self) -> TunnelStats {
-        match self {
-            ActiveForwarder::Local(f) => f.get_stats(),
-            ActiveForwarder::Remote(f) => f.get_stats(),
-            ActiveForwarder::Dynamic(f) => f.get_stats(),
-        }
-    }
 }
 
 /// An active tunnel instance.
@@ -632,7 +606,7 @@ impl TunnelManager {
                         config.id.clone(),
                         TunnelStatus::Connected,
                         None,
-                        tunnel.forwarder.stats(),
+                        tunnel.forwarder.get_stats(),
                     )
                 } else if let Some(handle) = agent_tunnels.get(&config.id) {
                     // Hosted on an agent (#2185): the data path runs on the
@@ -1516,11 +1490,7 @@ enum DeathCause {
 /// Stop a forwarder and drop its pool guards (RAII drains the pool). Free
 /// function so the supervisor task can tear a dead tunnel down without `&self`.
 fn teardown_parts(mut forwarder: ActiveForwarder, guards: PooledSessionGuards) {
-    match &mut forwarder {
-        ActiveForwarder::Local(f) => f.stop(),
-        ActiveForwarder::Remote(f) => f.stop(),
-        ActiveForwarder::Dynamic(f) => f.stop(),
-    }
+    forwarder.stop();
     drop(guards);
 }
 
