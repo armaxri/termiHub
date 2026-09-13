@@ -712,7 +712,10 @@ fn stale_reconnect_failed_after_a_successful_connect_is_a_noop() {
     store.reconnect_attempt("s1"); // connecting, attempt 1
     store.connected("s1"); // the attempt succeeded → Connected
 
-    store.reconnect_failed("s1", Some("late error from a superseded attempt".to_string()));
+    store.reconnect_failed(
+        "s1",
+        Some("late error from a superseded attempt".to_string()),
+    );
 
     let s = store.get("s1").unwrap();
     assert_eq!(
@@ -782,7 +785,10 @@ fn cancel_reconnect_after_giveup_lands_the_user_dismissed_idle_state() {
         store.reconnect_attempt("s1");
         store.reconnect_failed("s1", None);
     }
-    assert_eq!(store.get("s1").unwrap().reconnect.phase, ReconnectPhase::Gaveup);
+    assert_eq!(
+        store.get("s1").unwrap().reconnect.phase,
+        ReconnectPhase::Gaveup
+    );
 
     store.cancel_reconnect("s1");
 
