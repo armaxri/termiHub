@@ -10,7 +10,8 @@ evidence:
   - agent/src/service/mod.rs:89
   - src-tauri/src/embedded_servers/server_manager.rs:732
   - src-tauri/src/network/mod.rs:915
-status: open
+status: fixed
+resolution: "#2932 — shared core drain_broadcast helper for the Lagged(skip)/Closed(terminate) contract; 3 event bridges (agent service, embedded-servers, network http-monitor) migrated"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - src/components/SplitView/SplitView.tsx
   - src/components/RemoteDesktop/RemoteDesktopCanvas.tsx
   - src/components/Terminal/TerminalReconnectPrompt.tsx
-status: open
+status: fixed
+resolution: "#2935 — added tests for 8 zero-test components (ErrorBoundary, ActivityBarItem, TunnelDiagram, TransferControls, banners, ConnectionsEmptyState, FileBrowserPathBar) — 35 real tests. 23 more -> follow-up #2934"
 ---
 
 ## What
