@@ -209,21 +209,24 @@ impl LoadedLibrary {
     /// Create a new backend session from this plugin.
     ///
     /// Calls the plugin's `create_backend` entry point with the borrowed
-    /// `config_json`, the host-owned `output` sink, and the host capability
-    /// `bridge`, returning a safe [`LoadedBackend`] wrapper on success. The
-    /// `bridge` is the plugin's permission-checked route to network/filesystem
-    /// access (#2018); ownership of it transfers to the plugin. The returned
-    /// backend borrows nothing from `config_json` (the plugin copies what it needs
-    /// before the call returns), but it *does* depend on this library staying
-    /// loaded — callers must keep an `Arc<LoadedLibrary>` alive for the backend's
-    /// lifetime.
+    /// per-connection `config_json`, the plugin-level `settings_json` (the
+    /// manifest `settings` with the user's stored overrides applied — PLG-008),
+    /// the host-owned `output` sink, and the host capability `bridge`, returning
+    /// a safe [`LoadedBackend`] wrapper on success. `settings_json` may be `"{}"`
+    /// (or empty) for a plugin that declares no settings. The `bridge` is the
+    /// plugin's permission-checked route to network/filesystem access (#2018);
+    /// ownership of it transfers to the plugin. The returned backend borrows
+    /// nothing from the two JSON strings (the plugin copies what it needs before
+    /// the call returns), but it *does* depend on this library staying loaded —
+    /// callers must keep an `Arc<LoadedLibrary>` alive for the backend's lifetime.
     pub fn create_backend(
         &self,
         config_json: &str,
+        settings_json: &str,
         output: PluginOutputSender,
         bridge: PluginHostBridge,
     ) -> Result<LoadedBackend, PluginError> {
-        let config = PluginSessionConfig::new(config_json);
+        let config = PluginSessionConfig::with_settings(config_json, settings_json);
         let mut backend = PluginBackend {
             state: std::ptr::null_mut(),
             vtable: std::ptr::null(),
@@ -774,6 +777,14 @@ impl PluginHost {
         // (#2028).
         let policy_for_factory =
             ConnectionPolicy::from_manifest(plugin.manifest.connection_policy.as_ref());
+        // Resolve the plugin-level settings once at load time: the manifest
+        // `settings` defaults overlaid with the user's stored overrides. Every
+        // session delivers them to the backend so a declared setting (e.g.
+        // `defaultNamespace`) takes effect (PLG-008). A plugin that declares no
+        // settings and has none stored resolves to `"{}"`, leaving old plugin
+        // sessions unchanged.
+        let settings_for_factory =
+            super::manager::resolve_plugin_settings_json(&self.root, &plugin.manifest);
 
         {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
@@ -790,7 +801,8 @@ impl PluginHost {
                             schema_for_factory.clone(),
                             perms_for_factory.clone(),
                         )
-                        .with_connection_policy(policy_for_factory),
+                        .with_connection_policy(policy_for_factory)
+                        .with_plugin_settings(settings_for_factory.clone()),
                     )
                 }),
             );

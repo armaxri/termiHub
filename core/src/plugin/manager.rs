@@ -779,6 +779,57 @@ impl PluginManager {
     }
 }
 
+/// Read a plugin's persisted settings object directly from the settings store
+/// under `plugins_root`, returning an empty map when the store or the plugin's
+/// entry is absent (or unreadable).
+///
+/// This is the read half of [`PluginManager::get_settings`] exposed without a
+/// [`PluginManager`] instance, so the plugin **host** — which is rooted at the
+/// same `plugins_root` — can deliver a plugin's stored settings to its backend
+/// at session creation (PLG-008) without coupling to a manager.
+#[must_use]
+pub fn read_stored_settings(plugins_root: &Path, id: &str) -> Map<String, Value> {
+    read_json_or_default::<SettingsStore>(&plugins_root.join(SETTINGS_FILE_NAME))
+        .ok()
+        .and_then(|mut store| store.plugins.remove(id))
+        .unwrap_or_default()
+}
+
+/// The **effective** plugin-level settings delivered to a plugin's backend at
+/// session creation (PLG-008): every setting the manifest declares, defaulted
+/// from its schema, then overlaid with the user's stored overrides.
+///
+/// Applying the manifest defaults here is what makes a declared setting (e.g.
+/// `defaultNamespace`) actually take effect even when the user never changed it;
+/// a stored override for the same key wins. A plugin that declares no settings
+/// and has none stored yields an empty map — an empty `{}` JSON reaches the
+/// backend, so existing plugin sessions are unaffected.
+#[must_use]
+pub fn resolve_plugin_settings(
+    plugins_root: &Path,
+    manifest: &PluginManifest,
+) -> Map<String, Value> {
+    let mut effective = Map::new();
+    if let Some(declared) = manifest.settings.as_ref() {
+        for (key, schema) in declared {
+            effective.insert(key.clone(), schema.default.clone());
+        }
+    }
+    for (key, value) in read_stored_settings(plugins_root, &manifest.id) {
+        effective.insert(key, value);
+    }
+    effective
+}
+
+/// Serialize the [`resolve_plugin_settings`] map to a JSON object string for
+/// delivery over the plugin ABI, falling back to `"{}"` on the (practically
+/// impossible) serialization failure of a plain JSON object.
+#[must_use]
+pub fn resolve_plugin_settings_json(plugins_root: &Path, manifest: &PluginManifest) -> String {
+    let effective = resolve_plugin_settings(plugins_root, manifest);
+    serde_json::to_string(&effective).unwrap_or_else(|_| "{}".to_string())
+}
+
 /// Current time as milliseconds since the Unix epoch (0 if the clock predates
 /// the epoch, which cannot happen in practice).
 fn now_millis() -> u64 {
@@ -1068,6 +1119,93 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let root = tmp.path().join("plugins");
         (PluginManager::new(root), tmp)
+    }
+
+    /// A manifest declaring a plugin-level `settings` block (one string setting
+    /// with a default) plus a terminal backend so it validates — the shape the
+    /// PLG-008 finding calls out (`defaultNamespace`).
+    fn manifest_with_settings(id: &str) -> String {
+        format!(
+            r#"{{
+                "id": "{id}",
+                "name": "Settings Plugin",
+                "version": "1.0.0",
+                "author": "tester",
+                "description": "declares plugin-level settings",
+                "license": "MIT",
+                "apiVersion": "1.0",
+                "platforms": ["linux", "macos", "windows"],
+                "permissions": ["terminal"],
+                "extensions": {{
+                    "terminalBackend": {{
+                        "connectionType": "{id}",
+                        "displayName": "Settings",
+                        "configSchema": {{}}
+                    }}
+                }},
+                "settings": {{
+                    "defaultNamespace": {{
+                        "type": "string",
+                        "default": "default",
+                        "description": "Namespace used when none is set."
+                    }}
+                }}
+            }}"#
+        )
+    }
+
+    #[test]
+    fn resolve_plugin_settings_applies_manifest_defaults_when_none_stored() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+        let manifest = parse_manifest(&manifest_with_settings("s1")).unwrap();
+        // No settings store on disk: the declared default is delivered, so the
+        // setting takes effect even though the user never changed it (PLG-008).
+        let effective = resolve_plugin_settings(&root, &manifest);
+        assert_eq!(
+            effective.get("defaultNamespace"),
+            Some(&Value::String("default".to_string()))
+        );
+    }
+
+    #[test]
+    fn resolve_plugin_settings_lets_stored_overrides_win() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+        std::fs::create_dir_all(&root).unwrap();
+        // A stored override for the declared setting must win over the default.
+        let store = serde_json::json!({
+            "plugins": { "s1": { "defaultNamespace": "kube-system" } }
+        });
+        std::fs::write(
+            root.join(SETTINGS_FILE_NAME),
+            serde_json::to_string_pretty(&store).unwrap(),
+        )
+        .unwrap();
+        let manifest = parse_manifest(&manifest_with_settings("s1")).unwrap();
+        let effective = resolve_plugin_settings(&root, &manifest);
+        assert_eq!(
+            effective.get("defaultNamespace"),
+            Some(&Value::String("kube-system".to_string()))
+        );
+    }
+
+    #[test]
+    fn resolve_plugin_settings_is_empty_when_nothing_declared_or_stored() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+        // No `settings` block and no store => empty map => "{}" JSON, so an
+        // existing plugin session that declares no settings is unaffected.
+        let manifest = parse_manifest(&manifest_json("nosettings", "1.0")).unwrap();
+        assert!(resolve_plugin_settings(&root, &manifest).is_empty());
+        assert_eq!(resolve_plugin_settings_json(&root, &manifest), "{}");
+    }
+
+    #[test]
+    fn read_stored_settings_is_empty_when_store_absent() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+        assert!(read_stored_settings(&root, "anything").is_empty());
     }
 
     #[test]
