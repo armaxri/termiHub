@@ -30,4 +30,4 @@ pub use local_socket::{
     connect, connect_with_retry, BoxedReader, BoxedWriter, ListenerOptions, ListenerSecurity,
     LocalSocketListener, StaleReclaim,
 };
-pub use ndjson::{read_line, write_line};
+pub use ndjson::{read_line, read_line_resumable, write_line, LineOutcome};
