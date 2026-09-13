@@ -39,7 +39,6 @@ import {
   ShellIntegrationSettings,
   ShellIntegrationStatus,
 } from "@/types/connection";
-import { CredentialStoreStatusInfo } from "@/types/credential";
 import {
   loadConnections,
   persistAgent,
@@ -68,7 +67,6 @@ import {
   updateAgentFolder as apiUpdateAgentFolder,
   deleteAgentFolder as apiDeleteAgentFolder,
   AgentDefinitionInfo,
-  getCredentialStoreStatus as apiGetCredentialStoreStatus,
   getConnectionTypes,
   getAppMode as apiGetAppMode,
   checkForUpdates as apiCheckForUpdates,
@@ -134,6 +132,7 @@ import { createTransfersSlice, TransfersSlice } from "./slices/transfersSlice";
 import { createConnectionTreeSlice, ConnectionTreeSlice } from "./slices/connectionTreeSlice";
 import { createMonitoringSlice, MonitoringSlice } from "./slices/monitoringSlice";
 import { createWorkflowsSlice, WorkflowsSlice } from "./slices/workflowsSlice";
+import { createCredentialStoreSlice, CredentialStoreSlice } from "./slices/credentialStoreSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -393,7 +392,8 @@ export interface AppState
     ConnectionTreeSlice,
     MonitoringSlice,
     WorkflowsSlice,
-    WorkspacesSlice {
+    WorkspacesSlice,
+    CredentialStoreSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -1319,27 +1319,11 @@ export interface AppState
    */
   dismissRestorePrompt: (remember: boolean) => Promise<void>;
 
-  // Credential store
-  credentialStoreStatus: CredentialStoreStatusInfo | null;
-  setCredentialStoreStatus: (status: CredentialStoreStatusInfo) => void;
-  loadCredentialStoreStatus: () => Promise<void>;
-  unlockDialogOpen: boolean;
-  setUnlockDialogOpen: (open: boolean) => void;
-  /**
-   * Pending resolvers for in-flight requestUnlock() calls. Internal — settled by
-   * resolveUnlock(). Held as a list so that concurrent connect flows each awaiting
-   * requestUnlock() all settle on a single dialog exit; a single resolver would
-   * be overwritten by the second caller, wedging the first connect forever (G1).
-   */
-  unlockResolvers: ((unlocked: boolean) => void)[];
-  /**
-   * Opens the unlock dialog and returns a Promise that resolves to `true` when the
-   * store is successfully unlocked, or `false` when the user cancels/skips.
-   * Callers can `await` this before proceeding with a credential-dependent action.
-   */
-  requestUnlock: () => Promise<boolean>;
-  /** Settles (and clears) every pending requestUnlock() promise. Idempotent. */
-  resolveUnlock: (unlocked: boolean) => void;
+  // Credential store — the status snapshot + the promise-based master-password
+  // unlock dialog (credentialStoreStatus / setCredentialStoreStatus /
+  // loadCredentialStoreStatus / unlockDialogOpen / setUnlockDialogOpen /
+  // unlockResolvers / requestUnlock / resolveUnlock) live in CredentialStoreSlice
+  // (ARCH-001/FES-011, extracted under #2077 via #2881).
 
   // Portable mode
   isPortableMode: boolean;
@@ -2462,6 +2446,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createMonitoringSlice(set, get, store),
     ...createWorkflowsSlice(set, get, store),
     ...createWorkspacesSlice(set, get, store),
+    ...createCredentialStoreSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -6677,53 +6662,6 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
       set({ restorePrompt: null });
       await get().clearLastSession();
-    },
-
-    // Credential store
-    credentialStoreStatus: null,
-    setCredentialStoreStatus: (status) => set({ credentialStoreStatus: status }),
-    loadCredentialStoreStatus: async () => {
-      try {
-        const status = await apiGetCredentialStoreStatus();
-        set({ credentialStoreStatus: status });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to load credential store status: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    },
-    unlockDialogOpen: false,
-    setUnlockDialogOpen: (open) => {
-      const prevOpen = get().unlockDialogOpen;
-      set({ unlockDialogOpen: open });
-      // If the dialog was closed without a prior resolveUnlock(true) call (i.e. the
-      // user clicked Skip or dismissed the dialog), cancel any pending request.
-      if (prevOpen && !open) {
-        get().resolveUnlock(false);
-      }
-    },
-    unlockResolvers: [],
-    requestUnlock: () =>
-      new Promise<boolean>((resolve) => {
-        // Append rather than replace: two concurrent connect flows may both await
-        // requestUnlock() before the dialog resolves. Every awaiting caller must
-        // settle on the single dialog exit (G1) — overwriting a single resolver
-        // would leave the earlier connect wedged forever.
-        set((state) => ({
-          unlockDialogOpen: true,
-          unlockResolvers: [...state.unlockResolvers, resolve],
-        }));
-      }),
-    resolveUnlock: (unlocked) => {
-      const { unlockResolvers } = get();
-      if (unlockResolvers.length === 0) return;
-      // Clear first so a re-entrant resolveUnlock() (e.g. the unlocked event and a
-      // dialog-close both firing) is a harmless no-op — every promise settles once.
-      set({ unlockResolvers: [] });
-      for (const resolve of unlockResolvers) {
-        resolve(unlocked);
-      }
     },
 
     // Portable mode
