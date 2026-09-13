@@ -722,6 +722,7 @@ async fn active_shell_session_is_never_interrupted() {
 /// Never-interrupt against a real **Docker** container session (the #995
 /// live-agent flavour). Skips cleanly when Docker is unavailable.
 #[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn active_docker_session_is_never_interrupted() {
     if !docker_available() {
         eprintln!("Skipping: Docker not available");

@@ -564,3 +564,68 @@ jobs:
           path: tests/system/artifacts/
           if-no-files-found: ignore
           retention-days: 14
+
+  # Agent-crate Docker integration tests (TIN-008). The agent's Rust
+  # Docker/real-daemon integration suites — agent/tests/docker_integration.rs
+  # (4 tests), agent/tests/docker_deferred_update_integration.rs (1 test), and
+  # the Docker case in agent/tests/self_update_integration.rs
+  # (active_docker_session_is_never_interrupted) — each carry a `#[ignore]`, so
+  # the per-PR `cargo test --workspace` gate (code-quality.yml → Run Tests) never
+  # runs them: real-daemon tests are slow and must not flake the fast merge gate,
+  # exactly like the Docker-fixture caveat in the header. Before this lane existed
+  # they leaked into the per-PR ubuntu leg (its runner has Docker) while
+  # self-skipping INVISIBLY on the macOS leg and never running deterministically
+  # anywhere. This nightly job is the one place they EXECUTE against a real daemon.
+  #
+  # The suites also keep a `docker_available()` self-skip as a safety net for a
+  # host with no Docker — but a self-skip is silent, so this job first asserts the
+  # daemon is reachable (`docker info`), failing loudly if it is not, then runs the
+  # suites with `-- --ignored`, which un-ignores EXACTLY those Docker tests (the
+  # three files carry no other `#[ignore]`; the 5 non-Docker self_update tests are
+  # filtered out under `--ignored`, so only the 6 Docker tests run). GitHub's
+  # ubuntu runner ships a running Docker daemon and the tests pull alpine:latest on
+  # demand, so the self-skip guard passes and they run for real. Linux-only: the
+  # macOS/Windows runners have no usable Linux Docker daemon (see the header note),
+  # and the suites are `#![cfg(unix)]`. Kept out of the per-PR gate on purpose.
+  agent-docker-integration:
+    needs: setup
+    name: Agent Docker integration (${{ matrix.branch }})
+    runs-on: ubuntu-latest
+    # Only a cargo build + six short real-daemon tests; generous enough for a
+    # cold cache and the alpine image pulls.
+    timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        branch: ${{ fromJSON(needs.setup.outputs.branches) }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ matrix.branch }}
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+
+      - name: Verify the Docker daemon is reachable
+        # Fail loudly if Docker is unavailable rather than letting the suites
+        # self-skip to a false green — a silent skip is the blind spot this lane
+        # exists to close (TIN-008).
+        run: docker info
+
+      - name: Run the agent Docker integration suites (real daemon, --ignored)
+        # `--ignored` runs exactly the `#[ignore]`d Docker tests across the three
+        # binaries; the non-Docker self_update tests are filtered out. The
+        # `docker_available()` guard passes because the daemon is up (asserted
+        # above), so the tests exercise real containers.
+        run: >-
+          cargo test -p termihub-agent
+          --test docker_integration
+          --test docker_deferred_update_integration
+          --test self_update_integration
+          -- --ignored --nocapture
