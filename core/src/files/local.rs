@@ -214,6 +214,83 @@ pub fn set_permissions_sync(path: &str, mode: u32) -> std::io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode & 0o7777))
 }
 
+/// Copy a file or directory tree to a new location (DUP-024).
+///
+/// For a file, uses [`std::fs::copy`], first creating any missing parent
+/// directories of `dest`. For a directory, recursively copies the tree via
+/// [`copy_dir_recursive`], preserving the structure.
+///
+/// This is the single home for the recursive local copy that previously lived
+/// only in `src-tauri`, off the shared [`FileBrowser`](super::browser::FileBrowser)
+/// abstraction and therefore unreachable + untested elsewhere. It is a free
+/// function (like [`list_dir_sync`] / [`stat_sync`]) rather than a trait method:
+/// only the local filesystem needs it, and the remote backends' chunked copy is
+/// a separate transport concern (DUP-025).
+pub fn copy_sync(src: &str, dest: &str, is_directory: bool) -> std::io::Result<()> {
+    if is_directory {
+        copy_dir_recursive(Path::new(src), Path::new(dest))
+    } else {
+        // Ensure the destination's parent directory exists.
+        if let Some(parent) = Path::new(dest).parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(src, dest)?;
+        Ok(())
+    }
+}
+
+/// Recursively copy a directory and all its contents.
+///
+/// Symlinks are checked **before** the directory case (`entry.file_type()` does
+/// not follow links) and are recreated as symlinks pointing at their original
+/// target rather than being followed. This avoids two problems: `std::fs::copy`
+/// erroring on a symlink-to-directory (which would abort the whole copy and
+/// leave a partial tree behind), and unbounded recursion should a link form a
+/// loop back into the tree.
+fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in std::fs::read_dir(src)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let src_path = entry.path();
+        let dest_path = dest.join(entry.file_name());
+        if file_type.is_symlink() {
+            copy_symlink(&src_path, &dest_path)?;
+        } else if file_type.is_dir() {
+            copy_dir_recursive(&src_path, &dest_path)?;
+        } else {
+            std::fs::copy(&src_path, &dest_path)?;
+        }
+    }
+    Ok(())
+}
+
+/// Recreate a symlink at `dest` pointing at the same target as the one at `src`.
+///
+/// The link is copied verbatim (its target is not followed or resolved), so a
+/// broken or relative link is preserved as-is. On Windows the file/dir variant
+/// is chosen from the resolved target's kind, defaulting to a file symlink when
+/// the target cannot be stat'd (e.g. a broken link).
+fn copy_symlink(src: &Path, dest: &Path) -> std::io::Result<()> {
+    let target = std::fs::read_link(src)?;
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(&target, dest)?;
+    }
+    #[cfg(windows)]
+    {
+        // Follows the link to learn whether the target is a directory; a broken
+        // link (metadata fails) falls back to a file symlink.
+        let target_is_dir = std::fs::metadata(src).map(|m| m.is_dir()).unwrap_or(false);
+        if target_is_dir {
+            std::os::windows::fs::symlink_dir(&target, dest)?;
+        } else {
+            std::os::windows::fs::symlink_file(&target, dest)?;
+        }
+    }
+    Ok(())
+}
+
 /// Resolve the metadata that describes an entry, following a symlink to its
 /// target so a symlink-to-directory is navigable-as-directory.
 ///
@@ -476,6 +553,100 @@ mod tests {
         set_permissions_sync(file.to_str().unwrap(), 0o100755).unwrap();
         let mode = std::fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o7777, 0o755);
+    }
+
+    // ── Recursive local copy (DUP-024) ───────────────────────────────
+
+    #[test]
+    fn copy_sync_file_preserves_content_and_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("source.txt");
+        let dest = dir.path().join("dest.txt");
+        std::fs::write(&src, "copy me").unwrap();
+
+        copy_sync(src.to_str().unwrap(), dest.to_str().unwrap(), false).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "copy me");
+        // A copy, not a move: the source survives.
+        assert!(src.exists());
+    }
+
+    #[test]
+    fn copy_sync_file_creates_missing_parent_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("source.txt");
+        let dest = dir.path().join("a/b/c/dest.txt");
+        std::fs::write(&src, "deep copy").unwrap();
+
+        copy_sync(src.to_str().unwrap(), dest.to_str().unwrap(), false).unwrap();
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "deep copy");
+    }
+
+    #[test]
+    fn copy_sync_directory_recursively() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src_dir");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("file.txt"), "hello").unwrap();
+        std::fs::write(src.join("sub/nested.txt"), "nested").unwrap();
+
+        let dest = dir.path().join("dest_dir");
+        copy_sync(src.to_str().unwrap(), dest.to_str().unwrap(), true).unwrap();
+
+        assert!(dest.is_dir());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("file.txt")).unwrap(),
+            "hello"
+        );
+        assert!(dest.join("sub").is_dir());
+        assert_eq!(
+            std::fs::read_to_string(dest.join("sub/nested.txt")).unwrap(),
+            "nested"
+        );
+        assert!(src.is_dir(), "source tree survives a copy");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_sync_directory_preserves_nested_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src_dir");
+        std::fs::create_dir_all(src.join("realsub")).unwrap();
+        std::fs::write(src.join("a.txt"), "hi").unwrap();
+        std::fs::write(src.join("realsub/b.txt"), "nested").unwrap();
+
+        // A symlink-to-dir is the regression trigger: `entry.file_type()` reports
+        // it as a symlink (not a dir), so a naive `std::fs::copy` follows the
+        // link, finds a directory, and errors — aborting the whole copy.
+        symlink(src.join("realsub"), src.join("link_to_dir")).unwrap();
+        symlink(src.join("a.txt"), src.join("link_to_file")).unwrap();
+
+        let dest = dir.path().join("dest_dir");
+        copy_sync(src.to_str().unwrap(), dest.to_str().unwrap(), true).unwrap();
+
+        // Real entries are copied.
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "hi");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("realsub/b.txt")).unwrap(),
+            "nested"
+        );
+
+        // Both symlinks are preserved AS symlinks (not dereferenced), pointing at
+        // their original targets.
+        let dir_link = dest.join("link_to_dir");
+        assert!(
+            std::fs::symlink_metadata(&dir_link).unwrap().is_symlink(),
+            "link_to_dir should be preserved as a symlink"
+        );
+        assert_eq!(std::fs::read_link(&dir_link).unwrap(), src.join("realsub"));
+
+        let file_link = dest.join("link_to_file");
+        assert!(
+            std::fs::symlink_metadata(&file_link).unwrap().is_symlink(),
+            "link_to_file should be preserved as a symlink"
+        );
+        assert_eq!(std::fs::read_link(&file_link).unwrap(), src.join("a.txt"));
     }
 
     #[cfg(unix)]
