@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use tracing_subscriber::fmt::MakeWriter;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::{reload, EnvFilter, Registry};
 
 /// The app's bundle identifier, matching `tauri.conf.json`.
 ///
@@ -90,21 +90,89 @@ const FILE_LOG_DIRECTIVE: &str = "info,russh=warn";
 /// happen by accident while someone is only trying to raise termiHub's own detail.
 const RUSSH_CLAMP: &str = "russh=warn";
 
-/// Build the [`EnvFilter`] for the file sink.
+/// Log-level names selectable from the in-app Settings control (OBS-009),
+/// ordered least→most verbose. `"off"` disables the file sink entirely; the
+/// others map to the matching `tracing` level. Kept in sync with the frontend
+/// `AppSettings.fileLogLevel` union.
+pub const SELECTABLE_FILE_LOG_LEVELS: &[&str] = &["off", "error", "warn", "info", "debug", "trace"];
+
+/// Build a file-sink filter directive from a simple level name (OBS-009).
 ///
-/// Honors `TERMIHUB_FILE_LOG` when set, else [`FILE_LOG_DIRECTIVE`]. An override
-/// gets [`RUSSH_CLAMP`] prepended, so a directive that names `russh` explicitly
-/// still wins (later directives take precedence in an `EnvFilter`) while one that
-/// does not stays clamped.
-pub fn file_env_filter() -> EnvFilter {
-    match std::env::var("TERMIHUB_FILE_LOG") {
-        Ok(directive) if !directive.trim().is_empty() => {
-            EnvFilter::try_new(format!("{RUSSH_CLAMP},{directive}"))
-                .unwrap_or_else(|_| EnvFilter::new(FILE_LOG_DIRECTIVE))
-        }
-        _ => EnvFilter::new(FILE_LOG_DIRECTIVE),
+/// Returns `None` for an unrecognized level. Every level except `"off"` keeps
+/// the [`RUSSH_CLAMP`], so raising verbosity from the UI can never leak russh's
+/// per-packet cipher logs into the durable, user-shared file — the same safety
+/// property [`file_env_filter`] enforces for the env-var override. `"off"`
+/// silences the file entirely, russh included.
+///
+/// Case- and whitespace-insensitive, so a stored `" Debug "` still resolves.
+pub fn directive_for_level(level: &str) -> Option<String> {
+    let level = level.trim().to_ascii_lowercase();
+    if !SELECTABLE_FILE_LOG_LEVELS.contains(&level.as_str()) {
+        return None;
+    }
+    if level == "off" {
+        Some("off".to_string())
+    } else {
+        Some(format!("{level},{RUSSH_CLAMP}"))
     }
 }
+
+/// Build an [`EnvFilter`] for a selectable level name, or `None` if unrecognized.
+///
+/// This is the resolution used both at startup (for a persisted level) and by
+/// the `set_file_log_level` command's live reload.
+pub fn env_filter_for_level(level: &str) -> Option<EnvFilter> {
+    let directive = directive_for_level(level)?;
+    EnvFilter::try_new(directive).ok()
+}
+
+/// Build the [`EnvFilter`] for the file sink, honoring `TERMIHUB_FILE_LOG`.
+///
+/// Convenience wrapper over [`file_env_filter_with`] with no persisted level.
+pub fn file_env_filter() -> EnvFilter {
+    file_env_filter_with(None)
+}
+
+/// Build the [`EnvFilter`] for the file sink, honoring (in priority order):
+///
+/// 1. the `TERMIHUB_FILE_LOG` env var — an explicit directive, the startup
+///    override for a support case that needs a bespoke filter;
+/// 2. `persisted_level` — the level chosen in Settings (OBS-009), resolved via
+///    [`directive_for_level`] (so it carries the [`RUSSH_CLAMP`]);
+/// 3. the built-in [`FILE_LOG_DIRECTIVE`] default (INFO).
+///
+/// The env-var branch prepends [`RUSSH_CLAMP`] exactly as before, so a directive
+/// that names `russh` explicitly still wins while one that does not stays
+/// clamped. An unrecognized `persisted_level` falls through to the default.
+pub fn file_env_filter_with(persisted_level: Option<&str>) -> EnvFilter {
+    match std::env::var("TERMIHUB_FILE_LOG") {
+        Ok(directive) if !directive.trim().is_empty() => {
+            return EnvFilter::try_new(format!("{RUSSH_CLAMP},{directive}"))
+                .unwrap_or_else(|_| EnvFilter::new(FILE_LOG_DIRECTIVE));
+        }
+        _ => {}
+    }
+    if let Some(filter) = persisted_level.and_then(env_filter_for_level) {
+        return filter;
+    }
+    EnvFilter::new(FILE_LOG_DIRECTIVE)
+}
+
+/// Reload handle for the file sink's per-layer [`EnvFilter`] (OBS-009).
+///
+/// Lets the `set_file_log_level` command swap the file verbosity live —
+/// [`reload::Handle::reload`] rebuilds tracing's interest cache so the change
+/// takes effect without a restart. The `S` type is [`Registry`] because the
+/// filtered file layer is attached directly onto the registry in `lib.rs`, which
+/// is what keeps this handle type nameable and storable as Tauri state.
+pub type FileLogReloadHandle = reload::Handle<EnvFilter, Registry>;
+
+/// Managed Tauri state wrapping the file-filter reload handle.
+///
+/// `None` when the log file could not be opened at startup: the level control
+/// still persists the choice (applied on the next successful launch) but has
+/// nothing live to reload.
+pub struct FileLogReload(pub Option<FileLogReloadHandle>);
 
 /// Resolve the directory the application log is written to.
 ///
@@ -494,6 +562,113 @@ mod tests {
         assert!(
             dir.ends_with(Path::new(BUNDLE_ID).join("logs")),
             "non-macOS platforms must use <local-data>/<bundle-id>/logs, got {dir:?}"
+        );
+    }
+
+    #[test]
+    fn directive_for_level_maps_known_levels_and_clamps_russh() {
+        // Every non-off level carries the russh clamp (safety, not just noise).
+        assert_eq!(directive_for_level("error").as_deref(), Some("error,russh=warn"));
+        assert_eq!(directive_for_level("info").as_deref(), Some("info,russh=warn"));
+        assert_eq!(directive_for_level("debug").as_deref(), Some("debug,russh=warn"));
+        assert_eq!(directive_for_level("trace").as_deref(), Some("trace,russh=warn"));
+        // "off" silences everything, russh included.
+        assert_eq!(directive_for_level("off").as_deref(), Some("off"));
+        // Case- and whitespace-insensitive so a stored value still resolves.
+        assert_eq!(directive_for_level(" Debug ").as_deref(), Some("debug,russh=warn"));
+        // Unknown levels are rejected rather than guessed at.
+        assert_eq!(directive_for_level("verbose"), None);
+        assert_eq!(directive_for_level(""), None);
+    }
+
+    #[test]
+    fn env_filter_for_level_accepts_known_and_rejects_unknown() {
+        assert!(env_filter_for_level("debug").is_some());
+        assert!(env_filter_for_level("off").is_some());
+        assert!(env_filter_for_level("nonsense").is_none());
+    }
+
+    #[test]
+    fn a_persisted_debug_level_admits_app_debug_but_still_clamps_russh() {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::Layer as _;
+
+        // OBS-009: raising the file level to DEBUG must surface termiHub's own
+        // debug detail (the point of the control) while russh stays clamped —
+        // packet-level SSH internals must never reach the user-shared file.
+        let dir = tempfile::tempdir().unwrap();
+        let log = RotatingLogFile::new(dir.path(), 1 << 20, 3).unwrap();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(log.clone())
+                .with_filter(env_filter_for_level("debug").unwrap()),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "termihub_lib::session", "app debug detail");
+            tracing::debug!(target: "russh", "packet cipher internals");
+        });
+
+        let contents = read(&dir.path().join("termihub.log"));
+        assert!(
+            contents.contains("app debug detail"),
+            "app DEBUG must reach the file at debug level, got: {contents:?}"
+        );
+        assert!(
+            !contents.contains("packet cipher internals"),
+            "russh DEBUG must stay clamped even when the file level is raised to debug"
+        );
+    }
+
+    /// Whether `filter` admits an app-level DEBUG event into the file, without
+    /// touching the process environment (global, and would race other tests).
+    fn app_debug_reaches_file(filter: EnvFilter) -> bool {
+        use tracing_subscriber::layer::SubscriberExt;
+        use tracing_subscriber::Layer as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let log = RotatingLogFile::new(dir.path(), 1 << 20, 3).unwrap();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(log.clone())
+                .with_filter(filter),
+        );
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "termihub_lib::session", "app debug detail");
+        });
+        read(&dir.path().join("termihub.log")).contains("app debug detail")
+    }
+
+    #[test]
+    fn file_env_filter_with_persisted_level_raises_the_default() {
+        // No persisted level → the INFO default keeps app DEBUG out of the file.
+        assert!(
+            !app_debug_reaches_file(file_env_filter_with(None)),
+            "the default file level must not admit DEBUG"
+        );
+        // A persisted "debug" raises the file to admit app DEBUG (OBS-009).
+        assert!(
+            app_debug_reaches_file(file_env_filter_with(Some("debug"))),
+            "a persisted debug level must admit app DEBUG"
+        );
+        // An unrecognized persisted level falls back to the INFO default.
+        assert!(
+            !app_debug_reaches_file(file_env_filter_with(Some("bogus"))),
+            "an unrecognized persisted level must fall back to the default"
+        );
+    }
+
+    #[test]
+    fn file_log_reload_handle_swaps_the_filter_live() {
+        // Validates the `FileLogReloadHandle` alias (S = Registry) and the live
+        // reload path the `set_file_log_level` command drives. `_layer` must stay
+        // alive so the handle's shared state is not dropped before the reload.
+        let (_layer, handle): (_, FileLogReloadHandle) =
+            reload::Layer::new(env_filter_for_level("info").unwrap());
+        assert!(
+            handle.reload(env_filter_for_level("debug").unwrap()).is_ok(),
+            "reloading to a valid level must succeed"
         );
     }
 
