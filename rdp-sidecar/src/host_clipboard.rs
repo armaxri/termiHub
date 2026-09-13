@@ -271,8 +271,10 @@ fn parse_cf_hdrop(bytes: &[u8]) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if wide {
         let units: Vec<u16> = list
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_le_bytes(*pair))
             .collect();
         for segment in units.split(|&unit| unit == 0) {
             // The list is double-null terminated: the first empty segment is the

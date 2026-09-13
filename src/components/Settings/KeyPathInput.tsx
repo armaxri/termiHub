@@ -1,6 +1,7 @@
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSshKeyFiles, SshKeyFile } from "@/hooks/useSshKeyFiles";
+import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { validateSshKey, SshKeyValidation } from "@/services/api";
 import { Tooltip } from "@/components/ui";
 import "./KeyPathInput.css";
@@ -44,18 +45,21 @@ export function KeyPathInput({
   // valid OpenSSH-or-PEM key) before a connection is attempted. The keyPath
   // field is only shown for key auth, so validating whenever it has a value is
   // appropriate. An empty path is "no key selected yet" — no call, no hint.
+  const debouncedValidate = useDebouncedCallback((path: string) => {
+    validateSshKey(path)
+      .then(setValidation)
+      .catch(() => setValidation(null));
+  }, VALIDATION_DEBOUNCE_MS);
   useEffect(() => {
     if (value.trim() === "") {
+      // Empty path clears the hint immediately and drops any pending check.
+      debouncedValidate.cancel();
       setValidation(null);
       return;
     }
-    const timer = setTimeout(() => {
-      validateSshKey(value)
-        .then(setValidation)
-        .catch(() => setValidation(null));
-    }, VALIDATION_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [value]);
+    debouncedValidate(value);
+    return () => debouncedValidate.cancel();
+  }, [value, debouncedValidate]);
 
   const filtered = useMemo(() => {
     if (!value) return keyFiles;

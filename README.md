@@ -333,7 +333,7 @@ X11 forwarding lets you run graphical applications on a remote server and displa
 
 - **macOS** — Install [XQuartz](https://www.xquartz.org/) (`brew install --cask xquartz`), then log out and back in
 - **Linux** — Install `xauth` (`sudo apt install xauth` on Ubuntu/Debian)
-- **Windows** — Not currently supported (relies on Unix domain sockets)
+- **Windows** — Install [VcXsrv](https://sourceforge.net/projects/vcxsrv/); on first use termiHub can install it for you via winget (`marha.VcXsrv`) after a consent prompt, then manages the local X server automatically (forwarding over `127.0.0.1:6000`)
 
 The SSH server must also have `X11Forwarding yes` in `/etc/ssh/sshd_config` and `xauth` installed.
 
@@ -357,7 +357,7 @@ When you click on an SSH terminal tab, the sidebar file browser auto-connects vi
 - **"Connection refused"** — Verify the SSH server is running (`systemctl status sshd`), check the port, test with `ssh -p 22 user@host`
 - **"Authentication failed"** — Verify credentials; for key auth, ensure the public key is in `~/.ssh/authorized_keys` and the private key has `600` permissions
 - **"Host key verification failed"** — Connect once with `ssh user@hostname` and accept the key
-- **X11 not working** — Ensure XQuartz (macOS) or xauth (Linux) is installed and the server has `X11Forwarding yes`
+- **X11 not working** — Ensure the local X server is installed (XQuartz on macOS, `xauth` on Linux, VcXsrv on Windows) and the SSH server has `X11Forwarding yes`
 - **SFTP fails** — Ensure `Subsystem sftp` is configured in `/etc/ssh/sshd_config`
 
 ---
