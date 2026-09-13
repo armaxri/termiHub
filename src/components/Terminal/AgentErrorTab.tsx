@@ -2,7 +2,7 @@ import { useState, useCallback } from "react";
 import { WifiOff, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { currentAgentsView } from "@/store/agentsBridge";
-import { Button } from "@/components/ui";
+import { Button, ContentOverlay } from "@/components/ui";
 import { AgentErrorMeta } from "@/types/terminal";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
@@ -68,11 +68,10 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
       className={`agent-error-tab${isVisible ? "" : " agent-error-tab--hidden"}`}
       data-testid="agent-error-tab"
     >
-      <div className="agent-error-tab__body">
-        <WifiOff size={32} className="agent-error-tab__icon" />
-
-        <p className="agent-error-tab__heading">Agent connection unavailable</p>
-
+      <ContentOverlay
+        icon={<WifiOff size={32} className="agent-error-tab__icon" />}
+        heading="Agent connection unavailable"
+      >
         <div className="agent-error-tab__details">
           <div className="agent-error-tab__row">
             <span className="agent-error-tab__label">Agent</span>
@@ -110,7 +109,7 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
             <span className="agent-error-tab__reconnect-error">{reconnectError}</span>
           )}
         </div>
-      </div>
+      </ContentOverlay>
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { useCallback, useEffect } from "react";
 import { ServerCrash, RefreshCw, Loader2, Zap, Ban, Copy } from "lucide-react";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { Button } from "@/components/ui/Button";
-import { toast } from "@/components/ui";
+import { ContentOverlay, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { useElapsed } from "@/hooks/useElapsed";
@@ -218,16 +218,16 @@ export function TerminalConnectionOverlay({
   if (isReattaching) {
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
-        <div className="terminal-connection-overlay__body">
-          <Loader2
-            size={32}
-            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
-          />
-          <p className="terminal-connection-overlay__heading">Restoring session…</p>
-          <p className="terminal-connection-overlay__subheading">
-            Loading cached scrollback from the persistent session.
-          </p>
-        </div>
+        <ContentOverlay
+          icon={
+            <Loader2
+              size={32}
+              className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
+            />
+          }
+          heading="Restoring session…"
+          subheading="Loading cached scrollback from the persistent session."
+        />
       </div>
     );
   }
@@ -235,50 +235,53 @@ export function TerminalConnectionOverlay({
   if (waitingForAgent) {
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
-        <div className="terminal-connection-overlay__body">
-          <Loader2
-            size={32}
-            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
-          />
-          <p className="terminal-connection-overlay__heading">Waiting for agent…</p>
-          <p className="terminal-connection-overlay__subheading">
-            Waiting for the agent to connect before starting the session.
-          </p>
+        <ContentOverlay
+          icon={
+            <Loader2
+              size={32}
+              className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
+            />
+          }
+          heading="Waiting for agent…"
+          subheading="Waiting for the agent to connect before starting the session."
+          actions={
+            <>
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<Zap size={14} />}
+                onClick={handleRetryNowWaiting}
+                data-testid="terminal-connection-retry-now-btn"
+              >
+                Retry now
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Ban size={14} />}
+                onClick={handleAbort}
+                data-testid="terminal-connection-abort-btn"
+              >
+                Abort
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCancel}
+                data-testid="terminal-connection-cancel-btn"
+              >
+                Cancel
+              </Button>
+            </>
+          }
+        >
           <p
             className="terminal-connection-overlay__elapsed"
             data-testid="terminal-connection-timeout"
           >
             Times out in {remainingSeconds}s
           </p>
-          <div className="terminal-connection-overlay__actions">
-            <Button
-              size="sm"
-              variant="primary"
-              icon={<Zap size={14} />}
-              onClick={handleRetryNowWaiting}
-              data-testid="terminal-connection-retry-now-btn"
-            >
-              Retry now
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Ban size={14} />}
-              onClick={handleAbort}
-              data-testid="terminal-connection-abort-btn"
-            >
-              Abort
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleCancel}
-              data-testid="terminal-connection-cancel-btn"
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
+        </ContentOverlay>
       </div>
     );
   }
@@ -286,15 +289,46 @@ export function TerminalConnectionOverlay({
   if (autoRetryCount > 0) {
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
-        <div className="terminal-connection-overlay__body">
-          <Loader2
-            size={32}
-            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
-          />
-          <p className="terminal-connection-overlay__heading">
-            Connecting… (attempt {autoRetryCount + 1})
-          </p>
-          <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
+        <ContentOverlay
+          icon={
+            <Loader2
+              size={32}
+              className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
+            />
+          }
+          heading={`Connecting… (attempt ${autoRetryCount + 1})`}
+          subheading={tabTitle}
+          actions={
+            <>
+              <Button
+                size="sm"
+                variant="primary"
+                icon={<Zap size={14} />}
+                onClick={handleRetryNowAutoRetry}
+                data-testid="terminal-connection-retry-now-btn"
+              >
+                Retry now
+              </Button>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Ban size={14} />}
+                onClick={handleAbort}
+                data-testid="terminal-connection-abort-btn"
+              >
+                Abort
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCancel}
+                data-testid="terminal-connection-cancel-btn"
+              >
+                Cancel
+              </Button>
+            </>
+          }
+        >
           <p
             className="terminal-connection-overlay__elapsed"
             data-testid="terminal-connection-elapsed"
@@ -306,35 +340,7 @@ export function TerminalConnectionOverlay({
               Taking longer than usual — the host may be slow to respond or unreachable.
             </p>
           )}
-          <div className="terminal-connection-overlay__actions">
-            <Button
-              size="sm"
-              variant="primary"
-              icon={<Zap size={14} />}
-              onClick={handleRetryNowAutoRetry}
-              data-testid="terminal-connection-retry-now-btn"
-            >
-              Retry now
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Ban size={14} />}
-              onClick={handleAbort}
-              data-testid="terminal-connection-abort-btn"
-            >
-              Abort
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={handleCancel}
-              data-testid="terminal-connection-cancel-btn"
-            >
-              Cancel
-            </Button>
-          </div>
-        </div>
+        </ContentOverlay>
       </div>
     );
   }
@@ -342,13 +348,37 @@ export function TerminalConnectionOverlay({
   if (isConnecting) {
     return (
       <div className={cls} data-testid="terminal-connection-overlay">
-        <div className="terminal-connection-overlay__body">
-          <Loader2
-            size={32}
-            className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
-          />
-          <p className="terminal-connection-overlay__heading">Connecting…</p>
-          <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
+        <ContentOverlay
+          icon={
+            <Loader2
+              size={32}
+              className="terminal-connection-overlay__icon terminal-connection-overlay__icon--spin motion-essential-spinner"
+            />
+          }
+          heading="Connecting…"
+          subheading={tabTitle}
+          actions={
+            <>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Ban size={14} />}
+                onClick={handleAbort}
+                data-testid="terminal-connection-abort-btn"
+              >
+                Abort
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleCancel}
+                data-testid="terminal-connection-cancel-btn"
+              >
+                Cancel
+              </Button>
+            </>
+          }
+        >
           <p
             className="terminal-connection-overlay__elapsed"
             data-testid="terminal-connection-elapsed"
@@ -360,15 +390,27 @@ export function TerminalConnectionOverlay({
               Taking longer than usual — the host may be slow to respond or unreachable.
             </p>
           )}
-          <div className="terminal-connection-overlay__actions">
+        </ContentOverlay>
+      </div>
+    );
+  }
+
+  return (
+    <div className={cls} data-testid="terminal-connection-overlay">
+      <ContentOverlay
+        icon={<ServerCrash size={32} className="terminal-connection-overlay__icon" />}
+        heading="Connection failed"
+        subheading={tabTitle}
+        actions={
+          <>
             <Button
               size="sm"
-              variant="secondary"
-              icon={<Ban size={14} />}
-              onClick={handleAbort}
-              data-testid="terminal-connection-abort-btn"
+              variant="primary"
+              icon={<RefreshCw size={14} />}
+              onClick={handleRetry}
+              data-testid="terminal-connection-retry-btn"
             >
-              Abort
+              Retry
             </Button>
             <Button
               size="sm"
@@ -378,20 +420,9 @@ export function TerminalConnectionOverlay({
             >
               Cancel
             </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={cls} data-testid="terminal-connection-overlay">
-      <div className="terminal-connection-overlay__body">
-        <ServerCrash size={32} className="terminal-connection-overlay__icon" />
-
-        <p className="terminal-connection-overlay__heading">Connection failed</p>
-        <p className="terminal-connection-overlay__subheading">{tabTitle}</p>
-
+          </>
+        }
+      >
         <div className="terminal-connection-overlay__error-box">
           <span className="terminal-connection-overlay__error-text">{displayError}</span>
         </div>
@@ -442,27 +473,7 @@ export function TerminalConnectionOverlay({
             The serial port is already in use by another application.
           </p>
         )}
-
-        <div className="terminal-connection-overlay__actions">
-          <Button
-            size="sm"
-            variant="primary"
-            icon={<RefreshCw size={14} />}
-            onClick={handleRetry}
-            data-testid="terminal-connection-retry-btn"
-          >
-            Retry
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={handleCancel}
-            data-testid="terminal-connection-cancel-btn"
-          >
-            Cancel
-          </Button>
-        </div>
-      </div>
+      </ContentOverlay>
     </div>
   );
 }

@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSessionLifecycle, useSessionAutoReconnect } from "@/store/useSessionLifecycle";
-import { Button, Tooltip } from "@/components/ui";
+import { Button, ContentOverlay, Tooltip } from "@/components/ui";
 import type { TerminalExitInfo } from "@/types/terminal";
 import "./TerminalDisconnectOverlay.css";
 
@@ -94,9 +94,21 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
       className="terminal-disconnect-overlay terminal-disconnect-overlay--reconnecting"
       data-testid="terminal-disconnect-overlay"
     >
-      <div className="terminal-disconnect-overlay__body">
-        <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
-        <p className="terminal-disconnect-overlay__heading">Connection lost — reconnecting…</p>
+      <ContentOverlay
+        className="terminal-disconnect-overlay__body"
+        icon={<WifiOff size={32} className="terminal-disconnect-overlay__icon" />}
+        heading="Connection lost — reconnecting…"
+        actions={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={handleCancel}
+            data-testid="terminal-auto-reconnect-cancel-btn"
+          >
+            Cancel
+          </Button>
+        }
+      >
         <p
           className="terminal-disconnect-overlay__subheading"
           data-testid="terminal-auto-reconnect-countdown"
@@ -117,17 +129,7 @@ function AutoReconnectingOverlay({ tabId }: { tabId: string }) {
             Will run <code>{auto.onReconnectCommand}</code> on reconnect.
           </p>
         )}
-        <div className="terminal-disconnect-overlay__actions">
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleCancel}
-            data-testid="terminal-auto-reconnect-cancel-btn"
-          >
-            Cancel
-          </Button>
-        </div>
-      </div>
+      </ContentOverlay>
     </div>
   );
 }
@@ -212,18 +214,39 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
           </button>
         </Tooltip>
 
-        <div className="terminal-disconnect-overlay__body" data-testid="terminal-session-lost">
-          <Unplug
-            size={32}
-            className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
-          />
-
-          <p className="terminal-disconnect-overlay__heading">Session lost</p>
-          <p className="terminal-disconnect-overlay__subheading">
-            The connection was restored, but the live session could not be recovered. Its process
-            has ended. Scrollback is preserved below.
-          </p>
-
+        <ContentOverlay
+          className="terminal-disconnect-overlay__body"
+          data-testid="terminal-session-lost"
+          icon={
+            <Unplug
+              size={32}
+              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
+            />
+          }
+          heading="Session lost"
+          subheading="The connection was restored, but the live session could not be recovered. Its process has ended. Scrollback is preserved below."
+          actions={
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<Plus size={14} />}
+                onClick={handleStartNewShell}
+                data-testid="terminal-session-lost-new-shell-btn"
+              >
+                Start New Shell
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleDismiss}
+                data-testid="terminal-disconnect-view-btn"
+              >
+                View Scrollback
+              </Button>
+            </>
+          }
+        >
           {sessionLostError && (
             <div
               className="terminal-disconnect-overlay__error-box"
@@ -232,27 +255,7 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
               <span className="terminal-disconnect-overlay__error-text">{sessionLostError}</span>
             </div>
           )}
-
-          <div className="terminal-disconnect-overlay__actions">
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<Plus size={14} />}
-              onClick={handleStartNewShell}
-              data-testid="terminal-session-lost-new-shell-btn"
-            >
-              Start New Shell
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleDismiss}
-              data-testid="terminal-disconnect-view-btn"
-            >
-              View Scrollback
-            </Button>
-          </div>
-        </div>
+        </ContentOverlay>
       </div>
     );
   }
@@ -270,15 +273,27 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
         className="terminal-disconnect-overlay terminal-disconnect-overlay--reconnecting"
         data-testid="terminal-disconnect-overlay"
       >
-        <div className="terminal-disconnect-overlay__body">
-          <Loader2
-            size={32}
-            className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--spin motion-essential-spinner"
-          />
-          <p className="terminal-disconnect-overlay__heading">Reconnecting…</p>
-          <p className="terminal-disconnect-overlay__subheading">
-            Connection lost. Attempting to reconnect automatically.
-          </p>
+        <ContentOverlay
+          className="terminal-disconnect-overlay__body"
+          icon={
+            <Loader2
+              size={32}
+              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--spin motion-essential-spinner"
+            />
+          }
+          heading="Reconnecting…"
+          subheading="Connection lost. Attempting to reconnect automatically."
+          actions={
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleStop}
+              data-testid="terminal-disconnect-stop-btn"
+            >
+              Stop
+            </Button>
+          }
+        >
           {reconnectTriggerError && (
             <div
               className="terminal-disconnect-overlay__error-box"
@@ -289,17 +304,7 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
               </span>
             </div>
           )}
-          <div className="terminal-disconnect-overlay__actions">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleStop}
-              data-testid="terminal-disconnect-stop-btn"
-            >
-              Stop
-            </Button>
-          </div>
-        </div>
+        </ContentOverlay>
       </div>
     );
   }
@@ -321,44 +326,45 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
           </button>
         </Tooltip>
 
-        <div className="terminal-disconnect-overlay__body">
-          <AlertTriangle
-            size={32}
-            className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
-          />
-
-          <p className="terminal-disconnect-overlay__heading">Reconnect failed</p>
-          <p className="terminal-disconnect-overlay__subheading">
-            All reconnect attempts were exhausted. Scrollback is preserved below.
-          </p>
-
+        <ContentOverlay
+          className="terminal-disconnect-overlay__body"
+          icon={
+            <AlertTriangle
+              size={32}
+              className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
+            />
+          }
+          heading="Reconnect failed"
+          subheading="All reconnect attempts were exhausted. Scrollback is preserved below."
+          actions={
+            <>
+              <Button
+                variant="primary"
+                size="sm"
+                icon={<RefreshCw size={14} />}
+                onClick={handleReconnect}
+                data-testid="terminal-disconnect-reconnect-btn"
+              >
+                Try Again
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={handleDismiss}
+                data-testid="terminal-disconnect-view-btn"
+              >
+                View Scrollback
+              </Button>
+            </>
+          }
+        >
           <div
             className="terminal-disconnect-overlay__error-box"
             data-testid="terminal-disconnect-error-box"
           >
             <span className="terminal-disconnect-overlay__error-text">{disconnectError}</span>
           </div>
-
-          <div className="terminal-disconnect-overlay__actions">
-            <Button
-              variant="primary"
-              size="sm"
-              icon={<RefreshCw size={14} />}
-              onClick={handleReconnect}
-              data-testid="terminal-disconnect-reconnect-btn"
-            >
-              Try Again
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleDismiss}
-              data-testid="terminal-disconnect-view-btn"
-            >
-              View Scrollback
-            </Button>
-          </div>
-        </div>
+        </ContentOverlay>
       </div>
     );
   }
@@ -378,36 +384,39 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
         </button>
       </Tooltip>
 
-      <div className="terminal-disconnect-overlay__body">
-        {copy.clean ? (
-          <CheckCircle2 size={32} className="terminal-disconnect-overlay__icon" />
-        ) : (
-          <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
-        )}
-
-        <p className="terminal-disconnect-overlay__heading">{copy.heading}</p>
-        <p className="terminal-disconnect-overlay__subheading">{copy.subheading}</p>
-
-        <div className="terminal-disconnect-overlay__actions">
-          <Button
-            variant="primary"
-            size="sm"
-            icon={<RefreshCw size={14} />}
-            onClick={handleReconnect}
-            data-testid="terminal-disconnect-reconnect-btn"
-          >
-            Reconnect
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={handleDismiss}
-            data-testid="terminal-disconnect-view-btn"
-          >
-            View Scrollback
-          </Button>
-        </div>
-      </div>
+      <ContentOverlay
+        className="terminal-disconnect-overlay__body"
+        icon={
+          copy.clean ? (
+            <CheckCircle2 size={32} className="terminal-disconnect-overlay__icon" />
+          ) : (
+            <WifiOff size={32} className="terminal-disconnect-overlay__icon" />
+          )
+        }
+        heading={copy.heading}
+        subheading={copy.subheading}
+        actions={
+          <>
+            <Button
+              variant="primary"
+              size="sm"
+              icon={<RefreshCw size={14} />}
+              onClick={handleReconnect}
+              data-testid="terminal-disconnect-reconnect-btn"
+            >
+              Reconnect
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={handleDismiss}
+              data-testid="terminal-disconnect-view-btn"
+            >
+              View Scrollback
+            </Button>
+          </>
+        }
+      />
     </div>
   );
 }

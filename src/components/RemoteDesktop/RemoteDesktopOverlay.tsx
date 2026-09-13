@@ -1,5 +1,5 @@
 import { RefreshCw, AlertCircle, Power } from "lucide-react";
-import { Button, Spinner } from "@/components/ui";
+import { Button, Spinner, ContentOverlay } from "@/components/ui";
 import type { GraphicalSessionState } from "@/types/remoteDesktop";
 import { MAX_RECONNECT_ATTEMPTS } from "@/types/remoteDesktop";
 
@@ -33,11 +33,11 @@ export function RemoteDesktopOverlay({
   if (state === "connecting" || state === "authenticating") {
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-connecting">
-        <Spinner size="lg" label={null} className="rd-overlay__icon" />
-        <div className="rd-overlay__title">Connecting to {host}…</div>
-        <div className="rd-overlay__sub">
-          {state === "authenticating" ? "Authenticating" : "Establishing connection"}
-        </div>
+        <ContentOverlay
+          icon={<Spinner size="lg" label={null} className="rd-overlay__icon" />}
+          heading={`Connecting to ${host}…`}
+          subheading={state === "authenticating" ? "Authenticating" : "Establishing connection"}
+        />
       </div>
     );
   }
@@ -45,17 +45,21 @@ export function RemoteDesktopOverlay({
   if (state === "reconnecting" || state === "disconnected") {
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-reconnecting">
-        <RefreshCw
-          size={30}
-          className="rd-overlay__icon rd-overlay__spin motion-essential-spinner"
+        <ContentOverlay
+          icon={
+            <RefreshCw
+              size={30}
+              className="rd-overlay__icon rd-overlay__spin motion-essential-spinner"
+            />
+          }
+          heading="Connection lost. Reconnecting…"
+          subheading={`attempt ${Math.max(reconnectAttempt, 1)}/${MAX_RECONNECT_ATTEMPTS}`}
+          actions={
+            <Button variant="secondary" size="sm" onClick={onCancel}>
+              Cancel
+            </Button>
+          }
         />
-        <div className="rd-overlay__title">Connection lost. Reconnecting…</div>
-        <div className="rd-overlay__sub">
-          attempt {Math.max(reconnectAttempt, 1)}/{MAX_RECONNECT_ATTEMPTS}
-        </div>
-        <Button variant="secondary" size="sm" onClick={onCancel}>
-          Cancel
-        </Button>
       </div>
     );
   }
@@ -64,32 +68,39 @@ export function RemoteDesktopOverlay({
   const closed = state === "serverClosed" || state === "closed";
   return (
     <div className="rd-overlay" data-testid="remote-desktop-overlay-error">
-      {closed ? (
-        <Power size={30} className="rd-overlay__icon" />
-      ) : (
-        <AlertCircle size={30} className="rd-overlay__icon rd-overlay__icon--error" />
-      )}
-      <div className="rd-overlay__title">
-        {state === "authFailed"
-          ? "Authentication failed"
-          : state === "connectFailed"
-            ? "Could not connect"
-            : state === "serverClosed"
-              ? "Session closed by server"
-              : "Disconnected"}
-      </div>
-      {message && <div className="rd-overlay__sub rd-overlay__error">{message}</div>}
-      {state === "authFailed" && (
-        <div className="rd-overlay__sub">Check the credentials and try again.</div>
-      )}
-      <Button
-        variant="secondary"
-        size="sm"
-        onClick={onReconnect}
-        data-testid="remote-desktop-reconnect"
+      <ContentOverlay
+        icon={
+          closed ? (
+            <Power size={30} className="rd-overlay__icon" />
+          ) : (
+            <AlertCircle size={30} className="rd-overlay__icon rd-overlay__icon--error" />
+          )
+        }
+        heading={
+          state === "authFailed"
+            ? "Authentication failed"
+            : state === "connectFailed"
+              ? "Could not connect"
+              : state === "serverClosed"
+                ? "Session closed by server"
+                : "Disconnected"
+        }
+        actions={
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onReconnect}
+            data-testid="remote-desktop-reconnect"
+          >
+            Reconnect
+          </Button>
+        }
       >
-        Reconnect
-      </Button>
+        {message && <div className="rd-overlay__sub rd-overlay__error">{message}</div>}
+        {state === "authFailed" && (
+          <div className="rd-overlay__sub">Check the credentials and try again.</div>
+        )}
+      </ContentOverlay>
     </div>
   );
 }
