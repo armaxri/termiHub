@@ -2614,6 +2614,102 @@ mod tests {
         assert!(outputs.is_empty());
     }
 
+    // ── PERF-012: output-read copy reduction (byte-exact + framing) ──────
+    //
+    // These lock in the delivery contract of `run_output_reader`'s streaming
+    // phase so the zero-copy single-chunk fast path cannot silently alter the
+    // bytes, their order, or the event framing. They pass identically before
+    // and after the copy reduction: the optimization must be behaviour-neutral.
+
+    /// Helper: drive `run_output_reader` (streaming phase, no clear-wait) over a
+    /// pre-filled channel and return the emitted output events in order.
+    async fn collect_stream_events(chunks: Vec<Vec<u8>>) -> Vec<TerminalOutputEvent> {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-perf").await;
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1024);
+        for chunk in chunks {
+            tx.send(chunk).await.unwrap();
+        }
+        drop(tx); // EOF
+
+        SessionManager::run_output_reader(
+            "sess-perf".to_string(),
+            rx,
+            emitter.clone(),
+            sessions,
+            false,
+            new_capture(),
+            new_output_buffers(),
+            new_session_loggers(),
+            new_session_tab_ids(),
+        )
+        .await;
+
+        let events = emitter.outputs.lock().unwrap();
+        events.clone()
+    }
+
+    /// A single chunk with no follow-up is delivered byte-for-byte as exactly
+    /// one event (the zero-copy passthrough case).
+    #[tokio::test]
+    async fn run_output_reader_single_chunk_is_byte_exact() {
+        let events = collect_stream_events(vec![b"hello world".to_vec()]).await;
+        assert_eq!(events.len(), 1, "one chunk should yield one event");
+        assert_eq!(events[0].data, b"hello world");
+    }
+
+    /// Multiple chunks that are already queued coalesce into one event whose
+    /// bytes are the exact in-order concatenation of the inputs.
+    #[tokio::test]
+    async fn run_output_reader_coalesces_bytes_in_order() {
+        let events = collect_stream_events(vec![
+            b"aaa".to_vec(),
+            b"bbb".to_vec(),
+            b"ccc".to_vec(),
+        ])
+        .await;
+        let combined: Vec<u8> = events.iter().flat_map(|e| e.data.clone()).collect();
+        assert_eq!(combined, b"aaabbbccc", "bytes must stay in order");
+        // Queued chunks coalesce into a single event (framing preserved).
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].data, b"aaabbbccc");
+    }
+
+    /// A chunk carrying a screen-clear escape sequence passes through the
+    /// streaming phase untouched — the raw bytes are never rewritten.
+    #[tokio::test]
+    async fn run_output_reader_preserves_screen_clear_bytes() {
+        let chunk = b"before\x1b[2J\x1b[Hafter".to_vec();
+        let events = collect_stream_events(vec![chunk.clone()]).await;
+        let combined: Vec<u8> = events.iter().flat_map(|e| e.data.clone()).collect();
+        assert_eq!(combined, chunk, "screen-clear bytes must be byte-exact");
+    }
+
+    /// Many small chunks (simulating partial PTY reads) are delivered with
+    /// every byte preserved and strictly in order.
+    #[tokio::test]
+    async fn run_output_reader_partial_reads_preserve_order() {
+        let inputs: Vec<Vec<u8>> = (0u8..64).map(|i| vec![i]).collect();
+        let expected: Vec<u8> = (0u8..64).collect();
+        let events = collect_stream_events(inputs).await;
+        let combined: Vec<u8> = events.iter().flat_map(|e| e.data.clone()).collect();
+        assert_eq!(combined, expected, "all bytes, in order");
+    }
+
+    /// A first chunk at or above the coalesce cap is delivered on its own,
+    /// leaving a following chunk for the next event — matching the framing of
+    /// the original always-coalesce loop (whose size guard never pulled a
+    /// follow-up after such a chunk).
+    #[tokio::test]
+    async fn run_output_reader_oversized_first_chunk_is_not_merged() {
+        let big = vec![b'x'; MAX_COALESCE_BYTES + 16];
+        let small = b"tail".to_vec();
+        let events = collect_stream_events(vec![big.clone(), small.clone()]).await;
+        assert_eq!(events.len(), 2, "oversized chunk must not merge with next");
+        assert_eq!(events[0].data, big);
+        assert_eq!(events[1].data, small);
+    }
+
     /// Regression: `emit_and_cleanup` must NOT clear the persistent session record
     /// when the output channel closes. The daemon on the remote host is still alive
     /// after an agent SSH disconnect; keeping the record allows `attach_persistent_tab`
