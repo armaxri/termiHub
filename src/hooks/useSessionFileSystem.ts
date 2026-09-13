@@ -18,7 +18,7 @@ import {
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
-import { runTransfer, seedTransferQueueRow } from "./transferFeedback";
+import { runBlockingTransfer, runTransfer, seedTransferQueueRow } from "./transferFeedback";
 
 /**
  * Hook for session-based file system operations.
@@ -148,10 +148,21 @@ export function useSessionFileSystem() {
         );
         return;
       }
-      // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip.
-      const data = await sessionReadFile(sessionFileBrowserId, remotePath);
-      const { writeFile } = await import("@tauri-apps/plugin-fs");
-      await writeFile(localPath, data);
+      // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip
+      // with no transfer-progress event, so surface its own feedback (UX-017)
+      // rather than resolving silently.
+      await runBlockingTransfer(
+        async () => {
+          const data = await sessionReadFile(sessionFileBrowserId, remotePath);
+          const { writeFile } = await import("@tauri-apps/plugin-fs");
+          await writeFile(localPath, data);
+        },
+        {
+          loading: `Downloading ${fileName}…`,
+          success: `Downloaded ${fileName}`,
+          errorLabel: `Download "${fileName}"`,
+        }
+      );
     },
     [sessionFileBrowserId, sftpCapable, startDownload]
   );

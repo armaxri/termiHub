@@ -228,7 +228,20 @@ pub unsafe extern "C" fn termihub_plugin_create_backend(
         let json = unsafe { (*config).config_json.as_str() };
         serde_json::from_str::<ProbeConfig>(json).unwrap_or_default()
     };
-    if !cfg.probe.is_empty() {
+    if cfg.probe == "settings" {
+        // Report the plugin-level settings the host delivered (PLG-008) as a
+        // single line, so a test can assert they crossed the real ABI boundary.
+        let settings_json = if config.is_null() {
+            ""
+        } else {
+            // SAFETY: caller guarantees `config` is valid for the call;
+            // `settings_json` borrows host-owned memory that outlives this call.
+            unsafe { (*config).settings_json.as_str() }
+        };
+        let mut line = b"SETTINGS:".to_vec();
+        line.extend_from_slice(settings_json.as_bytes());
+        let _ = output.send(&line);
+    } else if !cfg.probe.is_empty() {
         run_probe(&cfg, &bridge, &output);
     }
     // The echo backend keeps no network/filesystem state, so the bridge is done.

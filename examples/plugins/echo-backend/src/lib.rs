@@ -38,6 +38,18 @@ struct EchoConfig {
     echo_prefix: String,
 }
 
+/// Plugin-level settings this backend accepts, matching the `settings` block in
+/// `manifest.json`. Delivered to every session via
+/// [`PluginSessionConfig::settings_json`] (PLG-008): the manifest defaults with
+/// the user's stored overrides applied. All fields optional so an empty `{}`
+/// (a plugin that declares no settings, or an old host) works unchanged.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+struct EchoSettings {
+    /// Prefix used when the per-connection config sets no `echoPrefix`.
+    default_prefix: String,
+}
+
 /// The running "session": it owns the host's output sink and echoes input to it.
 struct EchoBackend {
     output: PluginOutputSender,
@@ -147,7 +159,7 @@ pub unsafe extern "C" fn termihub_plugin_create_backend(
     }
 
     // Parse the borrowed config JSON (empty/absent => defaults).
-    let parsed = if config.is_null() {
+    let mut parsed = if config.is_null() {
         EchoConfig::default()
     } else {
         // SAFETY: caller guarantees `config` is valid for the call; `config_json`
@@ -162,6 +174,20 @@ pub unsafe extern "C" fn termihub_plugin_create_backend(
             }
         }
     };
+
+    // Apply the plugin-level settings (PLG-008): when the connection sets no
+    // `echoPrefix`, fall back to the plugin's `defaultPrefix` setting. Empty or
+    // absent settings leave the behavior unchanged.
+    if parsed.echo_prefix.is_empty() && !config.is_null() {
+        // SAFETY: caller guarantees `config` is valid for the call; `settings_json`
+        // borrows host-owned memory that outlives this function.
+        let settings_json = unsafe { (*config).settings_json.as_str() };
+        if !settings_json.trim().is_empty() {
+            if let Ok(settings) = serde_json::from_str::<EchoSettings>(settings_json) {
+                parsed.echo_prefix = settings.default_prefix;
+            }
+        }
+    }
 
     let backend = PluginBackend::from_boxed(build_backend(&parsed, output));
     // SAFETY: caller guarantees `out_backend` is valid and writable.
