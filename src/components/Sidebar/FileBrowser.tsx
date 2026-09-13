@@ -1091,7 +1091,10 @@ export function FileBrowser() {
           }
           break;
         case "download":
-          // downloadFile surfaces its own success/error toast.
+          // downloadFile surfaces its own feedback on every backend (UX-017):
+          // the SFTP-backed path via the transfer channel, and the local Save-as
+          // copy + byte-based (Docker / FTP / agent) round-trip via a
+          // loading→success/error toast.
           void downloadFile(entry.path, entry.name);
           break;
         case "vscode":

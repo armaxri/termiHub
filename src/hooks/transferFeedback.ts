@@ -97,3 +97,34 @@ export async function runTransfer(
     return false;
   }
 }
+
+/**
+ * Run a **blocking** transfer that produces NO `transfer-progress` events — a
+ * local Save-as copy or a byte-based (Docker / FTP / remote-agent)
+ * download/upload round-trip — with self-contained feedback (audit UX-017:
+ * "every action gives feedback").
+ *
+ * Unlike {@link runTransfer}, which defers the terminal *success* toast to the
+ * event path (`useTransferEvents`), this helper owns the whole
+ * `loading → success/error` lifecycle itself, because no `transfer-progress`
+ * event will ever cover a blocking round-trip — so deferring would leave the
+ * action silent on success. The single toast updates in place as the action
+ * settles. The rejection is always swallowed so callers never produce an
+ * unhandled rejection. Returns whether the transfer succeeded.
+ */
+export async function runBlockingTransfer(
+  action: () => Promise<unknown>,
+  messages: { loading: string; success: string; errorLabel: string }
+): Promise<boolean> {
+  const toastId = toast.loading(messages.loading);
+  try {
+    await action();
+    toast.success(messages.success, { id: toastId });
+    return true;
+  } catch (error) {
+    const message = transferErrorMessage(error);
+    frontendLog("file_transfer", `${messages.errorLabel} failed: ${message}`);
+    toast.error(`${messages.errorLabel} failed: ${message}`, { id: toastId });
+    return false;
+  }
+}
