@@ -52,6 +52,17 @@ describe("KeyPathInput validation hint (#896 / PR #204)", () => {
     vi.useRealTimers();
   });
 
+  it("hosts the combobox on the shared ui/Input primitive without losing its aria roles", () => {
+    renderInput("");
+    const field = query("field-keyPath-key-path-input") as HTMLInputElement | null;
+    // Migrated to ui/Input: the primitive class is present and every combobox
+    // attribute the type-ahead relies on is still forwarded through it.
+    expect(field?.className).toContain("ui-input");
+    expect(field?.getAttribute("role")).toBe("combobox");
+    expect(field?.getAttribute("aria-autocomplete")).toBe("list");
+    expect(field?.getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("renders a 'valid' hint after the debounce for a private key", async () => {
     validateSshKey.mockResolvedValue({
       status: "valid",
