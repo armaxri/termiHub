@@ -6,7 +6,7 @@
   background-color: var(--overlay-content-bg);
   backdrop-filter: var(--overlay-blur-sm);
   color: var(--text-primary);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   overflow: hidden;
 }
@@ -27,7 +27,7 @@
 }
 
 .agent-error-tab__icon {
-  color: var(--color-warning, #e8a838);
+  color: var(--color-warning);
   opacity: 0.85;
 }
 
@@ -52,7 +52,7 @@
   gap: var(--spacing-md);
   padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-sm);
-  background-color: var(--bg-secondary, rgba(255, 255, 255, 0.04));
+  background-color: var(--bg-secondary);
 }
 
 .agent-error-tab__label {
@@ -68,7 +68,7 @@
 }
 
 .agent-error-tab__value--error {
-  color: var(--color-error, #e05252);
+  color: var(--color-error);
 }
 
 .agent-error-tab__actions {
@@ -80,7 +80,7 @@
 }
 
 .agent-error-tab__reconnect-error {
-  color: var(--color-error, #e05252);
+  color: var(--color-error);
   font-size: var(--font-size-xs, var(--font-size-sm));
   max-width: 480px;
   text-align: center;

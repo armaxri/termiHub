@@ -72,6 +72,21 @@ const FILETIME_UNIX_EPOCH_DIFF_SECS: i64 = 11_644_473_600;
 /// `FILE_DEVICE_DISK` — the device type reported for the redirected volume.
 const FILE_DEVICE_DISK: u32 = 0x0000_0007;
 
+/// Upper bound on the byte count a single `DR_READ` request may ask for before
+/// we allocate a buffer for it. The `Length` field of `DR_READ` is a raw `u32`
+/// taken straight off the wire, so a malicious or compromised RDP server (or a
+/// MITM) could request up to 4 GiB and drive the sidecar to OOM. No legitimate
+/// drive-redirection read approaches this ceiling — reads are bounded by the
+/// negotiated channel chunking — so an oversize length is rejected with
+/// `STATUS_INVALID_PARAMETER` instead of being honored. 16 MiB is comfortably
+/// above any real read while keeping a rogue allocation bounded.
+const MAX_READ_LENGTH: u32 = 16 * 1024 * 1024;
+
+/// `STATUS_INVALID_PARAMETER` — returned when a request field is out of range
+/// (e.g. an oversize `DR_READ` length). Not among the constants ironrdp exposes
+/// on [`NtStatus`], so it is built from its raw NTSTATUS code.
+const STATUS_INVALID_PARAMETER: u32 = 0xC000_000D;
+
 // --- Fake volume geometry: enough capacity to make the drive appear usable. ---
 const BYTES_PER_SECTOR: u32 = 512;
 const SECTORS_PER_ALLOC_UNIT: u32 = 8; // 4 KiB clusters
@@ -365,6 +380,17 @@ impl DriveRedirectBackend {
         let Some(open) = self.open_files.get(&io.file_id) else {
             return read_error(io, NtStatus::UNSUCCESSFUL);
         };
+        // Guard against an unbounded server-supplied length driving an
+        // OOM-sized allocation in `read_at` (SEC-010): reject anything past the
+        // sane ceiling before allocating rather than trusting the wire value.
+        if req.length > MAX_READ_LENGTH {
+            warn!(
+                requested = req.length,
+                max = MAX_READ_LENGTH,
+                "rejecting oversize DR_READ length"
+            );
+            return read_error(io, NtStatus::from(STATUS_INVALID_PARAMETER));
+        }
         match read_at(&open.path, req.offset, req.length) {
             Ok(read_data) => RdpdrPdu::DeviceReadResponse(DeviceReadResponse {
                 device_io_reply: DeviceIoResponse::new(io, NtStatus::SUCCESS),
@@ -1268,6 +1294,66 @@ mod tests {
         });
         match pdu {
             RdpdrPdu::DeviceReadResponse(r) => assert_eq!(r.read_data, b"ab"),
+            other => panic!("expected read response, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn oversize_read_length_is_rejected_without_allocating() {
+        // SEC-010: a malicious/compromised server can put an enormous value in
+        // the DR_READ Length field. It must be refused before any allocation,
+        // not honored with a multi-gigabyte buffer.
+        let (mut backend, dir) = backend_with_root();
+        fs::write(dir.path().join("small.bin"), b"hello").unwrap();
+        let file_id = create_ok_id(
+            &mut backend,
+            "small.bin",
+            CreateDisposition::FILE_OPEN,
+            CreateOptions::empty(),
+        );
+
+        // u32::MAX would allocate ~4 GiB in the unfixed code path.
+        let pdu = backend.handle_read(DeviceReadRequest {
+            device_io_request: io_request(file_id, MajorFunction::Read),
+            length: u32::MAX,
+            offset: 0,
+        });
+        match pdu {
+            RdpdrPdu::DeviceReadResponse(r) => {
+                assert_eq!(
+                    u32::from(r.device_io_reply.io_status),
+                    STATUS_INVALID_PARAMETER
+                );
+                assert!(r.read_data.is_empty());
+            }
+            other => panic!("expected read response, got {other:?}"),
+        }
+
+        // One byte past the ceiling is still rejected.
+        let pdu = backend.handle_read(DeviceReadRequest {
+            device_io_request: io_request(file_id, MajorFunction::Read),
+            length: MAX_READ_LENGTH + 1,
+            offset: 0,
+        });
+        match pdu {
+            RdpdrPdu::DeviceReadResponse(r) => assert_eq!(
+                u32::from(r.device_io_reply.io_status),
+                STATUS_INVALID_PARAMETER
+            ),
+            other => panic!("expected read response, got {other:?}"),
+        }
+
+        // A normal read still succeeds and returns the file's bytes.
+        let pdu = backend.handle_read(DeviceReadRequest {
+            device_io_request: io_request(file_id, MajorFunction::Read),
+            length: 64 * 1024,
+            offset: 0,
+        });
+        match pdu {
+            RdpdrPdu::DeviceReadResponse(r) => {
+                assert_eq!(r.device_io_reply.io_status, NtStatus::SUCCESS);
+                assert_eq!(r.read_data, b"hello");
+            }
             other => panic!("expected read response, got {other:?}"),
         }
     }

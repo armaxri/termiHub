@@ -17,10 +17,10 @@
   width: 100%;
   padding: var(--spacing-sm) 10px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
 }
 
 .fleet-onboard__row:hover {
-  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+  background: var(--bg-hover);
   border-color: var(--border-primary);
 }

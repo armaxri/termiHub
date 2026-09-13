@@ -15,7 +15,7 @@
   align-items: center;
   gap: var(--spacing-xs);
   padding: var(--spacing-xxs) 10px;
-  border-radius: 100px;
+  border-radius: var(--radius-full);
   border: 1px solid transparent;
   font-size: var(--font-size-sm);
   color: var(--text-secondary);

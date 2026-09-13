@@ -340,14 +340,11 @@
 }
 
 .connection-tree__item--selected {
-  background-color: var(--bg-selected, color-mix(in srgb, var(--accent-color) 18%, transparent));
+  background-color: var(--bg-selected);
 }
 
 .connection-tree__item--selected:hover {
-  background-color: var(
-    --bg-selected-hover,
-    color-mix(in srgb, var(--accent-color) 28%, transparent)
-  );
+  background-color: var(--bg-selected-hover);
 }
 
 .connection-tree__folder--drop-over {
@@ -497,7 +494,7 @@
 }
 
 .agent-node__hint {
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   padding: var(--spacing-xxs) 0;
   user-select: none;
@@ -515,7 +512,7 @@
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
-  font-size: var(--font-size-xs, 11px);
+  font-size: var(--font-size-xs);
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;

@@ -34,7 +34,7 @@
   padding: 6px var(--spacing-sm);
   background: var(--bg-tertiary);
   border: 1px solid var(--border-secondary);
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
 }
 
 .connection-path-dialog__icon {

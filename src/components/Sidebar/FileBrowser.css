@@ -13,7 +13,7 @@
   align-items: center;
   justify-content: center;
   gap: var(--spacing-sm);
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--overlay-bg);
   border: 2px dashed var(--text-accent);
   color: var(--text-accent);
   font-size: var(--font-size-sm);
@@ -261,7 +261,7 @@
 
 .file-browser__permissions {
   flex-shrink: 0;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
 }
 
 /* Connection picker */
@@ -306,7 +306,7 @@
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-xs);
   color: var(--color-error);
-  background: rgba(244, 71, 71, 0.08);
+  background: var(--color-error-bg);
   border-bottom: 1px solid var(--border-secondary);
 }
 

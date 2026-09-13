@@ -268,7 +268,7 @@
   align-items: center;
   gap: var(--spacing-xxs);
   padding: 6px var(--spacing-sm);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
   background-color: var(--bg-secondary);

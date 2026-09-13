@@ -92,7 +92,7 @@
   gap: var(--spacing-xs);
   padding: 3px var(--spacing-sm) 3px 10px;
   border: 1px solid var(--border-primary);
-  border-radius: 100px;
+  border-radius: var(--radius-full);
   background: var(--bg-secondary);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
@@ -151,7 +151,7 @@
   gap: var(--spacing-xs);
   padding: 3px var(--spacing-sm);
   border: 1px dashed var(--border-primary);
-  border-radius: 100px;
+  border-radius: var(--radius-full);
   background: none;
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
@@ -251,7 +251,7 @@
 .layout-leaf {
   flex: 1;
   border: 1px solid var(--border-primary);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   padding: var(--spacing-xs);
   display: flex;
   flex-direction: column;
@@ -398,7 +398,7 @@
 .connection-picker {
   background: var(--bg-primary);
   border: 1px solid var(--border-primary);
-  border-radius: 8px;
+  border-radius: var(--radius-lg);
   width: 400px;
   max-height: 500px;
   display: flex;
@@ -490,7 +490,7 @@
 .connection-picker__item-type {
   font-size: var(--font-size-2xs);
   padding: 1px var(--spacing-xs);
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: var(--bg-secondary);
   color: var(--text-secondary);
   text-transform: uppercase;
@@ -547,7 +547,7 @@
 }
 
 .connection-picker__agent-warning-icon {
-  color: var(--color-warning, #e8a838);
+  color: var(--color-warning);
   flex-shrink: 0;
 }
 

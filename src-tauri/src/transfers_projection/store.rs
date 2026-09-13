@@ -34,7 +34,7 @@
 //! The live UI subscribes to and renders the region and dispatches `transfer.*`
 //! intents; the former `appStore` transfer reducers were removed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -389,6 +389,27 @@ impl TransferEntry {
 struct Inner {
     queue: HashMap<String, TransferEntry>,
     minimized: bool,
+    /// Keys of `queue` touched since the last [`TransferStore::drain_delta`]
+    /// (PERF-006, rollout of #2878). A superset of the actually-changed keys is
+    /// always safe: an unchanged key contributes an empty sub-diff and never
+    /// reorders the rest. The scalar `minimized` needs no dirty flag — it is a
+    /// single O(1) field always carried in the delta, so an unchanged value simply
+    /// yields no op.
+    dirty_queue: HashSet<String>,
+}
+
+/// A serialized description of the region entries touched since the previous
+/// [`TransferStore::drain_delta`] — the input to the region's incremental publish
+/// (PERF-006, rollout of #2878). Built in O(touched entries), not O(whole
+/// region). A `None` value marks a queue row that is now **absent** (removed), so
+/// the projection emits a `remove` for it. The `minimized` scalar is always
+/// carried (an O(1) field), so a change to it alone still projects.
+#[derive(Debug, Default)]
+pub struct RegionDelta {
+    /// `(transferId, Some(serialized TransferEntry) | None-if-removed)`.
+    pub queue: Vec<(String, Option<Value>)>,
+    /// The current panel-minimized flag.
+    pub minimized: bool,
 }
 
 /// The shadow transfer-queue authority. Owns one [`TransferEntry`] per transfer,
@@ -430,6 +451,7 @@ impl TransferStore {
         if inner.queue.contains_key(&seed.id) {
             return;
         }
+        inner.dirty_queue.insert(seed.id.clone());
         inner
             .queue
             .insert(seed.id.clone(), TransferEntry::from_seed(seed, now));
@@ -443,6 +465,7 @@ impl TransferStore {
         let mut inner = self.lock();
         let prev = inner.queue.get(&progress.transfer_id).cloned();
         let entry = TransferEntry::from_progress(progress, prev.as_ref(), now);
+        inner.dirty_queue.insert(entry.id.clone());
         inner.queue.insert(entry.id.clone(), entry);
     }
 
@@ -463,6 +486,7 @@ impl TransferStore {
                 continue;
             }
             let settled = TransferEntry::from_snapshot(snap, Some(prev), now);
+            inner.dirty_queue.insert(snap.transfer_id.clone());
             inner.queue.insert(snap.transfer_id.clone(), settled);
         }
     }
@@ -470,13 +494,25 @@ impl TransferStore {
     /// `transfer.remove` — drop one queue row (mirrors `removeTransfer`).
     /// Idempotent.
     pub fn remove(&self, id: &str) {
-        self.lock().queue.remove(id);
+        let mut inner = self.lock();
+        inner.dirty_queue.insert(id.to_string());
+        inner.queue.remove(id);
     }
 
     /// `transfer.clearCompleted` — drop every `completed` row, retaining
     /// failed/cancelled ones (mirrors `clearCompleted`).
     pub fn clear_completed(&self) {
-        self.lock()
+        let mut inner = self.lock();
+        // Mark the rows this removes dirty so the incremental publish emits their
+        // `remove` ops (only the completed keys change — O(change), not O(queue)).
+        let removed: Vec<String> = inner
+            .queue
+            .iter()
+            .filter(|(_, e)| e.state == TransferQueueState::Completed)
+            .map(|(id, _)| id.clone())
+            .collect();
+        inner.dirty_queue.extend(removed);
+        inner
             .queue
             .retain(|_, e| e.state != TransferQueueState::Completed);
     }
@@ -495,8 +531,42 @@ impl TransferStore {
     /// Idempotent server-side: replacing with identical content yields no diff.
     pub fn replace(&self, queue: HashMap<String, TransferEntry>, minimized: bool) {
         let mut inner = self.lock();
+        // Mark every key that could differ dirty: the old set (removals / changes)
+        // and the incoming set (adds / changes) (PERF-006). A whole-map replace is
+        // the one intrinsically O(region) fold; the reduced diff then equals the
+        // whole-region diff exactly.
+        let old_keys: Vec<String> = inner.queue.keys().cloned().collect();
+        inner.dirty_queue.extend(old_keys);
+        inner.dirty_queue.extend(queue.keys().cloned());
         inner.queue = queue;
         inner.minimized = minimized;
+    }
+
+    /// Drain the dirty-key set, serializing each touched queue row's current value
+    /// (or `None` if it was removed), and read the current minimized flag — the
+    /// input to the region's incremental publish (PERF-006, rollout of #2878).
+    /// O(number of touched rows).
+    ///
+    /// Draining and serializing under the single store lock keeps the returned
+    /// [`RegionDelta`] a consistent view of the touched entries at one instant. A
+    /// serialization failure is treated as absence (matching [`Self::snapshot`],
+    /// which likewise omits an entry it cannot serialize), so the region converges
+    /// on the same result either way.
+    pub fn drain_delta(&self) -> RegionDelta {
+        let mut inner = self.lock();
+        let keys: Vec<String> = inner.dirty_queue.drain().collect();
+        let minimized = inner.minimized;
+        let queue = keys
+            .into_iter()
+            .map(|id| {
+                let value = inner
+                    .queue
+                    .get(&id)
+                    .and_then(|entry| serde_json::to_value(entry).ok());
+                (id, value)
+            })
+            .collect();
+        RegionDelta { queue, minimized }
     }
 
     /// Read one queue row (test / diagnostics helper).

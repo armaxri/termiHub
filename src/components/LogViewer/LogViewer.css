@@ -47,15 +47,15 @@
 }
 
 .log-viewer__level-filter--error {
-  color: var(--color-error, #f44747);
+  color: var(--color-error);
 }
 
 .log-viewer__level-filter--warn {
-  color: var(--color-warning, #e8a317);
+  color: var(--color-warning);
 }
 
 .log-viewer__level-filter--info {
-  color: var(--accent-color, #4fc1ff);
+  color: var(--accent-color);
 }
 
 .log-viewer__level-filter--debug {
@@ -63,15 +63,15 @@
 }
 
 .log-viewer__level-filter--active.log-viewer__level-filter--error {
-  background-color: color-mix(in srgb, var(--color-error, #f44747) 15%, transparent);
+  background-color: color-mix(in srgb, var(--color-error) 15%, transparent);
 }
 
 .log-viewer__level-filter--active.log-viewer__level-filter--warn {
-  background-color: color-mix(in srgb, var(--color-warning, #e8a317) 15%, transparent);
+  background-color: color-mix(in srgb, var(--color-warning) 15%, transparent);
 }
 
 .log-viewer__level-filter--active.log-viewer__level-filter--info {
-  background-color: color-mix(in srgb, var(--accent-color, #4fc1ff) 15%, transparent);
+  background-color: color-mix(in srgb, var(--accent-color) 15%, transparent);
 }
 
 .log-viewer__level-filter--active.log-viewer__level-filter--debug {
@@ -112,7 +112,7 @@
 .log-viewer__list {
   flex: 1;
   overflow-y: auto;
-  font-family: var(--font-mono, "Consolas", "Monaco", monospace);
+  font-family: var(--font-mono);
   font-size: var(--font-size-xs);
   line-height: 1.5;
 }
@@ -142,15 +142,15 @@
 }
 
 .log-viewer__level--ERROR {
-  color: var(--color-error, #f44747);
+  color: var(--color-error);
 }
 
 .log-viewer__level--WARN {
-  color: var(--color-warning, #e8a317);
+  color: var(--color-warning);
 }
 
 .log-viewer__level--INFO {
-  color: var(--accent-color, #4fc1ff);
+  color: var(--accent-color);
 }
 
 .log-viewer__level--DEBUG {
