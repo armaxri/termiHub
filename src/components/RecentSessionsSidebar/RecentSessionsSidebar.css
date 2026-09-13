@@ -8,7 +8,7 @@
 /* --- Quick-connect bar --- */
 .recent-sessions__quick-connect {
   position: relative;
-  padding: 6px 8px;
+  padding: 6px var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -16,7 +16,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: var(--spacing-xs);
 }
 
 .recent-sessions__quick-connect-icon {
@@ -37,7 +37,7 @@
   top: calc(100% - 4px);
   z-index: var(--z-dropdown);
   margin: 0;
-  padding: 4px;
+  padding: var(--spacing-xs);
   list-style: none;
   background: var(--bg-secondary);
   border: 1px solid var(--border-primary);
@@ -49,9 +49,9 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--spacing-sm);
   width: 100%;
-  padding: 4px 8px;
+  padding: var(--spacing-xs) var(--spacing-sm);
   border: none;
   border-radius: var(--radius-sm);
   background: none;
@@ -80,7 +80,7 @@
 
 /* --- Toolbar + search --- */
 .recent-sessions__search {
-  padding: 6px 8px;
+  padding: 6px var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -88,7 +88,7 @@
 .recent-sessions__list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--spacing-xs) 0;
 }
 
 .recent-sessions__item-icon {
@@ -122,24 +122,24 @@
   align-items: center;
   justify-content: center;
   flex: 1;
-  padding: 24px;
+  padding: var(--spacing-xl);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   text-align: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 /* --- Save-as-connection dialog: icon row --- */
 .recent-sessions__save-icon-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 /* --- Save-as-connection dialog: editable connection details --- */
 .recent-sessions__save-fields {
-  margin: 8px 0 0;
-  padding: 8px 12px 12px;
+  margin: var(--spacing-sm) 0 0;
+  padding: var(--spacing-sm) var(--spacing-md) var(--spacing-md);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
@@ -153,13 +153,13 @@
 
 /* --- Save-as-connection dialog: save-password section --- */
 .recent-sessions__save-password {
-  margin-top: 8px;
+  margin-top: var(--spacing-sm);
 }
 
 .recent-sessions__save-password-toggle {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   font-size: var(--font-size-md);
   color: var(--text-primary);
   cursor: pointer;
@@ -167,7 +167,7 @@
 
 .recent-sessions__save-password-hint {
   display: block;
-  margin-top: 4px;
+  margin-top: var(--spacing-xs);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }

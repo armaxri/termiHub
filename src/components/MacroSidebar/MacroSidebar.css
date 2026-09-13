@@ -9,7 +9,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  padding: 6px 8px;
+  padding: 6px var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -27,7 +27,7 @@
 .macro-sidebar__list {
   flex: 1;
   overflow-y: auto;
-  padding: 4px 0;
+  padding: var(--spacing-xs) 0;
 }
 
 .macro-sidebar__empty {
@@ -36,11 +36,11 @@
   align-items: center;
   justify-content: center;
   flex: 1;
-  padding: 24px;
+  padding: var(--spacing-xl);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
   text-align: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 .macro-sidebar__empty-link {
@@ -78,8 +78,8 @@
 .macro-item__tags {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  padding-top: 2px;
+  gap: var(--spacing-xs);
+  padding-top: var(--spacing-xxs);
 }
 
 .macro-item__tag {

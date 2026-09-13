@@ -20,7 +20,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 12px 8px;
+  padding: 10px var(--spacing-md) var(--spacing-sm);
   border-bottom: 1px solid var(--border-primary);
 }
 
@@ -63,7 +63,7 @@
   border: none;
   cursor: pointer;
   color: var(--text-secondary);
-  padding: 2px;
+  padding: var(--spacing-xxs);
   border-radius: var(--radius-sm);
   flex-shrink: 0;
 }
@@ -74,7 +74,7 @@
 }
 
 .update-notification__body {
-  padding: 10px 12px;
+  padding: 10px var(--spacing-md);
 }
 
 .update-notification__message {
@@ -85,7 +85,7 @@
 }
 
 .update-notification__notes {
-  margin-top: 8px;
+  margin-top: var(--spacing-sm);
   max-height: 160px;
   overflow-y: auto;
   border: 1px solid var(--border-primary);
@@ -95,7 +95,7 @@
 
 .update-notification__notes-body {
   margin: 0;
-  padding: 8px;
+  padding: var(--spacing-sm);
   font-size: var(--font-size-xs);
   font-family: var(--font-mono);
   white-space: pre-wrap;
@@ -107,7 +107,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px 10px;
+  padding: var(--spacing-sm) var(--spacing-md) 10px;
   border-top: 1px solid var(--border-primary);
   flex-wrap: wrap;
 }

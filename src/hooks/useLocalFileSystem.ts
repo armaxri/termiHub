@@ -13,6 +13,7 @@ import {
   vscodeOpenLocal,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
+import { runBlockingTransfer } from "./transferFeedback";
 
 /**
  * Hook for local filesystem operations.
@@ -128,7 +129,13 @@ export function useLocalFileSystem() {
     const isDir =
       currentFileBrowsersView().local.entries.find((e) => e.path === filePath)?.isDirectory ??
       false;
-    await localCopyFile(filePath, localPath, isDir);
+    // A local Save-as copy is a blocking round-trip with no transfer-progress
+    // event, so surface its own feedback (UX-017) rather than resolving silently.
+    await runBlockingTransfer(() => localCopyFile(filePath, localPath, isDir), {
+      loading: `Saving ${fileName}…`,
+      success: `Saved ${fileName}`,
+      errorLabel: `Save "${fileName}"`,
+    });
   }, []);
 
   const copyEntry = useCallback(
