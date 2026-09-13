@@ -151,17 +151,9 @@ mod tests {
         let mut reader: &[u8] = &input;
         let mut out: Vec<u8> = Vec::new();
 
-        let outcome = run_chunked_copy(
-            &mut reader,
-            &mut out,
-            4,
-            0,
-            never_stop,
-            |_| {},
-            tag_err,
-        )
-        .await
-        .expect("copy succeeds");
+        let outcome = run_chunked_copy(&mut reader, &mut out, 4, 0, never_stop, |_| {}, tag_err)
+            .await
+            .expect("copy succeeds");
 
         assert_eq!(outcome, ChunkedCopyOutcome::Completed { transferred: 10 });
         assert_eq!(out, input, "every byte copied in order, unchanged");
@@ -297,17 +289,9 @@ mod tests {
         let mut reader = FailingReader;
         let mut out: Vec<u8> = Vec::new();
 
-        let err = run_chunked_copy(
-            &mut reader,
-            &mut out,
-            4,
-            0,
-            never_stop,
-            |_| {},
-            tag_err,
-        )
-        .await
-        .expect_err("a failing read surfaces as an error");
+        let err = run_chunked_copy(&mut reader, &mut out, 4, 0, never_stop, |_| {}, tag_err)
+            .await
+            .expect_err("a failing read surfaces as an error");
 
         assert_eq!(err, "read: boom", "phase-tagged and text preserved");
     }
