@@ -10,7 +10,8 @@ evidence:
   - core/src/service/mod.rs:51
   - core/src/embedded_servers/config.rs:56
   - src-tauri/src/embedded_servers/server_manager.rs:670
-status: open
+status: fixed
+resolution: "#2948 — ServiceStatus/ServerStatus kept distinct wire contracts but bridged via one shared ServerStatus::from_service_status conversion"
 ---
 
 ## What

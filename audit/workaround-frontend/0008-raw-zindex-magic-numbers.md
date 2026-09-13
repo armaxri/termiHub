@@ -11,7 +11,8 @@ evidence:
   - src/components/UpdateNotification/UpdateNotification.css:10
   - src/components/ActivityBar/ActivityBar.css:120
   - src/components/SplitView/SplitView.css:54
-status: open
+status: fixed
+resolution: "develop — already done on develop: complete --z-* token scale in variables.css (base..max), zero raw z-index literals in CSS or inline styles"
 ---
 
 ## What
