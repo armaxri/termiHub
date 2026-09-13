@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::Value;
 use termihub_core::service::{
-    Service, ServiceError, ServiceEvent, ServiceInfo, ServiceRegistry, ServiceStatus,
+    drain_broadcast, Service, ServiceError, ServiceEvent, ServiceInfo, ServiceRegistry,
+    ServiceStatus,
 };
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -84,23 +85,15 @@ impl AgentServiceRegistry {
         // Subscribe before starting so the bridge cannot miss the first
         // Starting/Running transitions.
         let latest = Arc::new(StdMutex::new(None));
-        let mut rx = service.subscribe_events();
+        let rx = service.subscribe_events();
         let latest_for_task = Arc::clone(&latest);
         let bridge = tokio::spawn(async move {
-            use tokio::sync::broadcast::error::RecvError;
-            loop {
-                match rx.recv().await {
-                    Ok(ServiceEvent { payload, .. }) => {
-                        if let Ok(mut slot) = latest_for_task.lock() {
-                            *slot = Some(payload);
-                        }
-                    }
-                    // Advisory events: a lagging drain drops the oldest and keeps going.
-                    Err(RecvError::Lagged(_)) => continue,
-                    // The service was dropped — nothing more to capture.
-                    Err(RecvError::Closed) => break,
+            drain_broadcast(rx, move |ServiceEvent { payload, .. }| {
+                if let Ok(mut slot) = latest_for_task.lock() {
+                    *slot = Some(payload);
                 }
-            }
+            })
+            .await;
         });
 
         if let Err(e) = service.start(config).await {

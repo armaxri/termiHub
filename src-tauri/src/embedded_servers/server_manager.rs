@@ -26,7 +26,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::broadcast::error::RecvError;
+use termihub_core::service::drain_broadcast;
 
 use super::config::{
     EmbeddedServerConfig, EmbeddedServerStore, ServerState, ServerStats, ServerStatus,
@@ -698,20 +698,14 @@ fn poll_agent_server_states(
 /// as a [`SERVER_STATUS_EVENT`] Tauri event so the frontend receives the same
 /// `ServerState` payload as before the lift. The task ends when the service is
 /// dropped (channel closed).
-fn spawn_event_bridge(app: AppHandle, mut events: termihub_core::service::ServiceEventReceiver) {
+fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEventReceiver) {
     tauri::async_runtime::spawn(async move {
-        loop {
-            match events.recv().await {
-                Ok(event) if event.kind == STATUS_EVENT_KIND => {
-                    let _ = app.emit(SERVER_STATUS_EVENT, event.payload);
-                }
-                Ok(_) => {}
-                // Advisory events: a lagging bridge drops the oldest and keeps going.
-                Err(RecvError::Lagged(_)) => continue,
-                // All senders dropped (service removed) — nothing more to forward.
-                Err(RecvError::Closed) => break,
+        drain_broadcast(events, move |event| {
+            if event.kind == STATUS_EVENT_KIND {
+                let _ = app.emit(SERVER_STATUS_EVENT, event.payload);
             }
-        }
+        })
+        .await;
     });
 }
 

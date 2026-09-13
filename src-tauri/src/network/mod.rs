@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter};
-use tokio::sync::broadcast::error::RecvError;
+use termihub_core::service::drain_broadcast;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use uuid::Uuid;
@@ -911,20 +911,14 @@ fn build_service_registry() -> ServiceRegistry {
 /// as a [`HTTP_MONITOR_CHECK_EVENT`] Tauri event so the frontend receives the
 /// same `HttpCheckResult` payload as before the lift. The task ends when the
 /// service is dropped (channel closed).
-fn spawn_event_bridge(app: AppHandle, mut events: termihub_core::service::ServiceEventReceiver) {
+fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEventReceiver) {
     tauri::async_runtime::spawn(async move {
-        loop {
-            match events.recv().await {
-                Ok(event) if event.kind == http_monitor::CHECK_EVENT_KIND => {
-                    let _ = app.emit(HTTP_MONITOR_CHECK_EVENT, event.payload);
-                }
-                Ok(_) => {}
-                // Advisory events: a lagging bridge drops the oldest and keeps going.
-                Err(RecvError::Lagged(_)) => continue,
-                // All senders dropped (service removed) — nothing more to forward.
-                Err(RecvError::Closed) => break,
+        drain_broadcast(events, move |event| {
+            if event.kind == http_monitor::CHECK_EVENT_KIND {
+                let _ = app.emit(HTTP_MONITOR_CHECK_EVENT, event.payload);
             }
-        }
+        })
+        .await;
     });
 }
 

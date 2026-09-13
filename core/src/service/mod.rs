@@ -125,6 +125,39 @@ impl Default for EventChannel {
     }
 }
 
+/// Drain a [`broadcast::Receiver`] to completion, invoking `on_event` for each
+/// value received in order.
+///
+/// This centralizes the `Lagged`/`Closed` contract that every service event
+/// bridge shares (DUP-021), so consumers no longer hand-roll the drain loop:
+///
+/// - **`Lagged`** — the receiver fell behind and the channel dropped the oldest
+///   buffered values. Service status/stats events are advisory (see
+///   [`EVENT_CHANNEL_CAPACITY`]), so the drain silently skips the gap and keeps
+///   going; the lag count is not surfaced.
+/// - **`Closed`** — all senders have been dropped, so no further value can
+///   arrive and the drain terminates.
+///
+/// `on_event` runs synchronously for each value. The returned future resolves
+/// only once the channel closes, so callers typically drive it from a spawned
+/// task.
+pub async fn drain_broadcast<T, F>(mut rx: broadcast::Receiver<T>, mut on_event: F)
+where
+    T: Clone,
+    F: FnMut(T),
+{
+    use broadcast::error::RecvError;
+    loop {
+        match rx.recv().await {
+            Ok(event) => on_event(event),
+            // Advisory events: a lagging drain drops the oldest and keeps going.
+            Err(RecvError::Lagged(_)) => continue,
+            // All senders dropped — nothing more to receive.
+            Err(RecvError::Closed) => break,
+        }
+    }
+}
+
 /// Capabilities declared by a service, for UI discovery and run-location routing.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -265,6 +298,45 @@ mod tests {
         let event = rx.recv().await.expect("event must arrive");
         assert_eq!(event.kind, "stats");
         assert_eq!(event.payload["requests"], 5);
+    }
+
+    #[tokio::test]
+    async fn drain_broadcast_forwards_events_in_order() {
+        let (tx, rx) = broadcast::channel::<u32>(8);
+        tx.send(1).unwrap();
+        tx.send(2).unwrap();
+        tx.send(3).unwrap();
+        drop(tx); // closing lets the drain terminate after the buffered values.
+
+        let mut received = Vec::new();
+        drain_broadcast(rx, |v| received.push(v)).await;
+        assert_eq!(received, vec![1, 2, 3]);
+    }
+
+    #[tokio::test]
+    async fn drain_broadcast_skips_lagged_and_continues() {
+        // Capacity 2 with 5 values queued forces the receiver to lag: its next
+        // recv sees `Lagged(3)`, then the 2 retained values (3, 4) survive.
+        let (tx, rx) = broadcast::channel::<u32>(2);
+        for i in 0..5 {
+            let _ = tx.send(i);
+        }
+        drop(tx); // buffered survivors still drain, then Closed terminates.
+
+        let mut received = Vec::new();
+        drain_broadcast(rx, |v| received.push(v)).await;
+        // 0,1,2 were dropped (surfaced as Lagged and skipped); the drain kept going.
+        assert_eq!(received, vec![3, 4]);
+    }
+
+    #[tokio::test]
+    async fn drain_broadcast_terminates_on_close() {
+        let (tx, rx) = broadcast::channel::<u32>(4);
+        drop(tx); // no senders left -> Closed on first recv.
+
+        let mut count = 0usize;
+        drain_broadcast(rx, |_v| count += 1).await;
+        assert_eq!(count, 0, "closed channel yields no events and terminates");
     }
 
     #[test]
