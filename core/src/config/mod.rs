@@ -17,6 +17,21 @@ use std::time::Duration;
 /// raise it further per connection via `connectTimeoutSecs`.
 pub const DEFAULT_SSH_CONNECT_TIMEOUT_SECS: u64 = 45;
 
+/// Default telnet connect timeout (seconds) when a connection does not configure
+/// its own `connectTimeoutSecs`. Bounds how long a connect to an unreachable
+/// telnet host may block before failing. Preserves the historical hardcoded 10 s
+/// budget the telnet backend used before the timeout became configurable
+/// (PARITY-006).
+pub const DEFAULT_TELNET_CONNECT_TIMEOUT_SECS: u64 = 10;
+
+/// Default FTP connect timeout (seconds) when a connection does not configure its
+/// own `connectTimeoutSecs`/`timeoutSecs`. Bounds how long the control-connection
+/// establish may block before failing.
+pub const DEFAULT_FTP_CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// Default FTP idle keep-alive interval (seconds) — see [`FtpConfig::keep_alive_secs`].
+pub const DEFAULT_FTP_KEEP_ALIVE_SECS: u64 = 60;
+
 /// Return the user's home directory.
 ///
 /// On Unix, reads `$HOME`. On Windows, reads `$USERPROFILE`.
@@ -442,10 +457,18 @@ impl Default for WslConfig {
 ///
 /// Shared between desktop and agent telnet backends.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TelnetConfig {
     pub host: String,
     #[serde(default = "default_telnet_port")]
     pub port: u16,
+    /// Maximum time (seconds) to wait for the TCP connect before failing. `None`
+    /// falls back to [`DEFAULT_TELNET_CONNECT_TIMEOUT_SECS`]. Named and shaped to
+    /// match [`SshConfig::connect_timeout_secs`] so the connect-timeout surface
+    /// is consistent across backends (PARITY-006). Omitted from the serialized
+    /// form when unset, so existing saved connections stay byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connect_timeout_secs: Option<u64>,
 }
 
 impl Default for TelnetConfig {
@@ -453,7 +476,20 @@ impl Default for TelnetConfig {
         Self {
             host: String::new(),
             port: default_telnet_port(),
+            connect_timeout_secs: None,
         }
+    }
+}
+
+impl TelnetConfig {
+    /// Connect timeout, falling back to the default when unset. Mirrors
+    /// [`SshConfig::connect_timeout`] so all backends expose the same accessor
+    /// (PARITY-006).
+    pub fn connect_timeout(&self) -> Duration {
+        Duration::from_secs(
+            self.connect_timeout_secs
+                .unwrap_or(DEFAULT_TELNET_CONNECT_TIMEOUT_SECS),
+        )
     }
 }
 
@@ -526,12 +562,24 @@ pub struct FtpConfig {
     /// Directory to change into after login (`CWD`), if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub initial_directory: Option<String>,
-    /// Connect timeout in seconds.
-    #[serde(default = "default_ftp_timeout_secs")]
-    pub timeout_secs: u64,
+    /// Connect timeout in seconds. Persisted as `timeoutSecs` for byte-stable
+    /// back-compat with existing saved connections; also accepts the unified
+    /// `connectTimeoutSecs` name shared with SSH/telnet (PARITY-006).
+    #[serde(
+        rename = "timeoutSecs",
+        alias = "connectTimeoutSecs",
+        default = "default_ftp_connect_timeout_secs"
+    )]
+    pub connect_timeout_secs: u64,
     /// Idle keep-alive interval in seconds. A periodic `NOOP` is sent on the
     /// browsing control connection every `keep_alive_secs` seconds to stop
     /// servers dropping an idle connection. `0` disables keep-alive.
+    ///
+    /// FTP liveness uses this application-level `NOOP` rather than the OS TCP
+    /// keepalive shared by the SSH/telnet stream backends
+    /// ([`crate::net::TcpKeepalivePolicy`]): idle FTP control connections are
+    /// commonly dropped by servers, so a protocol-level probe is required. See
+    /// the per-backend liveness policy documented in [`crate::net`] (PARITY-012).
     #[serde(default = "default_ftp_keep_alive_secs")]
     pub keep_alive_secs: u64,
     /// When set, the plain-FTP insecure-connection warning is suppressed for
@@ -554,7 +602,7 @@ impl Default for FtpConfig {
             mode: FtpDataMode::default(),
             transfer_type: FtpTransferType::default(),
             initial_directory: None,
-            timeout_secs: default_ftp_timeout_secs(),
+            connect_timeout_secs: default_ftp_connect_timeout_secs(),
             keep_alive_secs: default_ftp_keep_alive_secs(),
             suppress_security_warning: false,
         }
@@ -562,9 +610,11 @@ impl Default for FtpConfig {
 }
 
 impl FtpConfig {
-    /// Connect timeout as a [`Duration`].
-    pub fn timeout(&self) -> Duration {
-        Duration::from_secs(self.timeout_secs)
+    /// Connect timeout as a [`Duration`]. Named to match
+    /// [`SshConfig::connect_timeout`] / [`TelnetConfig::connect_timeout`] so all
+    /// backends expose the same accessor (PARITY-006).
+    pub fn connect_timeout(&self) -> Duration {
+        Duration::from_secs(self.connect_timeout_secs)
     }
 
     /// Keep-alive interval as a [`Duration`], or `None` when disabled (`0`).
@@ -783,12 +833,12 @@ fn default_ftp_port() -> u16 {
     21
 }
 
-fn default_ftp_timeout_secs() -> u64 {
-    30
+fn default_ftp_connect_timeout_secs() -> u64 {
+    DEFAULT_FTP_CONNECT_TIMEOUT_SECS
 }
 
 fn default_ftp_keep_alive_secs() -> u64 {
-    60
+    DEFAULT_FTP_KEEP_ALIVE_SECS
 }
 
 #[cfg(test)]
@@ -1169,11 +1219,63 @@ mod tests {
         let cfg = TelnetConfig {
             host: "example.com".into(),
             port: 2323,
+            connect_timeout_secs: Some(20),
         };
         let json = serde_json::to_string(&cfg).unwrap();
         let back: TelnetConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.host, "example.com");
         assert_eq!(back.port, 2323);
+        assert_eq!(back.connect_timeout_secs, Some(20));
+    }
+
+    // --- PARITY-006: unified connect-timeout across backends ---
+
+    #[test]
+    fn telnet_connect_timeout_defaults_when_unset() {
+        let cfg = TelnetConfig::default();
+        assert_eq!(cfg.connect_timeout_secs, None);
+        assert_eq!(
+            cfg.connect_timeout(),
+            Duration::from_secs(DEFAULT_TELNET_CONNECT_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn telnet_connect_timeout_honors_override() {
+        let cfg = TelnetConfig {
+            connect_timeout_secs: Some(3),
+            ..TelnetConfig::default()
+        };
+        assert_eq!(cfg.connect_timeout(), Duration::from_secs(3));
+    }
+
+    #[test]
+    fn telnet_config_absent_connect_timeout_still_loads() {
+        // A telnet connection saved before the field existed must still load and
+        // behave exactly as before (the historical 10s budget).
+        let json = r#"{ "host": "bbs.example.com", "port": 23 }"#;
+        let cfg: TelnetConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.connect_timeout_secs, None);
+        assert_eq!(
+            cfg.connect_timeout(),
+            Duration::from_secs(DEFAULT_TELNET_CONNECT_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn telnet_connect_timeout_camel_case_roundtrip() {
+        let cfg = TelnetConfig {
+            host: "h".into(),
+            port: 23,
+            connect_timeout_secs: Some(15),
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"connectTimeoutSecs\":15"), "json: {json}");
+        let back: TelnetConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.connect_timeout_secs, Some(15));
+        // Unset is omitted so existing saved connections stay byte-stable.
+        let default_json = serde_json::to_string(&TelnetConfig::default()).unwrap();
+        assert!(!default_json.contains("connectTimeoutSecs"), "{default_json}");
     }
 
     #[test]
@@ -1729,8 +1831,8 @@ mod tests {
         assert_eq!(cfg.mode, FtpDataMode::Passive);
         assert_eq!(cfg.transfer_type, FtpTransferType::Binary);
         assert!(cfg.initial_directory.is_none());
-        assert_eq!(cfg.timeout_secs, 30);
-        assert_eq!(cfg.timeout(), Duration::from_secs(30));
+        assert_eq!(cfg.connect_timeout_secs, 30);
+        assert_eq!(cfg.connect_timeout(), Duration::from_secs(30));
         // Keep-alive defaults to 60s (concept: periodic NOOP, default 60s).
         assert_eq!(cfg.keep_alive_secs, 60);
         assert_eq!(cfg.keep_alive_interval(), Some(Duration::from_secs(60)));
@@ -1768,7 +1870,7 @@ mod tests {
         assert!(!cfg.anonymous);
         assert_eq!(cfg.mode, FtpDataMode::Passive);
         assert_eq!(cfg.transfer_type, FtpTransferType::Binary);
-        assert_eq!(cfg.timeout_secs, 30);
+        assert_eq!(cfg.connect_timeout_secs, 30);
     }
 
     #[test]
@@ -1793,7 +1895,37 @@ mod tests {
         assert_eq!(cfg.mode, FtpDataMode::Active);
         assert_eq!(cfg.transfer_type, FtpTransferType::Ascii);
         assert_eq!(cfg.initial_directory.as_deref(), Some("/pub"));
-        assert_eq!(cfg.timeout_secs, 45);
+        assert_eq!(cfg.connect_timeout_secs, 45);
+    }
+
+    // --- PARITY-006: FTP connect-timeout back-compat + unified-name alias ---
+
+    #[test]
+    fn ftp_config_legacy_timeout_secs_still_loads() {
+        // PERSISTENCE BACK-COMPAT: connections saved with the original
+        // `timeoutSecs` key MUST keep loading unchanged.
+        let json = r#"{ "host": "ftp.example.com", "timeoutSecs": 45 }"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.connect_timeout_secs, 45);
+        assert_eq!(cfg.connect_timeout(), Duration::from_secs(45));
+    }
+
+    #[test]
+    fn ftp_config_accepts_unified_connect_timeout_alias() {
+        // The unified `connectTimeoutSecs` name (shared with SSH/telnet) is
+        // accepted as an alias.
+        let json = r#"{ "host": "ftp.example.com", "connectTimeoutSecs": 12 }"#;
+        let cfg: FtpConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.connect_timeout_secs, 12);
+    }
+
+    #[test]
+    fn ftp_config_connect_timeout_persists_as_timeout_secs() {
+        // Serialization keeps the historical `timeoutSecs` key so a save/load
+        // round-trip through the raw settings blob stays byte-stable.
+        let json = serde_json::to_string(&FtpConfig::default()).unwrap();
+        assert!(json.contains("\"timeoutSecs\":30"), "json: {json}");
+        assert!(!json.contains("connectTimeoutSecs"), "json: {json}");
     }
 
     #[test]
@@ -1830,7 +1962,7 @@ mod tests {
             mode: FtpDataMode::Passive,
             transfer_type: FtpTransferType::Binary,
             initial_directory: Some("/pub".into()),
-            timeout_secs: 30,
+            connect_timeout_secs: 30,
             keep_alive_secs: 60,
             suppress_security_warning: false,
         };
