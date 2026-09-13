@@ -16,8 +16,6 @@
 #![allow(dead_code)]
 
 use crate::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
 pub use crate::connection::ConnectionTypeInfo;
 use crate::monitoring::SystemStats;
 use crate::service::ServiceStatus;
@@ -27,6 +25,8 @@ use crate::tunnel::config::{
 };
 #[cfg(feature = "ssh")]
 use crate::tunnel::ReachableFrom;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 // Used by shell/session modules on unix; re-exported for test access on all platforms.
 #[allow(unused_imports)]
 pub use crate::config::ShellConfig;

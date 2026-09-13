@@ -132,7 +132,11 @@ pub fn dispatch_port_scan(
     task_id: &str,
     params: Value,
 ) {
-    match client.send_request(agent_id, "network.port_scan", params) {
+    match client.send_request(
+        agent_id,
+        termihub_core::protocol::methods::NETWORK_PORT_SCAN,
+        params,
+    ) {
         Ok(reply) => {
             for r in parse_list::<PortScanResult>(&reply, "results") {
                 let _ = app.emit(
@@ -164,7 +168,11 @@ pub fn dispatch_ping(
     task_id: &str,
     params: Value,
 ) {
-    match client.send_request(agent_id, "network.ping", params) {
+    match client.send_request(
+        agent_id,
+        termihub_core::protocol::methods::NETWORK_PING,
+        params,
+    ) {
         Ok(reply) => {
             for r in parse_list::<PingResult>(&reply, "results") {
                 let _ = app.emit(
@@ -192,7 +200,11 @@ pub fn dispatch_traceroute(
     task_id: &str,
     params: Value,
 ) {
-    match client.send_request(agent_id, "network.traceroute", params) {
+    match client.send_request(
+        agent_id,
+        termihub_core::protocol::methods::NETWORK_TRACEROUTE,
+        params,
+    ) {
         Ok(reply) => {
             for hop in parse_list::<TracerouteHop>(&reply, "hops") {
                 let _ = app.emit(

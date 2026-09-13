@@ -1238,43 +1238,49 @@ fn register_files_write(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
 }
 
 fn register_files_delete(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method(pm::CONNECTION_FILES_DELETE, |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+    module.register_async_method(
+        pm::CONNECTION_FILES_DELETE,
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
-        let p: FilesDeleteParams = params
-            .parse()
-            .map_err(|e| invalid_params("connection.files.delete", e))?;
+            let p: FilesDeleteParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.files.delete", e))?;
 
-        let browser =
-            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
+            let browser =
+                resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        // `FileBrowser::delete` self-detects a directory via `stat`, so the
-        // wire-level `is_directory` hint (kept for protocol compatibility) is
-        // advisory and no longer passed — mirroring the desktop `sftp_delete`.
-        let _ = p.is_directory;
-        browser.delete(&p.path).await.map_err(map_file_error)?;
-        Ok::<_, ErrorObjectOwned>(json!({}))
-    })?;
+            // `FileBrowser::delete` self-detects a directory via `stat`, so the
+            // wire-level `is_directory` hint (kept for protocol compatibility) is
+            // advisory and no longer passed — mirroring the desktop `sftp_delete`.
+            let _ = p.is_directory;
+            browser.delete(&p.path).await.map_err(map_file_error)?;
+            Ok::<_, ErrorObjectOwned>(json!({}))
+        },
+    )?;
     Ok(())
 }
 
 fn register_files_rename(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
-    module.register_async_method(pm::CONNECTION_FILES_RENAME, |params, ctx, _ext| async move {
-        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+    module.register_async_method(
+        pm::CONNECTION_FILES_RENAME,
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
 
-        let p: FilesRenameParams = params
-            .parse()
-            .map_err(|e| invalid_params("connection.files.rename", e))?;
+            let p: FilesRenameParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.files.rename", e))?;
 
-        let browser =
-            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
+            let browser =
+                resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
 
-        browser
-            .rename(&p.old_path, &p.new_path)
-            .await
-            .map_err(map_file_error)?;
-        Ok::<_, ErrorObjectOwned>(json!({}))
-    })?;
+            browser
+                .rename(&p.old_path, &p.new_path)
+                .await
+                .map_err(map_file_error)?;
+            Ok::<_, ErrorObjectOwned>(json!({}))
+        },
+    )?;
     Ok(())
 }
 
@@ -1995,60 +2001,63 @@ fn register_agent_request_deferred_update(
 fn register_agent_list_connections(
     module: &mut RpcModule<Mutex<HandlerState>>,
 ) -> anyhow::Result<()> {
-    module.register_async_method(pm::AGENT_LIST_CONNECTIONS, |_params, ctx, _ext| async move {
-        // Read-only. Requires `initialize` first so the caller is already
-        // recorded in both registries.
-        let (local_registry, host_registry) = {
-            let s = ctx.lock().await;
-            if !s.initialized {
-                return Err(not_initialized());
-            }
-            (s.client_registry.clone(), s.registry_client.get().cloned())
-        };
+    module.register_async_method(
+        pm::AGENT_LIST_CONNECTIONS,
+        |_params, ctx, _ext| async move {
+            // Read-only. Requires `initialize` first so the caller is already
+            // recorded in both registries.
+            let (local_registry, host_registry) = {
+                let s = ctx.lock().await;
+                if !s.initialized {
+                    return Err(not_initialized());
+                }
+                (s.client_registry.clone(), s.registry_client.get().cloned())
+            };
 
-        // The host-wide set, from the registry daemon (ADR-11): every client
-        // attached to this host, whether or not it holds any sessions, and
-        // whether or not it is served by *this* worker process. Includes the
-        // caller — the desktop-side update guard excludes its own `client_id`
-        // (from `initialize`) so it is not mistaken for an "other host".
-        let host_wide = match host_registry {
-            Some(registry) => registry.list().await,
-            None => None,
-        };
+            // The host-wide set, from the registry daemon (ADR-11): every client
+            // attached to this host, whether or not it holds any sessions, and
+            // whether or not it is served by *this* worker process. Includes the
+            // caller — the desktop-side update guard excludes its own `client_id`
+            // (from `initialize`) so it is not mistaken for an "other host".
+            let host_wide = match host_registry {
+                Some(registry) => registry.list().await,
+                None => None,
+            };
 
-        // The registry is optional infrastructure, so its absence must never
-        // turn into a wrong answer. `None` means "no host-wide view" — not "no
-        // clients" — and the honest fallback is this process's own client, the
-        // one thing we can still say for certain. That is the pre-registry
-        // behaviour, so a registry-less host degrades to exactly what it had
-        // before rather than to an empty set.
-        let connections: Vec<ConnectionInfo> = match host_wide {
-            Some(clients) => clients
-                .into_iter()
-                .map(|c| ConnectionInfo {
-                    client_id: c.client_id,
-                    client: c.client,
-                    client_version: c.client_version,
-                    connected_since: c.connected_since,
-                })
-                .collect(),
-            None => {
-                debug!("Registry unavailable; reporting this process's clients only");
-                local_registry
-                    .list()
+            // The registry is optional infrastructure, so its absence must never
+            // turn into a wrong answer. `None` means "no host-wide view" — not "no
+            // clients" — and the honest fallback is this process's own client, the
+            // one thing we can still say for certain. That is the pre-registry
+            // behaviour, so a registry-less host degrades to exactly what it had
+            // before rather than to an empty set.
+            let connections: Vec<ConnectionInfo> = match host_wide {
+                Some(clients) => clients
                     .into_iter()
                     .map(|c| ConnectionInfo {
                         client_id: c.client_id,
                         client: c.client,
                         client_version: c.client_version,
-                        connected_since: c.connected_since.to_rfc3339(),
+                        connected_since: c.connected_since,
                     })
-                    .collect()
-            }
-        };
+                    .collect(),
+                None => {
+                    debug!("Registry unavailable; reporting this process's clients only");
+                    local_registry
+                        .list()
+                        .into_iter()
+                        .map(|c| ConnectionInfo {
+                            client_id: c.client_id,
+                            client: c.client,
+                            client_version: c.client_version,
+                            connected_since: c.connected_since.to_rfc3339(),
+                        })
+                        .collect()
+                }
+            };
 
-        to_result_value(&ConnectionListResult { connections })
-    })?;
+            to_result_value(&ConnectionListResult { connections })
+        },
+    )?;
     Ok(())
 }
 
