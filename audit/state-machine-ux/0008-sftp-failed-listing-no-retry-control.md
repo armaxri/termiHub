@@ -9,7 +9,8 @@ subsystem: src/components/FileBrowser.tsx
 evidence:
   - src/components/FileBrowser.tsx:1319
   - src/components/FileBrowser.tsx:1547
-status: open
+status: fixed
+resolution: "#2937 — SFTP failed-listing placeholder gets Retry (re-invokes listing) + Dismiss (clears error via file_browser_projection, path retained); regression + projection tests"
 ---
 
 ## What
