@@ -11,6 +11,8 @@ interface PasswordInputProps {
   className?: string;
   id?: string;
   disabled?: boolean;
+  /** Accessible name for the input when no visible <label> is associated. */
+  "aria-label"?: string;
   /** Space-separated ids of elements describing this input (e.g. an error message). */
   "aria-describedby"?: string;
   /** Marks the input invalid for assistive tech when validation fails. */
@@ -38,6 +40,7 @@ export function PasswordInput({
   className,
   id,
   disabled,
+  "aria-label": ariaLabel,
   "aria-describedby": ariaDescribedBy,
   "aria-invalid": ariaInvalid,
   "data-testid": dataTestId,
@@ -70,6 +73,7 @@ export function PasswordInput({
         placeholder={placeholder}
         autoFocus={autoFocus}
         disabled={disabled}
+        aria-label={ariaLabel}
         aria-describedby={ariaDescribedBy}
         aria-invalid={ariaInvalid || undefined}
         data-testid={dataTestId}

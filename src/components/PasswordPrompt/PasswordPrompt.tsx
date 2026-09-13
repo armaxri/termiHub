@@ -16,11 +16,23 @@ export function PasswordPrompt() {
   const host = useAppStore((s) => s.passwordPromptHost);
   const username = useAppStore((s) => s.passwordPromptUsername);
   const notice = useAppStore((s) => s.passwordPromptNotice);
+  const kind = useAppStore((s) => s.passwordPromptKind);
   const submitPassword = useAppStore((s) => s.submitPassword);
   const dismissPasswordPrompt = useAppStore((s) => s.dismissPasswordPrompt);
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
 
   const storeActive = credentialStoreStatus != null && credentialStoreStatus.mode !== "none";
+
+  // A key passphrase unlocks a private key file — it is not the remote account
+  // password, so label the prompt accordingly (UX-010).
+  const isPassphrase = kind === "key_passphrase";
+  const title = isPassphrase ? "SSH Key Passphrase" : "SSH Password";
+  const description = isPassphrase
+    ? `Enter the passphrase for the SSH key used by ${username}@${host}`
+    : `Enter password for ${username}@${host}`;
+  const inputPlaceholder = isPassphrase ? "Passphrase" : "Password";
+  const inputAriaLabel = isPassphrase ? "SSH key passphrase" : "SSH password";
+  const saveLabel = isPassphrase ? "Save passphrase" : "Save password";
 
   const [password, setPassword] = useState("");
   const [savePassword, setSavePassword] = useState(false);
@@ -50,7 +62,7 @@ export function PasswordPrompt() {
       onOpenChange={(v) => {
         if (!v) dismissPasswordPrompt();
       }}
-      title="SSH Password"
+      title={title}
       footer={
         <>
           <Button
@@ -71,15 +83,16 @@ export function PasswordPrompt() {
           {notice}
         </p>
       )}
-      <p className="password-prompt__description">
-        Enter password for {username}@{host}
+      <p className="password-prompt__description" data-testid="password-prompt-description">
+        {description}
       </p>
       <PasswordInput
         className="ui-input"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={handleKeyDown}
-        placeholder="Password"
+        placeholder={inputPlaceholder}
+        aria-label={inputAriaLabel}
         autoFocus
         data-testid="password-prompt-input"
       />
@@ -88,10 +101,10 @@ export function PasswordPrompt() {
           <Checkbox
             checked={savePassword}
             onCheckedChange={setSavePassword}
-            aria-label="Save password"
+            aria-label={saveLabel}
             data-testid="password-prompt-save-checkbox"
           />
-          <span>Save password</span>
+          <span>{saveLabel}</span>
         </label>
       )}
     </Modal>

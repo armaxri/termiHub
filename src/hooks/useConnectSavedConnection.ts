@@ -263,7 +263,12 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           // The prompt modal is now the feedback surface — clear the pre-connect
           // indicator before it appears (UX-011).
           dismissConnecting();
-          const passphrase = await requestPassword(host, username, rejectedCredentialNotice);
+          const passphrase = await requestPassword(
+            host,
+            username,
+            rejectedCredentialNotice,
+            "key_passphrase"
+          );
           if (passphrase === null) {
             // Acknowledge the cancel (UX-012), matching the editor path.
             toast.info("Connect canceled");
