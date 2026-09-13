@@ -325,7 +325,11 @@ impl EmbeddedServerManager {
             TerminalError::EmbeddedServerError("Agent manager is not available".to_string())
         })?;
 
-        match agent_manager.send_request(agent_id, "service.start", params) {
+        match agent_manager.send_request(
+            agent_id,
+            termihub_core::protocol::methods::SERVICE_START,
+            params,
+        ) {
             Ok(result) => {
                 let state = server_state_from_start_reply(server_id, &result);
                 {
@@ -370,7 +374,11 @@ impl EmbeddedServerManager {
         };
         if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
             let params = json!({ "instanceId": server_id });
-            if let Err(e) = agent_manager.send_request(&handle.agent_id, "service.stop", params) {
+            if let Err(e) = agent_manager.send_request(
+                &handle.agent_id,
+                termihub_core::protocol::methods::SERVICE_STOP,
+                params,
+            ) {
                 tracing::warn!(
                     "Failed to stop agent-hosted embedded server {} on agent {}: {}",
                     server_id,
@@ -672,7 +680,11 @@ fn poll_agent_server_states(
     let mut out = Vec::with_capacity(targets.len());
     for (server_id, agent_id) in targets {
         let params = json!({ "instanceId": server_id });
-        match client.send_request(agent_id, "service.status", params) {
+        match client.send_request(
+            agent_id,
+            termihub_core::protocol::methods::SERVICE_STATUS,
+            params,
+        ) {
             Ok(result) => {
                 if let Some(state) = server_state_from_status_reply(server_id, &result) {
                     out.push(state);

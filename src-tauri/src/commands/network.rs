@@ -550,7 +550,11 @@ pub async fn network_dns_lookup(
             })?;
             let params = agent_tools::dns_params(&hostname, &record_type, server.as_deref());
             tokio::task::spawn_blocking(move || {
-                client.send_request(&agent_id, "network.dns_lookup", params)
+                client.send_request(
+                    &agent_id,
+                    termihub_core::protocol::methods::NETWORK_DNS_LOOKUP,
+                    params,
+                )
             })
             .await
             .map_err(|e| TerminalError::NetworkError(e.to_string()))?
@@ -702,7 +706,11 @@ pub fn network_wol_send(
             })?;
             let params = agent_tools::wol_params(&mac, &broadcast, port);
             client
-                .send_request(&agent_id, "network.wol", params)
+                .send_request(
+                    &agent_id,
+                    termihub_core::protocol::methods::NETWORK_WOL,
+                    params,
+                )
                 .map(|_| ())
         }
         ResolvedLocation::Local => wol::send_magic_packet(&mac, &broadcast, port)

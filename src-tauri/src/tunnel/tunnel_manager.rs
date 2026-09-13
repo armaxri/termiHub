@@ -341,7 +341,11 @@ fn poll_agent_tunnel_stats(
     let mut out = Vec::with_capacity(targets.len());
     for (tunnel_id, agent_id) in targets {
         let params = serde_json::json!({ "tunnelId": tunnel_id });
-        match client.send_request(agent_id, "tunnel.status", params) {
+        match client.send_request(
+            agent_id,
+            termihub_core::protocol::methods::TUNNEL_STATUS,
+            params,
+        ) {
             Ok(result) => {
                 if let Some(stats) = stats_from_status_reply(&result) {
                     out.push((tunnel_id.clone(), stats));
@@ -868,7 +872,11 @@ impl TunnelManager {
             "forward": forward,
         });
 
-        match agent_manager.send_request(agent_id, "tunnel.start", params) {
+        match agent_manager.send_request(
+            agent_id,
+            termihub_core::protocol::methods::TUNNEL_START,
+            params,
+        ) {
             Ok(result) => {
                 let bound_address = result["boundAddress"].as_str().unwrap_or("").to_string();
                 // The agent reports its runtime classification (loopback → agent
@@ -932,7 +940,11 @@ impl TunnelManager {
         };
         if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
             let params = serde_json::json!({ "tunnelId": tunnel_id });
-            if let Err(e) = agent_manager.send_request(&handle.agent_id, "tunnel.stop", params) {
+            if let Err(e) = agent_manager.send_request(
+                &handle.agent_id,
+                termihub_core::protocol::methods::TUNNEL_STOP,
+                params,
+            ) {
                 tracing::warn!(
                     "Failed to stop agent-hosted tunnel {} on agent {}: {}",
                     tunnel_id,
