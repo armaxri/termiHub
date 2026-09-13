@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FileDown, X } from "lucide-react";
 import { toast } from "sonner";
-import { Button, Spinner } from "@/components/ui";
+import { Button, Spinner, ContentOverlay } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
@@ -153,11 +153,11 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
 
       {session.awaitingFirstFrame && (
         <div className="rd-overlay" data-testid="remote-desktop-reconnecting-view">
-          <Spinner size="lg" label={null} className="rd-overlay__icon" />
-          <div className="rd-overlay__title">Reconnecting view…</div>
-          <div className="rd-overlay__sub">
-            The remote desktop is still connected — repainting the framebuffer in this window.
-          </div>
+          <ContentOverlay
+            icon={<Spinner size="lg" label={null} className="rd-overlay__icon" />}
+            heading="Reconnecting view…"
+            subheading="The remote desktop is still connected — repainting the framebuffer in this window."
+          />
         </div>
       )}
 

@@ -16,17 +16,9 @@
   display: none;
 }
 
-.terminal-connection-overlay__body {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-xl);
-  text-align: center;
-}
-
+/* Body layout (icon/heading/message/actions) comes from the shared
+   `.ui-content-overlay` primitive (UISF-008); the classes below are this
+   overlay's own icon tone plus its error/hint/elapsed content. */
 .terminal-connection-overlay__icon {
   color: var(--color-error);
   opacity: 0.8;
@@ -37,19 +29,6 @@
   color: var(--accent-color);
   opacity: 1;
   animation: th-spin 1s linear infinite;
-}
-
-.terminal-connection-overlay__heading {
-  font-size: var(--font-size-md);
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.terminal-connection-overlay__subheading {
-  font-size: var(--font-size-sm);
-  color: var(--text-secondary);
-  margin: 0;
 }
 
 .terminal-connection-overlay__elapsed {
@@ -137,13 +116,4 @@
   font-size: var(--font-size-xs, var(--font-size-sm));
   margin: 0;
   line-height: 1.5;
-}
-
-.terminal-connection-overlay__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  margin-top: var(--spacing-xs);
-  flex-wrap: wrap;
-  justify-content: center;
 }

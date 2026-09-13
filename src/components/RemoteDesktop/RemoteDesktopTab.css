@@ -102,23 +102,20 @@
   color: var(--color-warning);
 }
 
-/* Connection-state overlays */
+/* Connection-state overlays. The body layout (icon/heading/message/actions)
+   comes from the shared `.ui-content-overlay` primitive (UISF-008); this is only
+   the positioned backdrop that the body fills. */
 .rd-overlay {
   position: absolute;
   inset: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
   /* Unified content-overlay backdrop (UI-008): same treatment as the terminal
      connecting/disconnected overlays, so the desktop stays faintly visible. */
   background: var(--overlay-content-bg);
   backdrop-filter: var(--overlay-blur-sm);
   color: var(--text-primary);
   z-index: var(--z-elevated);
-  text-align: center;
-  padding: var(--spacing-lg);
 }
 
 .rd-overlay__icon {
@@ -127,11 +124,6 @@
 
 .rd-overlay__icon--error {
   color: var(--color-error);
-}
-
-.rd-overlay__title {
-  font-size: var(--font-size-lg);
-  font-weight: 600;
 }
 
 .rd-overlay__sub {

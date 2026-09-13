@@ -54,6 +54,9 @@ export type { SpinnerProps, SpinnerSize } from "./Spinner";
 export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps, EmptyStateVariant } from "./EmptyState";
 
+export { ContentOverlay } from "./ContentOverlay";
+export type { ContentOverlayProps } from "./ContentOverlay";
+
 export { ToastProvider, toast } from "./Toast";
 export type { ToastApi, ToastOptions, ToastPromiseMessages } from "./Toast";
 
