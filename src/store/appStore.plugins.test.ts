@@ -353,6 +353,91 @@ describe("appStore — plugins (#1993)", () => {
     });
   });
 
+  describe("error and edge branches (#2979)", () => {
+    it("logs and skips a plugin theme that fails validation, registering only the good ones (#1996)", async () => {
+      const themePlugin = makePlugin("badthemer", "active", { withBackend: false });
+      vi.mocked(apiListPlugins).mockResolvedValueOnce([themePlugin]);
+      const good: ThemeDefinition = {
+        id: "plugin:badthemer:ok",
+        name: "OK",
+        colorScheme: "dark",
+        colors: darkTheme.colors,
+      };
+      // One theme validates, one fails: the failure is logged and skipped, the
+      // good one still flows through to the registry (the theme-error skip loop).
+      vi.mocked(loadPluginThemes).mockResolvedValueOnce({
+        themes: [good],
+        errors: [
+          { pluginId: "badthemer", themeId: "bad", file: "bad.json", message: "invalid color" },
+        ],
+      });
+
+      await useAppStore.getState().loadPlugins();
+
+      expect(loadPluginThemes).toHaveBeenCalledTimes(1);
+      // Only the theme that validated is mirrored/registered; the bad one is dropped.
+      expect(useAppStore.getState().pluginThemes).toEqual([good]);
+      expect(setRegisteredPluginThemes).toHaveBeenCalledWith([good]);
+    });
+
+    it("loadPlugins tolerates a non-Error rejection (String(err) guard)", async () => {
+      vi.mocked(apiListPlugins).mockRejectedValueOnce("backend exploded");
+      await expect(useAppStore.getState().loadPlugins()).resolves.toBeUndefined();
+      expect(useAppStore.getState().plugins).toEqual([]);
+    });
+
+    it("installPlugin toasts a non-Error rejection via String(err) and rethrows", async () => {
+      vi.mocked(apiInstallPlugin).mockRejectedValueOnce("corrupt archive");
+      await expect(
+        useAppStore.getState().installPlugin("/tmp/x.termihub-plugin", false, false)
+      ).rejects.toBe("corrupt archive");
+      expect(toastError).toHaveBeenCalledWith("Failed to install plugin: corrupt archive", {
+        id: "toast-id",
+      });
+    });
+
+    it("uninstallPlugin falls back to the id, toasts an error, and rethrows on failure", async () => {
+      // The plugin is not in state, so the feedback name falls back to the id.
+      vi.mocked(apiUninstallPlugin).mockRejectedValueOnce(new Error("in use"));
+      await expect(useAppStore.getState().uninstallPlugin("ghost")).rejects.toThrow("in use");
+      expect(toastLoading).toHaveBeenCalledWith("Uninstalling ghost…");
+      expect(toastError).toHaveBeenCalledWith("Failed to uninstall ghost: in use", {
+        id: "toast-id",
+      });
+      expect(apiListPlugins).not.toHaveBeenCalled();
+    });
+
+    it("enablePlugin toasts an error and rethrows on failure", async () => {
+      useAppStore.setState({ plugins: [makePlugin("toggle", "disabled")] });
+      vi.mocked(apiEnablePlugin).mockRejectedValueOnce(new Error("boot failed"));
+      await expect(useAppStore.getState().enablePlugin("toggle")).rejects.toThrow("boot failed");
+      expect(toastError).toHaveBeenCalledWith("Failed to enable Plugin toggle: boot failed", {
+        id: "toast-id",
+      });
+      expect(apiListPlugins).not.toHaveBeenCalled();
+    });
+
+    it("disablePlugin falls back to the id in feedback when the plugin is not in state", async () => {
+      vi.mocked(apiListPlugins).mockResolvedValueOnce([]);
+      await useAppStore.getState().disablePlugin("unknown-id");
+      expect(toastLoading).toHaveBeenCalledWith("Disabling unknown-id…");
+      expect(toastSuccess).toHaveBeenCalledWith("Disabled unknown-id", { id: "toast-id" });
+    });
+
+    it("getPluginSettings tolerates a non-Error rejection (String(err) guard) and rethrows", async () => {
+      vi.mocked(apiGetPluginSettings).mockRejectedValueOnce("no such key");
+      await expect(useAppStore.getState().getPluginSettings("k8s")).rejects.toBe("no such key");
+    });
+
+    it("updatePluginSettings toasts a non-Error rejection via String(err) and rethrows", async () => {
+      vi.mocked(apiUpdatePluginSettings).mockRejectedValueOnce("quota exceeded");
+      await expect(useAppStore.getState().updatePluginSettings("k8s", { a: 1 })).rejects.toBe(
+        "quota exceeded"
+      );
+      expect(toastError).toHaveBeenCalledWith("Failed to save k8s settings: quota exceeded");
+    });
+  });
+
   describe("selectPlugin (#1997)", () => {
     it("opens a single plugin-detail tab titled after the plugin and records the selection", () => {
       useAppStore.setState({ plugins: [makePlugin("k8s", "active")] });

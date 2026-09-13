@@ -84,6 +84,23 @@ describe("appStore — macro slice (#1673)", () => {
     expect(useAppStore.getState().macros[0].name).toBe("First");
   });
 
+  it("loadMacros swallows an Error rejection and leaves state untouched (#2979)", async () => {
+    useAppStore.setState({ macros: [makeMacro("m-keep", "Keep")] });
+    vi.mocked(apiListMacros).mockRejectedValueOnce(new Error("backend down"));
+
+    // A read-only refresh logs rather than throwing, so it must resolve...
+    await expect(useAppStore.getState().loadMacros()).resolves.toBeUndefined();
+    // ...and must not clobber the existing library on failure.
+    expect(useAppStore.getState().macros).toHaveLength(1);
+    expect(useAppStore.getState().macros[0].id).toBe("m-keep");
+  });
+
+  it("loadMacros tolerates a non-Error rejection via the String(err) guard (#2979)", async () => {
+    vi.mocked(apiListMacros).mockRejectedValueOnce("kaboom");
+    await expect(useAppStore.getState().loadMacros()).resolves.toBeUndefined();
+    expect(useAppStore.getState().macros).toEqual([]);
+  });
+
   it("saveMacroToBackend saves, refreshes the list, and returns the stored macro", async () => {
     const stored = makeMacro("m-1", "Saved");
     vi.mocked(apiSaveMacro).mockResolvedValueOnce(stored);

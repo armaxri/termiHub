@@ -48,6 +48,7 @@ vi.mock("@/services/macroApi", () => ({
 
 import { useAppStore } from "./appStore";
 import { saveMacro as apiSaveMacro } from "@/services/macroApi";
+import { toast } from "@/components/ui";
 
 describe("appStore — macro recording slice (#1674)", () => {
   beforeEach(() => {
@@ -109,6 +110,17 @@ describe("appStore — macro recording slice (#1674)", () => {
     expect(s.macroSaveDialogOpen).toBe(true);
     // Steps are retained so the dialog can build the save payload.
     expect(s.macroRecordingSteps).toHaveLength(1);
+  });
+
+  it("stopMacroRecording is a no-op when no recording is active (#2979)", () => {
+    // Not recording — the guard returns immediately without touching state.
+    useAppStore.setState({ macroRecording: false, macroSaveDialogOpen: false });
+
+    useAppStore.getState().stopMacroRecording();
+
+    const s = useAppStore.getState();
+    expect(s.macroRecording).toBe(false);
+    expect(s.macroSaveDialogOpen).toBe(false);
   });
 
   it("stopping with no captured input does not open the save dialog", () => {
@@ -174,6 +186,26 @@ describe("appStore — macro recording slice (#1674)", () => {
     const s = useAppStore.getState();
     expect(s.macroRecordingSteps).toEqual([]);
     expect(s.macroSaveDialogOpen).toBe(false);
+  });
+
+  it("saveRecordedMacro keeps the dialog open and rethrows when the backend save fails (#2979)", async () => {
+    const errorToast = vi.spyOn(toast, "error");
+    useAppStore.getState().startMacroRecording();
+    useAppStore.getState().recordMacroInput("ls\r");
+    useAppStore.getState().stopMacroRecording();
+    expect(useAppStore.getState().macroSaveDialogOpen).toBe(true);
+
+    vi.mocked(apiSaveMacro).mockRejectedValueOnce(new Error("disk full"));
+
+    await expect(
+      useAppStore.getState().saveRecordedMacro({ name: "Greeting", tags: [] })
+    ).rejects.toThrow("disk full");
+
+    // The capture is retained and the dialog stays open so the user can retry.
+    const s = useAppStore.getState();
+    expect(s.macroSaveDialogOpen).toBe(true);
+    expect(s.macroRecordingSteps).toHaveLength(1);
+    expect(errorToast).toHaveBeenCalledWith(expect.stringContaining("Failed to save macro"));
   });
 
   it("discardRecordedMacro closes the dialog and drops the buffer", () => {
