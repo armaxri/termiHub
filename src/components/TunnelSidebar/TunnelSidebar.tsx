@@ -6,6 +6,7 @@ import { Button, toast, ConfirmDialog } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarToolbar } from "@/components/Sidebar/SidebarToolbar";
 import { useFlatRovingNav } from "@/hooks/useFlatRovingNav";
+import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import type { TunnelConfig, TunnelStatus } from "@/types/tunnel";
 import {
   combinedPairStatus,
@@ -34,8 +35,13 @@ export function TunnelSidebar() {
   const openTunnelEditorTab = useAppStore((s) => s.openTunnelEditorTab);
 
   // Tunnel pending delete confirmation (active teardown, chained-pair cascade, or
-  // a direct companion delete that breaks localhost), or null when idle.
-  const [pendingDelete, setPendingDelete] = useState<{ id: string; message: string } | null>(null);
+  // a direct companion delete that breaks localhost), or null when idle. The
+  // per-case `message` is derived caller-side in `handleDelete` and carried on
+  // the pending target; the confirm is fire-and-forget (no success toast).
+  const tunnelDelete = useDeleteConfirm<{ id: string; message: string }>(({ id }) => {
+    void deleteTunnel(id);
+  });
+  const requestDelete = tunnelDelete.request;
   // A live tunnel pending a Stop / force-Reconnect confirmation (UX-021): both
   // drop every connection currently forwarded through it, so they are guarded
   // like Delete. Null when idle.
@@ -97,7 +103,7 @@ export function TunnelSidebar() {
       // Deleting a chained companion directly breaks localhost while leaving the
       // agent port running — warn explicitly (#2597 edge case).
       if (target?.companionOf) {
-        setPendingDelete({
+        requestDelete({
           id: tunnelId,
           message: `Deleting "${name}" removes the hop on this computer. localhost will stop reaching the port (it still works on the agent). Continue?`,
         });
@@ -105,7 +111,7 @@ export function TunnelSidebar() {
       }
       // Deleting a chained parent cascades to its companion — name both.
       if (companion) {
-        setPendingDelete({
+        requestDelete({
           id: tunnelId,
           message: `Deleting "${name}" also removes its linked hop "${companion.name}" on this computer. Continue?`,
         });
@@ -113,7 +119,7 @@ export function TunnelSidebar() {
       }
       // Deleting an active tunnel silently tears down a live connection — confirm first.
       if (isActive) {
-        setPendingDelete({
+        requestDelete({
           id: tunnelId,
           message: `"${name}" is currently active. Deleting it will stop the tunnel. Continue?`,
         });
@@ -121,17 +127,8 @@ export function TunnelSidebar() {
       }
       void deleteTunnel(tunnelId);
     },
-    [tunnelStates, tunnels, deleteTunnel]
+    [tunnelStates, tunnels, deleteTunnel, requestDelete]
   );
-
-  const confirmDelete = useCallback(() => {
-    if (pendingDelete) {
-      void deleteTunnel(pendingDelete.id);
-      setPendingDelete(null);
-    }
-  }, [pendingDelete, deleteTunnel]);
-
-  const cancelDelete = useCallback(() => setPendingDelete(null), []);
 
   // Stopping a live tunnel drops every connection flowing through it — confirm
   // first (UX-021). A tunnel with no live forwards has nothing to lose, so stop
@@ -252,10 +249,8 @@ export function TunnelSidebar() {
         </div>
       )}
       <ConfirmDeleteDialog
-        open={pendingDelete !== null}
-        message={pendingDelete?.message ?? ""}
-        onConfirm={confirmDelete}
-        onCancel={cancelDelete}
+        {...tunnelDelete.dialogProps}
+        message={tunnelDelete.pending?.message ?? ""}
       />
       <ConfirmDialog
         open={pendingLifecycle !== null}
