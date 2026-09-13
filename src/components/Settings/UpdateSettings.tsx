@@ -7,7 +7,7 @@ import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { resolveUiLocale } from "@/utils/locale";
-import { Button, Spinner } from "@/components/ui";
+import { Button, Spinner, StatusDot } from "@/components/ui";
 import "./UpdateSettings.css";
 
 interface UpdateSettingsProps {
@@ -107,8 +107,10 @@ export function UpdateSettings({ visibleFields }: UpdateSettingsProps) {
               <span>
                 {updateCheckState === "available" && updateInfo?.available ? (
                   <span className="update-settings__available" data-testid="update-latest-version">
-                    <span
-                      className={`update-indicator__dot update-indicator__dot--${updateInfo.isSecurity ? "red" : "amber"}`}
+                    <StatusDot
+                      tone={updateInfo.isSecurity ? "error" : "notice"}
+                      size="sm"
+                      className="update-indicator__dot"
                     />
                     v{updateInfo.latestVersion}
                     {updateInfo.isSecurity && (

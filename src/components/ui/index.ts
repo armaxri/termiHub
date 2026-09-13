@@ -57,6 +57,9 @@ export type { SpinnerProps, SpinnerSize } from "./Spinner";
 export { EmptyState } from "./EmptyState";
 export type { EmptyStateProps, EmptyStateVariant } from "./EmptyState";
 
+export { StatusDot } from "./StatusDot";
+export type { StatusDotProps, StatusTone, StatusDotSize } from "./StatusDot";
+
 export { ContentOverlay } from "./ContentOverlay";
 export type { ContentOverlayProps } from "./ContentOverlay";
 

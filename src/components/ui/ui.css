@@ -830,6 +830,46 @@
   flex-shrink: 0;
 }
 
+/* === StatusDot (UISF-003) ===
+   The single small coloured status dot (src/components/ui/StatusDot.tsx),
+   consolidating the per-component `.*__dot` / `.*__status` spans that each
+   re-declared the same round-dot geometry and colour modifiers. The tone→token
+   map below is the one source of status colour. `inline-block` so the dot keeps
+   its size in plain inline flow (status bar) as well as inside flex rows. */
+.status-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.status-dot--sm {
+  width: 7px;
+  height: 7px;
+}
+
+.status-dot--neutral {
+  background-color: var(--text-secondary);
+}
+
+.status-dot--success {
+  background-color: var(--color-success);
+}
+
+.status-dot--warning {
+  background-color: var(--color-warning);
+}
+
+.status-dot--error {
+  background-color: var(--color-error);
+}
+
+.status-dot--notice {
+  background-color: var(--color-notice);
+}
+
 /* === EmptyState (UISF-002) ===
    The single empty-/loading-state primitive (src/components/ui/EmptyState.tsx),
    consolidating the per-component `.*__empty` blocks across lists, panels, and

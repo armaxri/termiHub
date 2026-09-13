@@ -6,8 +6,8 @@
  *     `onStart` (Error → Connecting, clears the stored error via `start_tunnel`),
  *   - offer a **View last error** control that surfaces the persisted message,
  *   - render the persisted error text inline, and
- *   - carry the red `sidebar-list-item__status--error` resting dot (the shared
- *     shell maps the tunnel's error status onto the `error` tone, issue #1383).
+ *   - carry the red `status-dot--error` resting dot (the shared shell maps the
+ *     tunnel's error status onto the `error` tone, issue #1383 / UISF-003).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
@@ -97,7 +97,7 @@ describe("TunnelListItem — errored resting state (#1240)", () => {
     await flush();
 
     const dot = container.querySelector('[data-testid="tunnel-status-tun-1"]');
-    expect(dot?.className).toContain("sidebar-list-item__status--error");
+    expect(dot?.className).toContain("status-dot--error");
     // The dot carries a non-colour accessible name for the state (A11Y-003).
     expect(dot?.getAttribute("role")).toBe("img");
     expect(dot?.getAttribute("aria-label")).toBe("Error");

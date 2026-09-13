@@ -26,28 +26,9 @@
   gap: 6px;
 }
 
-.sidebar-list-item__status {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.sidebar-list-item__status--neutral {
-  background-color: var(--text-secondary);
-}
-
-.sidebar-list-item__status--success {
-  background-color: var(--color-success);
-}
-
-.sidebar-list-item__status--warning {
-  background-color: var(--color-warning);
-}
-
-.sidebar-list-item__status--error {
-  background-color: var(--color-error);
-}
+/* The leading status dot now comes from the shared StatusDot primitive
+   (src/components/ui/StatusDot.tsx, UISF-003) — its geometry and tone→token
+   colours live in ui.css, not here. */
 
 .sidebar-list-item__badge {
   font-size: var(--font-size-xs);
