@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use termihub_core::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use termihub_core::connection::ConnectionTypeInfo;
+use termihub_core::monitoring::SystemStats;
 use termihub_core::service::ServiceStatus;
 use termihub_core::tunnel::config::{
     DynamicForwardConfig, LocalForwardConfig, RemoteForwardConfig, TunnelStats,
@@ -651,22 +652,26 @@ pub struct MonitoringUnsubscribeParams {
 // ── monitoring.data (notification payload) ──────────────────────────
 
 /// System statistics sent as a `monitoring.data` notification.
+///
+/// This is the core [`SystemStats`] field set plus the monitored `host`
+/// identifier. The stats are flattened so the wire shape stays a flat object
+/// (`{host, hostname, uptimeSeconds, …}`), while the field set is defined once
+/// on [`SystemStats`] rather than hand-maintained here (DUP-015).
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MonitoringData {
     /// `"self"` or connection ID identifying the monitored host.
     pub host: String,
-    pub hostname: String,
-    pub uptime_seconds: f64,
-    pub load_average: [f64; 3],
-    pub cpu_usage_percent: f64,
-    pub memory_total_kb: u64,
-    pub memory_available_kb: u64,
-    pub memory_used_percent: f64,
-    pub disk_total_kb: u64,
-    pub disk_used_kb: u64,
-    pub disk_used_percent: f64,
-    pub os_info: String,
+    /// The collected system statistics, flattened into this object.
+    #[serde(flatten)]
+    pub stats: SystemStats,
+}
+
+impl MonitoringData {
+    /// Build a notification payload from a monitored host id and its stats.
+    pub fn new(host: String, stats: SystemStats) -> Self {
+        Self { host, stats }
+    }
 }
 
 // ── agent.update_available (notification payload) ───────────────────
@@ -1882,24 +1887,30 @@ mod tests {
 
     #[test]
     fn monitoring_data_serializes_camel_case() {
-        let data = MonitoringData {
-            host: "self".to_string(),
-            hostname: "raspberrypi".to_string(),
-            uptime_seconds: 12345.67,
-            load_average: [0.15, 0.10, 0.05],
-            cpu_usage_percent: 78.5,
-            memory_total_kb: 16384000,
-            memory_available_kb: 12000000,
-            memory_used_percent: 25.0,
-            disk_total_kb: 50000000,
-            disk_used_kb: 20000000,
-            disk_used_percent: 42.0,
-            os_info: "Linux 5.15.0".to_string(),
-        };
+        // Built from a core `SystemStats` (DUP-015): the flattened stats must
+        // still serialize as a flat camelCase object identical to the previous
+        // hand-maintained shape — `host` plus every `SystemStats` field.
+        let data = MonitoringData::new(
+            "self".to_string(),
+            SystemStats {
+                hostname: "raspberrypi".to_string(),
+                uptime_seconds: 12345.67,
+                load_average: [0.15, 0.10, 0.05],
+                cpu_usage_percent: 78.5,
+                memory_total_kb: 16384000,
+                memory_available_kb: 12000000,
+                memory_used_percent: 25.0,
+                disk_total_kb: 50000000,
+                disk_used_kb: 20000000,
+                disk_used_percent: 42.0,
+                os_info: "Linux 5.15.0".to_string(),
+            },
+        );
         let v = serde_json::to_value(&data).unwrap();
         assert_eq!(v["host"], "self");
         assert_eq!(v["hostname"], "raspberrypi");
         assert_eq!(v["uptimeSeconds"], 12345.67);
+        assert_eq!(v["loadAverage"], json!([0.15, 0.10, 0.05]));
         assert_eq!(v["cpuUsagePercent"], 78.5);
         assert_eq!(v["memoryTotalKb"], 16384000);
         assert_eq!(v["memoryAvailableKb"], 12000000);
@@ -1908,6 +1919,8 @@ mod tests {
         assert_eq!(v["diskUsedKb"], 20000000);
         assert_eq!(v["diskUsedPercent"], 42.0);
         assert_eq!(v["osInfo"], "Linux 5.15.0");
+        // The flattened stats must not appear under a nested `stats` key.
+        assert!(v.get("stats").is_none());
         // Verify camelCase (no snake_case keys)
         assert!(v.get("uptime_seconds").is_none());
         assert!(v.get("cpu_usage_percent").is_none());

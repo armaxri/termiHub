@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 
 use termihub_core::monitoring::{
     BackoffSchedule, CollectLoopState, MonitorStatus, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
-    DEFAULT_MAX_RECONNECT_ATTEMPTS,
+    DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
 };
 
 use crate::io::transport::NotificationSender;
@@ -35,9 +35,6 @@ use self::collector::{LocalCollector, SshCollector, StatsCollector};
 /// (#1230, gap G2). Each call runs on a blocking thread (SSH connect is
 /// blocking).
 type CollectorFactory = Arc<dyn Fn() -> Result<Box<dyn StatsCollector>> + Send + Sync + 'static>;
-
-/// Default collection interval in milliseconds.
-const DEFAULT_INTERVAL_MS: u64 = 2000;
 
 /// Minimum allowed collection interval in milliseconds.
 const MIN_INTERVAL_MS: u64 = 500;
@@ -107,7 +104,7 @@ impl MonitoringManager {
     /// replaced (unsubscribed then re-subscribed).
     pub async fn subscribe(&self, host: &str, interval_ms: Option<u64>) -> Result<()> {
         let interval = interval_ms
-            .unwrap_or(DEFAULT_INTERVAL_MS)
+            .unwrap_or(DEFAULT_MONITORING_INTERVAL_MS)
             .max(MIN_INTERVAL_MS);
 
         // If already subscribed, cancel the old subscription first
@@ -348,20 +345,7 @@ async fn monitoring_task(
                         if let Some(status) = loop_state.on_success() {
                             debug!("Monitoring status for '{host}': {status:?}");
                         }
-                        let data = MonitoringData {
-                            host: host.clone(),
-                            hostname: stats.hostname,
-                            uptime_seconds: stats.uptime_seconds,
-                            load_average: stats.load_average,
-                            cpu_usage_percent: stats.cpu_usage_percent,
-                            memory_total_kb: stats.memory_total_kb,
-                            memory_available_kb: stats.memory_available_kb,
-                            memory_used_percent: stats.memory_used_percent,
-                            disk_total_kb: stats.disk_total_kb,
-                            disk_used_kb: stats.disk_used_kb,
-                            disk_used_percent: stats.disk_used_percent,
-                            os_info: stats.os_info,
-                        };
+                        let data = MonitoringData::new(host.clone(), *stats);
                         match serde_json::to_value(&data) {
                             Ok(value) => {
                                 let notification = JsonRpcNotification::new(

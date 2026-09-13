@@ -18,9 +18,7 @@ use termihub_core::backends::ssh::handler::SshSession;
 pub use termihub_core::monitoring::StatsCollector;
 
 use termihub_core::errors::CoreError;
-use termihub_core::monitoring::{
-    cpu_percent_from_delta, parse_stats, CpuCounters, SystemStats, MONITORING_COMMAND,
-};
+use termihub_core::monitoring::{parse_stats, CpuDeltaTracker, SystemStats, MONITORING_COMMAND};
 
 // ── Local collector ─────────────────────────────────────────────────
 
@@ -154,7 +152,7 @@ fn root_disk_stats(disks: &Disks) -> (u64, u64, f64) {
 /// command on each collection cycle via async exec channels.
 pub struct SshCollector {
     session: SshSession,
-    prev_cpu: Option<CpuCounters>,
+    cpu_tracker: CpuDeltaTracker,
 }
 
 impl SshCollector {
@@ -171,7 +169,7 @@ impl SshCollector {
         );
         Ok(Self {
             session,
-            prev_cpu: None,
+            cpu_tracker: CpuDeltaTracker::new(),
         })
     }
 
@@ -216,11 +214,9 @@ impl StatsCollector for SshCollector {
         let (stats, counters) =
             parse_stats(&output).map_err(|e| CoreError::Other(e.to_string()))?;
 
-        let cpu_usage_percent = match &self.prev_cpu {
-            Some(prev) => cpu_percent_from_delta(prev, &counters),
-            None => 0.0,
-        };
-        self.prev_cpu = Some(counters);
+        // First sample has no prior snapshot to diff against, so report 0 %;
+        // core's CpuDeltaTracker encapsulates that previous-counters state.
+        let cpu_usage_percent = self.cpu_tracker.update(counters).unwrap_or(0.0);
 
         Ok(SystemStats {
             hostname: stats.hostname,
