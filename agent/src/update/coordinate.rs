@@ -74,6 +74,20 @@ pub const ACK_TIMEOUT: Duration = Duration::from_secs(10);
 /// ~100 polls for the whole update.
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
+/// How many *consecutive* polls must report the peer set empty before the update
+/// treats it as the ack and proceeds (AGT-027).
+///
+/// A peer's registry record drops not only on a deliberate leave but also when
+/// its socket momentarily closes — a transient blip it reconnects from within a
+/// poll or two. Acting on a *single* empty poll is therefore fail-open: it reads
+/// such a blip as consent to cut the peer off. Requiring the empty observation
+/// to persist across two consecutive polls (~one [`POLL_INTERVAL`] of sustained
+/// absence) rules out a one-poll blip, while a peer that genuinely left stays
+/// gone and is confirmed on the very next poll. Negligible against
+/// [`ACK_TIMEOUT`]; a reappearance or an unanswered poll resets the streak, and
+/// the deadline still bounds the whole wait.
+const EMPTY_POLLS_TO_CONFIRM: u32 = 2;
+
 /// What the agent tells other hosts, and what it can see of them.
 ///
 /// A trait rather than a bare [`RegistryClient`] so the ack/timeout machine is
@@ -201,19 +215,41 @@ async fn wait_for_peers(
     let notified = peers.len() as u32;
     let deadline = tokio::time::Instant::now() + timeout;
     let mut last_seen: Vec<String> = peers;
+    // Consecutive polls that have reported the peer set empty. Only once this
+    // reaches `EMPTY_POLLS_TO_CONFIRM` do we trust the disappearance as a real
+    // disconnect rather than a transient blip (AGT-027, fail-safe).
+    let mut empty_streak: u32 = 0;
 
     loop {
         match coordinator.peer_ids(self_id).await {
             Some(peers) if peers.is_empty() => {
-                info!("Coordinated update: all {notified} host(s) disconnected; proceeding");
-                return CoordinationOutcome::AllDisconnected { notified };
+                empty_streak += 1;
+                if empty_streak >= EMPTY_POLLS_TO_CONFIRM {
+                    info!("Coordinated update: all {notified} host(s) disconnected; proceeding");
+                    return CoordinationOutcome::AllDisconnected { notified };
+                }
+                // Do not clear `last_seen`: if the window closes now we must
+                // still report the peers we last knew about as cut off, never
+                // an empty list that would read as a clean ack.
+                debug!(
+                    "Coordinated update: peers appear gone ({empty_streak}/{EMPTY_POLLS_TO_CONFIRM} \
+                     confirmations); waiting to rule out a transient drop"
+                );
             }
-            Some(peers) => last_seen = peers,
+            // A peer reappeared: the earlier emptiness was a blip, not consent.
+            Some(peers) => {
+                empty_streak = 0;
+                last_seen = peers;
+            }
             // The view blinked out mid-wait (registry restarting). Keep waiting
             // on the last set we saw rather than treating an unanswered poll as
             // either an ack or a failure — the supervisor reconnects on its own,
-            // and the timeout still bounds us.
-            None => debug!("Coordinated update: host view unavailable mid-wait; retrying"),
+            // and the timeout still bounds us. A blind poll cannot confirm
+            // emptiness, so it resets the streak.
+            None => {
+                empty_streak = 0;
+                debug!("Coordinated update: host view unavailable mid-wait; retrying");
+            }
         }
 
         let now = tokio::time::Instant::now();
@@ -430,9 +466,10 @@ mod tests {
         );
         assert_eq!(
             host.polls(),
-            5,
+            6,
             "must poll through both blind polls and the peer's last sighting \
-             rather than reading an unanswered poll as a disconnect"
+             rather than reading an unanswered poll as a disconnect \
+             (+1 confirmation poll for the empty streak, AGT-027)"
         );
     }
 
@@ -514,8 +551,10 @@ mod tests {
 
         coordinate_update(&host, "self", envelope(), ACK_TIMEOUT).await;
 
-        // census + two waits — proof the loop re-reads instead of waiting once.
-        assert_eq!(host.polls(), 3);
+        // census + a present sighting + two empty polls to confirm the
+        // disconnect — proof the loop re-reads instead of waiting once, and
+        // that an empty poll is confirmed before proceeding (AGT-027).
+        assert_eq!(host.polls(), 4);
     }
 
     /// A caller-supplied window is honoured, so a test (or a future setting)
