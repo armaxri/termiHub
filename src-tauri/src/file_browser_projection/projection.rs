@@ -35,6 +35,7 @@
 //! | `fileBrowser.loadStarted`   | `{ pane }`                             | mark the pane loading, clear its error              |
 //! | `fileBrowser.loadSucceeded` | `{ pane, path, entries }`              | commit the pane's path + listing, clear loading     |
 //! | `fileBrowser.loadFailed`    | `{ pane, error? }`                     | clear loading, record the error, keep last listing  |
+//! | `fileBrowser.clearError`    | `{ pane }`                             | dismiss the pane's error banner, keep its listing   |
 //! | `fileBrowser.reset`         | `{ pane }`                             | reset the pane to the idle baseline (`/`, empty)    |
 //! | `fileBrowser.setClipboard`  | `{ clipboard }` (`null` clears)        | set / clear the copy-cut clipboard                  |
 //! | `fileBrowser.replace`       | `{ mode?, local?, session?, clipboard? }` | overwrite the whole client view (render-cut mirror) |
@@ -134,6 +135,14 @@ pub fn register_file_browser_intents(registry: &mut HandlerRegistry, app_handle:
         let pane = parse_pane(intent)?;
         let error = optional_str(intent, "error");
         store.load_failed(&intent.client_id, pane, error);
+        Ok(publish_file_browser(projector, &store, &intent.client_id))
+    });
+
+    let handle = app_handle.clone();
+    registry.route("fileBrowser.clearError", move |intent, projector| {
+        let store = store_of(&handle)?;
+        let pane = parse_pane(intent)?;
+        store.clear_error(&intent.client_id, pane);
         Ok(publish_file_browser(projector, &store, &intent.client_id))
     });
 

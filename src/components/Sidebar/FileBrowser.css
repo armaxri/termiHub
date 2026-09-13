@@ -298,16 +298,23 @@
   border-color: var(--text-accent);
 }
 
-/* Error display */
+/* Error display: the failed-listing banner stacks its message over the
+   Retry / Dismiss recovery controls (SM-008) so both fit the narrow sidebar. */
 .file-browser__error {
   display: flex;
-  align-items: flex-start;
+  flex-direction: column;
   gap: var(--spacing-xs);
   padding: var(--spacing-xs) var(--spacing-sm);
   font-size: var(--font-size-xs);
   color: var(--color-error);
   background: var(--color-error-bg);
   border-bottom: 1px solid var(--border-secondary);
+}
+
+.file-browser__error-message {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-xs);
 }
 
 .file-browser__error span {
