@@ -352,10 +352,7 @@ describe("useLocalFileSystem — action wiring", () => {
     await act(async () => {
       await api.renameEntry("/home/user/old.txt", "new.txt");
     });
-    expect(vi.mocked(localRename)).toHaveBeenCalledWith(
-      "/home/user/old.txt",
-      "/home/user/new.txt"
-    );
+    expect(vi.mocked(localRename)).toHaveBeenCalledWith("/home/user/old.txt", "/home/user/new.txt");
   });
 
   it("setPermissions forwards path and mode", async () => {

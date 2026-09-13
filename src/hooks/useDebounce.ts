@@ -114,8 +114,5 @@ export function useDebouncedCallback<A extends unknown[]>(
   // Clear any pending invocation when the owning component unmounts.
   useEffect(() => cancel, [cancel]);
 
-  return useMemo(
-    () => Object.assign(debounced, { cancel, flush }),
-    [debounced, cancel, flush]
-  );
+  return useMemo(() => Object.assign(debounced, { cancel, flush }), [debounced, cancel, flush]);
 }
