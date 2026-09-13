@@ -24,10 +24,11 @@ use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use termihub_core::network::{PingResult, PortScanResult, TracerouteHop};
 
+use crate::network::events;
 use crate::run_location::Locality;
 use crate::terminal::agent_manager::AgentRpcClient;
 
@@ -132,26 +133,18 @@ pub fn dispatch_port_scan(
     task_id: &str,
     params: Value,
 ) {
-    match client.send_request(agent_id, "network.port_scan", params) {
+    match client.send_request(
+        agent_id,
+        termihub_core::protocol::methods::NETWORK_PORT_SCAN,
+        params,
+    ) {
         Ok(reply) => {
             for r in parse_list::<PortScanResult>(&reply, "results") {
-                let _ = app.emit(
-                    "network-scan-result",
-                    json!({
-                        "taskId": task_id,
-                        "host": r.host,
-                        "port": r.port,
-                        "state": r.state,
-                        "latencyMs": r.latency_ms,
-                    }),
-                );
+                events::emit_scan_result(app, task_id, &r);
             }
-            let _ = app.emit(
-                "network-scan-complete",
-                json!({ "taskId": task_id, "summary": field(&reply, "summary") }),
-            );
+            events::emit_scan_complete(app, task_id, field(&reply, "summary"));
         }
-        Err(e) => emit_error(app, "network-scan-error", task_id, &e.to_string()),
+        Err(e) => events::emit_error(app, events::name::SCAN_ERROR, task_id, &e.to_string()),
     }
 }
 
@@ -164,22 +157,20 @@ pub fn dispatch_ping(
     task_id: &str,
     params: Value,
 ) {
-    match client.send_request(agent_id, "network.ping", params) {
+    match client.send_request(
+        agent_id,
+        termihub_core::protocol::methods::NETWORK_PING,
+        params,
+    ) {
         Ok(reply) => {
             for r in parse_list::<PingResult>(&reply, "results") {
-                let _ = app.emit(
-                    "network-ping-result",
-                    json!({ "taskId": task_id, "result": r }),
-                );
+                events::emit_ping_result(app, task_id, r);
             }
-            let _ = app.emit(
-                "network-ping-complete",
-                // An agent ping is a fixed-count batch, so it always runs to
-                // completion (never "canceled").
-                json!({ "taskId": task_id, "stats": field(&reply, "stats"), "canceled": false }),
-            );
+            // An agent ping is a fixed-count batch, so it always runs to
+            // completion (never "canceled").
+            events::emit_ping_complete(app, task_id, field(&reply, "stats"), false);
         }
-        Err(e) => emit_error(app, "network-ping-error", task_id, &e.to_string()),
+        Err(e) => events::emit_error(app, events::name::PING_ERROR, task_id, &e.to_string()),
     }
 }
 
@@ -192,17 +183,18 @@ pub fn dispatch_traceroute(
     task_id: &str,
     params: Value,
 ) {
-    match client.send_request(agent_id, "network.traceroute", params) {
+    match client.send_request(
+        agent_id,
+        termihub_core::protocol::methods::NETWORK_TRACEROUTE,
+        params,
+    ) {
         Ok(reply) => {
             for hop in parse_list::<TracerouteHop>(&reply, "hops") {
-                let _ = app.emit(
-                    "network-traceroute-hop",
-                    json!({ "taskId": task_id, "hop": hop }),
-                );
+                events::emit_traceroute_hop(app, task_id, hop);
             }
-            let _ = app.emit("network-traceroute-complete", json!({ "taskId": task_id }));
+            events::emit_traceroute_complete(app, task_id);
         }
-        Err(e) => emit_error(app, "network-traceroute-error", task_id, &e.to_string()),
+        Err(e) => events::emit_error(app, events::name::TRACEROUTE_ERROR, task_id, &e.to_string()),
     }
 }
 
@@ -221,10 +213,6 @@ fn parse_list<T: DeserializeOwned>(reply: &Value, key: &str) -> Vec<T> {
 /// Extract `reply[key]` as an owned [`Value`], or `null` when absent.
 fn field(reply: &Value, key: &str) -> Value {
     reply.get(key).cloned().unwrap_or(Value::Null)
-}
-
-fn emit_error(app: &AppHandle, event: &str, task_id: &str, error: &str) {
-    let _ = app.emit(event, json!({ "taskId": task_id, "error": error }));
 }
 
 #[cfg(test)]

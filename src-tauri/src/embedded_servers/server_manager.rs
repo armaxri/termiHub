@@ -41,7 +41,7 @@ use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationRe
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
-use termihub_core::service::{Service, ServiceInfo, ServiceRegistry};
+use termihub_core::service::{Service, ServiceInfo, ServiceRegistry, ServiceStatus};
 
 /// Tauri event forwarded to the frontend for each embedded server status change.
 ///
@@ -325,7 +325,11 @@ impl EmbeddedServerManager {
             TerminalError::EmbeddedServerError("Agent manager is not available".to_string())
         })?;
 
-        match agent_manager.send_request(agent_id, "service.start", params) {
+        match agent_manager.send_request(
+            agent_id,
+            termihub_core::protocol::methods::SERVICE_START,
+            params,
+        ) {
             Ok(result) => {
                 let state = server_state_from_start_reply(server_id, &result);
                 {
@@ -370,7 +374,11 @@ impl EmbeddedServerManager {
         };
         if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
             let params = json!({ "instanceId": server_id });
-            if let Err(e) = agent_manager.send_request(&handle.agent_id, "service.stop", params) {
+            if let Err(e) = agent_manager.send_request(
+                &handle.agent_id,
+                termihub_core::protocol::methods::SERVICE_STOP,
+                params,
+            ) {
                 tracing::warn!(
                     "Failed to stop agent-hosted embedded server {} on agent {}: {}",
                     server_id,
@@ -576,19 +584,14 @@ fn server_state_from_value(server_id: &str, state: &serde_json::Value) -> Option
 /// (`{ "state": "running" | "failed", "detail": … }`) when no full state payload
 /// is available.
 fn synth_state_from_status(server_id: &str, status: &serde_json::Value) -> ServerState {
-    let (server_status, error) = match status.get("state").and_then(|s| s.as_str()) {
-        Some("running") => (ServerStatus::Running, None),
-        Some("starting") => (ServerStatus::Starting, None),
-        Some("stopping") => (ServerStatus::Stopping, None),
-        Some("failed") => (
-            ServerStatus::Error,
-            status
-                .get("detail")
-                .and_then(|d| d.as_str())
-                .map(str::to_string),
-        ),
-        _ => (ServerStatus::Stopped, None),
-    };
+    // Deserialize the core `ServiceStatus` wire shape, then project it onto the
+    // embedded-server `(ServerStatus, error)` pair via the single shared
+    // conversion (DUP-022) — so the variant relationship between the two enums is
+    // defined in one place, not hand-matched here as well. An absent or
+    // unparseable status degrades to `Stopped`, matching the prior fallback.
+    let (server_status, error) = serde_json::from_value::<ServiceStatus>(status.clone())
+        .map(|s| ServerStatus::from_service_status(&s))
+        .unwrap_or((ServerStatus::Stopped, None));
     ServerState {
         server_id: server_id.to_string(),
         status: server_status,
@@ -672,7 +675,11 @@ fn poll_agent_server_states(
     let mut out = Vec::with_capacity(targets.len());
     for (server_id, agent_id) in targets {
         let params = json!({ "instanceId": server_id });
-        match client.send_request(agent_id, "service.status", params) {
+        match client.send_request(
+            agent_id,
+            termihub_core::protocol::methods::SERVICE_STATUS,
+            params,
+        ) {
             Ok(result) => {
                 if let Some(state) = server_state_from_status_reply(server_id, &result) {
                     out.push(state);
@@ -801,6 +808,25 @@ mod tests {
         let state = synth_state_from_status("srv-3", &status);
         assert_eq!(state.status, ServerStatus::Error);
         assert_eq!(state.error.as_deref(), Some("port in use"));
+    }
+
+    /// Every non-failed lifecycle state synthesizes its matching `ServerStatus`
+    /// with no error, and an unrecognized/absent status degrades to `Stopped`
+    /// (DUP-022 — the reverse bridge routes through the shared conversion).
+    #[test]
+    fn synth_state_maps_each_lifecycle_state() {
+        for (wire, expected) in [
+            (json!({ "state": "stopped" }), ServerStatus::Stopped),
+            (json!({ "state": "starting" }), ServerStatus::Starting),
+            (json!({ "state": "running" }), ServerStatus::Running),
+            (json!({ "state": "stopping" }), ServerStatus::Stopping),
+            (json!({ "state": "bogus" }), ServerStatus::Stopped),
+            (json!(null), ServerStatus::Stopped),
+        ] {
+            let state = synth_state_from_status("srv", &wire);
+            assert_eq!(state.status, expected, "wire={wire}");
+            assert!(state.error.is_none(), "wire={wire}");
+        }
     }
 
     /// A `service.status` reply for a not-running instance yields no sample, so

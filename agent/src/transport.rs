@@ -11,6 +11,7 @@ use base64::Engine;
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
+use crate::protocol::methods::{CONNECTION_EXIT, CONNECTION_OUTPUT};
 use termihub_core::errors::SessionError;
 use termihub_core::session::traits::OutputSink;
 
@@ -37,7 +38,7 @@ impl OutputSink for JsonRpcOutputSink {
         for chunk in data.chunks(65536) {
             let encoded = b64.encode(chunk);
             let notification = JsonRpcNotification::new(
-                "connection.output",
+                CONNECTION_OUTPUT,
                 serde_json::json!({
                     "session_id": session_id,
                     "data": encoded,
@@ -55,7 +56,7 @@ impl OutputSink for JsonRpcOutputSink {
 
     fn send_exit(&self, session_id: &str, exit_code: Option<i32>) -> Result<(), SessionError> {
         let notification = JsonRpcNotification::new(
-            "connection.exit",
+            CONNECTION_EXIT,
             serde_json::json!({
                 "session_id": session_id,
                 "exit_code": exit_code,

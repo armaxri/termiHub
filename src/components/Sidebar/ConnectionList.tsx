@@ -25,8 +25,6 @@ import {
   Server,
   ArrowLeftRight,
   Route,
-  Search,
-  X,
   FileDown,
   FileSpreadsheet,
   Link,
@@ -42,7 +40,7 @@ import { newId } from "@/services/transport/ids";
 import { toast } from "@/components/ui";
 import { openLocalCommandTab } from "@/utils/openLocalCommandTab";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Button, Tooltip, Input, ConfirmDialog, EmptyState } from "@/components/ui";
+import { Button, Tooltip, SearchInput, ConfirmDialog, EmptyState } from "@/components/ui";
 import { ConnectionsEmptyState } from "./ConnectionsEmptyState";
 import { shouldShowInsecureFtpWarning } from "@/utils/ftpSecurity";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
@@ -1318,29 +1316,16 @@ export function ConnectionList() {
           />
           {!localCollapsed && (
             <div className="connection-list__filter">
-              <Search size={14} className="connection-list__filter-icon" aria-hidden="true" />
-              <Input
-                className="connection-list__filter-input"
+              <SearchInput
                 value={filterQuery}
-                onChange={(e) => setFilterQuery(e.target.value)}
+                onValueChange={setFilterQuery}
                 onKeyDown={handleFilterKeyDown}
                 placeholder="Filter connections…"
                 aria-label="Filter connections"
                 data-testid="connection-filter-input"
+                clearLabel="Clear filter"
+                clearTestId="connection-filter-clear"
               />
-              {filterQuery && (
-                <Tooltip content="Clear filter" side="top">
-                  <button
-                    type="button"
-                    className="connection-list__filter-clear"
-                    onClick={() => setFilterQuery("")}
-                    aria-label="Clear filter"
-                    data-testid="connection-filter-clear"
-                  >
-                    <X size={14} />
-                  </button>
-                </Tooltip>
-              )}
             </div>
           )}
           {!localCollapsed && (
@@ -1414,11 +1399,9 @@ export function ConnectionList() {
               />
               {!remoteAgentsCollapsed && (
                 <div className="connection-list__filter">
-                  <Search size={14} className="connection-list__filter-icon" aria-hidden="true" />
-                  <Input
-                    className="connection-list__filter-input"
+                  <SearchInput
                     value={agentFilterQuery}
-                    onChange={(e) => setAgentFilterQuery(e.target.value)}
+                    onValueChange={setAgentFilterQuery}
                     onKeyDown={(e) => {
                       if (e.key === "Escape") {
                         e.preventDefault();
@@ -1428,20 +1411,9 @@ export function ConnectionList() {
                     placeholder="Filter agent connections…"
                     aria-label="Filter agent connections"
                     data-testid="agent-filter-input"
+                    clearLabel="Clear agent filter"
+                    clearTestId="agent-filter-clear"
                   />
-                  {agentFilterQuery && (
-                    <Tooltip content="Clear filter" side="top">
-                      <button
-                        type="button"
-                        className="connection-list__filter-clear"
-                        onClick={() => setAgentFilterQuery("")}
-                        aria-label="Clear agent filter"
-                        data-testid="agent-filter-clear"
-                      >
-                        <X size={14} />
-                      </button>
-                    </Tooltip>
-                  )}
                 </div>
               )}
               {!remoteAgentsCollapsed && (

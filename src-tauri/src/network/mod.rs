@@ -5,6 +5,7 @@
 //! the persistent HTTP monitors.
 
 pub mod agent_tools;
+pub mod events;
 pub mod http_monitor;
 pub mod http_monitor_storage;
 pub mod wol_storage;
@@ -505,7 +506,11 @@ impl NetworkManager {
         });
 
         client
-            .send_request(agent_id, "service.start", params)
+            .send_request(
+                agent_id,
+                termihub_core::protocol::methods::SERVICE_START,
+                params,
+            )
             .map_err(|e| {
                 TerminalError::NetworkError(format!("agent-hosted HTTP monitor start failed: {e}"))
             })?;
@@ -558,7 +563,11 @@ impl NetworkManager {
             .and_then(|map| map.get(monitor_id).map(|h| h.agent_id.clone()))?;
         if let Some(client) = self.agent_rpc_client() {
             let params = json!({ "instanceId": monitor_id });
-            if let Err(e) = client.send_request(&agent_id, "service.stop", params) {
+            if let Err(e) = client.send_request(
+                &agent_id,
+                termihub_core::protocol::methods::SERVICE_STOP,
+                params,
+            ) {
                 tracing::warn!("Failed to stop agent-hosted HTTP monitor {monitor_id}: {e}");
             }
         }
@@ -659,7 +668,11 @@ impl NetworkManager {
         if let Some(agent_id) = self.agent_monitor_agent_id(monitor_id) {
             if let Some(client) = self.agent_rpc_client() {
                 let params = json!({ "instanceId": monitor_id });
-                if let Err(e) = client.send_request(&agent_id, "service.pause", params) {
+                if let Err(e) = client.send_request(
+                    &agent_id,
+                    termihub_core::protocol::methods::SERVICE_PAUSE,
+                    params,
+                ) {
                     tracing::warn!("Failed to pause agent-hosted HTTP monitor {monitor_id}: {e}");
                 }
             }
@@ -710,7 +723,11 @@ impl NetworkManager {
             if running {
                 let params = json!({ "instanceId": monitor_id });
                 client
-                    .send_request(&agent_id, "service.resume", params)
+                    .send_request(
+                        &agent_id,
+                        termihub_core::protocol::methods::SERVICE_RESUME,
+                        params,
+                    )
                     .map_err(|e| {
                         TerminalError::NetworkError(format!(
                             "agent-hosted HTTP monitor resume failed: {e}"
@@ -725,7 +742,11 @@ impl NetworkManager {
                     })?,
                 });
                 client
-                    .send_request(&agent_id, "service.start", params)
+                    .send_request(
+                        &agent_id,
+                        termihub_core::protocol::methods::SERVICE_START,
+                        params,
+                    )
                     .map_err(|e| {
                         TerminalError::NetworkError(format!(
                             "agent-hosted HTTP monitor resume failed: {e}"
@@ -1007,7 +1028,11 @@ fn poll_agent_monitor_checks(
     let mut out = Vec::new();
     for (monitor_id, agent_id) in targets {
         let params = json!({ "instanceId": monitor_id });
-        match client.send_request(agent_id, "service.status", params) {
+        match client.send_request(
+            agent_id,
+            termihub_core::protocol::methods::SERVICE_STATUS,
+            params,
+        ) {
             Ok(reply) => {
                 if let Some(result) = parse_agent_check(monitor_id, &reply) {
                     out.push((monitor_id.clone(), result));

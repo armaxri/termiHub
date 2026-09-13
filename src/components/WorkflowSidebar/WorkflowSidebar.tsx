@@ -18,20 +18,12 @@ import { WorkflowListItem } from "./WorkflowListItem";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
 import { newId } from "@/services/transport/ids";
+import { slugify } from "@/utils/slugify";
 import "./WorkflowSidebar.css";
 
 /** Generate a unique workflow id for a new or duplicated workflow. */
 function generateWorkflowId(): string {
   return newId("workflow");
-}
-
-/** Turn a workflow name into a filesystem-friendly slug for the default filename. */
-function slugifyWorkflowName(name: string): string {
-  const slug = name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return slug || "workflow";
 }
 
 /** Build a fresh, empty workflow draft (backend stamps the timestamps on save). */
@@ -160,7 +152,7 @@ export function WorkflowSidebar() {
       const workflow = workflows.find((w) => w.id === workflowId);
       if (!workflow) return;
       void exportWorkflowsToFile({
-        defaultPath: `termihub-workflow-${slugifyWorkflowName(workflow.name)}.json`,
+        defaultPath: `termihub-workflow-${slugify(workflow.name, "workflow")}.json`,
         content: () => serializeWorkflows([workflow]),
         successMessage: `Exported "${workflow.name}"`,
       });

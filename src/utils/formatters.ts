@@ -168,8 +168,8 @@ export function getBasename(path: string): string {
   return path.split(/[/\\]/).pop() ?? path;
 }
 
-/** Truncate string with ellipsis */
-export function truncate(str: string, maxLength: number): string {
+/** Truncate string with ellipsis (default max length 60). */
+export function truncate(str: string, maxLength = 60): string {
   if (str.length <= maxLength) return str;
   return str.slice(0, maxLength - 1) + "\u2026";
 }

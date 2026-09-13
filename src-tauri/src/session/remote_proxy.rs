@@ -474,7 +474,11 @@ impl RemoteProxy {
         let mgr = self.agent_manager.clone();
         let agent_id_owned = self.agent_id.clone();
         let caps_result = tokio::task::spawn_blocking(move || {
-            mgr.send_request(&agent_id_owned, "connection.types", serde_json::json!({}))
+            mgr.send_request(
+                &agent_id_owned,
+                termihub_core::protocol::methods::CONNECTION_TYPES,
+                serde_json::json!({}),
+            )
         })
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?;
@@ -622,7 +626,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
     async fn list_dir(&self, path: &str) -> Result<Vec<FileEntry>, FileError> {
         let result = self
             .rpc(
-                "connection.files.list",
+                termihub_core::protocol::methods::CONNECTION_FILES_LIST,
                 files_params::list(&self.remote_session_id, path),
             )
             .await?;
@@ -637,7 +641,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
         let result = self
             .rpc(
-                "connection.files.read",
+                termihub_core::protocol::methods::CONNECTION_FILES_READ,
                 files_params::read(&self.remote_session_id, path),
             )
             .await?;
@@ -650,7 +654,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
         use base64::Engine;
         let encoded = base64::engine::general_purpose::STANDARD.encode(data);
         self.rpc(
-            "connection.files.write",
+            termihub_core::protocol::methods::CONNECTION_FILES_WRITE,
             files_params::write(&self.remote_session_id, path, &encoded),
         )
         .await?;
@@ -659,7 +663,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
 
     async fn delete(&self, path: &str) -> Result<(), FileError> {
         self.rpc(
-            "connection.files.delete",
+            termihub_core::protocol::methods::CONNECTION_FILES_DELETE,
             files_params::delete(&self.remote_session_id, path),
         )
         .await?;
@@ -668,7 +672,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
 
     async fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
         self.rpc(
-            "connection.files.rename",
+            termihub_core::protocol::methods::CONNECTION_FILES_RENAME,
             files_params::rename(&self.remote_session_id, from, to),
         )
         .await?;
@@ -678,7 +682,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
     async fn stat(&self, path: &str) -> Result<FileEntry, FileError> {
         let result = self
             .rpc(
-                "connection.files.stat",
+                termihub_core::protocol::methods::CONNECTION_FILES_STAT,
                 files_params::stat(&self.remote_session_id, path),
             )
             .await?;
@@ -688,7 +692,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
 
     async fn mkdir(&self, path: &str) -> Result<(), FileError> {
         self.rpc(
-            "connection.files.mkdir",
+            termihub_core::protocol::methods::CONNECTION_FILES_MKDIR,
             files_params::mkdir(&self.remote_session_id, path),
         )
         .await?;
@@ -697,7 +701,7 @@ impl FileBrowser for RemoteFileBrowserProxy {
 
     async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
         self.rpc(
-            "connection.files.set_permissions",
+            termihub_core::protocol::methods::CONNECTION_FILES_SET_PERMISSIONS,
             files_params::set_permissions(&self.remote_session_id, path, mode),
         )
         .await?;
@@ -831,7 +835,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         // Send subscribe request to agent at the currently-configured cadence
         // (#1233); the frontend may later change it via `set_interval`.
         self.rpc(
-            "connection.monitoring.subscribe",
+            termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
             serde_json::json!({
                 "host": self.monitoring_host,
                 "interval_ms": self.interval_ms.load(Ordering::SeqCst),
@@ -874,7 +878,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             .unregister_monitoring_output(&self.agent_id, &self.monitoring_host);
 
         self.rpc(
-            "connection.monitoring.unsubscribe",
+            termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
             serde_json::json!({
                 "host": self.monitoring_host,
             }),
@@ -891,7 +895,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         self.interval_ms.store(ms, Ordering::SeqCst);
         if let Err(e) = self
             .rpc(
-                "connection.monitoring.subscribe",
+                termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
                 serde_json::json!({
                     "host": self.monitoring_host,
                     "interval_ms": ms,

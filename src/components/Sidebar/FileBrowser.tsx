@@ -31,7 +31,6 @@ import {
   Globe,
   Terminal,
   X,
-  Search,
   ChevronUp,
   ChevronDown,
   ExternalLink,
@@ -41,7 +40,16 @@ import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
-import { Button, Tooltip, Progress, Input, Spinner, EmptyState, toast } from "@/components/ui";
+import {
+  Button,
+  Tooltip,
+  Progress,
+  Input,
+  SearchInput,
+  Spinner,
+  EmptyState,
+  toast,
+} from "@/components/ui";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
@@ -1628,30 +1636,16 @@ export function FileBrowser() {
       </div>
 
       <div className="file-browser__subbar">
-        <div className="file-browser__filter">
-          <Search size={12} className="file-browser__filter-icon" />
-          <Input
-            inline
-            className="file-browser__filter-input"
-            placeholder="Filter"
-            value={filterQuery}
-            onChange={(e) => setFilterQuery(e.target.value)}
-            aria-label="Filter files"
-            data-testid="file-browser-filter"
-          />
-          {filterQuery && (
-            <Tooltip content="Clear filter" side="top">
-              <Button
-                variant="ghost"
-                size="sm"
-                icon={<X size={12} />}
-                onClick={() => setFilterQuery("")}
-                aria-label="Clear filter"
-                data-testid="file-browser-filter-clear"
-              />
-            </Tooltip>
-          )}
-        </div>
+        <SearchInput
+          size="sm"
+          value={filterQuery}
+          onValueChange={setFilterQuery}
+          placeholder="Filter"
+          aria-label="Filter files"
+          data-testid="file-browser-filter"
+          clearLabel="Clear filter"
+          clearTestId="file-browser-filter-clear"
+        />
         <div className="file-browser__columns">
           <SortHeader
             label="Name"
