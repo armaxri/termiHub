@@ -52,20 +52,24 @@ function render(overrides: Partial<RenderOptions> = {}): {
   onDimensions: ReturnType<typeof vi.fn>;
   onFirstFrame: ReturnType<typeof vi.fn>;
 } {
+  const onInput = vi.fn();
+  const onResize = vi.fn();
+  const onDimensions = vi.fn();
+  const onFirstFrame = vi.fn();
   const props = {
     sessionId: SESSION,
     scaleMode: "pixel" as ScaleMode,
     viewOnly: false,
-    onInput: vi.fn(),
-    onResize: vi.fn(),
-    onDimensions: vi.fn(),
-    onFirstFrame: vi.fn(),
+    onInput,
+    onResize,
+    onDimensions,
+    onFirstFrame,
     ...overrides,
   };
   act(() => {
     root.render(<RemoteDesktopCanvas {...props} />);
   });
-  return props;
+  return { onInput, onResize, onDimensions, onFirstFrame };
 }
 
 function canvasEl(): HTMLCanvasElement {
