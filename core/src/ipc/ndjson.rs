@@ -112,6 +112,123 @@ fn oversize_error(max_len: usize) -> io::Error {
     )
 }
 
+/// Outcome of reading one NDJSON line under a size cap via
+/// [`read_line_resumable`].
+///
+/// Unlike [`read_line`] — which returns a raw byte count and hard-errors on an
+/// over-cap line — the resumable reader distinguishes a clean EOF, a complete
+/// line, and an over-cap line that the caller can *reject and keep serving*.
+#[derive(Debug)]
+pub enum LineOutcome {
+    /// A complete line — newline-terminated, or a trailing line delivered at
+    /// EOF — whose length is within the cap. The trailing newline is stripped.
+    Line(String),
+    /// The line exceeded the cap. Any buffered bytes were dropped and the rest
+    /// of the over-long line was discarded up to (and including) its terminating
+    /// newline, so the caller can reject it and keep serving the connection
+    /// without ever having buffered the whole thing.
+    TooLarge,
+    /// Clean EOF with no buffered bytes.
+    Eof,
+}
+
+/// Read one newline-delimited line, **cancellation-safe** in a `select!` and
+/// **bounded** to `max_len` resident bytes.
+///
+/// This differs from [`read_line`] on two axes that matter for a long-lived
+/// JSON-RPC transport loop, so both live here rather than one being expressed in
+/// terms of the other:
+///
+/// - **Cancellation safety (#1559).** [`AsyncBufReadExt::read_line`] is *not*
+///   cancellation safe: used as a `select!` branch, when another branch (e.g. an
+///   outbound notification) completes first, the bytes it has already consumed
+///   are lost — silently dropping the front of an in-flight request. Under a peer
+///   that fragments a request across TCP segments the surviving tail is then
+///   parsed as its own frame. This reader keeps the partial-line accumulator
+///   (`pending`) *outside* the future and only ever `await`s on
+///   [`AsyncBufReadExt::fill_buf`], which is cancellation safe; bytes are
+///   `consume`d synchronously with no intervening await, so a cancelled future
+///   can never lose data — whatever was consumed is already in `pending`.
+/// - **Bounded, recoverable over-cap handling (#2352).** The cap is enforced
+///   *while reading*: once the current line would exceed `max_len`, `pending` is
+///   cleared and subsequent bytes are discarded (never buffered) until the
+///   terminating newline, keeping resident memory at ~`max_len` regardless of
+///   how much a peer sends before a newline. The over-cap line is reported as
+///   [`LineOutcome::TooLarge`] rather than an error, so the caller may reject it
+///   and continue serving the connection. `max_len` bounds the line *content*
+///   (the trailing newline is not counted).
+///
+/// `pending` must be owned by the caller and carried across calls (typically one
+/// buffer for the lifetime of a connection). Callers pass their own `max_len`
+/// (e.g. the agent JSON-RPC transport's 1 MiB protocol limit), which is why the
+/// cap is a parameter rather than [`MAX_LINE_LEN`].
+///
+/// Returns [`LineOutcome::Line`] (newline stripped) for a complete line within
+/// the cap, [`LineOutcome::TooLarge`] when the cap was exceeded, or
+/// [`LineOutcome::Eof`] at a clean EOF with no buffered bytes.
+pub async fn read_line_resumable<R>(
+    reader: &mut R,
+    pending: &mut Vec<u8>,
+    max_len: usize,
+) -> io::Result<LineOutcome>
+where
+    R: AsyncBufRead + Unpin + ?Sized,
+{
+    // Whether the current line has already crossed the cap. A partial line
+    // carried over from a cancelled read is always within the cap, but never
+    // trust that blindly.
+    let mut over = pending.len() > max_len;
+    loop {
+        let available = reader.fill_buf().await?;
+        if available.is_empty() {
+            // EOF.
+            if over {
+                pending.clear();
+                return Ok(LineOutcome::TooLarge);
+            }
+            // A trailing line without a newline is still delivered once; an
+            // empty accumulator means a clean close.
+            if pending.is_empty() {
+                return Ok(LineOutcome::Eof);
+            }
+            let line = String::from_utf8(std::mem::take(pending))
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            return Ok(LineOutcome::Line(line));
+        }
+
+        if let Some(idx) = available.iter().position(|&b| b == b'\n') {
+            // A complete line ends here. If it (or an earlier chunk) crossed the
+            // cap, discard it up to and including the newline and report the
+            // overflow; otherwise hand it back.
+            if over || pending.len().saturating_add(idx) > max_len {
+                reader.consume(idx + 1);
+                pending.clear();
+                return Ok(LineOutcome::TooLarge);
+            }
+            pending.extend_from_slice(&available[..idx]);
+            reader.consume(idx + 1);
+            let line = String::from_utf8(std::mem::take(pending))
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+            return Ok(LineOutcome::Line(line));
+        }
+
+        // No newline yet. Buffer the chunk unless doing so would cross the cap,
+        // in which case drop what we have and switch to discard-until-newline
+        // mode. `available` is a borrow of the reader, so finish using it before
+        // consuming.
+        let len = available.len();
+        if over {
+            // Already discarding: drop this chunk.
+        } else if pending.len().saturating_add(len) > max_len {
+            over = true;
+            pending.clear();
+        } else {
+            pending.extend_from_slice(available);
+        }
+        reader.consume(len);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,5 +325,244 @@ mod tests {
         let mut line = String::new();
         let n = read_line(&mut reader, &mut line).await.expect("read_line");
         assert_eq!(n, 0, "EOF yields zero bytes");
+    }
+
+    // ── read_line_resumable (cancellation-safe, bounded, recoverable) ──────
+
+    use std::time::Duration;
+    use tokio::io::AsyncWriteExt;
+
+    fn expect_line(outcome: LineOutcome) -> String {
+        match outcome {
+            LineOutcome::Line(line) => line,
+            other => panic!("expected a complete line, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_reassembles_fragmented_line() {
+        // A line delivered across two writes must reassemble into one frame,
+        // draining the accumulator when the newline arrives.
+        let (mut client, server) = tokio::io::duplex(1024);
+        let mut reader = BufReader::new(server);
+        let mut pending = Vec::new();
+
+        client.write_all(b"{\"a\":1").await.expect("chunk 1");
+        client.write_all(b",\"b\":2}\n").await.expect("chunk 2");
+
+        let line = expect_line(
+            read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+                .await
+                .expect("read"),
+        );
+        assert_eq!(line, r#"{"a":1,"b":2}"#);
+        assert!(pending.is_empty(), "accumulator drained after a line");
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_returns_one_line_per_call() {
+        // Two complete lines arriving in a single chunk must be handed back one
+        // per call, with the remainder left buffered in the reader.
+        let data = b"first\nsecond\n";
+        let mut reader = BufReader::new(&data[..]);
+        let mut pending = Vec::new();
+
+        let first = expect_line(
+            read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+                .await
+                .expect("first"),
+        );
+        assert_eq!(first, "first");
+        let second = expect_line(
+            read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+                .await
+                .expect("second"),
+        );
+        assert_eq!(second, "second");
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_handles_empty_and_leading_newlines() {
+        // A bare newline is a valid empty line, and a leading newline yields an
+        // empty line before the next content line.
+        let data = b"\nabc\n";
+        let mut reader = BufReader::new(&data[..]);
+        let mut pending = Vec::new();
+
+        let empty = expect_line(
+            read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+                .await
+                .expect("empty"),
+        );
+        assert_eq!(empty, "", "leading newline yields an empty line");
+        let content = expect_line(
+            read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+                .await
+                .expect("content"),
+        );
+        assert_eq!(content, "abc");
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_delivers_trailing_line_without_newline_at_eof() {
+        // A final line with no trailing newline is delivered once at EOF.
+        let data = b"no newline here";
+        let mut reader = BufReader::new(&data[..]);
+        let mut pending = Vec::new();
+
+        let line = expect_line(
+            read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+                .await
+                .expect("trailing"),
+        );
+        assert_eq!(line, "no newline here");
+        // The next read sees a clean EOF.
+        let outcome = read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+            .await
+            .expect("eof");
+        assert!(
+            matches!(outcome, LineOutcome::Eof),
+            "clean EOF after trailing line"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_returns_eof_on_clean_close() {
+        let empty: &[u8] = b"";
+        let mut reader = BufReader::new(empty);
+        let mut pending = Vec::new();
+        let outcome = read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+            .await
+            .expect("eof");
+        assert!(matches!(outcome, LineOutcome::Eof));
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_accepts_line_at_cap_boundary() {
+        // `max_len` bounds the line content (newline excluded): 7 content bytes
+        // at a cap of 7 is accepted; a cap of 6 rejects the same line.
+        const CAP: usize = 7;
+        let data = b"abcdefg\n";
+        let mut reader = BufReader::new(&data[..]);
+        let mut pending = Vec::new();
+        let line = expect_line(
+            read_line_resumable(&mut reader, &mut pending, CAP)
+                .await
+                .expect("at cap"),
+        );
+        assert_eq!(line, "abcdefg");
+
+        let mut reader = BufReader::new(&data[..]);
+        let mut pending = Vec::new();
+        let outcome = read_line_resumable(&mut reader, &mut pending, CAP - 1)
+            .await
+            .expect("over cap");
+        assert!(
+            matches!(outcome, LineOutcome::TooLarge),
+            "one byte over the cap is rejected"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_rejects_oversize_without_unbounded_buffering() {
+        // A peer that streams far more than the cap with no newline must be
+        // rejected as TooLarge and never fully buffered (the #2352 DoS bound).
+        const CAP: usize = 64;
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut reader = BufReader::new(server);
+        let mut pending = Vec::new();
+
+        let writer = tokio::spawn(async move {
+            client.write_all(&vec![b'x'; 100_000]).await.expect("body");
+            client.write_all(b"\n").await.expect("newline");
+            client // keep the writer alive until the read completes
+        });
+
+        let outcome = read_line_resumable(&mut reader, &mut pending, CAP)
+            .await
+            .expect("read");
+        assert!(
+            matches!(outcome, LineOutcome::TooLarge),
+            "over-size line rejected"
+        );
+        assert!(
+            pending.is_empty(),
+            "accumulator cleared, not left holding the blob"
+        );
+        let _client = writer.await.expect("writer task");
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_recovers_after_oversize_line() {
+        // After an over-size line is rejected the connection keeps working: a
+        // normal line that follows still parses.
+        const CAP: usize = 32;
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        let mut reader = BufReader::new(server);
+        let mut pending = Vec::new();
+
+        client.write_all(&vec![b'A'; 1000]).await.expect("big");
+        client.write_all(b"\n").await.expect("nl1");
+        client.write_all(b"{\"ok\":true}\n").await.expect("small");
+
+        let first = read_line_resumable(&mut reader, &mut pending, CAP)
+            .await
+            .expect("first");
+        assert!(
+            matches!(first, LineOutcome::TooLarge),
+            "over-size line rejected"
+        );
+
+        let second = expect_line(
+            read_line_resumable(&mut reader, &mut pending, CAP)
+                .await
+                .expect("second"),
+        );
+        assert_eq!(
+            second, r#"{"ok":true}"#,
+            "line after over-size still parses"
+        );
+    }
+
+    #[tokio::test]
+    async fn read_line_resumable_is_cancellation_safe() {
+        // The #1559 property: a partial line survives the future being dropped
+        // (as when a `select!` notification branch wins), because `pending`
+        // lives outside the future. Simulated by letting a sleep branch win
+        // while only the front of the line has arrived, then delivering the rest.
+        let (mut client, server) = tokio::io::duplex(1024);
+        let mut reader = BufReader::new(server);
+        let mut pending = Vec::new();
+
+        client
+            .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"conn")
+            .await
+            .expect("front");
+
+        tokio::select! {
+            _ = read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN) => {
+                panic!("read must not complete before the newline arrives");
+            }
+            _ = tokio::time::sleep(Duration::from_millis(100)) => {}
+        }
+
+        assert_eq!(
+            pending, b"{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"conn",
+            "consumed prefix preserved across the cancellation"
+        );
+
+        client
+            .write_all(b"ection.close\",\"params\":{}}\n")
+            .await
+            .expect("rest");
+        let line = expect_line(
+            read_line_resumable(&mut reader, &mut pending, MAX_LINE_LEN)
+                .await
+                .expect("read"),
+        );
+        assert_eq!(
+            line,
+            r#"{"jsonrpc":"2.0","id":7,"method":"connection.close","params":{}}"#
+        );
     }
 }
