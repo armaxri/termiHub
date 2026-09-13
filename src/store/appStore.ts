@@ -134,20 +134,13 @@ import { createFileBrowsersSlice, FileBrowsersSlice } from "./slices/fileBrowser
 import { createTransfersSlice, TransfersSlice } from "./slices/transfersSlice";
 import { createConnectionTreeSlice, ConnectionTreeSlice } from "./slices/connectionTreeSlice";
 import { createMonitoringSlice, MonitoringSlice } from "./slices/monitoringSlice";
+import { createWorkspacesSlice, WorkspacesSlice } from "./slices/workspacesSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
+import { type WorkspaceTabGroupDef, type WorkspaceWindowDef } from "@/types/workspace";
 import {
-  WorkspaceSummary,
-  WorkspaceDefinition,
-  type WorkspaceTabGroupDef,
-  type WorkspaceWindowDef,
-} from "@/types/workspace";
-import {
-  getWorkspaces as apiGetWorkspaces,
   loadWorkspace as apiLoadWorkspace,
   saveWorkspace as apiSaveWorkspace,
-  deleteWorkspace as apiDeleteWorkspace,
-  duplicateWorkspace as apiDuplicateWorkspace,
 } from "@/services/workspaceApi";
 import {
   buildTabGroupsFromWorkspace,
@@ -426,7 +419,8 @@ export interface AppState
     FileBrowsersSlice,
     TransfersSlice,
     ConnectionTreeSlice,
-    MonitoringSlice {
+    MonitoringSlice,
+    WorkspacesSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -1311,13 +1305,12 @@ export interface AppState
   /** Resolve the open local-process authorization prompt with the user's choice. */
   resolveLocalProcessPrompt: (decision: LocalProcessAuthDecision) => void;
 
-  // Workspaces
-  workspaces: WorkspaceSummary[];
-  activeWorkspaceName: string | null;
-  loadWorkspaces: () => Promise<void>;
-  saveWorkspaceToBackend: (definition: WorkspaceDefinition) => Promise<void>;
-  deleteWorkspaceFromBackend: (workspaceId: string) => Promise<void>;
-  duplicateWorkspaceInBackend: (workspaceId: string) => Promise<void>;
+  // Workspaces — the list/CRUD surface (`workspaces`, `activeWorkspaceName`,
+  // `loadWorkspaces` / `saveWorkspaceToBackend` / `deleteWorkspaceFromBackend` /
+  // `duplicateWorkspaceInBackend`) is provided by createWorkspacesSlice
+  // (ARCH-001/FES-011, extracted under #2077 via #2881). The layout-entangled
+  // actions below stay here — they depend on module-private tab/panel-tree +
+  // session-lifecycle helpers (a dedicated future cut).
   openWorkspaceEditorTab: (workspaceId: string | null) => void;
   /**
    * The id of the workspace whose launch is currently in flight, or `null` when
@@ -2635,6 +2628,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createTransfersSlice(set, get, store),
     ...createConnectionTreeSlice(set, get, store),
     ...createMonitoringSlice(set, get, store),
+    ...createWorkspacesSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -6639,62 +6633,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
       prompt.resolve(decision);
     },
 
-    // Workspaces
-    workspaces: [],
-    activeWorkspaceName: null,
+    // Workspaces — `workspaces` / `activeWorkspaceName` state and the
+    // `loadWorkspaces` / `saveWorkspaceToBackend` / `deleteWorkspaceFromBackend`
+    // / `duplicateWorkspaceInBackend` CRUD actions are provided by
+    // createWorkspacesSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
+    // The layout-entangled actions below stay here.
     launchingWorkspaceId: null,
-
-    loadWorkspaces: async () => {
-      try {
-        const workspaces = await apiGetWorkspaces();
-        set({ workspaces });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to load workspaces: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    },
-
-    saveWorkspaceToBackend: async (definition) => {
-      try {
-        await apiSaveWorkspace(definition);
-        await get().loadWorkspaces();
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to save workspace: ${err instanceof Error ? err.message : String(err)}`
-        );
-        throw err;
-      }
-    },
-
-    deleteWorkspaceFromBackend: async (workspaceId) => {
-      // Only mutate local state after the backend delete resolves, and rethrow
-      // on failure so the caller can surface the error (GAP G7). A swallowed
-      // failure would optimistically remove the item, then silently "un-delete"
-      // it on the next loadWorkspaces with no explanation.
-      await apiDeleteWorkspace(workspaceId);
-      set((state) => ({
-        workspaces: state.workspaces.filter((ws) => ws.id !== workspaceId),
-      }));
-    },
-
-    duplicateWorkspaceInBackend: async (workspaceId) => {
-      try {
-        await apiDuplicateWorkspace(workspaceId);
-        await get().loadWorkspaces();
-        toast.success("Duplicated workspace");
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to duplicate workspace: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to duplicate workspace: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    },
 
     openWorkspaceEditorTab: (workspaceId) =>
       setAndReseed((state) => {
