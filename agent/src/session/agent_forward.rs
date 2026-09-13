@@ -60,11 +60,11 @@ use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
 
 /// agent → desktop: a forwarded ssh-agent connection opened on the agent host.
-pub const AGENT_FORWARD_OPEN: &str = "agent.forward.open";
+pub use crate::protocol::methods::AGENT_FORWARD_OPEN;
 /// Both directions: a chunk of ssh-agent-protocol bytes for a stream.
-pub const AGENT_FORWARD_DATA: &str = "agent.forward.data";
+pub use crate::protocol::methods::AGENT_FORWARD_DATA;
 /// Both directions: a forwarded ssh-agent stream ended.
-pub const AGENT_FORWARD_CLOSE: &str = "agent.forward.close";
+pub use crate::protocol::methods::AGENT_FORWARD_CLOSE;
 
 /// Sender that feeds desktop→socket bytes to one accepted relay connection.
 type StreamSink = tokio::sync::mpsc::UnboundedSender<Vec<u8>>;
