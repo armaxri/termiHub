@@ -19,6 +19,7 @@ use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter};
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
+use crate::protocol::methods::{CONNECTION_EXIT, CONNECTION_OUTPUT};
 
 /// How long to wait for the Ready frame after connecting.
 ///
@@ -567,7 +568,7 @@ async fn reader_loop(
                     alive.store(false, Ordering::SeqCst);
 
                     let notification = JsonRpcNotification::new(
-                        "connection.exit",
+                        CONNECTION_EXIT,
                         serde_json::json!({
                             "session_id": session_id,
                             "exit_code": code,
@@ -626,7 +627,7 @@ pub(crate) fn send_output_notification(tx: &NotificationSender, session_id: &str
     for chunk in data.chunks(65536) {
         let encoded = b64.encode(chunk);
         let notification = JsonRpcNotification::new(
-            "connection.output",
+            CONNECTION_OUTPUT,
             serde_json::json!({
                 "session_id": session_id,
                 "data": encoded,

@@ -23,7 +23,7 @@ use termihub_core::monitoring::{
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::protocol::methods::{MonitoringData, SshSessionConfig};
+use crate::protocol::methods::{MonitoringData, SshSessionConfig, CONNECTION_MONITORING_DATA};
 use crate::session::definitions::ConnectionStore;
 
 use self::collector::{LocalCollector, SshCollector, StatsCollector};
@@ -348,10 +348,8 @@ async fn monitoring_task(
                         let data = MonitoringData::new(host.clone(), *stats);
                         match serde_json::to_value(&data) {
                             Ok(value) => {
-                                let notification = JsonRpcNotification::new(
-                                    "connection.monitoring.data",
-                                    value,
-                                );
+                                let notification =
+                                    JsonRpcNotification::new(CONNECTION_MONITORING_DATA, value);
                                 if tx.send(notification).is_err() {
                                     debug!("Notification channel closed, stopping monitoring for '{host}'");
                                     break;

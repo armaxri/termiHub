@@ -288,7 +288,7 @@ pub async fn request_agent_deferred_update(
         let result = manager
             .send_request(
                 &agent_id,
-                "agent.request_deferred_update",
+                termihub_core::protocol::methods::AGENT_REQUEST_DEFERRED_UPDATE,
                 Value::Object(params),
             )
             .map_err(|e| e.to_string())?;
@@ -360,7 +360,11 @@ pub async fn request_agent_update(
             params.insert("version".to_string(), Value::String(v));
         }
         let result = manager
-            .send_request(&agent_id, "agent.request_update", Value::Object(params))
+            .send_request(
+                &agent_id,
+                termihub_core::protocol::methods::AGENT_REQUEST_UPDATE,
+                Value::Object(params),
+            )
             .map_err(|e| e.to_string())?;
         Ok(CoordinatedUpdateResponse {
             applied: result
@@ -1040,7 +1044,11 @@ async fn run_coordinated_update(
         let mut params = serde_json::Map::new();
         params.insert("binaryPath".to_string(), Value::String(binary_path));
         params.insert("version".to_string(), Value::String(version));
-        rpc_manager.send_request(&rpc_agent, "agent.request_update", Value::Object(params))
+        rpc_manager.send_request(
+            &rpc_agent,
+            termihub_core::protocol::methods::AGENT_REQUEST_UPDATE,
+            Value::Object(params),
+        )
     })
     .await
     .map_err(|e| e.to_string())?;

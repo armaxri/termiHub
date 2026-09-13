@@ -741,8 +741,12 @@ impl<R: Runtime> AgentConnectionManager<R> {
 
             let request_id: u64 = 1;
             let init_params = build_initialize_params(&settings_clone, &enabled_external_files);
-            let req_line =
-                serialize_request(request_id, "initialize", init_params).map_err(|e| {
+            let req_line = serialize_request(
+                request_id,
+                termihub_core::protocol::methods::INITIALIZE,
+                init_params,
+            )
+            .map_err(|e| {
                     emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
                     TerminalError::RemoteError(format!("Serialize initialize failed: {}", e))
                 })?;
@@ -1148,7 +1152,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
             params["reason"] = serde_json::Value::String(r.to_string());
         }
 
-        let result = self.send_request(agent_id, "agent.shutdown", params)?;
+        let result = self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::AGENT_SHUTDOWN,
+            params,
+        )?;
         let detached = result
             .get("detached_sessions")
             .and_then(|v| v.as_u64())
@@ -1175,8 +1183,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
             agents.get(agent_id).map(|c| c.client_id.clone())
         };
 
-        let result =
-            self.send_request(agent_id, "agent.list_connections", serde_json::json!({}))?;
+        let result = self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::AGENT_LIST_CONNECTIONS,
+            serde_json::json!({}),
+        )?;
         let connections = result["connections"]
             .as_array()
             .cloned()
@@ -1308,7 +1319,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
             params["definition_id"] = Value::String(d.to_string());
         }
 
-        let result = self.send_request(agent_id, "connection.create", params)?;
+        let result = self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::CONNECTION_CREATE,
+            params,
+        )?;
         Ok(AgentSessionInfo {
             session_id: result["session_id"].as_str().unwrap_or("").to_string(),
             title: result["title"].as_str().unwrap_or("").to_string(),
@@ -1327,7 +1342,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
     ) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "connection.attach",
+            termihub_core::protocol::methods::CONNECTION_ATTACH,
             serde_json::json!({ "session_id": remote_session_id }),
         )?;
         Ok(())
@@ -1342,7 +1357,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
     ) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "connection.detach",
+            termihub_core::protocol::methods::CONNECTION_DETACH,
             serde_json::json!({ "session_id": remote_session_id }),
         )?;
         Ok(())
@@ -1357,7 +1372,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
     ) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "connection.close",
+            termihub_core::protocol::methods::CONNECTION_CLOSE,
             serde_json::json!({ "session_id": remote_session_id }),
         )?;
         Ok(())
@@ -1365,7 +1380,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
 
     /// List sessions on the agent.
     pub fn list_sessions(&self, agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
-        let result = self.send_request(agent_id, "connection.list", serde_json::json!({}))?;
+        let result = self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::CONNECTION_LIST,
+            serde_json::json!({}),
+        )?;
         let sessions = result["sessions"].as_array().cloned().unwrap_or_default();
         Ok(sessions
             .into_iter()
@@ -1378,7 +1397,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
         &self,
         agent_id: &str,
     ) -> Result<AgentConnectionsData, TerminalError> {
-        let result = self.send_request(agent_id, "connections.list", serde_json::json!({}))?;
+        let result = self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::CONNECTIONS_LIST,
+            serde_json::json!({}),
+        )?;
         let connections = result["connections"]
             .as_array()
             .cloned()
@@ -1413,7 +1436,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         definition: Value,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
-        let result = self.send_request(agent_id, "connections.create", definition)?;
+        let result = self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::CONNECTIONS_CREATE,
+            definition,
+        )?;
         parse_agent_definition(&result)
             .ok_or_else(|| TerminalError::RemoteError("Failed to parse definition result".into()))
     }
@@ -1424,7 +1451,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         params: Value,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
-        let result = self.send_request(agent_id, "connections.update", params)?;
+        let result = self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::CONNECTIONS_UPDATE,
+            params,
+        )?;
         parse_agent_definition(&result)
             .ok_or_else(|| TerminalError::RemoteError("Failed to parse definition result".into()))
     }
@@ -1433,7 +1464,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
     pub fn delete_definition(&self, agent_id: &str, def_id: &str) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "connections.delete",
+            termihub_core::protocol::methods::CONNECTIONS_DELETE,
             serde_json::json!({ "id": def_id }),
         )?;
         Ok(())
@@ -1448,7 +1479,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
     ) -> Result<AgentFolderInfo, TerminalError> {
         let result = self.send_request(
             agent_id,
-            "connections.folders.create",
+            termihub_core::protocol::methods::CONNECTIONS_FOLDERS_CREATE,
             serde_json::json!({ "name": name, "parent_id": parent_id }),
         )?;
         parse_agent_folder(&result)
@@ -1461,7 +1492,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         params: Value,
     ) -> Result<AgentFolderInfo, TerminalError> {
-        let result = self.send_request(agent_id, "connections.folders.update", params)?;
+        let result = self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::CONNECTIONS_FOLDERS_UPDATE,
+            params,
+        )?;
         parse_agent_folder(&result)
             .ok_or_else(|| TerminalError::RemoteError("Failed to parse folder result".into()))
     }
@@ -1470,7 +1505,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
     pub fn delete_folder(&self, agent_id: &str, folder_id: &str) -> Result<(), TerminalError> {
         self.send_request(
             agent_id,
-            "connections.folders.delete",
+            termihub_core::protocol::methods::CONNECTIONS_FOLDERS_DELETE,
             serde_json::json!({ "id": folder_id }),
         )?;
         Ok(())
@@ -1853,7 +1888,11 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
     ) -> Result<(), TerminalError> {
         let params = serde_json::to_value(settings)
             .map_err(|e| TerminalError::RemoteError(format!("Serialize settings: {}", e)))?;
-        self.send_request(agent_id, "agent.settingsUpdate", params)?;
+        self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::AGENT_SETTINGS_UPDATE,
+            params,
+        )?;
         Ok(())
     }
 }
@@ -2251,7 +2290,7 @@ async fn agent_io_task<R: Runtime>(
                             let encoded = b64.encode(&data);
                             if let Ok(line) = serialize_request(
                                 request_id,
-                                "agent.forward.data",
+                                termihub_core::protocol::methods::AGENT_FORWARD_DATA,
                                 serde_json::json!({
                                     "stream_id": stream_id,
                                     "data": encoded,
@@ -2264,7 +2303,7 @@ async fn agent_io_task<R: Runtime>(
                             request_id += 1;
                             if let Ok(line) = serialize_request(
                                 request_id,
-                                "agent.forward.close",
+                                termihub_core::protocol::methods::AGENT_FORWARD_CLOSE,
                                 serde_json::json!({ "stream_id": stream_id }),
                             ) {
                                 let _ = channel.data(line.as_bytes()).await;
@@ -2794,7 +2833,12 @@ async fn list_recovered_session_ids(
 ) -> Option<std::collections::HashSet<String>> {
     *request_id += 1;
     let req_id = *request_id;
-    let line = serialize_request(req_id, "connection.list", serde_json::json!({})).ok()?;
+    let line = serialize_request(
+        req_id,
+        termihub_core::protocol::methods::CONNECTION_LIST,
+        serde_json::json!({}),
+    )
+    .ok()?;
     channel.data(line.as_bytes()).await.ok()?;
 
     const MAX_SKIPPED: u32 = 1000;
@@ -2849,10 +2893,10 @@ fn dispatch_agent_notification<R: Runtime>(
     monitoring_outputs: &HashMap<String, MonitoringSender>,
     b64: &base64::engine::GeneralPurpose,
 ) {
-    if method == "agent.update_available" {
+    if method == termihub_core::protocol::methods::AGENT_UPDATE_AVAILABLE {
         emit_agent_update_available(app_handle, agent_id, params);
     }
-    if method == "agent.update_pending" {
+    if method == termihub_core::protocol::methods::AGENT_UPDATE_PENDING {
         emit_remote_agent_update_pending(app_handle, agent_id, params);
     }
     handle_notification(method, params, session_outputs, monitoring_outputs, b64);
@@ -2868,14 +2912,17 @@ fn handle_agent_forward_notification(
     params: &Value,
     b64: &base64::engine::GeneralPurpose,
 ) -> bool {
+    use termihub_core::protocol::methods::{
+        AGENT_FORWARD_CLOSE, AGENT_FORWARD_DATA, AGENT_FORWARD_OPEN,
+    };
     match method {
-        "agent.forward.open" => {
+        m if m == AGENT_FORWARD_OPEN => {
             if let Some(stream_id) = params["stream_id"].as_str() {
                 agent_forward.on_open(stream_id.to_string(), command_tx.clone());
             }
             true
         }
-        "agent.forward.data" => {
+        m if m == AGENT_FORWARD_DATA => {
             if let (Some(stream_id), Some(data_b64)) =
                 (params["stream_id"].as_str(), params["data"].as_str())
             {
@@ -2885,7 +2932,7 @@ fn handle_agent_forward_notification(
             }
             true
         }
-        "agent.forward.close" => {
+        m if m == AGENT_FORWARD_CLOSE => {
             if let Some(stream_id) = params["stream_id"].as_str() {
                 agent_forward.on_close(stream_id);
             }
@@ -2906,8 +2953,9 @@ fn handle_notification(
     monitoring_outputs: &HashMap<String, MonitoringSender>,
     b64: &base64::engine::GeneralPurpose,
 ) {
+    use termihub_core::protocol::methods::{CONNECTION_MONITORING_DATA, CONNECTION_OUTPUT};
     match method {
-        "connection.output" => {
+        m if m == CONNECTION_OUTPUT => {
             let session_id = match params["session_id"].as_str() {
                 Some(s) => s,
                 None => return,
@@ -2925,7 +2973,7 @@ fn handle_notification(
                 let _ = output_tx.try_send(data);
             }
         }
-        "connection.monitoring.data" => {
+        m if m == CONNECTION_MONITORING_DATA => {
             let host = match params["host"].as_str() {
                 Some(s) => s,
                 None => return,
@@ -3056,7 +3104,11 @@ async fn reconnect_agent(
             .map(|f| f.path.as_str())
             .collect();
         let init_params = build_initialize_params(agent_settings, &enabled_files);
-        let req_line = match serialize_request(*request_id, "initialize", init_params) {
+        let req_line = match serialize_request(
+            *request_id,
+            termihub_core::protocol::methods::INITIALIZE,
+            init_params,
+        ) {
             Ok(l) => l,
             Err(e) => {
                 warn!(
@@ -4141,7 +4193,7 @@ mod tests {
             tokio::task::spawn_blocking(move || {
                 m.send_request_with_timeout(
                     "agent-1",
-                    "connections.list",
+                    termihub_core::protocol::methods::CONNECTIONS_LIST,
                     serde_json::json!({}),
                     std::time::Duration::from_millis(200),
                 )
