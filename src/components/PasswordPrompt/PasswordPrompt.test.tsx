@@ -48,6 +48,46 @@ describe("PasswordPrompt", () => {
     expect(query("password-prompt-cancel")).not.toBeNull();
   });
 
+  it("labels the prompt as a password by default (UX-010)", async () => {
+    await act(async () => {
+      useAppStore.getState().requestPassword("example.com", "alice");
+    });
+    render();
+
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("SSH Password");
+    expect(query("password-prompt-description")?.textContent).toContain(
+      "Enter password for alice@example.com"
+    );
+    expect(query("password-prompt-input")?.getAttribute("placeholder")).toBe("Password");
+    expect(query("password-prompt-input")?.getAttribute("aria-label")).toBe("SSH password");
+  });
+
+  it("labels the prompt as a key passphrase when kind is key_passphrase (UX-010)", async () => {
+    await act(async () => {
+      useAppStore.getState().requestPassword("example.com", "alice", "", "key_passphrase");
+    });
+    render();
+
+    // The prompt must not call a key passphrase the account "SSH Password".
+    expect(document.querySelector(".ui-modal__title")?.textContent).toBe("SSH Key Passphrase");
+    expect(query("password-prompt-description")?.textContent).toContain("passphrase");
+    expect(query("password-prompt-input")?.getAttribute("placeholder")).toBe("Passphrase");
+    expect(query("password-prompt-input")?.getAttribute("aria-label")).toBe("SSH key passphrase");
+  });
+
+  it("labels the save checkbox for the passphrase case (UX-010)", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+    await act(async () => {
+      useAppStore.getState().requestPassword("example.com", "alice", "", "key_passphrase");
+    });
+    render();
+
+    const checkbox = query("password-prompt-save-checkbox");
+    expect(checkbox?.getAttribute("aria-label")).toBe("Save passphrase");
+  });
+
   it("renders no notice for an ordinary prompt (UX-013)", async () => {
     await act(async () => {
       useAppStore.getState().requestPassword("example.com", "alice");
