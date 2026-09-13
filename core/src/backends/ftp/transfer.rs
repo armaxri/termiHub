@@ -57,6 +57,20 @@ pub enum AttemptOutcome {
     },
 }
 
+/// Convert a `u64` resume offset into the `usize` that `suppaftp`'s
+/// `resume_transfer` (`REST`) expects, without the silent truncation of an
+/// `offset as usize` cast on 32-bit targets. On 64-bit hosts every offset fits;
+/// on a 32-bit target an offset beyond `usize::MAX` is rejected with a clear
+/// error instead of wrapping to a bogus (small) `REST` position that would
+/// corrupt the resumed transfer.
+fn resume_offset_to_usize(offset: u64) -> Result<usize, SessionError> {
+    usize::try_from(offset).map_err(|_| {
+        SessionError::SpawnFailed(format!(
+            "FTP resume offset {offset} exceeds this platform's addressable range"
+        ))
+    })
+}
+
 /// Best-effort probe of a remote file's size (`SIZE`), opening a throwaway
 /// connection. `None` when the server does not support `SIZE` or the file is
 /// unavailable (the caller then renders an indeterminate progress bar).
@@ -95,8 +109,9 @@ where
         .map_err(|e| SessionError::SpawnFailed(format!("FTP connect for transfer: {e}")))?;
 
     if offset > 0 {
+        let rest = resume_offset_to_usize(offset)?;
         stream
-            .resume_transfer(offset as usize)
+            .resume_transfer(rest)
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("FTP REST {offset}: {e}")))?;
     }
@@ -257,6 +272,33 @@ mod tests {
     #[test]
     fn stop_reason_variants_distinct() {
         assert_ne!(StopReason::Pause, StopReason::Cancel);
+    }
+
+    #[test]
+    fn resume_offset_converts_typical_values_exactly() {
+        assert_eq!(resume_offset_to_usize(0).unwrap(), 0);
+        assert_eq!(resume_offset_to_usize(1024).unwrap(), 1024);
+        assert_eq!(
+            resume_offset_to_usize(u32::MAX as u64).unwrap(),
+            u32::MAX as usize
+        );
+    }
+
+    /// On 64-bit hosts `usize == u64`, so even the maximum offset round-trips
+    /// with no truncation.
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn resume_offset_accepts_full_u64_range_on_64bit() {
+        assert_eq!(resume_offset_to_usize(u64::MAX).unwrap(), usize::MAX);
+    }
+
+    /// On a 32-bit target an offset beyond `usize::MAX` is rejected rather than
+    /// silently truncated (which `offset as usize` would do).
+    #[test]
+    #[cfg(target_pointer_width = "32")]
+    fn resume_offset_rejects_out_of_range_on_32bit() {
+        let over = usize::MAX as u64 + 1;
+        assert!(resume_offset_to_usize(over).is_err());
     }
 
     #[test]

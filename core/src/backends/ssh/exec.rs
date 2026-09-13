@@ -194,6 +194,17 @@ fn signal_exit_status(signal_name: &str) -> i32 {
     128 + signal_number(signal_name)
 }
 
+/// Convert a russh `exit-status` (a `u32` on the wire per RFC 4254) into the
+/// `i32` used throughout the exec API, without the silent wraparound of an
+/// `as i32` cast. Real exit statuses are tiny (`0..=255`, or `128 + signum`),
+/// so every legitimate value round-trips exactly; a pathological out-of-range
+/// status saturates to [`i32::MAX`] — staying a clearly non-zero failure rather
+/// than wrapping to a negative or near-zero value that could masquerade as
+/// success to callers keying off `exit_status == 0`.
+fn exit_status_to_i32(exit_status: u32) -> i32 {
+    i32::try_from(exit_status).unwrap_or(i32::MAX)
+}
+
 /// Human-readable name for a russh signal (the RFC 4254 name without the `SIG`
 /// prefix, e.g. `"KILL"`). Custom signals pass their raw name through.
 fn russh_signal_name(sig: &russh::Sig) -> String {
@@ -256,7 +267,7 @@ impl ExecChannel for RusshExecChannel {
                     }
                 }
                 Some(ChannelMsg::ExitStatus { exit_status }) => {
-                    return Some(ExecEvent::Exit(exit_status as i32));
+                    return Some(ExecEvent::Exit(exit_status_to_i32(exit_status)));
                 }
                 Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
                     return Some(ExecEvent::Signal(russh_signal_name(&signal_name)));
@@ -556,6 +567,22 @@ mod tests {
         assert_eq!(signal_exit_status("INT"), 130);
         // Unknown / custom signal names are still a non-zero failure.
         assert_ne!(signal_exit_status("SOMETHING_CUSTOM"), 0);
+    }
+
+    /// Guards against the u32→i32 wraparound of a plain `as i32` cast when a
+    /// server reports an `exit-status` outside the `i32` range.
+    #[test]
+    fn exit_status_conversion_is_faithful_and_saturates() {
+        // Every realistic exit status round-trips exactly.
+        assert_eq!(exit_status_to_i32(0), 0);
+        assert_eq!(exit_status_to_i32(1), 1);
+        assert_eq!(exit_status_to_i32(255), 255);
+        assert_eq!(exit_status_to_i32(i32::MAX as u32), i32::MAX);
+        // Values beyond i32::MAX saturate instead of wrapping negative: a plain
+        // `0x8000_0000 as i32` would be i32::MIN, which could read as a bogus
+        // (near-success) status; clamping keeps it a clearly non-zero failure.
+        assert_eq!(exit_status_to_i32(0x8000_0000), i32::MAX);
+        assert_eq!(exit_status_to_i32(u32::MAX), i32::MAX);
     }
 
     /// Regression for CORE-005: a server that opens the channel but never sends
