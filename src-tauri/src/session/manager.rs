@@ -2690,12 +2690,8 @@ mod tests {
     /// bytes are the exact in-order concatenation of the inputs.
     #[tokio::test]
     async fn run_output_reader_coalesces_bytes_in_order() {
-        let events = collect_stream_events(vec![
-            b"aaa".to_vec(),
-            b"bbb".to_vec(),
-            b"ccc".to_vec(),
-        ])
-        .await;
+        let events =
+            collect_stream_events(vec![b"aaa".to_vec(), b"bbb".to_vec(), b"ccc".to_vec()]).await;
         let combined: Vec<u8> = events.iter().flat_map(|e| e.data.clone()).collect();
         assert_eq!(combined, b"aaabbbccc", "bytes must stay in order");
         // Queued chunks coalesce into a single event (framing preserved).
