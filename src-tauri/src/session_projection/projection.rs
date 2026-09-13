@@ -49,14 +49,16 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
+use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
 use termihub_core::reconnect_backoff::ReconnectPhase;
 
 use crate::commands::projection::ProjectionState;
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{compute_ops, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector};
 use crate::session::manager::SessionManager;
-use crate::session_projection::store::{SessionLifecycleStore, TerminalExit, TerminalExitReason};
+use crate::session_projection::store::{
+    RegionDelta, SessionLifecycleStore, TerminalExit, TerminalExitReason,
+};
 use crate::session_projection::timer::ReconnectTimerDriver;
 
 /// The projection region id for the session-lifecycle domain (shared, per Open
@@ -66,16 +68,140 @@ pub const SESSION_LIFECYCLE_REGION: &str = "session-lifecycle";
 /// Publish the `session-lifecycle` region from the store, fanning a diff out to
 /// every subscriber and returning the advanced region for the intent ack (empty
 /// when the view did not change).
+///
+/// # Incremental publish (PERF-006, rollout of #2878)
+///
+/// The region view is `{ "sessions": { <sessionId>: SessionLifecycle } }`. The
+/// naive path re-serialized **all** sessions and diffed the whole tree on every
+/// fold — O(region) per fold, hence O(N²) over a per-session stream. Instead the
+/// store hands us only the sessions it touched
+/// ([`SessionLifecycleStore::drain_delta`]); we diff just those against the held
+/// view and splice them in place, bounding the cost to O(size of the change).
+///
+/// The emitted diff is **byte-identical** to the whole-region diff — see
+/// [`apply_session_delta`] for why — so no subscriber can tell the two apart.
 pub fn publish_sessions(
     projector: &Projector,
     store: &SessionLifecycleStore,
 ) -> Vec<ProducedRegion> {
-    match projector.publish(SESSION_LIFECYCLE_REGION, store.snapshot()) {
+    let delta = store.drain_delta();
+    let published = projector.publish_delta(SESSION_LIFECYCLE_REGION, |view| {
+        apply_session_delta(view, &delta, store)
+    });
+    match published {
         Some(version) => vec![ProducedRegion {
             region: SESSION_LIFECYCLE_REGION.to_string(),
             version,
         }],
         None => Vec::new(),
+    }
+}
+
+/// Compute the RFC-6902 ops for a drained [`RegionDelta`] and splice its new
+/// subtrees into the held region `view` in place — the incremental core of
+/// [`publish_sessions`] (PERF-006, rollout of #2878).
+///
+/// ## Why the reduced diff is byte-identical to the whole-region diff
+///
+/// `json_patch::diff` has two properties this relies on: (1) object keys are
+/// visited in **sorted** order (`serde_json` maps are `BTreeMap`s — no
+/// `preserve_order`), and (2) each key's sub-diff depends **only** on that key's
+/// old/new subtrees. So restricting both sides of the diff to just the touched
+/// keys yields exactly the same ops — same paths, same values, same order — that
+/// diffing the whole region would: the untouched keys produce no ops and, being
+/// visited in the same sorted positions, never reorder the touched ones. The
+/// top-level `{ sessions }` wrapper is preserved on both reduced sides so its own
+/// ordering (and absence of spurious top-level ops) matches too.
+///
+/// Under `debug_assertions` this is cross-checked against a fresh whole-region
+/// diff, so any dirty-tracking miss or ordering drift fails loudly in tests
+/// rather than silently corrupting a subscriber's cache.
+fn apply_session_delta(
+    view: &mut Value,
+    delta: &RegionDelta,
+    store: &SessionLifecycleStore,
+) -> Vec<DiffOp> {
+    // Fallback: an unseeded / unexpected view shape (e.g. the region was never
+    // seeded with the empty-store baseline) → the original whole-region path,
+    // byte-for-byte. Production always seeds the region in `lib.rs::setup()`.
+    if !view.get("sessions").is_some_and(Value::is_object) {
+        let full = store.snapshot();
+        let ops = compute_ops(view, &full);
+        *view = full;
+        return ops;
+    }
+
+    #[cfg(debug_assertions)]
+    let old_full = view.clone();
+
+    let reduced_old = json!({ "sessions": pick_keys(view.get("sessions"), &delta.sessions) });
+    let reduced_new = json!({ "sessions": subtree_map(&delta.sessions) });
+    let ops = compute_ops(&reduced_old, &reduced_new);
+
+    splice_subtrees(view, "sessions", &delta.sessions);
+
+    #[cfg(debug_assertions)]
+    {
+        // Ground truth: the whole-region diff and a fresh full snapshot. The
+        // incremental ops must equal the former, and the spliced view the latter
+        // — either mismatch is a dirty-tracking / ordering bug, not a perf tweak.
+        let fresh = store.snapshot();
+        debug_assert_eq!(
+            ops,
+            compute_ops(&old_full, &fresh),
+            "PERF-006: incremental session delta diverged from the whole-region diff"
+        );
+        debug_assert_eq!(
+            *view, fresh,
+            "PERF-006: spliced session view diverged from the store snapshot"
+        );
+    }
+
+    ops
+}
+
+/// Collect the touched keys that are present in `src` into a fresh object — the
+/// reduced *old* subtree.
+fn pick_keys(src: Option<&Value>, entries: &[(String, Option<Value>)]) -> Value {
+    let mut out = Map::new();
+    if let Some(obj) = src.and_then(Value::as_object) {
+        for (key, _) in entries {
+            if let Some(value) = obj.get(key) {
+                out.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    Value::Object(out)
+}
+
+/// Collect the present (`Some`) entries of a drained subtree into a fresh object —
+/// the reduced *new* subtree. A `None` value is an absent (removed) entry and is
+/// simply omitted, so the diff emits a `remove`.
+fn subtree_map(entries: &[(String, Option<Value>)]) -> Value {
+    let mut out = Map::new();
+    for (key, value) in entries {
+        if let Some(value) = value {
+            out.insert(key.clone(), value.clone());
+        }
+    }
+    Value::Object(out)
+}
+
+/// Splice the drained subtrees into `view[field]` in place: `Some` upserts the
+/// entry, `None` removes it. A no-op if the field is somehow not an object.
+fn splice_subtrees(view: &mut Value, field: &str, entries: &[(String, Option<Value>)]) {
+    let Some(obj) = view.get_mut(field).and_then(Value::as_object_mut) else {
+        return;
+    };
+    for (key, value) in entries {
+        match value {
+            Some(value) => {
+                obj.insert(key.clone(), value.clone());
+            }
+            None => {
+                obj.remove(key);
+            }
+        }
     }
 }
 

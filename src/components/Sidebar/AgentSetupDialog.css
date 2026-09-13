@@ -178,7 +178,7 @@
 .agent-setup-dialog__url {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   word-break: break-all;
   padding: var(--spacing-xs) var(--spacing-sm);
   background: var(--bg-primary);

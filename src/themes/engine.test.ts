@@ -66,6 +66,28 @@ describe("applyTheme", () => {
     );
   });
 
+  it("applies per-scheme elevation shadows tuned for the theme (UI-012)", () => {
+    // Dark: heavy dark-alpha shadow. Light: softer, lower-alpha shadow so depth
+    // reads on pale surfaces. The two must differ, and light must be lighter.
+    applyTheme("dark");
+    const darkShadow = document.documentElement.style.getPropertyValue("--shadow-md");
+    applyTheme("light");
+    const lightShadow = document.documentElement.style.getPropertyValue("--shadow-md");
+    expect(darkShadow).not.toBe("");
+    expect(lightShadow).not.toBe("");
+    expect(lightShadow).not.toBe(darkShadow);
+    expect(darkShadow).toContain("rgba(0, 0, 0, 0.3)");
+    expect(lightShadow).toContain("rgba(0, 0, 0, 0.12)");
+  });
+
+  it("restores the dark shadow set when switching light -> dark (UI-012)", () => {
+    applyTheme("light");
+    applyTheme("dark");
+    expect(document.documentElement.style.getPropertyValue("--shadow-overlay")).toContain(
+      "rgba(0, 0, 0, 0.75)"
+    );
+  });
+
   it("resolves system mode to dark when OS prefers dark", () => {
     stubMatchMedia(true);
     applyTheme("system");

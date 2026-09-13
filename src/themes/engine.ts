@@ -85,6 +85,33 @@ const COLOR_TO_CSS_VAR: Record<keyof ThemeColors, string> = {
   scrollbarThumbHover: "--scrollbar-thumb-hover",
 };
 
+/**
+ * Elevation shadow tokens, tuned per color scheme (UI-012). The dark scheme's
+ * heavy dark-alpha shadows read as muddy smudges on the light theme's pale
+ * surfaces, flattening depth. Light schemes therefore get softer, lower-alpha
+ * shadows (and drop the dark scheme's inset white top-highlight, which is
+ * meaningless on a light surface). The engine writes the set matching the active
+ * theme's `colorScheme`, so every dark/light theme — built-in, solarized,
+ * custom, or plugin — gets depth that reads correctly. variables.css keeps the
+ * dark set as the static `:root` default for pre-engine / SSR / test rendering.
+ */
+const ELEVATION_SHADOWS: Record<"dark" | "light", Record<string, string>> = {
+  dark: {
+    "--shadow-sm": "0 1px 4px rgba(0, 0, 0, 0.5), 0 0 1px rgba(0, 0, 0, 0.3)",
+    "--shadow-md": "0 4px 12px rgba(0, 0, 0, 0.3)",
+    "--shadow-dropdown":
+      "0 8px 28px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+    "--shadow-overlay":
+      "0 24px 64px rgba(0, 0, 0, 0.75), 0 8px 24px rgba(0, 0, 0, 0.5), inset 0 1px 0 rgba(255, 255, 255, 0.055)",
+  },
+  light: {
+    "--shadow-sm": "0 1px 3px rgba(0, 0, 0, 0.12), 0 0 1px rgba(0, 0, 0, 0.08)",
+    "--shadow-md": "0 4px 12px rgba(0, 0, 0, 0.12)",
+    "--shadow-dropdown": "0 8px 28px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.1)",
+    "--shadow-overlay": "0 24px 64px rgba(0, 0, 0, 0.22), 0 8px 24px rgba(0, 0, 0, 0.14)",
+  },
+};
+
 type ThemeChangeCallback = () => void;
 
 let currentTheme: ThemeDefinition = darkTheme;
@@ -137,6 +164,12 @@ function setCssVariables(theme: ThemeDefinition): void {
   const root = document.documentElement;
   for (const [key, cssVar] of Object.entries(COLOR_TO_CSS_VAR)) {
     root.style.setProperty(cssVar, theme.colors[key as keyof ThemeColors]);
+  }
+  // Elevation shadows are tuned per color scheme (UI-012): light themes get
+  // softer, lower-alpha shadows so depth reads on pale surfaces. Written every
+  // apply so switching light->dark (or vice versa) restores the correct set.
+  for (const [token, value] of Object.entries(ELEVATION_SHADOWS[theme.colorScheme])) {
+    root.style.setProperty(token, value);
   }
   // Tell WebKit which color scheme is active so system UI elements (scrollbars,
   // form controls) render in the matching dark/light style.

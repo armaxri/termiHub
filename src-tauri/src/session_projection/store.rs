@@ -27,7 +27,7 @@
 //! dispatches `session.*` intents; the former `appStore` lifecycle reducers and
 //! terminal-overlay reducers were removed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
@@ -202,6 +202,22 @@ struct Inner {
     sessions: HashMap<String, SessionLifecycle>,
     config: BackoffConfig,
     rand: RandFn,
+    /// Keys of `sessions` touched since the last [`SessionLifecycleStore::drain_delta`]
+    /// (PERF-006, rollout of #2878). A superset of the actually-changed keys is
+    /// always safe: an unchanged key contributes an empty sub-diff and never
+    /// reorders the rest.
+    dirty: HashSet<String>,
+}
+
+/// A serialized description of the region entries touched since the previous
+/// [`SessionLifecycleStore::drain_delta`] — the input to the region's incremental
+/// publish (PERF-006, rollout of #2878). Built in O(touched entries), not
+/// O(whole region). A `None` value marks a session that is now **absent**
+/// (removed), so the projection emits a `remove` for it.
+#[derive(Debug, Default)]
+pub struct RegionDelta {
+    /// `(sessionId, Some(serialized SessionLifecycle) | None-if-removed)`.
+    pub sessions: Vec<(String, Option<Value>)>,
 }
 
 impl Inner {
@@ -248,6 +264,7 @@ impl SessionLifecycleStore {
                 sessions: HashMap::new(),
                 config,
                 rand: Box::new(rand::random::<f64>),
+                dirty: HashSet::new(),
             }),
         }
     }
@@ -271,7 +288,9 @@ impl SessionLifecycleStore {
     /// `session.connect` — begin an initial connect. Resets any prior state for
     /// the session id (a fresh connect clears a stale error / reconnect loop).
     pub fn connect(&self, session_id: &str) {
-        self.lock()
+        let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
+        inner
             .sessions
             .insert(session_id.to_string(), SessionLifecycle::connecting());
     }
@@ -281,6 +300,7 @@ impl SessionLifecycleStore {
     /// engine a `Success` so the attempt counter resets.
     pub fn connected(&self, session_id: &str) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
         // Only the engine's Connecting sub-phase accepts Success; from a plain
         // initial connect the loop is Idle and the reducer is a no-op.
@@ -307,6 +327,7 @@ impl SessionLifecycleStore {
     /// with the message; the user may retry.
     pub fn connect_failed(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let entry = inner
             .sessions
             .entry(session_id.to_string())
@@ -324,6 +345,7 @@ impl SessionLifecycleStore {
     /// reconnect loop and lands in idle `Disconnected` with reason `User`.
     pub fn disconnect(&self, session_id: &str) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let entry = inner
             .sessions
             .entry(session_id.to_string())
@@ -344,6 +366,7 @@ impl SessionLifecycleStore {
     /// disconnect overlay and the resilient-reconnect loop are distinct).
     pub fn dropped(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let entry = inner
             .sessions
             .entry(session_id.to_string())
@@ -364,6 +387,7 @@ impl SessionLifecycleStore {
     /// no-op in the engine (the loop is already running).
     pub fn reconnect(&self, session_id: &str) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
         let reconnect = inner.reconnect_event(current, ReconnectEvent::Drop);
         let entry = inner
@@ -413,6 +437,7 @@ impl SessionLifecycleStore {
     /// left stuck reconnecting. Creates the entry lazily (mirrors the other folds).
     pub fn agent_transport_reconnecting(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let entry = inner
             .sessions
             .entry(session_id.to_string())
@@ -433,6 +458,7 @@ impl SessionLifecycleStore {
     /// outside the `Waiting` phase.
     pub fn reconnect_attempt(&self, session_id: &str) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
         let reconnect = inner.reconnect_event(current, ReconnectEvent::Attempt);
         if let Some(entry) = inner.sessions.get_mut(session_id) {
@@ -449,6 +475,7 @@ impl SessionLifecycleStore {
     /// or gives up (terminal `Failed` with the message).
     pub fn reconnect_failed(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
         let reconnect = inner.reconnect_event(current, ReconnectEvent::Failure);
         if let Some(entry) = inner.sessions.get_mut(session_id) {
@@ -468,6 +495,7 @@ impl SessionLifecycleStore {
     /// user can browse scrollback or reconnect manually (mirrors #1962 Cancel).
     pub fn cancel_reconnect(&self, session_id: &str) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
         let _ = inner.reconnect_event(current, ReconnectEvent::Cancel);
         if let Some(entry) = inner.sessions.get_mut(session_id) {
@@ -494,6 +522,7 @@ impl SessionLifecycleStore {
     /// for a session that has already connected.
     pub fn set_reconnect_trigger(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         if let Some(entry) = inner.sessions.get_mut(session_id) {
             entry.reconnect_error = error;
         }
@@ -513,6 +542,7 @@ impl SessionLifecycleStore {
     /// ever set for a tab whose lifecycle the store already tracks.
     pub fn set_backend_session_id(&self, session_id: &str, backend_session_id: Option<String>) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         if let Some(entry) = inner.sessions.get_mut(session_id) {
             entry.backend_session_id = backend_session_id;
         }
@@ -555,6 +585,7 @@ impl SessionLifecycleStore {
     /// for that variant), so the record must exist to carry the cause.
     pub fn set_exit(&self, session_id: &str, exit: Option<TerminalExit>) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let entry = inner
             .sessions
             .entry(session_id.to_string())
@@ -593,6 +624,7 @@ impl SessionLifecycleStore {
     /// lazily so the redrive can fold it for a tab the store is already tracking.
     pub fn session_lost(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
         let entry = inner
             .sessions
             .entry(session_id.to_string())
@@ -610,7 +642,34 @@ impl SessionLifecycleStore {
     /// `session.remove` — the session/tab is gone; drop it from the region.
     /// Idempotent: removing an unknown session is a no-op.
     pub fn remove(&self, session_id: &str) {
-        self.lock().sessions.remove(session_id);
+        let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
+        inner.sessions.remove(session_id);
+    }
+
+    /// Drain the dirty-key set, serializing each touched session's current value
+    /// (or `None` if it was removed) — the input to the region's incremental
+    /// publish (PERF-006, rollout of #2878). O(number of touched sessions).
+    ///
+    /// Draining and serializing under the single store lock keeps the returned
+    /// [`RegionDelta`] a consistent view of the touched entries at one instant. A
+    /// serialization failure is treated as absence (matching [`Self::snapshot`],
+    /// which likewise omits an entry it cannot serialize), so the region converges
+    /// on the same result either way.
+    pub fn drain_delta(&self) -> RegionDelta {
+        let mut inner = self.lock();
+        let keys: Vec<String> = inner.dirty.drain().collect();
+        let sessions = keys
+            .into_iter()
+            .map(|key| {
+                let value = inner
+                    .sessions
+                    .get(&key)
+                    .and_then(|entry| serde_json::to_value(entry).ok());
+                (key, value)
+            })
+            .collect();
+        RegionDelta { sessions }
     }
 
     /// Read a session's current lifecycle (test / diagnostics helper).

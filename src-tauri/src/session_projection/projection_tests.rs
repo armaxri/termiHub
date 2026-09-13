@@ -19,8 +19,8 @@ use tauri::Manager;
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
-    apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
-    ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
+    apply_ops, compute_ops, DiffFrame, DiffOp, Dispatcher, HandlerRegistry, Intent, IntentStatus,
+    ProjectionError, ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
 use crate::session::manager::{DropFold, EventEmitter};
 use crate::session_projection::projection::{
@@ -989,4 +989,143 @@ fn agent_transport_reconnecting_projects_reconnecting_without_arming_the_loop() 
         store.snapshot()["sessions"]["s2"]["status"],
         json!("connected")
     );
+}
+
+// ── Incremental publish equivalence (PERF-006, rollout of #2878) ──────────────
+//
+// The incremental publish (`drain_delta` → reduced diff → in-place splice) must
+// emit a diff **byte-identical** to the old whole-region path (re-serialize the
+// whole store + `compute_ops` of the two full trees). These tests pin that: at
+// each fold they assert the fanned-out ops equal `compute_ops(prev_full,
+// new_full)`, and that the subscriber cache converges on the store snapshot.
+
+/// Publish `store` and assert the emitted diff equals the whole-region diff
+/// between `prev` (the region view before the fold) and the store's fresh
+/// snapshot. Advances `prev` to the new snapshot. A `None` publish (no change) is
+/// asserted to coincide with an empty whole-region diff.
+fn assert_incremental_equals_full(
+    projector: &Projector,
+    store: &SessionLifecycleStore,
+    sink: &VecSink,
+    prev: &mut Value,
+    label: &str,
+) {
+    let before = sink.diffs().len();
+    let new_full = store.snapshot();
+    let expected_ops: Vec<DiffOp> = compute_ops(prev, &new_full);
+
+    let produced = publish_sessions(projector, store);
+    let diffs = sink.diffs();
+
+    if expected_ops.is_empty() {
+        assert!(
+            produced.is_empty(),
+            "{label}: no region advanced on a no-op"
+        );
+        assert_eq!(diffs.len(), before, "{label}: no diff on a no-op");
+    } else {
+        assert_eq!(diffs.len(), before + 1, "{label}: exactly one diff emitted");
+        assert_eq!(
+            &diffs.last().unwrap().ops,
+            &expected_ops,
+            "{label}: incremental ops must equal the whole-region diff"
+        );
+    }
+
+    // Cross-check the reference view converges exactly like a client cache would.
+    let mut applied = prev.clone();
+    apply_ops(&mut applied, &expected_ops).expect("diff applies cleanly");
+    assert_eq!(
+        applied, new_full,
+        "{label}: applying the diff reproduces the snapshot"
+    );
+
+    *prev = new_full;
+}
+
+/// The representative fold sequence the finding calls out — add a session, update
+/// one field of one session among many, remove a session, and a no-op — each
+/// producing exactly the whole-region diff, over a populated (O(N)) region.
+#[test]
+fn incremental_publish_is_byte_identical_to_the_whole_region_diff() {
+    let store = SessionLifecycleStore::new();
+    store.set_rand_for_test(Box::new(|| 0.5));
+    // A populated region: several live sessions, so a whole-region rebuild would
+    // be O(N) per fold and a single-entry change must not touch the rest.
+    for i in 0..6 {
+        let id = format!("s{i}");
+        store.connect(&id);
+        store.connected(&id);
+    }
+
+    let projector = Projector::new();
+    projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
+
+    // Clear the seed dirty set; the region baseline already equals the store, so
+    // this drains without emitting (a no-op publish).
+    assert!(publish_sessions(&projector, &store).is_empty());
+
+    let mut prev = store.snapshot();
+
+    // 1) Update one field of one session among many (the hot per-transition path).
+    store.set_backend_session_id("s3", Some("backend-3".to_string()));
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "update-one-of-many");
+
+    // 2) Add a brand-new session.
+    store.connect("s42");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "add-entry");
+
+    // 3) A lifecycle change on the new session (connecting → connected).
+    store.connected("s42");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "connected");
+
+    // 4) An unexpected drop on an existing session (status + fields change).
+    store.dropped("s1", Some("connection reset".to_string()));
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "dropped");
+
+    // 5) Remove a session (a `remove` under /sessions).
+    store.remove("s0");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "remove-entry");
+
+    // 6) A genuine no-op: a metadata write against an unknown session changes
+    //    nothing (marks the key dirty but it is absent → no op).
+    store.set_reconnect_trigger("unknown", Some("x".to_string()));
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "no-op");
+
+    // The subscriber, fed only the incremental diffs, converges on the authority.
+    let snap = projector.snapshot(SESSION_LIFECYCLE_REGION);
+    assert_eq!(
+        snap.view,
+        store.snapshot(),
+        "region view == store authority"
+    );
+}
+
+/// Two sessions changing in the **same** publish must still diff byte-identically
+/// to the whole-region path, exercising multi-key ordering within one reduced
+/// diff.
+#[test]
+fn incremental_publish_coalesces_multi_entry_changes_identically() {
+    let store = SessionLifecycleStore::new();
+    store.set_rand_for_test(Box::new(|| 0.5));
+    for i in 0..4 {
+        let id = format!("s{i}");
+        store.connect(&id);
+        store.connected(&id);
+    }
+    let projector = Projector::new();
+    projector.register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe(SESSION_LIFECYCLE_REGION, "sub", "A", sink.clone());
+    assert!(publish_sessions(&projector, &store).is_empty());
+
+    let mut prev = store.snapshot();
+
+    // Mutate three sessions before a single publish → one coalesced diff.
+    store.disconnect("s2");
+    store.dropped("s0", Some("dropped".to_string()));
+    store.remove("s3");
+    assert_incremental_equals_full(&projector, &store, &sink, &mut prev, "coalesced-multi");
 }

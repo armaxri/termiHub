@@ -114,7 +114,7 @@
 
 .terminal-scroll-viewport.terminal-horizontal-scroll::-webkit-scrollbar-thumb {
   background-color: transparent;
-  border-radius: 5px;
+  border-radius: var(--radius-md);
 }
 
 .terminal-container:hover

@@ -50,7 +50,7 @@
 .ssh-config-import__row-chain {
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -93,12 +93,12 @@
   width: 100%;
   padding: 8px 10px;
   border: 1px solid transparent;
-  border-radius: var(--radius-sm, 4px);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .bulk-ssh-import__row:hover,
 .bulk-ssh-import__row:focus-within {
-  background: var(--bg-hover, rgba(127, 127, 127, 0.12));
+  background: var(--bg-hover);
   border-color: var(--border-primary);
 }
