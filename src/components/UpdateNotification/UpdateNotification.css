@@ -44,17 +44,6 @@
   flex-shrink: 0;
 }
 
-.update-notification__dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-
-.update-notification__dot--amber {
-  background: var(--color-notice);
-}
-
 .update-notification__close {
   display: flex;
   align-items: center;

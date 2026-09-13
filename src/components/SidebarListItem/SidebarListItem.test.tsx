@@ -70,10 +70,12 @@ describe("SidebarListItem", () => {
   });
 
   it("maps status tones to modifier classes", () => {
+    // SidebarStatusDot is now an alias of the shared StatusDot primitive
+    // (UISF-003), so it renders the promoted `status-dot` classes.
     act(() => root.render(<SidebarStatusDot tone="error" testId="dot" />));
     const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
-    expect(dot.classList.contains("sidebar-list-item__status")).toBe(true);
-    expect(dot.classList.contains("sidebar-list-item__status--error")).toBe(true);
+    expect(dot.classList.contains("status-dot")).toBe(true);
+    expect(dot.classList.contains("status-dot--error")).toBe(true);
   });
 
   it("exposes a non-colour accessible name when a label is given", () => {

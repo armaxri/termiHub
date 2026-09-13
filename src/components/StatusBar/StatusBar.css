@@ -355,23 +355,10 @@
   color: var(--text-muted);
 }
 
-/* Update indicator dot in status bar */
+/* Layout-only placement for the shared StatusDot in the status bar; its size
+   and tone->token colour come from the StatusDot primitive (UISF-003). */
 .update-indicator__dot {
-  display: inline-block;
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
   margin-left: var(--spacing-xs);
-  vertical-align: middle;
-  flex-shrink: 0;
-}
-
-.update-indicator__dot--amber {
-  background: var(--color-notice);
-}
-
-.update-indicator__dot--red {
-  background: var(--color-error);
 }
 
 .update-indicator__develop-badge {

@@ -1,5 +1,6 @@
 import { useAppStore } from "@/store/appStore";
 import { useAppInfo } from "@/hooks/useAppInfo";
+import { StatusDot } from "@/components/ui";
 
 /**
  * Version chip in the status bar.  Shows an amber or red dot when an update
@@ -45,10 +46,12 @@ export function UpdateIndicator() {
         </span>
       )}
       {hasUpdate && (
-        <span
-          className={`update-indicator__dot update-indicator__dot--${isSecurity ? "red" : "amber"}`}
-          data-testid="update-indicator-dot"
-          aria-label={isSecurity ? "Security update available" : "Update available"}
+        <StatusDot
+          tone={isSecurity ? "error" : "notice"}
+          size="sm"
+          className="update-indicator__dot"
+          testId="update-indicator-dot"
+          label={isSecurity ? "Security update available" : "Update available"}
         />
       )}
     </button>
