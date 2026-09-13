@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, State};
 
 use termihub_core::network::{
     defaults, dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol, DnsRecordType,
@@ -15,7 +15,7 @@ use termihub_core::network::{
 use termihub_core::service::ServiceInfo;
 
 use crate::network::http_monitor::{HttpMonitorConfig, HttpMonitorState};
-use crate::network::{agent_tools, NetworkManager};
+use crate::network::{agent_tools, events, NetworkManager};
 use crate::run_location::{ResolvedLocation, RunLocation};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
@@ -120,12 +120,11 @@ pub async fn network_port_scan(
                 // recoverable error instead of panicking should that invariant
                 // ever be bypassed (WA-RS-005).
                 let Some(client) = agent_client else {
-                    let _ = app.emit(
-                        "network-scan-error",
-                        serde_json::json!({
-                            "taskId": &tid,
-                            "error": "no agent client for agent-located request",
-                        }),
+                    events::emit_error(
+                        &app,
+                        events::name::SCAN_ERROR,
+                        &tid,
+                        "no agent client for agent-located request",
                     );
                     manager.complete_task(&tid);
                     return;
@@ -141,16 +140,7 @@ pub async fn network_port_scan(
                     let app = app.clone();
                     let tid = tid.clone();
                     move |result: PortScanResult| {
-                        let _ = app.emit(
-                            "network-scan-result",
-                            serde_json::json!({
-                                "taskId": tid,
-                                "host": result.host,
-                                "port": result.port,
-                                "state": result.state,
-                                "latencyMs": result.latency_ms,
-                            }),
-                        );
+                        events::emit_scan_result(&app, &tid, &result);
                     }
                 };
 
@@ -165,17 +155,9 @@ pub async fn network_port_scan(
                 .await;
 
                 match summary {
-                    Ok(s) => {
-                        let _ = app.emit(
-                            "network-scan-complete",
-                            serde_json::json!({ "taskId": &tid, "summary": s }),
-                        );
-                    }
+                    Ok(s) => events::emit_scan_complete(&app, &tid, s),
                     Err(e) => {
-                        let _ = app.emit(
-                            "network-scan-error",
-                            serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
-                        );
+                        events::emit_error(&app, events::name::SCAN_ERROR, &tid, &e.to_string())
                     }
                 }
             }
@@ -265,12 +247,11 @@ pub async fn network_ping_start(
                 // recoverable error instead of panicking should that invariant
                 // ever be bypassed (WA-RS-005).
                 let Some(client) = agent_client else {
-                    let _ = app.emit(
-                        "network-ping-error",
-                        serde_json::json!({
-                            "taskId": &tid,
-                            "error": "no agent client for agent-located request",
-                        }),
+                    events::emit_error(
+                        &app,
+                        events::name::PING_ERROR,
+                        &tid,
+                        "no agent client for agent-located request",
                     );
                     manager.complete_task(&tid);
                     return;
@@ -286,10 +267,7 @@ pub async fn network_ping_start(
                     let app = app.clone();
                     let tid = tid.clone();
                     move |result| {
-                        let _ = app.emit(
-                            "network-ping-result",
-                            serde_json::json!({ "taskId": &tid, "result": result }),
-                        );
+                        events::emit_ping_result(&app, &tid, result);
                     }
                 };
 
@@ -307,17 +285,9 @@ pub async fn network_ping_start(
                 let canceled = cancel_clone.is_cancelled();
 
                 match result {
-                    Ok(stats) => {
-                        let _ = app.emit(
-                            "network-ping-complete",
-                            serde_json::json!({ "taskId": &tid, "stats": stats, "canceled": canceled }),
-                        );
-                    }
+                    Ok(stats) => events::emit_ping_complete(&app, &tid, stats, canceled),
                     Err(e) => {
-                        let _ = app.emit(
-                            "network-ping-error",
-                            serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
-                        );
+                        events::emit_error(&app, events::name::PING_ERROR, &tid, &e.to_string())
                     }
                 }
             }
@@ -378,14 +348,12 @@ pub async fn network_ping_sweep(
             let app = app.clone();
             let tid = tid.clone();
             move |result: PingSweepResult| {
-                let _ = app.emit(
-                    "network-sweep-result",
-                    serde_json::json!({
-                        "taskId": tid,
-                        "host": result.host,
-                        "latencyMs": result.latency_ms,
-                        "hostname": result.hostname,
-                    }),
+                events::emit_sweep_result(
+                    &app,
+                    &tid,
+                    result.host,
+                    result.latency_ms,
+                    result.hostname,
                 );
             }
         };
@@ -405,18 +373,8 @@ pub async fn network_ping_sweep(
         let canceled = cancel_clone.is_cancelled();
 
         match summary {
-            Ok(s) => {
-                let _ = app.emit(
-                    "network-sweep-complete",
-                    serde_json::json!({ "taskId": &tid, "summary": s, "canceled": canceled }),
-                );
-            }
-            Err(e) => {
-                let _ = app.emit(
-                    "network-sweep-error",
-                    serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
-                );
-            }
+            Ok(s) => events::emit_sweep_complete(&app, &tid, s, canceled),
+            Err(e) => events::emit_error(&app, events::name::SWEEP_ERROR, &tid, &e.to_string()),
         }
 
         // The owned `Arc<NetworkManager>` clone keeps the manager alive for
@@ -617,12 +575,11 @@ pub async fn network_traceroute(
                 // recoverable error instead of panicking should that invariant
                 // ever be bypassed (WA-RS-005).
                 let Some(client) = agent_client else {
-                    let _ = app.emit(
-                        "network-traceroute-error",
-                        serde_json::json!({
-                            "taskId": &tid,
-                            "error": "no agent client for agent-located request",
-                        }),
+                    events::emit_error(
+                        &app,
+                        events::name::TRACEROUTE_ERROR,
+                        &tid,
+                        "no agent client for agent-located request",
                     );
                     manager.complete_task(&tid);
                     return;
@@ -638,10 +595,7 @@ pub async fn network_traceroute(
                     let app = app.clone();
                     let tid = tid.clone();
                     move |hop| {
-                        let _ = app.emit(
-                            "network-traceroute-hop",
-                            serde_json::json!({ "taskId": &tid, "hop": hop }),
-                        );
+                        events::emit_traceroute_hop(&app, &tid, hop);
                     }
                 };
 
@@ -654,18 +608,13 @@ pub async fn network_traceroute(
                 .await;
 
                 match result {
-                    Ok(()) => {
-                        let _ = app.emit(
-                            "network-traceroute-complete",
-                            serde_json::json!({ "taskId": &tid }),
-                        );
-                    }
-                    Err(e) => {
-                        let _ = app.emit(
-                            "network-traceroute-error",
-                            serde_json::json!({ "taskId": &tid, "error": e.to_string() }),
-                        );
-                    }
+                    Ok(()) => events::emit_traceroute_complete(&app, &tid),
+                    Err(e) => events::emit_error(
+                        &app,
+                        events::name::TRACEROUTE_ERROR,
+                        &tid,
+                        &e.to_string(),
+                    ),
                 }
             }
         }
