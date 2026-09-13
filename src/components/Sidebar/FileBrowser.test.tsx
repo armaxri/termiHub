@@ -2036,3 +2036,123 @@ describe("FileBrowser – session-layer editor tabs (#1557)", () => {
     });
   });
 });
+
+describe("FileBrowser – failed-listing recovery controls (SM-008)", () => {
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    useAppStore.setState({ sidebarView: "files" });
+
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === "session_has_exec_capability") return Promise.resolve(true);
+      if (cmd === "session_list_files") return Promise.resolve([]);
+      return Promise.resolve(undefined);
+    });
+  });
+
+  afterEach(() => {
+    act(() => {
+      root.unmount();
+    });
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  /** Render a connected SSH session browser whose last directory listing failed. */
+  async function renderFailedSessionBrowser() {
+    const sshTab = makeTab({
+      connectionType: "ssh",
+      sessionId: "ssh-sess-1",
+      config: { type: "ssh", config: { host: "example.com", port: 22, username: "root" } },
+    });
+    setActiveTab(sshTab);
+    useAppStore.setState({
+      sessionFileBrowserId: "ssh-sess-1",
+      connectionTypes: [
+        {
+          typeId: "ssh",
+          displayName: "SSH",
+          icon: "folder",
+          schema: { groups: [] },
+          capabilities: {
+            monitoring: false,
+            fileBrowser: true,
+            resize: false,
+            persistent: false,
+          },
+        },
+      ],
+    });
+    // Keep a last-good listing so the auto-navigate effect stays idle and the
+    // seeded failure survives to render (mirrors a failed refresh/cd in place).
+    seedFileBrowsers({
+      mode: "session",
+      session: {
+        path: "/home/root",
+        entries: [
+          {
+            name: "readme.txt",
+            path: "/home/root/readme.txt",
+            isDirectory: false,
+            size: 10,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
+        ],
+        loading: false,
+        error: "Permission denied",
+      },
+    });
+
+    await act(async () => {
+      root.render(
+        <TooltipProvider delayDuration={0}>
+          <FileBrowser />
+        </TooltipProvider>
+      );
+    });
+    await flushAsync();
+  }
+
+  it("shows Retry and Dismiss controls when a directory listing fails", async () => {
+    await renderFailedSessionBrowser();
+
+    expect(container.textContent).toContain("Permission denied");
+    expect(container.querySelector('[data-testid="file-browser-error-retry"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="file-browser-error-dismiss"]')).toBeTruthy();
+  });
+
+  it("Retry re-invokes the directory listing", async () => {
+    await renderFailedSessionBrowser();
+    mockedInvoke.mockClear();
+
+    const retry = container.querySelector(
+      '[data-testid="file-browser-error-retry"]'
+    ) as HTMLElement;
+    await act(async () => {
+      retry.click();
+    });
+    await flushAsync();
+
+    const relisted = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "session_list_files");
+    expect(relisted.length).toBeGreaterThan(0);
+  });
+
+  it("Dismiss clears the listing error", async () => {
+    await renderFailedSessionBrowser();
+    expect(currentFileBrowsersView().session.error).toBe("Permission denied");
+
+    const dismiss = container.querySelector(
+      '[data-testid="file-browser-error-dismiss"]'
+    ) as HTMLElement;
+    await act(async () => {
+      dismiss.click();
+    });
+    await flushAsync();
+
+    expect(currentFileBrowsersView().session.error).toBeNull();
+  });
+});
