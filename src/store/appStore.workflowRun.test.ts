@@ -94,6 +94,10 @@ vi.mock("@/services/localProcessApi", () => ({
 }));
 
 import { useAppStore } from "./appStore";
+import {
+  listWorkflows as apiListWorkflows,
+  deleteWorkflow as apiDeleteWorkflow,
+} from "@/services/workflowApi";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentSettingsView } from "./settingsBridge";
 import {
@@ -711,6 +715,233 @@ describe("appStore — workflow run slice (#1852)", () => {
       kind: "run-local-process",
       program: "echo",
       args: ["hi"],
+    });
+  });
+
+  describe("slice error and edge branches (#2979)", () => {
+    const lp = (program: string, args: string[]): WorkflowStep => ({
+      kind: "run-local-process",
+      program,
+      args,
+    });
+
+    it("loadWorkflows swallows an Error rejection and leaves the library untouched", async () => {
+      useAppStore.setState({ workflows: [workflow("keep", [cmd("ls")])] });
+      vi.mocked(apiListWorkflows).mockRejectedValueOnce(new Error("backend down"));
+
+      await expect(useAppStore.getState().loadWorkflows()).resolves.toBeUndefined();
+
+      expect(useAppStore.getState().workflows).toHaveLength(1);
+      expect(useAppStore.getState().workflows[0].id).toBe("keep");
+    });
+
+    it("loadWorkflows tolerates a non-Error rejection via the String(err) guard", async () => {
+      vi.mocked(apiListWorkflows).mockRejectedValueOnce("kaboom");
+      await expect(useAppStore.getState().loadWorkflows()).resolves.toBeUndefined();
+      expect(useAppStore.getState().workflows).toEqual([]);
+    });
+
+    it("deleteWorkflowFromBackend removes the workflow after the backend delete resolves", async () => {
+      useAppStore.setState({
+        workflows: [workflow("w1", [cmd("a")]), workflow("w2", [cmd("b")])],
+      });
+
+      await useAppStore.getState().deleteWorkflowFromBackend("w1");
+
+      expect(apiDeleteWorkflow).toHaveBeenCalledWith("w1");
+      const remaining = useAppStore.getState().workflows;
+      expect(remaining.map((w) => w.id)).toEqual(["w2"]);
+    });
+
+    it("errors when there is no active terminal at all", async () => {
+      // No layout seeded → getActiveTab returns nothing → no default target.
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("x")])] });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(injected).toEqual([]);
+      expect(toast.error).toHaveBeenCalled();
+      expect(transport.dispatched).toEqual([]);
+    });
+
+    it("fails a send-command step when the injector seam is unavailable", async () => {
+      seedConnectedTerminal();
+      // No injector → the send seam short-circuits false → the step fails.
+      registerTerminalInputInjector(null);
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("x")])] });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(injected).toEqual([]);
+      expect(toast.error).toHaveBeenCalled();
+      expect(regionView().run).toBeNull();
+    });
+
+    it("fails a run-macro step when the injector seam is unavailable", async () => {
+      seedConnectedTerminal();
+      registerTerminalInputInjector(null);
+      useAppStore.setState({
+        macros: [
+          {
+            id: "m1",
+            name: "m",
+            tags: [],
+            steps: [{ data: "echo\n", delayMs: 0 }],
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+          },
+        ],
+        workflows: [workflow("w1", [{ kind: "run-macro", macroId: "m1" }])],
+      });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("fails a run-macro step that references a missing macro", async () => {
+      seedConnectedTerminal();
+      // Injector present (from beforeEach), but the macro id does not resolve.
+      useAppStore.setState({
+        macros: [],
+        workflows: [workflow("w1", [{ kind: "run-macro", macroId: "ghost" }])],
+      });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("prompts (allowlist absent) and persists to a fresh allowlist on 'always'", async () => {
+      seedConnectedTerminal();
+      // Enabled, but NO allowlist key at all → the `?? []` guards default it.
+      seedSettings({ workflowLocalProcessEnabled: true });
+      useAppStore.setState({ workflows: [workflow("w1", [lp("echo", ["hi"])])] });
+
+      const done = layoutState().runWorkflow("w1");
+      await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+      useAppStore.getState().resolveLocalProcessPrompt("always");
+      await done;
+
+      expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+      // The program was appended even though the allowlist started undefined.
+      expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual(["echo"]);
+    });
+
+    it("logs a null exit code without crashing the run", async () => {
+      seedConnectedTerminal();
+      seedSettings({
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: ["make"],
+      });
+      useAppStore.setState({ workflows: [workflow("w1", [lp("make", ["build"])])] });
+      invokeRunLocalProcess.mockImplementationOnce(() =>
+        Promise.resolve({ exitCode: null, timedOut: false, cancelled: false })
+      );
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(invokeRunLocalProcess).toHaveBeenCalledTimes(1);
+      expect(currentWorkflowOutputContent()?.exitCode).toBeNull();
+    });
+
+    it("surfaces a backend spawn rejection (Error) as a failed step, not a crash", async () => {
+      seedConnectedTerminal();
+      seedSettings({
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: ["make"],
+      });
+      useAppStore.setState({ workflows: [workflow("w1", [lp("make", ["build"])])] });
+      invokeRunLocalProcess.mockRejectedValueOnce(new Error("trust boundary refused"));
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      // The catch records a failed outcome (exit 1) rather than throwing.
+      expect(currentWorkflowOutputContent()?.exitCode).toBe(1);
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("surfaces a non-Error backend spawn rejection via String(err)", async () => {
+      seedConnectedTerminal();
+      seedSettings({
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: ["make"],
+      });
+      useAppStore.setState({ workflows: [workflow("w1", [lp("make", ["build"])])] });
+      invokeRunLocalProcess.mockRejectedValueOnce("plain string failure");
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(currentWorkflowOutputContent()?.exitCode).toBe(1);
+      expect(toast.error).toHaveBeenCalled();
+    });
+
+    it("forwards a cancel to the backend while a local process is running", async () => {
+      seedConnectedTerminal();
+      seedSettings({
+        workflowLocalProcessEnabled: true,
+        workflowLocalProcessAllowlist: ["sleep"],
+      });
+      useAppStore.setState({ workflows: [workflow("w1", [lp("sleep", ["100"])])] });
+      // Hold the process open so the cancel-poll has time to fire.
+      let releaseProc!: (r: {
+        exitCode: number | null;
+        timedOut: boolean;
+        cancelled: boolean;
+      }) => void;
+      invokeRunLocalProcess.mockImplementationOnce(
+        () =>
+          new Promise((res) => {
+            releaseProc = res;
+          })
+      );
+
+      const done = layoutState().runWorkflow("w1");
+      await vi.waitFor(() => expect(invokeRunLocalProcess).toHaveBeenCalled());
+
+      useAppStore.getState().cancelWorkflowRun();
+      // The 200ms poll observes the cancel and kills the backend process.
+      await vi.waitFor(() => expect(cancelLocalProcess).toHaveBeenCalled(), { timeout: 3000 });
+
+      releaseProc({ exitCode: null, timedOut: false, cancelled: true });
+      await done;
+
+      expect(regionView().run).toBeNull();
+    });
+
+    it("cancels an in-flight run when a new run starts", async () => {
+      seedConnectedTerminal();
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let firstStarted!: () => void;
+      const started = new Promise<void>((r) => (firstStarted = r));
+      registerTerminalInputInjector(async (_tabId, data) => {
+        injected.push(data);
+        if (data === "hold\n") {
+          firstStarted();
+          await gate;
+        }
+        return true;
+      });
+      useAppStore.setState({
+        workflows: [workflow("w1", [cmd("hold"), cmd("after")]), workflow("w2", [cmd("w2cmd")])],
+      });
+
+      const done1 = layoutState().runWorkflow("w1");
+      await started;
+      // Starting a second run while the first is in flight cancels the first.
+      const done2 = layoutState().runWorkflow("w2");
+      release();
+      await Promise.all([done1, done2]);
+
+      expect(injected).toContain("w2cmd\n");
+      // The first run's second step never sent because it was cancelled.
+      expect(injected).not.toContain("after\n");
+    });
+
+    it("resolveLocalProcessPrompt is a no-op when no prompt is open", () => {
+      expect(useAppStore.getState().localProcessPrompt).toBeNull();
+      expect(() => useAppStore.getState().resolveLocalProcessPrompt("cancel")).not.toThrow();
     });
   });
 });
