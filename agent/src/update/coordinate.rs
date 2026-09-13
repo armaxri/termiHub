@@ -436,6 +436,40 @@ mod tests {
         );
     }
 
+    /// AGT-027 (fail-safe): a peer that momentarily drops off the host view for
+    /// a single poll — its registry record vanishing on a transient socket blip
+    /// — then reappears must **not** be read as having consented to be cut off.
+    ///
+    /// Here `b` blips out for exactly one poll and is present before and after.
+    /// It never actually left, so the update must not proceed as
+    /// `AllDisconnected`; the transient absence is ruled out and `b` is still
+    /// reported as attached when the window closes (the honest, fail-safe
+    /// result). The pre-fix code returned `AllDisconnected` on that first empty
+    /// poll, cutting a live peer off.
+    #[tokio::test(start_paused = true)]
+    async fn a_peer_that_blips_out_for_one_poll_is_not_treated_as_consenting() {
+        let host = ScriptedHost::new(vec![
+            Some(vec!["b"]), // census
+            Some(vec![]),    // b's record momentarily vanishes (transient blip)
+            Some(vec!["b"]), // b is back — it never actually left, and stays
+        ]);
+
+        let outcome = coordinate_update(&host, "self", envelope(), ACK_TIMEOUT).await;
+
+        assert_eq!(
+            outcome,
+            CoordinationOutcome::TimedOut {
+                notified: 1,
+                remaining: vec!["b".to_string()],
+            },
+            "a one-poll blip must not be mistaken for a disconnect"
+        );
+        assert!(
+            !outcome.all_acked(),
+            "a peer that only blipped never consented to be cut off"
+        );
+    }
+
     /// When the view is down for the whole window, the peers we knew about are
     /// still reported as cut off rather than silently forgotten.
     #[tokio::test(start_paused = true)]
