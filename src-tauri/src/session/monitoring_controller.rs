@@ -35,7 +35,7 @@ use crate::system_monitor_projection::projection::fold_monitor_transition;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
-use super::manager::{SessionEntry, SessionMonitoringStatsEvent, SessionMonitoringStatusEvent};
+use super::manager::{SessionEntry, SessionMonitoringStatusEvent};
 
 /// Receive from an optional status receiver for use inside `tokio::select!`.
 ///
@@ -189,19 +189,13 @@ impl<'a> MonitoringController<'a> {
                                 // Server-authority fold (#2376): update the shared
                                 // `SystemMonitorStore` at the source — the instant
                                 // the collector loop produces the sample — and fan
-                                // the region diff out. Additive: the Tauri event
-                                // below and the client `monitor.stats` mirror stay
-                                // in place, so no user-facing behavior changes.
+                                // the region diff out. The region diff is now the
+                                // sole consumer: the legacy `session-monitoring-stats`
+                                // Tauri event had no frontend listener, so serializing
+                                // and emitting it was pure overhead (PERF-007).
                                 fold_monitor_transition(&app_handle, |store| {
-                                    store.stats(&sid, stats.clone());
+                                    store.stats(&sid, stats);
                                 });
-                                let event = SessionMonitoringStatsEvent {
-                                    session_id: sid.clone(),
-                                    stats,
-                                };
-                                if app_handle.emit("session-monitoring-stats", &event).is_err() {
-                                    break;
-                                }
                             }
                             // Stats channel closed: the collector loop ended.
                             None => break,

@@ -600,21 +600,7 @@ export async function onEmbeddedServerStatusChanged(
   });
 }
 
-import type { MonitorStatus, SystemStats } from "@/types/monitoring";
-
-interface SessionMonitoringStatsPayload {
-  session_id: string;
-  stats: SystemStats;
-}
-
-/** Subscribe to session-based monitoring stats push events. */
-export async function onSessionMonitoringStats(
-  callback: (sessionId: string, stats: SystemStats) => void
-): Promise<UnlistenFn> {
-  return await listen<SessionMonitoringStatsPayload>("session-monitoring-stats", (event) => {
-    callback(event.payload.session_id, event.payload.stats);
-  });
-}
+import type { MonitorStatus } from "@/types/monitoring";
 
 interface SessionMonitoringStatusPayload {
   session_id: string;
