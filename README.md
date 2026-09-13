@@ -275,6 +275,41 @@ TERMIHUB_CONFIG_DIR=./my-project/termihub-config pnpm tauri dev
 
 ---
 
+## Logs and Troubleshooting
+
+When something misbehaves, termiHub keeps two kinds of logs to help you diagnose it or file a useful bug report.
+
+### The in-app Log Viewer
+
+Click the **Log Viewer** icon (the scroll icon at the bottom of the Activity Bar) to open a live log tab. From there you can:
+
+- **Filter** by level (Error / Warning / Info / Debug) and **search** the messages.
+- **Copy** a single entry or all visible entries to the clipboard.
+- **Save to file** to export the current logs for attaching to a bug report.
+
+The Log Viewer shows the current session only; it is cleared when the app closes.
+
+### The persistent log file
+
+termiHub also writes a durable, size-capped log file that survives restarts and crashes — this is the one to attach when reporting a problem. It lives in your platform's conventional location:
+
+| Platform | Log file                                            |
+| -------- | --------------------------------------------------- |
+| macOS    | `~/Library/Logs/com.termihub.app/termihub.log`      |
+| Windows  | `%LOCALAPPDATA%\com.termihub.app\logs\termihub.log` |
+| Linux    | `~/.local/share/com.termihub.app/logs/termihub.log` |
+
+The file is rotated automatically and capped at roughly 15 MB total (the current file plus two archives named `termihub.1.log` / `termihub.2.log`), so it can never grow without bound. Passwords, key material, and terminal contents are never written to it.
+
+### Controlling how much is logged
+
+By default the file records **Info** level and above — enough to be readable without drowning in per-keystroke noise. When you are chasing a bug, raise the detail:
+
+- **In the app:** open **Settings → General → Diagnostics → Log File Verbosity** and choose a level (Off, Error, Warning, Info, Debug, Trace). The change applies immediately and is remembered across restarts. Debug is usually the right level for a bug report; set it back to Info when you are done.
+- **With an environment variable:** set `TERMIHUB_FILE_LOG` before launching to override the level at startup — e.g. `TERMIHUB_FILE_LOG=debug`. This wins over the in-app setting for that run. A support case that truly needs SSH internals can pass an explicit directive such as `TERMIHUB_FILE_LOG="debug,russh=debug"`; otherwise low-level SSH packet logging is kept out of the file even at Debug/Trace.
+
+---
+
 ## SSH Configuration
 
 ### Authentication Methods
