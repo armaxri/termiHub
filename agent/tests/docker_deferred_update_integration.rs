@@ -400,6 +400,7 @@ fn stage_newer_binary() -> (TempDir, PathBuf) {
 ///    answers again on the same port.
 /// 3. The successful apply leaves **no `pending_update`** (#1551).
 #[tokio::test]
+#[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
 async fn deferred_update_applies_on_last_docker_disconnect() {
     if !docker_available() {
         eprintln!("Skipping: Docker not available");
