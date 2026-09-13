@@ -10,7 +10,8 @@ evidence:
   - scripts/check.sh:1
   - scripts/test.sh:1
   - .github/workflows/code-quality.yml:1
-status: open
+status: fixed
+resolution: "#2900 — scripts/ci-local.sh(.cmd) reproduces the full per-PR CI gate locally (composes check.sh + tsc/coverage/audit/deny/machinery/plugins/commitlint); --quick subset"
 ---
 
 ## What

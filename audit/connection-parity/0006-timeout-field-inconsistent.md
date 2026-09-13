@@ -11,7 +11,8 @@ evidence:
   - core/src/backends/ftp/mod.rs:427
   - core/src/backends/docker/mod.rs:423
   - core/src/backends/telnet.rs:244
-status: open
+status: fixed
+resolution: "#2903 — unified connect-timeout: telnet gains connectTimeoutSecs (default 10, now configurable); FTP field/method renamed to connect_timeout w/ serde alias+rename for back-compat. FTP UI-key migration → #2901"
 ---
 
 ## What

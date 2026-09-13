@@ -10,7 +10,8 @@ evidence:
   - core/src/tool/network_tools.rs:272
   - agent/src/network/mod.rs:117
   - src-tauri/src/commands/network.rs:746
-status: open
+status: fixed
+resolution: "#2899 — single FromStr for DnsRecordType in core/network/types.rs; 3 copy-pasted parse_record_type deleted"
 ---
 
 ## What

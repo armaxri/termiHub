@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/commands/network.rs:344
   - core/src/tool/network_tools.rs:145
   - agent/src/network/mod.rs:28
-status: open
+status: fixed
+resolution: "#2899 — network-tool default params centralized in core/network/defaults.rs; 3 wrappers migrated; ping-sweep divergence reconciled to desktop values (concurrency 64, resolve-hostnames true)"
 ---
 
 ## What

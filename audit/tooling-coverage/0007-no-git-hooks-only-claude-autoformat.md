@@ -9,7 +9,8 @@ subsystem: scripts / dev-loop
 evidence:
   - .claude/CLAUDE.md:1
   - package.json:7
-status: open
+status: fixed
+resolution: "#2900 — git hooks via committed scripts/hooks + core.hooksPath (pre-commit fmt/lint staged, commit-msg commitlint, pre-push ci-local --quick); wired into setup.sh; no new dep"
 ---
 
 ## What

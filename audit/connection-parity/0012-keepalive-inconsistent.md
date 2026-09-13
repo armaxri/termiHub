@@ -10,7 +10,8 @@ evidence:
   - core/src/backends/ssh/auth.rs:122
   - core/src/backends/telnet.rs:296
   - core/src/backends/ftp/mod.rs:135
-status: open
+status: fixed
+resolution: "#2903 — shared TcpKeepalivePolicy in core/net.rs (telnet+SSH); per-backend liveness documented (FTP NOOP, serial/local/docker/wsl none). Behavior-preserving"
 ---
 
 ## What
