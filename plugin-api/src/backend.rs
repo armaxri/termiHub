@@ -242,3 +242,147 @@ impl Drop for LoadedBackend {
         unsafe { (self.vtable().destroy)(self.inner.state) };
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! FFI teardown/drop soundness for the backend handle (TBE-010): the wrapper
+    //! must release its backing FFI resource exactly once — never twice (a
+    //! double-free) and never zero times (a leak) — and a panic in the backend's
+    //! own `Drop` must be contained rather than unwound across the ABI.
+    use super::*;
+
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Never dereferenced by the recording destructors below, so a dangling
+    /// (non-null) `state` is fine for a pure drop-count probe.
+    fn dangling_state() -> *mut c_void {
+        core::ptr::NonNull::<c_void>::dangling().as_ptr()
+    }
+
+    unsafe extern "C" fn stub_write(_s: *mut c_void, _d: FfiByteSlice) -> PluginStatus {
+        PluginStatus::Ok
+    }
+    unsafe extern "C" fn stub_resize(_s: *mut c_void, _c: u16, _r: u16) -> PluginStatus {
+        PluginStatus::Ok
+    }
+    unsafe extern "C" fn stub_is_alive(_s: *mut c_void) -> bool {
+        true
+    }
+
+    #[test]
+    fn drop_calls_destroy_exactly_once() {
+        // The backend's `state` is freed by exactly one `destroy` call on drop —
+        // the no-double-free / no-leak guarantee the ABI's ownership rule rests on.
+        static DESTROYS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn count_destroy(_s: *mut c_void) {
+            DESTROYS.fetch_add(1, Ordering::SeqCst);
+        }
+        unsafe extern "C" fn stub_close(_s: *mut c_void) -> PluginStatus {
+            PluginStatus::Ok
+        }
+        DESTROYS.store(0, Ordering::SeqCst);
+
+        let vtable = PluginBackendVTable {
+            write_input: stub_write,
+            resize: stub_resize,
+            close: stub_close,
+            is_alive: stub_is_alive,
+            destroy: count_destroy,
+        };
+        let raw = PluginBackend {
+            state: dangling_state(),
+            vtable: &vtable,
+        };
+        // SAFETY: `vtable` outlives the wrapper (dropped below, still in scope);
+        // `count_destroy` ignores `state`, so a dangling pointer is sound here.
+        let backend = unsafe { LoadedBackend::from_raw(raw) };
+        assert_eq!(DESTROYS.load(Ordering::SeqCst), 0);
+        drop(backend);
+        assert_eq!(
+            DESTROYS.load(Ordering::SeqCst),
+            1,
+            "destroy must run exactly once on drop — no double-free, no leak"
+        );
+    }
+
+    #[test]
+    fn graceful_close_then_drop_releases_once_each() {
+        // Models the host adapter's disconnect path: a graceful `close()` followed
+        // by the wrapper dropping. `close` runs once and `destroy` runs exactly
+        // once afterwards — closing does not free the state, and dropping frees it
+        // a single time.
+        static CLOSES: AtomicUsize = AtomicUsize::new(0);
+        static DESTROYS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn count_close(_s: *mut c_void) -> PluginStatus {
+            CLOSES.fetch_add(1, Ordering::SeqCst);
+            PluginStatus::Ok
+        }
+        unsafe extern "C" fn count_destroy(_s: *mut c_void) {
+            DESTROYS.fetch_add(1, Ordering::SeqCst);
+        }
+        CLOSES.store(0, Ordering::SeqCst);
+        DESTROYS.store(0, Ordering::SeqCst);
+
+        let vtable = PluginBackendVTable {
+            write_input: stub_write,
+            resize: stub_resize,
+            close: count_close,
+            is_alive: stub_is_alive,
+            destroy: count_destroy,
+        };
+        let raw = PluginBackend {
+            state: dangling_state(),
+            vtable: &vtable,
+        };
+        // SAFETY: as in the previous test — `vtable` outlives the wrapper and the
+        // recording callbacks ignore `state`.
+        let backend = unsafe { LoadedBackend::from_raw(raw) };
+        backend.close().expect("stub close returns Ok");
+        assert_eq!(CLOSES.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            DESTROYS.load(Ordering::SeqCst),
+            0,
+            "close must not free the backend state"
+        );
+        drop(backend);
+        assert_eq!(
+            DESTROYS.load(Ordering::SeqCst),
+            1,
+            "destroy runs exactly once, after the graceful close"
+        );
+    }
+
+    #[test]
+    fn panicking_backend_drop_is_contained_not_unwound() {
+        // A plugin backend whose own `Drop` panics must NOT unwind across the FFI
+        // `destroy` boundary (that is undefined behavior). `from_boxed` installs
+        // the shared `VTABLE`, whose `vt_destroy` wraps the drop in `catch_unwind`;
+        // if the unwind escaped, this test would abort/propagate instead of pass.
+        struct PanicsOnDrop;
+        impl PluginTerminalBackend for PanicsOnDrop {
+            fn write_input(&self, _d: &[u8]) -> Result<(), PluginError> {
+                Ok(())
+            }
+            fn resize(&self, _c: u16, _r: u16) -> Result<(), PluginError> {
+                Ok(())
+            }
+            fn close(&self) -> Result<(), PluginError> {
+                Ok(())
+            }
+            fn is_alive(&self) -> bool {
+                true
+            }
+        }
+        impl Drop for PanicsOnDrop {
+            fn drop(&mut self) {
+                panic!("boom in plugin backend drop");
+            }
+        }
+
+        // SAFETY: `from_boxed` produces a valid backend backed by the shared VTABLE.
+        let backend =
+            unsafe { LoadedBackend::from_raw(PluginBackend::from_boxed(Box::new(PanicsOnDrop))) };
+        // The panic is contained by `vt_destroy`; the drop returns normally.
+        drop(backend);
+    }
+}
