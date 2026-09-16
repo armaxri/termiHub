@@ -10,7 +10,8 @@ evidence:
   - core/src/backends/local_shell.rs:548
   - core/src/output/coalescer.rs:22
   - src-tauri/src/session/manager.rs:1888
-status: open
+status: fixed
+resolution: "#2969 — single-chunk PTY output path now 1 copy instead of 2 (zero-copy fast path; run_output_reader hands the channel Vec straight to sink); multi-chunk copy kept (load-bearing). 5 byte-exact tests"
 ---
 
 ## What

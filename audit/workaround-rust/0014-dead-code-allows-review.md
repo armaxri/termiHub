@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/utils/errors.rs:18
   - core/src/plugin/host.rs:157
   - agent/src/daemon/transport.rs:61
-status: open
+status: fixed
+resolution: "#2960 — audited 63 dead_code/unused allows: 11 stale removed, 2 dead groups deleted (jsonrpc.rs dead req/write/read_line_blocking, TerminalErrorEvent), rest kept+justified"
 ---
 
 ## What

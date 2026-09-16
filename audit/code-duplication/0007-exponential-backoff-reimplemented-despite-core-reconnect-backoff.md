@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/terminal/agent_manager.rs:2626
   - src-tauri/src/tunnel/tunnel_manager.rs:1767
   - src-tauri/src/files/transfer/retry.rs:28
-status: open
+status: fixed
+resolution: "#2956 — shared core::util::backoff::capped_exponential_delay; 4 hand-rolled sites migrated, each proven bit-identical. Jittered f64 reconnect schedule left separate (distinct semantics)"
 ---
 
 ## What

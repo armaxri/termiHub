@@ -11,7 +11,8 @@ evidence:
   - core/src/plugin/host.rs:215
   - core/src/plugin/host.rs:689
   - core/tests/plugin_host_roundtrip.rs:73
-status: open
+status: fixed
+resolution: "#2968 — added 5 plugin FFI teardown/drop-order soundness tests (destroy-once, drop-order, panic-in-Drop containment, cross-plugin isolation, in-flight teardown); no real UAF found - Arc/refcount/catch_unwind/once-guards sound"
 ---
 
 ## What

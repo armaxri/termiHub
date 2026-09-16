@@ -10,7 +10,8 @@ evidence:
   - core/tests/reconnect_backoff_golden.rs:1
   - core/tests/ftp_reconnect.rs:25
   - core/tests/network_resilience.rs:237
-status: open
+status: fixed
+resolution: "#2966 — added 6 fast reconnect/cancellation race unit tests; FOUND+FIXED real bug: reconnect_failed lacked the still-current-run phase guard -> a cancelled/superseded stale attempt could resurrect a stopped tab into Reconnecting with a dead loop"
 ---
 
 ## What
