@@ -6,7 +6,7 @@ import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { registerCustomGrammars } from "@/utils/monacoCustomLanguages";
 import type { CustomLanguageGrammar } from "@/types/connection";
-import { Button, Tooltip, EmptyState } from "@/components/ui";
+import { Button, Input, Tooltip, EmptyState } from "@/components/ui";
 
 interface CustomGrammarsSettingsProps {
   visibleFields?: Set<string>;
@@ -210,9 +210,8 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                   Review and confirm the language ID and name before saving.
                 </p>
                 <div className="settings-panel__create-prompt">
-                  <input
+                  <Input
                     className="settings-panel__create-input"
-                    type="text"
                     value={draft.id}
                     onChange={(e) =>
                       setDraft((d) => d && { ...d, id: e.target.value, error: null })
@@ -220,9 +219,8 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
                     placeholder="Language ID (e.g. my-lang)"
                     data-testid="custom-grammar-id-input"
                   />
-                  <input
+                  <Input
                     className="settings-panel__create-input"
-                    type="text"
                     value={draft.name}
                     onChange={(e) =>
                       setDraft((d) => d && { ...d, name: e.target.value, error: null })

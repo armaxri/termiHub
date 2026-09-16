@@ -3,7 +3,7 @@ import { Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { SerialPortScanPrefix } from "@/types/connection";
-import { Button, Toggle, Tooltip } from "@/components/ui";
+import { Button, Input, Toggle, Tooltip } from "@/components/ui";
 
 interface SerialPortSettingsProps {
   visibleFields?: Set<string>;
@@ -138,9 +138,8 @@ export function SerialPortSettings({ visibleFields }: SerialPortSettingsProps) {
       )}
 
       <div className="settings-panel__add-row">
-        <input
+        <Input
           className="settings-panel__create-input"
-          type="text"
           value={newPrefix}
           placeholder="e.g. ttyXYZ"
           onChange={(e) => {
