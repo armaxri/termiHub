@@ -15,10 +15,11 @@
 //! expose the data connection as an async reader/writer for exactly this.
 
 use std::io::SeekFrom;
-use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
+use tokio::io::AsyncSeekExt;
 
 use crate::config::FtpConfig;
 use crate::errors::SessionError;
+use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 
 use super::establish;
 
@@ -152,7 +153,7 @@ async fn download<P, S>(
     remote_path: &str,
     local_path: &str,
     offset: u64,
-    mut on_progress: P,
+    on_progress: P,
     should_stop: S,
 ) -> Result<AttemptOutcome, SessionError>
 where
@@ -176,33 +177,38 @@ where
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("FTP RETR: {e}")))?;
 
-    let mut transferred = offset;
-    let mut buf = vec![0u8; FTP_CHUNK_SIZE];
-    loop {
-        if let Some(reason) = should_stop() {
-            return Ok(AttemptOutcome::Stopped {
-                transferred,
-                reason,
-            });
-        }
-        let n = data
-            .read(&mut buf)
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("FTP data read: {e}")))?;
-        if n == 0 {
-            break;
-        }
-        local.write_all(&buf[..n]).await?;
-        transferred += n as u64;
-        on_progress(transferred);
-    }
+    // Data-connection reads carry the "FTP data read" prefix; the local file
+    // write/flush keep the plain `?` (`SessionError::Io`) mapping.
+    let outcome = run_chunked_copy(
+        &mut data,
+        &mut local,
+        FTP_CHUNK_SIZE,
+        offset,
+        should_stop,
+        on_progress,
+        |phase, e| match phase {
+            CopyPhase::Read => SessionError::SpawnFailed(format!("FTP data read: {e}")),
+            CopyPhase::Write | CopyPhase::Flush => SessionError::Io(e),
+        },
+    )
+    .await?;
 
-    local.flush().await?;
-    stream
-        .finalize_retr_stream(data)
-        .await
-        .map_err(|e| SessionError::SpawnFailed(format!("FTP RETR finalize: {e}")))?;
-    Ok(AttemptOutcome::Completed { transferred })
+    match outcome {
+        ChunkedCopyOutcome::Stopped {
+            transferred,
+            reason,
+        } => Ok(AttemptOutcome::Stopped {
+            transferred,
+            reason,
+        }),
+        ChunkedCopyOutcome::Completed { transferred } => {
+            stream
+                .finalize_retr_stream(data)
+                .await
+                .map_err(|e| SessionError::SpawnFailed(format!("FTP RETR finalize: {e}")))?;
+            Ok(AttemptOutcome::Completed { transferred })
+        }
+    }
 }
 
 /// Stream `local_path` to a remote file, resuming from `offset`.
@@ -211,7 +217,7 @@ async fn upload<P, S>(
     remote_path: &str,
     local_path: &str,
     offset: u64,
-    mut on_progress: P,
+    on_progress: P,
     should_stop: S,
 ) -> Result<AttemptOutcome, SessionError>
 where
@@ -228,35 +234,40 @@ where
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("FTP STOR: {e}")))?;
 
-    let mut transferred = offset;
-    let mut buf = vec![0u8; FTP_CHUNK_SIZE];
-    loop {
-        if let Some(reason) = should_stop() {
-            // Leave the data stream to drop; the caller cleans up as needed.
-            return Ok(AttemptOutcome::Stopped {
-                transferred,
-                reason,
-            });
-        }
-        let n = local.read(&mut buf).await?;
-        if n == 0 {
-            break;
-        }
-        data.write_all(&buf[..n])
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("FTP data write: {e}")))?;
-        transferred += n as u64;
-        on_progress(transferred);
-    }
+    // Local file reads keep the plain `?` (`SessionError::Io`) mapping; the
+    // data-connection write/flush carry the "FTP data write/flush" prefixes. On
+    // a stop the data stream is left to drop, as before; the caller cleans up.
+    let outcome = run_chunked_copy(
+        &mut local,
+        &mut data,
+        FTP_CHUNK_SIZE,
+        offset,
+        should_stop,
+        on_progress,
+        |phase, e| match phase {
+            CopyPhase::Read => SessionError::Io(e),
+            CopyPhase::Write => SessionError::SpawnFailed(format!("FTP data write: {e}")),
+            CopyPhase::Flush => SessionError::SpawnFailed(format!("FTP data flush: {e}")),
+        },
+    )
+    .await?;
 
-    data.flush()
-        .await
-        .map_err(|e| SessionError::SpawnFailed(format!("FTP data flush: {e}")))?;
-    stream
-        .finalize_put_stream(data)
-        .await
-        .map_err(|e| SessionError::SpawnFailed(format!("FTP STOR finalize: {e}")))?;
-    Ok(AttemptOutcome::Completed { transferred })
+    match outcome {
+        ChunkedCopyOutcome::Stopped {
+            transferred,
+            reason,
+        } => Ok(AttemptOutcome::Stopped {
+            transferred,
+            reason,
+        }),
+        ChunkedCopyOutcome::Completed { transferred } => {
+            stream
+                .finalize_put_stream(data)
+                .await
+                .map_err(|e| SessionError::SpawnFailed(format!("FTP STOR finalize: {e}")))?;
+            Ok(AttemptOutcome::Completed { transferred })
+        }
+    }
 }
 
 #[cfg(test)]
