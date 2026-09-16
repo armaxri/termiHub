@@ -4904,9 +4904,10 @@ mod tests {
     }
 
     /// A connection that advertises a monitoring capability backed by a
-    /// [`RecordingMonitoringProvider`].
+    /// [`RecordingMonitoringProvider`]. The provider is held in an `Arc` so the
+    /// connection can expose it via `monitoring_handle` (CONC-007).
     struct MonitoringConnection {
-        provider: RecordingMonitoringProvider,
+        provider: Arc<RecordingMonitoringProvider>,
     }
 
     #[async_trait::async_trait]
@@ -4950,7 +4951,10 @@ mod tests {
             rx
         }
         fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
-            Some(&self.provider)
+            Some(self.provider.as_ref())
+        }
+        fn monitoring_handle(&self) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+            Some(self.provider.clone())
         }
         fn file_browser(&self) -> Option<&dyn FileBrowser> {
             None
@@ -4969,9 +4973,9 @@ mod tests {
             .insert_test_session(
                 "mon-1",
                 Box::new(MonitoringConnection {
-                    provider: RecordingMonitoringProvider {
+                    provider: Arc::new(RecordingMonitoringProvider {
                         calls: calls.clone(),
-                    },
+                    }),
                 }),
             )
             .await;
@@ -5057,5 +5061,143 @@ mod tests {
         let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
         manager.stop_session_monitoring("ghost").await.unwrap();
         manager.cancel_session_monitoring("ghost").await.unwrap();
+    }
+
+    // ── CONC-007: no `sessions` lock held across a provider network call ──
+
+    /// A monitoring provider whose `unsubscribe` parks until released, firing a
+    /// signal once it is in flight — lets a test prove the `sessions` map lock
+    /// is not held across a provider (network) call.
+    struct BlockingMonitoringProvider {
+        entered: Arc<tokio::sync::Notify>,
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl MonitoringProvider for BlockingMonitoringProvider {
+        async fn subscribe(
+            &self,
+        ) -> Result<
+            termihub_core::monitoring::MonitoringSubscription,
+            termihub_core::errors::CoreError,
+        > {
+            unreachable!("this test drives unsubscribe, not subscribe")
+        }
+        async fn unsubscribe(&self) -> Result<(), termihub_core::errors::CoreError> {
+            // Announce we are mid-call, then park until released — all while,
+            // under the fix, holding no `sessions` lock.
+            self.entered.notify_one();
+            self.release.notified().await;
+            Ok(())
+        }
+        async fn set_interval(&self, _interval: std::time::Duration) {}
+        async fn set_paused(&self, _paused: bool) {}
+        async fn cancel_connect(&self) {}
+    }
+
+    /// A connection exposing a [`BlockingMonitoringProvider`] via an owned
+    /// handle (CONC-007).
+    struct BlockingMonitoringConnection {
+        provider: Arc<BlockingMonitoringProvider>,
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectionType for BlockingMonitoringConnection {
+        fn type_id(&self) -> &str {
+            "blocking-monitoring"
+        }
+        fn display_name(&self) -> &str {
+            "Blocking Monitoring"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: true,
+                file_browser: false,
+                graphical: false,
+                resize: false,
+                persistent: false,
+                terminal: true,
+            }
+        }
+        async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
+            Ok(())
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn write(&self, _: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _: u16, _: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            Some(self.provider.as_ref())
+        }
+        fn monitoring_handle(&self) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+            Some(self.provider.clone())
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    /// CONC-007: a monitoring provider (network) call must run with no
+    /// `sessions` map lock held. While one session's `unsubscribe` is parked
+    /// mid-call, an unrelated op that needs the map lock must still make
+    /// progress; under the pre-fix code (lock held across the provider call)
+    /// this would deadlock.
+    #[tokio::test]
+    async fn monitoring_provider_call_does_not_hold_sessions_lock() {
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let provider = Arc::new(BlockingMonitoringProvider {
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session(
+                "mon-block",
+                Box::new(BlockingMonitoringConnection { provider }),
+            )
+            .await;
+
+        // Drive stop → unsubscribe, which parks inside the provider.
+        let bg = manager.clone();
+        let stop = tokio::spawn(async move { bg.stop_session_monitoring("mon-block").await });
+
+        // Wait until unsubscribe is confirmed in flight.
+        tokio::time::timeout(std::time::Duration::from_secs(5), entered.notified())
+            .await
+            .expect("unsubscribe should reach the provider");
+
+        // The map lock must be free: an unrelated op that needs it completes
+        // promptly instead of blocking behind the parked unsubscribe.
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            manager.insert_test_session("other", Box::new(MockConnection::default())),
+        )
+        .await
+        .expect("sessions map must stay lockable during a provider network call");
+
+        // Release the provider and confirm the stop completed cleanly.
+        release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(5), stop)
+            .await
+            .expect("stop task should join")
+            .expect("stop task should not panic")
+            .expect("stop_session_monitoring should succeed");
     }
 }
