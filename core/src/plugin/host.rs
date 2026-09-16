@@ -1288,4 +1288,136 @@ mod tests {
         // A load error is not an incompatibility.
         assert!(!HostError::MissingSymbol("x".into()).is_incompatible());
     }
+
+    // --- FFI teardown / unload soundness (TBE-010) ---
+
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn library_stays_mapped_until_the_last_arc_drops() {
+        // The refcount invariant the whole loader rests on (#1995): the host's
+        // registration Arc and every session Arc keep the plugin's code mapped.
+        // `plugin_shutdown` — which unmaps the library, after which the backend's
+        // vtable/state pointers would dangle — must run only when the *last* Arc
+        // drops, never while a session created from the plugin is still live. This
+        // is the teardown-while-a-session-is-in-flight case: unload must not pull
+        // the library out from under a live borrower.
+        static SHUTDOWNS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn count_shutdown() {
+            SHUTDOWNS.fetch_add(1, Ordering::SeqCst);
+        }
+        SHUTDOWNS.store(0, Ordering::SeqCst);
+
+        let host_registration = Arc::new(LoadedLibrary::for_drop_order_test(count_shutdown));
+        // A session created from the plugin holds its own clone (as
+        // `PluginConnectionType` does).
+        let live_session = Arc::clone(&host_registration);
+
+        // The host unloads (drops its registration Arc) while the session is still
+        // live: the library must stay mapped, so shutdown has NOT run.
+        drop(host_registration);
+        assert_eq!(
+            SHUTDOWNS.load(Ordering::SeqCst),
+            0,
+            "the library must not unload while a session still borrows it"
+        );
+
+        // Only when the final (session) Arc drops does the library unload — and its
+        // shutdown runs exactly once, never twice.
+        drop(live_session);
+        assert_eq!(
+            SHUTDOWNS.load(Ordering::SeqCst),
+            1,
+            "plugin_shutdown must run exactly once, when the final Arc drops"
+        );
+    }
+
+    #[test]
+    fn unloading_one_library_leaves_another_untouched() {
+        // Two independently-loaded plugins hold separate `Arc<LoadedLibrary>`s.
+        // Dropping one must run only *its* shutdown and must leave the other's
+        // still-live library entirely intact (cross-plugin isolation): one
+        // plugin's teardown can never invalidate another's live FFI resources.
+        static A: AtomicUsize = AtomicUsize::new(0);
+        static B: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn shut_a() {
+            A.fetch_add(1, Ordering::SeqCst);
+        }
+        unsafe extern "C" fn shut_b() {
+            B.fetch_add(1, Ordering::SeqCst);
+        }
+        A.store(0, Ordering::SeqCst);
+        B.store(0, Ordering::SeqCst);
+
+        let lib_a = Arc::new(LoadedLibrary::for_drop_order_test(shut_a));
+        let lib_b = Arc::new(LoadedLibrary::for_drop_order_test(shut_b));
+
+        drop(lib_a);
+        assert_eq!(A.load(Ordering::SeqCst), 1, "plugin A ran its own shutdown");
+        assert_eq!(
+            B.load(Ordering::SeqCst),
+            0,
+            "plugin B must be untouched by A's unload"
+        );
+
+        // B is still fully usable after A unloaded, then unloads cleanly itself.
+        assert_eq!(lib_b.info().id, "drop-order-test");
+        drop(lib_b);
+        assert_eq!(
+            B.load(Ordering::SeqCst),
+            1,
+            "plugin B unloads exactly once, only when it is itself dropped"
+        );
+    }
+
+    #[test]
+    fn host_unload_of_one_plugin_does_not_disturb_another() {
+        // At the `PluginHost` level: two loaded plugins each register a connection
+        // type and hold their own library Arc. Unloading one unregisters only its
+        // type and drops only its library reference; the other stays loaded,
+        // registered, and mapped — its library Arc refcount is unchanged.
+        unsafe extern "C" fn noop_shutdown() {}
+
+        let (host, _t) = test_host();
+
+        // Insert two loaded entries directly (no real dylib needed): each with its
+        // own library handle and a distinct registered connection type.
+        for id in ["plug-a", "plug-b"] {
+            let lib = Arc::new(LoadedLibrary::for_drop_order_test(noop_shutdown));
+            {
+                let mut reg = host.registry.lock().unwrap();
+                register_stub(&mut reg, id);
+            }
+            host.loaded.lock().unwrap().insert(
+                id.to_string(),
+                HostEntry {
+                    connection_type: id.to_string(),
+                    library: lib,
+                },
+            );
+            host.active.lock().unwrap().insert(id.to_string());
+        }
+
+        // An independent clone of plug-b's library so we can watch its refcount
+        // across plug-a's unload.
+        let b_lib = Arc::clone(&host.loaded.lock().unwrap()["plug-b"].library);
+        let b_refs_before = Arc::strong_count(&b_lib);
+
+        host.unload("plug-a");
+
+        // plug-a is gone from every host map and its type is unregistered…
+        assert!(!host.is_loaded("plug-a"));
+        assert!(!host.is_active("plug-a"));
+        assert!(!host.registry.lock().unwrap().has_type("plug-a"));
+
+        // …while plug-b is entirely untouched: still loaded, still registered, and
+        // its library Arc refcount is unchanged (its mapping was not dropped).
+        assert!(host.is_loaded("plug-b"));
+        assert!(host.registry.lock().unwrap().has_type("plug-b"));
+        assert_eq!(
+            Arc::strong_count(&b_lib),
+            b_refs_before,
+            "unloading plug-a must not drop plug-b's library reference"
+        );
+    }
 }

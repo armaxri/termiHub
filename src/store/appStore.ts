@@ -68,7 +68,6 @@ import {
   deleteAgentFolder as apiDeleteAgentFolder,
   AgentDefinitionInfo,
   getConnectionTypes,
-  getAppMode as apiGetAppMode,
   startPersistentSession as apiStartPersistentSession,
   stopPersistentSession as apiStopPersistentSession,
   attachPersistentTab as apiAttachPersistentTab,
@@ -131,6 +130,7 @@ import { createMonitoringSlice, MonitoringSlice } from "./slices/monitoringSlice
 import { createWorkflowsSlice, WorkflowsSlice } from "./slices/workflowsSlice";
 import { createCredentialStoreSlice, CredentialStoreSlice } from "./slices/credentialStoreSlice";
 import { createUpdateCheckerSlice, UpdateCheckerSlice } from "./slices/updateCheckerSlice";
+import { createPortableModeSlice, PortableModeSlice } from "./slices/portableModeSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -392,7 +392,8 @@ export interface AppState
     WorkflowsSlice,
     WorkspacesSlice,
     CredentialStoreSlice,
-    UpdateCheckerSlice {
+    UpdateCheckerSlice,
+    PortableModeSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -1324,10 +1325,9 @@ export interface AppState
   // unlockResolvers / requestUnlock / resolveUnlock) live in CredentialStoreSlice
   // (ARCH-001/FES-011, extracted under #2077 via #2881).
 
-  // Portable mode
-  isPortableMode: boolean;
-  portableDataDir: string | null;
-  loadAppMode: () => Promise<void>;
+  // Portable mode — whether the app runs in portable mode + the resolved data
+  // dir (isPortableMode / portableDataDir / loadAppMode) live in
+  // PortableModeSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
 
   // Update checker — the app-update availability probe + skip/dismiss lifecycle
   // (updateCheckState / updateInfo / updateNotificationDismissed /
@@ -2444,6 +2444,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     ...createWorkspacesSlice(set, get, store),
     ...createCredentialStoreSlice(set, get, store),
     ...createUpdateCheckerSlice(set, get, store),
+    ...createPortableModeSlice(set, get, store),
 
     // Connection type registry — updated by loadFromBackend()
     connectionTypes: [],
@@ -6661,20 +6662,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       await get().clearLastSession();
     },
 
-    // Portable mode
-    isPortableMode: false,
-    portableDataDir: null,
-    loadAppMode: async () => {
-      try {
-        const info = await apiGetAppMode();
-        set({ isPortableMode: info.isPortable, portableDataDir: info.dataDir });
-      } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to load app mode: ${err instanceof Error ? err.message : String(err)}`
-        );
-      }
-    },
+    // Portable mode (isPortableMode / portableDataDir / loadAppMode) provided by
+    // createPortableModeSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
   };
 });
 
