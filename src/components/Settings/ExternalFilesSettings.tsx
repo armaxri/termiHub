@@ -5,7 +5,7 @@ import { FilePlus2, Plus, Trash2, RefreshCw } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { ExternalFileConfig } from "@/types/connection";
-import { Button, Toggle, Tooltip, EmptyState } from "@/components/ui";
+import { Button, Input, Toggle, Tooltip, EmptyState } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { SettingsField } from "./SettingsField";
 
@@ -149,9 +149,8 @@ export function ExternalFilesSettings() {
         {showCreatePrompt && (
           <div className="settings-panel__create-prompt">
             <label className="settings-panel__create-label">Display name:</label>
-            <input
+            <Input
               className="settings-panel__create-input"
-              type="text"
               value={createName}
               onChange={(e) => setCreateName(e.target.value)}
               onKeyDown={(e) => {

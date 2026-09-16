@@ -74,6 +74,18 @@ describe("FileTypeSettings", () => {
     expect(query("file-type-add-btn")).not.toBeNull();
   });
 
+  it("renders the add inputs via the shared ui/Input primitive (UISF-013)", () => {
+    render();
+    const pattern = query("file-type-pattern-input") as HTMLInputElement;
+    const language = query("file-type-language-input") as HTMLInputElement;
+    expect(pattern.tagName).toBe("INPUT");
+    expect(pattern.classList.contains("ui-input")).toBe(true);
+    expect(pattern.classList.contains("settings-panel__create-input")).toBe(true);
+    expect(language.classList.contains("ui-input")).toBe(true);
+    // Language input keeps its datalist wiring after the migration.
+    expect(language.getAttribute("list")).toBe("file-type-language-list");
+  });
+
   it("add button is disabled when inputs are empty", () => {
     render();
     const btn = query("file-type-add-btn") as HTMLButtonElement;

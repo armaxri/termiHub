@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 use termihub_core::backends::ssh::SftpTransferChannel;
+use termihub_core::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
@@ -259,44 +260,40 @@ where
     R: AsyncReadExt + Unpin,
     W: AsyncWriteExt + Unpin,
 {
-    let mut buf = vec![0u8; CHUNK_SIZE];
-    let mut transferred: u64 = 0;
-    let mut last_emit = Instant::now();
-
     // Emit a starting event so even zero-byte / tiny files render a row.
     sink(&ctx.progress(0, TransferPhase::Transferring, None));
 
-    loop {
-        if token.is_cancelled() {
-            return Ok(CopyOutcome::Cancelled { transferred });
-        }
+    // Throttle progress emission to ~10 Hz, exactly as before: the shared loop
+    // calls `on_progress` after every chunk, so the ≤`PROGRESS_THROTTLE` gate
+    // lives in this callback rather than in the loop body.
+    let mut last_emit = Instant::now();
+    let outcome = run_chunked_copy(
+        reader,
+        writer,
+        CHUNK_SIZE,
+        0,
+        || token.is_cancelled().then_some(()),
+        |transferred| {
+            if last_emit.elapsed() >= PROGRESS_THROTTLE {
+                sink(&ctx.progress(transferred, TransferPhase::Transferring, None));
+                last_emit = Instant::now();
+            }
+        },
+        |phase, e| {
+            let what = match phase {
+                CopyPhase::Read => "read",
+                CopyPhase::Write => "write",
+                CopyPhase::Flush => "flush",
+            };
+            TerminalError::SshError(format!("transfer {what} failed: {e}"))
+        },
+    )
+    .await?;
 
-        let n = reader
-            .read(&mut buf)
-            .await
-            .map_err(|e| TerminalError::SshError(format!("transfer read failed: {e}")))?;
-        if n == 0 {
-            break;
-        }
-
-        writer
-            .write_all(&buf[..n])
-            .await
-            .map_err(|e| TerminalError::SshError(format!("transfer write failed: {e}")))?;
-        transferred += n as u64;
-
-        if last_emit.elapsed() >= PROGRESS_THROTTLE {
-            sink(&ctx.progress(transferred, TransferPhase::Transferring, None));
-            last_emit = Instant::now();
-        }
-    }
-
-    writer
-        .flush()
-        .await
-        .map_err(|e| TerminalError::SshError(format!("transfer flush failed: {e}")))?;
-
-    Ok(CopyOutcome::Completed { transferred })
+    Ok(match outcome {
+        ChunkedCopyOutcome::Completed { transferred } => CopyOutcome::Completed { transferred },
+        ChunkedCopyOutcome::Stopped { transferred, .. } => CopyOutcome::Cancelled { transferred },
+    })
 }
 
 /// Result of a chunked copy: either it ran to EOF, or it was cancelled at a
