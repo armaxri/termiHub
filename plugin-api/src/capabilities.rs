@@ -717,3 +717,158 @@ mod tests {
         assert!(split_u32(&[1, 0, 0]).is_none());
     }
 }
+
+#[cfg(test)]
+mod teardown_tests {
+    //! FFI teardown/drop soundness for the two owned handles this module hands a
+    //! plugin (TBE-010): the mediated TCP stream and the capability bridge. Each
+    //! must run its host-provided destructor exactly once on drop (no double-free,
+    //! no leak), and a "no resource" sentinel (null stream / absent destructor)
+    //! must drop as a harmless no-op rather than dereferencing a null pointer.
+    use super::*;
+
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    fn dangling_state() -> *mut c_void {
+        core::ptr::NonNull::<c_void>::dangling().as_ptr()
+    }
+
+    unsafe extern "C" fn stub_stream_read(
+        _s: *mut c_void,
+        _buf: *mut u8,
+        _len: usize,
+        _out: *mut usize,
+    ) -> PluginStatus {
+        PluginStatus::Ok
+    }
+    unsafe extern "C" fn stub_stream_write(
+        _s: *mut c_void,
+        _data: FfiByteSlice,
+        _out: *mut usize,
+    ) -> PluginStatus {
+        PluginStatus::Ok
+    }
+
+    #[test]
+    fn host_tcp_stream_drop_calls_destroy_exactly_once() {
+        // The plugin-side wrapper frees the host-owned socket via exactly one
+        // `destroy` call when it drops — the ownership handoff is released once.
+        static DESTROYS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn count_destroy(_s: *mut c_void) {
+            DESTROYS.fetch_add(1, Ordering::SeqCst);
+        }
+        DESTROYS.store(0, Ordering::SeqCst);
+
+        let vtable = PluginTcpStreamVTable {
+            read: stub_stream_read,
+            write: stub_stream_write,
+            destroy: count_destroy,
+        };
+        let raw = PluginTcpStream {
+            state: dangling_state(),
+            vtable: &vtable,
+        };
+        // SAFETY: `vtable` outlives the wrapper; `count_destroy` ignores `state`.
+        let stream = unsafe { HostTcpStream::from_raw(raw) };
+        drop(stream);
+        assert_eq!(
+            DESTROYS.load(Ordering::SeqCst),
+            1,
+            "the mediated stream must free the host socket exactly once"
+        );
+    }
+
+    #[test]
+    fn null_host_tcp_stream_drops_without_calling_destroy() {
+        // The "no stream" sentinel (null state/vtable) must drop as a no-op: the
+        // Drop guard checks for null before dereferencing the vtable, so a failed
+        // `open_connection` out-parameter left as `null()` cannot cause a null
+        // deref on teardown.
+        // SAFETY: `PluginTcpStream::null()` is the documented no-stream sentinel.
+        let stream = unsafe { HostTcpStream::from_raw(PluginTcpStream::null()) };
+        drop(stream); // must not dereference the null vtable
+    }
+
+    unsafe extern "C" fn stub_open(
+        _ctx: *mut c_void,
+        _host: FfiStr,
+        _port: u16,
+        _out: *mut PluginTcpStream,
+    ) -> PluginStatus {
+        PluginStatus::Other
+    }
+    unsafe extern "C" fn stub_read_file(
+        _ctx: *mut c_void,
+        _path: FfiStr,
+        _out: *mut FfiOwnedBytes,
+    ) -> PluginStatus {
+        PluginStatus::Other
+    }
+    unsafe extern "C" fn stub_write_file(
+        _ctx: *mut c_void,
+        _path: FfiStr,
+        _data: FfiByteSlice,
+        _mode: PluginWriteMode,
+    ) -> PluginStatus {
+        PluginStatus::Other
+    }
+    unsafe extern "C" fn stub_stat(
+        _ctx: *mut c_void,
+        _path: FfiStr,
+        _out: *mut PluginFileMetadata,
+    ) -> PluginStatus {
+        PluginStatus::Other
+    }
+    unsafe extern "C" fn stub_list(
+        _ctx: *mut c_void,
+        _path: FfiStr,
+        _out: *mut FfiOwnedBytes,
+    ) -> PluginStatus {
+        PluginStatus::Other
+    }
+
+    fn bridge_with_destroy(destroy: Option<PluginBridgeDestroyFn>) -> PluginHostBridge {
+        // SAFETY: the callbacks are safe to call with the (ignored) dangling ctx,
+        // and `destroy` (if any) reclaims it exactly once — but no test here calls
+        // a mediated operation, only exercises teardown.
+        unsafe {
+            PluginHostBridge::from_raw(
+                dangling_state(),
+                stub_open,
+                stub_read_file,
+                stub_write_file,
+                stub_stat,
+                stub_list,
+                destroy,
+            )
+        }
+    }
+
+    #[test]
+    fn bridge_drop_calls_destroy_exactly_once() {
+        // Dropping the bridge frees the host context via exactly one `destroy`
+        // call — the context the host leaked to cross the ABI is reclaimed once.
+        static DESTROYS: AtomicUsize = AtomicUsize::new(0);
+        unsafe extern "C" fn count_destroy(_ctx: *mut c_void) {
+            DESTROYS.fetch_add(1, Ordering::SeqCst);
+        }
+        DESTROYS.store(0, Ordering::SeqCst);
+
+        let bridge = bridge_with_destroy(Some(count_destroy));
+        drop(bridge);
+        assert_eq!(
+            DESTROYS.load(Ordering::SeqCst),
+            1,
+            "the bridge context must be reclaimed exactly once"
+        );
+    }
+
+    #[test]
+    fn bridge_without_destructor_drops_as_a_no_op() {
+        // A bridge carrying no destructor (`destroy == None`) owns no host context
+        // to free, so dropping it must be a harmless no-op rather than calling
+        // through a null pointer.
+        let bridge = bridge_with_destroy(None);
+        drop(bridge);
+    }
+}
