@@ -30,6 +30,8 @@ pub use registry::{
 pub use schema::*;
 pub use validation::{validate_settings, ValidationError};
 
+use std::sync::Arc;
+
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
@@ -187,6 +189,27 @@ pub trait ConnectionType: Send {
     ///
     /// Returns `None` when [`Capabilities::monitoring`] is `false`.
     fn monitoring(&self) -> Option<&dyn MonitoringProvider>;
+
+    /// An owned, shareable handle to this connection's monitoring provider —
+    /// the [`Arc`] analogue of [`monitoring`](Self::monitoring).
+    ///
+    /// Returned as an `Arc` so a caller can `await` a provider method (the
+    /// network `subscribe` / `unsubscribe` / `set_interval`) **without** holding
+    /// the lock that guards this connection. The session manager clones the
+    /// handle out from under its `sessions` map lock, releases the lock, then
+    /// performs the network call (CONC-007): holding a map-wide lock across a
+    /// provider network call would stall every other session operation for the
+    /// call's duration and risks a lock-ordering deadlock.
+    ///
+    /// **Contract:** a backend that returns `Some` from
+    /// [`monitoring`](Self::monitoring) MUST return `Some` here too — the same
+    /// provider — so preferring the handle never loses a monitoring capability.
+    /// The default returns `None`, matching a backend with no monitoring
+    /// capability; only backends whose provider does real network I/O override
+    /// it.
+    fn monitoring_handle(&self) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+        None
+    }
 
     /// Access the file browser, if this connection type supports it.
     ///

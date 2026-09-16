@@ -69,7 +69,12 @@ pub struct Ssh {
     /// the replacement on its next iteration.
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     /// Monitoring provider, created on connect.
-    monitoring_provider: Option<SshMonitoringProvider>,
+    ///
+    /// Held in an `Arc` so [`monitoring_handle`](ConnectionType::monitoring_handle)
+    /// can hand out an owned clone; the session manager subscribes / unsubscribes
+    /// on that clone without holding its `sessions` lock across the SSH connect
+    /// (CONC-007).
+    monitoring_provider: Option<Arc<SshMonitoringProvider>>,
     /// File browser provider (SFTP), created on connect.
     file_browser_provider: Option<SftpFileBrowser>,
 }
@@ -706,7 +711,7 @@ impl ConnectionType for Ssh {
         });
 
         // Create monitoring and file browser providers.
-        self.monitoring_provider = Some(SshMonitoringProvider::new(config.clone()));
+        self.monitoring_provider = Some(Arc::new(SshMonitoringProvider::new(config.clone())));
         self.file_browser_provider = Some(SftpFileBrowser::new(config));
 
         self.state = Some(ConnectedState {
@@ -778,7 +783,13 @@ impl ConnectionType for Ssh {
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
         self.monitoring_provider
             .as_ref()
-            .map(|p| p as &dyn MonitoringProvider)
+            .map(|p| p.as_ref() as &dyn MonitoringProvider)
+    }
+
+    fn monitoring_handle(&self) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+        self.monitoring_provider
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn MonitoringProvider + Send + Sync>)
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
