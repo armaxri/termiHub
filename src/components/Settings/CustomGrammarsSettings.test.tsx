@@ -99,6 +99,22 @@ describe("CustomGrammarsSettings", () => {
     expect((query("custom-grammar-name-input") as HTMLInputElement).value).toBe("My Language");
   });
 
+  it("renders the draft inputs via the shared ui/Input primitive (UISF-013)", async () => {
+    mockedOpen.mockResolvedValue("/path/to/my-lang.tmLanguage.json");
+    mockedReadTextFile.mockResolvedValue(VALID_GRAMMAR);
+
+    render();
+    click("custom-grammar-import-btn");
+    await act(async () => {});
+    render();
+
+    const id = query("custom-grammar-id-input") as HTMLInputElement;
+    const name = query("custom-grammar-name-input") as HTMLInputElement;
+    expect(id.classList.contains("ui-input")).toBe(true);
+    expect(id.classList.contains("settings-panel__create-input")).toBe(true);
+    expect(name.classList.contains("ui-input")).toBe(true);
+  });
+
   it("shows error for invalid JSON file", async () => {
     mockedOpen.mockResolvedValue("/path/to/bad.json");
     mockedReadTextFile.mockResolvedValue("not json {{{");
