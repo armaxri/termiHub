@@ -1,4 +1,5 @@
 pub mod browser;
+pub mod copy;
 pub mod local;
 pub mod utils;
 
