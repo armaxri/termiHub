@@ -40,6 +40,26 @@ function makeKeyEvent(
   });
 }
 
+/**
+ * Build an event that also carries a physical `code`, as every real browser /
+ * webview event does. Lets a test simulate a non-US layout: the same physical
+ * key (`code`) produces a different `key` character.
+ */
+function makeCodeKeyEvent(
+  code: string,
+  key: string,
+  mods: { ctrl?: boolean; shift?: boolean; meta?: boolean; alt?: boolean } = {}
+): KeyboardEvent {
+  return new KeyboardEvent("keydown", {
+    code,
+    key,
+    ctrlKey: mods.ctrl ?? false,
+    shiftKey: mods.shift ?? false,
+    metaKey: mods.meta ?? false,
+    altKey: mods.alt ?? false,
+  });
+}
+
 describe("serializeCombo / parseCombo round-trip", () => {
   const cases: [KeyCombo, string][] = [
     [{ key: "c", meta: true }, "Cmd+c"],
@@ -131,6 +151,130 @@ describe("eventMatchesCombo", () => {
     const combo: KeyCombo = { key: "=", meta: true };
     const event = makeKeyEvent("+", { ctrl: true, shift: true });
     expect(eventMatchesCombo(event, combo)).toBe(false);
+  });
+});
+
+describe("eventMatchesCombo — layout-independent physical-key matching (I18N-011)", () => {
+  // Letter/digit position shortcuts (Ctrl/Cmd+K, Cmd+0, …) must match the
+  // physical key via event.code, so they fire on the same physical key on any
+  // keyboard layout — even when the produced character (event.key) differs.
+
+  it("matches Cmd+K on a non-US layout where physical K produces a different char", () => {
+    const combo: KeyCombo = { key: "k", meta: true };
+    // Physical K on some layouts yields e.g. "ĸ" — event.key would never equal "k".
+    const event = makeCodeKeyEvent("KeyK", "ĸ", { meta: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("matches Ctrl+Shift+B when physical B yields a Cyrillic char (event.code wins)", () => {
+    const combo: KeyCombo = { key: "B", ctrl: true, shift: true };
+    const event = makeCodeKeyEvent("KeyB", "и", { ctrl: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("still matches on a US layout where event.code and event.key agree", () => {
+    const combo: KeyCombo = { key: "k", meta: true };
+    const event = makeCodeKeyEvent("KeyK", "k", { meta: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("matches by physical position, not character: KeyJ producing 'k' does NOT match combo k", () => {
+    const combo: KeyCombo = { key: "k", meta: true };
+    const event = makeCodeKeyEvent("KeyJ", "k", { meta: true });
+    expect(eventMatchesCombo(event, combo)).toBe(false);
+  });
+
+  it("matches a digit shortcut by physical position (Cmd+0 on AZERTY where 0 yields 'à')", () => {
+    const combo: KeyCombo = { key: "0", meta: true };
+    const event = makeCodeKeyEvent("Digit0", "à", { meta: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("keeps modifier strictness under code matching (wrong modifier fails)", () => {
+    const combo: KeyCombo = { key: "k", meta: true };
+    const event = makeCodeKeyEvent("KeyK", "ĸ", { ctrl: true });
+    expect(eventMatchesCombo(event, combo)).toBe(false);
+  });
+
+  it("leaves named keys (Arrow/Tab/Enter/F1) matched by event.key even when code is present", () => {
+    const combo: KeyCombo = { key: "ArrowUp", alt: true, shift: true };
+    const event = makeCodeKeyEvent("ArrowUp", "ArrowUp", { alt: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("leaves punctuation shortcuts matched by event.key (Ctrl+= with Equal code)", () => {
+    const combo: KeyCombo = { key: "=", ctrl: true };
+    const event = makeCodeKeyEvent("Equal", "=", { ctrl: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("keeps shift-key equivalence for punctuation (Shift+= producing + with Equal code)", () => {
+    const combo: KeyCombo = { key: "=", meta: true };
+    const event = makeCodeKeyEvent("Equal", "+", { meta: true, shift: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+
+  it("falls back to event.key when no code is present (synthetic events keep matching)", () => {
+    const combo: KeyCombo = { key: "b", ctrl: true };
+    const event = makeKeyEvent("b", { ctrl: true });
+    expect(eventMatchesCombo(event, combo)).toBe(true);
+  });
+});
+
+describe("findMatchingAction — layout-independent (I18N-011, Linux/Win context)", () => {
+  beforeEach(() => {
+    clearOverrides();
+  });
+
+  it("finds toggle-sidebar for physical Ctrl+Shift+B even when it produces 'и' (Cyrillic)", () => {
+    const event = makeCodeKeyEvent("KeyB", "и", { ctrl: true, shift: true });
+    expect(findMatchingAction(event)).toBe("toggle-sidebar");
+  });
+
+  it("finds close-tab for physical Ctrl+Shift+W even when it produces 'ц'", () => {
+    const event = makeCodeKeyEvent("KeyW", "ц", { ctrl: true, shift: true });
+    expect(findMatchingAction(event)).toBe("close-tab");
+  });
+
+  it("finds zoom-reset for physical Ctrl+0 even when digit row yields a non-digit char", () => {
+    const event = makeCodeKeyEvent("Digit0", "à", { ctrl: true });
+    expect(findMatchingAction(event)).toBe("zoom-reset");
+  });
+});
+
+describe("processKeyEvent — layout-independent chords (I18N-011, macOS context)", () => {
+  let originalAgent: PropertyDescriptor | undefined;
+
+  beforeEach(() => {
+    clearOverrides();
+    cancelChord();
+    vi.useFakeTimers();
+    originalAgent = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+    Object.defineProperty(navigator, "userAgent", {
+      value: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    cancelChord();
+    vi.useRealTimers();
+    if (originalAgent) {
+      Object.defineProperty(navigator, "userAgent", originalAgent);
+    } else {
+      Object.defineProperty(navigator, "userAgent", {
+        value: "Mozilla/5.0 (jsdom)",
+        configurable: true,
+      });
+    }
+  });
+
+  it("completes the Cmd+K Cmd+S chord by physical key on a non-US layout", () => {
+    // Physical K then physical S, both producing non-Latin chars.
+    expect(processKeyEvent(makeCodeKeyEvent("KeyK", "ĸ", { meta: true }))).toBe("chord-pending");
+    expect(isChordPending()).toBe(true);
+    expect(processKeyEvent(makeCodeKeyEvent("KeyS", "σ", { meta: true }))).toBe("show-shortcuts");
+    expect(isChordPending()).toBe(false);
   });
 });
 
