@@ -7,6 +7,7 @@
  */
 
 import { bundledLanguagesInfo } from "shiki";
+import { compareNames } from "@/utils/locale";
 
 export interface LanguagePackageInfo {
   id: string;
@@ -31,4 +32,4 @@ export const BUILTIN_PACKAGE_IDS: ReadonlySet<string> = new Set([
  */
 export const ALL_LANGUAGE_PACKAGES: LanguagePackageInfo[] = bundledLanguagesInfo
   .map(({ id, name }) => ({ id, name }))
-  .sort((a, b) => a.name.localeCompare(b.name));
+  .sort((a, b) => compareNames(a.name, b.name));

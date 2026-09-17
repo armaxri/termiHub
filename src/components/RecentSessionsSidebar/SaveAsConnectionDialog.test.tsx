@@ -177,6 +177,27 @@ describe("SaveAsConnectionDialog", () => {
     );
   });
 
+  it("renders the password field via the shared PasswordInput primitive (reveal toggle)", async () => {
+    credStatus.value = { mode: "master_password", status: "unlocked" };
+    render();
+
+    await act(async () => {
+      (query("save-as-connection-save-password") as HTMLButtonElement).click();
+      await Promise.resolve();
+    });
+
+    const input = query("save-as-connection-password") as HTMLInputElement;
+    expect(input).not.toBeNull();
+    expect(input.type).toBe("password");
+    // The shared primitive wraps the input and adds a visibility toggle button.
+    const wrapper = input.closest(".password-input");
+    expect(wrapper).not.toBeNull();
+    const toggle = wrapper!.querySelector(".password-input__toggle") as HTMLButtonElement;
+    expect(toggle).not.toBeNull();
+    act(() => toggle.click());
+    expect(input.type).toBe("text");
+  });
+
   it("aborts the save when storing the password fails", async () => {
     credStatus.value = { mode: "master_password", status: "unlocked" };
     storeCredentialMock.mockRejectedValueOnce(new Error("locked"));

@@ -2225,7 +2225,7 @@ export async function sessionGetCapabilities(
 }
 
 /**
- * Start session-based monitoring; stats arrive as `session-monitoring-stats` Tauri events.
+ * Start session-based monitoring; stats arrive via the system-monitor projection region.
  *
  * The backend owns monitor entry creation (#2224): `host` is the UI-only label the
  * client threads through so the server can create the `connecting` entry in the

@@ -1,4 +1,4 @@
-//! State-machine unit tests for the shadow [`SessionLifecycleStore`] (#2152).
+//! State-machine unit tests for the [`SessionLifecycleStore`] (#2152).
 //!
 //! Drives the store directly (no projector) to pin the connect / reconnect /
 //! disconnect / error transitions, including the composed ported #2144 backoff

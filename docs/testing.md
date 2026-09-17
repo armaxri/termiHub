@@ -407,6 +407,33 @@ rather than letting the suites self-skip to a false green — then runs
 the Windows agent serial grade lane (#2495) pattern — `#[ignore]` plus a
 dedicated `-- --ignored` job.
 
+### `require_docker!` — visible skips and enforceable presence (TBE-006)
+
+The `core/tests` integration suites (SSH/telnet/monitoring/tunnel/SFTP/…) and
+the desktop `src-tauri/tests/sftp_transfer.rs` suite gate each test behind a
+runtime `require_docker!` / `require_sftp_stress!` guard rather than `#[ignore]`,
+so they compile and self-skip when the Docker fixtures are not up. Two
+properties keep a skip from hiding a broken lane:
+
+- **Skips are visible.** A skipped test prints a `SKIPPED: <fixture> not
+reachable on port <n> …` line to stderr, so a human or CI scanning the output
+  sees a skip — a skip is never silently green.
+- **Presence is enforceable.** Setting the env var **`TERMIHUB_REQUIRE_DOCKER=1`**
+  flips the guard from _skip_ to _hard-fail_: an absent/unreachable fixture then
+  **panics** the test instead of returning early. A CI lane that brings the
+  fixtures up sets it, so a fixture that never came up (or a container serving
+  nothing) reds the lane rather than skipping to a false green. Local and per-PR
+  runs leave the var unset and keep skipping gracefully. Truthy values are `1`,
+  `true`, `yes`, `on` (case-insensitive).
+
+The [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
+lane (nightly + on `tests/docker`/`core/tests`/backend changes) brings the
+fixtures up and runs the suite — it is the natural place to opt in. Its
+bring-up currently omits the `vnc` and `ftp` profiles (and `vnc` is separately
+known-flaky, #1585), so `TERMIHUB_REQUIRE_DOCKER=1` cannot be flipped on
+blanket there until those fixtures are brought up or the corresponding tests are
+excluded from the required run; that wiring is tracked as a follow-up.
+
 ### Per-PR app-shell smoke (#2065)
 
 To give the merge gate _some_ app-boot coverage without the nightly lane's build

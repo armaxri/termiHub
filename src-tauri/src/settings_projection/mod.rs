@@ -9,7 +9,7 @@
 //! and serves the `settings.*` intents through the projection substrate
 //! ([`crate::projection`]), mirroring the shared system-monitor
 //! ([`crate::system_monitor_projection`]) and agents
-//! ([`crate::agents_projection`]) shadows.
+//! ([`crate::agents_projection`]) authorities.
 //!
 //! # The settings document is modeled opaquely
 //!
@@ -22,7 +22,7 @@
 //! `syntaxHighlighting` as opaque `serde_json::Value` — this store models the
 //! document as an **opaque JSON object**: it owns the whole-document replace and
 //! shallow-patch semantics `appStore` drives without duplicating (and drifting
-//! from) the 50-field typed struct. This is the coherent core the shadow needs;
+//! from) the 50-field typed struct. This is the coherent core the store needs;
 //! per-key typing is neither required by the render/mutation cuts nor desirable.
 //!
 //! # Shared region — Open Design Decision #4 / #6

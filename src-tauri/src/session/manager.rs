@@ -21,7 +21,6 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::files::FileEntry;
-use termihub_core::monitoring::{MonitorStatus, SystemStats};
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::ScreenClearDetector;
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
@@ -121,14 +120,6 @@ pub(super) struct PersistentRecord {
     pub(super) remote_session_id: Option<String>,
     /// Agent that owns this session — paired with `remote_session_id` for reconnect.
     pub(super) agent_id: Option<String>,
-}
-
-/// Error event emitted when a session-level error occurs.
-#[derive(Debug, Clone, Serialize)]
-#[allow(dead_code)]
-pub struct TerminalErrorEvent {
-    pub session_id: String,
-    pub message: String,
 }
 
 // ── EventEmitter trait ─────────────────────────────────────────────
@@ -272,24 +263,16 @@ pub(super) struct SessionEntry {
     /// session. Set by the frontend via `set_session_line_ending`; defaults to
     /// [`LineEnding::Lf`] until then.
     pub(super) line_ending: LineEnding,
-}
-
-/// Push event emitted via Tauri when session-based monitoring delivers stats.
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionMonitoringStatsEvent {
-    pub session_id: String,
-    pub stats: SystemStats,
-}
-
-/// Push event emitted via Tauri when a session's monitoring status changes.
-///
-/// Carries the collector loop's lifecycle state so the frontend can render an
-/// explicit `Stale` indicator instead of showing frozen stats as live (#1229,
-/// audit gap G1). `session_id` is snake_case to match the frontend payload.
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionMonitoringStatusEvent {
-    pub session_id: String,
-    pub status: MonitorStatus,
+    /// Cancellation handle for this session's detached output-reader task
+    /// (CONC-011). The reader is spawned with [`tokio::spawn`] and its
+    /// `JoinHandle` is dropped, so without this the task can only stop once it
+    /// happens to observe the output channel reaching EOF — which relies on the
+    /// backend's `disconnect()` promptly dropping the sender. Holding this token
+    /// lets teardown ([`SessionManager::close_session`]) stop the reader
+    /// deterministically: cancelling it breaks the reader's recv loop and it
+    /// still runs its normal end-of-stream cleanup (`emit_and_cleanup`), so no
+    /// output-buffer / logger state is leaked and no reader lingers.
+    pub(super) reader_cancel: CancellationToken,
 }
 
 /// Per-session scrollback capture buffers, keyed by `session_id` (#1900).
@@ -840,6 +823,11 @@ impl SessionManager {
         // (non-agent) session.
         let retained_agent_session_id = remote_session_id.clone();
 
+        // Deterministic-teardown handle for the output-reader task spawned below
+        // (CONC-011). Stored on the entry so `close_session` can cancel it; a
+        // clone is moved into the reader.
+        let reader_cancel = CancellationToken::new();
+
         // Store session.
         {
             let mut sessions = self.sessions.lock().await;
@@ -850,6 +838,7 @@ impl SessionManager {
                     info: info.clone(),
                     remote_session_id,
                     line_ending: LineEnding::default(),
+                    reader_cancel: reader_cancel.clone(),
                 },
             );
         }
@@ -933,6 +922,7 @@ impl SessionManager {
                 output_buffers,
                 session_loggers,
                 session_tab_ids,
+                reader_cancel,
             )
             .await;
         });
@@ -1137,6 +1127,12 @@ impl SessionManager {
         }
         let mut sessions = self.sessions.lock().await;
         if let Some(mut entry) = sessions.remove(session_id) {
+            // Deterministically stop the detached output-reader task (CONC-011)
+            // instead of relying on `disconnect()` to close the output channel
+            // and drive the reader to EOF. The reader observes the cancel, breaks
+            // its recv loop, and still runs its end-of-stream cleanup, so the
+            // scrollback buffer and any session logger are released as usual.
+            entry.reader_cancel.cancel();
             entry.connection.disconnect().await.ok();
             info!(session_id, "Closed session");
         }
@@ -1421,14 +1417,14 @@ impl SessionManager {
         )
     }
 
-    /// Subscribe to a session's monitoring provider and forward stats and
-    /// status as Tauri events.
+    /// Subscribe to a session's monitoring provider and fold stats and status
+    /// into the shared `SystemMonitorStore` at the source.
     ///
     /// Spawns a background task that reads the subscription's stats and status
-    /// channels and emits `session-monitoring-stats` and
-    /// `session-monitoring-status` events to the frontend. The status stream
-    /// lets the UI surface an explicit `Stale` arm on a mid-stream drop instead
-    /// of rendering frozen stats as live (#1229, audit gap G1). Call
+    /// channels and folds each sample into the store, fanning the
+    /// system-monitor region diff out to subscribers. The status stream lets the
+    /// UI surface an explicit `Stale` arm on a mid-stream drop instead of
+    /// rendering frozen stats as live (#1229, audit gap G1). Call
     /// [`stop_session_monitoring`](Self::stop_session_monitoring) to cancel the
     /// task and unsubscribe.
     pub async fn start_session_monitoring<R: tauri::Runtime>(
@@ -1629,6 +1625,10 @@ impl SessionManager {
 
         let output_rx = proxy.subscribe_output();
 
+        // Deterministic-teardown handle for the re-attached session's output
+        // reader (CONC-011), mirroring the create path.
+        let reader_cancel = CancellationToken::new();
+
         // Insert under the fresh desktop session id.
         {
             let mut sessions = self.sessions.lock().await;
@@ -1646,6 +1646,7 @@ impl SessionManager {
                     },
                     remote_session_id: Some(remote_session_id.to_string()),
                     line_ending: LineEnding::default(),
+                    reader_cancel: reader_cancel.clone(),
                 },
             );
         }
@@ -1683,6 +1684,7 @@ impl SessionManager {
                 output_buffers,
                 session_loggers,
                 session_tab_ids,
+                reader_cancel,
             )
             .await;
         });
@@ -1809,6 +1811,7 @@ impl SessionManager {
                 },
                 remote_session_id: None,
                 line_ending: LineEnding::default(),
+                reader_cancel: CancellationToken::new(),
             },
         );
     }
@@ -1829,6 +1832,7 @@ impl SessionManager {
         output_buffers: OutputBuffers,
         session_loggers: SessionLoggers,
         session_tab_ids: SessionTabIds,
+        cancel: CancellationToken,
     ) {
         // Phase 1: optionally buffer until the screen-clear sequence.
         if wait_for_clear {
@@ -1842,7 +1846,29 @@ impl SessionManager {
                 if remaining.is_zero() {
                     break;
                 }
-                match tokio::time::timeout(remaining, output_rx.recv()).await {
+                let recv = tokio::select! {
+                    biased;
+                    // Deterministic teardown while still buffering startup output
+                    // (CONC-011): flush what we have and run the normal cleanup,
+                    // rather than waiting for the channel to close.
+                    _ = cancel.cancelled() => {
+                        Self::capture_bytes(&capture, &buffer);
+                        Self::log_output(&session_loggers, &session_id, &buffer);
+                        Self::emit_and_cleanup(
+                            &session_id,
+                            buffer,
+                            &emitter,
+                            &sessions,
+                            &output_buffers,
+                            &session_loggers,
+                            &session_tab_ids,
+                        )
+                        .await;
+                        return;
+                    }
+                    res = tokio::time::timeout(remaining, output_rx.recv()) => res,
+                };
+                match recv {
                     Ok(Some(chunk)) => {
                         let cleared = detector.feed(&chunk);
                         buffer.extend_from_slice(&chunk);
@@ -1901,7 +1927,20 @@ impl SessionManager {
         // `pending_len() < MAX_COALESCE_BYTES` guard would never pull a follow-up
         // after such a chunk.
         let mut coalescer = OutputCoalescer::new();
-        while let Some(first_chunk) = output_rx.recv().await {
+        loop {
+            // Normal delivery is the `recv` arm; the `cancel` arm only fires on
+            // deterministic teardown (CONC-011). `biased` checks cancel first,
+            // but it is never ready during normal streaming, so a chunk is always
+            // taken when one is available — delivery/coalescing is unchanged. Both
+            // futures are cancel-safe, so no pending chunk is lost.
+            let first_chunk = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => break,
+                chunk = output_rx.recv() => match chunk {
+                    Some(chunk) => chunk,
+                    None => break,
+                },
+            };
             let data = if first_chunk.len() >= MAX_COALESCE_BYTES {
                 first_chunk
             } else {
@@ -2203,6 +2242,7 @@ mod tests {
                 },
                 remote_session_id: None,
                 line_ending: LineEnding::default(),
+                reader_cancel: CancellationToken::new(),
             },
         );
         drop(map);
@@ -2526,6 +2566,7 @@ mod tests {
             output_buffers,
             new_session_loggers(),
             new_session_tab_ids(),
+            CancellationToken::new(),
         )
         .await;
 
@@ -2556,6 +2597,60 @@ mod tests {
             let exits = emitter.exits.lock().unwrap();
             assert_eq!(exits.len(), 1);
         }
+    }
+
+    /// CONC-011: the detached output-reader task must stop deterministically when
+    /// its session is torn down, even if the output channel never reaches EOF
+    /// (e.g. a lingering/dead transport that never drops its sender). Cancelling
+    /// the session's `reader_cancel` token ends the task promptly and still runs
+    /// its end-of-stream cleanup (a `terminal-exit` is emitted).
+    #[tokio::test]
+    async fn run_output_reader_stops_on_cancellation_without_eof() {
+        let emitter = MockEventEmitter::new();
+        let sessions = sessions_with_mock("sess-cancel").await;
+        // Keep the sender alive for the whole test: the reader can only reach EOF
+        // if `tx` drops, so if cancellation were broken the task would hang.
+        let (tx, rx) = tokio::sync::mpsc::channel::<Vec<u8>>(10);
+
+        let cancel = CancellationToken::new();
+        let reader_cancel = cancel.clone();
+        let reader_emitter = emitter.clone();
+        let handle = tokio::spawn(async move {
+            SessionManager::run_output_reader(
+                "sess-cancel".to_string(),
+                rx,
+                reader_emitter,
+                sessions,
+                false,
+                new_capture(),
+                new_output_buffers(),
+                new_session_loggers(),
+                new_session_tab_ids(),
+                reader_cancel,
+            )
+            .await;
+        });
+
+        // The reader is streaming (channel open, no data pending) — without
+        // cancellation it would never return, since `tx` is still held here and
+        // the channel therefore never reaches EOF. Cancel the token and require
+        // the task to finish quickly: completing at all proves the cancel stopped
+        // it rather than an EOF that cannot happen while `tx` is alive.
+        cancel.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+            .await
+            .expect("output reader did not stop after cancellation")
+            .expect("output reader task panicked");
+
+        // The sender was never dropped before the reader stopped, so EOF was
+        // impossible — the cancel token is what ended it. Cleanup still ran:
+        // exactly one terminal-exit was emitted.
+        assert_eq!(
+            emitter.exits.lock().unwrap().len(),
+            1,
+            "cancelled reader must still emit its terminal-exit cleanup"
+        );
+        drop(tx);
     }
 
     #[tokio::test]
@@ -2597,6 +2692,7 @@ mod tests {
             new_output_buffers(),
             session_loggers.clone(),
             new_session_tab_ids(),
+            CancellationToken::new(),
         )
         .await;
 
@@ -2634,6 +2730,7 @@ mod tests {
             new_output_buffers(),
             new_session_loggers(),
             new_session_tab_ids(),
+            CancellationToken::new(),
         )
         .await;
 
@@ -2670,6 +2767,7 @@ mod tests {
             new_output_buffers(),
             new_session_loggers(),
             new_session_tab_ids(),
+            CancellationToken::new(),
         )
         .await;
 
@@ -4562,40 +4660,6 @@ mod tests {
         );
         assert_eq!(calls[0].0, "agent-1");
         assert_eq!(calls[0].1, "remote-1");
-    }
-
-    /// Tauri events are consumed by the TypeScript frontend which uses snake_case
-    /// property names in the payload interface.  Verify that `SessionMonitoringStatsEvent`
-    /// serialises `session_id` as `session_id` (not `sessionId`) so the frontend's
-    /// `event.payload.session_id` receives the value.
-    #[test]
-    fn session_monitoring_stats_event_serialises_session_id_as_snake_case() {
-        use termihub_core::monitoring::SystemStats;
-        let event = SessionMonitoringStatsEvent {
-            session_id: "test-session-123".to_string(),
-            stats: SystemStats {
-                hostname: "host".to_string(),
-                uptime_seconds: 0.0,
-                load_average: [0.0; 3],
-                cpu_usage_percent: 0.0,
-                memory_total_kb: 0,
-                memory_available_kb: 0,
-                memory_used_percent: 0.0,
-                disk_total_kb: 0,
-                disk_used_kb: 0,
-                disk_used_percent: 0.0,
-                os_info: String::new(),
-            },
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(
-            json.contains("\"session_id\""),
-            "expected snake_case key; got: {json}"
-        );
-        assert!(
-            !json.contains("\"sessionId\""),
-            "camelCase key must not appear; got: {json}"
-        );
     }
 
     // ── FileOps facade tests (#2076) ──────────────────────────────────

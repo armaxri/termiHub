@@ -1,5 +1,5 @@
 //! The authoritative, client-scoped broadcast-membership state machine behind
-//! the shadow `broadcast@<clientId>` region (#2242, Phase 4 step 5b of #2139,
+//! the `broadcast@<clientId>` region (#2242, Phase 4 step 5b of #2139,
 //! part of #2206 / #2152).
 //!
 //! Models the broadcast-input membership slice the frontend currently drives
@@ -25,19 +25,14 @@
 //! `session-lifecycle` region (a session's status is a property of the shared
 //! session).
 //!
-//! # Render + mutation cut — parity-safe, reducers retained
+//! # Authoritative — drives the live UI
 //!
-//! The shadow landed first (PR #2254); this step cuts the live UI over to the
-//! store. The frontend now (a) keeps the `broadcast@<clientId>` region a faithful
-//! mirror of `appStore` via [`replace`](BroadcastStore::replace) and **renders**
-//! the broadcast UI from the region when it mirrors `appStore` (render cut, on by
-//! default), and (b) routes the membership actions through the granular
-//! `broadcast.*` intents so **this store is authoritative** (mutation cut, on by
-//! default). The `appStore` broadcast reducers stay in place as the parity-safe
-//! fallback — the render gate falls back to `appStore` when the region has not
-//! caught up, and each mirrored intent is best-effort so a transport hiccup never
-//! disrupts the local mutation (per the #2205 reframe). The reducer removal is a
-//! later step.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The frontend subscribes to the `broadcast@<clientId>` region, **renders** the
+//! broadcast UI from it, and routes the membership actions through the granular
+//! `broadcast.*` intents. The former `appStore` broadcast reducers, the
+//! render/mutation-cut flags, the `broadcast.replace` seed and the faithful-mirror
+//! gate were all removed — there is no local fallback path.
 //!
 //! ## What stays frontend
 //!
@@ -142,7 +137,7 @@ fn ordered_targets(source_tab_id: &str, target_tab_ids: &[String]) -> Vec<String
     out
 }
 
-/// The shadow broadcast-membership authority. Owns one [`ClientState`] per
+/// The broadcast-membership authority. Owns one [`ClientState`] per
 /// attached client, keyed by `clientId`; an unknown client is seeded lazily on
 /// first touch with the idle baseline. Each client projects its own
 /// `broadcast@<clientId>` region.
@@ -210,15 +205,12 @@ impl BroadcastStore {
         state.target_tab_ids = Vec::new();
     }
 
-    /// `broadcast.replace` — overwrite this client's whole membership slice from a
-    /// frontend snapshot of the `appStore` broadcast state. This is the render-cut
-    /// mirror (the twin of `monitor.replace`): while the `appStore` reducers stay
-    /// authoritative it keeps the `broadcast@<clientId>` region a faithful copy of
-    /// the frontend slice, so the UI can render from the projection with byte
-    /// parity. Unlike [`start`](BroadcastStore::start) it is a **verbatim
-    /// whole-state set** — it does not prepend the source or de-duplicate, because
-    /// the `appStore` `broadcastTargetTabIds` set it mirrors is already canonical
-    /// (source-first, de-duped by the reducers).
+    /// `broadcast.replace` — overwrite this client's whole membership slice with a
+    /// caller-supplied snapshot. This is the whole-state overwrite intent (the twin
+    /// of `monitor.replace`): unlike [`start`](BroadcastStore::start) it is a
+    /// **verbatim whole-state set** — it does not prepend the source or
+    /// de-duplicate, because the `broadcastTargetTabIds` set it installs is expected
+    /// to be already canonical (source-first, de-duped by the caller).
     pub fn replace(
         &self,
         client_id: &str,

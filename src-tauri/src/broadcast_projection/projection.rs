@@ -36,12 +36,11 @@
 //! | `broadcast.removeTarget`  | `{ tabId }`                                          | remove a tab from the target set                |
 //! | `broadcast.replace`       | `{ active, sourceTabId, scope, targetTabIds, lastScope }` | overwrite the whole slice (render mirror) |
 //!
-//! `broadcast.replace` is the render-cut whole-state mirror (twin of
-//! `monitor.replace`): the frontend keeps the region a faithful copy of its
-//! `appStore` broadcast slice through it while the reducers stay authoritative,
-//! so the UI can render from the projection with byte parity. The per-transition
-//! `start`/`stop`/`toggle`/`addTarget`/`removeTarget` intents are the mutation
-//! cut, which makes this store authoritative.
+//! `broadcast.replace` is the whole-state overwrite intent (twin of
+//! `monitor.replace`): it installs an entire membership slice in one step. The
+//! per-transition `start`/`stop`/`toggle`/`addTarget`/`removeTarget` intents are
+//! the membership mutations, and this store is authoritative — the frontend renders
+//! straight from the region (the former `appStore` reducers were removed, #2283).
 //!
 //! Three frontend concerns need no dedicated intent because they read the
 //! projected set rather than mutate it: `isBroadcastTarget` is a membership read
@@ -50,18 +49,15 @@
 //! re-derives membership from the scope + tab tree (frontend) and reconciles the
 //! delta via `broadcast.addTarget` / `broadcast.removeTarget`.
 //!
-//! # Render + mutation cut
+//! # Authoritative
 //!
-//! Now driving the live UI (PR for #2242, following the #2254 shadow): the
-//! frontend subscribes to `broadcast@<clientId>`, seeds it with `broadcast.replace`
-//! to keep it a faithful mirror of `appStore`, renders the broadcast UI from it
-//! (render cut, on by default), and routes the membership actions through the
-//! per-transition `broadcast.*` intents (mutation cut, on by default) so this
-//! store is authoritative. The `appStore` broadcast reducers remain in place as
-//! the parity-safe fallback (the render gate falls back when the region has not
-//! caught up; each mirrored intent is best-effort). Per the substrate contract the
-//! result of an intent is never returned inline — it always arrives as a
-//! projection diff on the client's region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! `broadcast@<clientId>`, renders the broadcast UI from it, and routes the
+//! membership actions through the per-transition `broadcast.*` intents, so this
+//! store is authoritative. The former `appStore` broadcast reducers, the
+//! render/mutation-cut flags and the faithful-mirror gate were removed (#2283).
+//! Per the substrate contract the result of an intent is never returned inline —
+//! it always arrives as a projection diff on the client's region.
 
 use std::sync::Arc;
 

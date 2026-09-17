@@ -1,4 +1,4 @@
-//! The authoritative, shared system-monitor state behind the shadow
+//! The authoritative, shared system-monitor state behind the
 //! `system-monitors` projection region (#2224, Phase 5 of #2139).
 //!
 //! Models the per-host/session monitoring slice the frontend currently drives in
@@ -43,7 +43,7 @@ pub const DEFAULT_MONITORING_INTERVAL_MS: u64 = 2000;
 /// terminal session id (the stable `MonitorKey`).
 ///
 /// Every field serialises (no `skip_serializing_if`) so the view model matches
-/// the frontend `MonitoringEntry` shape exactly, keeping the eventual render cut
+/// the frontend `MonitoringEntry` shape exactly, keeping the render cut
 /// a pure parity swap.
 // `SystemStats` (a field below) does not derive `PartialEq`, so this record
 // can't either; tests compare via the serialised view model instead.
@@ -120,7 +120,7 @@ pub struct RegionDelta {
     pub stats_cache: Vec<(String, Option<Value>)>,
 }
 
-/// The shadow system-monitor authority. Owns one [`MonitorEntry`] per monitored
+/// The system-monitor authority. Owns one [`MonitorEntry`] per monitored
 /// host/session, keyed by `MonitorKey`, plus the last-known stats cache. The
 /// single shared `system-monitors` region projects this state.
 #[derive(Default)]
@@ -265,11 +265,11 @@ impl SystemMonitorStore {
     }
 
     /// `monitor.replace` — overwrite the whole monitor map and stats cache with a
-    /// caller-supplied snapshot. Used by the frontend render-cut mirror (#2224) to
-    /// keep the shared region a faithful copy of `appStore`'s monitoring slice
-    /// while `appStore` remains authoritative (the mutation cut is a later step) —
-    /// the analog of the layout bridge's `layout.replace` seed. Idempotent
-    /// server-side: replacing with the same content yields no diff.
+    /// caller-supplied snapshot. Used by the frontend to keep the shared region a
+    /// faithful copy of the monitoring slice — the analog of the layout bridge's
+    /// `layout.replace` seed. This store is authoritative (the former `appStore`
+    /// reducers were removed, #2283). Idempotent server-side: replacing with the
+    /// same content yields no diff.
     pub fn replace(
         &self,
         monitors: HashMap<String, MonitorEntry>,

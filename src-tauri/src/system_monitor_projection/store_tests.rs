@@ -1,4 +1,4 @@
-//! Unit tests for the shadow [`SystemMonitorStore`] transitions (#2224).
+//! Unit tests for the [`SystemMonitorStore`] transitions (#2224).
 //!
 //! Drives the store directly and asserts on the serialised view model (the type
 //! carries a `SystemStats` field, which has no `PartialEq`, so records are

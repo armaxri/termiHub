@@ -39,11 +39,56 @@ export default defineConfig({
       // The thresholds are therefore left unchanged (each still sits a few
       // points below its measured value). Raise these (never lower) as coverage
       // improves — they are a ratchet, not a target.
+      //
+      // Per-directory floors (TFE-011): the global thresholds are a loose ratchet
+      // on the whole-app average, so a single new untested file can hide under it.
+      // The glob-keyed entries below add local floors for directories that are
+      // already uniformly well-covered, so a regression *within* one of those
+      // areas fails CI even while the global average stays green. Vitest still
+      // counts every file toward the global thresholds — the globs do NOT carve
+      // files out of the global denominator (they only ADD a second, stricter
+      // gate for the matched files). Each floor is set several points BELOW that
+      // directory's current measured coverage so it passes today and only catches
+      // future regressions. These are the directories that are uniformly
+      // well-covered *recursively* (subdirectories included — the glob `**` matches
+      // the whole subtree, unlike the non-recursive per-directory rows in the text
+      // report). Measured 2026-09-17, recursive (glob: stmts/branch/func/lines):
+      //   src/themes/**        99.42 / 93.39 / 100   / 100
+      //   src/components/ui/** 94.85 / 92.66 / 92.65 / 96.57
+      //   src/utils/**         93.72 / 91.01 / 96.17 / 94.67
+      //   src/store/slices/**  85.19 / 68.63 / 86.80 / 86.22
+      // (src/plugins is intentionally NOT floored: its direct files are 100% but
+      // recursively the subtree is only ~85%, so it is not uniformly covered.)
+      // Raise a floor (never lower) as its directory's coverage climbs.
       thresholds: {
         lines: 75,
         statements: 74,
         functions: 70,
         branches: 67,
+        "src/themes/**": {
+          statements: 95,
+          branches: 88,
+          functions: 97,
+          lines: 97,
+        },
+        "src/components/ui/**": {
+          statements: 90,
+          branches: 86,
+          functions: 86,
+          lines: 92,
+        },
+        "src/utils/**": {
+          statements: 88,
+          branches: 85,
+          functions: 90,
+          lines: 90,
+        },
+        "src/store/slices/**": {
+          statements: 80,
+          branches: 62,
+          functions: 80,
+          lines: 80,
+        },
       },
     },
   },

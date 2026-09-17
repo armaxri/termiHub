@@ -1,4 +1,5 @@
 import type { FileEntry } from "@/types/connection";
+import { compareNames } from "@/utils/locale";
 
 /** Column a file list can be sorted by. */
 export type FileSortKey = "name" | "size" | "modified";
@@ -80,9 +81,9 @@ export function sortEntries(
     } else if (key === "modified") {
       cmp = new Date(a.modified).getTime() - new Date(b.modified).getTime();
     } else {
-      cmp = a.name.localeCompare(b.name);
+      cmp = compareNames(a.name, b.name);
     }
-    if (cmp === 0) cmp = a.name.localeCompare(b.name);
+    if (cmp === 0) cmp = compareNames(a.name, b.name);
     return cmp * factor;
   });
 }

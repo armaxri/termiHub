@@ -1,4 +1,4 @@
-//! Unit tests for the shadow [`TransferStore`] transitions and folds (#2229).
+//! Unit tests for the [`TransferStore`] transitions and folds (#2229).
 //!
 //! Drives the store directly and asserts on the typed [`TransferEntry`] records,
 //! covering the `queued → active → completed | failed | cancelled` lifecycle, the

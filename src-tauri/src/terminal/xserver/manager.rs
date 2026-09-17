@@ -9,13 +9,10 @@
 //! injected behind small traits, so the reuse / adopt / idle-shutdown logic is
 //! exercised by unit tests on every platform without a real `vcxsrv.exe`.
 //!
-//! Part of the X-server provisioning epic (#1047). This issue (#1049) builds the
+//! Part of the X-server provisioning epic (#1047). This issue (#1049) built the
 //! lifecycle core; the session-facing API (`ensure_running`, `acquire_session`,
 //! `release_session`, `status`, `set_auth_file`, [`DisplayInfo`], [`XServerStatus`])
-//! is exercised by the unit tests here and wired into the orchestrator, auth and
-//! UI in sibling issues (#1050, #1052, #1053). Until then those entry points are
-//! reachable only from tests, so dead-code analysis is relaxed for this module.
-#![allow(dead_code)]
+//! is now wired into the orchestrator, auth and UI (#1050, #1052, #1053).
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};

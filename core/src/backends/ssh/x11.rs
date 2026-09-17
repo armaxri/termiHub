@@ -338,7 +338,6 @@ async fn proxy_x11_channel(
     channel: russh::Channel<russh::client::Msg>,
     local_x: &LocalXServerInfo,
 ) {
-    #[allow(unused_mut)]
     let mut channel_stream = channel.into_stream();
 
     match &local_x.connection {

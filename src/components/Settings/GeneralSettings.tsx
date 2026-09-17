@@ -6,7 +6,7 @@ import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
 import { isWindows } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
-import { Select, SelectItem, Toggle, toast } from "@/components/ui";
+import { Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
 import { setFileLogLevel, getLogFilePath } from "@/services/api";
 import { frontendError } from "@/utils/frontendLog";
@@ -121,8 +121,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
             label="Default User"
             hint="Default username pre-filled for new SSH connections."
           >
-            <input
-              type="text"
+            <Input
               value={settings.defaultUser ?? ""}
               onChange={(e) =>
                 onChange((prev) => ({ ...prev, defaultUser: e.target.value || undefined }))

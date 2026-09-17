@@ -1,4 +1,4 @@
-//! The authoritative, shared transfer-queue state behind the shadow `transfers`
+//! The authoritative, shared transfer-queue state behind the `transfers`
 //! projection region (#2229, Phase 5 of #2139 / #2153).
 //!
 //! Models the Transfer Queue panel slice the frontend currently drives in
@@ -9,7 +9,7 @@
 //! attempt/max-attempt counters. The [`TransferEntry`] record and the
 //! `entry_from_*` folds mirror the frontend `TransferEntry` and the
 //! `transferEntryFrom{Seed,Progress,Snapshot}` helpers one-to-one
-//! (`src/types/transfer.ts`), so the eventual render cut is a pure parity swap.
+//! (`src/types/transfer.ts`), so the render cut was a pure parity swap.
 //!
 //! # Scope — the queue *view*, not the transfer engine
 //!
@@ -412,7 +412,7 @@ pub struct RegionDelta {
     pub minimized: bool,
 }
 
-/// The shadow transfer-queue authority. Owns one [`TransferEntry`] per transfer,
+/// The transfer-queue authority. Owns one [`TransferEntry`] per transfer,
 /// keyed by `transferId`, plus the panel-minimized flag. The single shared
 /// `transfers` region projects this state.
 #[derive(Default)]
@@ -524,11 +524,11 @@ impl TransferStore {
     }
 
     /// `transfer.replace` — overwrite the whole queue map and minimized flag with
-    /// a caller-supplied snapshot. Used by the frontend render-cut mirror (#2229)
-    /// to keep the shared region a faithful copy of `appStore`'s transfer-queue
-    /// slice while `appStore` remains authoritative (the mutation cut is a later
-    /// step) — the analog of the system-monitor bridge's `monitor.replace` seed.
-    /// Idempotent server-side: replacing with identical content yields no diff.
+    /// a caller-supplied snapshot. Used by the frontend to keep the shared region a
+    /// faithful copy of the transfer-queue slice — the analog of the system-monitor
+    /// bridge's `monitor.replace` seed. This store is authoritative (the former
+    /// `appStore` reducers were removed, #2283). Idempotent server-side: replacing
+    /// with identical content yields no diff.
     pub fn replace(&self, queue: HashMap<String, TransferEntry>, minimized: bool) {
         let mut inner = self.lock();
         // Mark every key that could differ dirty: the old set (removals / changes)

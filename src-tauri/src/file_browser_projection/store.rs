@@ -1,5 +1,5 @@
 //! The authoritative, client-scoped file-browser **view** state behind the
-//! shadow `file-browser@<clientId>` region (#2228, Phase 5 of #2139 / #2153).
+//! `file-browser@<clientId>` region (#2228, Phase 5 of #2139 / #2153).
 //!
 //! Models the file-browser UI state the frontend currently drives in
 //! `appStore.ts`: the two browser panes a client can open — **local**
@@ -269,7 +269,7 @@ impl ClientState {
     }
 }
 
-/// The shadow file-browser authority. Owns one [`ClientState`] per attached
+/// The file-browser authority. Owns one [`ClientState`] per attached
 /// client, keyed by `clientId`; an unknown client is seeded lazily on first
 /// touch. Each client projects its own `file-browser@<clientId>` region.
 pub struct FileBrowserStore {
@@ -393,12 +393,12 @@ impl FileBrowserStore {
 
     /// `fileBrowser.replace` — overwrite a client's whole browser view (active
     /// pane, the two panes, clipboard) with a caller-supplied snapshot. The
-    /// frontend render-cut mirror (#2228) uses this whole-slice seed to keep the
-    /// client's `file-browser@<clientId>` region a faithful copy of `appStore`'s
-    /// file-browser UI-state slice while `appStore` stays authoritative (the
-    /// mutation cut is a later step) — the analog of the connections bridge's
-    /// `connection.replace` / agents bridge's `agent.replace` seed. Idempotent
-    /// server-side: replacing with identical content yields no diff.
+    /// frontend uses this whole-slice seed to keep the client's
+    /// `file-browser@<clientId>` region a faithful copy of the file-browser
+    /// UI-state slice — the analog of the connections bridge's
+    /// `connection.replace` / agents bridge's `agent.replace` seed. This store is
+    /// authoritative (the former `appStore` reducers were removed, #2283).
+    /// Idempotent server-side: replacing with identical content yields no diff.
     pub fn replace(&self, client_id: &str, view: ClientView) {
         let mut clients = self.lock();
         let state = clients.entry(client_id.to_string()).or_default();

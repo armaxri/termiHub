@@ -1,4 +1,4 @@
-//! Unit tests for the shadow [`ConnectionsStore`] transitions (#2225).
+//! Unit tests for the [`ConnectionsStore`] transitions (#2225).
 //!
 //! Drives the store directly and asserts on the flat arrays / serialised view
 //! model (the reused config types carry a `serde_json::Value` settings field,

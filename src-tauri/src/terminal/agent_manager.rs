@@ -1349,6 +1349,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
     }
 
     /// Detach from a session on the agent.
+    // allow(dead_code): session-lifecycle API counterpart to the wired-up attach
+    // path; retained for the backend-driven reattach/close flows, not yet routed to.
     #[allow(dead_code)]
     pub fn detach_session(
         &self,
@@ -1364,6 +1366,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
     }
 
     /// Close a session on the agent.
+    // allow(dead_code): session-lifecycle API counterpart to the wired-up attach
+    // path; retained for the backend-driven reattach/close flows, not yet routed to.
     #[allow(dead_code)]
     pub fn close_session(
         &self,

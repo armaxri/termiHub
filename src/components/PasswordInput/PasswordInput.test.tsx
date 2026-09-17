@@ -163,4 +163,24 @@ describe("PasswordInput", () => {
     keyEvent("keydown", true);
     expect(seen).toBe(true);
   });
+
+  it("composes on the shared ui/Input primitive and preserves the caller className", () => {
+    act(() => {
+      root.render(
+        <PasswordInput
+          value=""
+          onChange={() => {}}
+          className="custom-cls"
+          data-testid="pw"
+          aria-invalid
+        />
+      );
+    });
+    // Migrated to ui/Input: the node carries the primitive class alongside the
+    // caller-supplied className and keeps its forwarded attributes/behavior.
+    expect(input().className).toContain("ui-input");
+    expect(input().className).toContain("custom-cls");
+    expect(input().getAttribute("data-testid")).toBe("pw");
+    expect(input().getAttribute("aria-invalid")).toBe("true");
+  });
 });

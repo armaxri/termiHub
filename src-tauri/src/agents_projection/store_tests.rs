@@ -1,4 +1,4 @@
-//! Unit tests for the shadow [`AgentsStore`] transitions (#2226).
+//! Unit tests for the [`AgentsStore`] transitions (#2226).
 //!
 //! Drives the store directly and asserts on the typed records and the serialised
 //! view model, checking the agent list order, the backend-authoritative

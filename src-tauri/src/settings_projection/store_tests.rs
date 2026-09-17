@@ -1,4 +1,4 @@
-//! Unit tests for the shadow [`SettingsStore`] transitions (#2227).
+//! Unit tests for the [`SettingsStore`] transitions (#2227).
 //!
 //! Drives the store directly and asserts on the serialised view model: the
 //! seeded default document, whole-document replace, shallow patch (insert /
