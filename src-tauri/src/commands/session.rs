@@ -735,7 +735,7 @@ pub async fn session_get_capabilities(
     })
 }
 
-/// Start session-based monitoring, pushing stats as `session-monitoring-stats` events.
+/// Start session-based monitoring, folding stats into the system-monitor region.
 ///
 /// `interval_ms` sets the collection cadence for this monitor; when omitted the
 /// provider's default interval is used (#1233).

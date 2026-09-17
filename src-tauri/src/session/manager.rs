@@ -21,7 +21,6 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::files::FileEntry;
-use termihub_core::monitoring::{MonitorStatus, SystemStats};
 use termihub_core::output::coalescer::OutputCoalescer;
 use termihub_core::output::screen_clear::ScreenClearDetector;
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
@@ -264,24 +263,6 @@ pub(super) struct SessionEntry {
     /// session. Set by the frontend via `set_session_line_ending`; defaults to
     /// [`LineEnding::Lf`] until then.
     pub(super) line_ending: LineEnding,
-}
-
-/// Push event emitted via Tauri when session-based monitoring delivers stats.
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionMonitoringStatsEvent {
-    pub session_id: String,
-    pub stats: SystemStats,
-}
-
-/// Push event emitted via Tauri when a session's monitoring status changes.
-///
-/// Carries the collector loop's lifecycle state so the frontend can render an
-/// explicit `Stale` indicator instead of showing frozen stats as live (#1229,
-/// audit gap G1). `session_id` is snake_case to match the frontend payload.
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionMonitoringStatusEvent {
-    pub session_id: String,
-    pub status: MonitorStatus,
 }
 
 /// Per-session scrollback capture buffers, keyed by `session_id` (#1900).
@@ -1413,14 +1394,14 @@ impl SessionManager {
         )
     }
 
-    /// Subscribe to a session's monitoring provider and forward stats and
-    /// status as Tauri events.
+    /// Subscribe to a session's monitoring provider and fold stats and status
+    /// into the shared `SystemMonitorStore` at the source.
     ///
     /// Spawns a background task that reads the subscription's stats and status
-    /// channels and emits `session-monitoring-stats` and
-    /// `session-monitoring-status` events to the frontend. The status stream
-    /// lets the UI surface an explicit `Stale` arm on a mid-stream drop instead
-    /// of rendering frozen stats as live (#1229, audit gap G1). Call
+    /// channels and folds each sample into the store, fanning the
+    /// system-monitor region diff out to subscribers. The status stream lets the
+    /// UI surface an explicit `Stale` arm on a mid-stream drop instead of
+    /// rendering frozen stats as live (#1229, audit gap G1). Call
     /// [`stop_session_monitoring`](Self::stop_session_monitoring) to cancel the
     /// task and unsubscribe.
     pub async fn start_session_monitoring<R: tauri::Runtime>(
@@ -4554,40 +4535,6 @@ mod tests {
         );
         assert_eq!(calls[0].0, "agent-1");
         assert_eq!(calls[0].1, "remote-1");
-    }
-
-    /// Tauri events are consumed by the TypeScript frontend which uses snake_case
-    /// property names in the payload interface.  Verify that `SessionMonitoringStatsEvent`
-    /// serialises `session_id` as `session_id` (not `sessionId`) so the frontend's
-    /// `event.payload.session_id` receives the value.
-    #[test]
-    fn session_monitoring_stats_event_serialises_session_id_as_snake_case() {
-        use termihub_core::monitoring::SystemStats;
-        let event = SessionMonitoringStatsEvent {
-            session_id: "test-session-123".to_string(),
-            stats: SystemStats {
-                hostname: "host".to_string(),
-                uptime_seconds: 0.0,
-                load_average: [0.0; 3],
-                cpu_usage_percent: 0.0,
-                memory_total_kb: 0,
-                memory_available_kb: 0,
-                memory_used_percent: 0.0,
-                disk_total_kb: 0,
-                disk_used_kb: 0,
-                disk_used_percent: 0.0,
-                os_info: String::new(),
-            },
-        };
-        let json = serde_json::to_string(&event).unwrap();
-        assert!(
-            json.contains("\"session_id\""),
-            "expected snake_case key; got: {json}"
-        );
-        assert!(
-            !json.contains("\"sessionId\""),
-            "camelCase key must not appear; got: {json}"
-        );
     }
 
     // ── FileOps facade tests (#2076) ──────────────────────────────────
