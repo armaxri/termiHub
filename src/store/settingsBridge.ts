@@ -43,6 +43,7 @@ import {
 } from "@/services/transport";
 import type { AppSettings } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The projection region id for the settings domain (twin of the Rust
  * `SETTINGS_REGION` const). Shared (Open Design Decision #4 / #6). */
@@ -91,7 +92,7 @@ export function setSettingsTransportForTest(t: Transport | null): void {
   transportInstance = t;
   lastView = DEFAULT_SETTINGS_VIEW;
   lastViewSignature = JSON.stringify(DEFAULT_SETTINGS_VIEW);
-  lastAppliedVersion = -1;
+  versionGuard.reset();
   lastSeededSignature = null;
 }
 
@@ -116,10 +117,11 @@ let lastView: SettingsView = DEFAULT_SETTINGS_VIEW;
 // view identity or re-notify subscribers — which would reset a consumer's local
 // draft or trigger needless re-renders.
 let lastViewSignature: string = JSON.stringify(DEFAULT_SETTINGS_VIEW);
-// The monotonic region version of `lastView`. A projected view older than this is
-// stale (e.g. an initial subscribe snapshot delivered late, after a newer diff has
-// already landed) and is ignored, so it can never clobber the current document.
-let lastAppliedVersion = -1;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// older than the last applied is stale (e.g. an initial subscribe snapshot
+// delivered late, after a newer diff has already landed) and is ignored, so it can
+// never clobber the current document.
+const versionGuard = makeVersionGuard();
 
 /**
  * Commit a projected document (at its region `version`) as the current view and
@@ -129,8 +131,7 @@ let lastAppliedVersion = -1;
  * reader hook's value referentially stable across resyncs.
  */
 function commitSettingsView(view: SettingsView, version: number): void {
-  if (version < lastAppliedVersion) return;
-  lastAppliedVersion = version;
+  if (!versionGuard.shouldApply(version)) return;
   const signature = JSON.stringify(view);
   if (signature === lastViewSignature) return;
   lastView = view;
@@ -194,7 +195,7 @@ export function stopSettingsSubscription(): void {
   startPromise = null;
   lastView = DEFAULT_SETTINGS_VIEW;
   lastViewSignature = JSON.stringify(DEFAULT_SETTINGS_VIEW);
-  lastAppliedVersion = -1;
+  versionGuard.reset();
   lastSeededSignature = null;
 }
 

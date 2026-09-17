@@ -20,6 +20,7 @@ import type {
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 
 import {
+  __emitConnectionsViewForTest,
   CONNECTIONS_REGION,
   currentConnectionsView,
   ensureConnectionsSubscribed,
@@ -134,6 +135,32 @@ describe("subscription + fan-out", () => {
 
     expect(currentConnectionsView().connections).toHaveLength(1);
     expect(received[received.length - 1].connections[0].id).toBe("A/1");
+    unsubscribe();
+  });
+});
+
+describe("version guard (FES-006)", () => {
+  it("applies the first snapshot, then a newer one, and drops a stale older one", () => {
+    const received: ConnectionsView[] = [];
+    const unsubscribe = onConnectionsView((v) => received.push(v));
+
+    const v1: ConnectionsView = { folders: [folder("A")], connections: [] };
+    const v2: ConnectionsView = { folders: [folder("A")], connections: [connection("A/1", "A")] };
+    const stale: ConnectionsView = { folders: [folder("Z")], connections: [] };
+
+    // First snapshot always applies.
+    __emitConnectionsViewForTest(v1, 1);
+    expect(currentConnectionsView()).toEqual(v1);
+
+    // A strictly newer version applies.
+    __emitConnectionsViewForTest(v2, 2);
+    expect(currentConnectionsView()).toEqual(v2);
+
+    // A strictly older (stale, out-of-order) version is dropped — the newer view stays.
+    __emitConnectionsViewForTest(stale, 1);
+    expect(currentConnectionsView()).toEqual(v2);
+    expect(received[received.length - 1]).toEqual(v2);
+
     unsubscribe();
   });
 });

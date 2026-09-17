@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { installBroadcastHarness, type FakeBroadcastTransport } from "@/test/broadcastHarness";
 import {
+  __emitBroadcastViewForTest,
   currentBroadcastView,
   dispatchBroadcastIntent,
   dispatchBroadcastIntentBestEffort,
@@ -118,5 +119,23 @@ describe("broadcast bridge — authoritative region", () => {
   it("a best-effort dispatch never throws out of the caller", async () => {
     await ensureBroadcastSubscribed();
     expect(() => dispatchBroadcastIntentBestEffort("broadcast.stop", {})).not.toThrow();
+  });
+
+  describe("version guard (FES-006)", () => {
+    it("applies the first snapshot, then a newer one, and drops a stale older one", () => {
+      const v1: BroadcastView = { ...EMPTY_BROADCAST_VIEW, active: true, sourceTabId: "a" };
+      const v2: BroadcastView = { ...EMPTY_BROADCAST_VIEW, active: true, sourceTabId: "b" };
+      const stale: BroadcastView = { ...EMPTY_BROADCAST_VIEW, active: true, sourceTabId: "STALE" };
+
+      __emitBroadcastViewForTest(v1, 1);
+      expect(currentBroadcastView().sourceTabId).toBe("a");
+
+      __emitBroadcastViewForTest(v2, 2);
+      expect(currentBroadcastView().sourceTabId).toBe("b");
+
+      // A strictly older version is dropped — the newer view stays.
+      __emitBroadcastViewForTest(stale, 1);
+      expect(currentBroadcastView().sourceTabId).toBe("b");
+    });
   });
 });

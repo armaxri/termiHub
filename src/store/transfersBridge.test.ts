@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Intent, IntentAck } from "@/services/transport";
 import {
+  __emitTransfersViewForTest,
   currentTransfersView,
   dispatchTransferIntent,
   dispatchTransferIntentBestEffort,
@@ -49,6 +50,24 @@ describe("subscription + fan-out", () => {
     expect(currentTransfersView().minimized).toBe(true);
     expect(Object.keys(currentTransfersView().queue)).toEqual(["t1"]);
     unsubscribe();
+  });
+});
+
+describe("version guard (FES-006)", () => {
+  it("applies the first snapshot, then a newer one, and drops a stale older one", () => {
+    const v1 = transfersView([fakeTransferEntry("t1", { transferred: 100 })]);
+    const v2 = transfersView([fakeTransferEntry("t1", { transferred: 500 })]);
+    const stale = transfersView([fakeTransferEntry("t1", { transferred: 999 })]);
+
+    __emitTransfersViewForTest(v1, 1);
+    expect(currentTransfersView().queue.t1.transferred).toBe(100);
+
+    __emitTransfersViewForTest(v2, 2);
+    expect(currentTransfersView().queue.t1.transferred).toBe(500);
+
+    // A strictly older version is dropped — the newer view stays.
+    __emitTransfersViewForTest(stale, 1);
+    expect(currentTransfersView().queue.t1.transferred).toBe(500);
   });
 });
 

@@ -19,6 +19,7 @@ import {
 } from "@/utils/reconnectBackoff";
 
 import {
+  __emitSessionViewForTest,
   currentSessionView,
   dispatchSessionIntent,
   effectiveAutoReconnect,
@@ -36,6 +37,7 @@ import {
   setSessionTransportForTest,
   stopSessionSubscription,
   type ProjectedSessionLifecycle,
+  type SessionLifecycleView,
 } from "./sessionBridge";
 
 /**
@@ -244,6 +246,42 @@ describe("shared region reconcile fan-out", () => {
     expect(lastA["tab-1"].status).toBe("connected");
     expect(lastB["tab-1"].status).toBe("connected");
     expect(seenA).toEqual(seenB);
+  });
+});
+
+describe("version guard (FES-006)", () => {
+  const life = (status: ProjectedSessionLifecycle["status"]): ProjectedSessionLifecycle => ({
+    status,
+    reconnect: initialReconnectState,
+  });
+  const view = (status: ProjectedSessionLifecycle["status"]): SessionLifecycleView => ({
+    sessions: { "tab-1": life(status) },
+  });
+
+  it("applies the first snapshot, then a newer one, and drops a stale older one", () => {
+    const seen: Record<string, ProjectedSessionLifecycle>[] = [];
+    onSessionView((next) => seen.push(structuredClone(next)));
+
+    __emitSessionViewForTest(view("connecting"), 1);
+    expect(currentSessionView()["tab-1"].status).toBe("connecting");
+
+    __emitSessionViewForTest(view("connected"), 2);
+    expect(currentSessionView()["tab-1"].status).toBe("connected");
+
+    // A strictly older (stale, out-of-order) version is dropped — the newer view
+    // stays, so a late snapshot can never regress a live reconnect state.
+    __emitSessionViewForTest(view("reconnecting"), 1);
+    expect(currentSessionView()["tab-1"].status).toBe("connected");
+    expect(seen[seen.length - 1]["tab-1"].status).toBe("connected");
+  });
+
+  it("still applies an equal-version re-emit (the gap-free optimistic overlay case)", () => {
+    __emitSessionViewForTest(view("connecting"), 3);
+    expect(currentSessionView()["tab-1"].status).toBe("connecting");
+    // ProjectionClient re-emits an optimistic overlay at the *same* region version;
+    // the guard must let it through so the reconnect feedback is not suppressed.
+    __emitSessionViewForTest(view("reconnecting"), 3);
+    expect(currentSessionView()["tab-1"].status).toBe("reconnecting");
   });
 });
 

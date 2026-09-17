@@ -55,6 +55,7 @@ import {
 } from "@/services/transport";
 import type { TransferEntry } from "@/types/transfer";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The projection region id for the transfer-queue domain (twin of the Rust
  * `TRANSFERS_REGION` const). Shared (Open Design Decision #4). */
@@ -115,6 +116,7 @@ export function setTransferTransportForTest(t: Transport | null): void {
   startPromise = null;
   transportInstance = t;
   lastView = EMPTY_VIEW;
+  versionGuard.reset();
 }
 
 function transport(): Transport {
@@ -131,6 +133,28 @@ export type TransfersViewListener = (view: TransfersView) => void;
 
 const viewListeners = new Set<TransfersViewListener>();
 let lastView: TransfersView = EMPTY_VIEW;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// strictly older than the last applied is a stale, out-of-order delivery and is
+// ignored, so it can never clobber a newer view.
+const versionGuard = makeVersionGuard();
+
+/**
+ * Commit a projected view (at its region `version`) as the current view and notify
+ * subscribers, unless it is stale (a version strictly older than the last applied).
+ * On today's substrate versions arrive monotonically so the guard never drops a
+ * valid update — it only adds out-of-order protection.
+ */
+function commitTransfersView(view: TransfersView, version: number): void {
+  if (!versionGuard.shouldApply(version)) return;
+  lastView = view;
+  for (const listener of viewListeners) {
+    try {
+      listener(lastView);
+    } catch (err) {
+      logTransferBridgeFallback("reconcile", err);
+    }
+  }
+}
 
 /**
  * Register a listener, invoked with the projected view on every diff. Returns an
@@ -152,14 +176,7 @@ export function ensureTransfersSubscribed(): Promise<ProjectionClient> {
   if (!startPromise) {
     const client = new ProjectionClient(transport(), TRANSFERS_REGION);
     client.onChange((state) => {
-      lastView = toView((state.view ?? {}) as TransfersRegionSnapshot);
-      for (const listener of viewListeners) {
-        try {
-          listener(lastView);
-        } catch (err) {
-          logTransferBridgeFallback("reconcile", err);
-        }
-      }
+      commitTransfersView(toView((state.view ?? {}) as TransfersRegionSnapshot), state.version);
     });
     startPromise = client
       .start()
@@ -182,6 +199,17 @@ export function stopTransfersSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastView = EMPTY_VIEW;
+  versionGuard.reset();
+}
+
+/**
+ * Test-only: synchronously commit a projected view at an explicit region `version`
+ * through the same guarded path a real diff takes, so a test can drive the
+ * stale-drop / apply behaviour without a transport double. Never call from
+ * production code.
+ */
+export function __emitTransfersViewForTest(view: TransfersView, version: number): void {
+  commitTransfersView(view, version);
 }
 
 /**
