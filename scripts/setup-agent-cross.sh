@@ -43,8 +43,6 @@ TARGETS=(
 echo "=== Agent Cross-Compilation Setup ==="
 echo ""
 
-OS="$(uname -s)"
-
 # --- Add Rust targets ---
 echo "--- Adding Rust targets ---"
 for target in "${TARGETS[@]}"; do

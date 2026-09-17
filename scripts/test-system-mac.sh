@@ -18,7 +18,7 @@
 #   ./scripts/test-system-mac.sh [OPTIONS]
 #
 # Options:
-#   --skip-build      Skip cargo build step
+#   --skip-build      Skip the container image rebuild (reuse existing images)
 #   --skip-serial     Skip virtual serial port setup
 #   --skip-unit       Skip unit tests (run integration tests only)
 #   --with-fault      Include network fault injection tests (profile: fault)
@@ -58,7 +58,7 @@ for arg in "$@"; do
             echo "Usage: ./scripts/test-system-mac.sh [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --skip-build    Skip cargo build step"
+            echo "  --skip-build    Skip container image rebuild (reuse existing images)"
             echo "  --skip-serial   Skip virtual serial port setup"
             echo "  --skip-unit     Skip unit tests (integration only)"
             echo "  --with-fault    Include network fault injection tests"
@@ -206,7 +206,14 @@ elif [ "$WITH_STRESS" -eq 1 ]; then
     COMPOSE_ARGS="--profile stress"
 fi
 
-$CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS up -d --build
+# --skip-build reuses the existing images instead of rebuilding them.
+BUILD_FLAG="--build"
+if [ "$SKIP_BUILD" -eq 1 ]; then
+    BUILD_FLAG=""
+    echo "Reusing existing container images (--skip-build)."
+fi
+
+$CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS up -d $BUILD_FLAG
 DOCKER_STARTED=1
 
 # Wait for core SSH container
