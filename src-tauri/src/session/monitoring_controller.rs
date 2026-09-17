@@ -98,6 +98,44 @@ impl<'a> MonitoringController<'a> {
             .cloned()
     }
 
+    /// The session's own monitoring provider as an owned handle, resolving the
+    /// same errors the borrowed path did — [`TerminalError::SessionNotFound`]
+    /// for an unknown session, `RemoteError("No monitoring capability")` for a
+    /// session without one.
+    ///
+    /// The `sessions` lock is released before this returns, so the caller awaits
+    /// the provider's (possibly network) method — `subscribe` / `set_interval` —
+    /// **without** holding the map lock across it (CONC-007). The returned `Arc`
+    /// keeps the provider alive independently of the session entry, so a session
+    /// removed mid-call cannot invalidate it.
+    async fn require_session_provider(
+        &self,
+        session_id: &str,
+    ) -> Result<Arc<dyn MonitoringProvider + Send + Sync>, TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let entry = sessions
+            .get(session_id)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        entry
+            .connection
+            .monitoring_handle()
+            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))
+    }
+
+    /// Best-effort variant for stop / cancel: an unknown session, or one with no
+    /// provider, yields `None` (treated as already gone) rather than an error.
+    /// Like [`require_session_provider`](Self::require_session_provider) it drops
+    /// the `sessions` lock before the caller's provider call (CONC-007).
+    async fn optional_session_provider(
+        &self,
+        session_id: &str,
+    ) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+        self.sessions
+            .lock()
+            .await
+            .get(session_id)
+            .and_then(|entry| entry.connection.monitoring_handle())
+    }
     /// Subscribe to a session's monitoring provider and fold stats and status
     /// into the shared `SystemMonitorStore` at the source.
     ///
@@ -125,24 +163,19 @@ impl<'a> MonitoringController<'a> {
 
         let subscription = match &resolved {
             ResolvedLocation::Local => {
-                let subscription = {
-                    let sessions = self.sessions.lock().await;
-                    let entry = sessions
-                        .get(session_id)
-                        .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-                    let provider = entry.connection.monitoring().ok_or_else(|| {
-                        TerminalError::RemoteError("No monitoring capability".to_string())
-                    })?;
-                    provider
-                        .subscribe()
-                        .await
-                        .map_err(|e| TerminalError::RemoteError(e.to_string()))?
-                };
+                // Clone the provider handle out from under the `sessions` lock,
+                // then subscribe with the lock released so the SSH / agent
+                // connect inside `subscribe` does not stall every other session
+                // operation for its duration (CONC-007).
+                let provider = self.require_session_provider(session_id).await?;
+                let subscription = provider
+                    .subscribe()
+                    .await
+                    .map_err(|e| TerminalError::RemoteError(e.to_string()))?;
 
                 // Apply the caller's chosen refresh interval to the now-running
-                // loop (#1233). Done after the subscribe block so the provider
-                // reference is not held across this await. Takes effect on the
-                // next tick; omitted → provider default.
+                // loop (#1233). Takes effect on the next tick; omitted → provider
+                // default.
                 if let Some(ms) = interval_ms {
                     self.set_session_monitoring_interval(session_id, ms).await?;
                 }
@@ -273,12 +306,12 @@ impl<'a> MonitoringController<'a> {
             return Ok(());
         }
 
-        let sessions = self.sessions.lock().await;
-        if let Some(entry) = sessions.get(session_id) {
-            if let Some(provider) = entry.connection.monitoring() {
-                if let Err(e) = provider.unsubscribe().await {
-                    warn!(session_id, error = %e, "Session monitoring unsubscribe error");
-                }
+        // Fetch the provider handle, then unsubscribe with the `sessions` lock
+        // released — an agent-hosted monitor's unsubscribe is a network RPC
+        // (CONC-007). Best-effort: a missing session / provider is already gone.
+        if let Some(provider) = self.optional_session_provider(session_id).await {
+            if let Err(e) = provider.unsubscribe().await {
+                warn!(session_id, error = %e, "Session monitoring unsubscribe error");
             }
         }
         Ok(())
@@ -297,14 +330,9 @@ impl<'a> MonitoringController<'a> {
             proxy.set_paused(paused).await;
             return Ok(());
         }
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let provider = entry
-            .connection
-            .monitoring()
-            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))?;
+        // Resolve the provider under the lock, then call it with the lock
+        // released (CONC-007).
+        let provider = self.require_session_provider(session_id).await?;
         provider.set_paused(paused).await;
         Ok(())
     }
@@ -321,14 +349,10 @@ impl<'a> MonitoringController<'a> {
                 .await;
             return Ok(());
         }
-        let sessions = self.sessions.lock().await;
-        let entry = sessions
-            .get(session_id)
-            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
-        let provider = entry
-            .connection
-            .monitoring()
-            .ok_or_else(|| TerminalError::RemoteError("No monitoring capability".to_string()))?;
+        // Resolve the provider under the lock, then call it with the lock
+        // released — an agent-hosted monitor's `set_interval` re-subscribes over
+        // the network (CONC-007).
+        let provider = self.require_session_provider(session_id).await?;
         provider
             .set_interval(std::time::Duration::from_millis(interval_ms.max(1)))
             .await;
@@ -346,11 +370,10 @@ impl<'a> MonitoringController<'a> {
             proxy.cancel_connect().await;
             return Ok(());
         }
-        let sessions = self.sessions.lock().await;
-        if let Some(entry) = sessions.get(session_id) {
-            if let Some(provider) = entry.connection.monitoring() {
-                provider.cancel_connect().await;
-            }
+        // Best-effort: resolve the provider under the lock, then cancel with the
+        // lock released (CONC-007).
+        if let Some(provider) = self.optional_session_provider(session_id).await {
+            provider.cancel_connect().await;
         }
         Ok(())
     }

@@ -71,7 +71,7 @@ pub struct RemoteProxy {
     /// File browser proxy (set during connect if supported).
     file_browser_proxy: Option<RemoteFileBrowserProxy>,
     /// Monitoring proxy (set during connect if supported).
-    monitoring_proxy: Option<RemoteMonitoringProxy>,
+    monitoring_proxy: Option<Arc<RemoteMonitoringProxy>>,
 }
 
 impl RemoteProxy {
@@ -333,7 +333,13 @@ impl ConnectionType for RemoteProxy {
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
         self.monitoring_proxy
             .as_ref()
-            .map(|p| p as &dyn MonitoringProvider)
+            .map(|p| p.as_ref() as &dyn MonitoringProvider)
+    }
+
+    fn monitoring_handle(&self) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+        self.monitoring_proxy
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn MonitoringProvider + Send + Sync>)
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
@@ -509,7 +515,7 @@ impl RemoteProxy {
                                     } else {
                                         remote_sid.clone()
                                     };
-                                    self.monitoring_proxy = Some(RemoteMonitoringProxy {
+                                    self.monitoring_proxy = Some(Arc::new(RemoteMonitoringProxy {
                                         agent_id: self.agent_id.clone(),
                                         monitoring_host,
                                         agent_manager: self.agent_manager.clone(),
@@ -517,7 +523,7 @@ impl RemoteProxy {
                                             DEFAULT_MONITORING_INTERVAL_MS,
                                         )),
                                         paused_tx: tokio::sync::watch::channel(false).0,
-                                    });
+                                    }));
                                 }
                             }
                         }
