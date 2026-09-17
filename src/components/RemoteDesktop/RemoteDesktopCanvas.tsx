@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import { onRemoteDesktopFrame, onRemoteDesktopCursor } from "@/services/events";
 import type { RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
+import { useDebouncedCallback } from "@/hooks/useDebounce";
 
 interface RemoteDesktopCanvasProps {
   /** Backend graphical session id; the canvas filters events by it. */
@@ -70,7 +71,14 @@ export function RemoteDesktopCanvas({
     y: 0,
     visible: false,
   });
-  const resizeTimerRef = useRef<number | null>(null);
+  // Debounce (Match Window) resolution-change requests through the shared hook
+  // (LIBFE-003), preserving the prior 300ms hand-rolled debounce. The callback
+  // reads the container's *current* dimensions when it fires and always calls the
+  // latest `onResize`; the pending request is dropped on unmount / mode change.
+  const debouncedResize = useDebouncedCallback(() => {
+    const container = containerRef.current;
+    if (container) onResize(container.clientWidth, container.clientHeight);
+  }, RESIZE_DEBOUNCE_MS);
   // Whether this canvas has painted a frame yet (per session), so the first
   // repaint can clear the cross-window "reconnecting view…" placeholder (#1904).
   const firstFramePaintedRef = useRef(false);
@@ -209,19 +217,15 @@ export function RemoteDesktopCanvas({
     const observer = new ResizeObserver(() => {
       repaint();
       if (scaleMode === "match") {
-        if (resizeTimerRef.current !== null) clearTimeout(resizeTimerRef.current);
-        resizeTimerRef.current = window.setTimeout(() => {
-          resizeTimerRef.current = null;
-          onResize(container.clientWidth, container.clientHeight);
-        }, RESIZE_DEBOUNCE_MS);
+        debouncedResize();
       }
     });
     observer.observe(container);
     return () => {
       observer.disconnect();
-      if (resizeTimerRef.current !== null) clearTimeout(resizeTimerRef.current);
+      debouncedResize.cancel();
     };
-  }, [scaleMode, repaint, onResize]);
+  }, [scaleMode, repaint, debouncedResize]);
 
   /** Reverse-scale a client pointer position to framebuffer pixels. */
   const toFramebuffer = useCallback((clientX: number, clientY: number) => {

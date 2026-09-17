@@ -106,6 +106,13 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
   const appInfo = useAppInfo();
   const [showSavedAck, setShowSavedAck] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+  // LIBFE-003: left as-is (not routed through useDebouncedCallback). The fired
+  // debounce body also calls setEditorDirty(false) + acknowledgeSaved(), but
+  // flushPendingSave (unmount / close-request path) deliberately does neither —
+  // so the hook's single-fn `.flush()` cannot express the divergent flush
+  // behaviour without a store write + a *new* ack timer firing during unmount.
+  // The existing hand-rolled unmount/close cleanup already flushes and clears
+  // both timers, so no timer leaks past unmount. Tracked for a hook extension.
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSettingsRef = useRef<AppSettings | null>(null);
   const ackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
