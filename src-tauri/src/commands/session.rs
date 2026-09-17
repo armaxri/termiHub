@@ -1021,16 +1021,21 @@ pub async fn list_persistent_sessions(
 ///
 /// Sends a `session.getBuffer` request to the agent, which queries the daemon's
 /// ring buffer non-destructively and returns a base64-encoded snapshot.
-/// The caller (frontend xterm) writes the decoded bytes directly.
+///
+/// Returns the buffer bytes as a base64 (standard alphabet, padded) string; the
+/// frontend decodes them in `src/services/api.ts` and writes the raw bytes into
+/// the xterm. base64 avoids the ~4–6x JSON number-array bloat on a buffer that
+/// can reach the 1 MiB ring-buffer ceiling (PERF-009).
 #[tauri::command]
 pub async fn get_agent_session_buffer(
     session_id: String,
     manager: State<'_, SessionManager>,
-) -> Result<Vec<u8>, String> {
-    manager
+) -> Result<String, String> {
+    let bytes = manager
         .get_remote_session_buffer(&session_id)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
 }
 
 #[cfg(test)]

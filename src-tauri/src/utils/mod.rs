@@ -7,6 +7,8 @@ pub mod expand;
 /// conventional log directory (#1570).
 pub mod file_log;
 pub mod fs;
+/// Efficient byte transport across the Tauri IPC boundary via base64 (PERF-009).
+pub mod ipc_bytes;
 pub mod log_capture;
 /// macOS anti-throttling for the headless full-app E2E test bridge (#2480).
 /// Test-bridge-only (SEC-005); compiled out of release builds.

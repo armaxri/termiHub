@@ -465,10 +465,16 @@ export async function takePendingWindowRestore(): Promise<WindowRestorePayload |
  * Fetch a session's captured scrollback so a freshly-created xterm in a
  * destination window can repaint history after a re-parent. Empty when nothing
  * has been captured or the session is unknown.
+ *
+ * The backend ships the bytes as a compact base64 string over IPC (instead of a
+ * JSON number-array — ~4–6x wire bloat plus a per-byte array allocation on a
+ * buffer that can reach the 1 MiB ring-buffer ceiling); this wrapper decodes
+ * them so callers still get raw bytes, byte-for-byte including high/non-UTF8
+ * bytes (PERF-009).
  */
 export async function replaySessionScrollback(sessionId: string): Promise<Uint8Array> {
-  const bytes = await invoke<number[]>("replay_session_scrollback", { sessionId });
-  return new Uint8Array(bytes);
+  const b64 = await invoke<string>("replay_session_scrollback", { sessionId });
+  return base64ToBytes(b64);
 }
 
 /**
@@ -826,10 +832,18 @@ export async function listPersistentSessions(): Promise<PersistentSessionSummary
   return await invoke<PersistentSessionSummary[]>("list_persistent_sessions");
 }
 
-/** Fetch the scrollback buffer for a persistent session from the agent daemon. */
+/**
+ * Fetch the scrollback buffer for a persistent session from the agent daemon.
+ *
+ * The backend ships the bytes as a compact base64 string over IPC (instead of a
+ * JSON number-array — ~4–6x wire bloat plus a per-byte array allocation on a
+ * buffer that can reach the 1 MiB ring-buffer ceiling); this wrapper decodes
+ * them so callers still get raw bytes, byte-for-byte including high/non-UTF8
+ * bytes (PERF-009).
+ */
 export async function getAgentSessionBuffer(sessionId: string): Promise<Uint8Array> {
-  const bytes = await invoke<number[]>("get_agent_session_buffer", { sessionId });
-  return new Uint8Array(bytes);
+  const b64 = await invoke<string>("get_agent_session_buffer", { sessionId });
+  return base64ToBytes(b64);
 }
 
 /** Info about a local session managed by the desktop. */

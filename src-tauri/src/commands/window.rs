@@ -295,13 +295,17 @@ pub fn send_handoff_to_window(
 /// Replay a session's ring-buffered scrollback so a freshly-created xterm in a
 /// destination window can repaint history after a re-parent.
 ///
-/// Returns the buffered bytes (empty when nothing has been captured yet or the
-/// session is unknown). The backend session is never touched — this is a pure
+/// Returns the buffered bytes as a base64 (standard alphabet, padded) string
+/// (empty string when nothing has been captured yet or the session is unknown);
+/// the frontend decodes them in `src/services/api.ts`. base64 avoids the ~4–6x
+/// JSON number-array bloat on a buffer that can reach the 1 MiB ring-buffer
+/// ceiling (PERF-009). The backend session is never touched — this is a pure
 /// read of the capture buffer.
 #[tauri::command]
 pub async fn replay_session_scrollback(
     session_id: String,
     manager: State<'_, SessionManager>,
-) -> Result<Vec<u8>, TerminalError> {
-    Ok(manager.replay_scrollback(&session_id).await)
+) -> Result<String, TerminalError> {
+    let bytes = manager.replay_scrollback(&session_id).await;
+    Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
 }

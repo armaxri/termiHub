@@ -61,15 +61,19 @@ describe("api response-validation (TFE-004)", () => {
     vi.clearAllMocks();
   });
 
-  // These wrappers ship raw bytes over IPC as a JSON number-array and must
-  // rehydrate them into a Uint8Array for callers. Assert the command + arg
-  // shape AND that the number-array response is transformed byte-exact —
-  // including high bytes (>127) that a naive char round-trip would corrupt.
+  // These wrappers ship raw bytes over IPC as a compact base64 string (PERF-009
+  // — was a JSON number-array, ~4–6x wire bloat) and must decode them back into
+  // a Uint8Array for callers. Assert the command + arg shape AND that the base64
+  // response decodes byte-exact — including high bytes (>127) and non-UTF8
+  // sequences that a naive string round-trip would corrupt. `bytes` spans the
+  // 0x00–0xFF boundary; `b64` is its canonical base64 (the exact wire form the
+  // Rust `encode_bytes_base64` emits).
   describe("byte-array response transformation", () => {
-    const numbers = [0x00, 0x41, 0x7f, 0x80, 0xc0, 0xfe, 0xff];
+    const bytes = [0x00, 0x41, 0x7f, 0x80, 0xc0, 0xfe, 0xff];
+    const b64 = "AEF/gMD+/w==";
 
-    it("replaySessionScrollback decodes number[] into an exact Uint8Array", async () => {
-      mockedInvoke.mockResolvedValue(numbers);
+    it("replaySessionScrollback decodes base64 into an exact Uint8Array", async () => {
+      mockedInvoke.mockResolvedValue(b64);
 
       const result = await replaySessionScrollback("sess-1");
 
@@ -77,11 +81,11 @@ describe("api response-validation (TFE-004)", () => {
         sessionId: "sess-1",
       });
       expect(result).toBeInstanceOf(Uint8Array);
-      expect(Array.from(result)).toEqual(numbers);
+      expect(Array.from(result)).toEqual(bytes);
     });
 
     it("replaySessionScrollback yields an empty Uint8Array for an empty buffer", async () => {
-      mockedInvoke.mockResolvedValue([]);
+      mockedInvoke.mockResolvedValue("");
 
       const result = await replaySessionScrollback("sess-empty");
 
@@ -89,8 +93,8 @@ describe("api response-validation (TFE-004)", () => {
       expect(result.length).toBe(0);
     });
 
-    it("getAgentSessionBuffer decodes number[] into an exact Uint8Array", async () => {
-      mockedInvoke.mockResolvedValue(numbers);
+    it("getAgentSessionBuffer decodes base64 into an exact Uint8Array", async () => {
+      mockedInvoke.mockResolvedValue(b64);
 
       const result = await getAgentSessionBuffer("agent-sess-1");
 
@@ -98,7 +102,7 @@ describe("api response-validation (TFE-004)", () => {
         sessionId: "agent-sess-1",
       });
       expect(result).toBeInstanceOf(Uint8Array);
-      expect(Array.from(result)).toEqual(numbers);
+      expect(Array.from(result)).toEqual(bytes);
     });
   });
 
