@@ -161,7 +161,12 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     setSubmitError(null);
     configRef.current = null;
     runDetection();
-  }, [isOpen]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Keyed on the open/close transition only: the state setters are stable and
+    // `runDetection` is intentionally omitted so a change to its inputs (agent /
+    // requestPassword / onOpenChange) cannot restart the reset + detection while
+    // the dialog is already open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isOpen]);
 
   const handleBrowse = useCallback(async () => {
     const selected = await open({

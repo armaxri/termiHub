@@ -548,6 +548,10 @@ export function FileEditor({
     return () => {
       cancelled = true;
     };
+    // Deps are the curated file-identity signals that must trigger a reload
+    // (path / remote flag / session identity / scratch content / nonce). Other
+    // `meta` fields and the setters are intentionally omitted so an unrelated
+    // meta churn cannot re-load and blow away in-progress edits (FEC-011).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meta.filePath, meta.isRemote, sessionIdentity, meta.scratch, meta.scratchContent, loadNonce]);
 

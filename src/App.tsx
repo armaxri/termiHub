@@ -269,6 +269,9 @@ function App() {
       clearTimeout(startupTimer);
       clearInterval(periodicTimer);
     };
+    // Run-once on mount: schedules the initial + periodic update checks. The
+    // `settings.updates.autoCheck` snapshot and `checkForUpdates` identity are
+    // intentionally omitted so the timers are never torn down and rescheduled.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
