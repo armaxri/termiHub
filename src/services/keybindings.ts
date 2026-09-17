@@ -400,9 +400,45 @@ const SHIFT_KEY_TO_BASE: Record<string, string> = {
   _: "-",
 };
 
+/**
+ * Physical-key `KeyboardEvent.code` for a combo whose key is a single Latin
+ * letter or digit, or `null` for anything else (punctuation, named keys like
+ * `Tab`/`Enter`/`ArrowUp`/`F1`, multi-char keys).
+ *
+ * Letters map to `KeyA`…`KeyZ` and digits to `Digit0`…`Digit9` — the
+ * layout-independent codes that always identify the physical key regardless of
+ * which character it produces on the active keyboard layout. This is what makes
+ * `Ctrl/Cmd+<letter/digit>` shortcuts fire on the same physical key on a
+ * non-US/non-Latin layout, where the produced `event.key` differs (I18N-011).
+ */
+export function comboKeyToCode(key: string): string | null {
+  if (key.length !== 1) return null;
+  if (key >= "a" && key <= "z") return `Key${key.toUpperCase()}`;
+  if (key >= "A" && key <= "Z") return `Key${key}`;
+  if (key >= "0" && key <= "9") return `Digit${key}`;
+  return null;
+}
+
+/**
+ * Whether the event's key input matches the combo's key.
+ *
+ * For letter/digit position shortcuts we compare the *physical* key
+ * (`event.code`) so the shortcut is layout-independent. We fall back to the
+ * produced character (`event.key`, case-insensitive) for punctuation and named
+ * keys — which are intentionally matched by character — and for environments
+ * that supply no `event.code` (e.g. some synthetic test events).
+ */
+function eventKeyMatches(event: KeyboardEvent, comboKey: string): boolean {
+  const code = comboKeyToCode(comboKey);
+  if (code && event.code) {
+    return event.code === code;
+  }
+  return event.key === comboKey || event.key.toLowerCase() === comboKey.toLowerCase();
+}
+
 /** Check if a KeyboardEvent matches a single KeyCombo. */
 export function eventMatchesCombo(event: KeyboardEvent, combo: KeyCombo): boolean {
-  const keyMatches = event.key === combo.key || event.key.toLowerCase() === combo.key.toLowerCase();
+  const keyMatches = eventKeyMatches(event, combo.key);
 
   if (keyMatches) {
     if (!!combo.ctrl !== event.ctrlKey) return false;
