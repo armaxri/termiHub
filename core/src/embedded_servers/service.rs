@@ -58,6 +58,19 @@ impl EmbeddedServerError {
     }
 }
 
+/// Build the shared, actionable "port already in use" error for a failed bind.
+///
+/// Names the exact port and tells the user how to recover (stop the conflicting
+/// process or pick another port), so a manual start surfaces a clear, recoverable
+/// error rather than a bare OS message. The wrapped OS error is kept for
+/// diagnosis (SM-018).
+fn port_in_use(config: &EmbeddedServerConfig, source: std::io::Error) -> EmbeddedServerError {
+    EmbeddedServerError::new(format!(
+        "Port {} is already in use. Stop the conflicting process or choose a different port in the server settings. ({source})",
+        config.port
+    ))
+}
+
 /// Machine-readable service id for the embedded HTTP server.
 pub const SERVICE_ID_HTTP: &str = "http_server";
 /// Machine-readable service id for the embedded FTP server.
@@ -232,19 +245,25 @@ impl EmbeddedServerService {
     /// Attempt a quick bind to check whether a config's port is available.
     ///
     /// Static so the pre-flight check can be exercised without a live service.
+    ///
+    /// The returned error is the shared, user-facing "port in use" message both
+    /// start paths surface. Manual start (`start_embedded_server`) returns it
+    /// verbatim as a *recoverable* error — the user picked and persisted that
+    /// exact port, so it must be honoured or clearly rejected, never silently
+    /// rebound elsewhere. Quick-share (`create_and_start_server`) instead swallows
+    /// it while stepping across ports, because it starts from an unchosen default
+    /// (SM-018).
     pub fn check_port_config(config: &EmbeddedServerConfig) -> Result<(), EmbeddedServerError> {
         let addr = format!("{}:{}", config.bind_host, config.port);
         match config.server_type {
             ServerType::Tftp => {
-                let socket = std::net::UdpSocket::bind(&addr).map_err(|e| {
-                    EmbeddedServerError::new(format!("Port {} is already in use: {e}", config.port))
-                })?;
+                let socket =
+                    std::net::UdpSocket::bind(&addr).map_err(|e| port_in_use(config, e))?;
                 drop(socket);
             }
             _ => {
-                let listener = std::net::TcpListener::bind(&addr).map_err(|e| {
-                    EmbeddedServerError::new(format!("Port {} is already in use: {e}", config.port))
-                })?;
+                let listener =
+                    std::net::TcpListener::bind(&addr).map_err(|e| port_in_use(config, e))?;
                 drop(listener);
             }
         }
@@ -687,6 +706,57 @@ mod tests {
             decide_bind_outcome(Err(mpsc::RecvTimeoutError::Timeout)),
             BindOutcome::Failed(_)
         ));
+    }
+
+    // ── port pre-flight clear error (SM-018) ──────────────────────────────────
+    //
+    // A manually-started server has an explicit, persisted port, so — unlike
+    // quick-share, which falls back across ports because it uses an unchosen
+    // default — a taken port must surface a *clear, recoverable* error the UI can
+    // toast, never a silent rebind. `check_port_config` is the shared pre-flight
+    // both paths rely on; these lock in that its message names the port and tells
+    // the user how to recover.
+
+    #[test]
+    fn check_port_config_reports_clear_recoverable_error_when_tcp_port_taken() {
+        // Hold a real TCP port so the pre-flight bind must fail.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let err = EmbeddedServerService::check_port_config(&http_config(port))
+            .expect_err("a taken port must fail the pre-flight");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains(&format!("Port {port} is already in use")),
+            "message must name the taken port: {msg}"
+        );
+        assert!(
+            msg.contains("choose a different port"),
+            "message must guide the user to recover: {msg}"
+        );
+    }
+
+    #[test]
+    fn check_port_config_reports_clear_recoverable_error_when_udp_port_taken() {
+        // TFTP binds UDP; a held UDP port must fail the pre-flight the same way.
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp port");
+        let port = socket.local_addr().expect("local addr").port();
+
+        let mut cfg = http_config(port);
+        cfg.server_type = ServerType::Tftp;
+        let err = EmbeddedServerService::check_port_config(&cfg)
+            .expect_err("a taken udp port must fail the pre-flight");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains(&format!("Port {port} is already in use")),
+            "message must name the taken port: {msg}"
+        );
+        assert!(
+            msg.contains("choose a different port"),
+            "message must guide the user to recover: {msg}"
+        );
     }
 
     // ── liveness (GAP G2/G9) ──────────────────────────────────────────────────

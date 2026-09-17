@@ -112,6 +112,16 @@ pub fn set_embedded_server_run_location(
 }
 
 /// Start a server by ID.
+///
+/// Port conflicts are intentionally **not** retried here. A manually configured
+/// server has an explicit, user-chosen, persisted port, so binding a *different*
+/// port would silently desync the running server from its saved config and the
+/// address the user handed out. When the port is taken, the start fails with the
+/// shared, recoverable "port already in use" error (see
+/// [`EmbeddedServerService::check_port_config`]) which the sidebar surfaces as a
+/// toast; the user then frees the port or edits the config. This is the
+/// deliberate counterpart to [`create_and_start_server`]'s fallback, which only
+/// applies because quick-share starts from an unchosen default port (SM-018).
 #[tauri::command]
 pub fn start_embedded_server(
     server_id: String,
@@ -131,7 +141,12 @@ pub fn stop_embedded_server(
 
 /// Create a new server configuration and immediately start it.
 ///
-/// If the requested port is in use, up to 10 sequential ports are tried.
+/// If the requested port is in use, up to 10 sequential ports are tried. This
+/// fallback is specific to quick-share, which starts from an unchosen default
+/// port (`DEFAULT_PORTS[protocol]`) the user never picked — so stepping to the
+/// next free port and reporting the one actually bound is the right UX. The
+/// manual [`start_embedded_server`] path deliberately does *not* fall back,
+/// because its port is explicit and persisted (SM-018).
 /// Returns the ID of the newly created configuration.
 #[tauri::command]
 pub fn create_and_start_server(
