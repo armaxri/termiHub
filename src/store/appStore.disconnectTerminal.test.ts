@@ -53,12 +53,14 @@ function liveTabIds(): string[] {
 
 /** Open a terminal tab already carrying a live backend session id. */
 function makeLiveTerminalTab(sessionId: string, persistentConnectionId?: string): string {
-  return useAppStore.getState().addTab(
-    "shell",
-    "local",
-    { type: "local", config: {} },
-    { contentType: "terminal", sessionId, persistentConnectionId }
-  );
+  return useAppStore
+    .getState()
+    .addTab(
+      "shell",
+      "local",
+      { type: "local", config: {} },
+      { contentType: "terminal", sessionId, persistentConnectionId }
+    );
 }
 
 describe("disconnectTerminal (UX-015)", () => {
@@ -108,12 +110,14 @@ describe("disconnectTerminal (UX-015)", () => {
   });
 
   it("is a no-op for a tab with no live session", () => {
-    const noSessionTab = useAppStore.getState().addTab(
-      "shell",
-      "local",
-      { type: "local", config: {} },
-      { contentType: "terminal", sessionId: null }
-    );
+    const noSessionTab = useAppStore
+      .getState()
+      .addTab(
+        "shell",
+        "local",
+        { type: "local", config: {} },
+        { contentType: "terminal", sessionId: null }
+      );
 
     useAppStore.getState().disconnectTerminal(noSessionTab);
 
