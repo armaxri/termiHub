@@ -12,51 +12,14 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+// The shared mock records every constructed instance in `mockXtermInstances`,
+// each seeding `options` from its constructor args so the ctor-provided
+// `screenReaderMode` is observable (the live-update effect mutates the same object).
+import { mockXtermInstances as xtermInstances } from "@/test/mockXterm";
 
 // --- Mocks ---
 
-// Capture every xterm instance the component constructs so assertions can read
-// the resolved `options.screenReaderMode` (set at construction and updated live).
-const { xtermInstances, MockXTerm } = vi.hoisted(() => {
-  const instances: { options: Record<string, unknown> }[] = [];
-  class MockXTerm {
-    open = vi.fn();
-    dispose = vi.fn();
-    loadAddon = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
-    onResize = vi.fn(() => ({ dispose: vi.fn() }));
-    onScroll = vi.fn(() => ({ dispose: vi.fn() }));
-    onCursorMove = vi.fn(() => ({ dispose: vi.fn() }));
-    onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
-    write = vi.fn((_data: unknown, cb?: () => void) => cb?.());
-    writeln = vi.fn();
-    scrollToBottom = vi.fn();
-    scrollLines = vi.fn();
-    selectAll = vi.fn();
-    hasSelection = vi.fn(() => false);
-    getSelection = vi.fn(() => "");
-    attachCustomKeyEventHandler = vi.fn();
-    unicode = { activeVersion: "6" };
-    cols = 80;
-    rows = 24;
-    resize = vi.fn();
-    focus = vi.fn();
-    element = document.createElement("div");
-    buffer = { active: { viewportY: 0, baseY: 0, length: 0, getLine: vi.fn() } };
-    parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
-    options: Record<string, unknown>;
-    constructor(opts: Record<string, unknown>) {
-      // Seed options from the constructor args so the ctor-provided
-      // screenReaderMode is observable (the live-update effect mutates this same
-      // object afterwards).
-      this.options = { ...(opts ?? {}) };
-      instances.push(this);
-    }
-  }
-  return { xtermInstances: instances, MockXTerm };
-});
-
-vi.mock("@xterm/xterm", () => ({ Terminal: MockXTerm }));
+vi.mock("@xterm/xterm", async () => (await import("@/test/mockXterm")).createMockXtermModule());
 
 vi.mock("@xterm/addon-fit", () => {
   class MockFitAddon {
