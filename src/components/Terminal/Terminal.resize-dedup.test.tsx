@@ -24,44 +24,24 @@ import { TerminalPortalProvider } from "./TerminalRegistry";
 // Capture the onResize callback so tests can simulate terminal resize events.
 let capturedOnResize: ((dims: { cols: number; rows: number }) => void) | null = null;
 
-vi.mock("@xterm/xterm", () => {
-  class MockXTerm {
-    open = vi.fn();
-    dispose = vi.fn();
-    loadAddon = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
+// Extends the shared MockXTerm, overriding only what this suite drives: onResize
+// captures the fit callback, and resize() mutates cols/rows so the dedup logic
+// sees the new PTY dimensions. (write() stays a plain spy — it must not invoke a
+// write callback here.)
+vi.mock("@xterm/xterm", async () => {
+  const { MockXTerm } = await import("@/test/mockXterm");
+  class ResizeDedupXTerm extends MockXTerm {
     onResize = vi.fn((cb: (dims: { cols: number; rows: number }) => void) => {
       capturedOnResize = cb;
       return { dispose: vi.fn() };
     });
-    onScroll = vi.fn(() => ({ dispose: vi.fn() }));
-    onCursorMove = vi.fn(() => ({ dispose: vi.fn() }));
-    onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
     write = vi.fn();
-    writeln = vi.fn();
-    scrollToBottom = vi.fn();
-    scrollLines = vi.fn();
-    selectAll = vi.fn();
-    hasSelection = vi.fn(() => false);
-    getSelection = vi.fn(() => "");
-    attachCustomKeyEventHandler = vi.fn();
-    unicode = { activeVersion: "6" };
-    cols = 80;
-    rows = 24;
-    resize = vi.fn(function (this: MockXTerm, cols: number, rows: number) {
+    resize = vi.fn(function (this: ResizeDedupXTerm, cols: number, rows: number) {
       this.cols = cols;
       this.rows = rows;
     });
-    focus = vi.fn();
-    element = document.createElement("div");
-    buffer = { active: { viewportY: 0, baseY: 0, length: 0, getLine: vi.fn() } };
-    parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
-    options = {};
-    modes = { bracketedPasteMode: false };
-    clearSelection = vi.fn();
-    clear = vi.fn();
   }
-  return { Terminal: MockXTerm };
+  return { Terminal: ResizeDedupXTerm };
 });
 
 vi.mock("@xterm/addon-fit", () => {
