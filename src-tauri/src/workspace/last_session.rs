@@ -78,6 +78,14 @@ impl LastSessionStorage {
     /// should never block startup, so it is treated as "no session to restore".
     /// Crucially, a newer file is only *ignored*, never overwritten: the save
     /// path guards against clobbering it (PER-004).
+    ///
+    /// A genuinely corrupt file is *preserved* — moved aside to a `<name>.bak`
+    /// sidecar — before load proceeds as "no session" (SM-023). Otherwise the
+    /// corrupt-but-maybe-recoverable bytes are lost the moment the next layout
+    /// change saves over them (the save path's [`guard_not_newer`] deliberately
+    /// allows overwriting a file with no readable version, i.e. a corrupt one).
+    /// Backing it up on load hands the user/support a chance to recover, matching
+    /// the corruption-recovery convention of the other JSON stores.
     pub fn load(&self) -> Result<Option<LastSession>> {
         if !self.file_path.exists() {
             return Ok(None);
@@ -93,9 +101,31 @@ impl LastSessionStorage {
                 Ok(None)
             }
             LoadOutcome::Corrupt(e) => {
-                tracing::warn!("Last-session file is corrupt, ignoring it: {e}");
+                self.preserve_corrupt_file(&e);
                 Ok(None)
             }
+        }
+    }
+
+    /// Move a corrupt last-session file aside to a `<name>.bak` sidecar so its
+    /// bytes are preserved for recovery instead of being silently overwritten by
+    /// the next save (SM-023).
+    ///
+    /// Best-effort: a failure here must never block startup, so it only logs. The
+    /// corrupt file is left in place on failure (never deleted without a backup),
+    /// and load still proceeds as "no session".
+    fn preserve_corrupt_file(&self, detail: &str) {
+        let backup = self.file_path.with_extension("json.bak");
+        match fs::rename(&self.file_path, &backup) {
+            Ok(()) => tracing::error!(
+                "Last-session file is corrupt ({detail}); preserved to {} and ignored",
+                backup.display()
+            ),
+            Err(rename_err) => tracing::error!(
+                "Last-session file is corrupt ({detail}); failed to preserve it to {} \
+                 ({rename_err}); leaving it in place and ignoring it",
+                backup.display()
+            ),
         }
     }
 
@@ -221,6 +251,61 @@ mod tests {
 
         // Must never error — a corrupt last session should not block startup.
         assert!(storage.load().unwrap().is_none());
+    }
+
+    /// SM-023: a corrupt last-session file must be preserved to a `.bak` sidecar
+    /// on load, not silently discarded. Without the backup the corrupt-but-maybe-
+    /// recoverable data is lost the moment the next layout change overwrites it
+    /// (the save path's `guard_not_newer` explicitly allows overwriting a file
+    /// with no readable version, i.e. a corrupt one). Preserving it on load gives
+    /// the user/support a chance to recover before it is gone.
+    #[test]
+    fn corrupt_file_is_backed_up_to_bak_on_load() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let corrupt = "this is not valid json {{{";
+        fs::write(&storage.file_path, corrupt).unwrap();
+
+        // Load treats it as "no session" (never errors, never blocks startup)...
+        assert!(storage.load().unwrap().is_none());
+
+        // ...but the corrupt bytes are preserved to a `.bak` sidecar, not lost.
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists(), "corrupt file must be backed up to a .bak");
+        assert_eq!(
+            fs::read_to_string(&backup).unwrap(),
+            corrupt,
+            "the .bak must hold the original corrupt bytes verbatim"
+        );
+
+        // The corrupt file is moved aside so the next save writes a fresh file
+        // instead of clobbering the still-corrupt original.
+        assert!(
+            !storage.file_path.exists(),
+            "the corrupt file must be moved aside, not left to be overwritten"
+        );
+    }
+
+    /// A subsequent save after a corrupt load writes a fresh valid file and leaves
+    /// the `.bak` backup intact — the recovered data stays available.
+    #[test]
+    fn save_after_corrupt_load_keeps_backup_intact() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let corrupt = "totally not json !!!";
+        fs::write(&storage.file_path, corrupt).unwrap();
+
+        assert!(storage.load().unwrap().is_none());
+        storage.save(&sample_session()).unwrap();
+
+        let backup = storage.file_path.with_extension("json.bak");
+        assert_eq!(
+            fs::read_to_string(&backup).unwrap(),
+            corrupt,
+            "the corrupt backup must survive a later save"
+        );
+        // The live file is now a valid, loadable session again.
+        assert_eq!(storage.load().unwrap().unwrap(), sample_session());
     }
 
     #[test]

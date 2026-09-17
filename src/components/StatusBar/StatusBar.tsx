@@ -770,9 +770,15 @@ function MonitoringStatus() {
   // badge so frozen data is never rendered as live (#1229, audit gap G1).
   const isStale = monitoringStatus === "stale";
   const isOffline = monitoringStatus === "offline";
+  // A mid-stream drop that has entered the bounded reconnect campaign reports
+  // "reconnecting" (SM-014). The last-known numbers are frozen while the
+  // transport is re-dialled, so they get the same "not live" treatment as stale
+  // — dimmed, with an explicit badge — rather than being shown as live.
+  const isReconnecting = monitoringStatus === "reconnecting";
   // Paused dims the numbers like stale (they are frozen), but is signalled with a
   // neutral badge rather than a warning one (#1233).
-  const staleModifier = isStale || monitoringPaused ? " monitoring-status__stat--stale" : "";
+  const staleModifier =
+    isStale || isReconnecting || monitoringPaused ? " monitoring-status__stat--stale" : "";
   return (
     <>
       <MonitoringDetailDropdown
@@ -828,6 +834,23 @@ function MonitoringStatus() {
             >
               <AlertTriangle size={12} />
               Stale
+            </span>
+          )}
+          {/*
+            The bounded reconnect campaign moves the collector loop to
+            "reconnecting" (SM-014). The last-known numbers stay visible but
+            dimmed, prefixed with a spinner badge, so the user knows the
+            transport dropped and is being re-dialled rather than reading the
+            frozen values as live. Recovery flips the status back to "live".
+          */}
+          {isReconnecting && (
+            <span
+              className="status-bar__item monitoring-status__reconnecting-badge"
+              title="Monitoring lost the connection and is reconnecting — the numbers below are frozen at their last-known values until it recovers."
+              data-testid="monitoring-reconnecting"
+            >
+              <Spinner size="xs" label={null} />
+              Reconnecting…
             </span>
           )}
           {/*
@@ -920,6 +943,12 @@ function MonitoringDetailDropdown({
 }: MonitoringDetailDropdownProps) {
   const isConnecting = status === "connecting" || (loading && !stats);
   const isOffline = status === "offline";
+  // A mid-stream reconnect leaves `loading` false (the entry stays connected)
+  // but reports status "reconnecting" (SM-014); reflect it on the host button
+  // with the same spinner + title as an in-flight connect so the recovery is
+  // visible at the host level, not only via the badge.
+  const isReconnecting = status === "reconnecting";
+  const showSpinner = loading || isReconnecting;
   return (
     <DropdownMenu.Root>
       <DropdownMenu.Trigger asChild>
@@ -929,10 +958,10 @@ function MonitoringDetailDropdown({
           // hostname, so a normal-state hover would only duplicate it. Keep a
           // title only while reconnecting, where it conveys transient state the
           // collapsed spinner label does not spell out.
-          title={loading ? `Reconnecting to ${host ?? "monitor"}…` : undefined}
+          title={showSpinner ? `Reconnecting to ${host ?? "monitor"}…` : undefined}
           data-testid="monitoring-host"
         >
-          {loading ? <Spinner size="xs" label={null} /> : <Activity size={12} />}
+          {showSpinner ? <Spinner size="xs" label={null} /> : <Activity size={12} />}
           {host}
         </button>
       </DropdownMenu.Trigger>

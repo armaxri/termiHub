@@ -357,14 +357,21 @@ impl EmbeddedServerService {
         }
     }
 
-    /// Stop the running server, emitting a `Stopped` transition.
+    /// Stop the running server, emitting a `Stopping` → `Stopped` transition.
     ///
-    /// Triggering the [`ShutdownSignal`] wakes the HTTP listener immediately (and
-    /// stops the FTP/TFTP poll loops on their next check); the server thread then
-    /// exits on its own (we do not join, to avoid blocking the caller).
-    /// Synchronous counterpart of the trait's async [`stop`](Service::stop).
+    /// A `Stopping` status is emitted *before* the teardown begins, so the
+    /// lifecycle (and the UI) reflects the in-progress stop instead of jumping
+    /// straight from `Running` to `Stopped` — mirroring the `Starting` →
+    /// `Running` pair on start (SM-016). Triggering the [`ShutdownSignal`] wakes
+    /// the HTTP listener immediately (and stops the FTP/TFTP poll loops on their
+    /// next check); the server thread then exits on its own (we do not join, to
+    /// avoid blocking the caller). Synchronous counterpart of the trait's async
+    /// [`stop`](Service::stop).
     pub fn shutdown(&mut self) {
         if let Some(active) = self.active.take() {
+            // Announce the in-progress stop before tearing the listener down so
+            // subscribers observe Running → Stopping → Stopped (SM-016).
+            self.set_status_and_emit(ServiceStatus::Stopping, ServerStats::default(), None);
             active.shutdown.trigger();
             if let Some(id) = self.config.as_ref().map(|c| c.id.clone()) {
                 self.set_status_and_emit(ServiceStatus::Stopped, ServerStats::default(), None);
@@ -832,6 +839,41 @@ mod tests {
         svc.stop().await.expect("stop");
         assert_eq!(svc.status(), ServiceStatus::Stopped);
         assert!(!svc.is_live());
+        // Stop emits a `Stopping` transition before the terminal `Stopped`, so
+        // the UI reflects the in-progress teardown (SM-016), mirroring the
+        // Starting → Running pair on start.
+        let stopping = recv_state(&mut rx).await;
+        assert_eq!(stopping.status, ServerStatus::Stopping);
+        let stopped = recv_state(&mut rx).await;
+        assert_eq!(stopped.status, ServerStatus::Stopped);
+    }
+
+    #[tokio::test]
+    async fn stop_emits_stopping_then_stopped_not_a_state_jump() {
+        // Regression for SM-016: the stop path must announce `Stopping` before
+        // the terminal `Stopped`, rather than jumping Running → Stopped in one
+        // step, so a server that takes a moment to tear down shows the
+        // transition instead of appearing frozen then suddenly gone.
+        let mut svc = EmbeddedServerService::new(ServerType::Http);
+        let mut rx = svc.subscribe_events();
+        let cfg = http_config(0);
+        svc.start(serde_json::to_value(&cfg).unwrap())
+            .await
+            .expect("start should succeed");
+
+        // Drain the start transitions so only the stop transitions remain.
+        assert_eq!(recv_state(&mut rx).await.status, ServerStatus::Starting);
+        assert_eq!(recv_state(&mut rx).await.status, ServerStatus::Running);
+
+        svc.stop().await.expect("stop");
+
+        let stopping = recv_state(&mut rx).await;
+        assert_eq!(
+            stopping.status,
+            ServerStatus::Stopping,
+            "stop must emit Stopping before Stopped"
+        );
+        assert_eq!(stopping.server_id, cfg.id);
         let stopped = recv_state(&mut rx).await;
         assert_eq!(stopped.status, ServerStatus::Stopped);
     }
