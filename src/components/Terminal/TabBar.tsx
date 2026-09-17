@@ -33,6 +33,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const rootPanel = useLayoutRenderTree();
   const setActiveTab = useAppStore((s) => s.setActiveTab);
   const closeTab = useAppStore((s) => s.closeTab);
+  const disconnectTerminal = useAppStore((s) => s.disconnectTerminal);
   const tabHorizontalScrolling = useAppStore((s) => s.tabHorizontalScrolling);
   const setTabHorizontalScrolling = useAppStore((s) => s.setTabHorizontalScrolling);
   const tabColors = useAppStore((s) => s.tabColors);
@@ -223,6 +224,15 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               tabColor={tabColors[tab.id]}
               onRename={() => setRenameTabId(tab.id)}
               onSetColor={() => setColorPickerTabId(tab.id)}
+              onDisconnect={
+                // Explicit Disconnect (UX-015) is only offered when the tab holds a
+                // live session to drop — closing such a tab is the destructive path
+                // this action replaces. Persistent tabs (whose close merely detaches)
+                // are excluded by `tabHasLiveSession`.
+                tabHasLiveSession(tab, { terminalExitedTabs, terminalSpawnErrors })
+                  ? () => disconnectTerminal(tab.id)
+                  : undefined
+              }
               windows={windows}
               currentWindowLabel={currentWindowLabel}
               onContextMenuOpenChange={refreshWindowsOnOpen}
