@@ -49,6 +49,7 @@ import {
 import type { AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo } from "@/services/api";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The projection region id for the agents domain (twin of the Rust
  * `AGENTS_REGION` const). Shared (Open Design Decision #4). */
@@ -142,16 +143,17 @@ let lastView: AgentsView = EMPTY_AGENTS_VIEW;
 // re-delivering the same view with a fresh object identity) does not churn the
 // view identity or re-notify subscribers — which would trigger needless re-renders.
 let lastViewSignature: string = JSON.stringify(EMPTY_AGENTS_VIEW);
-// The monotonic region version of `lastView`. A projected view older than this is
-// stale (e.g. an initial subscribe snapshot delivered late, after a newer diff has
-// already landed) and is ignored, so it can never clobber the current view.
-let lastAppliedVersion = -1;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// older than the last applied is stale (e.g. an initial subscribe snapshot
+// delivered late, after a newer diff has already landed) and is ignored, so it can
+// never clobber the current view.
+const versionGuard = makeVersionGuard();
 
 /** Reset the fan-out state to the empty baseline (tests / re-init). */
 function resetViewState(): void {
   lastView = EMPTY_AGENTS_VIEW;
   lastViewSignature = JSON.stringify(EMPTY_AGENTS_VIEW);
-  lastAppliedVersion = -1;
+  versionGuard.reset();
 }
 
 /**
@@ -164,8 +166,7 @@ function resetViewState(): void {
  * across resyncs.
  */
 function commitAgentsView(view: AgentsView, version: number): void {
-  if (version < lastAppliedVersion) return;
-  lastAppliedVersion = version;
+  if (!versionGuard.shouldApply(version)) return;
   const signature = JSON.stringify(view);
   if (signature === lastViewSignature) return;
   lastView = view;
@@ -255,14 +256,14 @@ export function __emitAgentsViewForTest(view: AgentsView, version: number): void
  * standing in for the server-side stream/fold so a unit/component test can drive
  * the authoritative region without a live backend. Bypasses the stale-version /
  * signature guards {@link commitAgentsView} applies to real diffs (a seed is
- * always the intended current view), advancing `lastAppliedVersion` so a later
+ * always the intended current view), advancing the version guard so a later
  * real diff is not treated as stale relative to the seed. The twin of the
  * connections bridge's `setConnectionsViewForTest`. Never call from production.
  */
 export function setAgentsViewForTest(view: AgentsView): void {
   lastView = view;
   lastViewSignature = JSON.stringify(view);
-  lastAppliedVersion += 1;
+  versionGuard.bump();
   for (const listener of viewListeners) {
     try {
       listener(view);

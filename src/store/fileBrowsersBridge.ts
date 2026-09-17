@@ -63,6 +63,7 @@ import {
 import type { FileClipboard } from "@/store/appStore";
 import type { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The active file-browser pane (twin of the Rust `mode` string; `"none"` is no
  * open browser). */
@@ -134,7 +135,7 @@ export function setFileBrowsersTransportForTest(t: Transport | null): void {
   transportInstance = t;
   lastView = EMPTY_FILE_BROWSERS_VIEW;
   lastViewSignature = JSON.stringify(EMPTY_FILE_BROWSERS_VIEW);
-  lastAppliedVersion = -1;
+  versionGuard.reset();
 }
 
 function transport(): Transport {
@@ -157,10 +158,11 @@ let lastView: FileBrowsersView = EMPTY_FILE_BROWSERS_VIEW;
 // re-delivering the same view with a fresh object identity) does not churn the view
 // identity or re-notify subscribers.
 let lastViewSignature: string = JSON.stringify(EMPTY_FILE_BROWSERS_VIEW);
-// The monotonic region version of `lastView`. A projected view strictly older than
-// this is stale and ignored, so a late-delivered snapshot can never clobber a newer
-// view; an optimistic overlay re-emitted at the same version still commits.
-let lastAppliedVersion = -1;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// strictly older than the last applied is stale and ignored, so a late-delivered
+// snapshot can never clobber a newer view; an optimistic overlay re-emitted at the
+// same version still commits.
+const versionGuard = makeVersionGuard();
 
 /** Normalize a possibly-partial pane view into a full {@link FileBrowserPaneView}. */
 function normalizePane(pane: Partial<FileBrowserPaneView> | undefined): FileBrowserPaneView {
@@ -192,8 +194,7 @@ function normalizeView(view: Partial<FileBrowsersView> | undefined): FileBrowser
  * suppressed.
  */
 function commitFileBrowsersView(next: FileBrowsersView, version: number): void {
-  if (version < lastAppliedVersion) return;
-  lastAppliedVersion = version;
+  if (!versionGuard.shouldApply(version)) return;
   const signature = JSON.stringify(next);
   if (signature === lastViewSignature) return;
   lastView = next;
@@ -273,7 +274,7 @@ export function stopFileBrowsersSubscription(): void {
   startPromise = null;
   lastView = EMPTY_FILE_BROWSERS_VIEW;
   lastViewSignature = JSON.stringify(EMPTY_FILE_BROWSERS_VIEW);
-  lastAppliedVersion = -1;
+  versionGuard.reset();
 }
 
 /**
