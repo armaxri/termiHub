@@ -9,7 +9,8 @@ subsystem: src-tauri/src/session/manager.rs
 evidence:
   - src-tauri/src/session/manager.rs:181
   - src/services/events.ts:218
-status: open
+status: fixed
+resolution: "#3006 — terminal-output now emit_to the hosting window (WindowManager.ownership map that gates resize); unclaimed sessions fall back to broadcast so it only narrows; ring-buffer replay guarantees no loss on tab-move; terminal-exit stays broadcast; TDD"
 ---
 
 ## What

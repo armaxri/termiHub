@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src/components/Terminal/Terminal.tsx
 evidence:
   - src/components/Terminal/Terminal.tsx:851
-status: open
+status: deferred
+resolution: "load-bearing — forced full-viewport DOM refresh is the #1849 stale-row fix (xterm dirty-tracking misses stale-position rows on rapid scroll); already gated off while WebGL active (#2107, default renderer). 0..rows-1 is already the narrowest correct range. Narrowing = reintroduce corruption"
 ---
 
 ## What

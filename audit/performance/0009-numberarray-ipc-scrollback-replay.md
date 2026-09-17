@@ -10,7 +10,8 @@ evidence:
   - src/services/api.ts:469
   - src/services/api.ts:830
   - core/src/buffer/mod.rs:7
-status: open
+status: fixed
+resolution: "#3007 — scrollback replay + agent-buffer IPC now base64 (reuses #2072 convention) instead of JSON number-array (~4-6x wire reduction); byte-exact round-trip proven both sides for all 0x00-0xFF; TDD"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/TabBar.tsx:105
-status: open
+status: fixed
+resolution: "#3005 — added Disconnect tab-context action (disconnectTerminal): drops live connection but keeps tab -> view mode + Reconnect banner (scrollback preserved); persistent tabs detached; reuses existing intentional-kill path; TDD"
 ---
 
 ## What

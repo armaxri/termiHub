@@ -11,7 +11,8 @@ evidence:
   - agent/src/session/types.rs:84
   - agent/src/session/definitions.rs:14
   - agent/src/state/persistence.rs:8
-status: open
+status: wontfix
+resolution: "by-design — 3 names = distinct wire/persisted/IPC contracts (disk `type`, RPC `typeId`, manifest/history `connectionType`); internal fields already mirror wire; drift test-guarded"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:169
   - src/components/Terminal/Terminal.agent-reconnect.test.tsx:33
-status: open
+status: fixed
+resolution: "develop — add Terminal.xterm-integration.test.ts exercising real xterm wiring under jsdom (merged pre-gap)"
 ---
 
 ## What

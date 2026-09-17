@@ -10,7 +10,8 @@ evidence:
   - src/services/keybindings.ts:405
   - src/services/keybindings.ts:671
   - src/services/keybindings.ts:679
-status: open
+status: fixed
+resolution: "#3008 — shortcut matcher (eventMatchesCombo) now compares physical event.code for letter/digit combos with event.key fallback; punctuation/named keys kept on event.key; US unchanged, non-US layouts now match; TDD. isShellReservedKey passthrough deferred #3009"
 ---
 
 ## What

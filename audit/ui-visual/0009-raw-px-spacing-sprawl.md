@@ -10,7 +10,8 @@ evidence:
   - src/styles/variables.css:102
   - src/components/Sidebar/ConnectionList.css:204
   - src/components/Settings/SettingsPanel.css:123
-status: open
+status: fixed
+resolution: "develop — tokenize ~323 raw px paddings/margins/gaps onto the spacing scale across 48 CSS files (merged pre-gap)"
 ---
 
 ## What
