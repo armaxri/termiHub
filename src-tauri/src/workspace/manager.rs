@@ -216,6 +216,7 @@ impl WorkspaceManager {
                 &uuid::Uuid::new_v4().to_string()[..6]
             );
 
+            let mut unresolved: Vec<String> = Vec::new();
             let definition = WorkspaceDefinition {
                 id: new_id,
                 name: entry.name,
@@ -226,12 +227,26 @@ impl WorkspaceManager {
                     .map(|g| WorkspaceTabGroupDef {
                         name: g.name,
                         color: g.color,
-                        layout: resolve_connection_names_to_ids(&g.layout, name_to_id),
+                        layout: resolve_connection_names_to_ids(
+                            &g.layout,
+                            name_to_id,
+                            &mut unresolved,
+                        ),
                         window_id: g.window_id,
                     })
                     .collect(),
                 windows: entry.windows,
             };
+
+            // Surface any dangling connection references instead of silently
+            // keeping them (PER-009). The tab and its raw ref are preserved above;
+            // here we only record a warning so the user learns the workspace is
+            // partially broken. Never auto-delete the tab or the reference.
+            record_dangling_ref_warnings(
+                &definition.name,
+                &mut unresolved,
+                &self.recovery_warnings,
+            );
 
             store.workspaces.push(definition);
             count += 1;
@@ -260,6 +275,46 @@ impl WorkspaceManager {
             workspace_count: data.workspaces.len(),
             total_tab_count,
         })
+    }
+}
+
+/// Record a recovery-style warning for each connection name that a workspace
+/// referenced but that no longer resolves to a known connection (PER-009).
+///
+/// De-duplicates the names, logs each one (so it is visible at runtime), and
+/// appends a [`RecoveryWarning`] to the manager's warning list — reusing the same
+/// machinery that reports corrupt/recovered stores elsewhere. The referencing tab
+/// is intentionally left untouched; this only surfaces the dangling reference.
+fn record_dangling_ref_warnings(
+    workspace_name: &str,
+    unresolved: &mut Vec<String>,
+    recovery_warnings: &Mutex<Vec<RecoveryWarning>>,
+) {
+    if unresolved.is_empty() {
+        return;
+    }
+    unresolved.sort();
+    unresolved.dedup();
+
+    let Ok(mut warnings) = recovery_warnings.lock() else {
+        return;
+    };
+    for name in unresolved.drain(..) {
+        tracing::warn!(
+            workspace = %workspace_name,
+            connection = %name,
+            "imported workspace references a connection that no longer exists; \
+             the tab was kept but will not connect until the connection is restored"
+        );
+        warnings.push(RecoveryWarning {
+            file_name: "workspaces.json".to_string(),
+            message: format!(
+                "Workspace \"{workspace_name}\" references connection \"{name}\", \
+                 which no longer exists. The tab was kept but will not connect \
+                 until the connection is restored."
+            ),
+            details: None,
+        });
     }
 }
 
@@ -297,9 +352,15 @@ fn replace_connection_ids_with_names(
 }
 
 /// Resolve connection names back to IDs for import.
+///
+/// A name that does not resolve to a known connection is **kept verbatim** (no
+/// data is dropped) and its name is recorded in `unresolved` so the caller can
+/// surface a warning instead of silently swallowing the dangling reference
+/// (PER-009).
 fn resolve_connection_names_to_ids(
     layout: &WorkspaceLayoutNode,
     name_to_id: &HashMap<String, String>,
+    unresolved: &mut Vec<String>,
 ) -> WorkspaceLayoutNode {
     match layout {
         WorkspaceLayoutNode::Leaf { tabs } => WorkspaceLayoutNode::Leaf {
@@ -307,10 +368,15 @@ fn resolve_connection_names_to_ids(
                 .iter()
                 .map(|tab| WorkspaceTabDef {
                     connection_ref: tab.connection_ref.as_ref().map(|name| {
-                        name_to_id
-                            .get(name)
-                            .cloned()
-                            .unwrap_or_else(|| name.clone())
+                        match name_to_id.get(name) {
+                            Some(id) => id.clone(),
+                            None => {
+                                // Preserve the raw name — the tab is never dropped —
+                                // but record it so the import can warn about it.
+                                unresolved.push(name.clone());
+                                name.clone()
+                            }
+                        }
                     }),
                     ..tab.clone()
                 })
@@ -324,7 +390,7 @@ fn resolve_connection_names_to_ids(
             direction: direction.clone(),
             children: children
                 .iter()
-                .map(|c| resolve_connection_names_to_ids(c, name_to_id))
+                .map(|c| resolve_connection_names_to_ids(c, name_to_id, unresolved))
                 .collect(),
             sizes: sizes.clone(),
         },
@@ -783,5 +849,94 @@ mod tests {
         let setup_b = mgr2.load_workspace(&setup_b_id).unwrap();
         assert_eq!(setup_b.tab_groups.len(), 2);
         assert_eq!(setup_b.tab_groups[1].name, "Deploy");
+    }
+
+    /// PER-009: importing a workspace whose tab references a connection name that
+    /// no longer resolves must NOT silently swallow the dangling reference. The
+    /// tab is kept (no data loss) with its raw name retained, and a recovery-style
+    /// warning naming the workspace + missing connection is produced.
+    #[test]
+    fn import_warns_on_dangling_connection_ref_but_keeps_tab() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+
+        let json = r#"{
+            "version": "1",
+            "workspaces": [{
+                "name": "Broken Setup",
+                "tabGroups": [{
+                    "name": "Main",
+                    "layout": {
+                        "type": "leaf",
+                        "tabs": [{ "connectionRef": "Deleted Server" }]
+                    }
+                }]
+            }]
+        }"#;
+
+        // Empty connection set → the referenced name cannot resolve.
+        let count = mgr.import_json(json, &HashMap::new()).unwrap();
+        assert_eq!(count, 1);
+
+        // (a) The tab is still present and its ref is retained verbatim — no data loss.
+        let workspaces = mgr.get_workspaces().unwrap();
+        let ws = mgr.load_workspace(&workspaces[0].id).unwrap();
+        if let WorkspaceLayoutNode::Leaf { tabs } = &ws.tab_groups[0].layout {
+            assert_eq!(tabs.len(), 1);
+            assert_eq!(tabs[0].connection_ref.as_deref(), Some("Deleted Server"));
+        } else {
+            panic!("Expected leaf layout");
+        }
+
+        // (b) A recovery warning was produced naming the workspace + missing connection.
+        let warnings = mgr.take_recovery_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].message.contains("Broken Setup"),
+            "warning should name the workspace, got: {}",
+            warnings[0].message
+        );
+        assert!(
+            warnings[0].message.contains("Deleted Server"),
+            "warning should name the missing connection, got: {}",
+            warnings[0].message
+        );
+    }
+
+    /// PER-009 (negative case): a resolvable reference resolves to its id as before
+    /// and produces no warning.
+    #[test]
+    fn import_resolvable_ref_produces_no_warning() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+
+        let json = r#"{
+            "version": "1",
+            "workspaces": [{
+                "name": "Fine",
+                "tabGroups": [{
+                    "name": "Main",
+                    "layout": { "type": "leaf", "tabs": [{ "connectionRef": "Dev Server" }] }
+                }]
+            }]
+        }"#;
+        let name_to_id: HashMap<String, String> =
+            [("Dev Server".to_string(), "conn-1".to_string())]
+                .into_iter()
+                .collect();
+
+        mgr.import_json(json, &name_to_id).unwrap();
+
+        let workspaces = mgr.get_workspaces().unwrap();
+        let ws = mgr.load_workspace(&workspaces[0].id).unwrap();
+        if let WorkspaceLayoutNode::Leaf { tabs } = &ws.tab_groups[0].layout {
+            assert_eq!(tabs[0].connection_ref.as_deref(), Some("conn-1"));
+        } else {
+            panic!("Expected leaf layout");
+        }
+        assert!(
+            mgr.take_recovery_warnings().is_empty(),
+            "a resolvable ref must not produce a warning"
+        );
     }
 }
