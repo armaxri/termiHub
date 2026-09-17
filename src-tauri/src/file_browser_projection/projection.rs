@@ -40,11 +40,11 @@
 //! | `fileBrowser.setClipboard`  | `{ clipboard }` (`null` clears)        | set / clear the copy-cut clipboard                  |
 //! | `fileBrowser.replace`       | `{ mode?, local?, session?, clipboard? }` | overwrite the whole client view (render-cut mirror) |
 //!
-//! `fileBrowser.replace` is the whole-slice seed the frontend render cut (#2228)
-//! uses to keep the client's region a faithful copy of `appStore`'s file-browser
-//! UI-state slice while `appStore` stays authoritative — the analog of the
+//! `fileBrowser.replace` is the whole-slice seed that keeps the client's region a
+//! faithful copy of the file-browser UI-state slice — the analog of the
 //! connections bridge's `connection.replace`. The per-transition intents above
-//! drive the store for the (later) mutation cut.
+//! drive the store, which is authoritative (the former `appStore` file-browser
+//! reducers were removed, #2283).
 //!
 //! `pane` is the concrete browser being acted on (`local` / `session`); `mode` is
 //! which pane is *active* and additionally accepts `"none"`. Since the SFTP

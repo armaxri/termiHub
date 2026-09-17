@@ -147,7 +147,7 @@ impl ClientState {
     }
 }
 
-/// The shadow restore-cohort authority. Owns one [`ClientState`] per attached
+/// The restore-cohort authority. Owns one [`ClientState`] per attached
 /// client, keyed by `clientId`; an unknown client is seeded lazily on first
 /// touch. Each client projects its own `restore-cohort@<clientId>` region.
 pub struct RestoreCohortStore {

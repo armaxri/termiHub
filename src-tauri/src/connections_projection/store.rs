@@ -1,4 +1,4 @@
-//! The authoritative, shared connections-tree state behind the shadow
+//! The authoritative, shared connections-tree state behind the
 //! `connections` projection region (#2225, Phase 5 of #2139).
 //!
 //! Models the saved-connection / folder tree the frontend currently drives in
@@ -45,7 +45,7 @@ struct Inner {
     connections: Vec<SavedConnection>,
 }
 
-/// The shadow connections-tree authority. Owns the flat `folders` and
+/// The connections-tree authority. Owns the flat `folders` and
 /// `connections` arrays keyed by their path-derived ids, mirroring the frontend
 /// `appStore` slice. The single shared `connections` region projects this state.
 #[derive(Default)]
@@ -63,7 +63,7 @@ impl ConnectionsStore {
     /// `{ "folders": [ConnectionFolder, …], "connections": [SavedConnection, …] }`.
     ///
     /// The key names and element shapes mirror the `appStore` connections slice
-    /// exactly, keeping the eventual render cut a pure parity swap. Pure with
+    /// exactly, keeping the render cut a pure parity swap. Pure with
     /// respect to store state (never mutates), so the projector can safely diff
     /// two consecutive snapshots.
     pub fn snapshot(&self) -> Value {
@@ -166,11 +166,11 @@ impl ConnectionsStore {
 
     /// `connection.replace` — overwrite the whole connections slice (the two flat
     /// folder + connection arrays) with a caller-supplied snapshot. Used by the
-    /// frontend render-cut mirror (#2225) to keep the shared `connections` region a
-    /// faithful copy of `appStore`'s connections slice while `appStore` remains
-    /// authoritative (the mutation cut is a later step) — the analog of the agents
-    /// bridge's `agent.replace` seed. Idempotent server-side: replacing with the
-    /// same content yields no diff.
+    /// frontend to keep the shared `connections` region a faithful copy of the
+    /// connections slice — the analog of the agents bridge's `agent.replace` seed.
+    /// This store is authoritative (the former `appStore` reducers were removed,
+    /// #2283). Idempotent server-side: replacing with the same content yields no
+    /// diff.
     pub fn replace(&self, folders: Vec<ConnectionFolder>, connections: Vec<SavedConnection>) {
         let mut inner = self.lock();
         inner.folders = folders;

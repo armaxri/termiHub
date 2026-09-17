@@ -114,7 +114,7 @@ pub struct SavedAgentSeed {
     /// Human-readable agent name.
     pub name: String,
     /// The agent's `RemoteAgentConfig`, serialised opaquely (matches the shape
-    /// the frontend stores, so the eventual render cut is a parity swap).
+    /// the frontend stores, so the render cut was a parity swap).
     pub config: Value,
     /// The agent's `AgentSettings`, serialised opaquely.
     pub agent_settings: Value,
@@ -272,7 +272,7 @@ impl Inner {
     }
 }
 
-/// The shadow agents authority. Owns the ordered [`AgentEntry`] list plus the
+/// The agents authority. Owns the ordered [`AgentEntry`] list plus the
 /// per-agent live sessions, saved definitions and folders. The single shared
 /// `agents` region projects this state.
 #[derive(Default)]
@@ -682,10 +682,10 @@ impl AgentsStore {
 
     /// `agent.replace` — overwrite the whole agents slice (the ordered agent list
     /// plus the per-agent sessions/definitions/folders maps) with a
-    /// caller-supplied snapshot. Used by the frontend render-cut mirror (#2226) to
-    /// keep the shared `agents` region a faithful copy of `appStore`'s agents slice
-    /// while `appStore` remains authoritative (the mutation cut is a later step) —
-    /// the analog of the system-monitor bridge's `monitor.replace` seed. Idempotent
+    /// caller-supplied snapshot. Used by the frontend to keep the shared `agents`
+    /// region a faithful copy of the agents slice — the analog of the
+    /// system-monitor bridge's `monitor.replace` seed. This store is authoritative
+    /// (the former `appStore` reducers were removed, #2283). Idempotent
     /// server-side: replacing with the same content yields no diff.
     pub fn replace(
         &self,

@@ -4,8 +4,8 @@
 //! Exposes the authoritative [`ConnectionsStore`] as one versioned,
 //! multi-subscriber projection region and turns the tree-mutation transitions the
 //! frontend currently drives into [`Intent`]s — mirroring the SSH-tunnels pilot
-//! ([`crate::tunnel::projection`]), the session-lifecycle shadow
-//! ([`crate::session_projection::projection`]) and the system-monitor shadow
+//! ([`crate::tunnel::projection`]), the session-lifecycle region
+//! ([`crate::session_projection::projection`]) and the system-monitor region
 //! ([`crate::system_monitor_projection::projection`]).
 //!
 //! # The `connections` region
@@ -31,11 +31,11 @@
 //! | `connection.toggleFolder`   | `{ folderId }`                   | flip a folder's `isExpanded`                 |
 //! | `connection.replace`        | `{ folders?, connections? }`     | overwrite the whole slice (render-cut mirror)|
 //!
-//! `connection.replace` is the whole-slice seed the frontend render cut (#2225)
-//! uses to keep the shared `connections` region a faithful copy of `appStore`'s
-//! connections slice while `appStore` stays authoritative — the analog of the
-//! agents bridge's `agent.replace`. The per-transition intents above drive the
-//! store once the mutation cut lands (a later step).
+//! `connection.replace` is the whole-slice seed that keeps the shared
+//! `connections` region a faithful copy of the connections slice — the analog of
+//! the agents bridge's `agent.replace`. The per-transition intents above drive
+//! the store, which is authoritative (the former `appStore` connections reducers
+//! were removed, #2283).
 //!
 //! Ordering is array position, matching the on-disk `children` order. The
 //! `connection.reorder` intent is the standalone reorder transition (drag-reorder a
@@ -113,10 +113,10 @@ pub fn publish_connections(projector: &Projector, store: &ConnectionsStore) -> V
 /// leaves the unified tree untouched is a no-op.
 ///
 /// It is **additive**: the per-transition `connection.*` intents and the
-/// render-cut `connection.replace` mirror stay in place, and nothing in the live
-/// UI subscribes to the region yet, so this changes no user-facing behavior.
-/// Dropping the now-redundant client re-dispatch is the later #2225
-/// render/mutation inversion.
+/// `connection.replace` overwrite stay in place, and this changed no user-facing
+/// behavior when added. The live UI now renders from the region, and the
+/// now-redundant client re-dispatch was dropped by the #2225 render/mutation
+/// inversion (#2283).
 ///
 /// Best-effort and non-fatal: if the store, the connection manager, or the
 /// projection state is not managed (e.g. a headless unit-test app that never ran

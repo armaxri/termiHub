@@ -560,7 +560,7 @@ fn clear_retained_request(app_handle: &AppHandle, tab_id: &str) {
 
 /// Reconcile the backend reconnect timer for a session after a transition, when
 /// the timer driver is present. Off-path (a silent no-op) if the driver is not
-/// managed yet — e.g. the shadow-only setup where nothing arms the loop.
+/// managed yet — e.g. a driver-absent setup where nothing arms the loop.
 fn sync_timer(app_handle: &AppHandle, session_id: &str) {
     if let Some(driver) = app_handle.try_state::<Arc<ReconnectTimerDriver>>() {
         (*driver).sync(session_id);

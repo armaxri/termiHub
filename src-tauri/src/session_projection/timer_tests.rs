@@ -282,7 +282,7 @@ fn a_fired_timer_invokes_the_backend_redrive_after_advancing_to_connecting() {
 
 #[test]
 fn without_a_redrive_hook_a_fired_timer_only_advances_the_store() {
-    // The default harness installs NO redrive (the shadow / client-driven path):
+    // The default harness installs NO redrive (the redrive-absent / client-driven path):
     // a fired timer advances + publishes, and the client owns the transport.
     let (store, _projector, scheduler, driver, publishes) = harness();
     store.connect("s1");

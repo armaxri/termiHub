@@ -1,4 +1,4 @@
-//! The authoritative, shared session-lifecycle state machine behind the shadow
+//! The authoritative, shared session-lifecycle state machine behind the
 //! `session-lifecycle` projection region (#2152, Phase 4 step 1 of #2139).
 //!
 //! Models the connect / reconnect / disconnect / error state machine the
@@ -236,7 +236,7 @@ impl Inner {
     }
 }
 
-/// The shadow session-lifecycle authority. Owns one [`SessionLifecycle`] per live
+/// The session-lifecycle authority. Owns one [`SessionLifecycle`] per live
 /// session, keyed by `sessionId`; an unknown session is created lazily on first
 /// touch. The single shared `session-lifecycle` region projects this map.
 pub struct SessionLifecycleStore {

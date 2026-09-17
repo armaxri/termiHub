@@ -34,19 +34,17 @@
 //! client that launched it. A second client viewing the same terminal does not
 //! see or drive this client's run.)
 //!
-//! # Render + mutation cut landed (#2243)
+//! # Authoritative — drives the live UI (#2243)
 //!
-//! The shadow landed the store; the render + mutation cut (frontend
-//! `workflowRunBridge` / `useProjectedWorkflowRun`, both flags on by default) then
-//! made this store authoritative: the Workflow Manager's running badge + output
-//! panel status render from the projected `workflow-run@<clientId>` region when it
-//! faithfully mirrors `appStore`, and the run transitions dispatch the `workflow.*`
-//! intents below. The `appStore` run reducers are **retained as the parity-safe
-//! fallback** (removal is a later step, per the #2205 reframe), so a backend hiccup
-//! degrades to the local path. The transient progress toast stays a frontend
-//! side-effect notification. The step side-effects and streamed output stay
-//! frontend (see below); the sibling restore-cohort and broadcast machines migrated
-//! as their own steps and keep a clean per-domain boundary.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative.
+//! The Workflow Manager's running badge + output-panel status render from the
+//! projected `workflow-run@<clientId>` region, and the run transitions dispatch
+//! the `workflow.*` intents below. The former `appStore` run reducers and the
+//! render/mutation-cut flags were removed; `appStore` holds no workflow-run slice
+//! and the intents are the sole write path. The transient progress toast stays a
+//! frontend side-effect notification. The step side-effects and streamed output
+//! stay frontend (see below); the sibling restore-cohort and broadcast machines
+//! migrated as their own steps and keep a clean per-domain boundary.
 
 pub mod projection;
 pub mod store;
