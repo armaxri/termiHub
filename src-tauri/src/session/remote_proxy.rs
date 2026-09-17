@@ -516,6 +516,7 @@ impl RemoteProxy {
                                         interval_ms: Arc::new(AtomicU64::new(
                                             DEFAULT_MONITORING_INTERVAL_MS,
                                         )),
+                                        paused_tx: tokio::sync::watch::channel(false).0,
                                     });
                                 }
                             }
@@ -722,6 +723,16 @@ pub struct RemoteMonitoringProxy {
     /// Shared (`Arc`) so the spawned status-derivation driver can read the live
     /// cadence when computing its sample-freshness window (SM-012).
     interval_ms: Arc<AtomicU64>,
+    /// Desktop-side pause state for an agent-mediated monitor (SM-013).
+    ///
+    /// The agent has no pause RPC yet, so a true remote pause is deferred (see
+    /// [`set_paused`](MonitoringProvider::set_paused)). Meanwhile the desktop
+    /// honours pause locally: the status-derivation driver watches this channel
+    /// and, while paused, drops the samples the agent keeps streaming and holds
+    /// the badge at `Paused` — so the UI never desyncs from the "paused" label.
+    /// A `watch` channel so a `set_paused` on the provider steers the running
+    /// driver immediately (each `subscribe` takes a fresh receiver).
+    paused_tx: tokio::sync::watch::Sender<bool>,
 }
 
 impl RemoteMonitoringProxy {
@@ -739,6 +750,7 @@ impl RemoteMonitoringProxy {
             monitoring_host: "self".to_string(),
             agent_manager,
             interval_ms: Arc::new(AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS)),
+            paused_tx: tokio::sync::watch::channel(false).0,
         }
     }
 
@@ -769,8 +781,18 @@ impl RemoteMonitoringProxy {
 ///   `false`, i.e. the agent-connection layer is reconnecting) the monitor
 ///   reports `Reconnecting`. A later sample recovers it to `Live`.
 ///
-/// The loop ends when the consumer drops `stats_tx` (tab closed) or the agent
-/// registration is torn down on `unsubscribe`/`disconnect` (closing `raw_rx`).
+/// **Pause (SM-013).** The agent has no pause RPC, so it keeps collecting and
+/// streaming while the user "pauses" an agent-hosted monitor. To stop that from
+/// desyncing the UI, this driver honours pause on the desktop: while `paused_rx`
+/// reads `true` it emits `Paused`, then **discards** every sample the agent
+/// pushes (no forward to `stats_tx`, no freshness/`Stale` accounting), so the
+/// numbers freeze at the last reading and the badge stays `Paused`. Resuming
+/// emits `Live` and the next fresh sample flows through again. A true remote
+/// pause that also halts the agent's poller is deferred to a follow-up.
+///
+/// The loop ends when the consumer drops `stats_tx` (tab closed), the agent
+/// registration is torn down on `unsubscribe`/`disconnect` (closing `raw_rx`),
+/// or the provider is dropped (closing `paused_rx`).
 async fn drive_monitor_status<F>(
     mut raw_rx: MonitoringReceiver,
     stats_tx: MonitoringSender,
@@ -778,42 +800,89 @@ async fn drive_monitor_status<F>(
     interval_ms: Arc<AtomicU64>,
     grace: Duration,
     transport_alive: F,
+    mut paused_rx: tokio::sync::watch::Receiver<bool>,
 ) where
     F: Fn() -> bool + Send,
 {
     let mut loop_state = CollectLoopState::with_threshold(DEFAULT_STALE_THRESHOLD);
 
+    // Honour a monitor that starts paused (the pause state survives a
+    // re-subscribe on the provider).
+    if *paused_rx.borrow_and_update() {
+        if let Some(status) = loop_state.pause() {
+            let _ = status_tx.send(status).await;
+        }
+    }
+
     loop {
+        // Paused: keep the agent subscription open but discard whatever it keeps
+        // streaming, and never count it for freshness — the badge holds `Paused`
+        // and the numbers stay frozen at the last reading (SM-013).
+        if loop_state.is_paused() {
+            tokio::select! {
+                changed = paused_rx.changed() => {
+                    if changed.is_err() {
+                        break; // provider dropped: subscription is going away
+                    }
+                    if !*paused_rx.borrow_and_update() {
+                        // Resumed: announce Live; the next fresh sample keeps it Live.
+                        if let Some(status) = loop_state.resume() {
+                            let _ = status_tx.send(status).await;
+                        }
+                    }
+                }
+                raw = raw_rx.recv() => match raw {
+                    // Drop samples that arrive while paused.
+                    Some(_) => {}
+                    // Raw channel closed: the subscription was torn down.
+                    None => break,
+                },
+            }
+            continue;
+        }
+
         let interval = Duration::from_millis(interval_ms.load(Ordering::SeqCst).max(1));
         let freshness = interval.saturating_add(grace);
 
-        match tokio::time::timeout(freshness, raw_rx.recv()).await {
-            Ok(Some(stats)) => {
-                // Fresh sample: forward it, then mark the loop Live.
-                if stats_tx.send(stats).await.is_err() {
-                    break; // consumer gone
+        tokio::select! {
+            changed = paused_rx.changed() => {
+                if changed.is_err() {
+                    break; // provider dropped
                 }
-                if let Some(status) = loop_state.on_success() {
-                    let _ = status_tx.send(status).await;
-                }
-            }
-            // Raw channel closed: the subscription was torn down. Stop cleanly
-            // (no status emit — the session is going away).
-            Ok(None) => break,
-            Err(_elapsed) => {
-                // No fresh sample within the window: count a missed collect.
-                if let Some(status) = loop_state.on_failure() {
-                    let _ = status_tx.send(status).await;
-                }
-                // Sustained drop: if the agent transport itself is down, the
-                // agent-connection layer is re-establishing it, so surface
-                // Reconnecting rather than leaving the numbers merely dimmed.
-                if loop_state.should_begin_reconnect() && !transport_alive() {
-                    if let Some(status) = loop_state.begin_reconnect() {
+                if *paused_rx.borrow_and_update() {
+                    if let Some(status) = loop_state.pause() {
                         let _ = status_tx.send(status).await;
                     }
                 }
             }
+            recv = tokio::time::timeout(freshness, raw_rx.recv()) => match recv {
+                Ok(Some(stats)) => {
+                    // Fresh sample: forward it, then mark the loop Live.
+                    if stats_tx.send(stats).await.is_err() {
+                        break; // consumer gone
+                    }
+                    if let Some(status) = loop_state.on_success() {
+                        let _ = status_tx.send(status).await;
+                    }
+                }
+                // Raw channel closed: the subscription was torn down. Stop cleanly
+                // (no status emit — the session is going away).
+                Ok(None) => break,
+                Err(_elapsed) => {
+                    // No fresh sample within the window: count a missed collect.
+                    if let Some(status) = loop_state.on_failure() {
+                        let _ = status_tx.send(status).await;
+                    }
+                    // Sustained drop: if the agent transport itself is down, the
+                    // agent-connection layer is re-establishing it, so surface
+                    // Reconnecting rather than leaving the numbers merely dimmed.
+                    if loop_state.should_begin_reconnect() && !transport_alive() {
+                        if let Some(status) = loop_state.begin_reconnect() {
+                            let _ = status_tx.send(status).await;
+                        }
+                    }
+                }
+            },
         }
     }
 }
@@ -856,6 +925,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         let agent_manager = self.agent_manager.clone();
         let agent_id = self.agent_id.clone();
         let interval_ms = self.interval_ms.clone();
+        let paused_rx = self.paused_tx.subscribe();
         tokio::spawn(drive_monitor_status(
             raw_rx,
             stats_tx,
@@ -863,6 +933,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             interval_ms,
             Duration::from_millis(MONITORING_FRESHNESS_GRACE_MS),
             move || agent_manager.is_connected(&agent_id),
+            paused_rx,
         ));
 
         Ok(MonitoringSubscription {
@@ -907,13 +978,20 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         }
     }
 
-    async fn set_paused(&self, _paused: bool) {
-        // Agent-mediated pause requires a protocol addition to signal the remote
-        // collect loop; tracked as a follow-up to #1233. Desktop-direct SSH
-        // monitoring supports pause today via the SSH provider.
+    async fn set_paused(&self, paused: bool) {
+        // Desktop-honoured pause (SM-013): a true remote pause that halts the
+        // agent's own poller still needs a protocol addition (deferred), but the
+        // desktop must not desync in the meantime. Steer the running
+        // status-derivation driver via the watch channel: while paused it holds
+        // the badge at `Paused` and drops the samples the agent keeps streaming,
+        // so the frozen numbers match the "paused" label. `send_replace` updates
+        // the value even with no live subscriber (a later `subscribe` reads it).
+        self.paused_tx.send_replace(paused);
         debug!(
             host = %self.monitoring_host,
-            "Pause/resume not yet supported for agent-mediated monitoring (follow-up to #1233)"
+            paused,
+            "Agent-mediated monitor pause honoured on the desktop (remote poller keeps running; \
+             true remote pause is a follow-up)"
         );
     }
 
@@ -2193,6 +2271,7 @@ mod tests {
             let (status_tx, mut status_rx) = mpsc::channel(8);
             // Tight interval + grace so the freshness window is short in tests.
             let interval = Arc::new(AtomicU64::new(20));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
 
             let handle = tokio::spawn(drive_monitor_status(
                 raw_rx,
@@ -2201,6 +2280,7 @@ mod tests {
                 interval,
                 Duration::from_millis(30),
                 || true, // transport stays up: a merely-slow agent, not a drop
+                paused_rx,
             ));
 
             // A fresh sample: the monitor reports Live and forwards the sample.
@@ -2237,6 +2317,7 @@ mod tests {
             let (stats_tx, _stats_rx) = mpsc::channel(16);
             let (status_tx, mut status_rx) = mpsc::channel(8);
             let interval = Arc::new(AtomicU64::new(20));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
 
             let handle = tokio::spawn(drive_monitor_status(
                 raw_rx,
@@ -2245,6 +2326,7 @@ mod tests {
                 interval,
                 Duration::from_millis(30),
                 || false, // transport is down → reconnect underway
+                paused_rx,
             ));
 
             // First sample establishes Live, then the stream stops.
@@ -2255,6 +2337,86 @@ mod tests {
                 next_status(&mut status_rx).await,
                 MonitorStatus::Reconnecting,
                 "a drop with a dead agent transport must escalate to Reconnecting"
+            );
+
+            drop(raw_tx);
+            handle
+                .await
+                .expect("driver task should end when raw channel closes");
+        }
+
+        /// SM-013: pausing an agent-hosted monitor must actually take effect on
+        /// the desktop even though the agent keeps streaming. While paused the
+        /// driver emits `Paused`, drops the samples the agent keeps pushing (they
+        /// must NOT reach the consumer, and must NOT flip the badge back to
+        /// `Live`), then resumes cleanly — emitting `Live` and forwarding samples
+        /// again. Before the fix `set_paused` was a no-op, so the discarded
+        /// samples flowed through and each one re-emitted `Live`, desyncing the
+        /// UI from its "paused" label.
+        #[tokio::test]
+        async fn pause_stops_forwarding_and_holds_paused_then_resumes() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, mut stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            // A generous freshness window so a stalled stream does not race the
+            // pause assertions with a spurious `Stale`.
+            let interval = Arc::new(AtomicU64::new(10_000));
+            let (paused_tx, paused_rx) = tokio::sync::watch::channel(false);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                Duration::from_millis(30),
+                || true, // transport stays up throughout
+                paused_rx,
+            ));
+
+            // Establish Live with a first sample.
+            raw_tx.send(sample()).await.expect("send sample");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+            assert!(
+                stats_rx.recv().await.is_some(),
+                "the pre-pause sample must be forwarded"
+            );
+
+            // Pause: the driver must emit Paused.
+            paused_tx.send_replace(true);
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Paused,
+                "pausing an agent monitor must report Paused on the desktop"
+            );
+
+            // Samples the agent keeps streaming while paused must be discarded:
+            // neither forwarded to the consumer nor allowed to re-emit Live.
+            raw_tx.send(sample()).await.expect("send sample");
+            raw_tx.send(sample()).await.expect("send sample");
+            assert!(
+                tokio::time::timeout(Duration::from_millis(150), stats_rx.recv())
+                    .await
+                    .is_err(),
+                "a paused agent monitor must not forward the samples it keeps receiving"
+            );
+            assert!(
+                tokio::time::timeout(Duration::from_millis(150), status_rx.recv())
+                    .await
+                    .is_err(),
+                "a paused agent monitor must not flip its badge back to Live"
+            );
+
+            // Resume: the driver emits Live and forwards fresh samples again.
+            paused_tx.send_replace(false);
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Live,
+                "resuming must report Live"
+            );
+            raw_tx.send(sample()).await.expect("send sample");
+            assert!(
+                stats_rx.recv().await.is_some(),
+                "a resumed monitor must forward samples again"
             );
 
             drop(raw_tx);
