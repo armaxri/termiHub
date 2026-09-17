@@ -402,6 +402,113 @@ describe("stale directory-list responses are dropped by request order (SM-007)",
     expectParity();
   });
 
+  it("navigateLocal normalizes backslashes and expands a bare drive letter", async () => {
+    vi.mocked(localListDir).mockReset();
+    vi.mocked(localListDir).mockResolvedValue([entry("a")]);
+
+    // A bare drive letter ("C:") is expanded to its root form ("C:/") so the Up
+    // button can detect the drive-root boundary (line 90 branch).
+    await useAppStore.getState().navigateLocal("C:");
+    await flush();
+    expect(vi.mocked(localListDir)).toHaveBeenLastCalledWith("C:/");
+    expect(currentFileBrowsersView().local.path).toBe("C:/");
+
+    // Backslashes are normalized to forward slashes uniformly across platforms.
+    await useAppStore.getState().navigateLocal("C:\\Users\\me");
+    await flush();
+    expect(vi.mocked(localListDir)).toHaveBeenLastCalledWith("C:/Users/me");
+    expect(currentFileBrowsersView().local.path).toBe("C:/Users/me");
+  });
+
+  it("navigateLocal stringifies a non-Error rejection (String(err) branch)", async () => {
+    vi.mocked(localListDir).mockReset();
+    // Reject with a plain string so the `err instanceof Error` guard takes its
+    // `String(err)` alternate rather than reading `.message`.
+    vi.mocked(localListDir).mockRejectedValue("disk gone");
+
+    await useAppStore.getState().navigateLocal("/x");
+    await flush();
+
+    expect(currentFileBrowsersView().local.error).toBe("disk gone");
+    expect(currentFileBrowsersView().local.loading).toBe(false);
+    expectParity();
+  });
+
+  it("refreshLocal records the pane error on a failed re-list", async () => {
+    vi.mocked(localListDir).mockReset();
+    vi.mocked(localListDir).mockResolvedValueOnce([entry("x")]);
+    await useAppStore.getState().navigateLocal("/tmp");
+    await flush();
+
+    vi.mocked(localListDir).mockRejectedValueOnce(new Error("refresh failed"));
+    await useAppStore.getState().refreshLocal();
+    await flush();
+
+    expect(currentFileBrowsersView().local.error).toBe("refresh failed");
+    expect(currentFileBrowsersView().local.loading).toBe(false);
+    expectParity();
+  });
+
+  it("navigateSession stringifies a non-Error rejection (String(err) branch)", async () => {
+    vi.mocked(sessionListFiles).mockReset();
+    vi.mocked(sessionListFiles).mockRejectedValue("session dropped");
+
+    await useAppStore.getState().navigateSession("sess-1", "/srv");
+    await flush();
+
+    expect(currentFileBrowsersView().session.error).toBe("session dropped");
+    expect(currentFileBrowsersView().session.loading).toBe(false);
+    expectParity();
+  });
+
+  it("refreshSession records the pane error on a failed re-list", async () => {
+    useAppStore.setState({ sessionFileBrowserId: "sess-1" });
+    seedFileBrowsers({ session: { path: "/srv", entries: [], loading: false, error: null } });
+    vi.mocked(sessionListFiles).mockReset();
+    vi.mocked(sessionListFiles).mockRejectedValueOnce(new Error("no route"));
+
+    await useAppStore.getState().refreshSession();
+    await flush();
+
+    expect(currentFileBrowsersView().session.error).toBe("no route");
+    expect(currentFileBrowsersView().session.loading).toBe(false);
+    expectParity();
+  });
+
+  it("setSessionFileBrowserId sets then clears the active session id", () => {
+    useAppStore.getState().setSessionFileBrowserId("sess-9");
+    expect(useAppStore.getState().sessionFileBrowserId).toBe("sess-9");
+
+    useAppStore.getState().setSessionFileBrowserId(null);
+    expect(useAppStore.getState().sessionFileBrowserId).toBeNull();
+  });
+
+  it("clearFileBrowserError dismisses a pane error without re-listing (SM-008)", async () => {
+    vi.mocked(localListDir).mockReset();
+    vi.mocked(localListDir).mockRejectedValueOnce(new Error("boom"));
+    await useAppStore.getState().navigateLocal("/root");
+    await flush();
+    expect(currentFileBrowsersView().local.error).toBe("boom");
+
+    useAppStore.getState().clearFileBrowserError("local");
+    expect(currentFileBrowsersView().local.error).toBeNull();
+    // Dismiss is client-only — it does not issue a fresh directory listing.
+    expect(vi.mocked(localListDir)).toHaveBeenCalledTimes(1);
+    expectParity();
+  });
+
+  it("clearFileBrowserError dismisses the session pane error too", async () => {
+    vi.mocked(sessionListFiles).mockReset();
+    vi.mocked(sessionListFiles).mockRejectedValueOnce(new Error("denied"));
+    await useAppStore.getState().navigateSession("sess-1", "/srv");
+    await flush();
+    expect(currentFileBrowsersView().session.error).toBe("denied");
+
+    useAppStore.getState().clearFileBrowserError("session");
+    expect(currentFileBrowsersView().session.error).toBeNull();
+    expectParity();
+  });
+
   it("navigateSession and navigateLocal keep independent per-pane request counters", async () => {
     const dLocal = deferred<FileEntry[]>();
     const dSession = deferred<FileEntry[]>();
@@ -433,5 +540,117 @@ describe("stale directory-list responses are dropped by request order (SM-007)",
       "fileBrowser.loadSucceeded",
       "fileBrowser.loadSucceeded",
     ]);
+  });
+
+  it("navigateLocal: a stale FAILURE resolving last does not overwrite the latest success", async () => {
+    const dA = deferred<FileEntry[]>();
+    const dB = deferred<FileEntry[]>();
+    vi.mocked(localListDir)
+      .mockImplementationOnce(() => dA.promise)
+      .mockImplementationOnce(() => dB.promise);
+
+    const pA = useAppStore.getState().navigateLocal("/a");
+    const pB = useAppStore.getState().navigateLocal("/b");
+
+    dB.resolve([entry("b")]);
+    await pB;
+    await settle();
+
+    // A rejects late — the superseded request's error must be dropped by the
+    // request-order guard, not surfaced over the newer successful view.
+    dA.reject(new Error("A failed"));
+    await pA;
+    await settle();
+
+    expect(currentFileBrowsersView().local.path).toBe("/b");
+    expect(currentFileBrowsersView().local.error).toBeNull();
+    expect(currentFileBrowsersView().local.loading).toBe(false);
+    expectParity();
+  });
+
+  it("refreshLocal: a stale SUCCESS resolving last is dropped by request order", async () => {
+    const d1 = deferred<FileEntry[]>();
+    const d2 = deferred<FileEntry[]>();
+    vi.mocked(localListDir)
+      .mockImplementationOnce(() => d1.promise)
+      .mockImplementationOnce(() => d2.promise);
+
+    const p1 = useAppStore.getState().refreshLocal();
+    const p2 = useAppStore.getState().refreshLocal();
+
+    d2.resolve([entry("new")]);
+    await p2;
+    await settle();
+
+    d1.resolve([entry("stale")]);
+    await p1;
+    await settle();
+
+    expect(currentFileBrowsersView().local.entries.map((e) => e.name)).toEqual(["new"]);
+    expect(currentFileBrowsersView().local.loading).toBe(false);
+    expectParity();
+  });
+
+  it("refreshLocal: a stale FAILURE resolving last is dropped by request order", async () => {
+    const d1 = deferred<FileEntry[]>();
+    const d2 = deferred<FileEntry[]>();
+    vi.mocked(localListDir)
+      .mockImplementationOnce(() => d1.promise)
+      .mockImplementationOnce(() => d2.promise);
+
+    const p1 = useAppStore.getState().refreshLocal();
+    const p2 = useAppStore.getState().refreshLocal();
+
+    d2.resolve([entry("ok")]);
+    await p2;
+    await settle();
+
+    d1.reject(new Error("stale refresh failed"));
+    await p1;
+    await settle();
+
+    expect(currentFileBrowsersView().local.error).toBeNull();
+    expect(currentFileBrowsersView().local.loading).toBe(false);
+    expectParity();
+  });
+
+  it("refreshSession: a stale FAILURE resolving last is dropped by request order", async () => {
+    useAppStore.setState({ sessionFileBrowserId: "sess-1" });
+    seedFileBrowsers({ session: { path: "/srv", entries: [], loading: false, error: null } });
+
+    const d1 = deferred<FileEntry[]>();
+    const d2 = deferred<FileEntry[]>();
+    vi.mocked(sessionListFiles)
+      .mockImplementationOnce(() => d1.promise)
+      .mockImplementationOnce(() => d2.promise);
+
+    const p1 = useAppStore.getState().refreshSession();
+    const p2 = useAppStore.getState().refreshSession();
+
+    d2.resolve([entry("s")]);
+    await p2;
+    await settle();
+
+    d1.reject(new Error("stale session refresh failed"));
+    await p1;
+    await settle();
+
+    expect(currentFileBrowsersView().session.error).toBeNull();
+    expect(currentFileBrowsersView().session.loading).toBe(false);
+    expectParity();
+  });
+
+  it("refreshLocal + refreshSession stringify a non-Error rejection (String(err) branch)", async () => {
+    vi.mocked(localListDir).mockRejectedValueOnce("local string err");
+    await useAppStore.getState().refreshLocal();
+    await settle();
+    expect(currentFileBrowsersView().local.error).toBe("local string err");
+
+    useAppStore.setState({ sessionFileBrowserId: "sess-1" });
+    seedFileBrowsers({ session: { path: "/srv", entries: [], loading: false, error: null } });
+    vi.mocked(sessionListFiles).mockRejectedValueOnce("session string err");
+    await useAppStore.getState().refreshSession();
+    await settle();
+    expect(currentFileBrowsersView().session.error).toBe("session string err");
   });
 });
