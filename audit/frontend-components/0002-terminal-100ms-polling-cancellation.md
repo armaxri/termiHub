@@ -10,7 +10,8 @@ evidence:
   - src/components/Terminal/Terminal.tsx:727
   - src/components/Terminal/Terminal.tsx:739
   - src/components/Terminal/Terminal.tsx:481
-status: open
+status: fixed
+resolution: "#3012 — same issue as WA-FE-012; Terminal.tsx connect/retry now driven by AbortSignal (isCanceled=()=>signal.aborted, :385), no 100ms setInterval poll"
 ---
 
 ## What

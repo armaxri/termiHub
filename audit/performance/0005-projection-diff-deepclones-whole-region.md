@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/services/transport/ProjectionClient.ts
 evidence:
   - src/services/transport/ProjectionClient.ts:204
-status: open
+status: fixed
+resolution: "#3024 — apply projection diffs with immer copy-on-write structural sharing (was full-region deep-clone per diff); immutability invariant + untouched-subtree ref-sharing proven by TDD; backend emits only add/remove/replace"
 ---
 
 ## What
