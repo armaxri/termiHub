@@ -40,6 +40,11 @@ export function PluginSettingsSection({ focusPluginId }: PluginSettingsSectionPr
   // gated on this so its (init-only) default values are the correct ones.
   const [values, setValues] = useState<Record<string, Record<string, JsonValue>>>({});
   const [savedAckId, setSavedAckId] = useState<string | null>(null);
+  // LIBFE-003: left as-is (not routed through useDebouncedCallback). This is a
+  // *keyed map* of concurrent per-plugin debounces (one pending save per plugin
+  // id), which the single-callback hook does not model; `ackTimer` is a plain
+  // clear-the-ack delay, not a debounce. The unmount effect below clears every
+  // pending timer, so nothing leaks past unmount. Tracked for a follow-up.
   const saveTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const ackTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const groupRefs = useRef<Map<string, HTMLDivElement>>(new Map());
