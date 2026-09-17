@@ -4137,6 +4137,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const remainingPrompt = omitKey(state.terminalReconnectPrompt, tabId);
         const remainingAutoRetry = omitKey(state.terminalAutoRetryCount, tabId);
         const remainingWaiting = omitKey(state.terminalWaitingForAgent, tabId);
+        // FES-003: prune the one-shot force-fresh-reconnect flag so it does not
+        // leak a stranded entry when the tab closes.
+        const remainingForceFresh = omitKey(state.terminalForceFreshReconnect, tabId);
 
         // Remove this tab from any persistent session's attachedTabIds
         const persistentSessions = { ...state.persistentSessions };
@@ -4185,6 +4188,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             terminalReconnectPrompt: remainingPrompt,
             terminalAutoRetryCount: remainingAutoRetry,
             terminalWaitingForAgent: remainingWaiting,
+            terminalForceFreshReconnect: remainingForceFresh,
           };
         }
 
@@ -4207,6 +4211,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           terminalReconnectPrompt: remainingPrompt,
           terminalAutoRetryCount: remainingAutoRetry,
           terminalWaitingForAgent: remainingWaiting,
+          terminalForceFreshReconnect: remainingForceFresh,
         };
       });
 
