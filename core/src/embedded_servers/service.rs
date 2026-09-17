@@ -257,7 +257,8 @@ impl EmbeddedServerService {
         let addr = format!("{}:{}", config.bind_host, config.port);
         match config.server_type {
             ServerType::Tftp => {
-                let socket = std::net::UdpSocket::bind(&addr).map_err(|e| port_in_use(config, e))?;
+                let socket =
+                    std::net::UdpSocket::bind(&addr).map_err(|e| port_in_use(config, e))?;
                 drop(socket);
             }
             _ => {
@@ -737,8 +738,8 @@ mod tests {
 
         let mut cfg = http_config(port);
         cfg.server_type = ServerType::Tftp;
-        let err =
-            EmbeddedServerService::check_port_config(&cfg).expect_err("a taken udp port must fail the pre-flight");
+        let err = EmbeddedServerService::check_port_config(&cfg)
+            .expect_err("a taken udp port must fail the pre-flight");
         let msg = err.to_string();
 
         assert!(
