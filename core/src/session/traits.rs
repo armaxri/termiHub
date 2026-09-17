@@ -15,11 +15,8 @@
 //! Generics over these traits monomorphize at compile time, so there is no
 //! dynamic dispatch overhead in hot paths.
 
-use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::Path;
 
-use crate::config::PtySize;
 use crate::errors::SessionError;
 use crate::session::shell::ShellCommand;
 
@@ -52,48 +49,6 @@ pub trait OutputSink: Send + 'static {
     /// established (e.g., a read failure on the PTY). Pre-session errors
     /// are returned directly from the spawn call.
     fn send_error(&self, session_id: &str, message: &str) -> Result<(), SessionError>;
-}
-
-/// Process spawning mechanism — consumers inject their PTY/daemon approach.
-///
-/// Desktop implementations use `portable-pty` for cross-platform PTY
-/// management. Agent implementations spawn a daemon process that manages
-/// the PTY and communicates over a Unix socket (binary frame protocol).
-///
-/// The associated `Handle` type allows each spawner to define its own
-/// process handle, avoiding trait-object overhead in the common case.
-pub trait ProcessSpawner: Send + Sync {
-    /// The handle type returned after a successful spawn.
-    type Handle: ProcessHandle;
-
-    /// Spawn an interactive shell session.
-    ///
-    /// `command` is a fully resolved [`ShellCommand`] (program path,
-    /// arguments, environment, working directory, PTY dimensions) built
-    /// by [`super::shell::build_shell_command()`].
-    ///
-    /// `pty_size` provides the initial terminal dimensions. `env` contains
-    /// additional environment variables to merge. `cwd` is the working
-    /// directory, or `None` to use the system default.
-    fn spawn_shell(
-        &self,
-        command: &ShellCommand,
-        pty_size: PtySize,
-        env: &HashMap<String, String>,
-        cwd: Option<&Path>,
-    ) -> Result<Self::Handle, SessionError>;
-
-    /// Spawn an arbitrary command (non-interactive).
-    ///
-    /// Used for one-shot commands (e.g., monitoring probes, file operations)
-    /// that still need PTY allocation for proper terminal handling.
-    fn spawn_command(
-        &self,
-        program: &str,
-        args: &[String],
-        pty_size: PtySize,
-        env: &HashMap<String, String>,
-    ) -> Result<Self::Handle, SessionError>;
 }
 
 /// Handle to a spawned process — abstracts over `portable-pty` vs daemon.
@@ -269,37 +224,6 @@ mod tests {
         }
     }
 
-    /// Minimal process spawner mock.
-    struct MockProcessSpawner;
-
-    impl ProcessSpawner for MockProcessSpawner {
-        type Handle = MockProcessHandle;
-
-        fn spawn_shell(
-            &self,
-            _command: &ShellCommand,
-            _pty_size: PtySize,
-            _env: &HashMap<String, String>,
-            _cwd: Option<&Path>,
-        ) -> Result<Self::Handle, SessionError> {
-            Ok(MockProcessHandle {
-                alive: Arc::new(Mutex::new(true)),
-            })
-        }
-
-        fn spawn_command(
-            &self,
-            _program: &str,
-            _args: &[String],
-            _pty_size: PtySize,
-            _env: &HashMap<String, String>,
-        ) -> Result<Self::Handle, SessionError> {
-            Ok(MockProcessHandle {
-                alive: Arc::new(Mutex::new(true)),
-            })
-        }
-    }
-
     // -- OutputSink tests -------------------------------------------------
 
     #[test]
@@ -338,33 +262,7 @@ mod tests {
         assert_eq!(errors[0], ("s1".to_string(), "read failed".to_string()));
     }
 
-    // -- ProcessSpawner + ProcessHandle tests -----------------------------
-
-    #[test]
-    fn process_spawner_spawn_shell() {
-        let spawner = MockProcessSpawner;
-        let cmd = ShellCommand {
-            program: "/bin/bash".into(),
-            args: vec!["--login".into()],
-            env: HashMap::new(),
-            cwd: None,
-            cols: 80,
-            rows: 24,
-        };
-        let handle = spawner
-            .spawn_shell(&cmd, PtySize::default(), &HashMap::new(), None)
-            .unwrap();
-        assert!(handle.is_alive());
-    }
-
-    #[test]
-    fn process_spawner_spawn_command() {
-        let spawner = MockProcessSpawner;
-        let handle = spawner
-            .spawn_command("ls", &["-la".into()], PtySize::default(), &HashMap::new())
-            .unwrap();
-        assert!(handle.is_alive());
-    }
+    // -- ProcessHandle tests ----------------------------------------------
 
     #[test]
     fn process_handle_write_input() {
@@ -413,13 +311,11 @@ mod tests {
     // -- Send bound verification ------------------------------------------
 
     fn _assert_output_sink_send<T: OutputSink>() {}
-    fn _assert_process_spawner_send_sync<T: ProcessSpawner>() {}
     fn _assert_process_handle_send<T: ProcessHandle>() {}
 
     #[test]
     fn trait_bounds_compile() {
         _assert_output_sink_send::<MockOutputSink>();
-        _assert_process_spawner_send_sync::<MockProcessSpawner>();
         _assert_process_handle_send::<MockProcessHandle>();
     }
 }

@@ -28,41 +28,9 @@ pub const TEST_BRIDGE_PORT_ENV: &str = "TERMIHUB_TEST_BRIDGE_PORT";
 /// terminal). Unset → behaviour is unchanged (the window is still pinned).
 pub const TEST_NO_ALWAYS_ON_TOP_ENV: &str = "TERMIHUB_TEST_NO_ALWAYS_ON_TOP";
 
-/// Env-var prefix for injecting a runtime feature-flag global into the webview
-/// under the test bridge (#2476). `TERMIHUB_TEST_FLAG_<NAME>=<bool>` injects
-/// `window.__TERMIHUB_<NAME>__ = <bool>` before boot, so the harness can flip a
-/// `window.__TERMIHUB_*__`-gated flag for a live run without a bridge protocol
-/// round-trip. Only active in test-bridge mode; production injects none.
-pub const TEST_FLAG_ENV_PREFIX: &str = "TERMIHUB_TEST_FLAG_";
-
-/// Whether a `TERMIHUB_TEST_FLAG_*` value reads as truthy (`1`/`true`, any case).
+/// Whether an env-var value reads as truthy (`1`/`true`, any case).
 fn flag_is_truthy(raw: &str) -> bool {
     matches!(raw.trim().to_ascii_lowercase().as_str(), "1" | "true")
-}
-
-/// Whether an env-var suffix is a safe JS identifier fragment (`[A-Za-z0-9_]+`),
-/// so the injected `window.__TERMIHUB_<NAME>__` can never be a script-injection
-/// vector. Env-var names are already restricted to this set, so this is a
-/// belt-and-suspenders guard.
-fn is_safe_flag_name(name: &str) -> bool {
-    !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
-}
-
-/// JavaScript that sets each `TERMIHUB_TEST_FLAG_<NAME>` env var as the boolean
-/// global `window.__TERMIHUB_<NAME>__`. Empty when none are set. Names are sorted
-/// so the emitted script is deterministic (stable across runs / for tests).
-fn feature_flag_init_script() -> String {
-    let mut pairs: Vec<(String, bool)> = std::env::vars()
-        .filter_map(|(key, val)| {
-            let name = key.strip_prefix(TEST_FLAG_ENV_PREFIX)?;
-            is_safe_flag_name(name).then(|| (name.to_string(), flag_is_truthy(&val)))
-        })
-        .collect();
-    pairs.sort();
-    pairs
-        .into_iter()
-        .map(|(name, value)| format!(" window.__TERMIHUB_{name}__ = {value};"))
-        .collect()
 }
 
 /// JavaScript that forces the page to always look foregrounded/visible, so the
@@ -90,13 +58,12 @@ document.addEventListener('webkitvisibilitychange',swallow,true);\
 ///
 /// Mirrors the keys read by `src/testbridge/testMode.ts`
 /// (`TEST_BRIDGE_GLOBAL_KEY` and `TEST_BRIDGE_PORT_GLOBAL_KEY`). Assigns to
-/// `window` explicitly since the script runs in its own function scope. Any
-/// `TERMIHUB_TEST_FLAG_*` feature-flag globals are appended (#2476), followed by
-/// the page-visibility override that keeps the reconnect engine awake (#2480).
+/// `window` explicitly since the script runs in its own function scope. The
+/// page-visibility override that keeps the reconnect engine awake (#2480) is
+/// appended.
 fn test_bridge_init_script(port: u16) -> String {
     format!(
-        "window.__TERMIHUB_TEST_BRIDGE__ = true; window.__TERMIHUB_TEST_BRIDGE_PORT__ = {port};{}{VISIBILITY_OVERRIDE_JS}",
-        feature_flag_init_script()
+        "window.__TERMIHUB_TEST_BRIDGE__ = true; window.__TERMIHUB_TEST_BRIDGE_PORT__ = {port};{VISIBILITY_OVERRIDE_JS}"
     )
 }
 
@@ -232,35 +199,6 @@ mod tests {
         assert!(!flag_is_truthy("0"));
         assert!(!flag_is_truthy("false"));
         assert!(!flag_is_truthy(""));
-    }
-
-    #[test]
-    fn safe_flag_name_rejects_injection() {
-        assert!(is_safe_flag_name("SESSION_BACKEND_REATTACH"));
-        assert!(is_safe_flag_name("A1_B2"));
-        assert!(!is_safe_flag_name(""));
-        assert!(!is_safe_flag_name("A;window.x=1"));
-        assert!(!is_safe_flag_name("A-B"));
-    }
-
-    #[test]
-    fn feature_flag_script_injects_env_flags_sorted_and_typed() {
-        // Mutates process-global env vars under unique keys no other test reads.
-        let on = "TERMIHUB_TEST_FLAG_ZZZ_ON";
-        let off = "TERMIHUB_TEST_FLAG_AAA_OFF";
-        unsafe {
-            std::env::set_var(on, "1");
-            std::env::set_var(off, "false");
-        }
-        let script = feature_flag_init_script();
-        assert_eq!(
-            script,
-            " window.__TERMIHUB_AAA_OFF__ = false; window.__TERMIHUB_ZZZ_ON__ = true;"
-        );
-        unsafe {
-            std::env::remove_var(on);
-            std::env::remove_var(off);
-        }
     }
 
     #[test]
