@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Button, Checkbox, Field, Input, Modal, NumberInput, Select, toast } from "@/components/ui";
+import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { IconPickerDialog } from "@/components/ConnectionEditor/IconPickerDialog";
 import { IconByName } from "@/utils/connectionIcons";
 import { storeCredential } from "@/services/api";
@@ -273,9 +274,9 @@ export function SaveAsConnectionDialog({
         </label>
         {savePassword && credentialStoreActive && (
           <Field label="Password" htmlFor="save-as-connection-password">
-            <Input
+            <PasswordInput
               id="save-as-connection-password"
-              type="password"
+              className="ui-input"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password to store"

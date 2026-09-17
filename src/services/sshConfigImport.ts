@@ -14,6 +14,7 @@ import type {
   SavedConnection,
   SshConfigImportConnection,
 } from "@/types/connection";
+import { compareNames } from "@/utils/locale";
 
 /**
  * Build the SSH settings record for a {@link SavedConnection} from an imported
@@ -123,6 +124,6 @@ export function importFolderOptions(folders: ConnectionFolder[]): ImportFolderOp
   const byId = new Map(folders.map((f) => [f.id, f]));
   const folderOpts = folders
     .map((f) => ({ value: f.id, label: folderPathLabel(f, byId) }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+    .sort((a, b) => compareNames(a.label, b.label));
   return [{ value: ROOT_FOLDER_VALUE, label: "Connections (root)" }, ...folderOpts];
 }
