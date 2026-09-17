@@ -172,4 +172,14 @@ describe("useDebouncedCallback", () => {
     act(() => vi.advanceTimersByTime(300));
     expect(cb).not.toHaveBeenCalled();
   });
+
+  it("clears the pending timer on unmount (no timer leaks)", () => {
+    const hook = renderCallback<[]>(vi.fn(), 300);
+    hook.call();
+    // The armed timer is live before unmount…
+    expect(vi.getTimerCount()).toBe(1);
+    hook.unmount();
+    // …and the cleanup must have cleared it, so nothing lingers past unmount.
+    expect(vi.getTimerCount()).toBe(0);
+  });
 });
