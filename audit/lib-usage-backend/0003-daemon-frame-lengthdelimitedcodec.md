@@ -9,7 +9,8 @@ subsystem: agent/daemon/protocol
 evidence:
   - agent/src/daemon/protocol.rs:110
   - agent/src/daemon/protocol.rs:149
-status: open
+status: wontfix
+resolution: "by-design — finding self-identifies as borderline keep-as-is; CLAUDE.md sanctions daemon frame protocol as acceptable domain-specific glue; well-tested w/ 16MiB guard; codec wouldnt model the 1-byte type discriminant"
 ---
 
 ## What

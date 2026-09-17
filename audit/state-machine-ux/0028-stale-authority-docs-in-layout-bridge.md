@@ -10,7 +10,8 @@ evidence:
   - src/store/layoutBridge.ts:16
   - src/store/layoutBridge.ts:404
   - src/store/sessionBridge.ts:581
-status: open
+status: fixed
+resolution: "develop — already resolved: stale gated-cut JSDoc (layoutIntentsEnabled/viewMatchesTree/seedLayoutRegion/appStore-fallback) removed by #2283 cleanup commits c73c0894/58a16d23/6b82ebb2; no dangling {@link} remain"
 ---
 
 ## What

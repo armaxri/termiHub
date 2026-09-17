@@ -9,7 +9,8 @@ subsystem: coverage/
 evidence:
   - coverage/clover.xml
   - coverage/coverage-final.json
-status: open
+status: fixed
+resolution: "develop — already resolved: coverage/ not tracked + already gitignored (#1528, CI regenerates); no committed report exists"
 ---
 
 ## What

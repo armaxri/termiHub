@@ -13,7 +13,8 @@ evidence:
   - src/components/Settings/KeyPathInput.tsx:28
   - src/components/RemoteDesktop/RemoteDesktopCanvas.tsx:119
   - src/test/setup.ts:53
-status: open
+status: fixed
+resolution: "#3023 — hook already existed (UISF-005); migrated 3 remaining hand-rolled debounce sites (useLocalDirWatch, FileEditor, RemoteDesktopCanvas) through useDebouncedCallback; SettingsPanel+PluginSettingsSection deferred #3022 (distinct flush/keyed-map semantics)"
 ---
 
 ## What
