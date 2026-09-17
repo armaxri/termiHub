@@ -2,9 +2,8 @@
 //!
 //! Config-model foundation for the Shell Context Menu & CLI Spawn Integration
 //! epic (#1363). This module owns the persisted settings shape
-//! ([`ShellIntegrationSettings`] and friends), the **pure**, platform-independent
-//! connection-type resolution priority ([`resolve_connection`]), and the
-//! staleness comparison used by the status command ([`exe_path_matches`]).
+//! ([`ShellIntegrationSettings`] and friends) and the staleness comparison used
+//! by the status command ([`exe_path_matches`]).
 //!
 //! It performs **no** OS writes — actual per-OS registration (registry / desktop
 //! files / Quick Actions) and file-manager detection land in later epic issues.
@@ -249,77 +248,6 @@ pub struct ShellIntegrationSettings {
     pub first_launch_banner_dismissed: bool,
 }
 
-/// The resolved connection selector for a spawn request.
-//
-// `allow(dead_code)`: this resolution API is the config-model foundation for
-// #1367; its runtime consumer (the CLI-spawn handler) lands in a later epic
-// #1363 issue. It is fully exercised by the unit tests below.
-#[allow(dead_code)]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ResolvedConnection {
-    /// Open the saved connection with this id.
-    Connection(String),
-    /// Show the interactive session picker.
-    Picker,
-    /// Open the system default shell.
-    SystemDefaultShell,
-}
-
-/// Resolve the effective connection selector for a spawn request in strict
-/// priority order:
-///
-/// 1. explicit `--connection <id>` override (`connection_override`)
-/// 2. the entry addressed by `--entry-id` (`entry_id`), if it exists
-/// 3. the first `Always`-visibility entry (the configured default)
-/// 4. the `fallback` setting (picker or system default shell)
-///
-/// An entry with no `connection_id` is a picker entry and resolves to
-/// [`ResolvedConnection::Picker`]. Pure and platform-independent so it is
-/// exhaustively unit-testable.
-///
-/// `allow(dead_code)`: consumer (the CLI-spawn handler) lands in a later
-/// epic #1363 issue; exercised by the unit tests below.
-#[allow(dead_code)]
-pub fn resolve_connection(
-    settings: &ShellIntegrationSettings,
-    connection_override: Option<&str>,
-    entry_id: Option<&str>,
-) -> ResolvedConnection {
-    // Tier 1: explicit --connection override.
-    if let Some(id) = connection_override {
-        return ResolvedConnection::Connection(id.to_string());
-    }
-    // Tier 2: the entry addressed by --entry-id, if it exists.
-    if let Some(id) = entry_id {
-        if let Some(entry) = settings.entries.iter().find(|e| e.id == id) {
-            return resolve_entry(entry);
-        }
-    }
-    // Tier 3: the first Always-visibility entry (the configured default).
-    if let Some(entry) = settings
-        .entries
-        .iter()
-        .find(|e| e.visibility == ShellEntryVisibility::Always)
-    {
-        return resolve_entry(entry);
-    }
-    // Tier 4: the fallback setting.
-    match settings.fallback {
-        ShellIntegrationFallback::Picker => ResolvedConnection::Picker,
-        ShellIntegrationFallback::SystemDefaultShell => ResolvedConnection::SystemDefaultShell,
-    }
-}
-
-/// Resolve a single entry to its selector: a fixed connection, or the picker
-/// when the entry carries no `connection_id`.
-#[allow(dead_code)]
-fn resolve_entry(entry: &ShellEntry) -> ResolvedConnection {
-    match &entry.connection_id {
-        Some(id) => ResolvedConnection::Connection(id.clone()),
-        None => ResolvedConnection::Picker,
-    }
-}
-
 /// Compare the executable path recorded at registration against the current
 /// executable path, returning `true` when they refer to the same binary.
 ///
@@ -435,109 +363,6 @@ mod tests {
             shell: None,
             container_runtime: ContainerRuntime::Auto,
         }
-    }
-
-    fn settings_with(
-        entries: Vec<ShellEntry>,
-        fallback: ShellIntegrationFallback,
-    ) -> ShellIntegrationSettings {
-        ShellIntegrationSettings {
-            entries,
-            fallback,
-            ..Default::default()
-        }
-    }
-
-    // ── Resolution priority — all four precedence tiers ──────────────────
-
-    #[test]
-    fn tier1_explicit_connection_override_wins() {
-        let settings = settings_with(
-            vec![entry("e1", Some("saved-a"), ShellEntryVisibility::Always)],
-            ShellIntegrationFallback::SystemDefaultShell,
-        );
-        // Override beats a matching entry-id and the default entry.
-        let resolved = resolve_connection(&settings, Some("override-conn"), Some("e1"));
-        assert_eq!(
-            resolved,
-            ResolvedConnection::Connection("override-conn".to_string())
-        );
-    }
-
-    #[test]
-    fn tier2_entry_id_selects_that_entry() {
-        let settings = settings_with(
-            vec![
-                entry("e1", Some("saved-a"), ShellEntryVisibility::Always),
-                entry("e2", Some("saved-b"), ShellEntryVisibility::Extended),
-            ],
-            ShellIntegrationFallback::Picker,
-        );
-        let resolved = resolve_connection(&settings, None, Some("e2"));
-        assert_eq!(
-            resolved,
-            ResolvedConnection::Connection("saved-b".to_string())
-        );
-    }
-
-    #[test]
-    fn tier2_picker_entry_resolves_to_picker() {
-        let settings = settings_with(
-            vec![entry("pick", None, ShellEntryVisibility::Extended)],
-            ShellIntegrationFallback::SystemDefaultShell,
-        );
-        let resolved = resolve_connection(&settings, None, Some("pick"));
-        assert_eq!(resolved, ResolvedConnection::Picker);
-    }
-
-    #[test]
-    fn tier2_unknown_entry_id_falls_through_to_default_entry() {
-        let settings = settings_with(
-            vec![entry("e1", Some("saved-a"), ShellEntryVisibility::Always)],
-            ShellIntegrationFallback::Picker,
-        );
-        // Unknown entry-id → falls through to the first Always entry (tier 3).
-        let resolved = resolve_connection(&settings, None, Some("does-not-exist"));
-        assert_eq!(
-            resolved,
-            ResolvedConnection::Connection("saved-a".to_string())
-        );
-    }
-
-    #[test]
-    fn tier3_first_always_entry_is_the_default() {
-        let settings = settings_with(
-            vec![
-                entry("e1", Some("saved-extended"), ShellEntryVisibility::Extended),
-                entry("e2", Some("saved-default"), ShellEntryVisibility::Always),
-                entry("e3", Some("saved-other"), ShellEntryVisibility::Always),
-            ],
-            ShellIntegrationFallback::Picker,
-        );
-        // No override, no entry-id → first Always entry (skips the Extended one).
-        let resolved = resolve_connection(&settings, None, None);
-        assert_eq!(
-            resolved,
-            ResolvedConnection::Connection("saved-default".to_string())
-        );
-    }
-
-    #[test]
-    fn tier4_fallback_picker_when_no_entry_matches() {
-        let settings = settings_with(
-            vec![entry("e1", Some("saved-a"), ShellEntryVisibility::Extended)],
-            ShellIntegrationFallback::Picker,
-        );
-        // Only Extended entries → no Always default → fallback.
-        let resolved = resolve_connection(&settings, None, None);
-        assert_eq!(resolved, ResolvedConnection::Picker);
-    }
-
-    #[test]
-    fn tier4_fallback_system_default_shell() {
-        let settings = settings_with(Vec::new(), ShellIntegrationFallback::SystemDefaultShell);
-        let resolved = resolve_connection(&settings, None, None);
-        assert_eq!(resolved, ResolvedConnection::SystemDefaultShell);
     }
 
     // ── Staleness comparison ─────────────────────────────────────────────
