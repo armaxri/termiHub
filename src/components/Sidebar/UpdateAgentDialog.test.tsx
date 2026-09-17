@@ -134,6 +134,26 @@ describe("UpdateAgentDialog", () => {
     expect(props.onOpenChange).toHaveBeenCalledWith(false);
   });
 
+  it("renders the confirm button with its leading ArrowUp icon (via ConfirmDialog)", () => {
+    render(<UpdateAgentDialog {...baseProps()} />);
+    const confirm = document.querySelector('[data-testid="update-agent-confirm"]');
+    expect(confirm).not.toBeNull();
+    // The migration must preserve the confirm-button glyph.
+    expect(confirm!.querySelector("svg.lucide-arrow-up")).toBeTruthy();
+  });
+
+  it("confirms when Enter is pressed while Cancel is not focused (ConfirmDialog safe default)", async () => {
+    const props = baseProps();
+    render(<UpdateAgentDialog {...props} otherHosts={[]} />);
+    const dialog = document.querySelector('[data-testid="update-agent-dialog"]') as HTMLElement;
+    const confirm = document.querySelector('[data-testid="update-agent-confirm"]') as HTMLElement;
+    await act(async () => {
+      confirm.focus();
+      dialog.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(mockedUpdateAgent).toHaveBeenCalledTimes(1);
+  });
+
   it("cancel closes the dialog without updating", () => {
     const props = baseProps();
     render(<UpdateAgentDialog {...props} />);
