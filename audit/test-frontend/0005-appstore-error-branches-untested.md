@@ -9,7 +9,8 @@ subsystem: store/appStore.ts
 evidence:
   - src/store/appStore.ts
   - coverage/clover.xml
-status: open
+status: in-progress
+resolution: "#3028 — first bounded slice: appStore branch 76.9->79.5% (+30, 18 tests: panel bail-outs, agent-lifecycle guards/catches); ~230 branches remain tracked in follow-up #3027; flagged toggleAgentFolder silent swallow"
 ---
 
 ## What

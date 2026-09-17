@@ -11,7 +11,8 @@ evidence:
   - src/store/slices/tunnelSlice.ts
   - src/store/slices/pluginsSlice.ts
   - coverage/clover.xml
-status: open
+status: fixed
+resolution: "#3025 — slices already ~90%/82% covered (audit stale, be010e60/#2979); pushed embedded-servers + tunnel slices to 100% branch (+9 tests: reconnect re-entrancy guard, name/error fallbacks); no bug"
 ---
 
 ## What

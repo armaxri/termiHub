@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/session/monitoring_controller.rs:195
   - src-tauri/src/session/monitoring_controller.rs:202
   - src-tauri/src/files/transfer/mod.rs:194
-status: open
+status: fixed
+resolution: "#2976 — already resolved: monitoring stats+status legacy emits removed via #2976; transfer-progress leg correctly kept (3 live consumers: applyTransferProgress, toastTerminalPhase, awaitTransfer) with dedup follow-up #2973"
 ---
 
 ## What

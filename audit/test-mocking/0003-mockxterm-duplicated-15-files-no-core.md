@@ -10,7 +10,8 @@ evidence:
   - src/components/Terminal/Terminal.overlapping-connect.test.tsx:29
   - src/components/Terminal/Terminal.webgl-renderer.test.tsx
   - src/components/Terminal/Terminal.tsx:169
-status: open
+status: fixed
+resolution: "#3026 — extract shared src/test/mockXterm.ts superset (now includes _core) + migrate 16 duplicated MockXTerm suites; real-xterm pin test left intact; no assertions changed"
 ---
 
 ## What
