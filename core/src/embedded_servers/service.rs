@@ -682,6 +682,57 @@ mod tests {
         ));
     }
 
+    // ── port pre-flight clear error (SM-018) ──────────────────────────────────
+    //
+    // A manually-started server has an explicit, persisted port, so — unlike
+    // quick-share, which falls back across ports because it uses an unchosen
+    // default — a taken port must surface a *clear, recoverable* error the UI can
+    // toast, never a silent rebind. `check_port_config` is the shared pre-flight
+    // both paths rely on; these lock in that its message names the port and tells
+    // the user how to recover.
+
+    #[test]
+    fn check_port_config_reports_clear_recoverable_error_when_tcp_port_taken() {
+        // Hold a real TCP port so the pre-flight bind must fail.
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let err = EmbeddedServerService::check_port_config(&http_config(port))
+            .expect_err("a taken port must fail the pre-flight");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains(&format!("Port {port} is already in use")),
+            "message must name the taken port: {msg}"
+        );
+        assert!(
+            msg.contains("choose a different port"),
+            "message must guide the user to recover: {msg}"
+        );
+    }
+
+    #[test]
+    fn check_port_config_reports_clear_recoverable_error_when_udp_port_taken() {
+        // TFTP binds UDP; a held UDP port must fail the pre-flight the same way.
+        let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind ephemeral udp port");
+        let port = socket.local_addr().expect("local addr").port();
+
+        let mut cfg = http_config(port);
+        cfg.server_type = ServerType::Tftp;
+        let err =
+            EmbeddedServerService::check_port_config(&cfg).expect_err("a taken udp port must fail the pre-flight");
+        let msg = err.to_string();
+
+        assert!(
+            msg.contains(&format!("Port {port} is already in use")),
+            "message must name the taken port: {msg}"
+        );
+        assert!(
+            msg.contains("choose a different port"),
+            "message must guide the user to recover: {msg}"
+        );
+    }
+
     // ── liveness (GAP G2/G9) ──────────────────────────────────────────────────
 
     #[test]
