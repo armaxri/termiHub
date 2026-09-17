@@ -177,18 +177,27 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
     };
   }, [tabId]);
 
-  const p = projected;
-  const lost = p?.status === "sessionLost";
-  return {
-    connecting: effectiveConnecting(p),
-    reconnecting: effectiveReconnecting(p),
-    disconnectError: effectiveDisconnectError(p),
-    reconnectTriggerError: effectiveReconnectTriggerError(p),
-    sessionLost: lost,
-    sessionLostError: lost ? p?.error : undefined,
-    exitInfo: effectiveExitInfo(p),
-    exited: effectiveExited(p),
-  };
+  // Memoize the returned slice on the projected snapshot: every field derives
+  // purely from `projected` (a stable `useState` reference that only changes when
+  // the region emits a new snapshot), so keying on it keeps the returned object
+  // referentially stable across unrelated re-renders — otherwise a fresh object
+  // literal each render re-runs every consumer's effects / re-renders memoized
+  // children even when nothing changed (FES-010). Mirrors the sibling
+  // `useProjectedSessionLifecycleMaps`, which already memoizes its map view.
+  return useMemo(() => {
+    const p = projected;
+    const lost = p?.status === "sessionLost";
+    return {
+      connecting: effectiveConnecting(p),
+      reconnecting: effectiveReconnecting(p),
+      disconnectError: effectiveDisconnectError(p),
+      reconnectTriggerError: effectiveReconnectTriggerError(p),
+      sessionLost: lost,
+      sessionLostError: lost ? p?.error : undefined,
+      exitInfo: effectiveExitInfo(p),
+      exited: effectiveExited(p),
+    };
+  }, [projected]);
 }
 
 /**
