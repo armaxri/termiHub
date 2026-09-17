@@ -49,6 +49,7 @@ import {
 } from "@/services/transport";
 import type { BroadcastScope } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /**
  * The `broadcast@<clientId>` region view model — a twin of the Rust store
@@ -94,6 +95,7 @@ export function setBroadcastTransportForTest(t: Transport | null): void {
   startPromise = null;
   transportInstance = t;
   lastView = EMPTY_BROADCAST_VIEW;
+  versionGuard.reset();
 }
 
 function transport(): Transport {
@@ -110,6 +112,10 @@ export type BroadcastViewListener = (view: BroadcastView) => void;
 
 const viewListeners = new Set<BroadcastViewListener>();
 let lastView: BroadcastView = EMPTY_BROADCAST_VIEW;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// strictly older than the last applied is a stale, out-of-order delivery and is
+// ignored, so it can never clobber a newer view.
+const versionGuard = makeVersionGuard();
 
 /**
  * Register a listener, invoked with the projected view on every diff. Returns an
@@ -132,6 +138,24 @@ function normalizeView(view: Partial<BroadcastView> | undefined): BroadcastView 
 }
 
 /**
+ * Commit a projected view (at its region `version`) as the current view and notify
+ * subscribers, unless it is stale (a version strictly older than the last applied).
+ * On today's substrate versions arrive monotonically so the guard never drops a
+ * valid update — it only adds out-of-order protection.
+ */
+function commitBroadcastView(view: BroadcastView, version: number): void {
+  if (!versionGuard.shouldApply(version)) return;
+  lastView = view;
+  for (const listener of viewListeners) {
+    try {
+      listener(lastView);
+    } catch (err) {
+      logBroadcastBridgeFallback("reconcile", err);
+    }
+  }
+}
+
+/**
  * Ensure the `broadcast@<clientId>` region client is subscribed so projected diffs
  * are received and fanned out to the {@link onBroadcastView} listeners. Idempotent
  * and de-duplicated across concurrent callers; a transport/subscribe failure is
@@ -142,14 +166,10 @@ export function ensureBroadcastSubscribed(): Promise<ProjectionClient> {
   if (!startPromise) {
     const client = new ProjectionClient(transport(), BROADCAST_REGION);
     client.onChange((state) => {
-      lastView = normalizeView(state.view as Partial<BroadcastView> | undefined);
-      for (const listener of viewListeners) {
-        try {
-          listener(lastView);
-        } catch (err) {
-          logBroadcastBridgeFallback("reconcile", err);
-        }
-      }
+      commitBroadcastView(
+        normalizeView(state.view as Partial<BroadcastView> | undefined),
+        state.version
+      );
     });
     startPromise = client
       .start()
@@ -172,6 +192,7 @@ export function stopBroadcastSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastView = EMPTY_BROADCAST_VIEW;
+  versionGuard.reset();
 }
 
 /**
@@ -181,6 +202,16 @@ export function stopBroadcastSubscription(): void {
  */
 export function currentBroadcastView(): BroadcastView {
   return lastView;
+}
+
+/**
+ * Test-only: synchronously commit a projected view at an explicit region `version`
+ * through the same guarded path a real diff takes, so a test can drive the
+ * stale-drop / apply behaviour without a transport double. Never call from
+ * production code.
+ */
+export function __emitBroadcastViewForTest(view: BroadcastView, version: number): void {
+  commitBroadcastView(view, version);
 }
 
 // ── Granular broadcast.* intent dispatch (the authoritative mutation path) ─────

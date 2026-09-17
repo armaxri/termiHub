@@ -39,6 +39,7 @@ import {
 } from "@/services/transport";
 import type { MonitoringEntry, SystemStats } from "@/types/monitoring";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The projection region id for the system-monitor domain (twin of the Rust
  * `SYSTEM_MONITORS_REGION` const). Shared (Open Design Decision #4). */
@@ -77,6 +78,7 @@ export function setMonitorTransportForTest(t: Transport | null): void {
   startPromise = null;
   transportInstance = t;
   lastView = EMPTY_VIEW;
+  versionGuard.reset();
 }
 
 function transport(): Transport {
@@ -93,6 +95,28 @@ export type MonitorsViewListener = (view: SystemMonitorsView) => void;
 
 const viewListeners = new Set<MonitorsViewListener>();
 let lastView: SystemMonitorsView = EMPTY_VIEW;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// strictly older than the last applied is a stale, out-of-order delivery and is
+// ignored, so it can never clobber a newer view.
+const versionGuard = makeVersionGuard();
+
+/**
+ * Commit a projected view (at its region `version`) as the current view and notify
+ * subscribers, unless it is stale (a version strictly older than the last applied).
+ * On today's substrate versions arrive monotonically so the guard never drops a
+ * valid update — it only adds out-of-order protection.
+ */
+function commitMonitorsView(view: SystemMonitorsView, version: number): void {
+  if (!versionGuard.shouldApply(version)) return;
+  lastView = view;
+  for (const listener of viewListeners) {
+    try {
+      listener(lastView);
+    } catch (err) {
+      logMonitorBridgeFallback("reconcile", err);
+    }
+  }
+}
 
 /**
  * Register a listener, invoked with the projected view on every diff. Returns an
@@ -115,14 +139,10 @@ export function ensureMonitorsSubscribed(): Promise<ProjectionClient> {
     const client = new ProjectionClient(transport(), SYSTEM_MONITORS_REGION);
     client.onChange((state) => {
       const view = (state.view ?? EMPTY_VIEW) as Partial<SystemMonitorsView>;
-      lastView = { monitors: view.monitors ?? {}, statsCache: view.statsCache ?? {} };
-      for (const listener of viewListeners) {
-        try {
-          listener(lastView);
-        } catch (err) {
-          logMonitorBridgeFallback("reconcile", err);
-        }
-      }
+      commitMonitorsView(
+        { monitors: view.monitors ?? {}, statsCache: view.statsCache ?? {} },
+        state.version
+      );
     });
     startPromise = client
       .start()
@@ -145,6 +165,17 @@ export function stopMonitorsSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastView = EMPTY_VIEW;
+  versionGuard.reset();
+}
+
+/**
+ * Test-only: synchronously commit a projected view at an explicit region `version`
+ * through the same guarded path a real diff takes, so a test can drive the
+ * stale-drop / apply behaviour without a transport double. Never call from
+ * production code.
+ */
+export function __emitMonitorsViewForTest(view: SystemMonitorsView, version: number): void {
+  commitMonitorsView(view, version);
 }
 
 /**

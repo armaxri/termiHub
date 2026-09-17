@@ -45,6 +45,7 @@ import {
   type Transport,
 } from "@/services/transport";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The projection region id for a client's restore cohort
  * (`restore-cohort@<clientId>`, twin of the Rust `restore_cohort_region`). */
@@ -104,6 +105,10 @@ let startPromise: Promise<ProjectionClient> | null = null;
 /** The last projected view received — the frontend's current picture of the
  * authoritative cohort state, read synchronously by the store's cohort actions. */
 let lastView: RestoreCohortView = EMPTY_RESTORE_COHORT_VIEW;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// strictly older than the last applied is a stale, out-of-order delivery and is
+// ignored, so it can never clobber a newer view (nor re-fire a stale settlement).
+const versionGuard = makeVersionGuard();
 
 /** Inject a transport for tests; `null` restores the lazily-created real one and
  * drops any active subscription and cached view. */
@@ -114,6 +119,7 @@ export function setRestoreTransportForTest(t: Transport | null): void {
   transportInstance = t;
   lastObservedSeq = 0;
   lastView = EMPTY_RESTORE_COHORT_VIEW;
+  versionGuard.reset();
 }
 
 function transport(): Transport {
@@ -156,6 +162,7 @@ export function stopRestoreSubscription(): void {
   startPromise = null;
   lastObservedSeq = 0;
   lastView = EMPTY_RESTORE_COHORT_VIEW;
+  versionGuard.reset();
 }
 
 /**
@@ -185,14 +192,31 @@ export function setRestoreSettlementRenderer(fn: RestoreSettlementRenderer | nul
 }
 
 /** React to a region diff: cache the view, and fire the settlement renderer once
- * per new monotonic `seq` so the aggregate summary toast appears exactly once. */
-function onRegionChange(state: ProjectionCacheState): void {
-  const view = (state.view as RestoreCohortView | undefined) ?? EMPTY_RESTORE_COHORT_VIEW;
+ * per new monotonic `seq` so the aggregate summary toast appears exactly once. A
+ * stale (strictly-older region version) diff is ignored (FES-006) so it can neither
+ * clobber a newer view nor re-fire a settlement. */
+function commitRestoreCohortView(view: RestoreCohortView, version: number): void {
+  if (!versionGuard.shouldApply(version)) return;
   lastView = view;
   const settlement = view.settlement;
   if (!settlement || settlement.seq <= lastObservedSeq) return;
   lastObservedSeq = settlement.seq;
   settlementRenderer?.(settlement);
+}
+
+function onRegionChange(state: ProjectionCacheState): void {
+  const view = (state.view as RestoreCohortView | undefined) ?? EMPTY_RESTORE_COHORT_VIEW;
+  commitRestoreCohortView(view, state.version);
+}
+
+/**
+ * Test-only: synchronously commit a projected view at an explicit region `version`
+ * through the same guarded path a real diff takes, so a test can drive the
+ * stale-drop / apply behaviour without a transport double. Never call from
+ * production code.
+ */
+export function __emitRestoreCohortViewForTest(view: RestoreCohortView, version: number): void {
+  commitRestoreCohortView(view, version);
 }
 
 // ── Mutation: begin/settle intent dispatch (also seeds the render region) ──────

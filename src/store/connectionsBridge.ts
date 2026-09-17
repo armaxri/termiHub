@@ -40,6 +40,7 @@ import {
 } from "@/services/transport";
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The projection region id for the connections-tree domain (twin of the Rust
  * `CONNECTIONS_REGION` const). Shared (Open Design Decision #4). */
@@ -103,6 +104,7 @@ export function setConnectionTransportForTest(t: Transport | null): void {
   startPromise = null;
   transportInstance = t;
   lastView = EMPTY_VIEW;
+  versionGuard.reset();
 }
 
 function transport(): Transport {
@@ -119,6 +121,28 @@ export type ConnectionsViewListener = (view: ConnectionsView) => void;
 
 const viewListeners = new Set<ConnectionsViewListener>();
 let lastView: ConnectionsView = EMPTY_VIEW;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// strictly older than the last applied is a stale, out-of-order delivery and is
+// ignored, so it can never clobber a newer view.
+const versionGuard = makeVersionGuard();
+
+/**
+ * Commit a projected view (at its region `version`) as the current view and notify
+ * subscribers, unless it is stale (a version strictly older than the last applied).
+ * On today's substrate versions arrive monotonically so the guard never drops a
+ * valid update — it only adds out-of-order protection.
+ */
+function commitConnectionsView(view: ConnectionsView, version: number): void {
+  if (!versionGuard.shouldApply(version)) return;
+  lastView = view;
+  for (const listener of viewListeners) {
+    try {
+      listener(lastView);
+    } catch (err) {
+      logConnectionBridgeFallback("reconcile", err);
+    }
+  }
+}
 
 /**
  * Register a listener, invoked with the projected view on every diff. Returns an
@@ -140,14 +164,7 @@ export function ensureConnectionsSubscribed(): Promise<ProjectionClient> {
   if (!startPromise) {
     const client = new ProjectionClient(transport(), CONNECTIONS_REGION);
     client.onChange((state) => {
-      lastView = toView((state.view ?? {}) as ConnectionsRegionSnapshot);
-      for (const listener of viewListeners) {
-        try {
-          listener(lastView);
-        } catch (err) {
-          logConnectionBridgeFallback("reconcile", err);
-        }
-      }
+      commitConnectionsView(toView((state.view ?? {}) as ConnectionsRegionSnapshot), state.version);
     });
     startPromise = client
       .start()
@@ -170,11 +187,22 @@ export function stopConnectionsSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastView = EMPTY_VIEW;
+  versionGuard.reset();
 }
 
 /** The last view fanned out (for a hook that subscribes after the first diff). */
 export function currentConnectionsView(): ConnectionsView {
   return lastView;
+}
+
+/**
+ * Test-only: synchronously commit a projected view at an explicit region `version`
+ * through the same guarded path a real diff takes, so a test can drive the
+ * stale-drop / apply behaviour without standing up a transport double. Never call
+ * from production code.
+ */
+export function __emitConnectionsViewForTest(view: ConnectionsView, version: number): void {
+  commitConnectionsView(view, version);
 }
 
 /**

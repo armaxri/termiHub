@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  __emitMonitorsViewForTest,
   currentMonitorsView,
   dispatchMonitorIntent,
   dispatchMonitorIntentBestEffort,
@@ -93,6 +94,24 @@ describe("dispatchMonitorIntent (client-originated, authoritative round-trip)", 
     await dispatchMonitorIntent("monitor.clearError", { key: "s1" });
 
     expect(currentMonitorsView().monitors.s1.error).toBeNull();
+  });
+});
+
+describe("version guard (FES-006)", () => {
+  it("applies the first snapshot, then a newer one, and drops a stale older one", () => {
+    const v1 = monitorsView([fakeMonitor("s1", { stats: fakeStats("host-a", 10) })]);
+    const v2 = monitorsView([fakeMonitor("s1", { stats: fakeStats("host-a", 20) })]);
+    const stale = monitorsView([fakeMonitor("s1", { stats: fakeStats("host-a", 99) })]);
+
+    __emitMonitorsViewForTest(v1, 1);
+    expect(currentMonitorsView()).toEqual(v1);
+
+    __emitMonitorsViewForTest(v2, 2);
+    expect(currentMonitorsView()).toEqual(v2);
+
+    // A strictly older version is dropped — the newer view stays.
+    __emitMonitorsViewForTest(stale, 1);
+    expect(currentMonitorsView()).toEqual(v2);
   });
 });
 
