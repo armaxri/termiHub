@@ -70,6 +70,40 @@ function browserLocaleCandidates(): ReadonlyArray<string | null | undefined> {
   return [...languages, navigator.language];
 }
 
+let cachedNameCollator: Intl.Collator | null = null;
+
+/**
+ * Shared locale-aware collator for sorting user-facing names — filenames,
+ * hostnames, connection/folder labels, and similar strings.
+ *
+ * - `numeric: true` orders embedded numbers naturally, so `"file2"` sorts
+ *   before `"file10"` instead of lexicographically after it.
+ * - `sensitivity: "base"` gives consistent case- and diacritic-insensitive
+ *   ordering, so `"Alpha"`/`"alpha"` and `"café"`/`"cafe"` no longer fragment
+ *   the list depending on casing/accents.
+ *
+ * Built with a guaranteed-valid locale (see {@link resolveUiLocale}) so it never
+ * throws on a `C`/`POSIX` environment. Cached because constructing a collator is
+ * comparatively expensive and the locale is fixed for the session.
+ */
+export function nameCollator(): Intl.Collator {
+  if (cachedNameCollator === null) {
+    cachedNameCollator = new Intl.Collator(resolveUiLocale(), {
+      numeric: true,
+      sensitivity: "base",
+    });
+  }
+  return cachedNameCollator;
+}
+
+/**
+ * Locale-aware comparator for user-facing names, suitable as an `Array.sort`
+ * callback (e.g. `names.sort(compareNames)`). See {@link nameCollator}.
+ */
+export function compareNames(a: string, b: string): number {
+  return nameCollator().compare(a, b);
+}
+
 /**
  * Rewrite `navigator.language` / `navigator.languages` to a valid tag when the
  * environment reports an invalid one (e.g. `"C"`). Idempotent and defensive: a

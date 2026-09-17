@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { getHomeDir, localListDir } from "@/services/api";
+import { compareNames } from "@/utils/locale";
 
 /** An SSH key file found in ~/.ssh/ */
 export interface SshKeyFile {
@@ -59,7 +60,7 @@ export function useSshKeyFiles() {
         const files = entries
           .filter((e) => !e.isDirectory && !isBlockedFile(e.name))
           .map((e) => ({ name: e.name, path: e.path }))
-          .sort((a, b) => a.name.localeCompare(b.name));
+          .sort((a, b) => compareNames(a.name, b.name));
 
         setKeyFiles(files);
       } catch {
