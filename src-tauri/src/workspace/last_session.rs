@@ -78,6 +78,14 @@ impl LastSessionStorage {
     /// should never block startup, so it is treated as "no session to restore".
     /// Crucially, a newer file is only *ignored*, never overwritten: the save
     /// path guards against clobbering it (PER-004).
+    ///
+    /// A genuinely corrupt file is *preserved* — moved aside to a `<name>.bak`
+    /// sidecar — before load proceeds as "no session" (SM-023). Otherwise the
+    /// corrupt-but-maybe-recoverable bytes are lost the moment the next layout
+    /// change saves over them (the save path's [`guard_not_newer`] deliberately
+    /// allows overwriting a file with no readable version, i.e. a corrupt one).
+    /// Backing it up on load hands the user/support a chance to recover, matching
+    /// the corruption-recovery convention of the other JSON stores.
     pub fn load(&self) -> Result<Option<LastSession>> {
         if !self.file_path.exists() {
             return Ok(None);
@@ -93,9 +101,31 @@ impl LastSessionStorage {
                 Ok(None)
             }
             LoadOutcome::Corrupt(e) => {
-                tracing::warn!("Last-session file is corrupt, ignoring it: {e}");
+                self.preserve_corrupt_file(&e);
                 Ok(None)
             }
+        }
+    }
+
+    /// Move a corrupt last-session file aside to a `<name>.bak` sidecar so its
+    /// bytes are preserved for recovery instead of being silently overwritten by
+    /// the next save (SM-023).
+    ///
+    /// Best-effort: a failure here must never block startup, so it only logs. The
+    /// corrupt file is left in place on failure (never deleted without a backup),
+    /// and load still proceeds as "no session".
+    fn preserve_corrupt_file(&self, detail: &str) {
+        let backup = self.file_path.with_extension("json.bak");
+        match fs::rename(&self.file_path, &backup) {
+            Ok(()) => tracing::error!(
+                "Last-session file is corrupt ({detail}); preserved to {} and ignored",
+                backup.display()
+            ),
+            Err(rename_err) => tracing::error!(
+                "Last-session file is corrupt ({detail}); failed to preserve it to {} \
+                 ({rename_err}); leaving it in place and ignoring it",
+                backup.display()
+            ),
         }
     }
 
