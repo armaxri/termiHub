@@ -7,8 +7,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // tab, and that the follow-on exit event lands the tab in the reconnectable view
 // mode. The service mocks only satisfy module import + record the drop call.
 
-const closeTerminalMock = vi.fn(() => Promise.resolve());
-const detachPersistentTabMock = vi.fn(() => Promise.resolve());
+const closeTerminalMock = vi.fn((..._args: unknown[]) => Promise.resolve());
+const detachPersistentTabMock = vi.fn((..._args: unknown[]) => Promise.resolve());
 
 vi.mock("@/services/storage", () => ({
   loadConnections: vi.fn(() =>
