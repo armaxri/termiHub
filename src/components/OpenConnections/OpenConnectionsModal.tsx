@@ -209,7 +209,13 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
   const spawnedSessions = localSessions.filter(isSpawned);
   const plainLocalSessions = localSessions.filter((s) => !isSpawned(s));
 
-  const connectedAgents = remoteAgents.filter((a) => a.connectionState === "connected");
+  // Memoize so this derived list keeps a stable identity across renders where
+  // `remoteAgents` is unchanged. That lets `loadData` (below) depend on it
+  // honestly instead of on a hand-built joined-id key.
+  const connectedAgents = useMemo(
+    () => remoteAgents.filter((a) => a.connectionState === "connected"),
+    [remoteAgents]
+  );
 
   // Agents still establishing (connecting) or recovering (reconnecting) their
   // transport. Previously hidden — the panel only listed "connected" agents — so
@@ -263,13 +269,17 @@ export function OpenConnectionsModal({ open, onOpenChange }: OpenConnectionsModa
     } finally {
       setLoading(false);
     }
-  }, [connectedAgents.map((a) => a.id).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connectedAgents]);
 
   useEffect(() => {
     if (open) {
       void loadData();
     }
-  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Load once when the panel opens; `loadData` is intentionally omitted so a
+    // later agent-set change does not silently re-fetch behind the open panel
+    // (refresh is driven explicitly, e.g. by the prune action).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
 
   // Include errored / reconnecting tunnels, not just connected/connecting: an
   // errored tunnel still holds a leaked `active_tunnels` entry + pool guards, so
