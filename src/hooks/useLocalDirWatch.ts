@@ -2,6 +2,7 @@ import { useEffect, useId, useRef } from "react";
 import { watchLocalDir, unwatchLocalDir } from "@/services/api";
 import { onLocalDirChanged } from "@/services/events";
 import { frontendLog } from "@/utils/frontendLog";
+import { useDebouncedCallback } from "@/hooks/useDebounce";
 
 /**
  * Coalesce a burst of directory events into a single refresh on the frontend
@@ -41,10 +42,11 @@ export function useLocalDirWatch(
   // never tear down the current run's watch that reuses the base id (FEC-005).
   const watchRunRef = useRef(0);
 
-  // Keep a stable ref so the (path-scoped) watch effect always calls the latest
-  // refresh logic without re-subscribing when the callback identity changes.
-  const onChangeRef = useRef(onExternalChange);
-  onChangeRef.current = onExternalChange;
+  // Coalesce bursts through the shared debounced-callback hook (LIBFE-003). Its
+  // identity is stable across renders and it always invokes the latest
+  // `onExternalChange`, so the path-scoped watch effect never re-subscribes when
+  // the callback identity changes, and its pending timer is dropped on unmount.
+  const debouncedRefresh = useDebouncedCallback(onExternalChange, REFRESH_DEBOUNCE_MS);
 
   useEffect(() => {
     if (!enabled || !path) return;
@@ -53,7 +55,6 @@ export function useLocalDirWatch(
     let disposed = false;
     let registered = false;
     let watchClosed = false;
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Idempotently tear down the OS watch — but only once it has actually
     // registered. Calling `unwatchLocalDir` before the matching
@@ -89,10 +90,7 @@ export function useLocalDirWatch(
       }
       const off = await onLocalDirChanged((changedWatchId) => {
         if (changedWatchId !== runWatchId) return;
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-          onChangeRef.current();
-        }, REFRESH_DEBOUNCE_MS);
+        debouncedRefresh();
       });
       // The effect may have been torn down while awaiting the listener; drop it
       // and tear the (now-registered) watch down.
@@ -107,9 +105,9 @@ export function useLocalDirWatch(
 
     return () => {
       disposed = true;
-      if (debounceTimer) clearTimeout(debounceTimer);
+      debouncedRefresh.cancel();
       unlisten?.();
       closeWatch();
     };
-  }, [enabled, path, watchId]);
+  }, [enabled, path, watchId, debouncedRefresh]);
 }
