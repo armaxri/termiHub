@@ -7,6 +7,7 @@ import { AppSettings } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
 import {
   Button,
+  Input,
   NumberInput,
   Select,
   SelectItem,
@@ -295,8 +296,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           label="Font Family"
           hint="Terminal font family. Leave empty to use the default Nerd Font chain."
         >
-          <input
-            type="text"
+          <Input
             value={settings.fontFamily ?? ""}
             onChange={(e) => onChange({ ...settings, fontFamily: e.target.value || undefined })}
             placeholder={DEFAULT_FONT_FAMILY}
