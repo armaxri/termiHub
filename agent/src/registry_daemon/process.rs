@@ -35,7 +35,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
 
-use crate::daemon::protocol::{read_frame_async, write_frame_async};
+use crate::daemon::protocol::{read_frame_async_capped_timeout, write_frame_async};
 use crate::daemon::transport::{registry_endpoint, BoxedReader, BoxedWriter, DaemonListener};
 use crate::registry_daemon::protocol::{
     BroadcastEnvelope, ClientRecord, MSG_ACK, MSG_BROADCAST, MSG_CLIENTS, MSG_DEREGISTER,
@@ -50,6 +50,42 @@ use crate::registry_daemon::protocol::{
 /// automatic, so erring low costs only a process start.
 pub const IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
+/// Bound on a single worker's outbound queue.
+///
+/// The registry's outbound traffic is tiny and bursty: an `MSG_ACK`, the
+/// occasional `MSG_CLIENTS` list, and the one production broadcast
+/// (`agent.update_pending`, #1351). A healthy worker drains this instantly, so a
+/// generous 256-frame queue never fills in normal operation. The cap exists only
+/// to bound a *stalled* consumer: [`RegistryState::fan_out`] clones each
+/// broadcast into every worker's queue, so a worker whose writer is blocked (slow
+/// or wedged, not gone) would otherwise accumulate frames without limit. On a
+/// full queue that worker is dropped rather than allowed to grow memory without
+/// bound (see `fan_out`).
+const REGISTRY_WORKER_QUEUE_CAP: usize = 256;
+
+/// Per-connection frame ceiling for the registry reader.
+///
+/// Registry frames are a handful of small JSON records — a [`ClientRecord`], a
+/// host-wide client list, or a [`BroadcastEnvelope`]. 64 KiB holds a client list
+/// many hundreds of records deep, far more than any real host, while sitting a
+/// factor of 256 below the session daemon's 16 MiB payload ceiling. The registry
+/// accepts unbounded concurrent connections, so this small ceiling keeps a peer
+/// from making it pre-allocate a large buffer per connection (N × 16 MiB would be
+/// a cheap local memory-amplification). Enforced before allocation by
+/// [`read_frame_async_capped_timeout`].
+const REGISTRY_MAX_FRAME_BYTES: u32 = 64 * 1024;
+
+/// Mid-frame read timeout for the registry reader.
+///
+/// Once a frame's first byte has arrived, the rest of that (tiny, local) frame
+/// must arrive within this window; a peer that writes a partial header then
+/// stalls (a local slowloris) is dropped rather than pinning its reader task and
+/// `WorkerConn` forever. This is a *mid-frame* timeout only — a connected-but-idle
+/// worker parked waiting for the next broadcast blocks before the first byte and
+/// is never affected, so healthy idle workers are never reaped. A few seconds is
+/// far longer than any real local frame takes yet bounds a wedged peer.
+const REGISTRY_MID_FRAME_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// A single connected worker.
 struct WorkerConn {
     /// The client this worker announced, once it has sent `MSG_REGISTER`.
@@ -59,8 +95,10 @@ struct WorkerConn {
     /// worker still holds a live connection and still receives broadcasts; it
     /// just is not part of the client set.
     record: Option<ClientRecord>,
-    /// Outbound frames for this worker, drained by its writer task.
-    tx: mpsc::UnboundedSender<(u8, Vec<u8>)>,
+    /// Outbound frames for this worker, drained by its writer task. Bounded at
+    /// [`REGISTRY_WORKER_QUEUE_CAP`] so a stalled consumer cannot grow memory
+    /// without limit; a full queue reaps the worker (see [`RegistryState::fan_out`]).
+    tx: mpsc::Sender<(u8, Vec<u8>)>,
 }
 
 /// The registry's whole state: who is connected, and how to reach them.
@@ -99,17 +137,41 @@ impl RegistryState {
     ///   dispatches on frame type, never on ACK ordering (#1610), and a departed
     ///   client just drops the event on a closed channel (`client.rs`).
     ///
-    /// Send failures are ignored: an unbounded channel only fails when the
-    /// receiving task is gone, which means that worker is already tearing down
-    /// and its own reader loop will remove it. A broadcast must never fail
-    /// because one recipient died.
+    /// A worker's queue is bounded ([`REGISTRY_WORKER_QUEUE_CAP`]), so this uses a
+    /// non-blocking `try_send` and reaps any worker it cannot deliver to:
+    ///
+    /// - **`Full`** — the consumer is stalled (slow or wedged, not gone). Dropping
+    ///   it is the safe policy: a broadcast must never block the whole fan-out on
+    ///   one slow recipient, nor let that recipient's queue grow memory without
+    ///   bound. The dropped worker's `WorkerConn` is removed here, which frees its
+    ///   queued frames and stops its writer task; its reader loop unwinds when the
+    ///   socket next errors or closes.
+    /// - **`Closed`** — the receiving task is already gone; reap it now rather than
+    ///   wait for its reader loop to notice.
+    ///
+    /// A broadcast must never fail because one recipient is slow or dead, so
+    /// healthy workers are always delivered to regardless of what any other
+    /// worker's queue is doing.
     fn fan_out(&self, except_conn: u64, msg_type: u8, payload: Vec<u8>) {
-        let guard = self.workers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = self.workers.lock().unwrap_or_else(|e| e.into_inner());
+        let mut wedged: Vec<u64> = Vec::new();
         for (conn_id, worker) in guard.iter() {
             if *conn_id == except_conn {
                 continue;
             }
-            let _ = worker.tx.send((msg_type, payload.clone()));
+            match worker.tx.try_send((msg_type, payload.clone())) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => {
+                    warn!("Registry: worker {conn_id} outbound queue full, dropping slow worker");
+                    wedged.push(*conn_id);
+                }
+                Err(mpsc::error::TrySendError::Closed(_)) => {
+                    wedged.push(*conn_id);
+                }
+            }
+        }
+        for conn_id in wedged {
+            guard.remove(&conn_id);
         }
     }
 }
@@ -186,7 +248,7 @@ async fn serve_worker(
     mut reader: BoxedReader,
     mut writer: BoxedWriter,
 ) {
-    let (tx, mut rx) = mpsc::unbounded_channel::<(u8, Vec<u8>)>();
+    let (tx, mut rx) = mpsc::channel::<(u8, Vec<u8>)>(REGISTRY_WORKER_QUEUE_CAP);
 
     {
         let mut guard = state.workers.lock().unwrap_or_else(|e| e.into_inner());
@@ -204,7 +266,13 @@ async fn serve_worker(
     });
 
     loop {
-        match read_frame_async(&mut reader).await {
+        match read_frame_async_capped_timeout(
+            &mut reader,
+            REGISTRY_MAX_FRAME_BYTES,
+            REGISTRY_MID_FRAME_TIMEOUT,
+        )
+        .await
+        {
             Ok(Some(frame)) => handle_frame(&state, conn_id, frame),
             Ok(None) => {
                 debug!("Registry: worker {conn_id} disconnected (EOF)");
@@ -250,7 +318,9 @@ fn handle_frame(state: &Arc<RegistryState>, conn_id: u64, frame: crate::daemon::
             let mut guard = state.workers.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(worker) = guard.get_mut(&conn_id) {
                 worker.record = Some(record);
-                let _ = worker.tx.send((MSG_ACK, Vec::new()));
+                // Direct reply to this worker's own request; drop on a full queue
+                // rather than block — a wedged worker is reaped by `fan_out`/EOF.
+                let _ = worker.tx.try_send((MSG_ACK, Vec::new()));
             }
         }
         MSG_DEREGISTER => {
@@ -272,7 +342,7 @@ fn handle_frame(state: &Arc<RegistryState>, conn_id: u64, frame: crate::daemon::
             };
             let guard = state.workers.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(worker) = guard.get(&conn_id) {
-                let _ = worker.tx.send((MSG_CLIENTS, payload));
+                let _ = worker.tx.try_send((MSG_CLIENTS, payload));
             }
         }
         MSG_BROADCAST => {
@@ -309,8 +379,8 @@ mod tests {
         }
     }
 
-    fn conn(state: &RegistryState, conn_id: u64) -> mpsc::UnboundedReceiver<(u8, Vec<u8>)> {
-        let (tx, rx) = mpsc::unbounded_channel();
+    fn conn(state: &RegistryState, conn_id: u64) -> mpsc::Receiver<(u8, Vec<u8>)> {
+        let (tx, rx) = mpsc::channel(REGISTRY_WORKER_QUEUE_CAP);
         state
             .workers
             .lock()
@@ -511,6 +581,43 @@ mod tests {
             .try_recv()
             .expect("event must reach a deregistered-but-connected worker");
         assert_eq!(msg_type, MSG_EVENT);
+    }
+
+    /// A stalled consumer must not be able to grow memory without bound, nor stall
+    /// delivery to healthy workers. When a worker's bounded outbound queue fills,
+    /// the fan-out drops *that* worker (reaps its `WorkerConn`) and keeps
+    /// delivering to everyone else — the broadcaster never blocks.
+    #[test]
+    fn a_full_worker_queue_drops_the_slow_worker_and_spares_healthy_ones() {
+        let state = Arc::new(RegistryState::default());
+        // Worker 0 never drains its queue (a stalled consumer).
+        let _slow = conn(&state, 0);
+        // Worker 1 drains one frame per round (a healthy consumer).
+        let mut healthy = conn(&state, 1);
+
+        let mut healthy_deliveries = 0usize;
+        // Fan out more frames than a single worker's queue can hold.
+        for _ in 0..(REGISTRY_WORKER_QUEUE_CAP + 5) {
+            // `u64::MAX` is not a real connection, so nothing is excluded.
+            state.fan_out(u64::MAX, MSG_EVENT, b"x".to_vec());
+            if healthy.try_recv().is_ok() {
+                healthy_deliveries += 1;
+            }
+        }
+
+        let workers = state.workers.lock().unwrap();
+        assert!(
+            !workers.contains_key(&0),
+            "the stalled worker must be reaped once its queue overflows"
+        );
+        assert!(
+            workers.contains_key(&1),
+            "the healthy worker must survive the slow peer"
+        );
+        assert!(
+            healthy_deliveries >= REGISTRY_WORKER_QUEUE_CAP,
+            "the healthy worker must keep receiving throughout ({healthy_deliveries} delivered)"
+        );
     }
 
     #[test]
