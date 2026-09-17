@@ -784,4 +784,93 @@ mod tests {
         assert_eq!(setup_b.tab_groups.len(), 2);
         assert_eq!(setup_b.tab_groups[1].name, "Deploy");
     }
+
+    /// PER-009: importing a workspace whose tab references a connection name that
+    /// no longer resolves must NOT silently swallow the dangling reference. The
+    /// tab is kept (no data loss) with its raw name retained, and a recovery-style
+    /// warning naming the workspace + missing connection is produced.
+    #[test]
+    fn import_warns_on_dangling_connection_ref_but_keeps_tab() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+
+        let json = r#"{
+            "version": "1",
+            "workspaces": [{
+                "name": "Broken Setup",
+                "tabGroups": [{
+                    "name": "Main",
+                    "layout": {
+                        "type": "leaf",
+                        "tabs": [{ "connectionRef": "Deleted Server" }]
+                    }
+                }]
+            }]
+        }"#;
+
+        // Empty connection set → the referenced name cannot resolve.
+        let count = mgr.import_json(json, &HashMap::new()).unwrap();
+        assert_eq!(count, 1);
+
+        // (a) The tab is still present and its ref is retained verbatim — no data loss.
+        let workspaces = mgr.get_workspaces().unwrap();
+        let ws = mgr.load_workspace(&workspaces[0].id).unwrap();
+        if let WorkspaceLayoutNode::Leaf { tabs } = &ws.tab_groups[0].layout {
+            assert_eq!(tabs.len(), 1);
+            assert_eq!(tabs[0].connection_ref.as_deref(), Some("Deleted Server"));
+        } else {
+            panic!("Expected leaf layout");
+        }
+
+        // (b) A recovery warning was produced naming the workspace + missing connection.
+        let warnings = mgr.take_recovery_warnings();
+        assert_eq!(warnings.len(), 1);
+        assert!(
+            warnings[0].message.contains("Broken Setup"),
+            "warning should name the workspace, got: {}",
+            warnings[0].message
+        );
+        assert!(
+            warnings[0].message.contains("Deleted Server"),
+            "warning should name the missing connection, got: {}",
+            warnings[0].message
+        );
+    }
+
+    /// PER-009 (negative case): a resolvable reference resolves to its id as before
+    /// and produces no warning.
+    #[test]
+    fn import_resolvable_ref_produces_no_warning() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+
+        let json = r#"{
+            "version": "1",
+            "workspaces": [{
+                "name": "Fine",
+                "tabGroups": [{
+                    "name": "Main",
+                    "layout": { "type": "leaf", "tabs": [{ "connectionRef": "Dev Server" }] }
+                }]
+            }]
+        }"#;
+        let name_to_id: HashMap<String, String> =
+            [("Dev Server".to_string(), "conn-1".to_string())]
+                .into_iter()
+                .collect();
+
+        mgr.import_json(json, &name_to_id).unwrap();
+
+        let workspaces = mgr.get_workspaces().unwrap();
+        let ws = mgr.load_workspace(&workspaces[0].id).unwrap();
+        if let WorkspaceLayoutNode::Leaf { tabs } = &ws.tab_groups[0].layout {
+            assert_eq!(tabs[0].connection_ref.as_deref(), Some("conn-1"));
+        } else {
+            panic!("Expected leaf layout");
+        }
+        assert!(
+            mgr.take_recovery_warnings().is_empty(),
+            "a resolvable ref must not produce a warning"
+        );
+    }
 }
