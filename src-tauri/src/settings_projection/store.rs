@@ -1,4 +1,4 @@
-//! The authoritative, shared app-settings document behind the shadow `settings`
+//! The authoritative, shared app-settings document behind the `settings`
 //! projection region (#2227, Phase 5 of #2139).
 //!
 //! Models the app-settings slice the frontend drives in `appStore` (the
@@ -50,7 +50,7 @@ fn default_settings_document() -> Map<String, Value> {
     doc
 }
 
-/// The shadow app-settings authority. Owns the single `AppSettings` document as
+/// The app-settings authority. Owns the single `AppSettings` document as
 /// an opaque JSON object; the shared `settings` region projects it.
 pub struct SettingsStore {
     /// The whole settings document. One mutex guards it so intents never

@@ -272,7 +272,7 @@ impl Inner {
     }
 }
 
-/// The shadow agents authority. Owns the ordered [`AgentEntry`] list plus the
+/// The agents authority. Owns the ordered [`AgentEntry`] list plus the
 /// per-agent live sessions, saved definitions and folders. The single shared
 /// `agents` region projects this state.
 #[derive(Default)]

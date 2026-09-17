@@ -1,4 +1,4 @@
-//! The authoritative, shared transfer-queue state behind the shadow `transfers`
+//! The authoritative, shared transfer-queue state behind the `transfers`
 //! projection region (#2229, Phase 5 of #2139 / #2153).
 //!
 //! Models the Transfer Queue panel slice the frontend currently drives in
@@ -412,7 +412,7 @@ pub struct RegionDelta {
     pub minimized: bool,
 }
 
-/// The shadow transfer-queue authority. Owns one [`TransferEntry`] per transfer,
+/// The transfer-queue authority. Owns one [`TransferEntry`] per transfer,
 /// keyed by `transferId`, plus the panel-minimized flag. The single shared
 /// `transfers` region projects this state.
 #[derive(Default)]

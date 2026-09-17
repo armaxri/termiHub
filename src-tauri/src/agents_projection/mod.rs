@@ -7,7 +7,7 @@
 //! `agents` projection region (Open Design Decision #4: infrastructure domains
 //! are shared) and serves the `agent.*` intents through the projection substrate
 //! ([`crate::projection`]), mirroring the SSH-tunnels pilot
-//! ([`crate::tunnel::projection`]) and the system-monitor shadow
+//! ([`crate::tunnel::projection`]) and the system-monitor region
 //! ([`crate::system_monitor_projection`]).
 //!
 //! # Authoritative — drives the live UI

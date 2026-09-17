@@ -3,7 +3,7 @@
 //!
 //! The auto-reconnect backoff loop used to time itself in the frontend: a
 //! `setTimeout` in `appStore.autoReconnectTimers` fired the `Waiting → Connecting`
-//! edge after each backoff window. Once the shadow [`SessionLifecycleStore`] is
+//! edge after each backoff window. Once the [`SessionLifecycleStore`] is
 //! authoritative for session status (step 2), the *timing* has to move
 //! server-side too — otherwise a client that never re-dispatches would strand a
 //! session in `Waiting` forever. This module is that one genuinely new mechanism:
@@ -145,7 +145,7 @@ impl ReconnectScheduler for TokioReconnectScheduler {
     }
 }
 
-/// Drives the reconnect backoff loop's timing for the shadow
+/// Drives the reconnect backoff loop's timing for the
 /// [`SessionLifecycleStore`]. Holds the store, the injectable scheduler, and a
 /// publish hook (in production: fan the `session-lifecycle` region out via the
 /// projector). Managed as Tauri state and resolved by the `session.*` intent
@@ -158,7 +158,7 @@ pub struct ReconnectTimerDriver {
     publish: Arc<dyn Fn() + Send + Sync>,
     /// The optional backend-driven reconnect redrive (#2454). Present once the
     /// production wiring ([`crate::session_projection::redrive`]) is installed;
-    /// `None` in shadow-only setups and plain timer unit tests, where a fired
+    /// `None` in redrive-absent setups and plain timer unit tests, where a fired
     /// timer only advances the store + publishes and the client drives the
     /// redrive. When present, it is invoked on every fired attempt but no-ops for
     /// a tab that did not opt into backend reattach.
@@ -168,7 +168,7 @@ pub struct ReconnectTimerDriver {
 impl ReconnectTimerDriver {
     /// Build a driver over a store, a scheduler, and a publish hook.
     ///
-    /// The backend redrive hook is absent by default (client-driven / shadow);
+    /// The backend redrive hook is absent by default (client-driven);
     /// install it with [`Self::with_redrive`].
     pub fn new(
         store: Arc<SessionLifecycleStore>,

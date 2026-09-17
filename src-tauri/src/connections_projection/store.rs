@@ -1,4 +1,4 @@
-//! The authoritative, shared connections-tree state behind the shadow
+//! The authoritative, shared connections-tree state behind the
 //! `connections` projection region (#2225, Phase 5 of #2139).
 //!
 //! Models the saved-connection / folder tree the frontend currently drives in
@@ -45,7 +45,7 @@ struct Inner {
     connections: Vec<SavedConnection>,
 }
 
-/// The shadow connections-tree authority. Owns the flat `folders` and
+/// The connections-tree authority. Owns the flat `folders` and
 /// `connections` arrays keyed by their path-derived ids, mirroring the frontend
 /// `appStore` slice. The single shared `connections` region projects this state.
 #[derive(Default)]

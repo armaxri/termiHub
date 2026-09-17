@@ -1,5 +1,5 @@
 //! The authoritative, client-scoped workflow-run state machine behind the
-//! shadow `workflow-run@<clientId>` region (#2243, Phase 4 step 5c of #2139).
+//! `workflow-run@<clientId>` region (#2243, Phase 4 step 5c of #2139).
 //!
 //! Models the in-flight workflow run the frontend currently drives (`appStore`
 //! `workflowRun` + `workflowRunOutput`, #1852 / #1865): a single active run per
@@ -149,7 +149,7 @@ impl ClientState {
     }
 }
 
-/// The shadow workflow-run authority. Owns one [`ClientState`] per attached
+/// The workflow-run authority. Owns one [`ClientState`] per attached
 /// client, keyed by `clientId`; an unknown client is seeded lazily on first
 /// touch. Each client projects its own `workflow-run@<clientId>` region.
 pub struct WorkflowRunStore {

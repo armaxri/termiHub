@@ -1,5 +1,5 @@
 //! The authoritative, client-scoped file-browser **view** state behind the
-//! shadow `file-browser@<clientId>` region (#2228, Phase 5 of #2139 / #2153).
+//! `file-browser@<clientId>` region (#2228, Phase 5 of #2139 / #2153).
 //!
 //! Models the file-browser UI state the frontend currently drives in
 //! `appStore.ts`: the two browser panes a client can open — **local**
@@ -269,7 +269,7 @@ impl ClientState {
     }
 }
 
-/// The shadow file-browser authority. Owns one [`ClientState`] per attached
+/// The file-browser authority. Owns one [`ClientState`] per attached
 /// client, keyed by `clientId`; an unknown client is seeded lazily on first
 /// touch. Each client projects its own `file-browser@<clientId>` region.
 pub struct FileBrowserStore {

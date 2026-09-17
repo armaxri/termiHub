@@ -1,5 +1,5 @@
 //! The authoritative, client-scoped broadcast-membership state machine behind
-//! the shadow `broadcast@<clientId>` region (#2242, Phase 4 step 5b of #2139,
+//! the `broadcast@<clientId>` region (#2242, Phase 4 step 5b of #2139,
 //! part of #2206 / #2152).
 //!
 //! Models the broadcast-input membership slice the frontend currently drives
@@ -142,7 +142,7 @@ fn ordered_targets(source_tab_id: &str, target_tab_ids: &[String]) -> Vec<String
     out
 }
 
-/// The shadow broadcast-membership authority. Owns one [`ClientState`] per
+/// The broadcast-membership authority. Owns one [`ClientState`] per
 /// attached client, keyed by `clientId`; an unknown client is seeded lazily on
 /// first touch with the idle baseline. Each client projects its own
 /// `broadcast@<clientId>` region.

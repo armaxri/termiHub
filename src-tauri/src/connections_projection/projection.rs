@@ -4,8 +4,8 @@
 //! Exposes the authoritative [`ConnectionsStore`] as one versioned,
 //! multi-subscriber projection region and turns the tree-mutation transitions the
 //! frontend currently drives into [`Intent`]s — mirroring the SSH-tunnels pilot
-//! ([`crate::tunnel::projection`]), the session-lifecycle shadow
-//! ([`crate::session_projection::projection`]) and the system-monitor shadow
+//! ([`crate::tunnel::projection`]), the session-lifecycle region
+//! ([`crate::session_projection::projection`]) and the system-monitor region
 //! ([`crate::system_monitor_projection::projection`]).
 //!
 //! # The `connections` region

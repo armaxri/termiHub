@@ -4,7 +4,7 @@
 //! Exposes the authoritative [`SystemMonitorStore`] as one versioned,
 //! multi-subscriber projection region and turns the monitoring transitions the
 //! frontend currently drives into [`Intent`]s — mirroring the SSH-tunnels pilot
-//! ([`crate::tunnel::projection`]) and the session-lifecycle shadow
+//! ([`crate::tunnel::projection`]) and the session-lifecycle region
 //! ([`crate::session_projection::projection`]).
 //!
 //! # The `system-monitors` region

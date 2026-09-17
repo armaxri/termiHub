@@ -1,4 +1,4 @@
-//! The authoritative, shared system-monitor state behind the shadow
+//! The authoritative, shared system-monitor state behind the
 //! `system-monitors` projection region (#2224, Phase 5 of #2139).
 //!
 //! Models the per-host/session monitoring slice the frontend currently drives in
@@ -120,7 +120,7 @@ pub struct RegionDelta {
     pub stats_cache: Vec<(String, Option<Value>)>,
 }
 
-/// The shadow system-monitor authority. Owns one [`MonitorEntry`] per monitored
+/// The system-monitor authority. Owns one [`MonitorEntry`] per monitored
 /// host/session, keyed by `MonitorKey`, plus the last-known stats cache. The
 /// single shared `system-monitors` region projects this state.
 #[derive(Default)]

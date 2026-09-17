@@ -4,7 +4,7 @@
 //! Exposes the authoritative [`AgentsStore`] as one versioned, multi-subscriber
 //! projection region and turns the agent transitions the frontend currently
 //! drives into [`Intent`]s — mirroring the SSH-tunnels pilot
-//! ([`crate::tunnel::projection`]) and the system-monitor shadow
+//! ([`crate::tunnel::projection`]) and the system-monitor region
 //! ([`crate::system_monitor_projection::projection`]).
 //!
 //! # The `agents` region

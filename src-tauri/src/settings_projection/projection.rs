@@ -3,8 +3,8 @@
 //!
 //! Exposes the authoritative [`SettingsStore`] as one versioned, multi-subscriber
 //! projection region and turns the settings mutations the frontend currently
-//! drives into [`Intent`]s — mirroring the shared system-monitor shadow
-//! ([`crate::system_monitor_projection::projection`]) and agents shadow
+//! drives into [`Intent`]s — mirroring the shared system-monitor region
+//! ([`crate::system_monitor_projection::projection`]) and agents region
 //! ([`crate::agents_projection::projection`]).
 //!
 //! # The `settings` region
