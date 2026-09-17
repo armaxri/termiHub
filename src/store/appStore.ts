@@ -1056,6 +1056,15 @@ export interface AppState
   setTerminalReattaching: (tabId: string, reattaching: boolean) => void;
   /** Dismiss the disconnect overlay into "view mode": scrollback is preserved, a thin banner shows. */
   dismissTerminalDisconnect: (tabId: string) => void;
+  /**
+   * Explicit user "Disconnect" (UX-015): drop a tab's live backend connection but
+   * leave the tab open in a reconnectable state — distinct from {@link closeTab},
+   * which tears the tab down and discards its scrollback. Reuses the intentional-
+   * kill path ({@link markSessionKilled} + close), so the terminal-exit handler
+   * folds it as a user disconnect (view mode + Reconnect banner) rather than an
+   * unexpected drop. No-op when the tab has no live session.
+   */
+  disconnectTerminal: (tabId: string) => void;
   reconnectTerminal: (tabId: string) => void;
   showTerminalReconnectPrompt: (tabId: string) => void;
   dismissTerminalReconnectPrompt: (tabId: string) => void;
@@ -5264,6 +5273,24 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // entering view mode.
         terminalViewMode: { ...state.terminalViewMode, [tabId]: true },
       })),
+    disconnectTerminal: (tabId) => {
+      // Explicit user Disconnect (UX-015): drop the live backend connection but
+      // keep the tab open in a reconnectable state — distinct from closeTab, which
+      // tears the tab down and loses its scrollback. Reuses the same intentional-
+      // kill path the Open Connections panel uses: tag the kill so the terminal-
+      // exit handler folds it as a user disconnect (view mode + Reconnect banner),
+      // not an unexpected drop, then drop the session. A persistent daemon-backed
+      // tab detaches (leaving the remote session running to re-attach on reconnect)
+      // rather than killing it; every other type closes. No live session → no-op.
+      const tab = collectLiveTabs(get()).find((t) => t.id === tabId);
+      const sessionId = tab?.sessionId;
+      if (!tab || !sessionId) return;
+      get().markSessionKilled(sessionId);
+      const drop = tab.persistentConnectionId
+        ? apiDetachPersistentTab(sessionId, tabId)
+        : apiCloseTerminal(sessionId, true);
+      fireAndForget(drop, `disconnect session ${sessionId} for tab ${tabId}`, "error");
+    },
     reconnectTerminal: (tabId) =>
       set((state) => {
         // Backend-driven resilient reconnect (#2476 agent, SM-004 direct SSH): the

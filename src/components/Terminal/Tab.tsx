@@ -72,6 +72,12 @@ interface TabProps {
   tabColor?: string;
   onRename?: () => void;
   onSetColor?: () => void;
+  /**
+   * Disconnect the tab's live backend session while keeping the tab open in a
+   * reconnectable state (UX-015). Provided only for terminal tabs that currently
+   * hold a live session; when omitted, the "Disconnect" item is hidden.
+   */
+  onDisconnect?: () => void;
   /** Per-tab connection status; drives the status dot. `undefined` hides the dot. */
   status?: TabStatus;
   /**
@@ -115,6 +121,7 @@ export function Tab({
   tabColor,
   onRename,
   onSetColor,
+  onDisconnect,
   status,
   isBroadcast,
   displayTitle,
@@ -286,6 +293,18 @@ export function Tab({
           >
             <Pencil size={14} /> Rename
           </ContextMenu.Item>
+          {onDisconnect && (
+            <>
+              <ContextMenu.Separator className="context-menu__separator" />
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={() => onDisconnect()}
+                data-testid="tab-context-disconnect"
+              >
+                <Unplug size={14} /> Disconnect
+              </ContextMenu.Item>
+            </>
+          )}
           <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item
             className="context-menu__item"
