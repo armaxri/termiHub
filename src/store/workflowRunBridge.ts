@@ -51,6 +51,7 @@ import {
 } from "@/services/transport";
 import type { WorkflowRunOutputLine, WorkflowRunOutputStatus } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The projection region id for a client's workflow run
  * (`workflow-run@<clientId>`, twin of the Rust `workflow_run_region`). */
@@ -116,6 +117,7 @@ export function setWorkflowTransportForTest(t: Transport | null): void {
   startPromise = null;
   transportInstance = t;
   lastView = EMPTY_VIEW;
+  versionGuard.reset();
   outputContent = null;
 }
 
@@ -133,6 +135,10 @@ export type WorkflowRunViewListener = (view: WorkflowRunView) => void;
 
 const viewListeners = new Set<WorkflowRunViewListener>();
 let lastView: WorkflowRunView = EMPTY_VIEW;
+// The monotonic region-version guard for `lastView` (FES-006): a projected view
+// strictly older than the last applied is a stale, out-of-order delivery and is
+// ignored, so it can never clobber a newer view.
+const versionGuard = makeVersionGuard();
 
 /**
  * Register a listener, invoked with the projected view on every diff. Returns an
@@ -166,6 +172,18 @@ function normalizeView(raw: unknown): WorkflowRunView {
 }
 
 /**
+ * Commit a projected view (at its region `version`) as the current view and fan it
+ * out, unless it is stale (a version strictly older than the last applied). On
+ * today's substrate versions arrive monotonically so the guard never drops a valid
+ * update — it only adds out-of-order protection.
+ */
+function commitWorkflowRunView(view: WorkflowRunView, version: number): void {
+  if (!versionGuard.shouldApply(version)) return;
+  lastView = view;
+  fanView();
+}
+
+/**
  * Ensure the `workflow-run@<clientId>` region client is subscribed so projected
  * diffs are received and fanned out to the {@link onWorkflowRunView} listeners.
  * Idempotent and de-duplicated across concurrent callers; a transport/subscribe
@@ -176,8 +194,7 @@ export function ensureWorkflowSubscribed(): Promise<ProjectionClient> {
   if (!startPromise) {
     const client = new ProjectionClient(transport(), region);
     client.onChange((state: ProjectionCacheState) => {
-      lastView = normalizeView(state.view);
-      fanView();
+      commitWorkflowRunView(normalizeView(state.view), state.version);
     });
     startPromise = client
       .start()
@@ -200,6 +217,7 @@ export function stopWorkflowSubscription(): void {
   regionClient = null;
   startPromise = null;
   lastView = EMPTY_VIEW;
+  versionGuard.reset();
 }
 
 // ── Frontend-owned streamed output content (not projected) ─────────────────────
@@ -409,6 +427,13 @@ export function logWorkflowBridgeFallback(kind: string, err: unknown): void {
 export function setWorkflowRunViewForTest(view: WorkflowRunView): void {
   lastView = normalizeView(view);
   fanView();
+}
+
+/** Commit a projected view at an explicit region `version` through the same guarded
+ * path a real diff takes, so a test can drive the stale-drop / apply behaviour
+ * (FES-006) without a transport double. Never call from production code. */
+export function __emitWorkflowRunViewForTest(view: WorkflowRunView, version: number): void {
+  commitWorkflowRunView(normalizeView(view), version);
 }
 
 /** Push streamed content straight to the render hook (component tests). */

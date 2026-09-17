@@ -54,6 +54,7 @@ import {
   type ReconnectPhase,
 } from "@/utils/reconnectBackoff";
 import { frontendLog } from "@/utils/frontendLog";
+import { makeVersionGuard } from "./bridgeVersionGuard";
 
 /** The projection region id for the session-lifecycle domain (twin of the Rust
  * `SESSION_LIFECYCLE_REGION` const). Shared (Open Design Decision #4). */
@@ -159,6 +160,7 @@ export function setSessionTransportForTest(t: Transport | null): void {
   creatingClient = null;
   startPromise = null;
   transportInstance = t;
+  versionGuard.reset();
 }
 
 function transport(): Transport {
@@ -479,6 +481,12 @@ export type SessionViewListener = (
 
 const viewListeners = new Set<SessionViewListener>();
 let lastSessions: Record<string, ProjectedSessionLifecycle> = {};
+// The monotonic region-version guard for `lastSessions` (FES-006): a projected view
+// strictly older than the last applied is a stale, out-of-order delivery and is
+// ignored, so it can never clobber a newer view. Equal versions still apply, so the
+// optimistic overlays this bridge re-emits at the current region version (the
+// gap-free reconnect feedback) are never suppressed.
+const versionGuard = makeVersionGuard();
 
 /**
  * Register a reconcile listener, invoked with the projected `sessions` map (and
@@ -490,10 +498,14 @@ export function onSessionView(listener: SessionViewListener): () => void {
   return () => viewListeners.delete(listener);
 }
 
-/** Fan a region-client change out to the {@link onSessionView} listeners as the
- * reconciled `sessions` map (and the previous one). */
-function fanOutSessionView(state: ProjectionCacheState): void {
-  const view = (state.view ?? {}) as Partial<SessionLifecycleView>;
+/** Commit a projected `session-lifecycle` view (at its region `version`) and fan the
+ * reconciled `sessions` map (and the previous one) to listeners — unless it is stale
+ * (a version strictly older than the last applied). On today's substrate versions
+ * arrive monotonically so the guard never drops a valid update — it only adds
+ * out-of-order protection; an optimistic overlay re-emitted at the same version
+ * still commits. */
+function commitSessionView(view: Partial<SessionLifecycleView>, version: number): void {
+  if (!versionGuard.shouldApply(version)) return;
   const next = view.sessions ?? {};
   const prev = lastSessions;
   lastSessions = next;
@@ -504,6 +516,22 @@ function fanOutSessionView(state: ProjectionCacheState): void {
       logSessionBridgeFallback("reconcile", err);
     }
   }
+}
+
+/** Fan a region-client change out to the {@link onSessionView} listeners as the
+ * reconciled `sessions` map (and the previous one). */
+function fanOutSessionView(state: ProjectionCacheState): void {
+  commitSessionView((state.view ?? {}) as Partial<SessionLifecycleView>, state.version);
+}
+
+/**
+ * Test-only: synchronously commit a projected view at an explicit region `version`
+ * through the same guarded path a real diff takes, so a test can drive the
+ * stale-drop / apply behaviour without a transport double. Never call from
+ * production code.
+ */
+export function __emitSessionViewForTest(view: SessionLifecycleView, version: number): void {
+  commitSessionView(view, version);
 }
 
 /**
@@ -554,6 +582,7 @@ export function stopSessionSubscription(): void {
   creatingClient = null;
   startPromise = null;
   lastSessions = {};
+  versionGuard.reset();
 }
 
 // ── Await a version, then read the reconciled lifecycle (parity helper) ─────────

@@ -8,17 +8,46 @@
  * `appStore` actions and the in-memory region twin.
  */
 
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 
 import {
+  __emitRestoreCohortViewForTest,
   currentRestoreCohortView,
   EMPTY_RESTORE_COHORT_VIEW,
   restoreCohortRegion,
+  type RestoreCohortView,
+  stopRestoreSubscription,
 } from "./restoreCohortBridge";
 
 describe("restoreCohortRegion", () => {
   it("is client-scoped, matching the Rust region id", () => {
     expect(restoreCohortRegion("abc123")).toBe("restore-cohort@abc123");
+  });
+});
+
+describe("version guard (FES-006)", () => {
+  afterEach(() => {
+    // Reset the module-level cached view + version guard so the emit tests below do
+    // not leak state into other cases.
+    stopRestoreSubscription();
+  });
+
+  it("applies the first snapshot, then a newer one, and drops a stale older one", () => {
+    const withFailed = (ids: string[]): RestoreCohortView => ({
+      cohort: null,
+      failedTabIds: ids,
+      settlement: null,
+    });
+
+    __emitRestoreCohortViewForTest(withFailed(["a"]), 1);
+    expect(currentRestoreCohortView().failedTabIds).toEqual(["a"]);
+
+    __emitRestoreCohortViewForTest(withFailed(["a", "b"]), 2);
+    expect(currentRestoreCohortView().failedTabIds).toEqual(["a", "b"]);
+
+    // A strictly older version is dropped — the newer view stays.
+    __emitRestoreCohortViewForTest(withFailed(["STALE"]), 1);
+    expect(currentRestoreCohortView().failedTabIds).toEqual(["a", "b"]);
   });
 });
 

@@ -19,9 +19,11 @@ import type {
   Transport,
 } from "@/services/transport";
 import {
+  __emitWorkflowRunViewForTest,
   appendWorkflowOutputLine,
   clearWorkflowOutputContent,
   currentWorkflowOutputContent,
+  currentWorkflowRunView,
   dispatchWorkflowRunStarted,
   onWorkflowOutputContent,
   openWorkflowOutputContent,
@@ -30,6 +32,7 @@ import {
   stopWorkflowSubscription,
   workflowRunRegion,
   type WorkflowRunOutputContent,
+  type WorkflowRunView,
 } from "./workflowRunBridge";
 
 /** A transport double that records dispatched intents and can be told to reject. */
@@ -109,6 +112,25 @@ describe("reliable workflow.* dispatch", () => {
     await expect(
       dispatchWorkflowRunStarted({ workflowId: "w1", workflowName: "d", tabId: "t", total: 1 })
     ).resolves.toBeUndefined();
+  });
+});
+
+describe("version guard (FES-006)", () => {
+  it("applies the first snapshot, then a newer one, and drops a stale older one", () => {
+    const run = (completed: number): WorkflowRunView => ({
+      run: { workflowId: "w1", workflowName: "Deploy", tabId: "t", total: 3, completed },
+      output: null,
+    });
+
+    __emitWorkflowRunViewForTest(run(1), 1);
+    expect(currentWorkflowRunView().run?.completed).toBe(1);
+
+    __emitWorkflowRunViewForTest(run(2), 2);
+    expect(currentWorkflowRunView().run?.completed).toBe(2);
+
+    // A strictly older version is dropped — the newer view stays.
+    __emitWorkflowRunViewForTest(run(99), 1);
+    expect(currentWorkflowRunView().run?.completed).toBe(2);
   });
 });
 
