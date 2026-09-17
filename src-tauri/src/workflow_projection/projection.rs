@@ -45,14 +45,14 @@
 //! (send / macro / local-process execution) likewise stay frontend; the store
 //! learns of progress only through these intents.
 //!
-//! # Authoritative after the render + mutation cut (#2243)
+//! # Authoritative — drives the live UI (#2243)
 //!
-//! Registered, fully served, and now driving the live UI: the frontend subscribes
-//! to `workflow-run@<clientId>` (rendering the run status when it mirrors `appStore`)
-//! and dispatches these `workflow.*` intents so the store is authoritative. The
-//! `appStore` run reducers are retained as the parity-safe fallback (removal is a
-//! later step). Per the substrate contract the result of an intent is never returned
-//! inline — it always arrives as a projection diff on the client's region.
+//! Registered, fully served, and driving the live UI: the frontend subscribes to
+//! `workflow-run@<clientId>`, renders the run status from it, and dispatches these
+//! `workflow.*` intents so the store is authoritative. The former `appStore` run
+//! reducers and the render/mutation-cut flags were removed (#2283). Per the
+//! substrate contract the result of an intent is never returned inline — it always
+//! arrives as a projection diff on the client's region.
 
 use std::sync::Arc;
 

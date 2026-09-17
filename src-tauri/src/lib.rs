@@ -10,11 +10,10 @@ mod agents_projection;
 /// Broadcast-membership authority (#2242, Phase 4 step 5b of #2139, part of
 /// #2206 / #2152): the client-scoped `broadcast@<clientId>` projection region +
 /// `broadcast.*` intents modeling the `appStore` broadcast-input membership slice
-/// (which tabs receive mirrored input, #1955 / #1956 / #1958). Now drives the
-/// live UI — the frontend renders the broadcast UI from the region and routes the
-/// membership actions through the intents (render + mutation cut, both on by
-/// default), with the `appStore` reducers retained as the parity-safe fallback —
-/// see [`broadcast_projection`].
+/// (which tabs receive mirrored input, #1955 / #1956 / #1958). Drives the live UI
+/// (stateless-UI inversion complete, #2283) — the frontend renders the broadcast
+/// UI from the region and routes the membership actions through the intents; the
+/// former `appStore` reducers were removed — see [`broadcast_projection`].
 mod broadcast_projection;
 mod cli;
 mod commands;
@@ -1050,11 +1049,11 @@ pub fn run() {
                 // client-scoped `broadcast@<clientId>` region + `broadcast.*`
                 // intents modeling the broadcast-input membership slice (which
                 // tabs receive mirrored input, #1955 / #1956 / #1958). The live
-                // UI now renders the broadcast UI from the region (kept a mirror
-                // of appStore via `broadcast.replace`) and routes the membership
-                // actions through the intents (render + mutation cut, both on by
-                // default), with the appStore reducers retained as the parity-safe
-                // fallback. No client region is seeded here: like layout and
+                // UI renders the broadcast UI from the region and routes the
+                // membership actions through the intents; the former appStore
+                // reducers and the render/mutation-cut flags were removed
+                // (stateless-UI inversion complete, #2283). No client region is
+                // seeded here: like layout and
                 // restore-cohort, broadcast regions are client-scoped and created
                 // lazily on a client's first `broadcast.*` intent.
                 app.manage(Arc::new(broadcast_projection::BroadcastStore::new()));

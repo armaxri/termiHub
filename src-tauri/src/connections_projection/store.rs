@@ -166,11 +166,11 @@ impl ConnectionsStore {
 
     /// `connection.replace` — overwrite the whole connections slice (the two flat
     /// folder + connection arrays) with a caller-supplied snapshot. Used by the
-    /// frontend render-cut mirror (#2225) to keep the shared `connections` region a
-    /// faithful copy of `appStore`'s connections slice while `appStore` remains
-    /// authoritative (the mutation cut is a later step) — the analog of the agents
-    /// bridge's `agent.replace` seed. Idempotent server-side: replacing with the
-    /// same content yields no diff.
+    /// frontend to keep the shared `connections` region a faithful copy of the
+    /// connections slice — the analog of the agents bridge's `agent.replace` seed.
+    /// This store is authoritative (the former `appStore` reducers were removed,
+    /// #2283). Idempotent server-side: replacing with the same content yields no
+    /// diff.
     pub fn replace(&self, folders: Vec<ConnectionFolder>, connections: Vec<SavedConnection>) {
         let mut inner = self.lock();
         inner.folders = folders;

@@ -524,11 +524,11 @@ impl TransferStore {
     }
 
     /// `transfer.replace` — overwrite the whole queue map and minimized flag with
-    /// a caller-supplied snapshot. Used by the frontend render-cut mirror (#2229)
-    /// to keep the shared region a faithful copy of `appStore`'s transfer-queue
-    /// slice while `appStore` remains authoritative (the mutation cut is a later
-    /// step) — the analog of the system-monitor bridge's `monitor.replace` seed.
-    /// Idempotent server-side: replacing with identical content yields no diff.
+    /// a caller-supplied snapshot. Used by the frontend to keep the shared region a
+    /// faithful copy of the transfer-queue slice — the analog of the system-monitor
+    /// bridge's `monitor.replace` seed. This store is authoritative (the former
+    /// `appStore` reducers were removed, #2283). Idempotent server-side: replacing
+    /// with identical content yields no diff.
     pub fn replace(&self, queue: HashMap<String, TransferEntry>, minimized: bool) {
         let mut inner = self.lock();
         // Mark every key that could differ dirty: the old set (removals / changes)

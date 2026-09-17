@@ -682,10 +682,10 @@ impl AgentsStore {
 
     /// `agent.replace` — overwrite the whole agents slice (the ordered agent list
     /// plus the per-agent sessions/definitions/folders maps) with a
-    /// caller-supplied snapshot. Used by the frontend render-cut mirror (#2226) to
-    /// keep the shared `agents` region a faithful copy of `appStore`'s agents slice
-    /// while `appStore` remains authoritative (the mutation cut is a later step) —
-    /// the analog of the system-monitor bridge's `monitor.replace` seed. Idempotent
+    /// caller-supplied snapshot. Used by the frontend to keep the shared `agents`
+    /// region a faithful copy of the agents slice — the analog of the
+    /// system-monitor bridge's `monitor.replace` seed. This store is authoritative
+    /// (the former `appStore` reducers were removed, #2283). Idempotent
     /// server-side: replacing with the same content yields no diff.
     pub fn replace(
         &self,

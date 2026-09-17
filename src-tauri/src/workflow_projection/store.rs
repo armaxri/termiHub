@@ -18,13 +18,13 @@
 //! `workflow-run@<clientId>` region per client — mirroring `restore-cohort`,
 //! `broadcast`, and `layout`.
 //!
-//! # Authoritative after the render + mutation cut (#2243)
+//! # Authoritative — drives the live UI (#2243)
 //!
-//! The shadow landed this store; the frontend render + mutation cut then made it
-//! authoritative — the UI renders the run status from the projected region and
-//! dispatches the `workflow.*` intents. The `appStore` run reducers are retained as
-//! the parity-safe fallback (removal is a later step), so the local path still runs
-//! and takes over on any dispatch failure.
+//! The stateless-UI inversion is complete (#2283): this store is authoritative —
+//! the UI renders the run status from the projected region and dispatches the
+//! `workflow.*` intents. The former `appStore` run reducers and the
+//! render/mutation-cut flags were removed; `appStore` holds no workflow-run slice
+//! and the intents are the sole write path.
 //!
 //! ## What stays frontend
 //!

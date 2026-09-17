@@ -265,11 +265,11 @@ impl SystemMonitorStore {
     }
 
     /// `monitor.replace` — overwrite the whole monitor map and stats cache with a
-    /// caller-supplied snapshot. Used by the frontend render-cut mirror (#2224) to
-    /// keep the shared region a faithful copy of `appStore`'s monitoring slice
-    /// while `appStore` remains authoritative (the mutation cut is a later step) —
-    /// the analog of the layout bridge's `layout.replace` seed. Idempotent
-    /// server-side: replacing with the same content yields no diff.
+    /// caller-supplied snapshot. Used by the frontend to keep the shared region a
+    /// faithful copy of the monitoring slice — the analog of the layout bridge's
+    /// `layout.replace` seed. This store is authoritative (the former `appStore`
+    /// reducers were removed, #2283). Idempotent server-side: replacing with the
+    /// same content yields no diff.
     pub fn replace(
         &self,
         monitors: HashMap<String, MonitorEntry>,

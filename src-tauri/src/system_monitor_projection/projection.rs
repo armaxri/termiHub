@@ -33,15 +33,13 @@
 //! | `monitor.close`        | `{ key }`                     | disconnect and drop the entry            |
 //! | `monitor.replace`      | `{ monitors, statsCache }`    | overwrite the whole map (render mirror)  |
 //!
-//! # Render cut (#2224 step 2)
+//! # Authoritative — drives the live UI (#2224)
 //!
-//! The status bar and Open Connections now **render** monitor stats/status from
-//! this region (`useProjectedMonitors`), but `appStore` remains **authoritative**
-//! — the mutation cut is a later step. To keep the render cut parity-safe, the
-//! frontend keeps the region a faithful copy of `appStore` via `monitor.replace`
-//! (the whole-map mirror) and only renders from the region when it deep-equals
-//! `appStore`, falling back to `appStore` otherwise. The granular `monitor.*`
-//! transitions stay served for the eventual mutation cut. Per the substrate
+//! The status bar and Open Connections **render** monitor stats/status from this
+//! region (`useProjectedMonitors`) and the granular `monitor.*` transitions
+//! mutate the store, which is authoritative — the former `appStore` monitoring
+//! reducers and the render/mutation-cut flags were removed (#2283).
+//! `monitor.replace` remains the whole-map overwrite intent. Per the substrate
 //! contract the result of an intent is never returned inline — it always arrives
 //! as a projection diff on the `system-monitors` region.
 
@@ -229,9 +227,10 @@ fn splice_subtrees(view: &mut Value, field: &str, entries: &[(String, Option<Val
 /// server-side, with no client round-trip required for it to be correct. It is
 /// **additive**: the existing Tauri event emission and the client `monitor.*`
 /// mirror stay in place, and the render-cut seed (`seedMonitorsRegion` on the
-/// frontend) keeps the region a faithful mirror of `appStore`, so this changes no
-/// user-facing behavior. Removing the now-redundant client re-dispatch is the
-/// later #2224 render/mutation inversion.
+/// frontend) keeps the region a faithful mirror of `appStore`, so this changed no
+/// user-facing behavior when added. The now-redundant client re-dispatch was later
+/// removed by the #2224 render/mutation inversion (#2283); the store is
+/// authoritative and the live UI renders from the region.
 ///
 /// Best-effort and non-fatal: if the store or the projection state is not managed
 /// (e.g. a headless unit-test app that never ran `setup()`), the fold is skipped

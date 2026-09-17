@@ -393,12 +393,12 @@ impl FileBrowserStore {
 
     /// `fileBrowser.replace` — overwrite a client's whole browser view (active
     /// pane, the two panes, clipboard) with a caller-supplied snapshot. The
-    /// frontend render-cut mirror (#2228) uses this whole-slice seed to keep the
-    /// client's `file-browser@<clientId>` region a faithful copy of `appStore`'s
-    /// file-browser UI-state slice while `appStore` stays authoritative (the
-    /// mutation cut is a later step) — the analog of the connections bridge's
-    /// `connection.replace` / agents bridge's `agent.replace` seed. Idempotent
-    /// server-side: replacing with identical content yields no diff.
+    /// frontend uses this whole-slice seed to keep the client's
+    /// `file-browser@<clientId>` region a faithful copy of the file-browser
+    /// UI-state slice — the analog of the connections bridge's
+    /// `connection.replace` / agents bridge's `agent.replace` seed. This store is
+    /// authoritative (the former `appStore` reducers were removed, #2283).
+    /// Idempotent server-side: replacing with identical content yields no diff.
     pub fn replace(&self, client_id: &str, view: ClientView) {
         let mut clients = self.lock();
         let state = clients.entry(client_id.to_string()).or_default();

@@ -93,10 +93,10 @@ pub fn publish_settings(projector: &Projector, store: &SettingsStore) -> Vec<Pro
 /// frontend receives). The projector coalesces an unchanged document to no diff,
 /// so a save that changes nothing is a no-op.
 ///
-/// It is **additive**: the `settings.*` intents stay in place, and nothing in the
-/// live UI subscribes to the region yet, so this changes no user-facing behavior.
-/// Making the store authoritative (dropping the redundant `appStore` reducer) is
-/// the later #2227 reducer-removal.
+/// It is **additive**: the `settings.*` intents stay in place, and this changed no
+/// user-facing behavior when added. The store is now authoritative — the live UI
+/// renders from the region and the redundant `appStore` reducer was dropped by the
+/// #2227 reducer-removal (#2283).
 ///
 /// Best-effort and non-fatal: if the store or the connection manager is not
 /// managed (e.g. a headless unit-test app that never ran `setup()`), or the

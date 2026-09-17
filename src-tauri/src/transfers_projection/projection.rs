@@ -30,12 +30,12 @@
 //! | `transfer.setMinimized`    | `{ minimized }`            | collapse/expand the panel                    |
 //! | `transfer.replace`         | `{ queue, minimized }`     | overwrite the whole slice (render mirror)    |
 //!
-//! `transfer.replace` is the whole-slice seed the (later) frontend render cut
-//! (#2229) uses to keep the shared region a faithful copy of `appStore`'s
-//! transfer-queue slice while `appStore` stays authoritative — the analog of the
-//! system-monitor bridge's `monitor.replace`. The granular `seed` / `progress` /
-//! `reconcile` / `remove` / `clearCompleted` / `setMinimized` transitions drive
-//! the store for the (later) mutation cut.
+//! `transfer.replace` is the whole-slice seed that keeps the shared region a
+//! faithful copy of the transfer-queue slice — the analog of the system-monitor
+//! bridge's `monitor.replace`. The granular `seed` / `progress` / `reconcile` /
+//! `remove` / `clearCompleted` / `setMinimized` transitions drive the store,
+//! which is authoritative (the former `appStore` transfer reducers were removed,
+//! #2229 / #2283).
 //!
 //! # Authoritative (#2229)
 //!

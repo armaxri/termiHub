@@ -99,8 +99,10 @@ pub fn publish_agents(projector: &Projector, store: &AgentsStore) -> Vec<Produce
 /// correct. It is **additive**: the existing Tauri event emission / RPC return
 /// and the client `agent.*` mirror stay in place, and the render-cut seed
 /// (`agent.replace` on the frontend) keeps the region a faithful mirror of
-/// `appStore`, so this changes no user-facing behavior. Removing the now-redundant
-/// client re-dispatch is the later #2226 render/mutation inversion.
+/// `appStore`, so this changed no user-facing behavior when added. The
+/// now-redundant client re-dispatch was later removed by the #2226 render/mutation
+/// inversion (#2283); the store is authoritative and the live UI renders from the
+/// region.
 ///
 /// Best-effort and non-fatal: if the store or the projection state is not managed
 /// (e.g. a headless unit-test app that never ran `setup()`), the fold is skipped
@@ -157,8 +159,8 @@ fn saved_agent_seed(agent: SavedRemoteAgent) -> SavedAgentSeed {
 /// whole slice.
 ///
 /// It is **additive**: the persisted-list authority and the client `agent.*` mirror
-/// stay in place, and nothing in the live UI subscribes to the region yet, so this
-/// changes no user-facing behavior. Best-effort and non-fatal: if the store, the
+/// stay in place, and this changed no user-facing behavior when added; the live UI
+/// now renders from the region (#2283). Best-effort and non-fatal: if the store, the
 /// connection manager, or the projection state is not managed (e.g. a headless
 /// unit-test app that never ran `setup()`), or the disk reload inside
 /// `load_unified_view` fails, the fold is skipped rather than erroring.
