@@ -357,14 +357,21 @@ impl EmbeddedServerService {
         }
     }
 
-    /// Stop the running server, emitting a `Stopped` transition.
+    /// Stop the running server, emitting a `Stopping` → `Stopped` transition.
     ///
-    /// Triggering the [`ShutdownSignal`] wakes the HTTP listener immediately (and
-    /// stops the FTP/TFTP poll loops on their next check); the server thread then
-    /// exits on its own (we do not join, to avoid blocking the caller).
-    /// Synchronous counterpart of the trait's async [`stop`](Service::stop).
+    /// A `Stopping` status is emitted *before* the teardown begins, so the
+    /// lifecycle (and the UI) reflects the in-progress stop instead of jumping
+    /// straight from `Running` to `Stopped` — mirroring the `Starting` →
+    /// `Running` pair on start (SM-016). Triggering the [`ShutdownSignal`] wakes
+    /// the HTTP listener immediately (and stops the FTP/TFTP poll loops on their
+    /// next check); the server thread then exits on its own (we do not join, to
+    /// avoid blocking the caller). Synchronous counterpart of the trait's async
+    /// [`stop`](Service::stop).
     pub fn shutdown(&mut self) {
         if let Some(active) = self.active.take() {
+            // Announce the in-progress stop before tearing the listener down so
+            // subscribers observe Running → Stopping → Stopped (SM-016).
+            self.set_status_and_emit(ServiceStatus::Stopping, ServerStats::default(), None);
             active.shutdown.trigger();
             if let Some(id) = self.config.as_ref().map(|c| c.id.clone()) {
                 self.set_status_and_emit(ServiceStatus::Stopped, ServerStats::default(), None);
