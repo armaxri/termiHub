@@ -223,6 +223,20 @@
   color: var(--color-warning);
 }
 
+/*
+  Reconnecting (SM-014): the transport dropped and the loop is re-dialling. The
+  numbers are frozen and dimmed like stale, but this badge signals the recovery
+  is in progress with a spinner. Warning tone matches the stale family — the
+  data is not live — while the spinner + label distinguish it from a settled
+  stale state.
+*/
+.monitoring-status__reconnecting-badge {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--color-warning);
+}
+
 .monitoring-status__loading {
   display: flex;
   align-items: center;
