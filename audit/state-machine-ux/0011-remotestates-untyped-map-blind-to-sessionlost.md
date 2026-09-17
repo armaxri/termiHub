@@ -11,7 +11,8 @@ evidence:
   - src/store/appStore.ts:6042
   - src/components/Terminal/TerminalView.tsx:128
   - src-tauri/src/session_projection/store.rs:63
-status: open
+status: fixed
+resolution: "develop — untyped remoteStates map removed; tab-strip status dot renders from typed session-lifecycle maps incl terminalSessionLost (TabBar.tsx)"
 ---
 
 ## What

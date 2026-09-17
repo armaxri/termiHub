@@ -11,7 +11,8 @@ evidence:
   - src/store/appStore.ts:5909
   - src/store/appStore.ts:1110
   - src/components/Terminal/Terminal.tsx:446
-status: open
+status: fixed
+resolution: "#3035 — prune terminalForceFreshReconnect on tab close (sole omission from closeTab prune list); broader ~15-map consolidation stays architectural"
 ---
 
 ## What

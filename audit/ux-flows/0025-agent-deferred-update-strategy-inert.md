@@ -10,7 +10,8 @@ evidence:
   - src/components/DynamicForm/agentSchema.ts:92
   - src/types/terminal.ts:280
   - src/components/AgentUpdateBanner/AgentUpdateBanner.tsx:62
-status: open
+status: fixed
+resolution: "develop — 'Deferred' update-strategy option removed; agentSchema offers only Immediate/Coordinated (both implemented)"
 ---
 
 ## What

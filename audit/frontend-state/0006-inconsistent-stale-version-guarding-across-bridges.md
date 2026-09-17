@@ -11,7 +11,8 @@ evidence:
   - src/store/settingsBridge.ts:131
   - src/store/fileBrowsersBridge.ts:194
   - src/store/connectionsBridge.ts:142
-status: open
+status: fixed
+resolution: "#3032 — extract shared bridgeVersionGuard (makeVersionGuard); migrate 3 ad-hoc guards + newly-guard 7 bridges; monotonic versions so no valid update dropped; layout deferred #3031"
 ---
 
 ## What

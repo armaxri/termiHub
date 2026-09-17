@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/system-integration.yml:288
   - .github/workflows/system-integration.yml:352
   - .github/workflows/system-integration.yml:503
-status: open
+status: fixed
+resolution: "develop — --reruns 4 removed: system-integration bulk legs now --reruns 2, reconnect grade --reruns 0 (CI-002)"
 ---
 
 ## What

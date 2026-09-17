@@ -9,7 +9,8 @@ subsystem: src/components/DynamicForm
 evidence:
   - src/components/DynamicForm/agentSchema.ts:110
   - src/types/terminal.ts:299
-status: open
+status: fixed
+resolution: "develop — 'Allow agent self-update' inert toggle removed from agentSchema (only forward-compat type field retained)"
 ---
 
 ## What

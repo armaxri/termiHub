@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/utils/test_bridge.rs:36
   - src-tauri/src/utils/test_bridge.rs:54
   - src-tauri/src/utils/test_bridge.rs:99
-status: open
+status: fixed
+resolution: "#3033 — remove orphaned #2476 feature-flag injection (TEST_FLAG_ENV_PREFIX/is_safe_flag_name/feature_flag_init_script) from test_bridge.rs; no frontend read window.__TERMIHUB_<flag>__; flag_is_truthy kept (still used by always_on_top_opt_out)"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: vitest.config.ts / coverage
 evidence:
   - vitest.config.ts:23
   - coverage/clover.xml
-status: open
+status: fixed
+resolution: "develop — vitest.config include now src/**/*.{ts,tsx} — .tsx no longer excluded from coverage denominator"
 ---
 
 ## What

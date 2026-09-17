@@ -9,7 +9,8 @@ subsystem: src/services/commands
 evidence:
   - src/services/commands.ts:77
   - src/services/keybindings.ts:283
-status: open
+status: fixed
+resolution: "#3035 — wire close/next/prev-tab-group command-palette runners via CONTEXT_COMMANDS (route shortcuts through same registry); coverage test fails on future runnerless action; clipboard deferred #3034 (needs focused-terminal seam)"
 ---
 
 ## What

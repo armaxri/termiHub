@@ -10,7 +10,8 @@ evidence:
   - core/src/session/traits.rs:65
   - core/src/session/traits.rs:108
   - agent/src/daemon/client.rs:327
-status: open
+status: fixed
+resolution: "#3033 — remove unused ProcessSpawner trait + MockProcessSpawner + spawner-only tests (zero non-test implementers); ProcessHandle kept (agent DaemonClient implements it)"
 ---
 
 ## What
