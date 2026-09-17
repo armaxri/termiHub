@@ -9,6 +9,7 @@
 use std::io;
 #[cfg(test)]
 use std::io::{Read, Write};
+use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -137,8 +138,28 @@ pub fn write_frame(writer: &mut impl Write, msg_type: u8, payload: &[u8]) -> io:
 /// Generic over [`AsyncRead`] so the same code drives a Unix domain socket
 /// on unix and a Windows named pipe on windows (see [`crate::daemon::transport`]).
 ///
-/// Returns `Ok(None)` on clean EOF.
+/// Returns `Ok(None)` on clean EOF. Enforces the session-daemon payload ceiling
+/// of [`MAX_PAYLOAD_SIZE`] (16 MiB) — session frames carry PTY buffer replays and
+/// are legitimately large.
 pub async fn read_frame_async<R>(reader: &mut R) -> io::Result<Option<Frame>>
+where
+    R: AsyncRead + Unpin + ?Sized,
+{
+    read_frame_async_capped(reader, MAX_PAYLOAD_SIZE).await
+}
+
+/// [`read_frame_async`] with a caller-supplied maximum payload size.
+///
+/// The cap is enforced **before** any payload buffer is allocated, so an
+/// oversized length prefix costs nothing beyond reading the 5-byte header. This
+/// lets a role with small frames (the host-wide registry, whose frames are a
+/// handful of small JSON records) declare a far smaller ceiling than the session
+/// daemon's 16 MiB, so a peer cannot make it pre-allocate a large buffer per
+/// connection (see [`crate::registry_daemon`]).
+pub async fn read_frame_async_capped<R>(
+    reader: &mut R,
+    max_payload: u32,
+) -> io::Result<Option<Frame>>
 where
     R: AsyncRead + Unpin + ?Sized,
 {
@@ -148,11 +169,68 @@ where
         Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(e) => return Err(e),
     }
+    read_frame_body(reader, header, max_payload).await.map(Some)
+}
 
+/// [`read_frame_async_capped`] with a **mid-frame** read timeout.
+///
+/// The wait for a frame's *first byte* is unbounded: a connected-but-idle peer
+/// (a registry worker parked waiting for the next broadcast) legitimately blocks
+/// there and must never be reaped. Once the first byte has arrived a frame has
+/// begun, and the remaining header + payload bytes must all arrive within
+/// `mid_frame_timeout`; a peer that writes a partial header and then stalls (a
+/// local slowloris) trips the timeout and the caller drops the connection rather
+/// than pinning the reader task forever. A clean EOF between frames still returns
+/// `Ok(None)` — an idle disconnect is normal, not a timeout error.
+pub async fn read_frame_async_capped_timeout<R>(
+    reader: &mut R,
+    max_payload: u32,
+    mid_frame_timeout: Duration,
+) -> io::Result<Option<Frame>>
+where
+    R: AsyncRead + Unpin + ?Sized,
+{
+    // First byte: unbounded — waiting here is a normal idle connection.
+    let mut first = [0u8; 1];
+    match reader.read_exact(&mut first).await {
+        Ok(_) => {}
+        Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
+        Err(e) => return Err(e),
+    }
+
+    // A frame has begun: bound the time to receive the rest of it.
+    let rest = async {
+        let mut header = [0u8; HEADER_SIZE];
+        header[0] = first[0];
+        reader.read_exact(&mut header[1..]).await?;
+        read_frame_body(reader, header, max_payload).await
+    };
+    match tokio::time::timeout(mid_frame_timeout, rest).await {
+        Ok(Ok(frame)) => Ok(Some(frame)),
+        Ok(Err(e)) => Err(e),
+        Err(_elapsed) => Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            "Timed out mid-frame waiting for the rest of a frame",
+        )),
+    }
+}
+
+/// Validate a frame header against `max_payload` and read its payload.
+///
+/// Shared by every async read path so the size check always happens **before**
+/// allocation. Assumes the full 5-byte `header` has already been read.
+async fn read_frame_body<R>(
+    reader: &mut R,
+    header: [u8; HEADER_SIZE],
+    max_payload: u32,
+) -> io::Result<Frame>
+where
+    R: AsyncRead + Unpin + ?Sized,
+{
     let msg_type = header[0];
     let length = u32::from_be_bytes([header[1], header[2], header[3], header[4]]);
 
-    if length > MAX_PAYLOAD_SIZE {
+    if length > max_payload {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("Frame payload too large: {length} bytes"),
@@ -170,7 +248,7 @@ where
         })?;
     }
 
-    Ok(Some(Frame { msg_type, payload }))
+    Ok(Frame { msg_type, payload })
 }
 
 /// Write a single frame to any async writer.
@@ -409,6 +487,83 @@ mod tests {
         let (mut read_half, _) = server.into_split();
 
         let result = read_frame_async(&mut read_half).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    /// The registry gives its reader a small per-connection frame ceiling so a
+    /// peer cannot make it pre-allocate a large buffer. A length prefix above the
+    /// cap must be rejected *before* any payload buffer is touched — here no
+    /// payload bytes follow the header at all, so the reader can only reject
+    /// pre-allocation.
+    #[tokio::test]
+    async fn capped_read_rejects_oversized_frame_before_allocation() {
+        let cap: u32 = 64 * 1024;
+        let mut buf = Vec::new();
+        buf.push(MSG_OUTPUT);
+        buf.extend_from_slice(&(cap + 1).to_be_bytes());
+        // Deliberately no payload bytes: a reader that allocated first would hang
+        // or read garbage; the size check must fire on the header alone.
+        let mut cursor = Cursor::new(buf);
+        let err = read_frame_async_capped(&mut cursor, cap)
+            .await
+            .expect_err("oversized frame must be rejected");
+        assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+    }
+
+    /// A frame at exactly the cap is accepted (off-by-one guard).
+    #[tokio::test]
+    async fn capped_read_accepts_a_frame_at_the_ceiling() {
+        let cap: u32 = 8;
+        let mut buf = Vec::new();
+        write_frame(&mut buf, MSG_OUTPUT, &[0xABu8; 8]).unwrap();
+        let mut cursor = Cursor::new(buf);
+        let frame = read_frame_async_capped(&mut cursor, cap)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(frame.payload.len(), 8);
+    }
+
+    /// The mid-frame timeout only bounds a frame that has *started* arriving: a
+    /// peer that writes one header byte then stalls is a local slowloris and must
+    /// be dropped, not parked forever.
+    #[tokio::test]
+    async fn mid_frame_stall_trips_the_timeout() {
+        let (mut client, mut server) = tokio::io::duplex(64);
+        client.write_all(&[MSG_OUTPUT]).await.unwrap(); // one header byte, then stall
+        let err = read_frame_async_capped_timeout(&mut server, 1024, Duration::from_millis(50))
+            .await
+            .expect_err("a stalled mid-frame read must time out");
+        assert_eq!(err.kind(), io::ErrorKind::TimedOut);
+        drop(client); // keep the peer alive until after the timeout fired
+    }
+
+    /// A complete small frame passes the mid-frame timeout untouched — the
+    /// timeout must never trip a healthy peer.
+    #[tokio::test]
+    async fn a_complete_frame_passes_the_mid_frame_timeout() {
+        let (mut client, mut server) = tokio::io::duplex(64);
+        write_frame_async(&mut client, MSG_OUTPUT, b"hi")
+            .await
+            .unwrap();
+        let frame = read_frame_async_capped_timeout(&mut server, 1024, Duration::from_secs(5))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(frame.msg_type, MSG_OUTPUT);
+        assert_eq!(frame.payload, b"hi");
+    }
+
+    /// A clean disconnect between frames (no bytes in flight) is a normal EOF, not
+    /// a timeout: an idle-but-connected worker that goes away must return
+    /// `Ok(None)`, never a `TimedOut` error.
+    #[tokio::test]
+    async fn mid_frame_timeout_returns_none_on_clean_eof() {
+        let (client, mut server) = tokio::io::duplex(64);
+        drop(client);
+        let result = read_frame_async_capped_timeout(&mut server, 1024, Duration::from_millis(50))
+            .await
+            .unwrap();
         assert!(result.is_none());
     }
 }
