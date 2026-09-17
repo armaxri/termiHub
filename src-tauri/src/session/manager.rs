@@ -170,7 +170,30 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
     fn emit_output(&self, event: &TerminalOutputEvent) -> bool {
-        self.emit("terminal-output", event).is_ok()
+        use crate::window::{OutputEmitTarget, WindowManager};
+        use tauri::Manager;
+        // PERF-004: narrow this hot-path emit to the window that hosts the
+        // session, instead of broadcasting every byte to every window (each of
+        // which would then deserialize and discard output for sessions it does
+        // not render). The `session_id → window` ownership map (#1900/#1939) is
+        // the authoritative source of which window renders a session — the same
+        // map that gates `resize` via `may_resize`. An **unclaimed** session
+        // (background/spawned, or the brief pre-claim moment on open/move) has no
+        // owner and falls back to the legacy broadcast, so output is never routed
+        // away from the window actually showing it. The scrollback a
+        // (re)attaching tab renders is authoritative from the backend ring-buffer
+        // replay, not this live tail, so a narrowed stream cannot lose bytes when
+        // a tab moves between windows.
+        let target = self
+            .try_state::<WindowManager>()
+            .map(|wm| wm.output_target(&event.session_id))
+            .unwrap_or(OutputEmitTarget::Broadcast);
+        match target {
+            OutputEmitTarget::Window(label) => self
+                .emit_to(tauri::EventTarget::labeled(label), "terminal-output", event)
+                .is_ok(),
+            OutputEmitTarget::Broadcast => self.emit("terminal-output", event).is_ok(),
+        }
     }
 
     fn emit_exit(&self, event: &TerminalExitEvent) {
