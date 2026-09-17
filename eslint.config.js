@@ -21,6 +21,21 @@ export default tseslint.config(
     ignores: ["dist/", "src-tauri/", "coverage/"],
   },
   {
+    // Production frontend code: enforce the logging policy from .claude/CLAUDE.md —
+    // debug output must go through `frontendLog` (→ LogViewer), never `console.*`,
+    // which is invisible to users. This ratchet stops a new console.* silently
+    // regressing after the WA-FE-006 migration removed the existing ones.
     files: ["src/**/*.{ts,tsx}"],
+    rules: {
+      "no-console": "error",
+    },
+  },
+  {
+    // Tests, test harnesses, and the vitest setup are dev-only code that never
+    // ships to users, so console.* is fine there — turn the ratchet back off.
+    files: ["src/**/*.test.{ts,tsx}", "src/test/**"],
+    rules: {
+      "no-console": "off",
+    },
   }
 );
