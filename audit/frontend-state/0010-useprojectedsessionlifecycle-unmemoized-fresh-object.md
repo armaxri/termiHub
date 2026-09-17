@@ -9,7 +9,8 @@ subsystem: src/store/useSessionLifecycle
 evidence:
   - src/store/useSessionLifecycle.ts:180
   - src/store/useSessionLifecycle.ts:58
-status: open
+status: fixed
+resolution: "#3011 — memoize useProjectedSessionLifecycle return on [projected] for stable identity (was fresh object literal each render); TDD RED->GREEN"
 ---
 
 ## What

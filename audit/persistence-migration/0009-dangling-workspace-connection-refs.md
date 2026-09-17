@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/workspace/manager.rs:300
   - src-tauri/src/workspace/manager.rs:309
   - src-tauri/src/workspace/manager.rs:267
-status: open
+status: fixed
+resolution: "#3014 — detect+surface dangling workspace->connection refs on import via RecoveryWarning (tab/ref preserved, no delete); frontend surface deferred to #3013; TDD"
 ---
 
 ## What

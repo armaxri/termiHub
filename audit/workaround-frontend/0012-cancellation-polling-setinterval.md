@@ -11,7 +11,8 @@ evidence:
   - src/store/sessionBridge.ts:883
   - src/components/Terminal/Terminal.tsx:728
   - src/components/Terminal/Terminal.tsx:740
-status: open
+status: fixed
+resolution: "#3012 — replace two setInterval(100) cancel-polls in sessionBridge with AbortController/AbortSignal threaded through Terminal connect effect; prompt cancel + no leaked timer; TDD"
 ---
 
 ## What

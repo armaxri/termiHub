@@ -10,7 +10,8 @@ evidence:
   - agent/src/daemon/process.rs:58
   - core/src/buffer/mod.rs:22
   - agent/src/session/manager.rs:655
-status: open
+status: fixed
+resolution: "#3010 — clamp wire-controlled persistent scrollback buffer capacity at 256 MiB via single mb_to_bytes chokepoint (was unbounded u32 MB -> eager HeapRb prealloc -> OOM/DoS); 4 tests"
 ---
 
 ## What
