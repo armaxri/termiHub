@@ -282,6 +282,19 @@ describe("appStore — plugins (#1993)", () => {
     expect(useAppStore.getState().pluginBackendTypes).toEqual([]);
   });
 
+  it("uninstallPlugin toasts an error and rethrows on failure (TFE-006)", async () => {
+    useAppStore.setState({ plugins: [makePlugin("gone", "active")] });
+    vi.mocked(apiUninstallPlugin).mockRejectedValueOnce(new Error("in use"));
+
+    await expect(useAppStore.getState().uninstallPlugin("gone")).rejects.toThrow("in use");
+
+    expect(toastError).toHaveBeenCalledWith("Failed to uninstall Plugin gone: in use", {
+      id: "toast-id",
+    });
+    // The list is not refreshed / cleared on failure.
+    expect(useAppStore.getState().plugins.map((p) => p.manifest.id)).toEqual(["gone"]);
+  });
+
   it("enablePlugin enables, refreshes, and toasts success with the plugin name", async () => {
     useAppStore.setState({ plugins: [makePlugin("toggle", "disabled")] });
     vi.mocked(apiListPlugins).mockResolvedValueOnce([makePlugin("toggle", "active")]);
@@ -294,6 +307,17 @@ describe("appStore — plugins (#1993)", () => {
     expect(useAppStore.getState().pluginBackendTypes).toEqual([
       { pluginId: "toggle", connectionType: "toggle", displayName: "Backend toggle" },
     ]);
+  });
+
+  it("enablePlugin toasts an error and rethrows on failure (TFE-006)", async () => {
+    useAppStore.setState({ plugins: [makePlugin("toggle", "disabled")] });
+    vi.mocked(apiEnablePlugin).mockRejectedValueOnce(new Error("incompatible"));
+
+    await expect(useAppStore.getState().enablePlugin("toggle")).rejects.toThrow("incompatible");
+
+    expect(toastError).toHaveBeenCalledWith("Failed to enable Plugin toggle: incompatible", {
+      id: "toast-id",
+    });
   });
 
   it("disablePlugin disables, refreshes, and toasts success", async () => {
