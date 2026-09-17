@@ -80,6 +80,34 @@ describe("useProjectedSessionLifecycle (per tab)", () => {
     expect(latest?.disconnectError).toBe("auth failed");
   });
 
+  it("returns a referentially stable slice across re-renders when unchanged (FES-010)", async () => {
+    // The slice must keep its identity across unrelated re-renders so consumers
+    // that key effects / memoized children on it do not churn (FES-010). A fresh
+    // object literal each render would break `Object.is` even with equal fields.
+    harness.transport.setSession(TAB, connected());
+    const seen: ProjectedSessionLifecycleSlice[] = [];
+    const push = (v: ProjectedSessionLifecycleSlice) => seen.push(v);
+    mount(<Probe onValue={push} />);
+    await flushSessionRegion();
+
+    const settled = seen.length;
+    const before = seen[settled - 1];
+
+    // Force a re-render with the projected region unchanged (a fresh element so
+    // React does not bail out on element identity).
+    act(() => root!.render(<Probe onValue={push} />));
+    expect(seen.length).toBeGreaterThan(settled);
+    const after = seen[seen.length - 1];
+    expect(Object.is(before, after)).toBe(true);
+
+    // A relevant region change yields a *new* reference with the new value.
+    act(() => harness.transport.setSession(TAB, failed("auth failed")));
+    await flushSessionRegion();
+    const changed = seen[seen.length - 1];
+    expect(Object.is(after, changed)).toBe(false);
+    expect(changed.disconnectError).toBe("auth failed");
+  });
+
   it("reflects the region as the sole source (no appStore fallback)", async () => {
     // The region is authoritative since the engine was removed: a connected
     // snapshot means not-connecting, regardless of any stale local field.
