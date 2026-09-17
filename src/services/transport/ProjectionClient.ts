@@ -29,15 +29,86 @@
  * their effective view is reference-identical to the authoritative baseline —
  * the already-inverted domains are unaffected.
  *
- * Diffs are applied with the maintained `fast-json-patch` package (RFC 6902),
- * the mirror of the Rust reference applier `projection::apply_ops`. Diffs and
- * snapshots always target the authoritative `baseView`, never the overlay.
+ * Diffs are RFC 6902 (`add` / `remove` / `replace`), the mirror of the Rust
+ * reference applier `projection::apply_ops`. They are applied with **immer**'s
+ * copy-on-write `applyPatches` (PERF-005): the new baseline shares every
+ * untouched subtree by reference with the previous view and re-identifies only
+ * the touched paths — O(diff) allocation instead of the O(whole-region) deep
+ * clone `fast-json-patch`'s non-mutating mode did. `fast-json-patch` is retained
+ * only for the degenerate primitive-base fallback and for the `compare` used by
+ * callers/tests. Diffs and snapshots always target the authoritative `baseView`,
+ * never the overlay.
+ *
+ * ## Immutability invariant (why copy-on-write is safe here)
+ *
+ * Downstream consumers hold references to previously-emitted views and rely on
+ * them staying immutable (React referential-equality diffing). immer never
+ * mutates the `base` it is given — it copies-on-write — so applying a later diff
+ * produces a fresh document without touching any object a prior emission handed
+ * out. Auto-freeze is disabled ({@link setAutoFreeze}) so an emitted view is
+ * byte-for-byte what the old deep-clone applier produced (plain, unfrozen
+ * objects); only the allocation/sharing changes, not the observable document.
  */
 
 import { applyPatch, type Operation } from "fast-json-patch";
+import { applyPatches, enablePatches, setAutoFreeze, type Patch } from "immer";
 
 import type { FrameHandler, Subscription, Transport } from "./Transport";
-import type { DiffFrame, Intent, IntentAck, ProjectionFrame, SnapshotFrame } from "./types";
+import type { DiffFrame, DiffOp, Intent, IntentAck, ProjectionFrame, SnapshotFrame } from "./types";
+
+// immer's patch plugin powers {@link applyDiffOps}; enable it once at load. Keep
+// produced documents UNFROZEN so an emitted view is identical to the deep-clone
+// applier's output — copy-on-write already guarantees the immutability invariant
+// (a later diff never mutates a previously-emitted view) without freezing.
+enablePatches();
+setAutoFreeze(false);
+
+/** A diff op that carries an RFC 6901 path (everything but the `semantic` op). */
+type PatchOp = Exclude<DiffOp, { op: "semantic" }>;
+
+/**
+ * Decode an RFC 6901 JSON Pointer (`/a/b~1c`) to immer's array-path form
+ * (`["a", "b/c"]`). Segments stay strings; immer coerces them for array indices
+ * and handles the `-` append token natively.
+ */
+function jsonPointerToPath(pointer: string): string[] {
+  if (pointer === "") return [];
+  return pointer
+    .split("/")
+    .slice(1)
+    .map((token) => token.replace(/~1/g, "/").replace(/~0/g, "~"));
+}
+
+/** Convert an RFC 6902 diff op to immer's `Patch` shape (array path). */
+function toImmerPatch(op: PatchOp): Patch {
+  const path = jsonPointerToPath(op.path);
+  return op.op === "remove" ? { op: "remove", path } : { op: op.op, path, value: op.value };
+}
+
+/**
+ * Apply an ordered RFC 6902 op list to `base`, returning a NEW document that
+ * shares every untouched subtree by reference with `base` (copy-on-write via
+ * immer). `base` is never mutated, so any previously-emitted view aliasing its
+ * subtrees stays intact (PERF-005). Only `add`/`remove`/`replace` reach here —
+ * the backend's `json_patch::diff` emits no move/copy/test, and `semantic` ops
+ * are resynced upstream — all of which immer's `applyPatches` represents
+ * faithfully.
+ */
+function applyDiffOps(base: unknown, ops: DiffOp[]): unknown {
+  // A region view model is always an object/array; only such a base can carry a
+  // path-addressed diff. Guard the degenerate primitive case with the plain
+  // deep-clone applier (behaviour-identical) so a malformed frame cannot throw
+  // out of the frame handler.
+  if (base === null || typeof base !== "object") {
+    return applyPatch(base, ops as unknown as Operation[], false, false).newDocument;
+  }
+  const patches: Patch[] = [];
+  for (const op of ops) {
+    if (op.op === "semantic") continue; // never reached (resynced upstream); narrows the union
+    patches.push(toImmerPatch(op));
+  }
+  return applyPatches(base as object, patches);
+}
 
 /** The cache's public state for one region. */
 export interface ProjectionCacheState {
@@ -238,8 +309,9 @@ export class ProjectionClient {
       return;
     }
     // Authoritative diffs always apply to the baseline, never the overlay.
-    const result = applyPatch(this.baseView, diff.ops as Operation[], false, false);
-    this.baseView = result.newDocument;
+    // Copy-on-write: the new baseline shares untouched subtrees with the prior
+    // view and never mutates it (PERF-005).
+    this.baseView = applyDiffOps(this.baseView, diff.ops);
     this.version = diff.version;
     this.pruneConfirmed();
     this.recompute();
