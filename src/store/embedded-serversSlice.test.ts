@@ -166,6 +166,27 @@ describe("embedded-servers slice (TFE-006)", () => {
       expect(servers[0].port).toBe(9090);
     });
 
+    it("updates only the matching server and passes every sibling through untouched", async () => {
+      // Two existing servers: saving an edit to srv-1 must replace srv-1 in place
+      // while srv-2 flows through the `.map` untouched (the sibling-passthrough
+      // branch of the replace path — line 87). A prior single-item test could not
+      // exercise the "keep this other one" arm.
+      const srv2 = makeServer("srv-2", "Keep");
+      useAppStore.setState({ embeddedServers: [makeServer("srv-1", "Old"), srv2] });
+
+      await useAppStore
+        .getState()
+        .saveEmbeddedServer({ ...makeServer("srv-1", "Renamed"), port: 9191 });
+
+      const servers = useAppStore.getState().embeddedServers;
+      expect(servers.map((s) => s.id)).toEqual(["srv-1", "srv-2"]);
+      const updated = servers.find((s) => s.id === "srv-1");
+      expect(updated?.name).toBe("Renamed");
+      expect(updated?.port).toBe(9191);
+      // The untouched sibling is the exact same object reference (passed through).
+      expect(servers.find((s) => s.id === "srv-2")).toBe(srv2);
+    });
+
     it("rethrows and does not mutate the list when the backend save fails", async () => {
       useAppStore.setState({ embeddedServers: [makeServer("srv-1", "Old")] });
       vi.mocked(apiSaveEmbeddedServer).mockRejectedValueOnce(new Error("save failed"));
