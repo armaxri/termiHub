@@ -216,6 +216,7 @@ impl WorkspaceManager {
                 &uuid::Uuid::new_v4().to_string()[..6]
             );
 
+            let mut unresolved: Vec<String> = Vec::new();
             let definition = WorkspaceDefinition {
                 id: new_id,
                 name: entry.name,
@@ -226,12 +227,26 @@ impl WorkspaceManager {
                     .map(|g| WorkspaceTabGroupDef {
                         name: g.name,
                         color: g.color,
-                        layout: resolve_connection_names_to_ids(&g.layout, name_to_id),
+                        layout: resolve_connection_names_to_ids(
+                            &g.layout,
+                            name_to_id,
+                            &mut unresolved,
+                        ),
                         window_id: g.window_id,
                     })
                     .collect(),
                 windows: entry.windows,
             };
+
+            // Surface any dangling connection references instead of silently
+            // keeping them (PER-009). The tab and its raw ref are preserved above;
+            // here we only record a warning so the user learns the workspace is
+            // partially broken. Never auto-delete the tab or the reference.
+            record_dangling_ref_warnings(
+                &definition.name,
+                &mut unresolved,
+                &self.recovery_warnings,
+            );
 
             store.workspaces.push(definition);
             count += 1;
@@ -260,6 +275,46 @@ impl WorkspaceManager {
             workspace_count: data.workspaces.len(),
             total_tab_count,
         })
+    }
+}
+
+/// Record a recovery-style warning for each connection name that a workspace
+/// referenced but that no longer resolves to a known connection (PER-009).
+///
+/// De-duplicates the names, logs each one (so it is visible at runtime), and
+/// appends a [`RecoveryWarning`] to the manager's warning list — reusing the same
+/// machinery that reports corrupt/recovered stores elsewhere. The referencing tab
+/// is intentionally left untouched; this only surfaces the dangling reference.
+fn record_dangling_ref_warnings(
+    workspace_name: &str,
+    unresolved: &mut Vec<String>,
+    recovery_warnings: &Mutex<Vec<RecoveryWarning>>,
+) {
+    if unresolved.is_empty() {
+        return;
+    }
+    unresolved.sort();
+    unresolved.dedup();
+
+    let Ok(mut warnings) = recovery_warnings.lock() else {
+        return;
+    };
+    for name in unresolved.drain(..) {
+        tracing::warn!(
+            workspace = %workspace_name,
+            connection = %name,
+            "imported workspace references a connection that no longer exists; \
+             the tab was kept but will not connect until the connection is restored"
+        );
+        warnings.push(RecoveryWarning {
+            file_name: "workspaces.json".to_string(),
+            message: format!(
+                "Workspace \"{workspace_name}\" references connection \"{name}\", \
+                 which no longer exists. The tab was kept but will not connect \
+                 until the connection is restored."
+            ),
+            details: None,
+        });
     }
 }
 
@@ -297,9 +352,15 @@ fn replace_connection_ids_with_names(
 }
 
 /// Resolve connection names back to IDs for import.
+///
+/// A name that does not resolve to a known connection is **kept verbatim** (no
+/// data is dropped) and its name is recorded in `unresolved` so the caller can
+/// surface a warning instead of silently swallowing the dangling reference
+/// (PER-009).
 fn resolve_connection_names_to_ids(
     layout: &WorkspaceLayoutNode,
     name_to_id: &HashMap<String, String>,
+    unresolved: &mut Vec<String>,
 ) -> WorkspaceLayoutNode {
     match layout {
         WorkspaceLayoutNode::Leaf { tabs } => WorkspaceLayoutNode::Leaf {
@@ -307,10 +368,15 @@ fn resolve_connection_names_to_ids(
                 .iter()
                 .map(|tab| WorkspaceTabDef {
                     connection_ref: tab.connection_ref.as_ref().map(|name| {
-                        name_to_id
-                            .get(name)
-                            .cloned()
-                            .unwrap_or_else(|| name.clone())
+                        match name_to_id.get(name) {
+                            Some(id) => id.clone(),
+                            None => {
+                                // Preserve the raw name — the tab is never dropped —
+                                // but record it so the import can warn about it.
+                                unresolved.push(name.clone());
+                                name.clone()
+                            }
+                        }
                     }),
                     ..tab.clone()
                 })
@@ -324,7 +390,7 @@ fn resolve_connection_names_to_ids(
             direction: direction.clone(),
             children: children
                 .iter()
-                .map(|c| resolve_connection_names_to_ids(c, name_to_id))
+                .map(|c| resolve_connection_names_to_ids(c, name_to_id, unresolved))
                 .collect(),
             sizes: sizes.clone(),
         },
