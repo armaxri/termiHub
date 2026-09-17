@@ -20,6 +20,7 @@ import { EditorTabMeta, EditorStatus } from "@/types/terminal";
 import { useAppStore, deriveEditorHostLabel } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { resolveLanguage } from "@/utils/languageMapping";
+import { useDebouncedCallback } from "@/hooks/useDebounce";
 import { getBasename, formatBytes } from "@/utils/formatters";
 import { suggestedSaveCopyPath } from "@/utils/saveCopyPath";
 import { getAvailableLanguages } from "@/utils/monacoLanguages";
@@ -869,6 +870,14 @@ export function FileEditor({
   const reloadFromDiskRef = useRef(reloadFromDisk);
   reloadFromDiskRef.current = reloadFromDisk;
 
+  // Coalesce a burst of local-watch change events into a single reload through
+  // the shared debounced-callback hook (LIBFE-003), matching the prior 150ms
+  // hand-rolled debounce. Stable identity + latest-callback via the ref, and the
+  // pending reload is dropped on unmount / when the watch effect re-runs.
+  const debouncedReloadFromDisk = useDebouncedCallback(() => {
+    void reloadFromDiskRef.current();
+  }, 150);
+
   // Last-seen remote stat (mtime + size) for the external-change poll (#1627),
   // keyed to the file identity so it survives visibility toggles (returning to a
   // tab detects a change that landed while it was hidden) but resets when the
@@ -891,7 +900,6 @@ export function FileEditor({
     let disposed = false;
     let registered = false;
     let watchClosed = false;
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
     // Idempotently tear down the OS watch — but only once it has actually
     // registered. Calling `unwatchLocalFile` before the matching
@@ -929,10 +937,7 @@ export function FileEditor({
         if (changedWatchId !== runWatchId) return;
         // Coalesce bursts on the frontend too — belt-and-braces over the
         // backend debounce.
-        if (debounceTimer) clearTimeout(debounceTimer);
-        debounceTimer = setTimeout(() => {
-          void reloadFromDiskRef.current();
-        }, 150);
+        debouncedReloadFromDisk();
       });
       // The effect may have been torn down while awaiting the listener; drop it
       // and tear the (now-registered) watch down.
@@ -947,11 +952,19 @@ export function FileEditor({
 
     return () => {
       disposed = true;
-      if (debounceTimer) clearTimeout(debounceTimer);
+      debouncedReloadFromDisk.cancel();
       unlisten?.();
       closeWatch();
     };
-  }, [meta.isRemote, isUnsavedScratch, effectivePath, watchId, tabId, supersededByZoom]);
+  }, [
+    meta.isRemote,
+    isUnsavedScratch,
+    effectivePath,
+    watchId,
+    tabId,
+    supersededByZoom,
+    debouncedReloadFromDisk,
+  ]);
 
   // Poll a remote (SFTP / session) file for external on-disk changes (#1627).
   // Remote transports can't OS-watch, so we re-`stat` the open file on an
