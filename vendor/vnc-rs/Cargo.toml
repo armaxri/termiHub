@@ -37,7 +37,6 @@ flate2 = "^1"
 tracing = { version = "^0.1", features = ["log"] }
 
 # async
-async_io_stream = "0.3"
 futures = "0.3"
 tokio-util = { version = "0.7", features = ["compat"] }
 tokio-stream = "0.1"
