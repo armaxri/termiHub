@@ -27,6 +27,48 @@ use crate::protocol::methods::{CONNECTION_EXIT, CONNECTION_OUTPUT};
 /// finish startup and send `MSG_READY` under CI load is not dropped prematurely.
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// Upper bound on a single framed write to the daemon (CONC-013).
+///
+/// Every write path locks the `writer` [`Mutex`] and holds the guard across the
+/// whole [`protocol::write_frame_async`] — this is **deliberate**: frames must
+/// not interleave on the socket, so only one write may be in flight at a time.
+/// The hazard is not the lock scope but the *unbounded* wait inside it: a wedged
+/// daemon (one that has stopped reading, leaving the socket buffer full) would
+/// otherwise hold the writer lock for the whole write, blocking every other
+/// sender — input, resize, detach, kill — behind one hung write, with no way for
+/// the teardown paths (`detach`/`close`) to make progress.
+///
+/// Wrapping the write in this timeout keeps the serialization intact (the lock
+/// is still held across the single write, so ordering/integrity are unchanged)
+/// while bounding how long a wedged socket can hold it. A timed-out write
+/// returns an error so teardown proceeds instead of hanging indefinitely. The
+/// bound is generous so a merely-busy daemon is never tripped; only a genuinely
+/// stuck socket reaches it.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Write a single frame to the daemon, bounded by [`WRITE_TIMEOUT`] (CONC-013).
+///
+/// Preserves the caller's serialization (it is invoked while the `writer` mutex
+/// guard is held, exactly as before), but a stalled socket can no longer hold
+/// the lock forever: on timeout it returns an error and the write is abandoned.
+async fn write_frame_timed(
+    writer: &mut BoxedWriter,
+    msg_type: u8,
+    payload: &[u8],
+) -> anyhow::Result<()> {
+    match tokio::time::timeout(
+        WRITE_TIMEOUT,
+        protocol::write_frame_async(writer, msg_type, payload),
+    )
+    .await
+    {
+        Ok(res) => res.map_err(anyhow::Error::from),
+        Err(_) => Err(anyhow::anyhow!(
+            "daemon write (frame 0x{msg_type:02x}) timed out after {WRITE_TIMEOUT:?}"
+        )),
+    }
+}
+
 /// Returned by [`DaemonClient::connect_for_recovery`] when the daemon refuses
 /// the connect because a live writer — another attached desktop's worker — is
 /// already holding the session (AGT-015).
@@ -196,7 +238,7 @@ impl DaemonClient {
             let writer = guard
                 .as_mut()
                 .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
-            protocol::write_frame_async(writer, MSG_QUERY_BUFFER, &[]).await?;
+            write_frame_timed(writer, MSG_QUERY_BUFFER, &[]).await?;
         }
 
         tokio::time::timeout(std::time::Duration::from_secs(10), rx)
@@ -221,7 +263,7 @@ impl DaemonClient {
         let writer = guard
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
-        protocol::write_frame_async(writer, MSG_INPUT, data).await?;
+        write_frame_timed(writer, MSG_INPUT, data).await?;
         Ok(())
     }
 
@@ -236,7 +278,7 @@ impl DaemonClient {
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("Not connected to daemon"))?;
         let payload = protocol::encode_resize(cols, rows);
-        protocol::write_frame_async(writer, MSG_RESIZE, &payload).await?;
+        write_frame_timed(writer, MSG_RESIZE, &payload).await?;
         Ok(())
     }
 
@@ -290,7 +332,7 @@ impl DaemonClient {
         // Ask the daemon to keep the session but drop this connection.
         let mut writer_guard = self.writer.lock().await;
         if let Some(ref mut writer) = *writer_guard {
-            let _ = protocol::write_frame_async(writer, MSG_DETACH, &[]).await;
+            let _ = write_frame_timed(writer, MSG_DETACH, &[]).await;
         }
         // Drop our writer half (closes our end of the socket).
         *writer_guard = None;
@@ -303,7 +345,7 @@ impl DaemonClient {
         {
             let mut guard = self.writer.lock().await;
             if let Some(ref mut writer) = *guard {
-                let _ = protocol::write_frame_async(writer, MSG_KILL, &[]).await;
+                let _ = write_frame_timed(writer, MSG_KILL, &[]).await;
             }
         }
         self.disconnect().await;
@@ -366,7 +408,7 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
                 let writer = guard.as_mut().ok_or_else(|| {
                     std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected to daemon")
                 })?;
-                protocol::write_frame_async(writer, MSG_INPUT, data).await
+                write_frame_timed(writer, MSG_INPUT, data).await
             })
             .map_err(|e| {
                 termihub_core::errors::SessionError::Io(std::io::Error::new(
@@ -385,7 +427,7 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
                     std::io::Error::new(std::io::ErrorKind::NotConnected, "not connected to daemon")
                 })?;
                 let payload = protocol::encode_resize(cols, rows);
-                protocol::write_frame_async(writer, MSG_RESIZE, &payload).await
+                write_frame_timed(writer, MSG_RESIZE, &payload).await
             })
             .map_err(|e| {
                 termihub_core::errors::SessionError::Io(std::io::Error::new(
@@ -403,7 +445,7 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
             Ok(handle) => handle.block_on(async {
                 let mut guard = self.writer.lock().await;
                 if let Some(ref mut writer) = *guard {
-                    let _ = protocol::write_frame_async(writer, MSG_KILL, &[]).await;
+                    let _ = write_frame_timed(writer, MSG_KILL, &[]).await;
                 }
                 // Drop the writer half — the reader task will exit on EOF.
                 *guard = None;
@@ -1070,5 +1112,79 @@ mod tests {
         assert!(client.is_alive());
 
         server.await.expect("mock daemon task");
+    }
+
+    /// A writer whose writes never complete — models a wedged daemon socket
+    /// whose kernel buffer is full because the daemon has stopped reading
+    /// (CONC-013). `poll_write`/`poll_flush` park forever, exactly as a real
+    /// backpressured socket does once its send buffer fills.
+    struct StalledWriter;
+
+    impl tokio::io::AsyncWrite for StalledWriter {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+            _buf: &[u8],
+        ) -> std::task::Poll<std::io::Result<usize>> {
+            std::task::Poll::Pending
+        }
+        fn poll_flush(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Pending
+        }
+        fn poll_shutdown(
+            self: Pin<&mut Self>,
+            _cx: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            std::task::Poll::Ready(Ok(()))
+        }
+    }
+
+    /// CONC-013: a write to a wedged daemon socket (one that never accepts
+    /// bytes) must time out and return an error instead of holding the writer
+    /// lock forever. `start_paused` lets [`WRITE_TIMEOUT`] elapse in virtual
+    /// time, so the test is instant yet exercises the real timeout path — the
+    /// property that keeps a hung daemon from wedging input/detach/close.
+    #[tokio::test(start_paused = true)]
+    async fn write_frame_timed_bounds_a_wedged_socket() {
+        let mut writer: BoxedWriter = Box::new(StalledWriter);
+        let result = write_frame_timed(&mut writer, MSG_INPUT, b"stuck").await;
+        assert!(
+            result.is_err(),
+            "a write to a wedged socket must time out, not hang"
+        );
+    }
+
+    /// CONC-013: the timeout wrapper is transparent on a healthy socket —
+    /// frames are written intact and in order, so wrapping the write does not
+    /// weaken the frame serialization the writer lock provides.
+    #[tokio::test]
+    async fn write_frame_timed_preserves_frame_order_on_healthy_socket() {
+        let (client_sock, server_sock) = tokio::io::duplex(64 * 1024);
+        let (mut server_reader, _server_writer) = tokio::io::split(server_sock);
+        let (_client_reader, client_writer) = tokio::io::split(client_sock);
+        let mut writer: BoxedWriter = Box::new(client_writer);
+
+        write_frame_timed(&mut writer, MSG_INPUT, b"first")
+            .await
+            .expect("healthy write must succeed");
+        write_frame_timed(&mut writer, MSG_RESIZE, b"2nd")
+            .await
+            .expect("healthy write must succeed");
+
+        let f1 = protocol::read_frame_async(&mut server_reader)
+            .await
+            .unwrap()
+            .unwrap();
+        let f2 = protocol::read_frame_async(&mut server_reader)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(f1.msg_type, MSG_INPUT);
+        assert_eq!(f1.payload, b"first");
+        assert_eq!(f2.msg_type, MSG_RESIZE);
+        assert_eq!(f2.payload, b"2nd");
     }
 }
