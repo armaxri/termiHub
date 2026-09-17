@@ -701,8 +701,8 @@ export function currentSessionView(): Record<string, ProjectedSessionLifecycle> 
  * Resolves with the region's `sessionId` for `tabId` as soon as it is present and
  * not equal to `excludeSessionId` (the prior, now-dead session id, so a stale
  * region value is never mistaken for the fresh one — the store also clears the id
- * on drop, so this is belt-and-suspenders). Resolves to `null` on `isCanceled()`
- * (the effect torn down) or after `timeoutMs` with no id — the caller then falls
+ * on drop, so this is belt-and-suspenders). Resolves to `null` when `signal`
+ * aborts (the effect torn down) or after `timeoutMs` with no id — the caller falls
  * back to the client redrive, which keeps a not-yet-driven reconnect from
  * stranding the terminal. With #2454 present the redrive publishes the id
  * promptly, so the wait settles at once and the timeout never bites.
@@ -713,7 +713,7 @@ export function currentSessionView(): Record<string, ProjectedSessionLifecycle> 
 export function waitForBackendReattachSessionId(
   tabId: string,
   excludeSessionId: string | null | undefined,
-  isCanceled: () => boolean,
+  signal: AbortSignal,
   timeoutMs = 10000
 ): Promise<string | null> {
   const accept = (id: string | undefined): id is string =>
@@ -751,19 +751,19 @@ export function waitForBackendReattachSessionId(
       finish(immediate);
       return;
     }
-    if (isCanceled()) {
+    if (signal.aborted) {
       finish(null);
       return;
     }
 
     const timer = setTimeout(() => finish(null), timeoutMs);
     cleanups.push(() => clearTimeout(timer));
-    // Poll cancellation so a torn-down effect stops waiting promptly rather than
-    // holding the promise open until the timeout.
-    const cancelPoll = setInterval(() => {
-      if (isCanceled()) finish(null);
-    }, 100);
-    cleanups.push(() => clearInterval(cancelPoll));
+    // Cancel promptly on effect teardown by listening for the AbortSignal's
+    // `abort` event rather than polling a flag: the promise frees on the event
+    // itself, with no up-to-100ms tick latency and no leaked interval timer.
+    const onAbort = () => finish(null);
+    signal.addEventListener("abort", onAbort);
+    cleanups.push(() => signal.removeEventListener("abort", onAbort));
   });
 }
 
@@ -802,17 +802,17 @@ export type BackendAgentReconnectOutcome =
  *    (the backend exhausted its retries),
  *  - `status === "disconnected"` (the loop was cancelled/stopped server-side)
  *    ⇒ `giveup` (settle the tab; no error banner),
- *  - `isCanceled()` (the effect torn down)  ⇒ `canceled`.
+ *  - `signal` aborts (the effect torn down)  ⇒ `canceled`.
  *
  * There is deliberately **no short fall-through timeout** — the tab is never
  * stranded because the backend always reaches one of the terminal states above
  * (success, exhausted-give-up, or user cancel, each folded into the region), and
- * `isCanceled` polling frees the promise the instant the effect unmounts.
+ * the `signal`'s `abort` event frees the promise the instant the effect unmounts.
  */
 export function waitForBackendAgentReconnectOutcome(
   tabId: string,
   excludeSessionId: string | null | undefined,
-  isCanceled: () => boolean
+  signal: AbortSignal
 ): Promise<BackendAgentReconnectOutcome> {
   const acceptId = (id: string | undefined): id is string =>
     !!id && !(excludeSessionId != null && id === excludeSessionId);
@@ -865,17 +865,17 @@ export function waitForBackendAgentReconnectOutcome(
       finish(immediate);
       return;
     }
-    if (isCanceled()) {
+    if (signal.aborted) {
       finish({ kind: "canceled" });
       return;
     }
 
-    // No fall-through timeout: wait across the whole backend loop. Poll only for
-    // cancellation so a torn-down effect frees the promise promptly.
-    const cancelPoll = setInterval(() => {
-      if (isCanceled()) finish({ kind: "canceled" });
-    }, 100);
-    cleanups.push(() => clearInterval(cancelPoll));
+    // No fall-through timeout: wait across the whole backend loop. Cancel on the
+    // effect teardown by listening for the AbortSignal's `abort` event rather
+    // than polling — the promise frees on the event itself, with no leaked timer.
+    const onAbort = () => finish({ kind: "canceled" });
+    signal.addEventListener("abort", onAbort);
+    cleanups.push(() => signal.removeEventListener("abort", onAbort));
   });
 }
 

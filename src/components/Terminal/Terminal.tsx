@@ -377,7 +377,13 @@ export function Terminal({
   }, [tabId]);
 
   const setupTerminal = useCallback(
-    async (xterm: XTerm, fitAddon: FitAddon, isCanceled: () => boolean, connectId: string) => {
+    async (xterm: XTerm, fitAddon: FitAddon, signal: AbortSignal, connectId: string) => {
+      // This effect run is "canceled" once its AbortSignal fires (the effect torn
+      // down / superseded). Derived from the signal so every synchronous guard
+      // below stays a cheap `isCanceled()` read while the backend waits cancel
+      // promptly off the signal's `abort` event (no 100ms cancel-polling).
+      const isCanceled = () => signal.aborted;
+
       // Cancel any pending session close from a StrictMode unmount cycle
       if (pendingCloseTimerRef.current !== null) {
         clearTimeout(pendingCloseTimerRef.current);
@@ -485,7 +491,7 @@ export function Terminal({
             const outcome = await waitForBackendAgentReconnectOutcome(
               tabId,
               sessionIdRef.current,
-              isCanceled
+              signal
             );
             if (isCanceled() || outcome.kind === "canceled") return;
             if (outcome.kind === "giveup") {
@@ -1120,10 +1126,12 @@ export function Terminal({
   // Create the terminal element, xterm instance, and register
   useEffect(() => {
     // Track whether this effect invocation is still active. In React StrictMode,
-    // the effect runs twice (mount → unmount → mount). The canceled flag prevents
-    // a stale async setupTerminal from overwriting the session created by the
-    // second mount, which would send input to the wrong backend session.
-    let canceled = false;
+    // the effect runs twice (mount → unmount → mount). Aborting the controller in
+    // cleanup prevents a stale async setupTerminal from overwriting the session
+    // created by the second mount (which would send input to the wrong backend
+    // session), and — unlike a bare boolean — lets the backend reconnect waits
+    // cancel promptly off the `abort` event instead of polling a flag.
+    const connectAbort = new AbortController();
 
     // Unique connect id for THIS effect run's connect attempt. Keyed by the
     // retry generation so an overlapping retry/reconnect (which re-runs the
@@ -1401,7 +1409,7 @@ export function Terminal({
     fitAddonRef.current = fitAddon;
 
     // Wire to backend
-    setupTerminal(xterm, fitAddon, () => canceled, connectId);
+    setupTerminal(xterm, fitAddon, connectAbort.signal, connectId);
 
     // Re-fit once web fonts finish loading. The terminal font (Nerd Font
     // Mono) ships via @font-face with `font-display: swap`, so xterm's
@@ -1418,7 +1426,7 @@ export function Terminal({
         .catch(() => undefined)
         .then(() => document.fonts.ready)
         .then(() => {
-          if (canceled) return;
+          if (connectAbort.signal.aborted) return;
           try {
             fitAddon.fit();
           } catch {
@@ -1506,7 +1514,7 @@ export function Terminal({
     resizeObserver.observe(el);
 
     return () => {
-      canceled = true;
+      connectAbort.abort();
       // If the tab is torn down while a connect is in flight (e.g. the user hit
       // Cancel on the connecting overlay), abort the backend's handshake instead
       // of leaving it to run to completion (#952). Cancel only THIS effect run's

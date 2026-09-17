@@ -10,7 +10,7 @@
  * exercised without a backend.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   FrameHandler,
@@ -91,9 +91,16 @@ afterEach(() => {
   setSessionTransportForTest(null);
 });
 
-describe("waitForBackendReattachSessionId", () => {
-  const never = () => false;
+/** A signal that never aborts (the effect stays mounted for the whole wait). */
+const never = new AbortController().signal;
+/** A signal that is already aborted before the wait starts. */
+const abortedSignal = (): AbortSignal => {
+  const ac = new AbortController();
+  ac.abort();
+  return ac.signal;
+};
 
+describe("waitForBackendReattachSessionId", () => {
   it("resolves with the id already present in the region (fast path)", async () => {
     // The redrive already published the new backend id before the terminal waits.
     transport.setSession("tab-1", connectedWith("backend-new"));
@@ -123,13 +130,34 @@ describe("waitForBackendReattachSessionId", () => {
     expect(await pending).toBe("backend-new");
   });
 
-  it("resolves null when the effect is cancelled", async () => {
-    const id = await waitForBackendReattachSessionId("tab-4", null, () => true);
+  it("resolves null when the effect is already cancelled (aborted signal)", async () => {
+    const id = await waitForBackendReattachSessionId("tab-4", null, abortedSignal());
     expect(id).toBeNull();
   });
 
   it("resolves null after the timeout when no id is published", async () => {
     const id = await waitForBackendReattachSessionId("tab-5", null, never, 20);
     expect(id).toBeNull();
+  });
+
+  it("cancels promptly on the abort event — arms the timeout but no 100ms poll, and leaks no timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const ac = new AbortController();
+      const pending = waitForBackendReattachSessionId("tab-6", "backend-old", ac.signal, 10000);
+      // Let the subscribe + fast-path settle without letting any tick fire.
+      await vi.advanceTimersByTimeAsync(0);
+      // Exactly ONE pending timer: the timeout. The former implementation also
+      // armed a 100ms cancel-poll interval (→ 2 timers); the signal-based wait
+      // arms none — cancellation rides the `abort` event, not a tick.
+      expect(vi.getTimerCount()).toBe(1);
+      // Aborting resolves on the event itself, with no 100ms advance.
+      ac.abort();
+      expect(await pending).toBeNull();
+      // The abort cleared the timeout and removed the listener — nothing leaked.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

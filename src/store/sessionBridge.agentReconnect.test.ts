@@ -14,7 +14,7 @@
  * without a backend (mirrors sessionBridge.backendReattach.test.ts).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type {
   FrameHandler,
@@ -112,9 +112,16 @@ afterEach(() => {
   setSessionTransportForTest(null);
 });
 
-describe("waitForBackendAgentReconnectOutcome", () => {
-  const never = () => false;
+/** A signal that never aborts (the effect stays mounted for the whole wait). */
+const never = new AbortController().signal;
+/** A signal that is already aborted before the wait starts. */
+const abortedSignal = (): AbortSignal => {
+  const ac = new AbortController();
+  ac.abort();
+  return ac.signal;
+};
 
+describe("waitForBackendAgentReconnectOutcome", () => {
   it("reattaches to a fresh backend session id (fast path)", async () => {
     transport.setSession("tab-1", connectedWith("agent-new"));
     await flush();
@@ -178,9 +185,35 @@ describe("waitForBackendAgentReconnectOutcome", () => {
     expect(await pending).toEqual({ kind: "reattach", sessionId: "agent-late" });
   });
 
-  it("resolves canceled when the effect is torn down", async () => {
-    const outcome = await waitForBackendAgentReconnectOutcome("tab-7", null, () => true);
+  it("resolves canceled when the effect is already torn down (aborted signal)", async () => {
+    const outcome = await waitForBackendAgentReconnectOutcome("tab-7", null, abortedSignal());
     expect(outcome).toEqual({ kind: "canceled" });
+  });
+
+  it("cancels promptly on the abort event — arms no 100ms poll and leaks no timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const ac = new AbortController();
+      let resolved: unknown = "pending";
+      const pending = waitForBackendAgentReconnectOutcome("tab-abort", "agent-old", ac.signal).then(
+        (o) => (resolved = o)
+      );
+      // Let the subscribe + fast-path settle without letting any tick fire.
+      await vi.advanceTimersByTimeAsync(0);
+      // This wait has no fall-through timeout and now no cancel-poll interval, so
+      // NO timer is pending. The former implementation armed a 100ms setInterval
+      // here (→ 1 timer); the signal-based wait rides the `abort` event instead.
+      expect(vi.getTimerCount()).toBe(0);
+      expect(resolved).toBe("pending");
+      // Cancellation fires on the event, not on a poll tick.
+      ac.abort();
+      await pending;
+      expect(resolved).toEqual({ kind: "canceled" });
+      // Listener removed on settle — nothing leaked.
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports session-lost when the live agent session is unrecoverable (#2512)", async () => {
