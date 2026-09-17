@@ -155,13 +155,29 @@ impl RegionState {
 /// The projector: owns the subscription registry (`region → subscribers`), the
 /// per-region monotonic version counters, and the coalescing/diff step.
 ///
-/// A single mutex over the region map gives the concept's "snapshot capture and
-/// subscriber insertion under one region lock" guarantee, so a late joiner can
-/// neither miss a diff that lands during attach nor receive one that predates
-/// its snapshot.
+/// # Locking (CONC-005)
+///
+/// Two levels. The outer `regions` map mutex is **structural only** — it guards
+/// lookup/insertion of the per-region handle and is held only for that O(1)
+/// step, never across a diff computation or a subscriber delivery. Each region
+/// then carries its **own** [`Mutex<RegionState>`]; a region's version bump,
+/// view store, and subscriber fan-out all run under *that* per-region lock.
+///
+/// This is what keeps a slow (or blocking) subscriber on one region from
+/// stalling progress on every other region: delivery holds only the region's
+/// own lock, not a single global lock over all regions. Per region, the bump
+/// and the fan-out stay atomic under one lock, so a subscriber can neither miss
+/// a diff that lands during attach nor receive one out of version order — the
+/// concept's "snapshot capture and subscriber insertion under one region lock"
+/// guarantee, now literally per region.
+///
+/// Lock order is fixed and non-overlapping: every method takes the map lock
+/// first (briefly, to obtain the region handle), **releases it**, then takes
+/// the region lock. The two are never held simultaneously, so no lock-ordering
+/// deadlock is possible.
 #[derive(Default)]
 pub struct Projector {
-    regions: Mutex<HashMap<String, RegionState>>,
+    regions: Mutex<HashMap<String, Arc<Mutex<RegionState>>>>,
 }
 
 impl Projector {
@@ -175,18 +191,16 @@ impl Projector {
     /// `null` view. Seeding lets a domain publish its real baseline before the
     /// first subscriber attaches.
     pub fn register_region(&self, region: &str, initial_view: Value) {
-        let mut regions = self.lock();
-        regions
-            .entry(region.to_string())
-            .or_insert_with(|| RegionState::new(initial_view));
+        // Only creates when absent; an existing region keeps its state.
+        self.region_handle(region, || initial_view);
     }
 
     /// Attach a subscriber and return the region's current snapshot.
     ///
-    /// Snapshot capture and subscriber insertion happen under one lock, so the
-    /// returned baseline and the diff stream that follows cannot interleave
-    /// (invariant 1: snapshot-on-attach). Idempotent per `subscription_id`: a
-    /// repeated id replaces the existing subscriber's sink.
+    /// Snapshot capture and subscriber insertion happen under the region's own
+    /// lock, so the returned baseline and the diff stream that follows cannot
+    /// interleave (invariant 1: snapshot-on-attach). Idempotent per
+    /// `subscription_id`: a repeated id replaces the existing subscriber's sink.
     pub fn subscribe(
         &self,
         region: &str,
@@ -195,10 +209,8 @@ impl Projector {
         sink: Arc<dyn ProjectionSink>,
     ) -> SnapshotFrame {
         let subscription_id = subscription_id.into();
-        let mut regions = self.lock();
-        let state = regions
-            .entry(region.to_string())
-            .or_insert_with(|| RegionState::new(Value::Null));
+        let handle = self.region_handle(region, || Value::Null);
+        let mut state = Self::lock_region(&handle);
         state.subscribers.retain(|s| s.id != subscription_id);
         state.subscribers.push(Subscriber {
             id: subscription_id,
@@ -210,9 +222,10 @@ impl Projector {
 
     /// Detach a subscriber. Idempotent — a missing id is a no-op.
     pub fn unsubscribe(&self, region: &str, subscription_id: &str) {
-        let mut regions = self.lock();
-        if let Some(state) = regions.get_mut(region) {
-            state.subscribers.retain(|s| s.id != subscription_id);
+        if let Some(handle) = self.existing_region(region) {
+            Self::lock_region(&handle)
+                .subscribers
+                .retain(|s| s.id != subscription_id);
         }
     }
 
@@ -220,9 +233,10 @@ impl Projector {
     /// disconnect, when its individual subscription ids are not known here).
     /// Idempotent.
     pub fn unsubscribe_client(&self, region: &str, client_id: &str) {
-        let mut regions = self.lock();
-        if let Some(state) = regions.get_mut(region) {
-            state.subscribers.retain(|s| s.client_id != client_id);
+        if let Some(handle) = self.existing_region(region) {
+            Self::lock_region(&handle)
+                .subscribers
+                .retain(|s| s.client_id != client_id);
         }
     }
 
@@ -234,14 +248,17 @@ impl Projector {
     /// (`base_version = V`, `version = V + 1`) out to every current subscriber,
     /// reaping any whose sink has gone. Returns the new version.
     ///
+    /// The bump and the fan-out run under the region's own lock, so two
+    /// concurrent publishers to the same region deliver strictly in version
+    /// order (the second blocks on the region lock until the first has finished
+    /// delivering `V + 1`). Publishers to *other* regions are not blocked.
+    ///
     /// Because the diff is computed against the *last emitted* view, many
     /// mutations collapsed into one `publish` call produce one diff — the
     /// concept's burst-coalescing, for free.
     pub fn publish(&self, region: &str, new_view: Value) -> Option<u64> {
-        let mut regions = self.lock();
-        let state = regions
-            .entry(region.to_string())
-            .or_insert_with(|| RegionState::new(Value::Null));
+        let handle = self.region_handle(region, || Value::Null);
+        let mut state = Self::lock_region(&handle);
 
         let ops = compute_ops(&state.view, &new_view);
         if ops.is_empty() {
@@ -259,7 +276,7 @@ impl Projector {
             version,
             ops,
         });
-        Self::fan_out(state, &frame);
+        Self::fan_out(&mut state, &frame);
         Some(version)
     }
 
@@ -293,10 +310,8 @@ impl Projector {
         region: &str,
         delta: impl FnOnce(&mut Value) -> Vec<DiffOp>,
     ) -> Option<u64> {
-        let mut regions = self.lock();
-        let state = regions
-            .entry(region.to_string())
-            .or_insert_with(|| RegionState::new(Value::Null));
+        let handle = self.region_handle(region, || Value::Null);
+        let mut state = Self::lock_region(&handle);
 
         let ops = delta(&mut state.view);
         if ops.is_empty() {
@@ -313,16 +328,14 @@ impl Projector {
             version,
             ops,
         });
-        Self::fan_out(state, &frame);
+        Self::fan_out(&mut state, &frame);
         Some(version)
     }
 
     /// The region's current snapshot (creates an empty region if absent).
     pub fn snapshot(&self, region: &str) -> SnapshotFrame {
-        let mut regions = self.lock();
-        let state = regions
-            .entry(region.to_string())
-            .or_insert_with(|| RegionState::new(Value::Null));
+        let handle = self.region_handle(region, || Value::Null);
+        let state = Self::lock_region(&handle);
         state.snapshot(region)
     }
 
@@ -331,10 +344,8 @@ impl Projector {
     /// Returns `None` if the caller's `have` already matches the region's
     /// current version (nothing to send); otherwise the current snapshot.
     pub fn resync(&self, region: &str, have: Option<u64>) -> Option<SnapshotFrame> {
-        let mut regions = self.lock();
-        let state = regions
-            .entry(region.to_string())
-            .or_insert_with(|| RegionState::new(Value::Null));
+        let handle = self.region_handle(region, || Value::Null);
+        let state = Self::lock_region(&handle);
         if have == Some(state.version) {
             return None;
         }
@@ -343,29 +354,54 @@ impl Projector {
 
     /// Number of live subscribers on a region (test / diagnostics helper).
     pub fn subscriber_count(&self, region: &str) -> usize {
-        self.lock()
-            .get(region)
-            .map(|s| s.subscribers.len())
+        self.existing_region(region)
+            .map(|h| Self::lock_region(&h).subscribers.len())
             .unwrap_or(0)
     }
 
     /// The region's current version, if it exists (test / diagnostics helper).
     pub fn region_version(&self, region: &str) -> Option<u64> {
-        self.lock().get(region).map(|s| s.version)
+        self.existing_region(region)
+            .map(|h| Self::lock_region(&h).version)
     }
 
     fn fan_out(state: &mut RegionState, frame: &ProjectionFrame) {
-        // Deliver to every subscriber; reap any whose sink is gone.
+        // Deliver to every subscriber; reap any whose sink is gone. Runs under
+        // the region's own lock, never the global map lock — a slow `deliver`
+        // stalls only this region (CONC-005).
         state
             .subscribers
             .retain(|sub| sub.sink.deliver(frame).is_ok());
     }
 
-    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, RegionState>> {
-        // The map is only ever locked for the short body of a projector call;
-        // a poisoned lock means another thread panicked mid-mutation, which is
-        // a bug — recover the guard rather than cascade the panic.
+    /// Get the shared handle to a region's state, creating it with `init()` when
+    /// absent. Holds the map lock only for the O(1) lookup/insert — never across
+    /// region work or subscriber delivery (CONC-005).
+    fn region_handle(&self, region: &str, init: impl FnOnce() -> Value) -> Arc<Mutex<RegionState>> {
+        let mut regions = self.map_lock();
+        regions
+            .entry(region.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(RegionState::new(init()))))
+            .clone()
+    }
+
+    /// The handle to an existing region, or `None` — never creates one.
+    fn existing_region(&self, region: &str) -> Option<Arc<Mutex<RegionState>>> {
+        self.map_lock().get(region).cloned()
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn map_lock(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<Mutex<RegionState>>>> {
+        // Held only for the short structural lookup/insert of a region handle;
+        // a poisoned lock means another thread panicked mid-mutation, which is a
+        // bug — recover the guard rather than cascade the panic.
         self.regions.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn lock_region(handle: &Arc<Mutex<RegionState>>) -> std::sync::MutexGuard<'_, RegionState> {
+        // Serialises a single region's bump + view store + fan-out. Recover a
+        // poisoned lock rather than cascade the panic.
+        handle.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 

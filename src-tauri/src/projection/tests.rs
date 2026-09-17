@@ -12,8 +12,10 @@
 //! subscriber lifecycle, and the envelope serde shapes that mirror the
 //! TypeScript types.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use serde_json::{json, Value};
 
@@ -532,4 +534,137 @@ fn snapshot_frame_carries_single_kind_discriminator_in_both_forms() {
         serde_json::from_value::<ProjectionFrame>(wrapped_v).unwrap(),
         wrapped,
     );
+}
+
+// ── Concurrency: per-region lock scope (CONC-005) ────────────────────────────
+
+/// A sink whose `deliver` signals once when it begins, then blocks until it is
+/// released. Used to pin one region's lock open while asserting another region
+/// still makes progress.
+struct BlockingSink {
+    started: Mutex<Option<mpsc::Sender<()>>>,
+    release: Mutex<Option<mpsc::Receiver<()>>>,
+}
+
+impl ProjectionSink for BlockingSink {
+    fn deliver(&self, _frame: &ProjectionFrame) -> Result<(), ProjectionError> {
+        if let Some(tx) = self.started.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
+        if let Some(rx) = self.release.lock().unwrap().as_ref() {
+            let _ = rx.recv();
+        }
+        Ok(())
+    }
+}
+
+/// (a) A slow subscriber on one region must not block progress on another: the
+/// global map lock is never held across delivery, only the region's own lock.
+///
+/// A regression (the old single global lock held across `fan_out`) would make
+/// the region-B publish hang instead of returning — the `recv_timeout` turns
+/// that hang into a clean failure rather than a wedged test run.
+#[test]
+fn slow_subscriber_on_one_region_does_not_block_other_regions() {
+    let projector = Arc::new(Projector::new());
+    projector.register_region("A", json!({ "n": 0 }));
+    projector.register_region("B", json!({ "n": 0 }));
+
+    let (started_tx, started_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let blocker = Arc::new(BlockingSink {
+        started: Mutex::new(Some(started_tx)),
+        release: Mutex::new(Some(release_rx)),
+    });
+    projector.subscribe("A", "sub-a", "A", blocker);
+
+    let sink_b = Arc::new(VecSink::new());
+    projector.subscribe("B", "sub-b", "B", sink_b.clone());
+
+    // Publishing to A blocks inside delivery, holding region A's lock.
+    let proj_a = projector.clone();
+    let a_handle = thread::spawn(move || {
+        proj_a.publish("A", json!({ "n": 1 }));
+    });
+
+    // Wait until A's delivery is actually in progress (its lock is held).
+    started_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("blocking sink began delivery");
+
+    // Region B must still make progress while A is stuck.
+    let proj_b = projector.clone();
+    let (done_tx, done_rx) = mpsc::channel();
+    thread::spawn(move || {
+        let v = proj_b.publish("B", json!({ "n": 1 }));
+        let _ = done_tx.send(v);
+    });
+    let published_b = done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("region B published while region A was blocked");
+    assert_eq!(published_b, Some(1));
+    assert_eq!(sink_b.diffs().len(), 1);
+
+    // Release A and let it finish cleanly.
+    release_tx.send(()).unwrap();
+    a_handle.join().unwrap();
+    assert_eq!(projector.region_version("A"), Some(1));
+}
+
+/// (b) Concurrent publishers to the *same* region still deliver strictly in
+/// version order with no gaps or drops — the per-region lock spans both the
+/// version bump and the fan-out, so a subscriber never sees `V + 2` before
+/// `V + 1`.
+#[test]
+fn concurrent_publishers_to_one_region_deliver_in_version_order() {
+    let projector = Arc::new(Projector::new());
+    projector.register_region("r", json!({ "n": 0 }));
+    let sink = Arc::new(VecSink::new());
+    projector.subscribe("r", "sub", "A", sink.clone());
+
+    const THREADS: u64 = 8;
+    const PER_THREAD: u64 = 50;
+    let counter = Arc::new(AtomicU64::new(1));
+    let mut handles = Vec::new();
+    for _ in 0..THREADS {
+        let proj = projector.clone();
+        let counter = counter.clone();
+        handles.push(thread::spawn(move || {
+            for _ in 0..PER_THREAD {
+                // A globally-unique value, so every publish changes the view and
+                // emits exactly one diff (no coalesced no-ops).
+                let n = counter.fetch_add(1, Ordering::SeqCst);
+                proj.publish("r", json!({ "n": n }));
+            }
+        }));
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+
+    let diffs = sink.diffs();
+    let total = (THREADS * PER_THREAD) as usize;
+    assert_eq!(diffs.len(), total, "one diff per publish, none dropped");
+
+    // Strictly ordered, gap-free version chain: 0 → 1 → 2 → … → total.
+    for (i, d) in diffs.iter().enumerate() {
+        let expected = (i as u64) + 1;
+        assert_eq!(d.version, expected, "versions delivered in order");
+        assert_eq!(
+            d.base_version,
+            expected - 1,
+            "each diff chains onto the previous version"
+        );
+    }
+    assert_eq!(projector.region_version("r"), Some(total as u64));
+
+    // A fresh client cache replays the whole ordered stream without a gap.
+    let mut cache = ClientCache {
+        version: 0,
+        view: json!({ "n": 0 }),
+    };
+    for d in &diffs {
+        cache.apply(d).expect("ordered diff applies without a gap");
+    }
+    assert_eq!(cache.version, total as u64);
 }
