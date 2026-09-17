@@ -223,6 +223,61 @@ mod tests {
         assert!(storage.load().unwrap().is_none());
     }
 
+    /// SM-023: a corrupt last-session file must be preserved to a `.bak` sidecar
+    /// on load, not silently discarded. Without the backup the corrupt-but-maybe-
+    /// recoverable data is lost the moment the next layout change overwrites it
+    /// (the save path's `guard_not_newer` explicitly allows overwriting a file
+    /// with no readable version, i.e. a corrupt one). Preserving it on load gives
+    /// the user/support a chance to recover before it is gone.
+    #[test]
+    fn corrupt_file_is_backed_up_to_bak_on_load() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let corrupt = "this is not valid json {{{";
+        fs::write(&storage.file_path, corrupt).unwrap();
+
+        // Load treats it as "no session" (never errors, never blocks startup)...
+        assert!(storage.load().unwrap().is_none());
+
+        // ...but the corrupt bytes are preserved to a `.bak` sidecar, not lost.
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists(), "corrupt file must be backed up to a .bak");
+        assert_eq!(
+            fs::read_to_string(&backup).unwrap(),
+            corrupt,
+            "the .bak must hold the original corrupt bytes verbatim"
+        );
+
+        // The corrupt file is moved aside so the next save writes a fresh file
+        // instead of clobbering the still-corrupt original.
+        assert!(
+            !storage.file_path.exists(),
+            "the corrupt file must be moved aside, not left to be overwritten"
+        );
+    }
+
+    /// A subsequent save after a corrupt load writes a fresh valid file and leaves
+    /// the `.bak` backup intact — the recovered data stays available.
+    #[test]
+    fn save_after_corrupt_load_keeps_backup_intact() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let corrupt = "totally not json !!!";
+        fs::write(&storage.file_path, corrupt).unwrap();
+
+        assert!(storage.load().unwrap().is_none());
+        storage.save(&sample_session()).unwrap();
+
+        let backup = storage.file_path.with_extension("json.bak");
+        assert_eq!(
+            fs::read_to_string(&backup).unwrap(),
+            corrupt,
+            "the corrupt backup must survive a later save"
+        );
+        // The live file is now a valid, loadable session again.
+        assert_eq!(storage.load().unwrap().unwrap(), sample_session());
+    }
+
     #[test]
     fn clear_removes_file() {
         let dir = TempDir::new().unwrap();
