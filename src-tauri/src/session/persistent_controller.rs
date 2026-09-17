@@ -28,6 +28,7 @@
 
 use std::collections::HashSet;
 
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use termihub_core::connection::ConnectionType;
@@ -285,6 +286,10 @@ impl<'a> PersistentController<'a> {
 
                     let output_rx = proxy.subscribe_output();
 
+                    // Deterministic-teardown handle for the output reader spawned
+                    // below (CONC-011), so `close_session` can stop it directly.
+                    let reader_cancel = CancellationToken::new();
+
                     // Re-insert under the same session_id so the tab's existingSessionId
                     // prop and the TerminalOutputDispatcher's pendingOutput buffer both
                     // continue to work without any frontend state update.
@@ -304,6 +309,7 @@ impl<'a> PersistentController<'a> {
                                 },
                                 remote_session_id: Some(remote_sid),
                                 line_ending: LineEnding::default(),
+                                reader_cancel: reader_cancel.clone(),
                             },
                         );
                     }
@@ -327,6 +333,7 @@ impl<'a> PersistentController<'a> {
                             output_buffers,
                             session_loggers,
                             session_tab_ids,
+                            reader_cancel,
                         )
                         .await;
                     });
