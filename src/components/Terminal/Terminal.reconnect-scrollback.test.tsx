@@ -20,6 +20,7 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { mockXtermInstances as xtermInstances } from "@/test/mockXterm";
 
 // --- Mocks ---
 
@@ -28,47 +29,9 @@ import { useAppStore } from "@/store/appStore";
 const SERIALIZED_SCROLLBACK = "\x1b[32mprevious scrollback line\x1b[0m\r\n";
 
 // Track every xterm instance created, in order, with its write() spy so the
-// test can distinguish the disposed instance from the fresh one.
-interface TrackedXTerm {
-  write: ReturnType<typeof vi.fn>;
-  dispose: ReturnType<typeof vi.fn>;
-}
-const xtermInstances: TrackedXTerm[] = [];
-
-vi.mock("@xterm/xterm", () => {
-  class MockXTerm {
-    open = vi.fn();
-    dispose = vi.fn();
-    loadAddon = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
-    onResize = vi.fn(() => ({ dispose: vi.fn() }));
-    onScroll = vi.fn(() => ({ dispose: vi.fn() }));
-    onCursorMove = vi.fn(() => ({ dispose: vi.fn() }));
-    onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
-    write = vi.fn((_data: unknown, cb?: () => void) => cb?.());
-    writeln = vi.fn();
-    reset = vi.fn();
-    scrollToBottom = vi.fn();
-    scrollLines = vi.fn();
-    selectAll = vi.fn();
-    hasSelection = vi.fn(() => false);
-    getSelection = vi.fn(() => "");
-    attachCustomKeyEventHandler = vi.fn();
-    unicode = { activeVersion: "6" };
-    cols = 80;
-    rows = 24;
-    resize = vi.fn();
-    focus = vi.fn();
-    element = document.createElement("div");
-    buffer = { active: { viewportY: 0, baseY: 0, length: 0, getLine: vi.fn() } };
-    parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
-    options = {};
-    constructor() {
-      xtermInstances.push({ write: this.write, dispose: this.dispose });
-    }
-  }
-  return { Terminal: MockXTerm };
-});
+// test can distinguish the disposed instance from the fresh one. The shared mock
+// records each constructed instance in `mockXtermInstances`.
+vi.mock("@xterm/xterm", async () => (await import("@/test/mockXterm")).createMockXtermModule());
 
 vi.mock("@xterm/addon-fit", () => {
   class MockFitAddon {
