@@ -30,36 +30,9 @@ import { FakeSessionTransport, reconnecting } from "@/test/sessionLifecycleRegio
 
 // --- Mocks (mirror Terminal.backend-reattach.test.tsx) ---
 
-vi.mock("@xterm/xterm", () => {
-  class MockXTerm {
-    open = vi.fn();
-    dispose = vi.fn();
-    loadAddon = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
-    onResize = vi.fn(() => ({ dispose: vi.fn() }));
-    onScroll = vi.fn(() => ({ dispose: vi.fn() }));
-    onCursorMove = vi.fn(() => ({ dispose: vi.fn() }));
-    onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
-    write = vi.fn((_data: unknown, cb?: () => void) => cb?.());
-    writeln = vi.fn();
-    reset = vi.fn();
-    scrollToBottom = vi.fn();
-    scrollLines = vi.fn();
-    selectAll = vi.fn();
-    hasSelection = vi.fn(() => false);
-    getSelection = vi.fn(() => "");
-    attachCustomKeyEventHandler = vi.fn();
-    unicode = { activeVersion: "6" };
-    cols = 80;
-    rows = 24;
-    resize = vi.fn();
-    focus = vi.fn();
-    element = document.createElement("div");
-    buffer = { active: { viewportY: 0, baseY: 0, length: 0, getLine: vi.fn() } };
-    parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
-    options = {};
-  }
-  return { Terminal: MockXTerm };
+vi.mock("@xterm/xterm", async () => {
+  const { createMockXtermModule } = await import("@/test/mockXterm");
+  return createMockXtermModule();
 });
 
 vi.mock("@xterm/addon-fit", () => {

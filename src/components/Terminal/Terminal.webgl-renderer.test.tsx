@@ -26,41 +26,22 @@ const h = vi.hoisted(() => {
 const mockRefresh = vi.fn();
 let capturedWriteCallback: (() => void) | null = null;
 
-vi.mock("@xterm/xterm", () => {
-  class MockXTerm {
-    open = vi.fn();
-    dispose = vi.fn();
+// Extends the shared MockXTerm, overriding only what this suite drives: loadAddon
+// records loaded addons, write captures its callback, refresh is the asserted
+// spy, and the buffer is seeded scrolled-to-bottom (viewportY === baseY).
+vi.mock("@xterm/xterm", async () => {
+  const { MockXTerm } = await import("@/test/mockXterm");
+  class WebglXTerm extends MockXTerm {
     loadAddon = vi.fn((addon: unknown) => {
       h.loadedAddons.push(addon);
     });
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
-    onResize = vi.fn(() => ({ dispose: vi.fn() }));
-    onScroll = vi.fn(() => ({ dispose: vi.fn() }));
-    onCursorMove = vi.fn(() => ({ dispose: vi.fn() }));
-    onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
-    scrollToLine = vi.fn();
     write = vi.fn((_data: unknown, cb?: () => void) => {
       capturedWriteCallback = cb ?? null;
     });
-    writeln = vi.fn();
-    scrollToBottom = vi.fn();
     refresh = mockRefresh;
-    scrollLines = vi.fn();
-    selectAll = vi.fn();
-    hasSelection = vi.fn(() => false);
-    getSelection = vi.fn(() => "");
-    attachCustomKeyEventHandler = vi.fn();
-    unicode = { activeVersion: "6" };
-    cols = 80;
-    rows = 24;
-    resize = vi.fn();
-    focus = vi.fn();
-    element = document.createElement("div");
     buffer = { active: { viewportY: 100, baseY: 100, length: 1, getLine: vi.fn() } };
-    parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
-    options = {};
   }
-  return { Terminal: MockXTerm };
+  return { Terminal: WebglXTerm };
 });
 
 vi.mock("@xterm/addon-webgl", () => {

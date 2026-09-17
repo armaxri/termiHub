@@ -33,54 +33,16 @@ import {
   connected as connectedLifecycle,
   reconnecting,
 } from "@/test/sessionLifecycleRegionTestHarness";
+import { mockXtermInstances as xtermInstances } from "@/test/mockXterm";
 
 // The distinctive serialized snapshot the SerializeAddon mock returns, so a test
 // can prove whether the fresh xterm replayed the previous instance's local buffer.
 const SERIALIZED_SCROLLBACK = "\x1b[32mlocal scrollback snapshot\x1b[0m\r\n";
 
 // Every xterm instance created, in order, with its write() spy — so a test can
-// inspect what the fresh (final) instance rendered.
-interface TrackedXTerm {
-  write: ReturnType<typeof vi.fn>;
-  dispose: ReturnType<typeof vi.fn>;
-}
-const xtermInstances: TrackedXTerm[] = [];
-
-vi.mock("@xterm/xterm", () => {
-  class MockXTerm {
-    open = vi.fn();
-    dispose = vi.fn();
-    loadAddon = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
-    onResize = vi.fn(() => ({ dispose: vi.fn() }));
-    onScroll = vi.fn(() => ({ dispose: vi.fn() }));
-    onCursorMove = vi.fn(() => ({ dispose: vi.fn() }));
-    onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
-    write = vi.fn((_d: unknown, cb?: () => void) => cb?.());
-    writeln = vi.fn();
-    reset = vi.fn();
-    refresh = vi.fn();
-    scrollToBottom = vi.fn();
-    scrollLines = vi.fn();
-    selectAll = vi.fn();
-    hasSelection = vi.fn(() => false);
-    getSelection = vi.fn(() => "");
-    attachCustomKeyEventHandler = vi.fn();
-    unicode = { activeVersion: "6" };
-    cols = 80;
-    rows = 24;
-    resize = vi.fn();
-    focus = vi.fn();
-    element = document.createElement("div");
-    buffer = { active: { viewportY: 0, baseY: 0, length: 0, getLine: vi.fn() } };
-    parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
-    options = {};
-    constructor() {
-      xtermInstances.push({ write: this.write, dispose: this.dispose });
-    }
-  }
-  return { Terminal: MockXTerm };
-});
+// inspect what the fresh (final) instance rendered. The shared mock records each
+// constructed instance in `mockXtermInstances`.
+vi.mock("@xterm/xterm", async () => (await import("@/test/mockXterm")).createMockXtermModule());
 vi.mock("@xterm/addon-fit", () => {
   class M {
     fit = vi.fn();
