@@ -234,4 +234,68 @@ describe("appStore — macro playback slice (#1675)", () => {
   it("cancelMacroPlayback is a no-op when nothing is playing", () => {
     expect(() => useAppStore.getState().cancelMacroPlayback()).not.toThrow();
   });
+
+  it("errors when there is no active terminal at all (#2979)", async () => {
+    // No layout seeded → getActiveTab returns nothing → no default target.
+    useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
+
+    await useAppStore.getState().playMacro("m1");
+
+    expect(injected).toEqual([]);
+    expect(toast.error).toHaveBeenCalled();
+    expect(useAppStore.getState().macroPlayback).toBeNull();
+  });
+
+  it("ends in error and toasts when the injector seam is unavailable (#2979)", async () => {
+    seedConnectedTerminal();
+    // Clear the module-level injector so the inject seam short-circuits to false,
+    // which the scheduler reports as an `error` outcome. Omitting opts also
+    // exercises the default `real-time` timing branch.
+    registerTerminalInputInjector(null);
+    useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
+
+    await useAppStore.getState().playMacro("m1");
+
+    expect(injected).toEqual([]);
+    expect(toast.error).toHaveBeenCalled();
+    expect(useAppStore.getState().macroPlayback).toBeNull();
+  });
+
+  it("cancels an in-flight playback when a new one starts (#2979)", async () => {
+    seedConnectedTerminal();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    let firstStarted!: () => void;
+    const started = new Promise<void>((r) => (firstStarted = r));
+    registerTerminalInputInjector(async (_tabId, data) => {
+      injected.push(data);
+      if (data === "m1-a") {
+        firstStarted();
+        await gate; // hold the first playback in flight
+      }
+      return true;
+    });
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "m1-a", delayMs: 0 },
+          { data: "m1-b", delayMs: 0 },
+        ]),
+        macro("m2", [{ data: "m2-a", delayMs: 0 }]),
+      ],
+    });
+
+    const done1 = layoutState().playMacro("m1", { timingMode: "instant" });
+    await started;
+    // A second playback while the first is in flight cancels the first.
+    const done2 = layoutState().playMacro("m2", { timingMode: "instant" });
+    release();
+    await Promise.all([done1, done2]);
+
+    // m2 played fully; m1 was cancelled after its first (gated) step, so its
+    // second step never injected.
+    expect(injected).toContain("m2-a");
+    expect(injected).not.toContain("m1-b");
+    expect(useAppStore.getState().macroPlayback).toBeNull();
+  });
 });
