@@ -165,6 +165,54 @@ mod tests {
         }
     }
 
+    /// `src-tauri files::transfer::retry::backoff_delay` (1-based
+    /// `failed_attempts`): `BASE.saturating_mul(1u32.checked_shl(n-1))` with
+    /// `BASE = 1s` and no cap (the retry budget bounds it). Callers pass
+    /// `failed_attempts - 1` and an effectively-unbounded cap.
+    #[test]
+    fn matches_ftp_retry_backoff() {
+        let base = Duration::from_secs(1);
+        // Old shift form over the real domain (failed_attempts 1..MAX_RETRIES).
+        let old = |failed: u32| -> Duration {
+            let factor = 1u32.checked_shl(failed - 1).unwrap_or(u32::MAX);
+            base.saturating_mul(factor)
+        };
+        for failed in 1..=8u32 {
+            assert_eq!(
+                capped_exponential_delay(base, failed - 1, Duration::MAX),
+                old(failed),
+                "ftp-retry failed_attempts {failed}"
+            );
+        }
+    }
+
+    /// `core::monitoring::http_monitor::PollSchedule::record` (0-based
+    /// `consecutive_failures`): `interval.saturating_mul(min(1<<failures, 30))`.
+    /// Routed as `capped_exponential_delay(interval, failures, interval*30)`,
+    /// which is identical because `interval*min(2^f,cap) == min(interval*2^f,
+    /// interval*cap)` for a positive interval.
+    #[test]
+    fn matches_http_monitor_backoff() {
+        let interval = Duration::from_secs(5);
+        let max_mult = 30u32;
+        let cap = interval.saturating_mul(max_mult);
+        let old = |failures: u32| -> Duration {
+            let mult = if failures == 0 {
+                1
+            } else {
+                1u32.checked_shl(failures).unwrap_or(u32::MAX).min(max_mult)
+            };
+            interval.saturating_mul(mult)
+        };
+        for failures in 0..64u32 {
+            assert_eq!(
+                capped_exponential_delay(interval, failures, cap),
+                old(failures),
+                "http-monitor consecutive_failures {failures}"
+            );
+        }
+    }
+
     /// `core::backends::ftp::reconnect::reconnect_backoff` (0-based):
     /// `100ms * (1 << min(attempt, 4))`, itself clamped to 2000ms. Because the
     /// shift is capped at 4 the value plateaus at 1600ms (the 2000ms clamp is

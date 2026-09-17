@@ -29,9 +29,16 @@ pub fn backoff_delay(failed_attempts: u32) -> Option<Duration> {
     if failed_attempts == 0 || failed_attempts >= MAX_RETRIES {
         return None;
     }
-    // 2^(failed_attempts - 1), saturating to avoid overflow on absurd inputs.
-    let factor = 1u32.checked_shl(failed_attempts - 1).unwrap_or(u32::MAX);
-    Some(BASE_BACKOFF.saturating_mul(factor))
+    // `BASE_BACKOFF * 2^(failed_attempts - 1)` via the shared capped-exponential
+    // MATH (DUP-007 / LIBBE-004). Attempts are 1-based here, so `failed_attempts
+    // - 1` is passed to the 0-based helper. There is no delay cap (the retry
+    // budget above bounds it), so `Duration::MAX` is passed as the cap; the
+    // helper's saturating arithmetic keeps a large attempt from overflowing.
+    Some(termihub_core::util::backoff::capped_exponential_delay(
+        BASE_BACKOFF,
+        failed_attempts - 1,
+        Duration::MAX,
+    ))
 }
 
 /// The `REST` offset to resume a transfer from, given the bytes already present
