@@ -67,6 +67,22 @@ jobs:
         # compile against; with the fixtures up, the `require_docker!` guards run
         # the tests instead of skipping them.
         #
+        # TERMIHUB_REQUIRE_DOCKER=1 (TBE-006): this lane ALWAYS provisions the
+        # fixtures — the unconditional "Bring up the Docker fixtures" step above
+        # runs `docker compose … up -d --build --wait`, and `--wait` blocks until
+        # every container is healthy, so by the time this step runs Docker is
+        # guaranteed present. Without this var, a fixture that is nevertheless
+        # unreachable (a container that never mapped its port, a compose that
+        # partially came up) would make `require_docker!` *skip* the test and the
+        # lane would go falsely green — "tests passed" when they never ran. Setting
+        # it turns that missing/broken fixture into a hard FAIL instead of a silent
+        # skip, so this Docker-backed lane cannot report green without actually
+        # exercising the fixtures. Scoped to this step because it is the only one
+        # that runs the `require_docker!`-gated core/tests; the local/per-PR gate
+        # (no containers) leaves it unset, so those runs still skip as before.
+        env:
+          TERMIHUB_REQUIRE_DOCKER: "1"
+        #
         # `--test-threads=1` is required: the suites share single-instance
         # containers, and running them concurrently makes them stomp on shared
         # state (e.g. the network-fault-proxy's `tc` qdisc → "Exclusivity flag
