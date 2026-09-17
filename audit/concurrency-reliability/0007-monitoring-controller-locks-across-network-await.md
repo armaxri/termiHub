@@ -13,7 +13,8 @@ evidence:
   - src-tauri/src/session/monitoring_controller.rs:289
   - src-tauri/src/session/monitoring_controller.rs:313
   - src-tauri/src/session/monitoring_controller.rs:338
-status: open
+status: fixed
+resolution: "#2991 — MonitoringController resolved provider as owned Arc (new monitoring_handle) under a short lock, drops sessions map lock before subscribe/RPC .await; still-current guards; deadlock-repro test"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/connection/shell_integration.rs:257
   - src-tauri/src/connection/shell_integration.rs:282
   - src-tauri/src/connection/shell_integration.rs:315
-status: open
+status: fixed
+resolution: "#2996 — removed dead ResolvedConnection/resolve_connection/resolve_entry API (-177 lines); consumer epic #1363 closed, spawn path superseded it with spawn_kind+saved_entry. Latent gap: per-entry connectionId not honored at spawn -> follow-up"
 ---
 
 ## What

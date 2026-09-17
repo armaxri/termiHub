@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/projection/mod.rs:312
   - src-tauri/src/commands/projection.rs:60
   - src-tauri/src/projection/mod.rs:347
-status: open
+status: fixed
+resolution: "#2998 — split projector global mutex: map-lock is structural-only (O(1) lookup of per-region Arc<Mutex<RegionState>>), fan-out runs under per-region lock so a slow subscriber blocks only its region; ordering+consistency preserved, re-entrancy deadlock fixed; 2 tests + 25x stress"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: lib.rs setup / portable mode
 evidence:
   - src-tauri/src/lib.rs:490
   - src-tauri/src/lib.rs:491
-status: open
+status: fixed
+resolution: "develop — already sound on develop: no set_var/remove_var in production init/setup() path; all such calls are #[cfg(test)] and already unsafe-wrapped"
 ---
 
 ## What

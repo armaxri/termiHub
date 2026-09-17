@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/session/persistent_controller.rs:319
   - src-tauri/src/session/manager.rs:1871
   - src-tauri/src/session/manager.rs:1134
-status: open
+status: fixed
+resolution: "#2993 — added reader_cancel CancellationToken to SessionEntry; 3 run_output_reader spawn sites observe it via biased select! and break to emit_and_cleanup on teardown (buffer/logger released, terminal-exit emitted); regression test"
 ---
 
 ## What

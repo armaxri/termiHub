@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/session/graphical_manager.rs:674
   - src-tauri/src/session/file_ops.rs:61
   - src-tauri/src/session/manager.rs:1133
-status: open
+status: deferred
+resolution: "#2991 — graphical mgr already does not hold map lock across network call; per-session connection mutex is intentional RDP/VNC protocol serialization"
 ---
 
 ## What

@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/lib.rs:904
   - src-tauri/src/connections_projection/projection.rs:44
   - src-tauri/src/agents_projection/mod.rs
-status: open
+status: fixed
+resolution: "#2994 — corrected stale shadow/reducer-fallback module docs across 10 authoritative projection domains post-#2283 (doc-only). Layout left accurate (still shadow, #2562)"
 ---
 
 ## What

@@ -12,7 +12,8 @@ evidence:
   - agent/src/daemon/client.rs:277
   - agent/src/daemon/client.rs:332
   - agent/src/daemon/client.rs:368
-status: open
+status: fixed
+resolution: "#2995 — lock scope kept (intentional frame serialization; reader on separate task); real gap was no write timeout -> wrapped guarded writes in 10s write_frame_timed so a wedged daemon cannot hold the lock forever; race-free + tests"
 ---
 
 ## What

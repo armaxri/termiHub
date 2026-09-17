@@ -10,7 +10,8 @@ evidence:
   - core/src/monitoring/status.rs:245
   - src/components/StatusBar.tsx:773
   - src/components/OpenConnectionsModal.tsx:1338
-status: open
+status: fixed
+resolution: "#2999 — added Reconnecting badge (spinner+label) + dimmed CPU/mem/disk to system-monitor StatusBar UI; reads existing MonitorStatus::Reconnecting from system-monitors region; frontend-only, TDD"
 ---
 
 ## What

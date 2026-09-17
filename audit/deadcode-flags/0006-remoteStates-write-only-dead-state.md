@@ -10,7 +10,8 @@ evidence:
   - src/store/appStore.ts:1218
   - src/store/appStore.ts:6042
   - src/components/Terminal/TerminalView.tsx:78
-status: open
+status: fixed
+resolution: "FES-002 — already removed on develop (7a16aa04): remoteStates field+writes deleted from appStore/TerminalView, tab-strip reader migrated (tabStatus.ts). Zero refs remain"
 ---
 
 ## What

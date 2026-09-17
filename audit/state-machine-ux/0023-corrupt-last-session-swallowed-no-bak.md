@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src-tauri/src/workspace/last_session.rs
 evidence:
   - src-tauri/src/workspace/last_session.rs:79
-status: open
+status: fixed
+resolution: "#3000 — corrupt last-session.json now moved to .bak (preserve_corrupt_file) before load returns no-session, so next save cant clobber it; error-logged; TDD. User-facing recovery toast deferred (return-type plumbing)"
 ---
 
 ## What
