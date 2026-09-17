@@ -9,6 +9,7 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_wit
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
 use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool, SshGateway};
+use termihub_core::protocol::methods::TunnelForwardSpec;
 use termihub_core::tunnel::ActiveForwarder;
 use tokio_util::sync::CancellationToken;
 
@@ -784,6 +785,35 @@ impl TunnelManager {
         Ok(())
     }
 
+    /// Map a desktop [`TunnelType`] to the agent wire [`TunnelForwardSpec`] value
+    /// sent as `tunnel.start`'s `forward` parameter (DUP-019).
+    ///
+    /// Both enums wrap the same core forward-config structs, so mapping through
+    /// the shared [`TunnelForwardSpec`] makes its `#[serde(tag = "mode")]`
+    /// discriminator the single source of truth for the `mode` string. This
+    /// replaces the previous hand-poked `forward["mode"] = json!("local"/…)` where
+    /// the literals were duplicated on the desktop and would desync **silently**
+    /// if the agent enum's serde rename ever changed. Now a rename fails the
+    /// golden/contract tests at build time instead of the CI-dark integration lane
+    /// at runtime.
+    ///
+    /// The produced JSON is byte-identical to the old shape — `serde_json::Value`
+    /// serializes object keys alphabetically (no `preserve_order` feature), so the
+    /// internally-tagged spec's `mode` key lands in exactly the same position the
+    /// appended literal did. Pinned by `agent_forward_wire_bytes_are_stable`.
+    fn forward_spec_for_wire(
+        tunnel_type: &TunnelType,
+    ) -> std::result::Result<serde_json::Value, TerminalError> {
+        let spec = match tunnel_type {
+            TunnelType::Local(config) => TunnelForwardSpec::Local(config.clone()),
+            TunnelType::Remote(config) => TunnelForwardSpec::Remote(config.clone()),
+            TunnelType::Dynamic(config) => TunnelForwardSpec::Dynamic(config.clone()),
+        };
+        serde_json::to_value(&spec).map_err(|e| {
+            TerminalError::TunnelError(format!("Failed to serialize forward spec: {}", e))
+        })
+    }
+
     /// Start a tunnel hosted on a remote agent (S3, #2185).
     ///
     /// The agent runs the SSH client; the desktop sends only control over the
@@ -802,31 +832,11 @@ impl TunnelManager {
         agent_id: &str,
     ) -> Result<(), TerminalError> {
         // Build the agent's internally-tagged `TunnelForwardSpec` (a `mode`
-        // discriminator plus the flattened forward config). Local, remote, and
-        // dynamic all run on an agent (#2185, #2198).
-        let forward = match &config.tunnel_type {
-            TunnelType::Local(local) => {
-                let mut forward = serde_json::to_value(local).map_err(|e| {
-                    TerminalError::TunnelError(format!("Failed to serialize forward config: {}", e))
-                })?;
-                forward["mode"] = serde_json::json!("local");
-                forward
-            }
-            TunnelType::Remote(remote) => {
-                let mut forward = serde_json::to_value(remote).map_err(|e| {
-                    TerminalError::TunnelError(format!("Failed to serialize forward config: {}", e))
-                })?;
-                forward["mode"] = serde_json::json!("remote");
-                forward
-            }
-            TunnelType::Dynamic(dynamic) => {
-                let mut forward = serde_json::to_value(dynamic).map_err(|e| {
-                    TerminalError::TunnelError(format!("Failed to serialize forward config: {}", e))
-                })?;
-                forward["mode"] = serde_json::json!("dynamic");
-                forward
-            }
-        };
+        // discriminator plus the flattened forward config) via the shared type, so
+        // the `mode` string is sourced from the agent enum's serde and can never
+        // silently desync (DUP-019). Local, remote, and dynamic all run on an
+        // agent (#2185, #2198).
+        let forward = Self::forward_spec_for_wire(&config.tunnel_type)?;
 
         // Reject a double-start (already active on the desktop or an agent).
         {
@@ -2603,6 +2613,148 @@ mod tests {
                 companion_action(&status, false),
                 CompanionAction::None,
                 "down companion left alone for parent {status:?}"
+            );
+        }
+    }
+
+    // ── DUP-019: typed agent-tunnel forward-spec wire bridge ─────────────
+    //
+    // `start_agent_tunnel` sends the tunnel mode to the agent through the shared
+    // `TunnelForwardSpec` type (`forward_spec_for_wire`) instead of poking a
+    // hard-coded `"local"/"remote"/"dynamic"` string into a `Value`. These tests
+    // pin the exact wire bytes (they must NOT change — the agent parses them) and
+    // assert the desktop discriminator stays identical to the agent enum's serde,
+    // so a rename on either side fails here at build time rather than silently on
+    // the CI-dark agent-integration lane.
+
+    use crate::tunnel::config::{DynamicForwardConfig, RemoteForwardConfig};
+    use termihub_core::protocol::methods::TunnelForwardSpec;
+
+    fn sample_local() -> LocalForwardConfig {
+        LocalForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: 5432,
+            remote_host: "db.internal".to_string(),
+            remote_port: 5433,
+        }
+    }
+
+    fn sample_remote() -> RemoteForwardConfig {
+        RemoteForwardConfig {
+            remote_host: "0.0.0.0".to_string(),
+            remote_port: 8080,
+            local_host: "127.0.0.1".to_string(),
+            local_port: 3000,
+        }
+    }
+
+    fn sample_dynamic() -> DynamicForwardConfig {
+        DynamicForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: 1080,
+        }
+    }
+
+    #[test]
+    fn agent_forward_wire_bytes_are_stable() {
+        // Golden: byte-for-byte the payload produced before DUP-019's typed
+        // refactor. Object keys are alphabetical (serde_json has no
+        // `preserve_order`), so the internally-tagged `mode` key lands exactly
+        // where the old appended literal did. Changing any of these strings is a
+        // WIRE BREAK — the agent deserializes them.
+        let local = super::TunnelManager::forward_spec_for_wire(&TunnelType::Local(sample_local()))
+            .expect("serialize local forward");
+        assert_eq!(
+            serde_json::to_string(&local).unwrap(),
+            r#"{"localHost":"127.0.0.1","localPort":5432,"mode":"local","remoteHost":"db.internal","remotePort":5433}"#
+        );
+
+        let remote =
+            super::TunnelManager::forward_spec_for_wire(&TunnelType::Remote(sample_remote()))
+                .expect("serialize remote forward");
+        assert_eq!(
+            serde_json::to_string(&remote).unwrap(),
+            r#"{"localHost":"127.0.0.1","localPort":3000,"mode":"remote","remoteHost":"0.0.0.0","remotePort":8080}"#
+        );
+
+        let dynamic =
+            super::TunnelManager::forward_spec_for_wire(&TunnelType::Dynamic(sample_dynamic()))
+                .expect("serialize dynamic forward");
+        assert_eq!(
+            serde_json::to_string(&dynamic).unwrap(),
+            r#"{"localHost":"127.0.0.1","localPort":1080,"mode":"dynamic"}"#
+        );
+    }
+
+    #[test]
+    fn agent_forward_wire_matches_legacy_string_poke() {
+        // Equivalence with the exact pre-refactor construction (serialize the
+        // inner config, then append the mode literal), proving the migration
+        // preserves the wire for every mode.
+        let cases: [(TunnelType, &str); 3] = [
+            (TunnelType::Local(sample_local()), "local"),
+            (TunnelType::Remote(sample_remote()), "remote"),
+            (TunnelType::Dynamic(sample_dynamic()), "dynamic"),
+        ];
+        for (tunnel_type, mode) in cases {
+            let mut legacy = match &tunnel_type {
+                TunnelType::Local(c) => serde_json::to_value(c).unwrap(),
+                TunnelType::Remote(c) => serde_json::to_value(c).unwrap(),
+                TunnelType::Dynamic(c) => serde_json::to_value(c).unwrap(),
+            };
+            legacy["mode"] = serde_json::json!(mode);
+            let typed = super::TunnelManager::forward_spec_for_wire(&tunnel_type).unwrap();
+            assert_eq!(
+                serde_json::to_string(&typed).unwrap(),
+                serde_json::to_string(&legacy).unwrap(),
+                "typed forward wire diverged from legacy string-poke for {mode}"
+            );
+        }
+    }
+
+    #[test]
+    fn desktop_discriminator_matches_agent_spec_mode() {
+        // Cross-side contract: the desktop's `mode` string equals the agent
+        // `TunnelForwardSpec` enum's own serialized discriminator, and the agent
+        // parses the desktop payload back to the matching variant. A serde rename
+        // on either side breaks this (and the golden test) at build time.
+        let cases: [(TunnelType, TunnelForwardSpec, &str); 3] = [
+            (
+                TunnelType::Local(sample_local()),
+                TunnelForwardSpec::Local(sample_local()),
+                "local",
+            ),
+            (
+                TunnelType::Remote(sample_remote()),
+                TunnelForwardSpec::Remote(sample_remote()),
+                "remote",
+            ),
+            (
+                TunnelType::Dynamic(sample_dynamic()),
+                TunnelForwardSpec::Dynamic(sample_dynamic()),
+                "dynamic",
+            ),
+        ];
+        for (tunnel_type, agent_spec, expected_mode) in cases {
+            let wire = super::TunnelManager::forward_spec_for_wire(&tunnel_type).unwrap();
+            let agent_mode = serde_json::to_value(&agent_spec).unwrap()["mode"].clone();
+            assert_eq!(
+                wire["mode"], agent_mode,
+                "desktop discriminator diverged from agent spec for {expected_mode}"
+            );
+            assert_eq!(wire["mode"], serde_json::json!(expected_mode));
+
+            // The agent parses the exact desktop payload back to the right variant.
+            let parsed: TunnelForwardSpec = serde_json::from_value(wire).unwrap();
+            let round_tripped = matches!(
+                (&tunnel_type, &parsed),
+                (TunnelType::Local(_), TunnelForwardSpec::Local(_))
+                    | (TunnelType::Remote(_), TunnelForwardSpec::Remote(_))
+                    | (TunnelType::Dynamic(_), TunnelForwardSpec::Dynamic(_))
+            );
+            assert!(
+                round_tripped,
+                "agent parsed the wrong variant for {expected_mode}"
             );
         }
     }
