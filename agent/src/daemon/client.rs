@@ -311,7 +311,6 @@ impl DaemonClient {
     }
 
     /// Whether the daemon is still alive.
-    #[allow(dead_code)]
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }

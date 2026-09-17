@@ -58,7 +58,6 @@ pub use termihub_core::ipc::{BoxedReader, BoxedWriter};
 /// launcher races this connect against the daemon process exiting (see
 /// `session::manager`), so a daemon that dies before binding fails fast — this
 /// long window only applies while the daemon is still alive but slow to bind.
-#[allow(dead_code)]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// How long [`connect_for_recovery`] waits for an **already-running** daemon
 /// endpoint to accept before giving up on it.
@@ -76,7 +75,6 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// daemon; a dead-but-lingering socket fast-fails within it.
 const RECOVERY_CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
 /// How often [`connect`] retries while the endpoint is not yet available.
-#[allow(dead_code)]
 const CONNECT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// A listening daemon endpoint, restricted to the current user, bound through
@@ -139,7 +137,6 @@ impl DaemonListener {
 
 /// Connect to a daemon endpoint, retrying briefly while the endpoint is not yet
 /// present (the daemon binds it during slow startup work).
-#[allow(dead_code)] // wired into the agent client/launcher in #767
 pub async fn connect(endpoint: &str) -> io::Result<(BoxedReader, BoxedWriter)> {
     ipc::connect_with_retry(endpoint, CONNECT_TIMEOUT, CONNECT_POLL_INTERVAL).await
 }
@@ -156,11 +153,13 @@ pub async fn connect_for_recovery(endpoint: &str) -> io::Result<(BoxedReader, Bo
 }
 
 #[cfg(unix)]
-#[allow(unused_imports)]
 pub use unix_impl::{
     agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, open_daemon_log,
     open_registry_log, registry_endpoint, remove_session_files, session_endpoint,
 };
+// allow(unused_imports): a couple of these names (the agent-forward helpers) have
+// only unix-side consumers, so the windows re-export can be unused there depending
+// on the build; kept to mirror the unix surface. Cannot be verified from a non-windows host.
 #[cfg(windows)]
 #[allow(unused_imports)]
 pub use windows_impl::{

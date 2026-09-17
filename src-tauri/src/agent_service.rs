@@ -218,6 +218,8 @@ mod tests {
     /// method is ever called — every stub is `unimplemented!()`.
     struct NoopClient;
 
+    // allow(unused_variables): test-only stub whose every method body is
+    // `unimplemented!()`, so all trait-method parameters are intentionally unused.
     #[allow(unused_variables)]
     impl AgentRpcClient for NoopClient {
         fn connect_agent(
