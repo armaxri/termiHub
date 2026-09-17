@@ -10,7 +10,8 @@ evidence:
   - src/services/api.ts:1
   - src/services/api.test.ts:1
   - coverage/clover.xml
-status: open
+status: fixed
+resolution: "develop — dedicated suites cover the cited gaps: api.responseValidation.test.ts (response decoding) + api.passthrough.test.ts (per-wrapper request mapping)"
 ---
 
 ## What

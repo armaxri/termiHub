@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/tunnel/config.rs:21
   - agent/src/protocol/methods.rs:700
   - src-tauri/src/tunnel/tunnel_manager.rs:766
-status: open
+status: fixed
+resolution: "#3030 — TunnelForwardSpec lives in core (shared by both crates); replaced string-poke discriminator with typed forward_spec_for_wire conversion; wire bytes proven unchanged + cross-side contract test so rename fails at build time"
 ---
 
 ## What

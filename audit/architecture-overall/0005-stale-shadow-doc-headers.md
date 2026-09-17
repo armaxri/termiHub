@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/connections_projection/mod.rs:1
   - src-tauri/src/settings_projection/mod.rs:1
   - src/store/appStore.ts:895
-status: open
+status: fixed
+resolution: "develop — projection module headers swept to authoritative wording (#2283); layout accurately the sole remaining shadow outlier"
 ---
 
 ## What

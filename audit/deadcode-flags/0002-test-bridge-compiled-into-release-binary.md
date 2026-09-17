@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/utils/test_bridge.rs:1
   - src-tauri/src/lib.rs:394
   - src-tauri/src/lib.rs:1636
-status: open
+status: fixed
+resolution: "develop — test-bridge is a NON-default cargo feature (default=ftp,vnc,rdp-sidecar), all call sites #[cfg(feature=test-bridge)] — excluded from release builds"
 ---
 
 ## What
