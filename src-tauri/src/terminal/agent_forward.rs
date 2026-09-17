@@ -85,6 +85,15 @@ impl DesktopAgentForward {
         command_tx: UnboundedSender<AgentIoCommand>,
         connect: LocalAgentConnector,
     ) {
+        // TAURI-014: intentionally UNBOUNDED, and safe. The producer is the remote
+        // agent forwarding one operator ssh-agent connection, whose traffic is
+        // protocol-bounded: ssh-agent is strictly request/response with small
+        // messages (a sign request → a signature), so bytes arrive only as fast as
+        // the local agent answers the previous one — there is no streaming firehose
+        // to outrun the writer task that drains this channel. A bound here would buy
+        // no memory safety and risks stalling the agent's I/O loop, so it stays
+        // unbounded by design (contrast the process-output path in local_process.rs,
+        // which is genuinely unbounded and uses a bounded, backpressured channel).
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
         self.streams.lock().unwrap().insert(stream_id.clone(), tx);
 

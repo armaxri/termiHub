@@ -885,6 +885,21 @@ impl<R: Runtime> AgentConnectionManager<R> {
             // 4. Spawn the async I/O task
             let alive = Arc::new(AtomicBool::new(true));
             let reconnecting = Arc::new(AtomicBool::new(false));
+            // TAURI-014: this channel stays UNBOUNDED, deliberately. A bounded +
+            // backpressured version was assessed and deferred (see follow-up), for
+            // three reasons: (1) the sole consumer (`agent_io_task`) re-queues
+            // survivors into this same channel during reconnect (the
+            // `command_tx.send` at the CONC-014 drain below) — under a full bounded
+            // channel `send().await` would self-deadlock, and `try_send`+drop would
+            // silently discard control commands (forbidden); (2) the task holds its
+            // own `command_tx` clone (CONC-009), so the channel never closes and a
+            // full bound would block every producer for the entire reconnect window;
+            // (3) the real unbounded-growth vector — terminal input piling up while
+            // the consumer stalls — is already bounded by CONC-014, which drops
+            // `SessionInput` at the source (via `reconnecting`) during the only
+            // window the loop stops draining. Under normal operation the loop drains
+            // continuously, so the queue does not grow. Bounding this safely needs a
+            // producer-context refactor tracked as a follow-up.
             let (command_tx, command_rx) = mpsc::unbounded_channel::<AgentIoCommand>();
 
             let alive_clone = alive.clone();
