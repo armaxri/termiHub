@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/session/remote_proxy.rs:752
   - src-tauri/src/commands/session.rs:748
   - src-tauri/src/system_monitor_projection/store.rs:184
-status: open
+status: fixed
+resolution: "#3002 — RemoteMonitoringProxy.set_paused was a no-op; now a watch<bool> steers drive_monitor_status to discard streamed samples + hold Paused while paused, resume->Live. True remote-pause RPC deferred #3001"
 ---
 
 ## What

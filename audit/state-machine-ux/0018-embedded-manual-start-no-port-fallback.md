@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/commands/embedded_servers.rs:114
   - src-tauri/src/commands/embedded_servers.rs:136
   - src/store/slices/embedded-serversSlice.ts:143
-status: open
+status: fixed
+resolution: "#3004 — verify-or-defer: manual server explicit port should NOT silently rebind (config desync) - made port-in-use error actionable/recoverable (names port + recovery) + documented the deliberate quick-share-vs-manual divergence; TDD"
 ---
 
 ## What

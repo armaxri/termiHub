@@ -10,7 +10,8 @@ evidence:
   - core/src/embedded_servers/config.rs:60
   - core/src/embedded_servers/service.rs:344
   - core/src/embedded_servers/service.rs:203
-status: open
+status: fixed
+resolution: "#3003 — EmbeddedServerService.shutdown() now emits ServiceStatus::Stopping before teardown then Stopped (was Running->Stopped jump); Stopping states already existed but were unreachable; wire preserved, TDD"
 ---
 
 ## What

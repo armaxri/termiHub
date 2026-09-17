@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: vitest.config.ts
 evidence:
   - vitest.config.ts:31
-status: open
+status: fixed
+resolution: "#2990 — added per-directory coverage floors (themes/ui/utils/store-slices) below current levels + global ratchet kept. TFE-001(.tsx glob)+TFE-010(stale report) already done on develop"
 ---
 
 ## What

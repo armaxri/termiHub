@@ -9,7 +9,8 @@ subsystem: src-tauri credential manager
 evidence:
   - src-tauri/src/security/credential/manager.rs:187
   - src-tauri/src/security/credential/auto_lock.rs:186
-status: open
+status: fixed
+resolution: "develop — already addressed since #263: credential auto-lock is a pure idle timer, CredentialManager.record_activity() resets it on every get/set/remove/list; connect-time credential reads reset it. Broader activity reset correctly not done (security)"
 ---
 
 ## What
