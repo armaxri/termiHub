@@ -319,8 +319,7 @@ pub async fn run_local_process(
     // Forward streamed output lines to the frontend as events. Bounded so a
     // stalled frontend throttles the process reader (backpressure) rather than
     // letting the queue grow without limit — TAURI-014. Output is never dropped.
-    let (tx, mut rx) =
-        mpsc::channel::<(&'static str, String)>(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
+    let (tx, mut rx) = mpsc::channel::<(&'static str, String)>(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
     let emit_task = {
         let app = app_handle.clone();
         let run_id = run_id.clone();
@@ -586,6 +585,9 @@ mod tests {
         handle.await.unwrap();
 
         let expected: Vec<String> = (0..50).map(|i| format!("line{i}")).collect();
-        assert_eq!(got, expected, "all lines must arrive exactly once, in order");
+        assert_eq!(
+            got, expected,
+            "all lines must arrive exactly once, in order"
+        );
     }
 }
