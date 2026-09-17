@@ -40,13 +40,13 @@ mod tests {
     #[test]
     fn scrollback_bytes_base64_round_trip_is_byte_exact() {
         let cases: Vec<Vec<u8>> = vec![
-            Vec::new(),                                   // empty buffer → ""
-            b"plain ascii scrollback".to_vec(),           // plain ASCII
-            "héllo — 日本語 🎉".as_bytes().to_vec(),      // UTF-8 multi-byte
-            vec![0x00, 0x7f, 0x80, 0xfe, 0xff],           // boundary + high bytes
-            vec![0xff, 0xfe, 0xc0, 0xc1, 0x80],           // invalid-as-UTF8 bytes
+            Vec::new(),                                     // empty buffer → ""
+            b"plain ascii scrollback".to_vec(),             // plain ASCII
+            "héllo — 日本語 🎉".as_bytes().to_vec(),        // UTF-8 multi-byte
+            vec![0x00, 0x7f, 0x80, 0xfe, 0xff],             // boundary + high bytes
+            vec![0xff, 0xfe, 0xc0, 0xc1, 0x80],             // invalid-as-UTF8 bytes
             vec![0x1b, 0x5b, 0x33, 0x31, 0x6d, 0x00, 0x07], // ANSI escape + NUL + BEL
-            (0u16..=255).map(|b| b as u8).collect(),      // every byte value
+            (0u16..=255).map(|b| b as u8).collect(),        // every byte value
         ];
 
         for bytes in cases {
