@@ -13,7 +13,8 @@ evidence:
   - src/components/DynamicForm/ConnectionSettingsForm.tsx:161
   - src/components/CommandPalette/CommandPalette.tsx:120
   - src/components/NetworkTools/LatencyChart.tsx:157
-status: open
+status: fixed
+resolution: "#3017 — resolve exhaustive-deps suppressions: memoize the one .join-key hack site (loop-guard test) + one-line justification on the genuinely mount-once ones; no deferral"
 ---
 
 ## What

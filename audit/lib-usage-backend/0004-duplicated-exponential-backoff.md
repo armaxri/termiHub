@@ -14,7 +14,8 @@ evidence:
   - src-tauri/src/files/transfer/retry.rs:28
   - src-tauri/src/terminal/agent_manager.rs:2626
   - agent/src/monitoring/mod.rs:288
-status: open
+status: fixed
+resolution: "#3021 — most already done by DUP-007 on develop; routed 2 remaining sites (transfer/retry, http_monitor) + discovered 9th through capped_exponential_delay helper w/ bit-identical regression tests; reconnect_backoff.rs documented permanent exclusion"
 ---
 
 ## What

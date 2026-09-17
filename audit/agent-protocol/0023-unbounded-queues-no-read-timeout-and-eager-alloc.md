@@ -10,7 +10,8 @@ evidence:
   - agent/src/registry_daemon/process.rs:63
   - agent/src/daemon/protocol.rs:131
   - agent/src/daemon/process.rs:315
-status: open
+status: fixed
+resolution: "#3016 — bound registry outbound queue (cap 256, drop-slow-worker) + 64KiB registry frame ceiling + 5s registry mid-frame timeout; session-daemon heartbeat deferred #3015; 6 tests"
 ---
 
 ## What

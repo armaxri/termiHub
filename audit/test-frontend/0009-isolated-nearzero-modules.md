@@ -10,7 +10,8 @@ evidence:
   - src/utils/monacoCustomLanguages.ts
   - src/components/Settings/KeyPathInput.tsx
   - coverage/clover.xml
-status: open
+status: fixed
+resolution: "#3020 — cover KeyPathInput (29->85% branch, +18 tests, security empty/invalid-path invariant locked) + monacoCustomLanguages (2.77->77% branch, +16 tests via local recording stub); no bug found"
 ---
 
 ## What

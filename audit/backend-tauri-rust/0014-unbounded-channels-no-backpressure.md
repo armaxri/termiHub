@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/terminal/agent_forward.rs:90
   - src-tauri/src/terminal/agent_manager.rs:848
   - src-tauri/src/commands/local_process.rs:306
-status: open
+status: fixed
+resolution: "#3019 — bound local-process output channel (1024) with send().await backpressure (never drops); ssh-agent justified protocol-bounded; agent-io loop deferred #3018 (self-requeue deadlock); TDD"
 ---
 
 ## What

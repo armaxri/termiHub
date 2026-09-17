@@ -10,7 +10,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:1020
   - src/components/ActivityBar/ActivityBar.tsx:116
   - src/components/ui/ErrorBoundary.tsx:44
-status: open
+status: fixed
+resolution: "develop — already remediated pre-gap: zero production console.* left in src/ (only comments/tests reference it); prior migration campaign #1146"
 ---
 
 ## What
