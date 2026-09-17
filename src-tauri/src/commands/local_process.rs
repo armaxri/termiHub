@@ -48,6 +48,16 @@ const DEFAULT_TIMEOUT_MS: u64 = 30_000;
 /// for an effectively unbounded process.
 const MAX_TIMEOUT_MS: u64 = 600_000;
 
+/// Bound on buffered local-process output lines before the reader task applies
+/// backpressure (TAURI-014). Once this many lines are queued the reader `.await`s
+/// the send instead of growing the queue, which stalls the pipe read and lets the
+/// OS pipe buffer back the child off — bounding memory with **zero dropped
+/// output**. Output completeness is a correctness requirement here: a dropped line
+/// would silently corrupt the terminal/run view, so backpressure (not drop) is the
+/// only acceptable overflow policy. Generous so a briefly-stalled frontend rarely
+/// throttles a well-behaved process.
+const LOCAL_PROCESS_OUTPUT_QUEUE_CAP: usize = 1024;
+
 /// One streamed line of local-process output.
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,7 +149,7 @@ fn resolve_timeout(timeout_ms: Option<u64>) -> Duration {
 fn spawn_reader<R>(
     reader: Option<R>,
     stream: &'static str,
-    tx: mpsc::UnboundedSender<(&'static str, String)>,
+    tx: mpsc::Sender<(&'static str, String)>,
 ) -> tokio::task::JoinHandle<()>
 where
     R: AsyncRead + Unpin + Send + 'static,
@@ -150,7 +160,11 @@ where
         };
         let mut lines = BufReader::new(reader).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            if tx.send((stream, line)).is_err() {
+            // Backpressure, never drop (TAURI-014): a full queue makes this
+            // `.await` rather than grow, throttling the read so the OS pipe backs
+            // the child off. `send` errors only when the consumer is gone — the
+            // process's output is no longer wanted, so stop reading then.
+            if tx.send((stream, line)).await.is_err() {
                 break;
             }
         }
@@ -173,7 +187,7 @@ pub async fn execute_local_process(
     args: &[String],
     timeout: Duration,
     token: &CancellationToken,
-    output_tx: mpsc::UnboundedSender<(&'static str, String)>,
+    output_tx: mpsc::Sender<(&'static str, String)>,
 ) -> Result<LocalProcessOutcome, TerminalError> {
     let program = program.trim();
     if program.is_empty() {
@@ -302,8 +316,11 @@ pub async fn run_local_process(
     let token = registry.register(&run_id);
     let registry_handle = registry.inner().clone();
 
-    // Forward streamed output lines to the frontend as events.
-    let (tx, mut rx) = mpsc::unbounded_channel::<(&'static str, String)>();
+    // Forward streamed output lines to the frontend as events. Bounded so a
+    // stalled frontend throttles the process reader (backpressure) rather than
+    // letting the queue grow without limit — TAURI-014. Output is never dropped.
+    let (tx, mut rx) =
+        mpsc::channel::<(&'static str, String)>(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
     let emit_task = {
         let app = app_handle.clone();
         let run_id = run_id.clone();
@@ -343,9 +360,7 @@ mod tests {
     use super::*;
 
     /// Drain the output channel into a flat list of `(stream, line)` pairs.
-    fn collect_output(
-        mut rx: mpsc::UnboundedReceiver<(&'static str, String)>,
-    ) -> Vec<(String, String)> {
+    fn collect_output(mut rx: mpsc::Receiver<(&'static str, String)>) -> Vec<(String, String)> {
         let mut out = Vec::new();
         while let Ok((stream, line)) = rx.try_recv() {
             out.push((stream.to_string(), line));
@@ -355,7 +370,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_program_is_refused() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let err = execute_local_process("   ", &[], Duration::from_secs(5), &token, tx)
             .await
@@ -370,7 +385,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn passes_args_as_discrete_argv_no_shell() {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let args = vec!["[%s]\n".to_string(), "a b".to_string()];
         let outcome =
@@ -394,7 +409,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn shell_metacharacters_in_args_are_literal() {
-        let (tx, rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let args = vec!["%s\n".to_string(), "; rm -rf / && echo pwned".to_string()];
         let outcome =
@@ -414,7 +429,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn surfaces_nonzero_exit_status() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         // `sh -c 'exit 3'` is spawned as a direct argv (no shell wrapping by us);
         // it deterministically exits 3.
@@ -432,7 +447,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn enforces_timeout() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let args = vec!["30".to_string()];
         let outcome =
@@ -448,7 +463,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn cancel_terminates_process() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let cancel_token = token.clone();
         tokio::spawn(async move {
@@ -469,7 +484,7 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn surfaces_nonzero_exit_status_windows() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         let args = vec!["/c".to_string(), "exit 3".to_string()];
         let outcome = execute_local_process("cmd", &args, Duration::from_secs(5), &token, tx)
@@ -485,7 +500,7 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn enforces_timeout_windows() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(LOCAL_PROCESS_OUTPUT_QUEUE_CAP);
         let token = CancellationToken::new();
         // ping -n 30 keeps the process alive well past the timeout.
         let args = vec!["-n".to_string(), "30".to_string(), "127.0.0.1".to_string()];
@@ -507,5 +522,70 @@ mod tests {
             resolve_timeout(Some(MAX_TIMEOUT_MS * 10)),
             Duration::from_millis(MAX_TIMEOUT_MS)
         );
+    }
+
+    /// TAURI-014: the output channel is bounded and applies **backpressure**, not
+    /// dropping. A full buffer rejects an eager `try_send` (so the reader would
+    /// `.await` instead of growing the queue); once the consumer drains, the held
+    /// line is delivered — nothing is lost, and order is preserved.
+    #[tokio::test]
+    async fn output_channel_applies_backpressure_without_dropping() {
+        let (tx, mut rx) = mpsc::channel::<(&'static str, String)>(1);
+
+        // Fill the single buffer slot.
+        tx.send(("stdout", "first".to_string())).await.unwrap();
+
+        // The buffer is full: an eager send cannot be accepted — a real reader
+        // would suspend on `send().await` here rather than queue more (bounded
+        // memory), and crucially the line is NOT discarded.
+        match tx.try_send(("stdout", "second".to_string())) {
+            Err(mpsc::error::TrySendError::Full((stream, line))) => {
+                assert_eq!(stream, "stdout");
+                assert_eq!(line, "second");
+            }
+            other => panic!("expected a Full backpressure signal, got {other:?}"),
+        }
+
+        // Draining frees a slot; the previously-blocked line then flows through in
+        // order — throttled, never dropped.
+        assert_eq!(rx.recv().await.unwrap(), ("stdout", "first".to_string()));
+        tx.send(("stdout", "second".to_string())).await.unwrap();
+        assert_eq!(rx.recv().await.unwrap(), ("stdout", "second".to_string()));
+    }
+
+    /// TAURI-014: every produced line survives the bounded channel in order, even
+    /// when the buffer is far smaller than the number of lines — the reader is
+    /// throttled by backpressure, and no line is skipped or reordered.
+    #[tokio::test]
+    async fn spawn_reader_preserves_all_lines_in_order_under_backpressure() {
+        use tokio::io::AsyncWriteExt;
+
+        // A tiny (capacity-1) channel guarantees the reader hits backpressure
+        // repeatedly while the consumer drains one line at a time.
+        let (tx, mut rx) = mpsc::channel::<(&'static str, String)>(1);
+        let (client, mut server) = tokio::io::duplex(64);
+
+        // Feed 50 numbered lines, then drop the writer to signal EOF.
+        tokio::spawn(async move {
+            for i in 0..50 {
+                server
+                    .write_all(format!("line{i}\n").as_bytes())
+                    .await
+                    .unwrap();
+            }
+            drop(server);
+        });
+
+        let handle = spawn_reader(Some(client), "stdout", tx);
+
+        let mut got = Vec::new();
+        while let Some((stream, line)) = rx.recv().await {
+            assert_eq!(stream, "stdout");
+            got.push(line);
+        }
+        handle.await.unwrap();
+
+        let expected: Vec<String> = (0..50).map(|i| format!("line{i}")).collect();
+        assert_eq!(got, expected, "all lines must arrive exactly once, in order");
     }
 }
