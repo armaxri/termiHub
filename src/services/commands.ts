@@ -28,6 +28,28 @@ export interface PaletteCommand {
 }
 
 /**
+ * Keybinding actions deliberately left out of the command palette, with the
+ * reason each is excluded. This is the allowlist the coverage test checks
+ * against: any *other* action lacking a runner is a genuine gap (a surfaced
+ * shortcut the palette silently drops), so adding an action without wiring a
+ * runner — or listing it here — fails `commands.coverage.test.ts`.
+ *
+ * - `command-palette` — opens the palette itself; a self-referential entry is
+ *   pointless inside the palette.
+ * - `copy` / `paste` / `select-all` — clipboard actions bound to the focused
+ *   terminal's live xterm instance (`copySelectionToClipboard`/`pasteToTerminal`
+ *   in the `TerminalRegistry` React context, `xterm.selectAll()`). They have no
+ *   store action or dispatch seam to invoke from here yet; wiring them needs a
+ *   new focused-terminal command seam — tracked as a follow-up to UX-028.
+ */
+export const PALETTE_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set([
+  "command-palette",
+  "copy",
+  "paste",
+  "select-all",
+]);
+
+/**
  * Store-only runners: actions that operate purely on global store state and are
  * always available. Context-bound actions (which need live panel/terminal
  * resolution) live in {@link CONTEXT_COMMANDS} instead, so the palette and the

@@ -1,5 +1,10 @@
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { getActivePanelId, getLayoutRenderTree } from "@/store/layoutSelectors";
+import {
+  getActivePanelId,
+  getLayoutRenderTree,
+  getActiveTabGroupId,
+  getLayoutTabGroups,
+} from "@/store/layoutSelectors";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
@@ -127,6 +132,43 @@ function moveActiveTabToNewWindow(): void {
 }
 
 /**
+ * Whether more than one tab group exists, so a tab-group nav/close action has an
+ * applicable target (a lone group cannot be cycled past or closed).
+ */
+function hasMultipleTabGroups(): boolean {
+  return getLayoutTabGroups().length >= 2;
+}
+
+/** Close the active tab group, honouring the confirm-on-shortcut setting. */
+function closeActiveTabGroup(): void {
+  const groups = getLayoutTabGroups();
+  if (groups.length <= 1) return;
+  const activeTabGroupId = getActiveTabGroupId();
+  const state = useAppStore.getState();
+  const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
+  if (confirmEnabled) {
+    const activeGroup = groups.find((g) => g.id === activeTabGroupId);
+    state.setPendingShortcutCloseConfirm({
+      kind: "tab-group",
+      tabGroupId: activeTabGroupId,
+      label: activeGroup?.name ?? "this tab group",
+    });
+  } else {
+    state.closeTabGroup(activeTabGroupId);
+  }
+}
+
+/** Cycle the active tab group selection by `delta` groups, wrapping around. */
+function cycleTabGroup(delta: 1 | -1): void {
+  const groups = getLayoutTabGroups();
+  if (groups.length <= 1) return;
+  const activeId = getActiveTabGroupId();
+  const idx = groups.findIndex((g) => g.id === activeId);
+  const nextIdx = (idx + delta + groups.length) % groups.length;
+  useAppStore.getState().setActiveTabGroup(groups[nextIdx].id);
+}
+
+/**
  * Registry of context-bound commands, keyed by keybinding action id. Consumed by
  * both the keyboard handler and the command palette so the two never diverge.
  */
@@ -147,4 +189,7 @@ export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
     isAvailable: () => activeTerminalTab() !== null,
     run: moveActiveTabToNewWindow,
   },
+  "close-tab-group": { isAvailable: hasMultipleTabGroups, run: closeActiveTabGroup },
+  "next-tab-group": { isAvailable: hasMultipleTabGroups, run: () => cycleTabGroup(1) },
+  "prev-tab-group": { isAvailable: hasMultipleTabGroups, run: () => cycleTabGroup(-1) },
 };
