@@ -131,6 +131,14 @@ impl Default for ReconnectState {
 ///
 /// `attempt < 1` is treated as attempt 1 so a caller never gets a negative or
 /// sub-base delay.
+///
+/// LIBBE-004: left as-is (NOT routed through
+/// [`crate::util::backoff::capped_exponential_delay`]). That shared helper is a
+/// different numeric domain — integer `Duration`, a fixed factor of 2, no jitter
+/// — whereas this schedule is `f64` milliseconds with a *configurable* `factor`
+/// and symmetric random jitter, proven equivalent to the TypeScript
+/// `reconnectBackoff.ts` via golden vectors. Folding it into the integer helper
+/// would change its rounding/jitter/factor semantics, so it stays here.
 pub fn backoff_delay(attempt: i64, config: &BackoffConfig) -> f64 {
     let n = attempt.max(1);
     let raw = config.base_delay_ms * config.factor.powi((n - 1) as i32);

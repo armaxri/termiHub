@@ -761,19 +761,13 @@ impl PollSchedule {
         } else {
             self.consecutive_failures.saturating_add(1)
         };
-        self.interval.saturating_mul(self.backoff_multiplier())
-    }
-
-    /// Backoff multiplier: 1 while healthy, doubling per consecutive failure,
-    /// capped at [`BACKOFF_MAX_MULTIPLIER`].
-    fn backoff_multiplier(&self) -> u32 {
-        if self.consecutive_failures == 0 {
-            return 1;
-        }
-        let doubled = 1u32
-            .checked_shl(self.consecutive_failures)
-            .unwrap_or(u32::MAX);
-        doubled.min(BACKOFF_MAX_MULTIPLIER)
+        // Capped exponential backoff via the shared MATH (DUP-007 / LIBBE-004):
+        // `interval * 2^failures`, clamped to `interval * BACKOFF_MAX_MULTIPLIER`.
+        // This is bit-identical to the old `interval * min(2^failures, cap)`
+        // multiplier form because `interval * min(2^f, m) == min(interval*2^f,
+        // interval*m)` for a positive interval.
+        let cap = self.interval.saturating_mul(BACKOFF_MAX_MULTIPLIER);
+        crate::util::backoff::capped_exponential_delay(self.interval, self.consecutive_failures, cap)
     }
 }
 
