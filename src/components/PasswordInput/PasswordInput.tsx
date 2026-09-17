@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Eye, EyeOff, AlertTriangle } from "lucide-react";
+import { Input } from "@/components/ui";
 import "./PasswordInput.css";
 
 interface PasswordInputProps {
@@ -61,7 +62,7 @@ export function PasswordInput({
 
   return (
     <div className="password-input">
-      <input
+      <Input
         id={id}
         className={className}
         type={visible ? "text" : "password"}

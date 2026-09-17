@@ -13,17 +13,9 @@
   box-shadow: var(--shadow-sm);
 }
 
-.terminal-search-bar__input {
+/* Width override for the shared ui/Input (which is 100% wide by default); the
+   remaining skin (border, background, radius, focus ring) comes from ui-input.
+   Scoped to the search bar so it wins over the equal-specificity .ui-input. */
+.terminal-search-bar .terminal-search-bar__input {
   width: 180px;
-  padding: var(--spacing-xxs) 6px;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-sm);
-  background: var(--bg-input);
-  color: var(--text-primary);
-  font-size: var(--font-size-sm);
-  outline: none;
-}
-
-.terminal-search-bar__input:focus {
-  border-color: var(--accent-color);
 }
