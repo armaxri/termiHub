@@ -199,10 +199,58 @@ pub fn superseded_notification(
     }
 }
 
+// ── Terminal-output emit targeting (PERF-004) ────────────────────────────────
+//
+// Terminal output is the app's hottest path — every byte of process output
+// crosses the webview IPC boundary. It was historically emitted as a *global
+// broadcast* to every window ([`AppHandle::emit`]), so in a multi-window setup
+// every window received, deserialized, and then discarded output for sessions it
+// does not render — wasted IPC/decode plus a minor cross-window byte exposure.
+// With the authoritative `session_id → window` ownership map (#1900/#1939) the
+// emit can be narrowed to the single window that hosts the session.
+
+/// Where a session's `terminal-output` chunk should be delivered (PERF-004).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OutputEmitTarget {
+    /// Deliver only to this window label — the window that owns (renders) the
+    /// session per the ownership map.
+    Window(String),
+    /// Broadcast to every window (the legacy path). Used only when the session
+    /// has no owner: a background/spawned session, or the brief pre-claim moment
+    /// on open/move. Broadcasting for an unknown host can never route output
+    /// *away* from the window that is actually showing it.
+    Broadcast,
+}
+
+/// Decide where a session's terminal output should go, from its current owner in
+/// the ownership map: `Some(owner)` → that window; `None` (unclaimed) → broadcast.
+///
+/// This mirrors [`WindowManager::may_resize`]'s unclaimed→any-window rule: an
+/// unclaimed session is delivered to all windows exactly as before, so targeting
+/// can only ever *narrow* delivery once a hosting window is known — it never
+/// sends output to the wrong window. The authoritative scrollback a
+/// (re)attaching tab renders comes from the backend ring-buffer replay
+/// (`session_get_buffer` / agent `MSG_BUFFER_REPLAY`), not from this live tail,
+/// so a narrowed live stream cannot lose bytes across a tab move: the destination
+/// window replays the full server-side ring buffer on attach.
+pub fn output_emit_target(owner: Option<String>) -> OutputEmitTarget {
+    match owner {
+        Some(label) => OutputEmitTarget::Window(label),
+        None => OutputEmitTarget::Broadcast,
+    }
+}
+
 impl WindowManager {
     /// Create an empty manager (no extra windows, nothing claimed).
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The [`OutputEmitTarget`] for `session_id`, resolved from the ownership
+    /// map (PERF-004). A claimed session targets its owning window; an unclaimed
+    /// session broadcasts, preserving the legacy single-window / pre-claim path.
+    pub fn output_target(&self, session_id: &str) -> OutputEmitTarget {
+        output_emit_target(self.owner_of(session_id))
     }
 
     /// Allocate the next unique window label (`win-1`, `win-2`, …).
@@ -583,6 +631,64 @@ mod tests {
     fn superseded_notification_is_none_on_a_first_claim() {
         // No prior owner (a session's first claim) → nobody lost it → no signal.
         assert_eq!(superseded_notification(None, "main", "s1"), None);
+    }
+
+    #[test]
+    fn output_emit_target_maps_owner_to_window_and_none_to_broadcast() {
+        // PERF-004: the pure decision — a known owner narrows the emit to that
+        // window; no owner falls back to the legacy broadcast.
+        assert_eq!(
+            output_emit_target(Some("win-2".to_string())),
+            OutputEmitTarget::Window("win-2".to_string())
+        );
+        assert_eq!(output_emit_target(None), OutputEmitTarget::Broadcast);
+    }
+
+    #[test]
+    fn output_target_broadcasts_for_an_unclaimed_session() {
+        // A background/spawned session, or the brief pre-claim moment on
+        // open/move, has no owner → broadcast to every window, exactly the legacy
+        // path. Output is never routed away from the window rendering it.
+        let wm = WindowManager::new();
+        assert_eq!(wm.output_target("s1"), OutputEmitTarget::Broadcast);
+    }
+
+    #[test]
+    fn output_target_is_the_owning_window_once_claimed() {
+        let wm = WindowManager::new();
+        wm.claim("s1", "win-1");
+        assert_eq!(
+            wm.output_target("s1"),
+            OutputEmitTarget::Window("win-1".to_string()),
+            "a claimed session targets only its owning window"
+        );
+    }
+
+    #[test]
+    fn output_target_follows_ownership_across_a_move_then_falls_back() {
+        // The emit target tracks the hosting window across a re-parent: the
+        // destination grants first, so the target moves atomically to the new
+        // owner — output follows the tab to its new window with no wrong-window
+        // window. When the owner releases (tab closed/destroyed), it falls back to
+        // broadcast rather than targeting a window that no longer renders it.
+        let wm = WindowManager::new();
+        wm.claim("s1", "main");
+        assert_eq!(
+            wm.output_target("s1"),
+            OutputEmitTarget::Window("main".to_string())
+        );
+        wm.claim("s1", "win-1");
+        assert_eq!(
+            wm.output_target("s1"),
+            OutputEmitTarget::Window("win-1".to_string()),
+            "targeting follows the destination-grants-first claim"
+        );
+        wm.release("s1", "win-1");
+        assert_eq!(
+            wm.output_target("s1"),
+            OutputEmitTarget::Broadcast,
+            "a released session broadcasts rather than targeting a stale window"
+        );
     }
 
     #[test]
