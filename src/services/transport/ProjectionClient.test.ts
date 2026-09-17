@@ -1,4 +1,4 @@
-import { compare } from "fast-json-patch";
+import { applyPatch, compare, type Operation } from "fast-json-patch";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { ProjectionClient, type ProjectionCacheState } from "./ProjectionClient";
@@ -416,5 +416,152 @@ describe("ProjectionClient · optimistic folding (#2533)", () => {
     // Regions that never dispatch optimistically are unaffected: the emitted
     // view IS the authoritative baseline object (the 8 inverted domains).
     expect(client.state.view).toBe((client as unknown as { baseView: unknown }).baseView);
+  });
+});
+
+// ── Structural-sharing diff apply (PERF-005) ───────────────────────────────────
+
+/**
+ * A representative region view carrying the substrate's real shapes: a keyed
+ * map (`sessions`, like the sessions/monitors regions), an ordered array
+ * (`connections`), and a nested stats cache (`statsCache`, updated frequently).
+ */
+interface RichView {
+  sessions: Record<string, { status: string; bytes: number }>;
+  connections: { id: string }[];
+  statsCache: Record<string, { cpu: number }>;
+}
+
+const richView = (): RichView => ({
+  sessions: {
+    s1: { status: "connected", bytes: 1 },
+    s2: { status: "idle", bytes: 2 },
+  },
+  connections: [{ id: "c1" }, { id: "c2" }],
+  statsCache: { m1: { cpu: 10 } },
+});
+
+/**
+ * Drives deterministic RFC-6902 diffs (computed with the same `compare` the
+ * backend mirrors) into a client and records every emitted view **by
+ * reference** — the raw `state.view`, never a clone — so reference-identity and
+ * immutability can be asserted.
+ */
+function makeSharingHarness() {
+  const transport = new FakeTransport(richView(), "monitors");
+  const client = new ProjectionClient(transport, "monitors");
+  const views: unknown[] = [];
+  client.onChange((s) => views.push(s.view));
+
+  let serverView: unknown = clone(richView());
+  let serverVersion = 0;
+  // A reference document maintained via the OLD deep-clone applier path
+  // (`mutateDocument=false`) — the observable behaviour the new path must match.
+  let refView: unknown = clone(richView());
+
+  /** Apply a mutation on the server, stream its diff, and mirror it on the ref. */
+  const step = (mutate: (v: ReturnType<typeof richView>) => void): DiffOp[] => {
+    const next = clone(serverView) as ReturnType<typeof richView>;
+    mutate(next);
+    const ops = compare(serverView as object, next as object) as DiffOp[];
+    const baseVersion = serverVersion;
+    const version = baseVersion + 1;
+    serverView = next;
+    serverVersion = version;
+    refView = applyPatch(clone(refView), ops as unknown as Operation[], false, false).newDocument;
+    transport.emit({ region: "monitors", kind: "diff", baseVersion, version, ops });
+    return ops;
+  };
+
+  return {
+    client,
+    views,
+    step,
+    ref: () => refView,
+    latest: () => views[views.length - 1] as Record<string, unknown>,
+  };
+}
+
+describe("ProjectionClient · structural-sharing diff apply (PERF-005)", () => {
+  it("stays byte-for-byte equal to the deep-clone applier across a sequence of diffs", async () => {
+    const h = makeSharingHarness();
+    await h.client.start();
+
+    h.step((v) => (v.sessions.s1.status = "closing"));
+    expect(h.client.state.view).toEqual(h.ref());
+    h.step((v) => (v.sessions.s3 = { status: "new", bytes: 0 }));
+    expect(h.client.state.view).toEqual(h.ref());
+    h.step((v) => delete v.sessions.s2);
+    expect(h.client.state.view).toEqual(h.ref());
+    h.step((v) => (v.statsCache.m1.cpu = 99));
+    expect(h.client.state.view).toEqual(h.ref());
+    h.step((v) => v.connections.push({ id: "c3" }));
+    expect(h.client.state.view).toEqual(h.ref());
+    h.step((v) => v.connections.splice(0, 1));
+    expect(h.client.state.view).toEqual(h.ref());
+
+    // Independent cross-check: the emitted view equals the authored server view.
+    expect(h.client.state.view).toEqual(h.ref());
+  });
+
+  it("never mutates a previously-emitted view when a later diff is applied (immutability invariant)", async () => {
+    const h = makeSharingHarness();
+    await h.client.start();
+
+    h.step((v) => (v.sessions.s1.status = "connecting"));
+    const v1 = h.latest();
+    const v1Snapshot = clone(v1); // structural snapshot of v1 BEFORE the next diff
+
+    h.step((v) => (v.sessions.s2.status = "closing"));
+    const v2 = h.latest();
+
+    // v1 (and every nested object it holds) is byte-for-byte unchanged: the
+    // second diff did not reach into any object a prior emission handed out.
+    expect(v1).toEqual(v1Snapshot);
+    // A genuinely new top-level document was produced.
+    expect(v2).not.toBe(v1);
+  });
+
+  it("shares untouched subtrees by reference and only re-identifies the touched path", async () => {
+    const h = makeSharingHarness();
+    await h.client.start();
+
+    h.step((v) => (v.sessions.s1.status = "connecting"));
+    const v1 = h.latest();
+    h.step((v) => (v.sessions.s1.status = "connected"));
+    const v2 = h.latest();
+
+    // New top-level identity on change.
+    expect(v2).not.toBe(v1);
+    // Untouched top-level branches are shared by reference (no wasteful clone).
+    expect(v2.connections).toBe(v1.connections);
+    expect(v2.statsCache).toBe(v1.statsCache);
+    // The touched container gets a fresh reference…
+    expect(v2.sessions).not.toBe(v1.sessions);
+    // …but an untouched sibling entry inside it is still shared…
+    const s1 = (v: Record<string, unknown>) => (v.sessions as Record<string, unknown>).s2;
+    expect(s1(v2)).toBe(s1(v1));
+    // …while only the touched entry is re-identified.
+    const touched = (v: Record<string, unknown>) => (v.sessions as Record<string, unknown>).s1;
+    expect(touched(v2)).not.toBe(touched(v1));
+  });
+
+  it("shares references correctly for add and remove ops too", async () => {
+    const h = makeSharingHarness();
+    await h.client.start();
+
+    // add a new session entry
+    h.step((v) => (v.sessions.s3 = { status: "new", bytes: 0 }));
+    const v1 = h.latest();
+    // remove a connection (array op)
+    h.step((v) => v.connections.splice(0, 1));
+    const v2 = h.latest();
+
+    expect(h.client.state.view).toEqual(h.ref());
+    // The array-op diff left the untouched `sessions`/`statsCache` branches shared.
+    expect(v2.sessions).toBe(v1.sessions);
+    expect(v2.statsCache).toBe(v1.statsCache);
+    // …and re-identified only the `connections` array it changed.
+    expect(v2.connections).not.toBe(v1.connections);
   });
 });
