@@ -14,42 +14,23 @@ const mockBuffer = {
   active: { viewportY: 100, baseY: 100, length: 1, getLine: vi.fn() },
 };
 
-vi.mock("@xterm/xterm", () => {
-  class MockXTerm {
-    open = vi.fn();
-    dispose = vi.fn();
-    loadAddon = vi.fn();
-    onData = vi.fn(() => ({ dispose: vi.fn() }));
-    onResize = vi.fn(() => ({ dispose: vi.fn() }));
+// Extends the shared MockXTerm, overriding only the members this suite drives:
+// the onScroll/write callbacks are captured into file-local variables and the
+// buffer/scrollToBottom spies are the module-level ones the test asserts.
+vi.mock("@xterm/xterm", async () => {
+  const { MockXTerm } = await import("@/test/mockXterm");
+  class AutoScrollXTerm extends MockXTerm {
     onScroll = vi.fn((handler: () => void) => {
       capturedOnScrollHandler = handler;
       return { dispose: vi.fn() };
     });
-    onCursorMove = vi.fn(() => ({ dispose: vi.fn() }));
-    onWriteParsed = vi.fn(() => ({ dispose: vi.fn() }));
-    scrollToLine = vi.fn();
     write = vi.fn((_data: unknown, cb?: () => void) => {
       capturedWriteCallback = cb ?? null;
     });
-    writeln = vi.fn();
     scrollToBottom = mockScrollToBottom;
-    refresh = vi.fn();
-    scrollLines = vi.fn();
-    selectAll = vi.fn();
-    hasSelection = vi.fn(() => false);
-    getSelection = vi.fn(() => "");
-    attachCustomKeyEventHandler = vi.fn();
-    unicode = { activeVersion: "6" };
-    cols = 80;
-    rows = 24;
-    resize = vi.fn();
-    focus = vi.fn();
-    element = document.createElement("div");
     buffer = mockBuffer;
-    parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
-    options = {};
   }
-  return { Terminal: MockXTerm };
+  return { Terminal: AutoScrollXTerm };
 });
 
 vi.mock("@xterm/addon-fit", () => {
