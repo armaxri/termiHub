@@ -360,10 +360,27 @@ fn map_file_error(e: FileError) -> ErrorObjectOwned {
     }
 }
 
-/// Convert a megabyte count (from agent settings) to a byte count,
-/// with a floor of 64 KiB to avoid a zero-length buffer.
+/// Hard upper bound on the persistent scrollback ring-buffer size: 256 MiB.
+///
+/// The size (in MB) is wire-controlled — it arrives as
+/// `persistent_scrollback_buffer_size_mb` (a `u32`) inside the agent settings
+/// carried on `initialize` / connection requests — and `RingBuffer::new`
+/// eagerly heap-allocates the full capacity. Without a ceiling a malicious or
+/// buggy peer could request an enormous capacity and exhaust agent memory
+/// (AGT-024). The desktop UI caps the field at 64 MiB; this hard cap sits
+/// comfortably above legitimate use while bounding abuse. Clamping happens
+/// where the wire value is first turned into a byte count, before any buffer
+/// is allocated.
+const MAX_PERSISTENT_SCROLLBACK_BUFFER_BYTES: usize = 256 * 1_048_576;
+
+/// Convert a megabyte count (from agent settings) to a byte count, clamped to
+/// `[64 KiB, MAX_PERSISTENT_SCROLLBACK_BUFFER_BYTES]`. The floor avoids a
+/// zero-length buffer; the ceiling bounds the wire-controlled capacity so an
+/// oversized request cannot drive an unbounded allocation (AGT-024).
 fn mb_to_bytes(mb: u32) -> usize {
-    (mb as usize).saturating_mul(1_048_576).max(65_536)
+    (mb as usize)
+        .saturating_mul(1_048_576)
+        .clamp(65_536, MAX_PERSISTENT_SCROLLBACK_BUFFER_BYTES)
 }
 
 // ── State-extraction helpers ───────────────────────────────────────
@@ -2258,6 +2275,47 @@ mod tests {
             .expect_err("failing serialize must yield an error");
         assert_eq!(err.code() as i64, errors::INTERNAL_ERROR);
         assert!(err.message().contains("Failed to serialize response"));
+    }
+
+    // ── Persistent scrollback buffer sizing (AGT-024) ──────────────
+
+    #[test]
+    fn mb_to_bytes_passes_in_range_values_through_unchanged() {
+        // A normal, in-range setting is honoured exactly — 1 MiB and the
+        // UI-maximum 64 MiB both convert verbatim, preserving existing
+        // scrollback behaviour.
+        assert_eq!(mb_to_bytes(1), 1_048_576);
+        assert_eq!(mb_to_bytes(64), 64 * 1_048_576);
+    }
+
+    #[test]
+    fn mb_to_bytes_floors_zero_to_avoid_empty_buffer() {
+        // A zero/missing value must not yield a zero-length buffer; it is
+        // floored to 64 KiB.
+        assert_eq!(mb_to_bytes(0), 65_536);
+    }
+
+    #[test]
+    fn mb_to_bytes_clamps_absurd_wire_value_to_max() {
+        // A malicious/buggy peer requesting an enormous capacity must be
+        // clamped to the hard cap, not allocated verbatim (AGT-024).
+        assert_eq!(
+            mb_to_bytes(u32::MAX),
+            MAX_PERSISTENT_SCROLLBACK_BUFFER_BYTES
+        );
+        // Any value above the cap collapses to exactly the cap.
+        let over_cap_mb = (MAX_PERSISTENT_SCROLLBACK_BUFFER_BYTES / 1_048_576) as u32 + 1;
+        assert_eq!(
+            mb_to_bytes(over_cap_mb),
+            MAX_PERSISTENT_SCROLLBACK_BUFFER_BYTES
+        );
+    }
+
+    #[test]
+    fn mb_to_bytes_allows_value_exactly_at_cap() {
+        // The cap itself is a permitted value (boundary, not off-by-one).
+        let cap_mb = (MAX_PERSISTENT_SCROLLBACK_BUFFER_BYTES / 1_048_576) as u32;
+        assert_eq!(mb_to_bytes(cap_mb), MAX_PERSISTENT_SCROLLBACK_BUFFER_BYTES);
     }
 
     // ── Docker availability probe tests ────────────────────────────
