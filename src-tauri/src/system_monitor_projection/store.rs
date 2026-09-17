@@ -43,7 +43,7 @@ pub const DEFAULT_MONITORING_INTERVAL_MS: u64 = 2000;
 /// terminal session id (the stable `MonitorKey`).
 ///
 /// Every field serialises (no `skip_serializing_if`) so the view model matches
-/// the frontend `MonitoringEntry` shape exactly, keeping the eventual render cut
+/// the frontend `MonitoringEntry` shape exactly, keeping the render cut
 /// a pure parity swap.
 // `SystemStats` (a field below) does not derive `PartialEq`, so this record
 // can't either; tests compare via the serialised view model instead.

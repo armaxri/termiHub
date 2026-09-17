@@ -114,7 +114,7 @@ pub struct SavedAgentSeed {
     /// Human-readable agent name.
     pub name: String,
     /// The agent's `RemoteAgentConfig`, serialised opaquely (matches the shape
-    /// the frontend stores, so the eventual render cut is a parity swap).
+    /// the frontend stores, so the render cut was a parity swap).
     pub config: Value,
     /// The agent's `AgentSettings`, serialised opaquely.
     pub agent_settings: Value,

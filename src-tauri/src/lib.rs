@@ -1202,7 +1202,7 @@ pub fn run() {
                     );
                 }
                 // Seed the shared `agents` region from the persisted
-                // `ConnectionManager` agent list (#2403), so the shadow store — and
+                // `ConnectionManager` agent list (#2403), so the store — and
                 // the region a subscriber attaches to before the first `agent.*`
                 // intent — reflects the real agent list-membership from startup
                 // rather than an empty baseline. Seeding the persisted list here is
@@ -1225,7 +1225,7 @@ pub fn run() {
                     );
                 }
                 // Seed the shared `connections` region from the persisted
-                // `ConnectionManager` authority (#2389/#2394), so the shadow store
+                // `ConnectionManager` authority (#2389/#2394), so the store
                 // — and the region a subscriber attaches to before the first
                 // `connection.*` intent — reflects the real connections tree from
                 // startup rather than an empty baseline. The seed uses the same
@@ -1249,7 +1249,7 @@ pub fn run() {
                     );
                 }
                 // Seed the shared `settings` region from the persisted
-                // `AppSettings` authority (#2386), so the shadow store — and the
+                // `AppSettings` authority (#2386), so the store — and the
                 // region a subscriber attaches to before the first `settings.*`
                 // intent — reflects the real persisted preferences document from
                 // startup rather than the default baseline. Seeding the resolved
@@ -1293,10 +1293,9 @@ pub fn run() {
                 // the frontend `setTimeout` reconnect loop server-side. Built
                 // here — after the projector exists — so a fired backoff timer
                 // can advance the store and fan the `session-lifecycle` diff out
-                // itself. In shadow mode it stays off-path (nothing dispatches
-                // `session.reconnect` yet); once the frontend `sessionIntents`
-                // flag is on, the store's `Waiting` phases arm it and it drives
-                // the `reconnectAttempt` edge on the ported #2144 backoff schedule.
+                // itself. The session-lifecycle store is authoritative (#2283):
+                // its `Waiting` phases arm the driver, which drives the
+                // `reconnectAttempt` edge on the ported #2144 backoff schedule.
                 if let Some(store) =
                     app.handle().try_state::<Arc<session_projection::SessionLifecycleStore>>()
                 {

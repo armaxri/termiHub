@@ -9,7 +9,7 @@
 //! attempt/max-attempt counters. The [`TransferEntry`] record and the
 //! `entry_from_*` folds mirror the frontend `TransferEntry` and the
 //! `transferEntryFrom{Seed,Progress,Snapshot}` helpers one-to-one
-//! (`src/types/transfer.ts`), so the eventual render cut is a pure parity swap.
+//! (`src/types/transfer.ts`), so the render cut was a pure parity swap.
 //!
 //! # Scope — the queue *view*, not the transfer engine
 //!

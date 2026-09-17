@@ -63,7 +63,7 @@ impl ConnectionsStore {
     /// `{ "folders": [ConnectionFolder, …], "connections": [SavedConnection, …] }`.
     ///
     /// The key names and element shapes mirror the `appStore` connections slice
-    /// exactly, keeping the eventual render cut a pure parity swap. Pure with
+    /// exactly, keeping the render cut a pure parity swap. Pure with
     /// respect to store state (never mutates), so the projector can safely diff
     /// two consecutive snapshots.
     pub fn snapshot(&self) -> Value {
