@@ -731,6 +731,14 @@ function preserveSplitMarks(node: PanelNode, marks: Map<string, string>): PanelN
  * and again when the authoritative diff/snapshot arrives. Subscribes the region
  * (idempotent) so the stream is live. Returns an unsubscribe.
  */
+// FES-006: unlike the other projection bridges, this bridge caches no module-level
+// `lastView` that a stale region snapshot could clobber — its readers compose on
+// demand ({@link composeLayoutFromView}) and this mirror recomposes `appStore`
+// straight from `state.view`. Stale/out-of-order snapshots are already filtered by
+// the `ProjectionClient` itself (`adoptSnapshot` never regresses the version;
+// `applyDiff` applies only in order), so the shared `makeVersionGuard()` is
+// deliberately not applied here — there is nothing at this layer for it to protect.
+// See #3031 for whether an explicit defense-in-depth guard is still wanted.
 export function subscribeLayoutRegion(handler: (view: LayoutView | undefined) => void): () => void {
   const alreadyRegistered = layoutMirrorHandlers.has(handler);
   layoutMirrorHandlers.add(handler);
