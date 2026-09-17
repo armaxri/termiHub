@@ -58,6 +58,19 @@ impl EmbeddedServerError {
     }
 }
 
+/// Build the shared, actionable "port already in use" error for a failed bind.
+///
+/// Names the exact port and tells the user how to recover (stop the conflicting
+/// process or pick another port), so a manual start surfaces a clear, recoverable
+/// error rather than a bare OS message. The wrapped OS error is kept for
+/// diagnosis (SM-018).
+fn port_in_use(config: &EmbeddedServerConfig, source: std::io::Error) -> EmbeddedServerError {
+    EmbeddedServerError::new(format!(
+        "Port {} is already in use. Stop the conflicting process or choose a different port in the server settings. ({source})",
+        config.port
+    ))
+}
+
 /// Machine-readable service id for the embedded HTTP server.
 pub const SERVICE_ID_HTTP: &str = "http_server";
 /// Machine-readable service id for the embedded FTP server.
@@ -232,19 +245,24 @@ impl EmbeddedServerService {
     /// Attempt a quick bind to check whether a config's port is available.
     ///
     /// Static so the pre-flight check can be exercised without a live service.
+    ///
+    /// The returned error is the shared, user-facing "port in use" message both
+    /// start paths surface. Manual start (`start_embedded_server`) returns it
+    /// verbatim as a *recoverable* error — the user picked and persisted that
+    /// exact port, so it must be honoured or clearly rejected, never silently
+    /// rebound elsewhere. Quick-share (`create_and_start_server`) instead swallows
+    /// it while stepping across ports, because it starts from an unchosen default
+    /// (SM-018).
     pub fn check_port_config(config: &EmbeddedServerConfig) -> Result<(), EmbeddedServerError> {
         let addr = format!("{}:{}", config.bind_host, config.port);
         match config.server_type {
             ServerType::Tftp => {
-                let socket = std::net::UdpSocket::bind(&addr).map_err(|e| {
-                    EmbeddedServerError::new(format!("Port {} is already in use: {e}", config.port))
-                })?;
+                let socket = std::net::UdpSocket::bind(&addr).map_err(|e| port_in_use(config, e))?;
                 drop(socket);
             }
             _ => {
-                let listener = std::net::TcpListener::bind(&addr).map_err(|e| {
-                    EmbeddedServerError::new(format!("Port {} is already in use: {e}", config.port))
-                })?;
+                let listener =
+                    std::net::TcpListener::bind(&addr).map_err(|e| port_in_use(config, e))?;
                 drop(listener);
             }
         }
