@@ -82,6 +82,15 @@ export interface ConfirmDialogProps {
   cancelLabel?: string;
   /** Confirm button variant (defaults to "danger" for destructive actions). */
   confirmVariant?: ButtonVariant;
+  /**
+   * Optional leading icon rendered inside the confirm {@link Button} (before its
+   * label), forwarded to the Button's `icon` prop. Lets a confirm-shaped dialog
+   * that carries an action glyph (e.g. `<ArrowUp />` on the agent-update
+   * confirm) compose the primitive instead of a hand-rolled {@link Modal}. This
+   * is the confirm *button*'s icon — distinct from
+   * {@link ConfirmDialogProps.icon | icon}, which tints the title.
+   */
+  confirmIcon?: React.ReactNode;
   /** Disable the confirm button (e.g. while a body-slot form is invalid). */
   confirmDisabled?: boolean;
   /**
@@ -134,6 +143,7 @@ export function ConfirmDialog({
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   confirmVariant = "danger",
+  confirmIcon,
   confirmDisabled,
   confirmErrorToast,
   dontAskAgain,
@@ -196,6 +206,7 @@ export function ConfirmDialog({
           </Button>
           <Button
             variant={confirmVariant}
+            icon={confirmIcon}
             onClick={onConfirm}
             disabled={confirmDisabled}
             errorToast={confirmErrorToast}
