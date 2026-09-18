@@ -81,13 +81,14 @@ import "./FileBrowser.css";
 
 /**
  * Fixed row height in px, matching `.file-browser__row` in FileBrowser.css. Rows
- * are two-line (name on top, a muted Modified · Size · permissions meta line
- * below) so the filename gets the full width in the narrow sidebar (#2798). The
- * list is virtualized (@tanstack/react-virtual) so only the visible window of
- * rows is mounted; a uniform height keeps the windowing math exact and cheap —
- * this constant MUST stay in sync with `.file-browser__row`'s CSS height.
+ * are a single line showing the filename in full; the Modified / Size /
+ * permissions metadata is a hover-reveal overlay pinned to the right edge, so it
+ * never reserves space or truncates the name. The list is virtualized
+ * (@tanstack/react-virtual) so only the visible window of rows is mounted; a
+ * uniform height keeps the windowing math exact and cheap — this constant MUST
+ * stay in sync with `.file-browser__row`'s CSS height (28px).
  */
-const ROW_HEIGHT = 40;
+const ROW_HEIGHT = 28;
 
 /** Extra rows rendered above/below the viewport so fast scrolls stay smooth. */
 const ROW_OVERSCAN = 8;
@@ -495,10 +496,9 @@ function FileRow({
   // populated `size` renders no size cell instead of the old "NaN GB" (#2798).
   const sizeLabel = entry.isDirectory ? "" : formatBytes(entry.size);
 
-  // The second row of each entry is a muted meta line — Modified · Size ·
-  // permissions — built from only the parts that are present, with a middot
-  // separator inserted *between* parts so a missing part never leaves a dangling
-  // or leading "·" (#2798).
+  // The hover-reveal metadata overlay — Modified, Size, permissions — built from
+  // only the parts that are present. They render as adjacent columns (no middot
+  // separators); a missing part simply isn't added.
   const metaParts: React.ReactNode[] = [];
   if (entry.modified) {
     metaParts.push(
@@ -525,18 +525,6 @@ function FileRow({
       </span>
     );
   }
-  const metaNodes: React.ReactNode[] = [];
-  metaParts.forEach((part, i) => {
-    if (i > 0) {
-      metaNodes.push(
-        <span key={`sep-${i}`} className="file-browser__meta-sep" aria-hidden="true">
-          ·
-        </span>
-      );
-    }
-    metaNodes.push(part);
-  });
-
   if (isRenaming) {
     return <RenameRow entry={entry} onSubmit={onRenameSubmit} onCancel={onRenameCancel} />;
   }
@@ -586,9 +574,12 @@ function FileRow({
                   </span>
                 )}
               </span>
-              {metaNodes.length > 0 && <span className="file-browser__meta">{metaNodes}</span>}
             </span>
           </button>
+          {/* Hover-reveal metadata overlay: a sibling of the row button (not
+              nested in it) so it can be absolutely positioned at the right edge
+              without ever reserving space in the filename area. */}
+          {metaParts.length > 0 && <span className="file-browser__meta">{metaParts}</span>}
           <div className="file-browser__row-menu">
             <DropdownMenu.Root>
               <Tooltip content="Actions" side="top">
