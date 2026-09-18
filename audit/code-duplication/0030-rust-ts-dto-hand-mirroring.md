@@ -11,7 +11,8 @@ evidence:
   - core/src/files/mod.rs:16
   - src/types/embeddedServer.ts:2
   - src/services/api.ts:1197
-status: open
+status: partial
+resolution: "#3087 — ts-rs codegen ADOPTED (maintainer decision). PR-1 infra + 7 dependency-closed connection DTOs generate from Rust (ConnectionFolder/AgentSettings/SavedRemoteAgent/ConnectionConfig/RemoteAgentConfig/ExternalAgentFile/UpdateStrategy) → src/types/generated/, hand-written interfaces replaced by re-exports (233 import sites unchanged), CI staleness gate in code-quality.yml rust-quality job, ts-rs=dev-dep under cfg(test) so release binary is codegen-free (cargo tree verified). serde-fidelity: #[ts(type=..)] literal-unions + #[ts(as=Option<..>,optional)] for skip_serializing_if. Removed obsolete ConnectionConfig drift-guard. REMAINING clusters (TerminalOptions/flatten+SavedConnection, ConnectionTreeNode enum, core config types, agent+core protocol DTOs, event payloads) → follow-up #3088 Ready2Implement. Also partially addresses MOCK-005 (hand-mirror machinery) — MOCK-005/MOCK-010/AGT-028 stay open pending #3088 rollout"
 ---
 
 ## What

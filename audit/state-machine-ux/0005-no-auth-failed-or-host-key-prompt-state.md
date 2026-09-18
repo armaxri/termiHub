@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/session_projection/store.rs:310
   - src/types/sshHostKey.ts:1
   - src/utils/reconnectBackoff.ts:51
-status: open
+status: fixed
+resolution: "#3090 — auth failures now fold a distinct terminal non-retryable SessionStatus::AuthFailed (serialized authFailed) immediately instead of spinning the reconnect-backoff loop through its doomed attempt budget. Classified from typed SessionError/TerminalError::AuthFailed BEFORE stringification (not message-substring, avoids I18N-001) at the two fold points where the typed error is in hand: connect_auth_failed (initial direct connect) + reconnect_auth_failed (redrive, stops loop via Cancel→Gaveup so give-up secret-scrub+timer-cancel fire). Transient-retry path byte-for-byte unchanged (regression test). Frontend additive: authFailed renders same terminal overlay as failed w/ auth wording. Whole-agent transport re-establish path left transient (only has String, transport-level) → noted. Deferred credential-re-entry/host-key UX + preserving typed auth error across agent-proxy boundary → follow-up #3089"
 ---
 
 ## What
