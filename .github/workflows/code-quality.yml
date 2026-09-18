@@ -99,6 +99,23 @@ jobs:
       - name: Clippy ftp feature in isolation (guards #1499)
         run: cargo clippy -p termihub-core --features ftp --all-targets -- -D warnings
 
+      # Fail the PR when a crate declares a dependency it never uses (TOOL-008).
+      # Unused deps grow build time and supply-chain surface. cargo-machete
+      # statically scans each crate's sources for usage — no build required.
+      # Known false positives (e.g. a dep whose package name differs from its
+      # lib crate name, which the name-scan cannot match) are ignore-listed
+      # per-crate via `[package.metadata.cargo-machete]`. Run from the repo root
+      # it walks the whole tree, so it also covers the workspace-EXCLUDED
+      # `rdp-sidecar/` and the vendored crates the workspace jobs don't build.
+      # Prebuilt binary download (~seconds) instead of compiling from source.
+      - name: Install cargo-machete
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-machete
+
+      - name: Check for unused dependencies (cargo-machete)
+        run: cargo machete
+
       # Prebuilt binary download (~seconds) instead of `cargo install cargo-audit`,
       # which compiles from source (~3 min) on a cold cache.
       - name: Install cargo-audit

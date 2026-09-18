@@ -9,6 +9,14 @@ edition = "2021"
 publish = false
 build = "build.rs"
 
+# cargo-machete cannot see this dependency's usage because its package name
+# (`vnc-rs`) differs from its library crate name (`[lib] name = "vnc"`): the code
+# imports it as `vnc::VncConnector` / `vnc::VncClient` (core/src/backends/vnc/),
+# which machete's `vnc_rs` name-scan never matches. It is genuinely used behind
+# the `vnc` feature, so ignore-list it rather than remove it.
+[package.metadata.cargo-machete]
+ignored = ["vnc-rs"]
+
 # Hashing the staged `termihub-rdp-helper` externalBin to embed its SHA-256 at
 # build time for the adapter's pre-spawn integrity check (#1762). Always compiled
 # (build-deps cannot be feature-gated), but tiny and pure-Rust.

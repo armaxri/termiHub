@@ -436,16 +436,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async_io_stream"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6d7b9decdf35d8908a7e3ef02f64c5e9b1695e230154c0e8de3969142d9b94c"
-dependencies = [
- "futures",
- "rustc_version",
-]
-
-[[package]]
 name = "atk"
 version = "0.18.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7626,7 +7616,6 @@ dependencies = [
  "objc2-app-kit",
  "objc2-foundation",
  "percent-encoding",
- "portable-pty",
  "proptest",
  "quick-xml",
  "rand 0.8.6",
@@ -7638,7 +7627,6 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha2 0.10.9",
- "shlex",
  "ssh2-config",
  "tauri",
  "tauri-build",
@@ -7688,7 +7676,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "shellexpand",
  "sysinfo",
  "tempfile",
  "termihub-core",
@@ -8484,7 +8471,6 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vnc-rs"
 version = "0.5.3"
 dependencies = [
- "async_io_stream",
  "flate2",
  "futures",
  "rustls-pemfile",
