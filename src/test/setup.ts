@@ -69,102 +69,26 @@ if (typeof Element !== "undefined") {
   // `scrollend` event (when the environment advertises `onscrollend` and the
   // virtualizer opts in via `useScrollendEvent`) or, as a fallback, from a 150ms
   // debounced `setTimeout` that its cleanup never clears. That leaked timer fires
-  // after the FileBrowser unmounts and — once jsdom has torn the environment down
-  // between test files — throws an unhandled "window is not defined" that fails
-  // the whole run. jsdom does not implement `onscrollend`, so advertise it here
-  // (before any react-virtual module loads) to steer the FileBrowser virtualizer
-  // onto the timer-free scrollend path, leaving nothing pending past teardown.
+  // after a virtualized list (the FileBrowser) unmounts and — once jsdom has torn
+  // the environment down between test files — throws an unhandled "window is not
+  // defined" that fails the whole run.
+  //
+  // The unclear-on-unmount timer is a bug inside the `@tanstack/virtual-core`
+  // dependency (`observeOffset`'s cleanup removes the scroll listener but never
+  // clears the fallback debounce), not our code — see follow-up issue and the
+  // regression test in `src/test/virtualListSize.test.tsx`, which asserts the
+  // scrollend path leaves `vi.getTimerCount() === 0` while the debounce fallback
+  // leaks one timer. jsdom does not implement `onscrollend`, so advertise it here
+  // — at module load, because `virtual-core` captures `"onscrollend" in window`
+  // in a top-level `const` when it first loads — to steer the virtualizer onto
+  // the timer-free scrollend path (it opts in via `useScrollendEvent: true`),
+  // leaving nothing pending past teardown. This shim must stay global; the
+  // per-test sizing/scroll helpers moved to `src/test/virtualListSize.ts` as an
+  // explicit opt-in (audit finding MOCK-008), but this one is load-time-bound.
   if (typeof window !== "undefined" && !("onscrollend" in window)) {
     (window as unknown as { onscrollend: ((this: Window, ev: Event) => void) | null }).onscrollend =
       null;
   }
-
-  // jsdom does no layout, so scroll containers report size 0 and a windowing
-  // library (@tanstack/react-virtual, used by the FileBrowser) would render an
-  // empty window under test. The virtualizer measures its scroll element via
-  // offsetHeight/clientHeight and derives the max scroll offset from
-  // scrollHeight - clientHeight, so give the FileBrowser's scroll container a
-  // real viewport size and a scrollHeight matching its virtual spacer. Then
-  // small test directories render in full (as they did pre-virtualization),
-  // while large synthetic directories still mount only a subset and can scroll.
-  // Only the FileBrowser list opts in; every other element keeps jsdom's zero
-  // size, so Radix measurement/positioning stays untouched.
-  const FILE_BROWSER_LIST_HEIGHT = 2000;
-  const FILE_BROWSER_LIST_WIDTH = 300;
-  const isFileBrowserList = (el: unknown): el is HTMLElement =>
-    el instanceof HTMLElement && el.classList.contains("file-browser__list");
-  /** Total scrollable content height = the virtual spacer's declared height. */
-  const fileBrowserScrollHeight = (list: HTMLElement): number => {
-    const inner = list.querySelector<HTMLElement>(".file-browser__list-inner");
-    const declared = inner ? parseFloat(inner.style.height) : NaN;
-    return Number.isNaN(declared) ? FILE_BROWSER_LIST_HEIGHT : declared;
-  };
-  const overrideDimension = (
-    prop: "offsetHeight" | "offsetWidth" | "clientHeight" | "clientWidth" | "scrollHeight",
-    measure: (list: HTMLElement) => number
-  ): void => {
-    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, prop);
-    Object.defineProperty(HTMLElement.prototype, prop, {
-      configurable: true,
-      get(this: HTMLElement): number {
-        if (isFileBrowserList(this)) return measure(this);
-        return original?.get?.call(this) ?? 0;
-      },
-    });
-  };
-  overrideDimension("offsetHeight", () => FILE_BROWSER_LIST_HEIGHT);
-  overrideDimension("clientHeight", () => FILE_BROWSER_LIST_HEIGHT);
-  overrideDimension("offsetWidth", () => FILE_BROWSER_LIST_WIDTH);
-  overrideDimension("clientWidth", () => FILE_BROWSER_LIST_WIDTH);
-  overrideDimension("scrollHeight", fileBrowserScrollHeight);
-
-  // jsdom's scrollTop/scrollLeft are inert (setting them is a no-op that always
-  // reads back 0), but @tanstack/react-virtual reads element.scrollTop to know
-  // the scroll offset. Back them with real per-element storage so a programmatic
-  // scroll actually sticks.
-  const scrollTopStore = new WeakMap<Element, number>();
-  const scrollLeftStore = new WeakMap<Element, number>();
-  Object.defineProperty(HTMLElement.prototype, "scrollTop", {
-    configurable: true,
-    get(this: HTMLElement): number {
-      return scrollTopStore.get(this) ?? 0;
-    },
-    set(this: HTMLElement, value: number) {
-      scrollTopStore.set(this, value);
-    },
-  });
-  Object.defineProperty(HTMLElement.prototype, "scrollLeft", {
-    configurable: true,
-    get(this: HTMLElement): number {
-      return scrollLeftStore.get(this) ?? 0;
-    },
-    set(this: HTMLElement, value: number) {
-      scrollLeftStore.set(this, value);
-    },
-  });
-
-  // @tanstack/react-virtual's scrollToIndex() drives the scroll element via
-  // scrollTo(); jsdom's implementation is an inert no-op that never updates
-  // scrollTop or fires a scroll event, so make it actually move the element and
-  // notify listeners. This lets keyboard-nav tests observe an off-screen row
-  // being scrolled (and mounted) into view.
-  Element.prototype.scrollTo = function scrollTo(
-    xOrOptions?: number | ScrollToOptions,
-    y?: number
-  ): void {
-    if (typeof xOrOptions === "object" && xOrOptions !== null) {
-      if (typeof xOrOptions.top === "number") this.scrollTop = xOrOptions.top;
-      if (typeof xOrOptions.left === "number") this.scrollLeft = xOrOptions.left;
-    } else {
-      if (typeof xOrOptions === "number") this.scrollLeft = xOrOptions;
-      if (typeof y === "number") this.scrollTop = y;
-    }
-    this.dispatchEvent(new Event("scroll"));
-    // Mirror a real browser's scroll → scrollend sequence so the virtualizer's
-    // scrollend-driven `isScrolling` reset runs synchronously (see the
-    // `onscrollend` shim above) and never arms the leaked debounce timer.
-    this.dispatchEvent(new Event("scrollend"));
-  };
 }
 
 // Mock monaco-editor so tests don't need a browser environment.

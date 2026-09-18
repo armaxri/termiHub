@@ -19,6 +19,7 @@ import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
+import { setupVirtualListSizing } from "@/test/virtualListSize";
 import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
@@ -128,6 +129,8 @@ function row(name: string): HTMLElement {
 const q = (testId: string) => document.querySelector(`[data-testid="${testId}"]`) as HTMLElement;
 
 setupFileBrowsersRegion();
+// Size the virtualized list so its rows mount under jsdom (MOCK-008).
+setupVirtualListSizing();
 
 describe("FileBrowser — VS Code action feedback (#1342)", () => {
   beforeEach(() => {

@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { InvokeArgs } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
+import { setupVirtualListSizing } from "@/test/virtualListSize";
 import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
@@ -122,6 +123,8 @@ function argPath(args?: InvokeArgs): string | undefined {
 }
 
 setupFileBrowsersRegion();
+// Size the virtualized list so its rows mount under jsdom (MOCK-008).
+setupVirtualListSizing();
 
 describe("FileBrowser — multi-delete outcome reporting (#1394)", () => {
   beforeEach(() => {

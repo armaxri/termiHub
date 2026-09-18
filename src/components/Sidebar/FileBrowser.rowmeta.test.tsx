@@ -1,6 +1,7 @@
 import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
+import { setupVirtualListSizing } from "@/test/virtualListSize";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -60,6 +61,8 @@ function setActiveTab(tab: TerminalTab) {
 setupSettingsRegion();
 setupAgentsRegion();
 setupFileBrowsersRegion();
+// Size the virtualized list so its rows mount under jsdom (MOCK-008).
+setupVirtualListSizing();
 
 // Fixed date so the absolute-timestamp tooltip is deterministic (mid-January
 // never crosses a year boundary regardless of the test machine's timezone).
