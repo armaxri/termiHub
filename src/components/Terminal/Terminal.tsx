@@ -330,7 +330,18 @@ export function Terminal({
   // the DOM renderer mid-session. Lives at component scope so the output-flush
   // effect and the terminal-init effect (which owns the addon) share it.
   const webglRendererActiveRef = useRef(false);
-  const pendingCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Cancellation token for a teardown (persistent-detach / close) deferred on
+  // unmount. Rather than a wall-clock `setTimeout(…, 50)` guess (FEC-014 /
+  // WA-FE-009), the teardown is deferred to a microtask so a same-tick effect
+  // re-run — React StrictMode's dev unmount→remount, or a reconnect (retryCount
+  // dep change) — can cancel it before the backend session is torn down. The
+  // re-run's `setupTerminal` synchronously flips `cancelled` on this token
+  // (below); because the teardown runs in a microtask (which drains only after
+  // the synchronous effect-flush that performs the re-mount), it deterministically
+  // observes that flag. A genuine unmount has no re-run, so nothing flips the
+  // flag and the microtask proceeds. This replaces the fragile 50ms delay with a
+  // spec-defined ordering keyed off an actual React lifecycle fact.
+  const pendingCloseRef = useRef<{ cancelled: boolean } | null>(null);
   const isViewModeRef = useRef(false);
   // Capture existingSessionId at mount time only. After the Terminal creates a
   // session, TerminalRegistry.registerSession writes the session ID back to the
@@ -384,10 +395,14 @@ export function Terminal({
       // promptly off the signal's `abort` event (no 100ms cancel-polling).
       const isCanceled = () => signal.aborted;
 
-      // Cancel any pending session close from a StrictMode unmount cycle
-      if (pendingCloseTimerRef.current !== null) {
-        clearTimeout(pendingCloseTimerRef.current);
-        pendingCloseTimerRef.current = null;
+      // Cancel any pending deferred teardown from a same-tick unmount (React
+      // StrictMode's unmount→remount, or an effect re-run such as a reconnect).
+      // The teardown is a microtask, so flipping this token synchronously here —
+      // before the microtask drains — deterministically prevents it firing into
+      // the session this run is about to (re)establish (FEC-014 / WA-FE-009).
+      if (pendingCloseRef.current !== null) {
+        pendingCloseRef.current.cancelled = true;
+        pendingCloseRef.current = null;
       }
 
       try {
@@ -1055,20 +1070,27 @@ export function Terminal({
             // Session torn down while still live (tab closed/reconnecting) —
             // the exit handler never fired, so notify parsers here (#1998).
             sandboxNotifySessionEnd(sessionId);
-            // Defer the close so that React StrictMode's rapid unmount→remount
-            // can cancel it before the backend session is destroyed.
+            // Defer the teardown to a microtask so React StrictMode's rapid
+            // unmount→remount (or any same-tick effect re-run) can cancel it, via
+            // the token flipped in setupTerminal above, before the backend
+            // session is destroyed. Deterministic ordering, not a 50ms guess
+            // (FEC-014 / WA-FE-009).
             const sid = sessionIdRef.current;
             sessionIdRef.current = null;
-            if (persistentConnectionId) {
-              // Detach from persistent session — backend process keeps running.
-              pendingCloseTimerRef.current = setTimeout(() => {
+            const token = { cancelled: false };
+            pendingCloseRef.current = token;
+            queueMicrotask(() => {
+              // Cancelled by a remount's setupTerminal — the session is still
+              // mounted; leave it alone.
+              if (token.cancelled) return;
+              if (pendingCloseRef.current === token) pendingCloseRef.current = null;
+              if (persistentConnectionId) {
+                // Detach from persistent session — backend process keeps running.
                 fireAndForget(
                   detachPersistentTab(sid, tabId),
                   `detach persistent tab ${tabId} on teardown`
                 );
-              }, 50);
-            } else {
-              pendingCloseTimerRef.current = setTimeout(() => {
+              } else {
                 // Multi-window (#1900): if this session is being re-parented to
                 // another window, the destination adopts it — do NOT close the
                 // backend session. Consume the moving flag once.
@@ -1077,8 +1099,8 @@ export function Terminal({
                   return;
                 }
                 closeTerminal(sid);
-              }, 50);
-            }
+              }
+            });
           }
         };
       } catch (err) {

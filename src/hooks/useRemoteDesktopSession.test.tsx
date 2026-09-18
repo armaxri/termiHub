@@ -6,7 +6,7 @@
  * reconnect.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { act } from "react";
+import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
 import { useRemoteDesktopSession, type RemoteDesktopSession } from "./useRemoteDesktopSession";
@@ -95,15 +95,14 @@ beforeEach(() => {
 
 afterEach(async () => {
   act(() => root.unmount());
-  // The session hook defers its on-unmount disconnect behind a real 50ms timer
-  // (the StrictMode mount→unmount→mount guard). The whole file normally runs in
-  // well under 50ms, so those timers fire harmlessly after the suite — but on a
-  // starved CI runner an early test's deferred close can instead fire *during* a
-  // later test and inflate its `remoteDesktopDisconnect` call count, tripping the
-  // "must NOT be torn down" assertion (#1904). Drain the timers here so every
-  // deferred close is attributed to (and cleared with) the test that scheduled it.
+  // The session hook defers its on-unmount disconnect to a microtask (the
+  // StrictMode mount→unmount→mount guard). Drain microtasks here so every
+  // deferred close is attributed to (and cleared with) the test that scheduled
+  // it, rather than bleeding into a later test's `remoteDesktopDisconnect` call
+  // count and tripping a "must NOT be torn down" assertion (#1904).
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 60));
+    await Promise.resolve();
+    await Promise.resolve();
   });
   container.remove();
 });
@@ -388,5 +387,49 @@ describe("useRemoteDesktopSession", () => {
     // flag is consumed so a later real close still cleans up.
     expect(mockedDisconnect).not.toHaveBeenCalled();
     expect(useAppStore.getState().isSessionMoving("rd-1")).toBe(false);
+  });
+
+  // ── Deterministic on-unmount teardown (FEC-014 / WA-FE-009) ──
+
+  it("disconnects the owned session on a genuine unmount (deferred to a microtask)", async () => {
+    const tabId = addTab();
+    renderSession(tabId);
+    await flush();
+    expect(mockedConnect).toHaveBeenCalledTimes(1);
+    expect(mockedDisconnect).not.toHaveBeenCalled();
+
+    // Genuine unmount: no remount follows, so the deferred disconnect fires on
+    // the next microtask tick.
+    act(() => root.render(<div />));
+    expect(mockedDisconnect).not.toHaveBeenCalled();
+    await flush();
+    expect(mockedDisconnect).toHaveBeenCalledWith("rd-1");
+  });
+
+  it("keeps the live owned session connected across a React StrictMode remount", async () => {
+    // Distinct id per connect so the StrictMode-orphaned first attempt (which is
+    // correctly cleaned up) is distinguishable from the live second one.
+    let n = 0;
+    mockedConnect.mockImplementation(() => Promise.resolve(`rd-strict-${++n}`));
+    const tabId = addTab();
+    let latest: RemoteDesktopSession | null = null;
+    function Probe() {
+      latest = useRemoteDesktopSession(tabId);
+      return null;
+    }
+    // StrictMode double-invokes effects (mount→unmount→mount). The session the
+    // tab still owns after the remount must NOT be disconnected.
+    act(() =>
+      root.render(
+        <StrictMode>
+          <Probe />
+        </StrictMode>
+      )
+    );
+    await flush();
+
+    const owned = latest!.sessionId;
+    expect(owned).toBeTruthy();
+    expect(mockedDisconnect).not.toHaveBeenCalledWith(owned);
   });
 });
