@@ -10,6 +10,7 @@ import {
 } from "@/services/api";
 import { toast } from "@/components/ui";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
+import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { isAuthFailure } from "@/utils/backendErrorCode";
@@ -50,7 +51,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
   const connect = useCallback(
     async (connection: SavedConnection) => {
       let config = connection.config;
-      const cfg = config.config as unknown as Record<string, unknown>;
+      const cfg = config.config;
 
       // UX-011: the credential-aware path below can run several slow steps —
       // unlock, stored-credential resolve, and a blocking pre-connect SSH
@@ -85,7 +86,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
       // per-type hardcode); an unknown type or absent flag stays terminal (#1335).
       const effectiveTypeId =
         config.type === "remote-session"
-          ? ((cfg.sessionType as string | undefined) ?? config.type)
+          ? (readConfigString(connection.config, "sessionType") ?? config.type)
           : config.type;
       const caps = useAppStore
         .getState()
@@ -105,8 +106,8 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
 
       // Connections with authMethod and password support credential store resolution
       if (cfg.authMethod && cfg.host) {
-        const authMethod = cfg.authMethod as string;
-        const savePassword = cfg.savePassword as boolean | undefined;
+        const authMethod = readConfigString(connection.config, "authMethod") ?? "";
+        const savePassword = readConfigBoolean(connection.config, "savePassword");
 
         // For key auth, decide whether a passphrase is needed from the key's
         // actual encryption rather than the savePassword flag (#885): a
@@ -115,7 +116,9 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         // read, default to "encrypted" so an encrypted key never fails silently.
         let keyEncrypted = false;
         if (authMethod === "key") {
-          keyEncrypted = await isSshKeyEncrypted((cfg.keyPath as string) ?? "").catch(() => true);
+          keyEncrypted = await isSshKeyEncrypted(
+            readConfigString(connection.config, "keyPath") ?? ""
+          ).catch(() => true);
         }
         // Password auth always needs a credential; key auth only when encrypted.
         const needsCredential = authMethod === "password" || (authMethod === "key" && keyEncrypted);
@@ -234,8 +237,8 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
 
         // No stored credential or stale credential was cleared — prompt the user
         if (authMethod === "password") {
-          const host = cfg.host as string;
-          const username = (cfg.username as string) ?? "";
+          const host = readConfigString(connection.config, "host") ?? "";
+          const username = readConfigString(connection.config, "username") ?? "";
           // The prompt modal is now the feedback surface — clear the pre-connect
           // indicator before it appears (UX-011).
           dismissConnecting();
@@ -258,8 +261,8 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           // gate above) and no stored passphrase yet — prompt so the backend can
           // unlock the key, regardless of savePassword (#885). Whether the
           // passphrase is then stored still follows the prompt's Save box.
-          const host = cfg.host as string;
-          const username = (cfg.username as string) ?? "";
+          const host = readConfigString(connection.config, "host") ?? "";
+          const username = readConfigString(connection.config, "username") ?? "";
           // The prompt modal is now the feedback surface — clear the pre-connect
           // indicator before it appears (UX-011).
           dismissConnecting();

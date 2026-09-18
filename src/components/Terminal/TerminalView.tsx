@@ -46,6 +46,7 @@ import {
   sessionLoggingStatus,
 } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { readConfigString } from "@/utils/connectionConfigFields";
 import "./TerminalView.css";
 
 export function TerminalView() {
@@ -120,8 +121,7 @@ export function TerminalView() {
         // therefore empty for sessions opened after the first refresh.
         const agentTerminalTabs = allTabs.filter((tab) => {
           if (tab.contentType !== "terminal") return false;
-          const cfg = tab.config.config as { agentId?: string };
-          return cfg.agentId === session_id;
+          return readConfigString(tab.config, "agentId") === session_id;
         });
 
         if (state === "connected") {

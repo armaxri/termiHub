@@ -39,6 +39,7 @@ import {
   DEFAULT_MONITORING_INTERVAL_MS,
 } from "@/types/monitoring";
 import { resolveFeatureEnabled } from "@/utils/featureFlags";
+import { connectionConfigFields, readConfigString } from "@/utils/connectionConfigFields";
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
 import { TransferQueueIndicator } from "@/components/TransferQueue";
 import { Tooltip, Spinner, EmptyState, SearchInput, toast } from "@/components/ui";
@@ -283,8 +284,8 @@ function RemoteDesktopStatus() {
 
   if (!activeTab) return null;
 
-  const cfg = activeTab.config.config as Record<string, unknown>;
-  const host = (cfg.host as string | undefined) || activeTab.title || "remote";
+  const cfg = connectionConfigFields(activeTab.config);
+  const host = readConfigString(activeTab.config, "host") || activeTab.title || "remote";
   const port = cfg.port;
   const hostPort = port !== undefined && port !== null && port !== "" ? `${host}:${port}` : host;
   const colorDepth = cfg.colorDepth;
@@ -609,8 +610,7 @@ function MonitoringStatus() {
     if (autoConnectFailedRef.current === key) return;
     autoConnectFailedRef.current = key;
 
-    const cfg = activeTab.config.config;
-    const hostLabel = (cfg.host as string) || activeTab.title || key;
+    const hostLabel = readConfigString(activeTab.config, "host") || activeTab.title || key;
 
     const doConnect = async () => {
       try {

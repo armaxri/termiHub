@@ -180,6 +180,7 @@ import { onPersistentSessionStateChanged } from "@/services/events";
 import { applyTheme, onThemeChange } from "@/themes";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import { fireAndForget, frontendError, frontendLog } from "@/utils/frontendLog";
+import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 import { backendErrorMessage } from "@/utils/backendErrorCode";
 import { quotePath } from "@/utils/quotePath";
 import { toast } from "@/components/ui";
@@ -3430,13 +3431,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const connectionId = tab?.persistentConnectionId;
       if (!tab || !connectionId) return null;
 
-      const cfg = tab.config.config as {
-        agentId?: string;
-        sessionType?: string;
-        title?: string;
-        [key: string]: unknown;
-      };
-      const agentId = cfg.agentId;
+      const cfg = tab.config.config;
+      const agentId = readConfigString(tab.config, "agentId");
       if (!agentId || !connectionId.startsWith(`${agentId}:`)) return null;
       const defId = connectionId.slice(agentId.length + 1);
 
@@ -3482,11 +3478,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // loaded, e.g. after an agent disconnect); agentId/persistent are dropped
       // from the forwarded settings.
       get().setTabSessionId(tabId, null);
-      const { agentId: _agentId, sessionType, title, persistent: _persistent, ...connConfig } = cfg;
+      const {
+        agentId: _agentId,
+        sessionType: _sessionType,
+        title: _title,
+        persistent: _persistent,
+        ...connConfig
+      } = cfg;
       const def: AgentDefinitionInfo = {
         id: defId,
-        name: title ?? tab.title,
-        sessionType: sessionType ?? "shell",
+        name: readConfigString(tab.config, "title") ?? tab.title,
+        sessionType: readConfigString(tab.config, "sessionType") ?? "shell",
         config: connConfig,
         persistent: true,
         folderId: null,
@@ -4828,16 +4830,14 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // Only disconnect if the active tab doesn't have an explicit override.
         if (oldSettings.powerMonitoringEnabled && !newSettings.powerMonitoringEnabled) {
           const activeTab = getActiveTab(get());
-          const tabCfg = activeTab?.config.config as unknown as Record<string, unknown> | undefined;
-          const hasOverride = tabCfg?.enableMonitoring === true;
+          const hasOverride = readConfigBoolean(activeTab?.config, "enableMonitoring") === true;
           if (!hasOverride) {
             get().disconnectMonitoring();
           }
         }
         if (oldSettings.fileBrowserEnabled && !newSettings.fileBrowserEnabled) {
           const activeTab = getActiveTab(get());
-          const tabCfg = activeTab?.config.config as unknown as Record<string, unknown> | undefined;
-          const hasOverride = tabCfg?.enableFileBrowser === true;
+          const hasOverride = readConfigBoolean(activeTab?.config, "enableFileBrowser") === true;
           if (!hasOverride) {
             if (get().sidebarView === "files") {
               set({ sidebarView: "connections" });
@@ -6190,9 +6190,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
                 (c) => c.id === tabDef.connectionRef
               );
               if (!saved) return false;
-              const cfg = saved.config.config as Record<string, unknown>;
-              const authMethod = cfg.authMethod as string | undefined;
-              const savePassword = cfg.savePassword as boolean | undefined;
+              const authMethod = readConfigString(saved.config, "authMethod");
+              const savePassword = readConfigBoolean(saved.config, "savePassword");
               return authMethod === "password" || (authMethod === "key" && savePassword);
             }) || disconnectedAgentsNeedingCreds.length > 0;
           if (needsStoredCredential) {
@@ -6247,9 +6246,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const resolvedConnections = await Promise.all(
           currentConnectionsView().connections.map(async (conn) => {
             if (!referencedIds.has(conn.id)) return conn;
-            const cfg = conn.config.config as Record<string, unknown>;
-            const authMethod = cfg.authMethod as string | undefined;
-            const savePassword = cfg.savePassword as boolean | undefined;
+            const cfg = conn.config.config;
+            const authMethod = readConfigString(conn.config, "authMethod");
+            const savePassword = readConfigBoolean(conn.config, "savePassword");
             if (!authMethod) return conn;
             const resolution = await resolveConnectionCredential(conn.id, authMethod, savePassword);
             if (!resolution.usedStoredCredential || !resolution.password) return conn;

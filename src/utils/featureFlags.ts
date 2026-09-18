@@ -1,4 +1,5 @@
 import { ConnectionConfig } from "@/types/terminal";
+import { readConfigBoolean } from "@/utils/connectionConfigFields";
 
 /**
  * Resolve whether a per-connection feature is enabled.
@@ -16,8 +17,7 @@ export function resolveFeatureEnabled(
   globalDefault: boolean
 ): boolean {
   if (!config) return false;
-  const cfg = config.config as unknown as Record<string, unknown>;
-  const override_ = cfg[feature];
-  if (typeof override_ === "boolean") return override_;
+  const override_ = readConfigBoolean(config, feature);
+  if (override_ !== undefined) return override_;
   return globalDefault;
 }

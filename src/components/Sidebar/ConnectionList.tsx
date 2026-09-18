@@ -50,6 +50,7 @@ import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { computeVisibleTreeNodes, type VisibleTreeNode } from "@/utils/computeVisibleTreeNodes";
 import { experimentalTypeIds } from "@/utils/experimentalTypes";
 import { filterConnectionTree, type ConnectionTreeFilter } from "@/utils/connectionSearch";
+import { readConfigString } from "@/utils/connectionConfigFields";
 import { agentNameMatchesQuery, agentDefinitionMatchesQuery } from "@/utils/agentTreeSearch";
 import {
   getJumpHosts,
@@ -546,7 +547,7 @@ function ConnectionItem({
             >
               <Play size={14} /> Connect
             </ContextMenu.Item>
-            {!!(connection.config.config as unknown as Record<string, unknown>).host && (
+            {!!readConfigString(connection.config, "host") && (
               <ContextMenu.Item
                 className="context-menu__item"
                 onSelect={() => onPingHost(connection)}
@@ -1002,8 +1003,7 @@ export function ConnectionList() {
   }, [openConnectionEditorTab]);
 
   const handlePingHost = useCallback(async (connection: SavedConnection) => {
-    const cfg = connection.config.config as unknown as Record<string, unknown>;
-    const host = cfg.host as string | undefined;
+    const host = readConfigString(connection.config, "host");
     if (!host) return;
     await openLocalCommandTab(`Ping ${host}`, `ping ${host}`);
   }, []);
