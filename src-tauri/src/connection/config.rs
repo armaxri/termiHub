@@ -24,6 +24,8 @@ fn default_persistent_buffer_mb() -> u32 {
 /// Stored locally with the connection profile; sent to the agent on startup
 /// and on live updates via the `agent.settingsUpdate` JSON-RPC method.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSettings {
     /// Start the system monitoring subsystem on agent startup.
@@ -42,7 +44,13 @@ pub struct AgentSettings {
     #[serde(default = "default_starting_directory")]
     pub starting_directory: String,
     /// Agent log level: "error", "warn", "info", "debug", "trace".
+    // ts-rs widens `String` to `string`; restore the literal union the frontend
+    // `AgentSettings.logLevel` used.
     #[serde(default = "default_log_level")]
+    #[cfg_attr(
+        test,
+        ts(type = "\"error\" | \"warn\" | \"info\" | \"debug\" | \"trace\"")
+    )]
     pub log_level: String,
     /// Enable verbose JSON-RPC protocol tracing in agent logs.
     #[serde(default)]
@@ -163,6 +171,8 @@ pub enum ConnectionTreeNode {
 
 /// A saved remote agent definition (SSH transport config only, no ephemeral state).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct SavedRemoteAgent {
     pub id: String,
@@ -277,6 +287,8 @@ pub struct SavedConnection {
 /// The `id` is not stored on disk — it is derived from the folder's
 /// position in the tree (e.g., `"Work/Dev"`).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ConnectionFolder {
     pub id: String,
@@ -703,7 +715,13 @@ mod tests {
     // These const lists mirror the serialized (camelCase) keys of the Rust
     // structs. Update them when a field is added/removed so the drift test
     // stays a faithful mirror.
-    const CONNECTION_CONFIG_BACKEND_FIELDS: &[&str] = &["type", "config"];
+    //
+    // NOTE: `ConnectionConfig` no longer needs a hand-rolled drift guard — its
+    // frontend interface is now GENERATED from this Rust struct via ts-rs
+    // (`src/types/generated/ConnectionConfig.ts`, audit DUP-030), so the CI
+    // staleness gate enforces parity mechanically. The remaining guard below
+    // still covers `SavedConnection`, which is not yet ts-rs-generated (deferred
+    // to the ts-rs rollout follow-up).
     const SAVED_CONNECTION_BACKEND_FIELDS: &[&str] = &[
         "id",
         "name",
@@ -713,20 +731,6 @@ mod tests {
         "icon",
         "sourceFile",
     ];
-
-    #[test]
-    fn connection_config_no_silent_frontend_field_drop() {
-        // `ConnectionConfig.settings` is opaque JSON (`serde_json::Value`) that
-        // already preserves everything under `config`; only the two top-level
-        // keys need to stay in parity with the frontend.
-        let ts = include_str!("../../../src/types/terminal.ts");
-        assert_no_silent_drop(
-            ts,
-            "ConnectionConfig",
-            CONNECTION_CONFIG_BACKEND_FIELDS,
-            &[],
-        );
-    }
 
     #[test]
     fn saved_connection_no_silent_frontend_field_drop() {

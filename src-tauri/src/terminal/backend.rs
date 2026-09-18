@@ -23,6 +23,8 @@ const DEFAULT_AGENT_PATH: &str = "~/.local/bin/termihub-agent";
 
 /// An external connection file configured for a remote agent.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct ExternalAgentFile {
     /// Absolute path on the remote host.
     pub path: String,
@@ -37,6 +39,8 @@ pub struct ExternalAgentFile {
 /// still configuration-only and resolves back to `Immediate` at update time
 /// (see [`RemoteAgentConfig::effective_update_strategy`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "lowercase")]
 pub enum UpdateStrategy {
     /// Shut the running agent down and redeploy immediately (the only path
@@ -66,18 +70,30 @@ impl UpdateStrategy {
 
 /// SSH transport configuration for a remote agent (no session details).
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct RemoteAgentConfig {
     pub host: String,
     pub port: u16,
     pub username: String,
+    // ts-rs widens `String` to the structural `string`, dropping the literal
+    // union the frontend relies on — restore it explicitly (matches the deleted
+    // hand-written `authMethod: "password" | "key" | "agent"`).
     #[serde(default = "default_auth_method")]
+    #[cfg_attr(test, ts(type = "\"password\" | \"key\" | \"agent\""))]
     pub auth_method: String,
+    // `skip_serializing_if` is invisible to ts-rs, so these `Option` fields would
+    // emit as required `field: T | null`; `#[ts(optional)]` restores the `field?:
+    // T` shape the frontend interface used.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub password: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub key_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub save_password: Option<bool>,
     /// Path to the agent binary on the remote host.
     ///
@@ -85,9 +101,15 @@ pub struct RemoteAgentConfig {
     /// to `$HOME` in SSH exec commands so it works in non-interactive sessions
     /// where `~/.local/bin` may not be on the PATH.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub agent_path: Option<String>,
     /// External connection files to load on the remote host.
+    // Non-`Option` field that is omitted from the wire when empty
+    // (`skip_serializing_if`), so the frontend interface made it optional. ts-rs
+    // only emits `?` for `Option`, so treat it as `Option<Vec<…>>` for TS gen to
+    // recover the `externalConnectionFiles?: ExternalAgentFile[]` shape.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<ExternalAgentFile>>", optional))]
     pub external_connection_files: Vec<ExternalAgentFile>,
     /// Whether the agent may check GitHub and update itself in the background.
     ///
@@ -95,14 +117,21 @@ pub struct RemoteAgentConfig {
     /// release, stages a SHA-256-verified binary while idle (#1355) and
     /// auto-applies it once its last session disconnects (#1401), honoring
     /// [`Self::update_strategy`].
+    // Always serialized, but the hand-written frontend interface marked it
+    // optional (forward-compat/tolerant loading). Reproduce that `?` shape via
+    // the `Option` TS-gen alias so the generated DTO stays byte-identical.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub allow_self_update: bool,
     /// How this agent's binary is updated when a newer desktop version deploys.
     ///
     /// Defaults to [`UpdateStrategy::Immediate`]. See
     /// [`RemoteAgentConfig::effective_update_strategy`] for how non-immediate
     /// strategies are currently resolved.
+    // Optional in the hand-written frontend interface; see note on
+    // `allow_self_update`.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<UpdateStrategy>", optional))]
     pub update_strategy: UpdateStrategy,
 }
 
@@ -269,10 +298,15 @@ impl RemoteAgentConfig {
 /// unstructured JSON. The on-disk format is `{"type": "<id>", "config": {...}}`
 /// which is backward-compatible with the previous tagged-enum format.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct ConnectionConfig {
     #[serde(rename = "type")]
     pub type_id: String,
+    // `serde_json::Value` has no faithful structural TS form; the frontend
+    // interface used `Record<string, unknown>` (not `any`) — keep that exactly.
     #[serde(rename = "config")]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub settings: serde_json::Value,
 }
 
