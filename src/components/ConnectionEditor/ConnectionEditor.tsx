@@ -1,4 +1,6 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { z } from "zod";
 import * as RadixSelect from "@radix-ui/react-select";
 import {
   PlugZap,
@@ -198,6 +200,17 @@ interface ConnectionEditorProps {
   isVisible: boolean;
 }
 
+/**
+ * Top-level connection metadata backed by react-hook-form + zod (UISF-011): the
+ * scalar fields the editor owns directly, separate from the schema-driven
+ * per-type config (which lives on ConnectionSettingsForm / DynamicForm).
+ */
+interface TopLevelFormValues {
+  name: string;
+  sourceFile: string | null;
+  persistent: boolean;
+}
+
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
   const { connections, folders } = useProjectedConnections();
   const connectionTypes = useAppStore((s) => s.connectionTypes);
@@ -311,17 +324,46 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     defaultShell,
   ]);
 
-  const [name, setName] = useState(
-    existingAgentDef?.name ??
-      existingConnection?.name ??
-      (isAgentDefinitionMode ? "" : (existingAgent?.name ?? ""))
+  // Top-level connection metadata migrated to react-hook-form + zod (UISF-011,
+  // #3073): the scalar fields the editor owns directly — connection name,
+  // storage-file target, and the agent-definition "persistent" flag. The
+  // schema-driven per-type config below stays on ConnectionSettingsForm /
+  // DynamicForm (already react-hook-form + zod), and the connection-type selector
+  // stays on local state because it drives that form's lifecycle. Same pattern as
+  // the migrated CustomRuleEditor / TunnelEditor.
+  const initialTopLevel = useMemo<TopLevelFormValues>(
+    () => ({
+      name:
+        existingAgentDef?.name ??
+        existingConnection?.name ??
+        (isAgentDefinitionMode ? "" : (existingAgent?.name ?? "")),
+      sourceFile: existingConnection?.sourceFile ?? null,
+      persistent: existingAgentDef?.persistent ?? false,
+    }),
+    // Baseline captured once at mount (the editor remounts per tab), mirroring the
+    // previous useState initializers; later store churn must not re-seed it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
   );
+  const { control: topLevelControl, setValue: setTopLevelValue } = useForm<TopLevelFormValues>({
+    defaultValues: initialTopLevel,
+  });
+  // Live top-level values. `useWatch` can lag the seeded defaults by a render, so
+  // merge it over the initial values to keep a complete, immediately-correct view
+  // for validation, the Save gate, dirty tracking, and the save payload.
+  const watchedTopLevel = useWatch({ control: topLevelControl });
+  const name = watchedTopLevel.name ?? initialTopLevel.name;
+  const sourceFile =
+    watchedTopLevel.sourceFile !== undefined
+      ? watchedTopLevel.sourceFile
+      : initialTopLevel.sourceFile;
+  const persistent = watchedTopLevel.persistent ?? initialTopLevel.persistent;
+
   const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
   const [selectedType, setSelectedType] = useState(initialTypeAndSettings.typeId);
   const [connSettings, setConnSettings] = useState<Record<string, unknown>>(
     initialTypeAndSettings.settings
   );
-  const [persistent, setPersistent] = useState(existingAgentDef?.persistent ?? false);
 
   /** Agent transport mode: editing the SSH config to reach the agent itself. */
   const isAgentTransportMode =
@@ -380,22 +422,25 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
    * host/user/port, auth (`IdentityFile` → key, else agent), and any resolved
    * jump-host chain. The user reviews and edits before saving.
    */
-  const handleImportConnection = useCallback((conn: SshConfigImportConnection) => {
-    if (conn.name) setName(conn.name);
-    setConnSettings((prev) => {
-      const { keyPath: _prevKey, proxyJump: _prevChain, ...rest } = prev;
-      const next: Record<string, unknown> = {
-        ...rest,
-        host: conn.host,
-        port: conn.port,
-        username: conn.username,
-        authMethod: conn.authMethod,
-      };
-      if (conn.authMethod === "key" && conn.keyPath) next.keyPath = conn.keyPath;
-      if (conn.proxyJump.length > 0) next.proxyJump = conn.proxyJump;
-      return next;
-    });
-  }, []);
+  const handleImportConnection = useCallback(
+    (conn: SshConfigImportConnection) => {
+      if (conn.name) setTopLevelValue("name", conn.name);
+      setConnSettings((prev) => {
+        const { keyPath: _prevKey, proxyJump: _prevChain, ...rest } = prev;
+        const next: Record<string, unknown> = {
+          ...rest,
+          host: conn.host,
+          port: conn.port,
+          username: conn.username,
+          authMethod: conn.authMethod,
+        };
+        if (conn.authMethod === "key" && conn.keyPath) next.keyPath = conn.keyPath;
+        if (conn.proxyJump.length > 0) next.proxyJump = conn.proxyJump;
+        return next;
+      });
+    },
+    [setTopLevelValue]
+  );
 
   /** SSH connections offered as saved-connection jump-host hops (#940), labelled
    * by folder path and excluding the connection being edited (no self-reference). */
@@ -426,9 +471,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   );
   const [icon, setIcon] = useState<string | undefined>(
     existingAgentDef?.icon ?? existingConnection?.icon
-  );
-  const [sourceFile, setSourceFile] = useState<string | null>(
-    existingConnection?.sourceFile ?? null
   );
 
   // Snapshot initial field values so we can compare against them to detect changes.
@@ -489,48 +531,105 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     setEditorDirty,
   ]);
 
-  // Connections, remote agents, and per-agent definitions occupy independent
-  // namespaces — a connection named "Foo" must not collide with an agent
-  // named "Foo". Validate only against peers in the entity being edited.
-  const nameError = useMemo((): string | null => {
-    const trimmed = name.trim().toLowerCase();
-    if (!trimmed) return null;
+  // Zod schema for the top-level metadata (UISF-011). It is a 1:1 translation of
+  // the editor's previous hand-rolled checks: a non-blank name, and a name that
+  // is unique among the right peer set. Connections, remote agents, and per-agent
+  // definitions occupy independent namespaces — a connection named "Foo" must not
+  // collide with an agent named "Foo" — so the uniqueness check runs only against
+  // peers in the entity being edited. `sourceFile` and `persistent` ride along
+  // unvalidated (they had no validation before). The blank-name issue carries a
+  // sentinel message that is filtered out of the rendered error below, so a blank
+  // name disables Save without surfacing inline text — matching the prior behavior
+  // where an empty name showed no error message.
+  const BLANK_NAME_ISSUE = "__blank_name__";
+  const topLevelSchema = useMemo(
+    () =>
+      z
+        .object({
+          name: z.string(),
+          sourceFile: z.string().nullable(),
+          persistent: z.boolean(),
+        })
+        .superRefine((val, ctx) => {
+          const trimmed = val.name.trim().toLowerCase();
+          if (!trimmed) {
+            ctx.addIssue({ code: "custom", path: ["name"], message: BLANK_NAME_ISSUE });
+            return;
+          }
+          if (isAgentDefinitionMode && existingAgent) {
+            const siblings = agentDefinitions[existingAgent.id] ?? [];
+            const editingDefId = existingAgentDef?.id;
+            const clash = siblings.some(
+              (d) => d.name.trim().toLowerCase() === trimmed && d.id !== editingDefId
+            );
+            if (clash) {
+              ctx.addIssue({
+                code: "custom",
+                path: ["name"],
+                message: "A definition with this name already exists on this agent.",
+              });
+            }
+            return;
+          }
+          if (isAgentTransportMode) {
+            const clash = remoteAgents.some(
+              (a) => a.name.trim().toLowerCase() === trimmed && a.id !== editingConnectionId
+            );
+            if (clash) {
+              ctx.addIssue({
+                code: "custom",
+                path: ["name"],
+                message: "A remote agent with this name already exists.",
+              });
+            }
+            return;
+          }
+          const clash = connections.some(
+            (c) =>
+              c.name.trim().toLowerCase() === trimmed &&
+              c.id !== editingConnectionId &&
+              c.folderId === folderId
+          );
+          if (clash) {
+            ctx.addIssue({
+              code: "custom",
+              path: ["name"],
+              message: "A connection with this name already exists in this folder.",
+            });
+          }
+        }),
+    [
+      connections,
+      remoteAgents,
+      agentDefinitions,
+      existingAgent,
+      existingAgentDef,
+      isAgentDefinitionMode,
+      isAgentTransportMode,
+      editingConnectionId,
+      folderId,
+    ]
+  );
 
-    if (isAgentDefinitionMode && existingAgent) {
-      const siblings = agentDefinitions[existingAgent.id] ?? [];
-      const editingDefId = existingAgentDef?.id;
-      const clash = siblings.some(
-        (d) => d.name.trim().toLowerCase() === trimmed && d.id !== editingDefId
-      );
-      return clash ? "A definition with this name already exists on this agent." : null;
+  // Deterministic, synchronous validity straight from the schema (the same
+  // approach ConnectionSettingsForm/CustomRuleEditor use) so errors and the Save
+  // gate update on the same render as the edit and stay testable without awaiting.
+  const topLevelValidity = useMemo(() => {
+    const errors: Record<string, string> = {};
+    const result = topLevelSchema.safeParse({ name, sourceFile, persistent });
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const key = issue.path.join(".");
+        if (!(key in errors)) errors[key] = issue.message;
+      }
     }
+    return { valid: result.success, errors };
+  }, [topLevelSchema, name, sourceFile, persistent]);
 
-    if (isAgentTransportMode) {
-      const clash = remoteAgents.some(
-        (a) => a.name.trim().toLowerCase() === trimmed && a.id !== editingConnectionId
-      );
-      return clash ? "A remote agent with this name already exists." : null;
-    }
-
-    const clash = connections.some(
-      (c) =>
-        c.name.trim().toLowerCase() === trimmed &&
-        c.id !== editingConnectionId &&
-        c.folderId === folderId
-    );
-    return clash ? "A connection with this name already exists in this folder." : null;
-  }, [
-    name,
-    connections,
-    remoteAgents,
-    agentDefinitions,
-    existingAgent,
-    existingAgentDef,
-    isAgentDefinitionMode,
-    isAgentTransportMode,
-    editingConnectionId,
-    folderId,
-  ]);
+  // The blank-name issue disables Save (validity is false) without surfacing
+  // inline text: its sentinel message is filtered out here.
+  const rawNameError = topLevelValidity.errors["name"];
+  const nameError = rawNameError && rawNameError !== BLANK_NAME_ISSUE ? rawNameError : null;
 
   // Client-side validity of the schema-driven connection form (reported upward
   // by ConnectionSettingsForm). Gates Save/Save & Connect while a visible
@@ -544,8 +643,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   }, []);
 
   /** Whether the connection can be saved: named, unique, valid form + jump hosts. */
-  const canSave =
-    !!name.trim() && !nameError && schemaValid && jumpHostValidation.errors.length === 0;
+  const canSave = topLevelValidity.valid && schemaValid && jumpHostValidation.errors.length === 0;
 
   // Category navigation
   const [activeCategory, setActiveCategory] = useState<EditorCategory>("connection");
@@ -1155,14 +1253,21 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         <h3 className="settings-panel__category-title">General</h3>
         <label className="settings-form__field">
           <span className="settings-form__label">Name</span>
-          <Input
-            ref={nameRef}
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Connection name"
-            error={!!nameError}
-            data-testid="connection-editor-name-input"
+          <Controller
+            name="name"
+            control={topLevelControl}
+            render={({ field }) => (
+              <Input
+                ref={nameRef}
+                type="text"
+                value={field.value ?? ""}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="Connection name"
+                error={!!nameError}
+                data-testid="connection-editor-name-input"
+              />
+            )}
           />
           {nameError && (
             <p
@@ -1223,15 +1328,21 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         {!isAnyAgentMode && enabledExternalFiles.length > 0 && (
           <label className="settings-form__field">
             <span className="settings-form__label">Storage File</span>
-            <Select
-              value={sourceFile ?? DEFAULT_STORAGE_FILE}
-              onChange={(v) => setSourceFile(v === DEFAULT_STORAGE_FILE ? null : v)}
-              options={[
-                { value: DEFAULT_STORAGE_FILE, label: "Default (connections.json)" },
-                ...enabledExternalFiles.map((f) => ({ value: f.path, label: f.path })),
-              ]}
-              aria-label="Storage File"
-              data-testid="connection-editor-source-file"
+            <Controller
+              name="sourceFile"
+              control={topLevelControl}
+              render={({ field }) => (
+                <Select
+                  value={field.value ?? DEFAULT_STORAGE_FILE}
+                  onChange={(v) => field.onChange(v === DEFAULT_STORAGE_FILE ? null : v)}
+                  options={[
+                    { value: DEFAULT_STORAGE_FILE, label: "Default (connections.json)" },
+                    ...enabledExternalFiles.map((f) => ({ value: f.path, label: f.path })),
+                  ]}
+                  aria-label="Storage File"
+                  data-testid="connection-editor-source-file"
+                />
+              )}
             />
           </label>
         )}
@@ -1349,11 +1460,17 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           <h3 className="settings-panel__category-title">Session</h3>
           <div className="settings-form__field">
             <span className="settings-form__label">Persistent session</span>
-            <Toggle
-              checked={persistent}
-              onCheckedChange={setPersistent}
-              aria-label="Persistent session"
-              data-testid="connection-editor-persistent"
+            <Controller
+              name="persistent"
+              control={topLevelControl}
+              render={({ field }) => (
+                <Toggle
+                  checked={field.value ?? false}
+                  onCheckedChange={field.onChange}
+                  aria-label="Persistent session"
+                  data-testid="connection-editor-persistent"
+                />
+              )}
             />
             <span className="settings-form__hint">
               Keep the session alive when the tab is closed
