@@ -155,6 +155,7 @@ if [ "$SKIP_SERIAL" -eq 0 ]; then
     socat -d -d \
         "pty,raw,echo=0,link=$PTY_A" \
         "pty,raw,echo=0,link=$PTY_B" &>/dev/null &
+    # shellcheck disable=SC2034  # consumed indirectly by cleanup()'s ${!pid_var} loop
     SOCAT_SERIAL_PID=$!
 
     WAITED=0
