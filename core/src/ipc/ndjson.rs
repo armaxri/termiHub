@@ -262,10 +262,17 @@ mod tests {
         assert_eq!(line.trim(), "second line");
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn read_line_reassembles_partial_reads() {
         // Simulate a line delivered across two separate writes: the buffered
         // reader must reassemble it into a single framed line.
+        //
+        // Timing is deterministic, not wall-clock: `start_paused` runs the
+        // sleep on tokio's virtual clock, which only auto-advances once every
+        // task is parked. The first flush wakes the reader, so it consumes the
+        // partial "hel" (exercising the reassembly path) and parks waiting for
+        // more before the clock advances and the remainder is written. This
+        // sequences the two chunks without a real-time delay (TBE-012).
         let (client, server) = tokio::io::duplex(64);
         let writer = tokio::spawn(async move {
             use tokio::io::AsyncWriteExt;
@@ -524,12 +531,17 @@ mod tests {
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn read_line_resumable_is_cancellation_safe() {
         // The #1559 property: a partial line survives the future being dropped
         // (as when a `select!` notification branch wins), because `pending`
         // lives outside the future. Simulated by letting a sleep branch win
         // while only the front of the line has arrived, then delivering the rest.
+        //
+        // `start_paused` keeps this deterministic and instant: the read future
+        // parks (no newline yet) and the sleep is the only live timer, so the
+        // virtual clock auto-advances and the sleep branch always wins — no
+        // real 100ms wall-clock wait, no timing flake (TBE-012).
         let (mut client, server) = tokio::io::duplex(1024);
         let mut reader = BufReader::new(server);
         let mut pending = Vec::new();
