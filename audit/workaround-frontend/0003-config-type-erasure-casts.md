@@ -18,7 +18,8 @@ evidence:
   - src/store/appStore.ts:5184
   - src/store/appStore.ts:5192
   - src/components/TunnelEditor/tunnelValidation.ts:35
-status: open
+status: partial
+resolution: "#3084 — duplicate of FEC-008 — same typed-accessor work; remainder needs discriminated union #3083/DUP-030"
 ---
 
 ## What
