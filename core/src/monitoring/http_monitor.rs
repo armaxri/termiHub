@@ -767,7 +767,11 @@ impl PollSchedule {
         // multiplier form because `interval * min(2^f, m) == min(interval*2^f,
         // interval*m)` for a positive interval.
         let cap = self.interval.saturating_mul(BACKOFF_MAX_MULTIPLIER);
-        crate::util::backoff::capped_exponential_delay(self.interval, self.consecutive_failures, cap)
+        crate::util::backoff::capped_exponential_delay(
+            self.interval,
+            self.consecutive_failures,
+            cap,
+        )
     }
 }
 

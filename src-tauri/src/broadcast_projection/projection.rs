@@ -65,7 +65,9 @@ use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::broadcast_projection::store::{BroadcastScope, BroadcastStore};
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    optional_str, required_bool, required_str, HandlerRegistry, Intent, ProducedRegion, Projector,
+};
 
 /// The projection region id for a client's broadcast membership
 /// (`broadcast@<clientId>`).
@@ -214,34 +216,6 @@ fn optional_scope(intent: &Intent, key: &str) -> Result<Option<BroadcastScope>, 
             parse_scope(s).map(Some)
         }
     }
-}
-
-/// Extract a required boolean field from an intent payload.
-fn required_bool(intent: &Intent, key: &str) -> Result<bool, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_bool)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract an optional string field (absent → `None`).
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
 }
 
 /// Extract a required array-of-strings field (e.g. `targetTabIds`).

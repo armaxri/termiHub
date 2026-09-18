@@ -49,7 +49,9 @@ use std::sync::Arc;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    optional_str, required_str, HandlerRegistry, Intent, ProducedRegion, Projector,
+};
 use crate::restore_cohort_projection::store::{RestoreCohortStore, TabOutcome};
 
 /// The projection region id for a client's restore cohort
@@ -126,16 +128,6 @@ fn required_outcome(intent: &Intent) -> Result<TabOutcome, (String, String)> {
     }
 }
 
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
 /// Extract a required array-of-strings field (e.g. `pendingTabIds`).
 fn required_str_array(intent: &Intent, key: &str) -> Result<Vec<String>, (String, String)> {
     let arr = intent
@@ -160,15 +152,6 @@ fn optional_usize(intent: &Intent, key: &str) -> usize {
         .and_then(Value::as_u64)
         .map(|n| n as usize)
         .unwrap_or(0)
-}
-
-/// Extract an optional string field (e.g. a toast id); absent → `None`.
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
 }
 
 #[cfg(test)]

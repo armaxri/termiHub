@@ -53,7 +53,10 @@ use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
 
 use crate::commands::projection::ProjectionState;
-use crate::projection::{compute_ops, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    compute_ops, required_bool, required_str, DiffOp, HandlerRegistry, Intent, ProducedRegion,
+    Projector,
+};
 use crate::transfers_projection::store::{
     RegionDelta, TransferEntry, TransferProgress, TransferSeed, TransferSnapshot, TransferStore,
 };
@@ -369,25 +372,6 @@ fn parse_replace(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     Ok((queue, minimized))
-}
-
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract a required bool field from an intent payload.
-fn required_bool(intent: &Intent, key: &str) -> Result<bool, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_bool)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
 }
 
 #[cfg(test)]

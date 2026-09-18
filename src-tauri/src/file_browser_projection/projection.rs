@@ -72,7 +72,9 @@ use tauri::{AppHandle, Manager};
 use crate::file_browser_projection::store::{
     ClientView, Clipboard, FileBrowserKind, FileBrowserStore, FileEntry,
 };
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    optional_str, required_str, HandlerRegistry, Intent, ProducedRegion, Projector,
+};
 
 /// The projection region id for a client's file browser
 /// (`file-browser@<clientId>`).
@@ -242,25 +244,6 @@ fn parse_clipboard(intent: &Intent) -> Result<Option<Clipboard>, (String, String
                 )
             }),
     }
-}
-
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract an optional string field (e.g. a failure reason); absent → `None`.
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
 }
 
 #[cfg(test)]

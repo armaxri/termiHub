@@ -67,7 +67,10 @@ use crate::agents_projection::store::{
 use crate::commands::projection::ProjectionState;
 use crate::connection::config::SavedRemoteAgent;
 use crate::connection::manager::ConnectionManager;
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    bad_payload, optional_str, optional_typed, required_str, required_usize, HandlerRegistry,
+    Intent, ProducedRegion, Projector,
+};
 
 /// The projection region id for the agents domain (shared, per Open Design
 /// Decision #4).
@@ -375,44 +378,10 @@ fn store_of(app_handle: &AppHandle) -> Result<Arc<AgentsStore>, (String, String)
         })
 }
 
-/// Build a `bad_payload` rejection with a message.
-fn bad_payload(message: &str) -> (String, String) {
-    ("bad_payload".to_string(), message.to_string())
-}
-
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| bad_payload(&format!("missing '{key}'")))
-}
-
-/// Extract an optional string field; absent → `None`.
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
-
 /// Extract an optional JSON field; absent → `Value::Null` (an agent added without
 /// a config carries a null blob, matching an unset frontend field).
 fn optional_value(intent: &Intent, key: &str) -> Value {
     intent.payload.get(key).cloned().unwrap_or(Value::Null)
-}
-
-/// Extract a required array index (`usize`) field from an intent payload.
-fn required_usize(intent: &Intent, key: &str) -> Result<usize, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_u64)
-        .map(|n| n as usize)
-        .ok_or_else(|| bad_payload(&format!("missing '{key}'")))
 }
 
 /// Parse the required `state` field as an [`AgentConnectionState`].
@@ -454,21 +423,6 @@ fn required_list<T: serde::de::DeserializeOwned>(
         .get(key)
         .ok_or_else(|| bad_payload(&format!("missing '{key}'")))?;
     serde_json::from_value(value.clone()).map_err(|e| bad_payload(&format!("invalid {key}: {e}")))
-}
-
-/// Parse an optional typed field, treating an absent or `null` value as the type's
-/// default (an empty list/map). Lets a mirror that clears a whole sub-slice be
-/// expressed by omitting the field; a present-but-malformed field is a
-/// `bad_payload` rejection that advances nothing.
-fn optional_typed<T: serde::de::DeserializeOwned + Default>(
-    intent: &Intent,
-    key: &str,
-) -> Result<T, (String, String)> {
-    match intent.payload.get(key) {
-        None | Some(Value::Null) => Ok(T::default()),
-        Some(value) => serde_json::from_value(value.clone())
-            .map_err(|e| bad_payload(&format!("invalid {key}: {e}"))),
-    }
 }
 
 /// Parse an `agent.replace` payload into the whole-slice snapshot the render-cut
