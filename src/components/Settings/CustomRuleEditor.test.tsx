@@ -118,6 +118,50 @@ describe("CustomRuleEditor", () => {
     expect((byTestId("custom-rule-pattern") as HTMLInputElement).value).toBe("foo");
   });
 
+  it("blocks Save and marks the color field invalid for a non-hex color", () => {
+    render();
+    setInput(byTestId("custom-rule-name"), "colored");
+    setInput(byTestId("custom-rule-pattern"), "INFO");
+    // Valid so far.
+    expect((byTestId("custom-rule-save") as HTMLButtonElement).disabled).toBe(false);
+
+    setInput(byTestId("custom-rule-color-hex"), "not-a-color");
+    expect(byTestId("custom-rule-color-hex").getAttribute("aria-invalid")).toBe("true");
+    expect((byTestId("custom-rule-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("populates flag defaults for a new rule (case-sensitive on, whole-word off)", () => {
+    render();
+    expect(byTestId("custom-rule-case-sensitive").getAttribute("aria-checked")).toBe("true");
+    expect(byTestId("custom-rule-whole-word").getAttribute("aria-checked")).toBe("false");
+  });
+
+  it("carries toggled flag and style edits through to the saved rule", () => {
+    const { onSave } = render();
+    setInput(byTestId("custom-rule-name"), "flags");
+    setInput(byTestId("custom-rule-pattern"), "INFO");
+    // Flip whole-word on and case-sensitive off, and enable bold.
+    act(() => byTestId("custom-rule-whole-word").click());
+    act(() => byTestId("custom-rule-case-sensitive").click());
+    act(() => byTestId("custom-rule-bold").click());
+    act(() => byTestId("custom-rule-save").click());
+
+    const saved = onSave.mock.calls[0][0] as HighlightRule;
+    expect(saved.wholeWord).toBe(true);
+    expect(saved.caseSensitive).toBe(false);
+    expect(saved.style.bold).toBe(true);
+  });
+
+  it("preserves id and priority from the edited rule on save", () => {
+    const rule = createCustomRule({ name: "Keep", pattern: "foo", priority: 7 });
+    const { onSave } = render({ rule });
+    act(() => byTestId("custom-rule-save").click());
+
+    const saved = onSave.mock.calls[0][0] as HighlightRule;
+    expect(saved.id).toBe(rule.id);
+    expect(saved.priority).toBe(7);
+  });
+
   it("highlights matching text in the preview", () => {
     render();
     // A pattern that matches the sample's "ERROR" keyword.
