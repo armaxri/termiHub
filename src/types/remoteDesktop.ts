@@ -13,56 +13,23 @@ export const MAX_RECONNECT_ATTEMPTS = 3;
 /** How the remote framebuffer fills the tab. */
 export type ScaleMode = "fit" | "pixel" | "match";
 
-/**
- * The shared graphical-session lifecycle state (matches Rust `GraphicalState`,
- * serialized camelCase). The frontend renders overlays and the tab state-dot
- * purely from this.
- */
-export type GraphicalSessionState =
-  | "connecting"
-  | "authenticating"
-  | "active"
-  | "resizing"
-  | "disconnected"
-  | "reconnecting"
-  | "serverClosed"
-  | "authFailed"
-  | "connectFailed"
-  | "closed";
+// The core graphical DTOs are generated from their Rust source of truth
+// (core/src/connection/graphical.rs) via ts-rs (audit DUP-030 / MOCK-010, ts-rs
+// rollout #3088). `FrameUpdate`/`CursorUpdate`/`GraphicalSessionState` are also
+// referenced within this file (the `extends` payloads, the state helpers), so
+// they are imported locally and re-exported; `DirtyRect`/`CursorShape` are only
+// consumed externally and are re-exported directly.
+//
+// `GraphicalSessionState` is the frontend's historical name for the Rust
+// `GraphicalState` string union — the shared graphical-session lifecycle state
+// the frontend renders overlays and the tab state-dot from.
+import type { GraphicalState as GraphicalSessionState } from "./generated/GraphicalState";
+import type { FrameUpdate } from "./generated/FrameUpdate";
+import type { CursorUpdate } from "./generated/CursorUpdate";
 
-/** A decoded dirty rectangle: tightly-packed RGBA (`width*height*4`) at (x,y). */
-export interface DirtyRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  /** RGBA bytes; reconstructed into an `ImageData` for a canvas blit. */
-  data: number[];
-}
-
-/** A framebuffer update: full dimensions plus the changed rectangles. */
-export interface FrameUpdate {
-  width: number;
-  height: number;
-  rects: DirtyRect[];
-}
-
-/** An RGBA cursor bitmap with hotspot. */
-export interface CursorShape {
-  width: number;
-  height: number;
-  hotspotX: number;
-  hotspotY: number;
-  data: number[];
-}
-
-/** A cursor position / shape update. */
-export interface CursorUpdate {
-  x: number;
-  y: number;
-  visible: boolean;
-  shape?: CursorShape;
-}
+export type { GraphicalSessionState, FrameUpdate, CursorUpdate };
+export type { DirtyRect } from "./generated/DirtyRect";
+export type { CursorShape } from "./generated/CursorShape";
 
 /**
  * A protocol-agnostic input event sent to the backend (matches Rust
