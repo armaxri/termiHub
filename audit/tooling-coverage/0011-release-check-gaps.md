@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: scripts / release
 evidence:
   - scripts/release-check.sh:1
-status: open
+status: partial
+resolution: "develop — reclaim-partial: unified-coverage step added scripts/release-check.sh:116-130 (advisory). Still missing: no system/integration tests, no `pnpm tauri build`/smoke-test.sh in release-check, TODO/FIXME/HACK scan still warn-only (:166-181)"
 ---
 
 ## What

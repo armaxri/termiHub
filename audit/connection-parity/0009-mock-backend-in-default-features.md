@@ -10,7 +10,8 @@ evidence:
   - src-tauri/Cargo.toml:18
   - src-tauri/src/session/registry.rs:81
   - core/src/backends/mock_remote_desktop.rs:258
-status: open
+status: fixed
+resolution: "develop — reclaim: mock-remote-desktop already OUT of default build (src-tauri/Cargo.toml:18 default=[ftp,vnc,rdp-sidecar]); documented DEAD-001 rationale + opt-in --features mock-remote-desktop for E2E only. Registration #[cfg]-gated. Verified on fresh develop"
 ---
 
 ## What
