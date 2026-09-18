@@ -40,8 +40,24 @@ unmaintained = "none"
 # - RUSTSEC-2023-0071: Marvin timing sidechannel in `rsa` (transitive via
 #   ssh-key). We only extract raw RSA key components and rebuild via OpenSSL;
 #   we never decrypt through this crate, so the sidechannel does not apply.
+#
+# The `unsound` entries below are non-actionable transitive advisories accepted
+# as a release sign-off (#3054; findings SUP-003/004/006). They are unsoundness
+# NOTICES on upstream-pinned crates (git2, event-listener, the Tauri/GTK3 glib
+# bindings), not exploitable vulnerabilities in our usage, and no upstream fix
+# exists. Kept in lockstep with .cargo/audit.toml. Unmaintained advisories are
+# NOT listed here — they are globally ungated above via `unmaintained = "none"`.
+# Real vulnerabilities and yanked crates are NOT ignored and still fail CI.
 ignore = [
     "RUSTSEC-2023-0071",
+    # event-listener: unsound (!Send tags cross threads via StackSlot), transitive.
+    "RUSTSEC-2026-0221",
+    # git2: unsound (UB in Remote::list()), Tauri/git transitive.
+    "RUSTSEC-2026-0183",
+    # git2: unsound (UB via Signature from buffer-created BlameHunk), transitive.
+    "RUSTSEC-2026-0184",
+    # glib: unsound VariantStrIter iterator impls, Tauri/GTK3 binding transitive.
+    "RUSTSEC-2024-0429",
 ]
 
 [licenses]

@@ -56,6 +56,13 @@ ignore = [
     # bump in the follow-up filed with PKG-013.
     "RUSTSEC-2026-0194",
     "RUSTSEC-2026-0195",
+    # RUSTSEC-2024-0429: unsoundness in `glib`'s `VariantStrIter` Iterator /
+    # DoubleEndedIterator impls. Non-actionable transitive advisory accepted as
+    # a release sign-off (#3054; findings SUP-003/004/006). `glib` is pinned by
+    # the Tauri/GTK3 clipboard-files -> gtk 0.18 binding stack; it is an
+    # unsoundness NOTICE, not an exploitable vulnerability in our usage, and no
+    # upstream fix exists on that line. Mirrors the workspace audit/deny ignores.
+    "RUSTSEC-2024-0429",
 ]
 
 [licenses]
