@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/auto-close-issues.yml:9
   - .github/workflows/auto-close-issues.yml:24
   - .github/workflows/auto-close-issues.yml:35
-status: open
+status: fixed
+resolution: "#3107 — auto-close-issues.yml (runs post-merge on pull_request:closed with issues:write) checked out at the default ref = the merged PR head, so it ran the PR-author-controlled parse-issue-refs.mjs with the workflow token. Hardened: ref=github.event.pull_request.base.ref (trusted base) + sparse-checkout scripts + persist-credentials:false + actions/checkout SHA-pin bump (matches repo convention) + explicit contents:read least-priv. Behavior preserved: parse-issue-refs.mjs reads issue refs from the EVENT PAYLOAD (PR_TITLE/PR_BODY env) not the tree, so Closes #N parsing/closing unchanged. actionlint clean"
 ---
 
 ## What

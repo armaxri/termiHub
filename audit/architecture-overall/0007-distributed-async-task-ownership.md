@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/session_projection/timer.rs:106
   - src-tauri/src/lib.rs:235
   - src-tauri/src/session/graphical_manager.rs:146
-status: open
+status: partial
+resolution: "#3106 — bounded first slice of owned-task/deterministic-shutdown: new src-tauri/src/app_tasks.rs AppTasks = tokio_util TaskTracker + app CancellationToken in managed state; spawn via tauri::async_runtime::spawn(track_future) NOT bare tokio::spawn (avoids off-runtime panic, #2503 pattern). run_app_teardown calls shutdown(5s) = cancel token + close tracker + timeout-bounded wait (deadlock-safe: teardown task itself untracked; logs Completed/TimedOut). Adopted 2 clearly-app-lifetime loops (spawn IPC accept, connections.json watcher poll). DEFERRED session/agent/monitoring/tunnel (session-scoped, need per-session tokens) + request-scoped cmd tasks (cancellation could truncate critical work) → follow-up #3105. 4 paused-clock unit tests, 2011 lib tests pass"
 ---
 
 ## What
