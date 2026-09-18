@@ -10,7 +10,8 @@ evidence:
   - agent/src/registry_daemon/process.rs:236
   - agent/src/daemon/process.rs:194
   - agent/src/registry_daemon/client.rs:224
-status: open
+status: partial
+resolution: "#3098 — daemon-socket peer-cred check: unix half LANDED in shared core::ipc::local_socket.rs unix_impl, gated on verify_peer_uid flag set when bound CurrentUserOnly (covers spawn+recovery accepts via shared DaemonListener::accept + registry daemon; desktop rendezvous uses Inherit, untouched). Reads peer uid via SO_PEERCRED(Linux)/getpeereid(macOS); positively-different uid dropped+logged, loop keeps serving. FAILS OPEN on cred-read error + matches euid|ruid so same-user reconnect NOT broken (test-guarded). Windows named-pipe SID check DEFERRED → #3097 Ready2Implement"
 ---
 
 ## What

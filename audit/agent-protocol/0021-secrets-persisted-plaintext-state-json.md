@@ -10,7 +10,8 @@ evidence:
   - agent/src/state/persistence.rs:66
   - agent/src/session/manager.rs:519
   - agent/src/session/manager.rs:244
-status: open
+status: fixed
+resolution: "#3098 — agent state.json (holds full per-session connection JSON) now written owner-only 0o600 on unix via explicit set_permissions after the atomic write (persistence.rs) + regression test. Was already incidentally 0o600 via #2366 tempfile-preserve-on-rename; fix makes the invariant explicit + no longer dependent on tempfile internals, no world-readable window. Windows = documented no-op (NTFS %APPDATA% ACLs). Secret-stripping (settings holding full connection JSON) deferred as product-adjacent"
 ---
 
 ## What
