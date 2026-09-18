@@ -144,6 +144,19 @@ describe("FileBrowser – virtualization", () => {
     expect(container.querySelector('[data-testid="file-row-item-4999"]')).toBeNull();
   });
 
+  it("positions rows on the 28px single-line grid (ROW_HEIGHT stays in sync with the CSS)", async () => {
+    // 40 rows fit inside the stubbed 2000px window, so all are mounted and the
+    // virtualizer lays each out with `translateY(index * ROW_HEIGHT)`. A 28px
+    // single-line row (down from the reverted two-line 40px, #2798) must be
+    // reflected here or the windowing math drifts from the rendered row height.
+    await renderLocalBrowser(makeEntries(40));
+    const secondRow = container
+      .querySelector('[data-testid="file-row-item-0001"]')
+      ?.closest(".file-browser__virtual-row") as HTMLElement | null;
+    expect(secondRow).toBeTruthy();
+    expect(secondRow?.style.transform).toBe("translateY(28px)");
+  });
+
   it("registers the container-level OS file-drop handler while virtualized", async () => {
     await renderLocalBrowser(makeEntries(5000));
     // Drag-and-drop is wired on the outer container, not per row, so it must
