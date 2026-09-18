@@ -1,4 +1,7 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Monitor, Server, AlertTriangle, Link2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
@@ -27,7 +30,7 @@ import {
 import { bestSshViaForAgent, deriveCompanion, findCompanion } from "@/utils/tunnelChain";
 import { TunnelDiagram } from "./TunnelDiagram";
 import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
-import { validateTunnelType } from "./tunnelValidation";
+import { validateTunnelType, type TunnelFieldErrors } from "./tunnelValidation";
 import { newId } from "@/services/transport/ids";
 import "./TunnelEditor.css";
 
@@ -78,6 +81,76 @@ function defaultTunnelType(type: "local" | "remote" | "dynamic"): TunnelType {
   }
 }
 
+/** Editing shape of a {@link TunnelConfig} (the fields the form owns). */
+interface TunnelFormState {
+  name: string;
+  sshConnectionId: string;
+  tunnelType: TunnelType;
+  host: RunLocation;
+  autoStart: boolean;
+  reconnectOnDisconnect: boolean;
+}
+
+/**
+ * Client-side validation schema (UX gate only; the same checks the editor
+ * previously ran by hand, translated 1:1 into zod):
+ *
+ * - `name` must be non-empty once trimmed (UX-022) — gates Save without an
+ *   inline error, matching the ConnectionEditor.
+ * - `sshConnectionId` must resolve to a saved SSH connection.
+ * - the forwarding host/port fields are validated by the shared
+ *   {@link validateTunnelType} (non-empty hosts, ports in 1–65535, blank
+ *   rejected) — its per-field messages are re-emitted as zod issues under
+ *   `tunnelType.config.*` so the inline `Field` errors stay byte-identical and
+ *   the discriminated `local`/`remote`/`dynamic` union only validates the
+ *   fields present on the active type.
+ *
+ * `tunnelType` and `host` are tagged unions carried opaquely; their real
+ * validation lives in the `superRefine` above.
+ */
+const tunnelFormSchema = z
+  .object({
+    name: z.string(),
+    sshConnectionId: z.string(),
+    tunnelType: z.custom<TunnelType>(),
+    host: z.custom<RunLocation>(),
+    autoStart: z.boolean(),
+    reconnectOnDisconnect: z.boolean(),
+  })
+  .superRefine((form, ctx) => {
+    if (form.name.trim() === "") {
+      ctx.addIssue({ code: "custom", path: ["name"], message: "Name is required." });
+    }
+    if (!form.sshConnectionId) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["sshConnectionId"],
+        message: "An SSH connection is required.",
+      });
+    }
+    const { errors } = validateTunnelType(form.tunnelType);
+    for (const [field, message] of Object.entries(errors)) {
+      if (message) {
+        ctx.addIssue({ code: "custom", path: ["tunnelType", "config", field], message });
+      }
+    }
+  });
+
+/**
+ * Tab-based editor for an SSH tunnel: name, SSH connection, run-location host,
+ * tunnel type (local `-L` / remote `-R` / dynamic `-D`), the type-specific
+ * host/port forwarding fields, and the auto-start / reconnect toggles, plus a
+ * live endpoint diagram, reachability warning, and the "chain a hop" affordance.
+ *
+ * Backed by react-hook-form + zod (see {@link tunnelFormSchema}). Validity and
+ * the per-field errors are derived synchronously from the schema so Save
+ * re-gates on the same render as an edit (and stays testable without awaiting
+ * react-hook-form's async error proxy). The scalar fields are Controller-wired;
+ * the discriminated `tunnelType` union and the `host` run-location are driven
+ * imperatively through `setValue` because they change shape/several fields at
+ * once (type switch, "Widen bind", chaining), matching the previous hand-rolled
+ * behavior exactly.
+ */
 export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const tunnels = useAppStore((s) => s.tunnels);
   const { connections } = useProjectedConnections();
@@ -94,120 +167,141 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   // SSH connections only
   const sshConnections = connections.filter((c) => c.config.type === "ssh");
 
-  const [name, setName] = useState(existingTunnel?.name ?? "");
-  const [sshConnectionId, setSshConnectionId] = useState(
-    existingTunnel?.sshConnectionId ?? sshConnections[0]?.id ?? ""
-  );
-  const [tunnelType, setTunnelType] = useState<TunnelType>(
-    existingTunnel?.tunnelType ?? defaultTunnelType("local")
-  );
-  // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
-  // computer — agent hosting is opt-in.
-  const [host, setHost] = useState<RunLocation>(existingTunnel?.host ?? THIS_COMPUTER);
-  const [autoStart, setAutoStart] = useState(existingTunnel?.autoStart ?? false);
-  const [reconnect, setReconnect] = useState(existingTunnel?.reconnectOnDisconnect ?? false);
+  const { control, getValues, setValue, reset } = useForm<TunnelFormState>({
+    defaultValues: {
+      name: existingTunnel?.name ?? "",
+      sshConnectionId: existingTunnel?.sshConnectionId ?? sshConnections[0]?.id ?? "",
+      tunnelType: existingTunnel?.tunnelType ?? defaultTunnelType("local"),
+      // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
+      // computer — agent hosting is opt-in.
+      host: existingTunnel?.host ?? THIS_COMPUTER,
+      autoStart: existingTunnel?.autoStart ?? false,
+      reconnectOnDisconnect: existingTunnel?.reconnectOnDisconnect ?? false,
+    },
+    resolver: zodResolver(tunnelFormSchema),
+    mode: "onChange",
+  });
 
-  // Sync if tunnel ID changes
+  // Sync if the tunnel ID changes (reload the working copy from the store).
   useEffect(() => {
     if (existingTunnel) {
-      setName(existingTunnel.name);
-      setSshConnectionId(existingTunnel.sshConnectionId);
-      setTunnelType(existingTunnel.tunnelType);
-      setHost(existingTunnel.host ?? THIS_COMPUTER);
-      setAutoStart(existingTunnel.autoStart);
-      setReconnect(existingTunnel.reconnectOnDisconnect);
+      reset({
+        name: existingTunnel.name,
+        sshConnectionId: existingTunnel.sshConnectionId,
+        tunnelType: existingTunnel.tunnelType,
+        host: existingTunnel.host ?? THIS_COMPUTER,
+        autoStart: existingTunnel.autoStart,
+        reconnectOnDisconnect: existingTunnel.reconnectOnDisconnect,
+      });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [existingTunnel]);
 
-  const handleTypeChange = useCallback(
-    (type: "local" | "remote" | "dynamic") => {
-      if (tunnelType.type !== type) {
-        setTunnelType(defaultTunnelType(type));
-      }
-    },
-    [tunnelType.type]
-  );
+  // Subscribe to every field so validity + the derived diagram/endpoint/
+  // reachability reads re-run on each edit, then take a complete, fresh snapshot
+  // from `getValues()` (which reflects `setValue` synchronously).
+  useWatch({ control });
+  const form = getValues();
+  // Pull the tagged unions into locals so the `isAgentHost` type guard narrows
+  // through into the closures below (control-flow narrowing of a property access
+  // does not persist into nested callbacks; a `const` local's does).
+  const { tunnelType, host } = form;
 
-  const updateConfig = useCallback((field: string, value: string | number | "") => {
-    setTunnelType((prev) => {
-      switch (prev.type) {
-        case "local":
-          return { type: "local", config: { ...prev.config, [field]: value } };
-        case "remote":
-          return { type: "remote", config: { ...prev.config, [field]: value } };
-        case "dynamic":
-          return { type: "dynamic", config: { ...prev.config, [field]: value } };
-      }
-    });
-  }, []);
+  const handleTypeChange = (type: "local" | "remote" | "dynamic") => {
+    if (getValues("tunnelType").type !== type) {
+      setValue("tunnelType", defaultTunnelType(type));
+    }
+  };
 
-  // Inline validation of the forwarding host/port fields. Blocks Save while any
-  // visible field is invalid. `tunnelType` is a fresh object on every edit, so
-  // memoizing the check would never hit; it iterates only a few fields.
-  const { errors, valid } = validateTunnelType(tunnelType);
-  // Require a non-blank name too (UX-022): Save is disabled while the name is
-  // empty rather than silently persisting the tunnel as "Untitled Tunnel" —
-  // matching the ConnectionEditor, which gates Save on `name.trim()`.
-  const canSave = !!name.trim() && !!sshConnectionId && valid;
+  // Update a single forwarding host/port field by rebuilding the whole tagged
+  // `tunnelType` object — the discriminated union is carried as one form value
+  // (rather than per-leaf paths) so a type switch never leaks stale leaves.
+  const updateConfig = (field: string, value: string | number | "") => {
+    const prev = getValues("tunnelType");
+    let next: TunnelType;
+    switch (prev.type) {
+      case "local":
+        next = { type: "local", config: { ...prev.config, [field]: value } };
+        break;
+      case "remote":
+        next = { type: "remote", config: { ...prev.config, [field]: value } };
+        break;
+      case "dynamic":
+        next = { type: "dynamic", config: { ...prev.config, [field]: value } };
+        break;
+    }
+    setValue("tunnelType", next);
+  };
+
+  // Deterministic, synchronous validity + per-field errors derived straight from
+  // the schema — the same approach CustomRuleEditor / EmbeddedServerDialog use.
+  const { valid: canSave, errors } = useMemo<{ valid: boolean; errors: TunnelFieldErrors }>(() => {
+    const result = tunnelFormSchema.safeParse(form);
+    const fieldErrors: TunnelFieldErrors = {};
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const key = issue.path[issue.path.length - 1];
+        if (typeof key === "string" && !(key in fieldErrors)) fieldErrors[key] = issue.message;
+      }
+    }
+    return { valid: result.success, errors: fieldErrors };
+    // `form` is a fresh snapshot every render; key on its serialization so the
+    // check only recomputes when a value actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(form)]);
 
   // Build the parent `TunnelConfig` from the current editor state. Shared by
   // Save and by "Chain a hop" (which must persist the parent before linking a
   // companion to its id). The id is stable across both so chaining a freshly
   // built tunnel links to the same row Save creates.
-  const buildConfig = useCallback(
-    (): TunnelConfig => ({
-      id: existingTunnel?.id ?? newId("tun"),
-      // Save is disabled while the name is blank (UX-022), so this fallback only
-      // ever guards the non-Save caller (chaining a hop).
-      name: name.trim() || "Untitled Tunnel",
-      sshConnectionId,
-      tunnelType,
-      host,
-      autoStart,
-      reconnectOnDisconnect: reconnect,
-      companionOf: existingTunnel?.companionOf,
-    }),
-    [existingTunnel, name, sshConnectionId, tunnelType, host, autoStart, reconnect]
-  );
+  const buildConfig = (values: TunnelFormState): TunnelConfig => ({
+    id: existingTunnel?.id ?? newId("tun"),
+    // Save is disabled while the name is blank (UX-022), so this fallback only
+    // ever guards the non-Save caller (chaining a hop).
+    name: values.name.trim() || "Untitled Tunnel",
+    sshConnectionId: values.sshConnectionId,
+    tunnelType: values.tunnelType,
+    host: values.host,
+    autoStart: values.autoStart,
+    reconnectOnDisconnect: values.reconnectOnDisconnect,
+    companionOf: existingTunnel?.companionOf,
+  });
 
-  const handleSave = useCallback(
-    async (andStart: boolean) => {
-      const config = buildConfig();
+  const handleSave = async (andStart: boolean) => {
+    const config = buildConfig(getValues());
 
-      try {
-        await saveTunnel(config);
-        if (andStart) {
-          startTunnel(config.id).catch((err) => {
-            frontendLog("tunnel_editor", `Failed to start tunnel after save: ${err}`);
-            toast.error("Failed to start tunnel");
-          });
-        } else {
-          // Plain Save gave no feedback before (UX-022) — the only signal was the
-          // tab closing. Confirm it, matching Duplicate/Delete/Start. Save & Start
-          // skips this: `startTunnel` owns the feedback for that path.
-          toast.success(`Saved tunnel "${config.name}"`);
-        }
-        // Find panelId for this tab and close it
-        const { findLeafByTab } = await import("@/utils/panelTree");
-        const leaf = findLeafByTab(rootPanel, tabId);
-        if (leaf) {
-          closeTab(tabId, leaf.id);
-        }
-      } catch (err) {
-        frontendLog("tunnel_editor", `Failed to save tunnel: ${err}`);
-        throw err instanceof Error ? err : new Error("Failed to save tunnel");
+    try {
+      await saveTunnel(config);
+      if (andStart) {
+        startTunnel(config.id).catch((err) => {
+          frontendLog("tunnel_editor", `Failed to start tunnel after save: ${err}`);
+          toast.error("Failed to start tunnel");
+        });
+      } else {
+        // Plain Save gave no feedback before (UX-022) — the only signal was the
+        // tab closing. Confirm it, matching Duplicate/Delete/Start. Save & Start
+        // skips this: `startTunnel` owns the feedback for that path.
+        toast.success(`Saved tunnel "${config.name}"`);
       }
-    },
-    [buildConfig, saveTunnel, startTunnel, closeTab, rootPanel, tabId]
-  );
+      // Find panelId for this tab and close it
+      const { findLeafByTab } = await import("@/utils/panelTree");
+      const leaf = findLeafByTab(rootPanel, tabId);
+      if (leaf) {
+        closeTab(tabId, leaf.id);
+      }
+    } catch (err) {
+      frontendLog("tunnel_editor", `Failed to save tunnel: ${err}`);
+      throw err instanceof Error ? err : new Error("Failed to save tunnel");
+    }
+  };
 
-  const handleCancel = useCallback(async () => {
+  const handleCancel = async () => {
     const { findLeafByTab } = await import("@/utils/panelTree");
     const leaf = findLeafByTab(rootPanel, tabId);
     if (leaf) {
       closeTab(tabId, leaf.id);
     }
-  }, [rootPanel, tabId, closeTab]);
+  };
 
   const sshOptions = sshConnections.map((c) => ({ value: c.id, label: c.name }));
 
@@ -219,7 +313,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const hostAgentName = isAgentHost(host)
     ? (remoteAgents.find((a) => a.id === host.agentId)?.name ?? host.agentId)
     : undefined;
-  const sshLabel = sshConnections.find((c) => c.id === sshConnectionId)?.name;
+  const sshLabel = sshConnections.find((c) => c.id === form.sshConnectionId)?.name;
   const endpointLines = tunnelEndpointLines(tunnelType, host, {
     agentName: hostAgentName,
     sshLabel,
@@ -227,9 +321,9 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const reachability = tunnelReachabilityWarning(tunnelType, host, hostAgentName);
 
   /** Widen an agent-hosted loopback bind to 0.0.0.0 so this computer can reach it. */
-  const handleWidenBind = useCallback(() => {
+  const handleWidenBind = () => {
     updateConfig("localHost", WIDE_BIND_HOST);
-  }, [updateConfig]);
+  };
 
   // ── Chain a hop to this computer (#2597) ──────────────────────────────────
   // The affordance sits beside "Widen bind" on the same reachability warning.
@@ -251,18 +345,18 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const [chainSshId, setChainSshId] = useState("");
   const [chainStartNow, setChainStartNow] = useState(true);
 
-  const handleOpenChain = useCallback(() => {
+  const handleOpenChain = () => {
     setChainSshId(bestSshViaForAgent(sshViaCandidates, hostAgent?.config.host) ?? "");
     setChainStartNow(true);
     setChainOpen(true);
-  }, [sshViaCandidates, hostAgent]);
+  };
 
-  const handleRevealCompanion = useCallback(() => {
+  const handleRevealCompanion = () => {
     if (existingCompanion) openTunnelEditorTab(existingCompanion.id);
-  }, [existingCompanion, openTunnelEditorTab]);
+  };
 
-  const handleChainConfirm = useCallback(async () => {
-    const parent = buildConfig();
+  const handleChainConfirm = async () => {
+    const parent = buildConfig(getValues());
     const companion = deriveCompanion(parent, chainSshId);
     try {
       // Persist the parent first so the companion can link to its id, then the
@@ -285,10 +379,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       frontendLog("tunnel_editor", `Failed to chain hop: ${err}`);
       toast.error("Failed to chain a hop to this computer");
     }
-  }, [buildConfig, chainSshId, chainStartNow, saveTunnel, startTunnel, rootPanel, tabId, closeTab]);
+  };
 
   // The companion the preview describes, derived from the current parent draft.
-  const chainCompanion = deriveCompanion(buildConfig(), chainSshId);
+  const chainCompanion = deriveCompanion(buildConfig(form), chainSshId);
   const chainCompanionLocal =
     chainCompanion.tunnelType.type === "local" ? chainCompanion.tunnelType.config : undefined;
 
@@ -314,22 +408,29 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       </div>
 
       <div className="tunnel-editor__form" data-testid="tunnel-editor-form">
-        <Field label="Name" htmlFor={`tunnel-name-${tabId}`}>
-          <Input
-            ref={nameRef}
-            id={`tunnel-name-${tabId}`}
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="e.g. Dev Database"
-            data-testid="tunnel-editor-name"
-          />
-        </Field>
+        <Controller
+          name="name"
+          control={control}
+          render={({ field }) => (
+            <Field label="Name" htmlFor={`tunnel-name-${tabId}`}>
+              <Input
+                ref={nameRef}
+                id={`tunnel-name-${tabId}`}
+                type="text"
+                value={field.value ?? ""}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                placeholder="e.g. Dev Database"
+                data-testid="tunnel-editor-name"
+              />
+            </Field>
+          )}
+        />
 
         <Field label="SSH Connection" htmlFor={`tunnel-ssh-${tabId}`}>
           <Select
-            value={sshConnectionId || undefined}
-            onChange={setSshConnectionId}
+            value={form.sshConnectionId || undefined}
+            onChange={(v) => setValue("sshConnectionId", v)}
             options={sshOptions}
             placeholder="No SSH connections available"
             aria-label="SSH Connection"
@@ -340,7 +441,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         <Field label="Tunnel host" htmlFor={`tunnel-host-${tabId}`}>
           <Select
             value={encodeHost(host)}
-            onChange={(v) => setHost(decodeHost(v))}
+            onChange={(v) => setValue("host", decodeHost(v))}
             options={hostOptions}
             aria-label="Tunnel host"
             data-testid="tunnel-editor-host"
@@ -610,14 +711,34 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         )}
 
         <div className="tunnel-editor__checkbox-row">
-          <Toggle id={`auto-start-${tabId}`} checked={autoStart} onCheckedChange={setAutoStart} />
+          <Controller
+            name="autoStart"
+            control={control}
+            render={({ field }) => (
+              <Toggle
+                id={`auto-start-${tabId}`}
+                checked={field.value}
+                onCheckedChange={field.onChange}
+              />
+            )}
+          />
           <label className="tunnel-editor__checkbox-label" htmlFor={`auto-start-${tabId}`}>
             Auto-start when app launches
           </label>
         </div>
 
         <div className="tunnel-editor__checkbox-row">
-          <Toggle id={`reconnect-${tabId}`} checked={reconnect} onCheckedChange={setReconnect} />
+          <Controller
+            name="reconnectOnDisconnect"
+            control={control}
+            render={({ field }) => (
+              <Toggle
+                id={`reconnect-${tabId}`}
+                checked={field.value}
+                onCheckedChange={field.onChange}
+              />
+            )}
+          />
           <label className="tunnel-editor__checkbox-label" htmlFor={`reconnect-${tabId}`}>
             Reconnect automatically on disconnect
           </label>
