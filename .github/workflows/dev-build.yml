@@ -397,6 +397,76 @@ jobs:
           path: artifacts/
           merge-multiple: true
 
+      # Guard against silently publishing an INCOMPLETE dev build (finding CI-021).
+      # This job is best-effort by design (see the `if:` above): a single failed
+      # platform must never block refreshing the release for the platforms that DID
+      # build. But a partial release must never *look* complete — so detect which
+      # expected artifacts are absent (a failed build leg never uploads its installer,
+      # so its file is missing from artifacts/), surface each as a workflow warning,
+      # and flag them in the release notes + title. When every leg succeeded this step
+      # finds nothing missing and the published release is byte-identical to before.
+      - name: Detect missing platform artifacts
+        id: missing
+        env:
+          BUILD_APP_RESULT: ${{ needs.build-app.result }}
+          BUILD_AGENTS_LINUX_RESULT: ${{ needs.build-agents-linux.result }}
+          BUILD_AGENTS_MACOS_RESULT: ${{ needs.build-agents-macos.result }}
+        run: |
+          set -euo pipefail
+          # Artifacts guaranteed to exist when their build leg succeeds: the primary
+          # installer per desktop platform + every agent binary. Optional secondary
+          # bundles (…-setup.exe, linux-x64 .deb, linux-arm64 .rpm) are collected
+          # best-effort even on a green build, so they are intentionally NOT required
+          # here — their absence must not raise a false "incomplete" alarm.
+          EXPECTED=(
+            "termiHub-dev-macos-x64.dmg|macOS Intel (.dmg)"
+            "termiHub-dev-macos-arm64.dmg|macOS Apple Silicon (.dmg)"
+            "termiHub-dev-windows-x64.msi|Windows x64 (.msi)"
+            "termiHub-dev-linux-x64.AppImage|Linux x64 (.AppImage)"
+            "termiHub-dev-linux-arm64.deb|Linux ARM64 (.deb)"
+            "termihub-agent-linux-x64|Agent Linux x64"
+            "termihub-agent-linux-arm64|Agent Linux ARM64"
+            "termihub-agent-linux-armv7|Agent Linux ARMv7"
+            "termihub-agent-macos-arm64|Agent macOS ARM64"
+            "termihub-agent-macos-x64|Agent macOS x64"
+          )
+          missing_md=""
+          missing_count=0
+          for entry in "${EXPECTED[@]}"; do
+            f="${entry%%|*}"
+            label="${entry#*|}"
+            if [ ! -f "artifacts/$f" ]; then
+              echo "::warning title=Incomplete dev build::Missing artifact '$f' ($label) — its build leg did not succeed, so this platform is absent from the dev release."
+              missing_md="${missing_md}- **${label}** — \`${f}\`"$'\n'
+              missing_count=$((missing_count + 1))
+            fi
+          done
+          # Belt-and-suspenders: also warn on any outright failed build job, even in
+          # the unlikely case its primary artifacts are all somehow present.
+          for jr in "build-app=$BUILD_APP_RESULT" \
+                    "build-agents-linux=$BUILD_AGENTS_LINUX_RESULT" \
+                    "build-agents-macos=$BUILD_AGENTS_MACOS_RESULT"; do
+            job="${jr%%=*}"
+            res="${jr#*=}"
+            if [ "$res" != "success" ]; then
+              echo "::warning title=Incomplete dev build::Build job '$job' finished with result '$res' — the dev release may be missing one or more platforms."
+            fi
+          done
+          if [ "$missing_count" -gt 0 ]; then
+            echo "Detected $missing_count missing artifact(s); dev release will be flagged INCOMPLETE."
+            incomplete=true
+          else
+            echo "All expected platform artifacts present."
+            incomplete=false
+          fi
+          {
+            echo "incomplete=$incomplete"
+            echo "missing_count=$missing_count"
+            echo "missing_md<<MISSING_EOF"
+            printf '%s' "$missing_md"
+            echo "MISSING_EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Delete existing dev release (if any)
         run: gh release delete "${{ needs.prepare-release.outputs.tag }}" --yes --cleanup-tag 2>/dev/null || true
         env:
@@ -404,11 +474,21 @@ jobs:
           GH_REPO: ${{ github.repository }}
 
       - name: Write release notes
+        env:
+          INCOMPLETE: ${{ steps.missing.outputs.incomplete }}
+          MISSING_MD: ${{ steps.missing.outputs.missing_md }}
         run: |
           BRANCH="${{ needs.prepare-release.outputs.branch }}"
           SHORT_SHA="${GITHUB_SHA::7}"
           DATE=$(date -u +"%Y-%m-%d %H:%M UTC")
           {
+            if [ "${INCOMPLETE:-false}" = "true" ]; then
+              echo "## 🚨 Incomplete Build — one or more platforms failed to build"
+              echo ""
+              echo "Some platform build jobs did not succeed, so this dev release is **missing the artifacts listed below**. Do not treat it as a complete build:"
+              echo ""
+              echo "$MISSING_MD"
+            fi
             echo "## ⚠️ Dev Build — Not for Production Use"
             echo ""
             echo "This is an automated development build from the \`${BRANCH}\` branch."
@@ -445,6 +525,10 @@ jobs:
         run: |
           BRANCH="${{ needs.prepare-release.outputs.branch }}"
           SHORT_SHA="${GITHUB_SHA::7}"
+          TITLE="Dev Build — not for production use (${BRANCH} @ ${SHORT_SHA})"
+          if [ "${INCOMPLETE:-false}" = "true" ]; then
+            TITLE="${TITLE} — INCOMPLETE (${MISSING_COUNT} artifact(s) missing)"
+          fi
           ARTIFACT_ARGS=()
           while IFS= read -r -d '' f; do
             ARTIFACT_ARGS+=("$f")
@@ -452,8 +536,10 @@ jobs:
           gh release create "${{ needs.prepare-release.outputs.tag }}" \
             "${ARTIFACT_ARGS[@]}" \
             --prerelease \
-            --title "Dev Build — not for production use (${BRANCH} @ ${SHORT_SHA})" \
+            --title "$TITLE" \
             --notes-file release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
+          INCOMPLETE: ${{ steps.missing.outputs.incomplete }}
+          MISSING_COUNT: ${{ steps.missing.outputs.missing_count }}
