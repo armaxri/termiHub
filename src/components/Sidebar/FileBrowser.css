@@ -108,9 +108,19 @@
   opacity: 1;
 }
 
+/* A flex item defaults to `min-height: auto`, so the tall virtualizer inner
+   spacer would grow this element to full content height and it would never
+   establish a bounded scroll viewport — the list stopped scrolling and its
+   overflow spilled up into `.sidebar__content` (regression from the 40px rows
+   in #2798). `min-height: 0` lets it shrink to the available space so
+   `overflow-y: auto` actually scrolls. `overflow-x: auto` lets a filename wider
+   than the panel be reached by scrolling instead of being cut. The scrollbars
+   are styled globally in global.css. */
 .file-browser__list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overflow-x: auto;
 }
 
 /* Virtualized list (@tanstack/react-virtual): an inner spacer sized to the full
@@ -131,6 +141,7 @@
 }
 
 .file-browser__row-wrapper {
+  position: relative;
   display: flex;
   align-items: center;
 }
@@ -147,20 +158,24 @@
   background-color: var(--bg-active);
 }
 
-/* Two-line row: the icon is vertically centred against a stacked body (name line
-   on top, muted meta line below). The fixed height MUST equal ROW_HEIGHT in
-   FileBrowser.tsx — the virtualizer sizes the scroll range from that constant. */
+/* Single-line row: the icon and the full filename sit on one baseline; the
+   Modified / Size / permissions metadata is a hover-reveal overlay (below), not
+   a reserved column, so it never crushes or truncates the name. The fixed height
+   MUST equal ROW_HEIGHT in FileBrowser.tsx — the virtualizer sizes the scroll
+   range from that constant, so the two drift the windowing math apart if they
+   disagree. */
 .file-browser__row {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
   flex: 1;
-  height: 40px;
+  height: 28px;
   padding: 0 var(--spacing-sm);
   font-size: var(--font-size-sm);
   color: var(--text-primary);
   text-align: left;
   min-width: 0;
+  white-space: nowrap;
 }
 
 .file-browser__row-menu {
@@ -196,55 +211,64 @@
   font-style: italic;
 }
 
-/* Stacked body: name line on top, muted meta line below. `min-width: 0` lets its
-   children truncate instead of forcing the row to overflow. */
+/* Single-row body: just the filename line, flexing to fill the row. */
 .file-browser__body {
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
-  flex-direction: column;
-  justify-content: center;
-  gap: 1px;
-}
-
-/* Line 1: the filename (dominant) plus any symlink-target hint. */
-.file-browser__name-line {
-  display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: var(--spacing-xs);
-  min-width: 0;
 }
 
-/* The filename is the dominant element: it takes the full row width and
-   truncates with an ellipsis. `min-width: 0` is essential — without it a flex
-   item refuses to shrink below its content width, so a long name would overflow
-   the row and get clipped (#2798). */
-.file-browser__name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-primary);
-}
-
-/* Line 2: a smaller, muted meta line — Modified · Size · permissions — that
-   flows with middot separators and never competes with the name for width. */
-.file-browser__meta {
+/* The filename (dominant) plus any symlink-target hint, on one line. */
+.file-browser__name-line {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs);
   min-width: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  font-size: var(--font-size-2xs);
-  color: var(--text-secondary);
 }
 
-.file-browser__meta-sep {
-  flex-shrink: 0;
+/* The filename ALWAYS wins: it is rendered in full and is never truncated — no
+   `text-overflow: ellipsis`, no `overflow: hidden`. `flex-shrink: 0` keeps it at
+   its natural width so a name wider than the panel overflows into the list's
+   horizontal scroll (reachable, never cut) rather than being squeezed; the row
+   `title` is the guaranteed-readable fallback. */
+.file-browser__name {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+/* Metadata is hidden at rest and fades in only on row hover / selection. It is an
+   absolutely-positioned overlay pinned to the right edge, so it reserves no space
+   in the name area and can never crush or cut the filename. The gradient lets it
+   read cleanly over the tail of a long name; the right padding clears the kebab
+   menu that sits at the row's right edge. */
+.file-browser__meta {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding-left: var(--spacing-xl);
+  padding-right: calc(var(--control-height-sm) + var(--spacing-sm));
+  font-size: var(--font-size-2xs);
   color: var(--text-secondary);
-  opacity: 0.6;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition-fast);
+  background: linear-gradient(to right, transparent, var(--bg-hover) var(--spacing-xl));
+}
+
+.file-browser__row-wrapper:hover .file-browser__meta,
+.file-browser__row-wrapper--selected .file-browser__meta {
+  opacity: 1;
+}
+
+.file-browser__row-wrapper--selected .file-browser__meta {
+  background: linear-gradient(to right, transparent, var(--bg-active) var(--spacing-xl));
 }
 
 .file-browser__size,
