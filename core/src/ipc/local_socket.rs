@@ -1093,6 +1093,52 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// AGT-022 (windows): a `CurrentUserOnly` named-pipe listener must still
+    /// accept a connection from the **same** local user — the normal, and only,
+    /// legitimate case (the desktop/agent and its session daemon all run as one
+    /// user). The peer-SID check must never reject or hang a same-user connect:
+    /// that would break every legitimate session reconnect. Regression guard for
+    /// the check not mis-firing on the same user, exercising the real
+    /// client-PID → process-token → `TokenUser` SID lookup path.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn current_user_only_accepts_same_user_connection() {
+        let address = unique_address("peer-ok");
+
+        let mut listener = LocalSocketListener::bind_with_options(
+            &address,
+            ListenerOptions {
+                security: ListenerSecurity::CurrentUserOnly,
+                stale_reclaim: StaleReclaim::Unconditional,
+            },
+        )
+        .await
+        .expect("bind current-user-only listener");
+
+        let server = tokio::spawn(async move {
+            // If a same-user peer were wrongly rejected, this accept would hang
+            // and the test would time out — exactly the reconnect-breaking
+            // failure the SID check must avoid.
+            let (mut reader, mut writer) = listener.accept().await.expect("accept same-user");
+            let mut b = [0u8; 2];
+            reader.read_exact(&mut b).await.expect("server read");
+            writer.write_all(&b).await.expect("server echo");
+            writer.flush().await.expect("server flush");
+        });
+
+        let (mut reader, mut writer) =
+            connect_with_retry(&address, Duration::from_secs(5), Duration::from_millis(20))
+                .await
+                .expect("same-user connect");
+        writer.write_all(b"ok").await.expect("client write");
+        writer.flush().await.expect("client flush");
+        let mut got = [0u8; 2];
+        reader.read_exact(&mut got).await.expect("client read");
+        assert_eq!(&got, b"ok", "same-user round-trip must succeed");
+
+        server.await.expect("server task");
+    }
+
     /// AGT-022: the peer-credential helper reads the uid of the process on the
     /// other end of a Unix socket. On a same-process socket pair that uid is our
     /// own — this exercises the real `SO_PEERCRED`/`getpeereid` syscall path so a
