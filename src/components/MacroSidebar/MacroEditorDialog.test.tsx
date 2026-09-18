@@ -134,10 +134,35 @@ describe("MacroEditorDialog", () => {
     expect(result.steps.map((s) => s.data)).toEqual(["step-two\r", "step-one\r", "step-three\r"]);
   });
 
+  it("enables Save with a valid name and at least one step", () => {
+    render();
+    // Pre-filled edit mode: name is populated and the macro has steps.
+    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("disables Save when the name is emptied", () => {
     render();
     setInput("macro-editor-name", "   ");
     expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("does not call onSave while the name is invalid", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render({ onSave });
+
+    setInput("macro-editor-name", "");
+    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
+    await flush();
+
+    expect(onSave).not.toHaveBeenCalled();
+  });
+
+  it("re-enables Save once a valid name is restored", () => {
+    render();
+    setInput("macro-editor-name", "");
+    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    setInput("macro-editor-name", "Restored");
+    expect((query("macro-editor-save") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("disables Save when all steps are removed", () => {
