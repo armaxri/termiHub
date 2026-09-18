@@ -11,6 +11,9 @@ export type { ButtonProps, ButtonVariant, ButtonSize } from "./Button";
 export { Input } from "./Input";
 export type { InputProps } from "./Input";
 
+export { ColorInput } from "./ColorInput";
+export type { ColorInputProps } from "./ColorInput";
+
 export { SearchInput } from "./SearchInput";
 export type { SearchInputProps } from "./SearchInput";
 

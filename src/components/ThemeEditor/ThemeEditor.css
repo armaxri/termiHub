@@ -40,15 +40,10 @@
   color: var(--text-primary);
 }
 
+/* Swatch skin comes from the shared `.ui-color-input` primitive; only the
+   flex sizing for this row layout is theme-editor-specific. */
 .theme-editor__swatch {
   flex: 0 0 auto;
-  width: var(--spacing-xl);
-  height: var(--spacing-xl);
-  padding: 0;
-  border: 1px solid var(--border-secondary);
-  border-radius: var(--radius-sm);
-  background: none;
-  cursor: pointer;
 }
 
 .theme-editor__hex {

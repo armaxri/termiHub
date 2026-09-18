@@ -219,6 +219,17 @@
   box-shadow: none;
 }
 
+/* ── Color swatch ───────────────────────────────────────────────────── */
+.ui-color-input {
+  width: var(--spacing-xl);
+  height: var(--spacing-xl);
+  padding: 0;
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+
 /* ── Textarea ───────────────────────────────────────────────────────── */
 .ui-textarea {
   width: 100%;
