@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: rdp-sidecar/clipboard
 evidence:
   - rdp-sidecar/src/clipboard.rs:72
-status: open
+status: fixed
+resolution: "develop — host_clipboard now implements Windows CF_HDROP (#1791) + Linux text/uri-list X11+Wayland (#1792); only a doc-comment stale"
 ---
 
 ## What

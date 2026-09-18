@@ -10,7 +10,7 @@ evidence:
   - core/src/ipc/ndjson.rs:35
   - agent/src/daemon/protocol.rs:40
   - core/src/backends/vnc/mod.rs:349
-status: partial
+status: fixed
 resolution: "develop — untrusted-input alloc umbrella: NDJSON capped (CORE-002) + VNC dims clamped (CORE-008) done; TFTP/remote-read/tunnel/plugin-zip sub-items (CORE-013/021/022/027/032) remain separate"
 ---
 

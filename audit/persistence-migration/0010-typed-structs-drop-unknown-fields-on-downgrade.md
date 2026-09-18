@@ -11,7 +11,7 @@ evidence:
   - src-tauri/src/workspace/config.rs:161
   - agent/src/state/persistence.rs:13
 status: fixed
-resolution: "#2746 — unknown-field round-trip"
+resolution: "#2746+#3046 — serde-flatten preserve-unknown-fields: 4 stores via #2746, AgentState completed via #3046 (was still dropping unknown fields on downgrade)"
 ---
 
 ## What

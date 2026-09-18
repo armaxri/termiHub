@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/connections_projection/projection.rs:236
   - src-tauri/src/agents_projection/projection.rs
   - src-tauri/src/transfers_projection/projection.rs
-status: open
+status: fixed
+resolution: "#3047 — extract 6 identical projection intent-payload helpers (bad_payload/required_str/optional_str/required_usize/required_bool/optional_typed) into shared projection/helpers.rs, route 10 domains; store_of etc kept local (distinct types)"
 ---
 
 ## What

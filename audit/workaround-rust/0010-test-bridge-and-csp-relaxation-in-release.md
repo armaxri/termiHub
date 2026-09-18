@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/utils/test_bridge.rs:149
   - src-tauri/src/utils/test_bridge.rs:36
   - src-tauri/src/lib.rs:432
-status: open
+status: fixed
+resolution: "develop — test_bridge + CSP relaxation + flag override all #[cfg(feature=test-bridge)] (non-default); release has no code path"
 ---
 
 ## What
