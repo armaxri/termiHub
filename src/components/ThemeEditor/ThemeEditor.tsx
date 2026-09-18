@@ -1,10 +1,50 @@
 import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Button, ColorInput, Field, Input, Modal, Select } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { BASE_THEME_ORDER, COLOR_TOKEN_GROUPS, previewTheme, resolveBaseTheme } from "@/themes";
 import type { ThemeColors, ThemeDefinition } from "@/themes/types";
 import { normalizeHexColor } from "@/services/syntaxHighlighting";
 import "./ThemeEditor.css";
+
+/**
+ * The scalar meta fields of a theme that the form owns. The color grid
+ * ({@link ThemeColors}) is deliberately kept out of react-hook-form and held as
+ * imperative local state: it is a large, dynamically-keyed value with a live
+ * per-token preview side effect that does not benefit from RHF's field model.
+ */
+type ThemeMeta = Pick<ThemeDefinition, "id" | "name" | "colorScheme" | "baseTheme">;
+
+/** Extract the form-owned meta fields from a full theme definition. */
+function metaOf(theme: ThemeDefinition): ThemeMeta {
+  return {
+    id: theme.id,
+    name: theme.name,
+    colorScheme: theme.colorScheme,
+    baseTheme: theme.baseTheme,
+  };
+}
+
+/**
+ * Client-side validation schema for a theme's scalar meta fields (UX feedback
+ * only; the same check the editor previously ran by hand, translated 1:1 into
+ * zod): `name` must be non-empty once trimmed. The other meta fields ride along
+ * and are preserved on save.
+ */
+const themeMetaSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    colorScheme: z.enum(["dark", "light"]),
+    baseTheme: z.string().optional(),
+  })
+  .superRefine((meta, ctx) => {
+    if (meta.name.trim() === "") {
+      ctx.addIssue({ code: "custom", path: ["name"], message: "Name is required." });
+    }
+  });
 
 interface ThemeEditorProps {
   /** Whether the editor modal is open. */
@@ -34,9 +74,20 @@ function toSwatch(value: string): string {
  * theme selector, and every editable color token grouped by section with a
  * swatch + hex field + per-token reset. Edits are applied live to the whole app
  * via {@link previewTheme}; the parent restores the persisted theme on cancel.
+ *
+ * The scalar meta fields (name, base theme) are backed by react-hook-form + zod
+ * (see {@link themeMetaSchema}); the name is required and gates Save. The color
+ * grid and its live-preview side effect stay imperative local state.
  */
 export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEditorProps) {
-  const [draft, setDraft] = useState<ThemeDefinition>(initialTheme);
+  const { control, getValues, reset, setValue } = useForm<ThemeMeta>({
+    defaultValues: metaOf(initialTheme),
+    resolver: zodResolver(themeMetaSchema),
+    mode: "onChange",
+  });
+
+  // The color grid is held imperatively (see {@link ThemeMeta}).
+  const [colors, setColors] = useState<ThemeColors>(initialTheme.colors);
 
   // Built lazily (not at module load) so partially-mocked `@/themes` in other
   // components' tests never executes this at import time.
@@ -45,39 +96,65 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
     []
   );
 
-  // Reset the draft whenever a different theme is opened for editing.
+  // Reset both halves of the draft whenever a different theme is opened.
   useEffect(() => {
-    setDraft(initialTheme);
-  }, [initialTheme]);
+    reset(metaOf(initialTheme));
+    setColors(initialTheme.colors);
+  }, [initialTheme, reset]);
+
+  // Live meta values. `useWatch` can lag the seeded defaults by a render and only
+  // surfaces registered fields, so merge it over the initial meta to keep a
+  // complete draft for the preview and validity checks.
+  const watched = useWatch({ control });
+  const meta: ThemeMeta = { ...metaOf(initialTheme), ...watched };
+  const draft: ThemeDefinition = { ...meta, colors };
+  const draftKey = JSON.stringify(draft);
 
   // Apply the working draft live while the editor is open.
   useEffect(() => {
     if (open) previewTheme(draft);
-  }, [open, draft]);
+    // `draft` is rebuilt every render; key the effect on its serialization.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, draftKey]);
 
-  const baseColors = useMemo(() => resolveBaseTheme(draft.baseTheme).colors, [draft.baseTheme]);
+  const baseColors = useMemo(() => resolveBaseTheme(meta.baseTheme).colors, [meta.baseTheme]);
 
-  const nameError = draft.name.trim() === "" ? "Name is required." : undefined;
-  const canSave = !nameError;
+  // Deterministic, synchronous validity derived straight from the schema — the
+  // same approach CustomRuleEditor uses — rather than react-hook-form's async
+  // error proxy, so errors and the Save gate update on the same render as the
+  // edit (and stay testable without awaiting).
+  const validity = useMemo(() => {
+    const errors: Record<string, string> = {};
+    const result = themeMetaSchema.safeParse(meta);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const key = issue.path.join(".");
+        if (!(key in errors)) errors[key] = issue.message;
+      }
+    }
+    return { valid: result.success, errors };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(meta)]);
+
+  const nameError = validity.errors["name"];
+  const canSave = validity.valid;
 
   const setColor = (key: keyof ThemeColors, value: string) =>
-    setDraft((d) => ({ ...d, colors: { ...d.colors, [key]: value } }));
+    setColors((c) => ({ ...c, [key]: value }));
 
   const resetColor = (key: keyof ThemeColors) => setColor(key, baseColors[key]);
 
   const handleBaseChange = (baseId: string) => {
     const base = resolveBaseTheme(baseId);
-    setDraft((d) => ({
-      ...d,
-      baseTheme: base.id,
-      colorScheme: base.colorScheme,
-      colors: { ...base.colors },
-    }));
+    setValue("baseTheme", base.id);
+    setValue("colorScheme", base.colorScheme);
+    setColors({ ...base.colors });
   };
 
   const handleSave = () => {
     if (!canSave) return;
-    onSave({ ...draft, name: draft.name.trim() });
+    const current = getValues();
+    onSave({ ...current, name: current.name.trim(), colors });
   };
 
   return (
@@ -104,32 +181,45 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
       }
     >
       <div className="theme-editor" data-testid="theme-editor">
-        <Field label="Name" htmlFor="theme-editor-name" error={nameError}>
-          <Input
-            id="theme-editor-name"
-            value={draft.name}
-            placeholder="My Custom Theme"
-            error={!!nameError}
-            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-            data-testid="theme-editor-name"
-          />
-        </Field>
+        <Controller
+          name="name"
+          control={control}
+          render={({ field }) => (
+            <Field label="Name" htmlFor="theme-editor-name" error={nameError}>
+              <Input
+                id="theme-editor-name"
+                value={field.value ?? ""}
+                placeholder="My Custom Theme"
+                error={!!nameError}
+                onChange={(e) => field.onChange(e.target.value)}
+                onBlur={field.onBlur}
+                data-testid="theme-editor-name"
+              />
+            </Field>
+          )}
+        />
 
-        <Field label="Based on" htmlFor="theme-editor-base">
-          <Select
-            value={draft.baseTheme ?? "dark"}
-            onChange={handleBaseChange}
-            options={baseOptions}
-            data-testid="theme-editor-base"
-          />
-        </Field>
+        <Controller
+          name="baseTheme"
+          control={control}
+          render={({ field }) => (
+            <Field label="Based on" htmlFor="theme-editor-base">
+              <Select
+                value={field.value ?? "dark"}
+                onChange={handleBaseChange}
+                options={baseOptions}
+                data-testid="theme-editor-base"
+              />
+            </Field>
+          )}
+        />
 
         <div className="theme-editor__groups">
           {COLOR_TOKEN_GROUPS.map((group) => (
             <section key={group.label} className="theme-editor__group">
               <h4 className="theme-editor__group-title">{group.label}</h4>
               {group.tokens.map((token) => {
-                const value = draft.colors[token.key];
+                const value = colors[token.key];
                 const isOverridden = value !== baseColors[token.key];
                 return (
                   <div key={token.key} className="theme-editor__row">
