@@ -9,7 +9,8 @@ subsystem: deny.toml
 evidence:
   - deny.toml:49
   - .cargo/audit.toml:10
-status: open
+status: wontfix
+resolution: "#3055 — same conscious sign-off as SUP-003 (RUSTSEC-2023-0071 in deny.toml + audit.toml), documented rationale + #3054"
 ---
 
 ## What

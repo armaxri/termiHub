@@ -9,7 +9,8 @@ subsystem: core/backends/ssh
 evidence:
   - deny.toml:43
   - .cargo/audit.toml:1
-status: open
+status: wontfix
+resolution: "#3055 — conscious documented sign-off: RUSTSEC-2023-0071 (rsa Marvin timing sidechannel) suppressed in both tools — we only extract raw RSA components + rebuild via OpenSSL, never decrypt through rsa, so sidechannel N/A; rationale in audit.toml + tracked #3054"
 ---
 
 ## What

@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/connections_projection/projection.rs:44
   - src-tauri/src/connections_projection/projection.rs:116
   - src-tauri/src/commands/connection.rs:56
-status: open
+status: partial
+resolution: "develop — projection migration largely cut: 10/11 domains authoritative + appStore reducers removed (lib.rs:1120, #2283). Remaining: layout still explicit shadow (lib.rs:1012, reducer removal deferred #2562) + fold_*_from_manager still a 2nd write path hand-wired into ~17 mutation sites in commands/connection.rs"
 ---
 
 ## What

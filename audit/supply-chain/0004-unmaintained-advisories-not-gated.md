@@ -9,7 +9,8 @@ subsystem: workspace
 evidence:
   - deny.toml:34
   - .github/workflows/code-quality.yml:325
-status: open
+status: deferred
+resolution: "#3055 — maintainer decision (2026-09-18): unmaintained stays ungated by policy, BUT the abandoned-dep set is no longer unmonitored — #3055 enumerated every non-actionable unmaintained/unsound RUSTSEC ID with rationale in .cargo/audit.toml + tracking issue #3054 for upstream resolution. Net-new: #3055 also FIXED 2 real vulns the noise had masked (rustls RUSTSEC-2026-0285, cryptoki -0286)"
 ---
 
 ## What

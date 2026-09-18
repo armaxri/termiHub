@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: deny.toml
 evidence:
   - deny.toml:34
-status: open
+status: deferred
+resolution: "#3055 — same policy item as SUP-004: unmaintained=none kept by maintainer decision; non-actionable advisories now documented-ignored + tracked #3054"
 ---
 
 ## What

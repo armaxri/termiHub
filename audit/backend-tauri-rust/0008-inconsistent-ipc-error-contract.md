@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/commands/credential.rs:52
   - src-tauri/src/commands/credential.rs:40
   - src-tauri/src/commands/session.rs
-status: open
+status: partial
+resolution: "develop — IPC error contract still stringly-typed: TerminalError serializes to_string() discarding variant tag (utils/errors.rs:121); only auth_failed carries stable [thub-code:auth_failed] marker (:14). Full {code,message} envelope across ~270 Result<_,String> cmds unimplemented — remaining scope is architectural (folds into ERR-008)"
 ---
 
 ## What

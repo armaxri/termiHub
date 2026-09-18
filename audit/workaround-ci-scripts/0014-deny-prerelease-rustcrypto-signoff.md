@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: deny.toml
 evidence:
   - deny.toml:bans
-status: open
+status: deferred
+resolution: "maintainer-decision — deny.toml bans policy (pre-release RustCrypto stack accepted + multiple-versions/wildcards allowed) is a SEPARATE bans/duplicates call, out of #3055's advisory-suppression scope — needs its own maintainer decision on tightening [bans]"
 ---
 
 ## What

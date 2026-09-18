@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/code-quality.yml:343
   - .github/workflows/cargo-update-lockfile.yml:1
   - docs/ci-yanked-crate-runbook.md:1
-status: open
+status: deferred
+resolution: "#2645 — same as SUP-006: yanked-gate reactive-mitigation is the systemic #2645 item; yanked=deny intentionally retained"
 ---
 
 ## What

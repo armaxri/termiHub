@@ -10,7 +10,8 @@ evidence:
   - src/utils/fileBrowserNav.ts:83
   - src/hooks/useSshKeyFiles.ts:62
   - src/services/sshConfigImport.ts:126
-status: open
+status: fixed
+resolution: "develop — already done (commit 6cd8b986, merged 2026-09-13): shared memoized nameCollator() Intl.Collator(resolveUiLocale(),{numeric:true,sensitivity:base}) + compareNames() in locale.ts; all 9 sort sites route through it (fileBrowserNav/useSshKeyFiles/sshConfigImport/jumpHost/FleetOnboardDialog/connectionIcons/FileTypeSettings/monacoLanguages+Packages); ordinal sites left (windowPicker numeric, syntaxHighlighting span-length); tests in locale.test.ts. [sweep read stale dev8]"
 ---
 
 ## What
