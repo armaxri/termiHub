@@ -334,9 +334,9 @@ Handshake that establishes the protocol version and exchanges capabilities.
   "jsonrpc": "2.0",
   "method": "initialize",
   "params": {
-    "protocol_version": "0.2.0",
+    "protocolVersion": "0.2.0",
     "client": "termihub-desktop",
-    "client_version": "0.1.0"
+    "clientVersion": "0.1.0"
   },
   "id": 1
 }
@@ -352,7 +352,7 @@ Handshake that establishes the protocol version and exchanges capabilities.
     "agent_version": "0.1.0",
     "client_id": "b3f1c2d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
     "capabilities": {
-      "connection_types": [
+      "connectionTypes": [
         {
           "typeId": "local",
           "displayName": "Local Shell",
@@ -366,36 +366,43 @@ Handshake that establishes the protocol version and exchanges capabilities.
           }
         }
       ],
-      "max_sessions": 20,
-      "available_shells": ["/bin/bash", "/bin/zsh"],
-      "available_serial_ports": [],
-      "docker_available": false,
-      "available_docker_images": []
+      "maxSessions": 20,
+      "availableShells": ["/bin/bash", "/bin/zsh"],
+      "availableSerialPorts": [],
+      "dockerAvailable": false,
+      "availableDockerImages": []
     }
   },
   "id": 1
 }
 ```
 
-| Param              | Type     | Description                |
-| ------------------ | -------- | -------------------------- |
-| `protocol_version` | `string` | Requested protocol version |
-| `client`           | `string` | Client identifier          |
-| `client_version`   | `string` | Client application version |
+| Param             | Type     | Description                |
+| ----------------- | -------- | -------------------------- |
+| `protocolVersion` | `string` | Requested protocol version |
+| `client`          | `string` | Client identifier          |
+| `clientVersion`   | `string` | Client application version |
 
 On a successful `initialize`, the agent records the client (`client`, `client_version`, an agent-assigned `client_id`, and a `connected_since` timestamp) in its per-process `ConnectionRegistry` and clears it when the connection drops (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Because each `--stdio` process serves one client, the registry holds exactly one entry in the SSH-tunnelled deployment.
 
-| Result Field                           | Type                   | Description                                  |
-| -------------------------------------- | ---------------------- | -------------------------------------------- |
-| `protocol_version`                     | `string`               | Negotiated protocol version                  |
-| `agent_version`                        | `string`               | Agent binary version                         |
-| `client_id`                            | `string`               | Agent-assigned id for this client (0.3.0+)   |
-| `capabilities.connection_types`        | `ConnectionTypeInfo[]` | Available connection types with schemas/caps |
-| `capabilities.max_sessions`            | `integer`              | Maximum concurrent sessions                  |
-| `capabilities.available_shells`        | `string[]`             | Available shell paths                        |
-| `capabilities.available_serial_ports`  | `string[]`             | Available serial port paths                  |
-| `capabilities.docker_available`        | `boolean`              | Whether Docker is available                  |
-| `capabilities.available_docker_images` | `string[]`             | Available Docker image names                 |
+| Result Field                         | Type                   | Description                                  |
+| ------------------------------------ | ---------------------- | -------------------------------------------- |
+| `protocol_version`                   | `string`               | Negotiated protocol version                  |
+| `agent_version`                      | `string`               | Agent binary version                         |
+| `client_id`                          | `string`               | Agent-assigned id for this client (0.3.0+)   |
+| `capabilities.connectionTypes`       | `ConnectionTypeInfo[]` | Available connection types with schemas/caps |
+| `capabilities.maxSessions`           | `integer`              | Maximum concurrent sessions                  |
+| `capabilities.availableShells`       | `string[]`             | Available shell paths                        |
+| `capabilities.availableSerialPorts`  | `string[]`             | Available serial port paths                  |
+| `capabilities.dockerAvailable`       | `boolean`              | Whether Docker is available                  |
+| `capabilities.availableDockerImages` | `string[]`             | Available Docker image names                 |
+
+> **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
+> (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
+> `snake_case` is silently ignored. The **result's top-level** fields, however, are `snake_case`
+> (`protocol_version`, `agent_version`, `client_id`), while the nested `capabilities` object is
+> `camelCase` (`connectionTypes`, `maxSessions`, …). This params-vs-result inconsistency is a known
+> wart; unifying it is a wire-breaking change deferred to a coordinated protocol-version bump.
 
 **Errors:**
 
@@ -2433,10 +2440,10 @@ For serial sessions:
 
 ```
 Desktop → Agent:
-{"jsonrpc":"2.0","method":"initialize","params":{"protocol_version":"0.2.0","client":"termihub-desktop","client_version":"0.1.0"},"id":1}
+{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.2.0","client":"termihub-desktop","clientVersion":"0.1.0"},"id":1}
 
 Agent → Desktop:
-{"jsonrpc":"2.0","result":{"protocol_version":"0.2.0","agent_version":"0.1.0","capabilities":{"connection_types":["local","ssh","serial","docker","telnet","wsl"],"max_sessions":20}},"id":1}
+{"jsonrpc":"2.0","result":{"protocol_version":"0.2.0","agent_version":"0.1.0","capabilities":{"connectionTypes":["local","ssh","serial","docker","telnet","wsl"],"maxSessions":20}},"id":1}
 
 Desktop → Agent:
 {"jsonrpc":"2.0","method":"connection.create","params":{"type":"local","config":{"shell":"/bin/bash","cols":80,"rows":24,"env":{"TERM":"xterm-256color"}},"title":"Build session"},"id":2}
@@ -2467,10 +2474,10 @@ Agent → Desktop (notification — command output):
 
 ```
 Desktop → Agent (new SSH channel):
-{"jsonrpc":"2.0","method":"initialize","params":{"protocol_version":"0.2.0","client":"termihub-desktop","client_version":"0.1.0"},"id":1}
+{"jsonrpc":"2.0","method":"initialize","params":{"protocolVersion":"0.2.0","client":"termihub-desktop","clientVersion":"0.1.0"},"id":1}
 
 Agent → Desktop:
-{"jsonrpc":"2.0","result":{"protocol_version":"0.2.0","agent_version":"0.1.0","capabilities":{"connection_types":["local","ssh","serial","docker","telnet","wsl"],"max_sessions":20}},"id":1}
+{"jsonrpc":"2.0","result":{"protocol_version":"0.2.0","agent_version":"0.1.0","capabilities":{"connectionTypes":["local","ssh","serial","docker","telnet","wsl"],"maxSessions":20}},"id":1}
 
 Desktop → Agent:
 {"jsonrpc":"2.0","method":"connection.list","params":{},"id":2}
