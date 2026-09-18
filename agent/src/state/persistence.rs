@@ -34,6 +34,16 @@ pub struct AgentState {
     /// the self-update feature still loads (the field defaults to empty).
     #[serde(default)]
     pub update: UpdateState,
+    /// Unknown top-level keys, captured verbatim so an older agent preserves
+    /// fields a newer version added rather than dropping them on save (PER-010).
+    ///
+    /// Without this catch-all, a downgrade/rollback (the agent auto-updates)
+    /// would erase everything a newer agent wrote into `state.json` on the next
+    /// load→save cycle. Empty by default, so a flattened empty map contributes
+    /// nothing to the serialized output. Matches the sibling stores' idiom
+    /// (`AppSettings`, `WorkspaceStore`, `LastSession`, `SessionHistory`).
+    #[serde(flatten, default)]
+    pub extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Default for AgentState {
@@ -42,6 +52,7 @@ impl Default for AgentState {
             version: CURRENT_STATE_VERSION,
             sessions: HashMap::new(),
             update: UpdateState::default(),
+            extra: serde_json::Map::new(),
         }
     }
 }
