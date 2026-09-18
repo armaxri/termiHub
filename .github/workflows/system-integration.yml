@@ -53,6 +53,13 @@ concurrency:
   group: system-integration-${{ github.event.schedule || github.event.inputs.branch || github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token (CI-010). Every job checks out (its matrix branch),
+# builds the app/agent, runs the integration lane, and uploads failure artifacts
+# via the artifact API — none comment on a PR, publish check runs, or push — so a
+# read-only token is sufficient for this scheduled/dispatch lane.
+permissions:
+  contents: read
+
 jobs:
   # Resolve which branch(es) this run grades from the trigger: the daily cron →
   # develop, the Wednesday cron → main, a manual dispatch → the chosen input
