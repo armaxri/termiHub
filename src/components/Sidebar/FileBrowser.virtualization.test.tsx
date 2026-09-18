@@ -5,6 +5,7 @@ import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { setupFileBrowsersRegion } from "@/test/fileBrowsersRegionTestHarness";
+import { setupVirtualListSizing } from "@/test/virtualListSize";
 import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
@@ -107,6 +108,10 @@ async function renderLocalBrowser(entries: FileEntry[]) {
 }
 
 setupFileBrowsersRegion();
+// Give the virtualized list an explicit measured viewport under jsdom (MOCK-008):
+// 40 rows fit inside a 2000px window, so small directories mount in full while
+// large synthetic directories still window down to a visible subset.
+setupVirtualListSizing();
 
 describe("FileBrowser – virtualization", () => {
   beforeEach(() => {

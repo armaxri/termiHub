@@ -1,6 +1,7 @@
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { setupFileBrowsersRegion, seedFileBrowsers } from "@/test/fileBrowsersRegionTestHarness";
+import { setupVirtualListSizing } from "@/test/virtualListSize";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
@@ -75,6 +76,8 @@ function setActiveTab(tab: TerminalTab) {
 setupSettingsRegion();
 setupAgentsRegion();
 setupFileBrowsersRegion();
+// Size the virtualized list so its rows mount under jsdom (MOCK-008).
+setupVirtualListSizing();
 
 describe("FileBrowser – useFileBrowserSync", () => {
   beforeEach(() => {
