@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { CONTEXT_COMMANDS } from "./contextCommands";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { getActiveTabGroupId } from "@/store/layoutSelectors";
 import { getAllLeaves } from "@/utils/panelTree";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { layoutState } from "@/test/layoutState";
@@ -45,6 +46,7 @@ describe("CONTEXT_COMMANDS registry", () => {
       [
         "clear-terminal",
         "close-tab",
+        "close-tab-group",
         "find-in-terminal",
         "focus-down",
         "focus-left",
@@ -52,7 +54,9 @@ describe("CONTEXT_COMMANDS registry", () => {
         "focus-up",
         "move-tab-to-new-window",
         "next-tab",
+        "next-tab-group",
         "prev-tab",
+        "prev-tab-group",
       ].sort()
     );
   });
@@ -141,6 +145,65 @@ describe("next-tab / prev-tab", () => {
 
     CONTEXT_COMMANDS["prev-tab"].run();
     expect(activeLeaf()!.activeTabId).toBe(first);
+  });
+});
+
+describe("close-tab-group", () => {
+  const cmd = CONTEXT_COMMANDS["close-tab-group"];
+
+  it("is unavailable with a single tab group", () => {
+    expect(cmd.isAvailable()).toBe(false);
+  });
+
+  it("is available once a second tab group exists", () => {
+    useAppStore.getState().addTabGroup();
+    expect(cmd.isAvailable()).toBe(true);
+  });
+
+  it("closes the active tab group immediately when the confirm setting is disabled", () => {
+    useAppStore.getState().addTabGroup();
+    seedSettings({ confirmCloseTabOnShortcut: false });
+    const spy = vi.spyOn(useAppStore.getState(), "closeTabGroup");
+    cmd.run();
+    expect(spy).toHaveBeenCalledOnce();
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+  });
+
+  it("opens the confirm dialog when the confirm setting is enabled (default)", () => {
+    useAppStore.getState().addTabGroup();
+    cmd.run();
+    const confirm = useAppStore.getState().pendingShortcutCloseConfirm;
+    expect(confirm?.kind).toBe("tab-group");
+  });
+
+  it("run() is inert with a single tab group", () => {
+    const spy = vi.spyOn(useAppStore.getState(), "closeTabGroup");
+    cmd.run();
+    expect(spy).not.toHaveBeenCalled();
+    expect(useAppStore.getState().pendingShortcutCloseConfirm).toBeNull();
+  });
+});
+
+describe("next-tab-group / prev-tab-group", () => {
+  it("are unavailable with fewer than two tab groups", () => {
+    expect(CONTEXT_COMMANDS["next-tab-group"].isAvailable()).toBe(false);
+    expect(CONTEXT_COMMANDS["prev-tab-group"].isAvailable()).toBe(false);
+  });
+
+  it("cycle the active tab group, wrapping around", () => {
+    const first = getActiveTabGroupId();
+    const second = useAppStore.getState().addTabGroup();
+
+    expect(CONTEXT_COMMANDS["next-tab-group"].isAvailable()).toBe(true);
+    // After adding, `second` is active; next wraps back to `first`.
+    CONTEXT_COMMANDS["next-tab-group"].run();
+    expect(getActiveTabGroupId()).toBe(first);
+
+    CONTEXT_COMMANDS["next-tab-group"].run();
+    expect(getActiveTabGroupId()).toBe(second);
+
+    CONTEXT_COMMANDS["prev-tab-group"].run();
+    expect(getActiveTabGroupId()).toBe(first);
   });
 });
 

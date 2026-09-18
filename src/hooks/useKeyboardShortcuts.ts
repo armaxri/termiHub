@@ -1,6 +1,5 @@
 import { useEffect } from "react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
-import { getActiveTabGroupId, getLayoutTabGroups } from "@/store/layoutSelectors";
 import { currentSettingsView } from "@/store/settingsBridge";
 import {
   processKeyEvent,
@@ -22,10 +21,10 @@ import {
  * Global keyboard shortcuts for the application.
  * Uses the KeybindingService's chord-aware processKeyEvent() for matching.
  *
- * Context-bound actions (focus-panel, tab close/next/prev, terminal find/clear)
- * are executed via the shared {@link CONTEXT_COMMANDS} registry so the keyboard
- * handler and the command palette run identical logic against the focused
- * panel/terminal.
+ * Context-bound actions (focus-panel, tab close/next/prev, tab-group
+ * close/next/prev, terminal find/clear) are executed via the shared
+ * {@link CONTEXT_COMMANDS} registry so the keyboard handler and the command
+ * palette run identical logic against the focused panel/terminal.
  */
 export function useKeyboardShortcuts() {
   // Capture-phase interception for zoom-panel: must fire before Monaco (and other
@@ -178,47 +177,6 @@ export function useKeyboardShortcuts() {
           e.preventDefault();
           useAppStore.getState().toggleBroadcast();
           break;
-
-        case "close-tab-group": {
-          e.preventDefault();
-          const tabGroups = getLayoutTabGroups();
-          const activeTabGroupId = getActiveTabGroupId();
-          if (tabGroups.length <= 1) break;
-          const confirmEnabled = currentSettingsView().confirmCloseTabOnShortcut ?? true;
-          if (confirmEnabled) {
-            const activeGroup = tabGroups.find((g) => g.id === activeTabGroupId);
-            useAppStore.getState().setPendingShortcutCloseConfirm({
-              kind: "tab-group",
-              tabGroupId: activeTabGroupId,
-              label: activeGroup?.name ?? "this tab group",
-            });
-          } else {
-            useAppStore.getState().closeTabGroup(activeTabGroupId);
-          }
-          break;
-        }
-
-        case "next-tab-group": {
-          e.preventDefault();
-          const groups = getLayoutTabGroups();
-          const activeId = getActiveTabGroupId();
-          if (groups.length <= 1) break;
-          const idx = groups.findIndex((g) => g.id === activeId);
-          const nextIdx = (idx + 1) % groups.length;
-          useAppStore.getState().setActiveTabGroup(groups[nextIdx].id);
-          break;
-        }
-
-        case "prev-tab-group": {
-          e.preventDefault();
-          const groups = getLayoutTabGroups();
-          const activeId = getActiveTabGroupId();
-          if (groups.length <= 1) break;
-          const idx = groups.findIndex((g) => g.id === activeId);
-          const prevIdx = (idx - 1 + groups.length) % groups.length;
-          useAppStore.getState().setActiveTabGroup(groups[prevIdx].id);
-          break;
-        }
       }
     };
 
