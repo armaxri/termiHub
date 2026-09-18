@@ -244,7 +244,12 @@ mod tests {
         assert_eq!(buffer.get_recent(10).len(), 0);
     }
 
+    // Serialized against every other thread-local `tracing` default-subscriber
+    // test in this crate under the shared `tracing_default_subscriber` group: a
+    // concurrent guard drop transiently reverts the global max-level to OFF and
+    // would drop this test's events (a well-known parallel-`tracing`-test race).
     #[test]
+    #[serial_test::serial(tracing_default_subscriber)]
     fn layer_captures_tracing_events() {
         use tracing_subscriber::layer::SubscriberExt;
 
@@ -264,6 +269,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial(tracing_default_subscriber)]
     fn default_filter_silences_russh_but_keeps_app_debug() {
         use tracing_subscriber::layer::SubscriberExt;
 

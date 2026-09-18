@@ -2191,6 +2191,33 @@ fn filter_reconnect_backlog(drained: Vec<AgentIoCommand>) -> Vec<AgentIoCommand>
 /// JSON-RPC responses to waiting callers and notifications to registered
 /// session output channels.
 #[allow(clippy::too_many_arguments)]
+/// Structured reconnect-lifecycle log vocabulary (OBS-004).
+///
+/// Each line carries `agent_id` (and the failure `error`) as a `tracing`
+/// **field** rather than interpolating it into the message, so a supporter can
+/// filter `termihub.log` by agent across a reconnect. The enclosing
+/// [`agent_io_task`] span already scopes these to one agent; the explicit field
+/// keeps each line self-describing when read in isolation.
+fn log_agent_connection_lost(agent_id: &str) {
+    info!(agent_id = %agent_id, "connection lost, attempting reconnect");
+}
+
+fn log_agent_reconnected(agent_id: &str) {
+    info!(agent_id = %agent_id, "reconnected successfully");
+}
+
+fn log_agent_reconnect_failed(agent_id: &str, error: &str) {
+    error!(agent_id = %agent_id, error, "reconnection failed");
+}
+
+/// Drive one agent's live I/O and reconnect loop.
+///
+/// Wrapped in an `agent_io` span (OBS-004) keyed by `agent_id`, so every nested
+/// log event — handshake, parse errors, reconnect attempts — is groupable and
+/// filterable by the agent it belongs to when a `termihub.log` interleaves many
+/// concurrent agents.
+#[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, fields(agent_id = %agent_id))]
 async fn agent_io_task<R: Runtime>(
     session: SshSession,
     mut channel: russh::Channel<russh::client::Msg>,
@@ -2350,7 +2377,7 @@ async fn agent_io_task<R: Runtime>(
                             // reconnect path a real EOF takes; the transport is
                             // dropped eagerly just below so the peer sees the break
                             // at once.
-                            info!("Agent {}: test-only in-process transport sever", agent_id);
+                            info!("test-only in-process transport sever");
                             test_severed = true;
                             connection_error =
                                 Some("test-only in-process transport sever (#2573)".to_string());
@@ -2412,18 +2439,14 @@ async fn agent_io_task<R: Runtime>(
                                         }
                                     }
                                     Err(e) => {
-                                        warn!("Agent {}: failed to parse message: {}", agent_id, e);
+                                        warn!(error = %e, "failed to parse agent message");
                                     }
                                 }
                             }
                         }
                         Some(ChannelMsg::ExtendedData { ref data, ext: 1 }) => {
                             // stderr from the remote agent process (SSH_EXTENDED_DATA_STDERR = 1)
-                            warn!(
-                                "Agent {}: stderr: {}",
-                                agent_id,
-                                String::from_utf8_lossy(data)
-                            );
+                            warn!(stderr = %String::from_utf8_lossy(data), "agent process stderr");
                         }
                         Some(ChannelMsg::Eof) => {
                             // Remote side sent EOF — connection is gone
@@ -2432,7 +2455,7 @@ async fn agent_io_task<R: Runtime>(
                         Some(ChannelMsg::ExitStatus { exit_status }) => {
                             if exit_status != 0 {
                                 let msg = format!("Agent process exited with status {}", exit_status);
-                                error!("Agent {}: {}", agent_id, msg);
+                                error!(exit_status, "agent process exited with nonzero status");
                                 connection_error = Some(msg);
                             }
                             break true;
@@ -2480,7 +2503,7 @@ async fn agent_io_task<R: Runtime>(
             "reconnecting",
             connection_error.as_deref(),
         );
-        info!("Agent {}: connection lost, attempting reconnect", agent_id);
+        log_agent_connection_lost(&agent_id);
 
         // CONC-003: fail every in-flight request the moment the link drops, so
         // its caller (and the `spawn_blocking` thread it pins) unblocks now
@@ -2587,7 +2610,7 @@ async fn agent_io_task<R: Runtime>(
                 reconnecting.store(false, Ordering::SeqCst);
 
                 emit_agent_state(&app_handle, &agent_id, "connected");
-                info!("Agent {}: reconnected successfully", agent_id);
+                log_agent_reconnected(&agent_id);
                 // Notify all pending requests that the connection was lost
                 for (_, tx) in pending_responses.drain() {
                     let _ = tx.send(Err("Connection lost during request".to_string()));
@@ -2595,7 +2618,7 @@ async fn agent_io_task<R: Runtime>(
                 continue 'outer;
             }
             Err(e) => {
-                error!("Agent {}: reconnection failed: {}", agent_id, e);
+                log_agent_reconnect_failed(&agent_id, &e);
                 // #2612/#2564: the in-task reconnect budget is exhausted — fold every
                 // hosted session's `session-lifecycle` region entry `Reconnecting →
                 // Failed` at the backend source with the reconnect error, the same
@@ -3267,7 +3290,8 @@ pub(crate) mod tracing_capture {
         fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
             // `%value` (Display) and the log message both arrive here as
             // `format_args`, whose `Debug` renders the unquoted string.
-            self.0.insert(field.name().to_string(), format!("{value:?}"));
+            self.0
+                .insert(field.name().to_string(), format!("{value:?}"));
         }
         fn record_i64(&mut self, field: &Field, value: i64) {
             self.0.insert(field.name().to_string(), value.to_string());
@@ -3340,10 +3364,13 @@ pub(crate) mod tracing_capture {
                 }
             }
 
-            self.events.lock().expect("capture lock").push(CapturedEvent {
-                span: span_name,
-                fields: fields.0,
-            });
+            self.events
+                .lock()
+                .expect("capture lock")
+                .push(CapturedEvent {
+                    span: span_name,
+                    fields: fields.0,
+                });
         }
     }
 
@@ -3368,7 +3395,12 @@ mod tests {
     /// (and the failure `error`) as **structured `tracing` fields**, not
     /// interpolated into the message. This is what lets a supporter filter
     /// `termihub.log` by agent across a reconnect instead of grepping message text.
+    // Serialized against every other test that installs a thread-local `tracing`
+    // default subscriber (see `utils::log_capture`, `session::manager`): a
+    // concurrent guard drop transiently reverts the global max-level to OFF and
+    // would drop our events (a well-known parallel-`tracing`-test race).
     #[test]
+    #[serial_test::serial(tracing_default_subscriber)]
     fn agent_reconnect_logs_carry_structured_fields() {
         let (capture, guard) = super::tracing_capture::install();
         log_agent_connection_lost("agent-xyz");
