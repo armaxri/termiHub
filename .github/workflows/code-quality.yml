@@ -229,6 +229,41 @@ jobs:
       - name: Lint Markdown
         run: pnpm run markdownlint
 
+  # Shell-script static analysis (audit finding TOOL-012).
+  #
+  # No CI lane ran shellcheck over the repo's shell scripts, so shell bugs
+  # shipped silently — including the SC2257-class defect that broke
+  # verify-agent-reconnect.sh on its first real run (an unquoted heredoc
+  # arithmetic expansion that shellcheck flagged but was suppressed as a false
+  # positive, with no CI to re-check it). This job gates every PR on shellcheck
+  # over the repo's shell scripts (scripts/**, tests/**, examples/**, agent/**,
+  # plus the executable scripts/hooks/* discovered by shebang). It runs on a
+  # bare checkout (no pnpm/cargo install), so only tracked scripts are scanned.
+  #
+  # Severity gate = warning, not error. SC2257 and the other set -u / quoting
+  # hazards this lane exists to catch are warning-level (an error-only gate
+  # would miss the exact class that motivated the finding). The tree is green at
+  # warning today; any new warning fails the PR. Fix real findings; a
+  # `# shellcheck disable=SCxxxx` is allowed only with a one-line justification.
+  #
+  # The shellcheck version is pinned (same rationale as the clippy toolchain
+  # pin, #2549): a floating "stable" lets a new shellcheck release add a warning
+  # that reds every PR with no script change. Bump it deliberately as a chore.
+  shellcheck:
+    name: Shell Script Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Run ShellCheck
+        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
+        with:
+          severity: warning
+          version: v0.11.0
+          ignore_paths: node_modules target graft
+
   # Run tests
   tests:
     name: Run Tests

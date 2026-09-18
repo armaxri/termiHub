@@ -19,7 +19,7 @@
 # selected (-k external_app). --manual, -s and -rs are always added.
 set -uo pipefail
 
-cd "$(git rev-parse --show-toplevel)"
+cd "$(git rev-parse --show-toplevel)" || exit 1
 
 # Select the external-app guided-manual suite unless the caller passes its own.
 PYTEST_SELECT=("$@")
