@@ -844,6 +844,17 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
   // Capture selection BEFORE right-click modifies it (xterm auto-selects word on right-click)
   const preRightClickSelectionRef = useRef<string | null>(null);
 
+  // Per-tab guard against a re-entrant / doubled contextmenu gesture. When termiHub
+  // is viewed over Windows Remote Desktop (mstsc, the OS session-remoting — NOT
+  // termiHub's own RDP / rdp-sidecar connection type) a single right-click can
+  // deliver the contextmenu event more than once (the OS remote-desktop relay /
+  // WebView2 double-fire), each firing a paste — the double-paste bug (#2595
+  // remote-desktop follow-up). This is defense-in-depth alongside the per-tab paste
+  // debounce in TerminalRegistry: if a right-click paste for this tab is already in
+  // flight, a second contextmenu for the same gesture is ignored until it settles.
+  // Keyed per tab so a different tab's right-click is unaffected.
+  const quickActionPastingRef = useRef<Set<string>>(new Set());
+
   const captureSelectionBeforeRightClick = useCallback(
     (e: React.PointerEvent, tabId: string) => {
       if (e.button === 2) {
@@ -865,8 +876,14 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
           reportError: (message) => toast.error(message),
         });
       } else {
+        // Ignore a duplicate contextmenu for the same gesture while its paste is
+        // still resolving (see quickActionPastingRef).
+        if (quickActionPastingRef.current.has(tabId)) return;
+        quickActionPastingRef.current.add(tabId);
         clearTerminalSelection(tabId);
-        pasteToTerminal(tabId);
+        void Promise.resolve(pasteToTerminal(tabId)).finally(() => {
+          quickActionPastingRef.current.delete(tabId);
+        });
       }
     },
     [clearTerminalSelection, pasteToTerminal]
