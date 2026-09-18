@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { ArrowDown, ArrowUp, Trash2 } from "lucide-react";
 import { Modal, Button, Input, Field, NumberInput } from "@/components/ui";
 import type { Macro, MacroStep } from "@/types/macro";
@@ -13,6 +16,31 @@ export interface MacroEditorResult {
   tags: string[];
   steps: MacroStep[];
 }
+
+/**
+ * Client-side validation schema for a macro's scalar form fields (UX feedback
+ * only; the same check the dialog previously ran by hand, translated 1:1 into
+ * zod): `name` must be non-empty once trimmed. `description` and `tags` ride
+ * along as free text and are never rejected — they are trimmed/parsed on save.
+ *
+ * The steps array is validated separately (a macro with no steps cannot be
+ * saved) and combined with this schema's validity at the Save gate, so today's
+ * exact enable/disable behavior is preserved.
+ */
+const macroFormSchema = z
+  .object({
+    name: z.string(),
+    description: z.string(),
+    tags: z.string(),
+  })
+  .superRefine((form, ctx) => {
+    if (form.name.trim() === "") {
+      ctx.addIssue({ code: "custom", path: ["name"], message: "Name is required." });
+    }
+  });
+
+/** The raw form values the dialog edits (tags stays comma-separated text). */
+type MacroFormValues = z.infer<typeof macroFormSchema>;
 
 export interface MacroEditorDialogProps {
   /** Whether the dialog is open. */
@@ -35,29 +63,58 @@ export interface MacroEditorDialogProps {
  * input plus its inter-step delay, which can be adjusted. Steps can be reordered
  * or deleted individually. Composed entirely from the shared UI primitives.
  *
+ * The scalar fields are backed by react-hook-form + zod (see
+ * {@link macroFormSchema}); the imperative steps list stays in local state, and
+ * the Save gate combines the form validity with the "at least one step" rule.
+ *
  * Edits are held locally and only persisted when the user saves, so cancelling
  * discards them. Removing every step is disallowed at the Save gate (a macro
  * with no steps has nothing to play), and the name is required.
  */
 export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEditorDialogProps) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [tags, setTags] = useState("");
+  const { control, getValues, reset } = useForm<MacroFormValues>({
+    defaultValues: { name: "", description: "", tags: "" },
+    resolver: zodResolver(macroFormSchema),
+    mode: "onChange",
+  });
+
   const [steps, setSteps] = useState<MacroStep[]>([]);
 
   // Reload the working copy each time a macro is opened so a prior edit never
   // leaks in and cancel truly discards.
   useEffect(() => {
     if (open && macro) {
-      setName(macro.name);
-      setDescription(macro.description ?? "");
-      setTags(macro.tags.join(", "));
+      reset({
+        name: macro.name,
+        description: macro.description ?? "",
+        tags: macro.tags.join(", "),
+      });
       setSteps(macro.steps.map((s) => ({ ...s })));
     }
-  }, [open, macro]);
+  }, [open, macro, reset]);
 
-  const trimmedName = name.trim();
-  const canSave = trimmedName.length > 0 && steps.length > 0;
+  // Live form values. `useWatch` only surfaces registered fields and can lag the
+  // seeded defaults by a render, so merge it over blank defaults to keep a
+  // complete draft for the synchronous validity check.
+  const watched = useWatch({ control });
+  const draft: MacroFormValues = {
+    name: watched?.name ?? "",
+    description: watched?.description ?? "",
+    tags: watched?.tags ?? "",
+  };
+
+  // Deterministic, synchronous validity derived straight from the schema — the
+  // same approach CustomRuleEditor uses — rather than react-hook-form's async
+  // error proxy, so the Save gate updates on the same render as the edit.
+  const validity = useMemo(() => {
+    return macroFormSchema.safeParse(draft).success;
+    // `draft` is rebuilt every render from the watched values; keying on its
+    // serialization avoids recomputing when nothing actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(draft)]);
+
+  // Save requires both a valid form and at least one step, exactly as before.
+  const canSave = validity && steps.length > 0;
 
   const moveStep = (index: number, direction: -1 | 1) => {
     setSteps((prev) => {
@@ -85,10 +142,11 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
   // duplicate; a rejection just returns the button to idle with the dialog open.
   const handleSave = () => {
     if (!canSave) return;
+    const current = getValues();
     return onSave({
-      name: trimmedName,
-      description: description.trim() || undefined,
-      tags: parseTags(tags),
+      name: current.name.trim(),
+      description: current.description.trim() || undefined,
+      tags: parseTags(current.tags),
       steps,
     });
   };
@@ -177,33 +235,54 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
         </>
       }
     >
-      <Field label="Name" htmlFor="macro-editor-name">
-        <Input
-          id="macro-editor-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Macro name"
-          data-testid="macro-editor-name"
-        />
-      </Field>
-      <Field label="Description (optional)" htmlFor="macro-editor-description">
-        <Input
-          id="macro-editor-description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What this macro does"
-          data-testid="macro-editor-description"
-        />
-      </Field>
-      <Field label="Tags (optional, comma-separated)" htmlFor="macro-editor-tags">
-        <Input
-          id="macro-editor-tags"
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-          placeholder="ops, release"
-          data-testid="macro-editor-tags"
-        />
-      </Field>
+      <Controller
+        name="name"
+        control={control}
+        render={({ field }) => (
+          <Field label="Name" htmlFor="macro-editor-name">
+            <Input
+              id="macro-editor-name"
+              value={field.value ?? ""}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              placeholder="Macro name"
+              data-testid="macro-editor-name"
+            />
+          </Field>
+        )}
+      />
+      <Controller
+        name="description"
+        control={control}
+        render={({ field }) => (
+          <Field label="Description (optional)" htmlFor="macro-editor-description">
+            <Input
+              id="macro-editor-description"
+              value={field.value ?? ""}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              placeholder="What this macro does"
+              data-testid="macro-editor-description"
+            />
+          </Field>
+        )}
+      />
+      <Controller
+        name="tags"
+        control={control}
+        render={({ field }) => (
+          <Field label="Tags (optional, comma-separated)" htmlFor="macro-editor-tags">
+            <Input
+              id="macro-editor-tags"
+              value={field.value ?? ""}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              placeholder="ops, release"
+              data-testid="macro-editor-tags"
+            />
+          </Field>
+        )}
+      />
       <div className="macro-editor__steps-header">
         <span className="macro-editor__steps-title">Steps ({steps.length})</span>
       </div>
