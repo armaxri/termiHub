@@ -10,7 +10,8 @@ evidence:
   - agent/src/update/mod.rs:164
   - agent/src/update/test_hook.rs:105
   - agent/src/update/test_hook.rs:164
-status: open
+status: fixed
+resolution: "#3091 — agent self-update TEST HOOK no longer ships in release builds. Gated `#[cfg(any(feature="test-hooks", debug_assertions))]` (debug_assertions mirrors sibling WA-RS-009 startup_test_delay gate; `test` cfg would break live integration tests that spawn the agent BINARY, not linked w/ --cfg test). Verified: `cargo build --release -p termihub-agent` default = 0 occurrences of env consts/log marker (strings); --features test-hooks restores (4). Test-agent build fully wired: build-agents.sh --features passthrough + Python harness stage_remote_agent_binary builds armed container w/ --features test-hooks. All 7 deferred_update_hook live tests + #1546 units green, clippy clean w/ and w/o feature. No follow-up needed"
 ---
 
 ## What
