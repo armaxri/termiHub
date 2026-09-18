@@ -21,6 +21,10 @@ pub mod panic_hook;
 pub mod portable;
 pub mod remote_exec;
 pub mod shell_detect;
+/// Single-instance enforcement (per user) for installed release builds
+/// (PER-005 / SM-025). Prevents two copies clobbering shared config/session
+/// files by focusing the running window and exiting the second launch.
+pub mod single_instance;
 pub mod ssh_auth;
 pub mod ssh_key_convert;
 pub mod ssh_key_validate;

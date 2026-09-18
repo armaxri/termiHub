@@ -3506,3 +3506,37 @@ routes execution end-to-end, which per-PR CI cannot (it needs a live agent).
    agent (reachable on the agent's network / port bound there), not the desktop.
 3. Switch back to **This computer** and restart → confirm it is hosted locally
    again.
+
+### Single-instance enforcement (findings PER-005, SM-025)
+
+termiHub runs as a **single instance per user** in installed release builds: a
+second launch focuses the already-running window and exits instead of opening a
+second process. This prevents two copies clobbering each other's shared config
+and `last_session` files (neither store takes a cross-process lock — PER-005 —
+and `last_session` writes are last-writer-wins — SM-025). The mode-gating logic
+(installed+release only) is covered by unit tests
+(`utils::single_instance::tests`), but exercising two real processes is inherently
+manual. **Enforcement is compiled out of debug builds**, so this must be verified
+against an **installed release build** (`./scripts/build.sh`), not `./scripts/dev.sh`.
+
+**Second launch focuses the existing window (installed release).**
+
+1. Install and launch the release build. Note the window and open a tab or two.
+2. Launch the app a **second time** (double-click the installed app / run its
+   binary again). Confirm **no second window opens** — the existing window comes
+   to the **front and gains focus** (and un-minimizes if it was minimized), and
+   the second process exits on its own.
+3. Confirm your open tabs/state are untouched and the config/session files are
+   **not** duplicated or reset (single writer, so no clobber).
+
+**Portable mode in two folders both run (no lock).**
+
+1. Make two separate portable copies (each in its own folder containing a `data/`
+   directory — see the portable-mode notes). Launch **both** at once.
+2. Confirm **both instances run simultaneously** (they use separate `data/` dirs
+   and legitimately do not clobber, so single-instance must **not** block them).
+
+**Dev builds are not locked.**
+
+1. From two checkouts, launch `./scripts/dev.sh` in each. Confirm **both run** —
+   the parallel dev-checkout workflow is unaffected (debug builds skip the lock).
