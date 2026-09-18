@@ -11,7 +11,8 @@ evidence:
   - .github/workflows/build.yml:1
   - .github/workflows/system-integration.yml:1
   - .github/workflows/agent.yml:1
-status: open
+status: fixed
+resolution: "#3062 — added top-level least-privilege permissions:{contents:read} to all 8 unscoped workflows (code-quality/build/agent/system-integration/integration-fixtures/coverage + 2 windows-grade); each verified to only checkout/build/test/upload-artifact (no writes needed); actionlint clean"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: src/components/RecentSessionsSidebar
 evidence:
   - src/components/RecentSessionsSidebar/SaveAsConnectionDialog.tsx:277
   - src/components/PasswordInput/PasswordInput.tsx
-status: open
+status: fixed
+resolution: "develop — SaveAsConnectionDialog.tsx:277 now renders <PasswordInput> (imported :3) inside <Field label=Password>; raw <Input type=password> gone — the single-PR swap is already done"
 ---
 
 ## What

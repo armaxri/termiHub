@@ -9,7 +9,8 @@ subsystem: components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:1019
   - src/components/Terminal/Terminal.tsx:1020
-status: open
+status: fixed
+resolution: "#3068 — duplicate of FEC-003 (same Terminal.tsx initial-command setTimeout(200) issue) — resolved by the same PR: readiness-gated send + fallback + cleanup"
 ---
 
 ## What

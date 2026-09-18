@@ -11,7 +11,8 @@ evidence:
   - core/src/backends/mock_remote_desktop.rs:122
   - core/src/backends/vnc/frame.rs:44
   - core/tests/vnc.rs:239
-status: open
+status: fixed
+resolution: "develop — VNC resize clamps untrusted dims + tested: core/src/backends/vnc/frame.rs:26 MAX_DIMENSION=8192, resize() clamps width/height.min(MAX) before alloc (:65), resize_clamps_hostile_dimensions_before_allocating (:173) drives real 65535x65535 through path. mock-divergence closed"
 ---
 
 ## What

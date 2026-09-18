@@ -11,7 +11,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:1020
   - src/utils/classifyAgentError.ts:79
   - src/utils/frontendLog.ts:31
-status: open
+status: partial
+resolution: "develop — durable error channel exists: frontendError mirrors ERROR/WARN to backend durable log (frontendLog.ts:133/:26). Remaining cross-cutting: 364 toast sites not routed through it, typed-envelope classification is ERR-003 (in-progress), display-string sanitization absent — folds w/ TAURI-008"
 ---
 
 ## What

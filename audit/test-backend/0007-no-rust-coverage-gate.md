@@ -9,7 +9,8 @@ subsystem: .github/workflows
 evidence:
   - .github/workflows/code-quality.yml:223
   - .github/workflows/code-quality.yml:263
-status: open
+status: partial
+resolution: "develop — rust coverage tooling landed (coverage.yml cargo-llvm-cov unified FE+Rust via scripts/coverage.sh) but NOT enforcing: whole job continue-on-error:true (:33 'advisory'), coverage.sh:13 doesn't fail on low value. Remaining: flip to fail-on-decrease ratchet after baseline — maintainer/policy call (same as CI-011)"
 ---
 
 ## What

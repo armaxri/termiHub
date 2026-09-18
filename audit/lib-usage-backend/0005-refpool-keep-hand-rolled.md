@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/ssh
 evidence:
   - core/src/backends/ssh/session_pool.rs:46
-status: open
+status: wontfix
+resolution: "develop — keep-as-is by design: RefPool correctly hand-rolled (ssh/session_pool.rs, 19 refs); documented buy-vs-build, no action wanted"
 ---
 
 ## What

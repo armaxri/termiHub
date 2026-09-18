@@ -10,7 +10,8 @@ evidence:
   - src/components/Terminal/Terminal.tsx:1044
   - src/components/Terminal/Terminal.tsx:1050
   - src/components/Terminal/Terminal.tsx:1054
-status: open
+status: fixed
+resolution: "#3069 — duplicate of FEC-014 — same teardown-defer fix"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: src/components/Terminal, src/services/events
 evidence:
   - src/services/events.ts:46
   - src/components/Terminal/Terminal.tsx:858
-status: open
+status: fixed
+resolution: "#3058 — added automated IME + Unicode round-trip coverage (19 tests, 3 files): useEditorKeyboard.ime.test.tsx drives real compositionstart→end→Enter (candidate-confirm swallowed, no double-process); unicodeRoundTrip + wsUnicodeRoundTrip prove CJK/RTL/combining/astral-emoji survive dispatcher + WS bridge codepoint-exact, grapheme clusters un-split. Native OS IME rendering + xterm glyph shaping deferred to manual grade #3059"
 ---
 
 ## What

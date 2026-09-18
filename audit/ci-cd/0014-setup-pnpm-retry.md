@@ -9,7 +9,8 @@ subsystem: .github/actions/setup-pnpm
 evidence:
   - .github/actions/setup-pnpm/action.yml:11
   - .github/actions/setup-pnpm/action.yml:16
-status: open
+status: partial
+resolution: "develop — pnpm/action-setup now SHA-pinned (@0977fd99 # v6.0.10) closing unpinned-action-retry concern; remaining: 3x continue-on-error retry-masking pattern retained by design (low)"
 ---
 
 ## What

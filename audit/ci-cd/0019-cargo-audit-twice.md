@@ -9,7 +9,8 @@ subsystem: .github/workflows/code-quality.yml
 evidence:
   - .github/workflows/code-quality.yml:110
   - .github/workflows/code-quality.yml:325
-status: open
+status: fixed
+resolution: "#3062 — dropped the redundant duplicate cargo audit (was byte-identical over same workspace lock in both rust-quality :127 AND security-audit :469); kept the dedicated security-audit job's run; cargo audit now runs once per PR"
 ---
 
 ## What

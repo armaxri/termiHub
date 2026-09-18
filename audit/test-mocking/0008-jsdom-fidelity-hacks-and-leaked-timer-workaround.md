@@ -11,7 +11,8 @@ evidence:
   - src/test/setup.ts:107
   - src/test/setup.ts:133
   - src/test/setup.ts:59
-status: open
+status: fixed
+resolution: "#3057 — extracted the hidden global 2000px HTMLElement.prototype size hack into explicit opt-in helper src/test/virtualListSize.ts (per-test sizing); migrated 7 FileBrowser suites; added timer-leak regression test. Diagnosed the onscrollend shim's leak as @tanstack/virtual-core@3.17.4's own uncleaned debounce (kept shim + documented + follow-up #3056); full suite 6496 tests green"
 ---
 
 ## What

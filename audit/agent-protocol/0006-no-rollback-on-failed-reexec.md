@@ -10,7 +10,8 @@ evidence:
   - agent/src/update/apply.rs:186
   - agent/src/update/apply.rs:233
   - agent/src/update/apply.rs:213
-status: open
+status: fixed
+resolution: "#3063 — agent self-update apply now backs up + reverts: unique tempfile::NamedTempFile::new_in(dir) (was fixed .update.tmp); copies current binary to <exe>.backup before atomic swap; on failed re-exec restores backup so on-disk agent stays runnable; cleans backup on success (startup prune). Revert logic factored testable (435 agent tests); un-fakeable execve-fail e2e deferred to live #3064"
 ---
 
 ## What

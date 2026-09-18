@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/release.yml:280
   - .github/workflows/release.yml:213
   - .github/workflows/release.yml:367
-status: open
+status: deferred
+resolution: "maintainer-decision — signing half = explicit unsigned-beta decision (macOS ad-hoc codesign, MSI unsigned; signing deferred pre-v1.0 per release-strategy). Desktop-installer user-facing .sha256 is a REAL additive gap (agent binaries already ship sidecars #1350 for internal verify; installers at release.yml:280-312 upload none, verify-release expected[] omits them) — folds into the pre-v1.0 signing/verification story, release-domain maintainer call"
 ---
 
 ## What

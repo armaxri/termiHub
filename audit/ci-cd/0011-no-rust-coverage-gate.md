@@ -9,7 +9,8 @@ subsystem: .github/workflows/code-quality.yml
 evidence:
   - .github/workflows/code-quality.yml:216
   - .github/workflows/code-quality.yml:223
-status: open
+status: partial
+resolution: "develop — rust coverage now MEASURED: coverage.yml runs unified frontend+rust cargo-llvm-cov (:78); remaining: whole job continue-on-error:true (:33) advisory pending baseline — flip to blocking ratchet"
 ---
 
 ## What

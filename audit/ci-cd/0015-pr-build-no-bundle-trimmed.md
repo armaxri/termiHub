@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/build.yml:14
   - .github/workflows/build.yml:92
   - .github/workflows/build.yml:27
-status: open
+status: partial
+resolution: "develop — PR build --no-bundle + 3-target matrix (build.yml:93/:27); full bundles+dropped arches built post-merge by dev-build.yml; remaining: no pre-merge full-bundle+sidecar+sign gate (cost/cadence maintainer)"
 ---
 
 ## What

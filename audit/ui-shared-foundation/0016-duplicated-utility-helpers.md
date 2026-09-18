@@ -15,7 +15,8 @@ evidence:
   - src/utils/formatters.ts:4
   - src/components/ThemeEditor/ThemeEditor.tsx:137
   - src/components/Settings/CustomRuleEditor.tsx:179
-status: open
+status: fixed
+resolution: "#3072 — remaining dups consolidated: shared errorMessage() util routed through ~200 sites/~60 files (folded 3 local reimpls + 2 wrappers, net -210 lines); ColorInput ui primitive extracted, used in ThemeEditor+CustomRuleEditor. id-gen was ALREADY consolidated (generateMacroId/generateWorkflowId both wrap newId ULID, #2149) — added missing newId shape tests. Earlier bits (parseTags/slugify/formatBytes) already done. 6531 tests green"
 ---
 
 ## What

@@ -12,7 +12,8 @@ evidence:
   - src/utils/languageMapping.ts:13
   - src/services/transport/ids.ts:9
   - src/services/transport/ProjectionClient.ts:1
-status: open
+status: wontfix
+resolution: "develop — keep-as-is: reconnectBackoff.ts/parseHostPort.ts/transport/ids.ts hand-rolled by design; no action"
 ---
 
 ## What

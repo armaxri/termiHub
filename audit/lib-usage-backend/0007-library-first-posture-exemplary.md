@@ -10,7 +10,8 @@ evidence:
   - core/Cargo.toml:79
   - src-tauri/Cargo.toml:505
   - agent/Cargo.toml:386
-status: open
+status: wontfix
+resolution: "develop — positive/info finding: library-first posture exemplary; no action by design"
 ---
 
 ## What

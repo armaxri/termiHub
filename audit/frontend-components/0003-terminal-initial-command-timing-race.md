@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:1019
-status: open
+status: fixed
+resolution: "#3068 — initial workspace-launch command no longer sent on a blind setTimeout(200): now sent on the FIRST connection.output chunk for the session (readiness proof, hooked in subscribeOutput) with a 200ms fallback timer as safety net, exactly-once via initialCommandSent flag; fallback timer + flag cleared in cleanupRef teardown so a late chunk racing unmount can't send into a dead/replaced session. TDD Terminal.initial-command.test.tsx (first-output/fallback/unmount/no-double/reattach), 6520 tests green"
 ---
 
 ## What

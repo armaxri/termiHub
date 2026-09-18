@@ -10,7 +10,8 @@ evidence:
   - src/components/Terminal/Terminal.tsx:1050
   - src/components/Terminal/Terminal.tsx:1054
   - src/hooks/useRemoteDesktopSession.ts:204
-status: open
+status: fixed
+resolution: "#3069 — (≡WA-FE-009) replaced 50ms wall-clock StrictMode-teardown defer with queueMicrotask + cancellation token flipped synchronously by the remount's re-setup (Terminal.tsx persistent-detach + closeTerminal, useRemoteDesktopSession.ts). React runs cleanup+re-setup in one passive-effect flush so the microtask drains AFTER a same-tick remount cancels teardown; genuine unmount proceeds. isSessionMoving(#1900) honored. mutation-verified tests, 6523 green. Also closes untracked-timer half"
 ---
 
 ## What

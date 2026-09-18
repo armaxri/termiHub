@@ -10,7 +10,8 @@ evidence:
   - src/main.tsx:1
   - src/utils/ensureValidLocale.ts:11
   - src/utils/locale.ts:83
-status: open
+status: fixed
+resolution: "#3065 — enforce locale guard runs first: source-reading vitest main.importOrder.test.ts asserts main.tsx's first import is `./utils/ensureValidLocale` (strips comments, regex import order); fail-on-reorder demonstrated. Chose test over eslint import/order to avoid repo-wide churn (matches cspConfig.test.ts precedent). 6517 tests green"
 ---
 
 ## What

@@ -11,7 +11,8 @@ evidence:
   - core/src/config/mod.rs:625
   - core/src/config/mod.rs:637
   - core/src/config/mod.rs:865
-status: open
+status: fixed
+resolution: "develop — password deliberately left verbatim (no shell expansion) + regression tests: config/mod.rs:314 clones password without expand_config_value, doc :324/:676; tests ssh/ftp/jump_host/proxy_jump _leaves_password_verbatim (:1582-1650) assert $/${VAR}/~ survive byte-for-byte, no env leak"
 ---
 
 ## What

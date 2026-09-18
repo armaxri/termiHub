@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/embedded_servers/tftp
 evidence:
   - core/src/embedded_servers/tftp_server.rs:1
-status: open
+status: wontfix
+resolution: "develop — keep-as-is: TFTP server hand-rolled over std UDP (embedded_servers/tftp_server.rs); documented, no action"
 ---
 
 ## What

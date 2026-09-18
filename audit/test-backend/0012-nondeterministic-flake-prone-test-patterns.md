@@ -11,7 +11,8 @@ evidence:
   - core/src/ipc/ndjson.rs:86
   - agent/tests/local_agent_integration.rs:98
   - agent/tests/tcp_listener_readiness.rs:129
-status: open
+status: fixed
+resolution: "#3066 — SUPERSEDES earlier partial: ndjson framing tests now deterministic — #[tokio::test(start_paused=true)] virtual time on read_line_reassembles_partial_reads + read_line_resumable_is_cancellation_safe; sleeps run on mock clock (park-then-advance), assertions byte-identical, 15 tests ~0.00s (was 110ms). netem-lane + #2495 halves still out of scope"
 ---
 
 ## What

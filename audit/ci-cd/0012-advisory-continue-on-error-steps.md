@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/code-quality.yml:269
   - .github/workflows/code-quality.yml:311
   - .github/workflows/cargo-update-lockfile.yml:94
-status: open
+status: partial
+resolution: "develop — prod pnpm-audit now a real BLOCKING gate (code-quality.yml:445 pnpm-audit-prod-gate.sh); remaining advisory-by-design: coverage-gap report (:394), full-tree pnpm audit (:453), cargo-update sanity — forcing-functions = policy"
 ---
 
 ## What

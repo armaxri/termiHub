@@ -9,7 +9,8 @@ subsystem: src/components/LogViewer, src/components/Settings
 evidence:
   - src/components/LogViewer/LogViewer.tsx:101
   - src/components/Settings/UpdateSettings.tsx:86
-status: open
+status: partial
+resolution: "develop — log-file path now surfaced Settings→Diagnostics (GeneralSettings.tsx:255); remaining: no consolidated About/copy-debug-info bundle (OS/build/commit/agent-version) + no export-time redaction in LogViewer.tsx"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/terminal/agent_binary.rs:320
   - src-tauri/src/terminal/agent_binary.rs:357
   - src-tauri/src/terminal/agent_binary.rs:283
-status: open
+status: fixed
+resolution: "#3061 — release builds now fail closed on agent-binary checksum: real hole was verify_with_adjacent_sidecar tolerating a MISSING .sha256 unconditionally on the cache + bundled-resource paths (download path already gated). Added require_checksum param derived from !is_dev_build; missing sidecar = hard error in release, warn in dev; mismatch always rejected. 50 tests. Found+filed windows-arm64 agent asset gap #3060"
 ---
 
 ## What

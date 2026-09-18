@@ -12,7 +12,7 @@ evidence:
   - src-tauri/src/workspace/last_session.rs:77
   - src-tauri/src/connection/storage.rs:135
 status: fixed
-resolution: "#2746 — newer-file-not-wiped"
+resolution: "#3067 — extended granular per-entry salvage to all 6 remaining stores (embedded_servers/session_history/workspace/workflows/tunnel/macros) via shared salvage_list_store<Store,Entry> primitive in utils/migrate.rs + VersionedStore::salvage hook, mirroring connection/storage back-up→salvage→reset-only-if-container-broken; drops only corrupt entries (indexed warning), preserves extra fields; per-store corrupt_entry_is_dropped tests + 4 primitive tests; no format/save-path change. Note: salvages against CURRENT entry shape (ok today, all v1 identity-migration)"
 ---
 
 ## What

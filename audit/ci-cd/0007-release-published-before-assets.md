@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/release.yml:84
   - .github/workflows/release.yml:93
   - .github/workflows/release.yml:463
-status: open
+status: wontfix
+resolution: "#2650 — verified-prerelease is the CHOSEN release model (#2650, closed): release publishes --prerelease then the verify-release job (release.yml:469) gates the full checksummed asset set + notes before it's user-consumable. Draft-until-verified would duplicate that gate; prerelease-visibility is intentional for the beta"
 ---
 
 ## What
