@@ -224,6 +224,23 @@ if [ "$WITH_FTP" -eq 1 ]; then
     COMPOSE_ARGS="$COMPOSE_ARGS --profile ftp"
 fi
 
+# Reap this checkout's stale fixture containers left by a crashed/killed prior
+# run (or an earlier --keep-infra) before bringing the infra up, so a normal run
+# self-heals instead of colliding with a wedged leftover (finding TIN-011). The
+# EXIT trap above only fires on a clean exit, so a crash/kill bypasses it. Scoped
+# STRICTLY to this checkout via the compose-project label, so the up-to-ten
+# parallel checkouts never touch each other's containers.
+REAP_PROJECT="${TERMIHUB_TEST_PROJECT:-${COMPOSE_PROJECT_NAME:-termihub}}"
+STALE_CONTAINERS=$(
+    $CONTAINER_CMD ps -aq \
+        --filter "label=com.docker.compose.project=${REAP_PROJECT}" 2>/dev/null || true
+)
+if [ -n "$STALE_CONTAINERS" ]; then
+    echo "Reaping stale fixture containers for project '${REAP_PROJECT}' (prior crash/keep-infra)..."
+    # shellcheck disable=SC2086  # word-splitting the id list is intended here
+    $CONTAINER_CMD rm -f $STALE_CONTAINERS >/dev/null 2>&1 || true
+fi
+
 $CONTAINER_CMD compose -f tests/docker/docker-compose.yml $COMPOSE_ARGS up -d --build
 DOCKER_STARTED=1
 
