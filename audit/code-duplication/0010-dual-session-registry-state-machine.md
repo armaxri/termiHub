@@ -11,7 +11,8 @@ evidence:
   - agent/src/session/manager.rs:344
   - agent/src/session/manager.rs:1197
   - core/src/session/mod.rs
-status: open
+status: partial
+resolution: "#3095 — RE-SCOPED after scoping pass: finding premise (desktop+agent duplicate the same session-lifecycle FSM) is MIS-TARGETED. The real reconnect FSM is already unified in session_projection/store.rs (SessionLifecycleStore, authoritative post-#2283) w/ NO agent twin — so the FSM-unification half is effectively DONE. The two 'duplicated' maps (src-tauri vs agent SessionManager.sessions) are transport-ownership registries w/ OPPOSITE settle semantics (desktop removes on exit, agent retains Exited) + non-unifiable entry types → 'one registry, delete both maps' is infeasible/regressive (won't-fix, rationale on #3095). Salvageable = thin core::session::registry::Sessions<E> container (Slice A agent-first after #3092, Slice B desktop ops-only) → tracked #3095 Ready2Implement. Verify-or-defer saved an impl agent from a mirage"
 ---
 
 ## What

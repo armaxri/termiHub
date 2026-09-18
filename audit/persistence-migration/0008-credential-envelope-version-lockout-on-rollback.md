@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/credential/crypto.rs:23
   - src-tauri/src/credential/crypto.rs:217
   - src-tauri/src/credential/master_password.rs:143
-status: open
+status: fixed
+resolution: "#3094 — credential envelope version migration machinery: reads accept MIN_SUPPORTED_ENVELOPE_VERSION..=ENVELOPE_VERSION via shared classify_envelope_version (unlock + import paths). version>current → new UnlockFailure::NewerVersion (corrupted:false, UI won't offer destructive reset) — 'written by a newer version, update to unlock' not Corrupted; version<MIN → terminal 'no longer supported'. CAUGHT LATENT BUG: version was AEAD AAD hardcoded `AAD=&[1]` on both sides (never read envelope.version) → replaced w/ aad_for_version(version); aad_for_version(1)==[1] byte-identical so existing credentials.enc stay readable (regression-guarded w/ do-not-change comment). Upgrade-on-write automatic (encrypt stamps ENVELOPE_VERSION; never eager on read). Migration-contract doc on the const. 127/127 tests. Down-migration for a real future format deferred until that format exists (no tracker needed — contract documents procedure)"
 ---
 
 ## What
