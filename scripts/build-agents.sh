@@ -82,6 +82,7 @@ SELECTED_TARGETS=()
 SEQUENTIAL=false
 NATIVE=false
 DEV=false
+FEATURES=""
 
 # --- Argument parsing ---
 while [[ $# -gt 0 ]]; do
@@ -103,6 +104,11 @@ while [[ $# -gt 0 ]]; do
             DEV=true
             shift
             ;;
+        --features)
+            shift
+            FEATURES="$1"
+            shift
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: build-agents.sh [OPTIONS]
@@ -120,6 +126,10 @@ Options:
                      no container runtime required. Required for macOS and Windows targets.
   --dev              Build in debug profile (omits --release). Much faster to compile;
                      binary lands in target/<triple>/debug/ instead of release/.
+  --features <list>  Comma-separated cargo features to enable (passed through as
+                     `--features <list>`). Used by the system-test harness to build a
+                     release agent that still carries the env-gated update test hook
+                     (`--features test-hooks`); OFF for every real release build.
   --help, -h         Show this help message
 
 Linux targets (cross-rs mode, require setup-agent-cross.sh):
@@ -193,6 +203,16 @@ if [ "$DEV" = true ]; then
 else
     PROFILE_FLAG="--release"
     PROFILE_DIR="release"
+fi
+
+# --- Feature setup ---
+# Rendered into each build command as `--features <list>` (empty when unset).
+# Deliberately word-split alongside $PROFILE_FLAG below (SC2086 already suppressed
+# there), so an empty value contributes no argument.
+if [ -n "$FEATURES" ]; then
+    FEATURES_FLAG="--features $FEATURES"
+else
+    FEATURES_FLAG=""
 fi
 
 # --- Detect cross-rs (skipped for --native) ---
@@ -298,13 +318,13 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
         if [ "$NATIVE" = true ]; then
             echo "  Building with cargo (native)..."
             # shellcheck disable=SC2086
-            cargo build $PROFILE_FLAG --target "$target" -p termihub-agent 2>&1 \
+            cargo build $PROFILE_FLAG $FEATURES_FLAG --target "$target" -p termihub-agent 2>&1 \
                 | { grep -v "<jemalloc>:" || true; } \
                 || build_exit=$?
         else
             echo "  Building with cross-rs..."
             # shellcheck disable=SC2086
-            CROSS_CONFIG=agent/Cross.toml cross build $PROFILE_FLAG --target "$target" -p termihub-agent 2>&1 \
+            CROSS_CONFIG=agent/Cross.toml cross build $PROFILE_FLAG $FEATURES_FLAG --target "$target" -p termihub-agent 2>&1 \
                 | { grep -v "<jemalloc>:" || true; } \
                 || build_exit=$?
         fi
@@ -365,11 +385,11 @@ else
             if [ "$NATIVE" = true ]; then
                 # shellcheck disable=SC2086
                 CARGO_TARGET_DIR="$cross_dir" \
-                    cargo build $PROFILE_FLAG --target "$target" -p termihub-agent 2>&1
+                    cargo build $PROFILE_FLAG $FEATURES_FLAG --target "$target" -p termihub-agent 2>&1
             else
                 # shellcheck disable=SC2086
                 CARGO_TARGET_DIR="$cross_dir" CROSS_CONFIG=agent/Cross.toml \
-                    cross build $PROFILE_FLAG --target "$target" -p termihub-agent 2>&1
+                    cross build $PROFILE_FLAG $FEATURES_FLAG --target "$target" -p termihub-agent 2>&1
             fi \
                 | awk -v prefix="[$target] " '
                     {

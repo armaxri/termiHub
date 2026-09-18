@@ -757,6 +757,13 @@ Notes worth knowing before you use it:
 - **Test-only, and env-only.** Deliberately not a CLI flag, so it can never
   appear in `--help` or in a desktop-built SSH exec command. Unset, the agent's
   behaviour is unchanged and the code path is never entered.
+- **Compiled out of release builds (audit finding AGT-008).** The hook is only
+  present under `debug_assertions` (every `cargo test` / dev build) or when the
+  `test-hooks` cargo feature is enabled — a default `cargo build --release` ships
+  neither the hook nor the env lookup. A **release** agent for the system tests
+  therefore has to be built with the feature: `stage_remote_agent_binary` (the
+  harness) passes `scripts/build-agents.sh --features test-hooks`. Building a
+  release agent by hand for the armed container needs the same flag.
 - **It does not swap the binary.** The default staged path points at a file the
   agent never writes. A `pending_update` is live — closing the last session fires
   a real deferred apply — so this matters: the apply fails, logs, and keeps the

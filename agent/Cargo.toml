@@ -20,6 +20,22 @@ path = "src/main.rs"
 name = "termihub_agent"
 path = "src/lib.rs"
 
+[features]
+# Compiles the env-gated self-update **test hook** (`src/update/test_hook.rs`,
+# #1546) into the binary. OFF by default so a shipping `cargo build --release`
+# never contains it: the hook lets whoever can set `TERMIHUB_AGENT_TEST_PENDING_UPDATE`
+# on the agent host point the self-updater at an arbitrary binary, which must not
+# be reachable in a released ventilator-grade agent (audit finding AGT-008).
+#
+# The hook is ALSO compiled in for any `debug_assertions` build (so every
+# `cargo test` / dev build keeps the #1546 unit and live-agent integration tests
+# working with no wiring — see `src/update/mod.rs`). This feature is the knob for
+# the one case `debug_assertions` cannot cover: a **release-profile** agent built
+# for the system tests (`scripts/build-agents.sh --features test-hooks`, staged
+# into the armed Docker container), which needs the hook present in an optimized
+# binary. It stays OFF for every real release build path.
+test-hooks = []
+
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 serde = { workspace = true }

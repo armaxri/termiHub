@@ -23,11 +23,21 @@
 //!
 //! # Gating
 //!
-//! Everything here is inert unless `TERMIHUB_AGENT_TEST_PENDING_UPDATE` is set
-//! to a non-empty value: [`TestPendingUpdate::from_env`] returns `None` and both
-//! call sites (`io/tcp.rs`, `io/stdio.rs`) skip. Production behaviour is byte
-//! for byte unchanged. The var is deliberately not a CLI flag — it must never
-//! appear in `--help` or in a desktop-built exec command.
+//! This whole module is compiled out of release builds (audit finding AGT-008):
+//! it exists only under `debug_assertions` (every `cargo test` / dev build) or
+//! when the `test-hooks` cargo feature is explicitly enabled. See the gate on
+//! `mod test_hook;` and on [`super::TestUpdateHook`] in `update/mod.rs`. A
+//! shipped `cargo build --release` contains neither this code nor the env lookup
+//! that arms it, so the self-update path cannot be redirected at an arbitrary
+//! binary through an environment variable on a released agent.
+//!
+//! Even when compiled in, everything here is inert unless
+//! `TERMIHUB_AGENT_TEST_PENDING_UPDATE` is set to a non-empty value:
+//! [`TestPendingUpdate::from_env`] returns `None` and the transport loops
+//! (`io/tcp.rs`, `io/stdio.rs`, via [`super::TestUpdateHook`]) do nothing.
+//! Production behaviour is byte for byte unchanged. The var is deliberately not a
+//! CLI flag — it must never appear in `--help` or in a desktop-built exec
+//! command.
 //!
 //! # Safety: the staged binary is never applied by accident
 //!
@@ -176,6 +186,19 @@ mod tests {
     #[test]
     fn unset_gate_is_a_no_op() {
         assert_eq!(TestPendingUpdate::parse(None, None), None);
+    }
+
+    /// The real production entry point [`TestPendingUpdate::from_env`] — not just
+    /// the pure [`TestPendingUpdate::parse`] — must be disarmed when the gate is
+    /// absent. Clears the env first (mirroring the live suite's hygiene) so a
+    /// developer who happens to export the var cannot make this pass spuriously.
+    /// This is the arm the AGT-008 gate compiles out of release builds; here we
+    /// pin that, when it IS compiled in, an unset gate arms nothing.
+    #[test]
+    fn from_env_is_disarmed_when_the_gate_is_absent() {
+        std::env::remove_var(TEST_PENDING_UPDATE_ENV);
+        std::env::remove_var(TEST_PENDING_UPDATE_BINARY_ENV);
+        assert_eq!(TestPendingUpdate::from_env(), None);
     }
 
     #[test]

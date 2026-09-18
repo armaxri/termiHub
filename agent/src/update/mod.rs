@@ -36,12 +36,23 @@
 //! timer or a real GitHub release. Env-gated and inert in production — see
 //! [`test_hook`] for the gate, the safety argument, and how it stays clear of
 //! the #1551 startup prune.
+//!
+//! **The hook is compiled OUT of release builds (audit finding AGT-008).** It
+//! exists only when `debug_assertions` is on (every `cargo test` / dev build) or
+//! the `test-hooks` cargo feature is explicitly enabled — the same shape as the
+//! #1579 `startup_test_delay` gate in `io/tcp.rs` (WA-RS-009). A default
+//! `cargo build --release` contains neither the hook nor the env lookup that arms
+//! it, so the self-update path cannot be redirected at an arbitrary binary via an
+//! environment variable on a shipped agent. The transport loops reach the hook
+//! only through [`TestUpdateHook`], whose release build is an inert no-op that
+//! never touches the environment.
 
 mod apply;
 mod checksum;
 mod coordinate;
 mod download;
 mod github;
+#[cfg(any(feature = "test-hooks", debug_assertions))]
 mod test_hook;
 mod version;
 
@@ -64,7 +75,71 @@ pub use apply::{
 };
 pub use coordinate::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 pub use github::{current_asset_suffix, DEFAULT_REPO};
+#[cfg(any(feature = "test-hooks", debug_assertions))]
 pub use test_hook::TestPendingUpdate;
+
+/// Startup seam for the #1546 env-gated deferred-update **test hook**.
+///
+/// Wraps [`TestPendingUpdate`] so the transport loops (`io/stdio.rs`,
+/// `io/tcp.rs`) read identically whether or not the hook is compiled in. When the
+/// hook is present (`debug_assertions`, or the `test-hooks` feature) this holds
+/// the armed [`TestPendingUpdate`] — or `None` when the env gate is unset — and
+/// forwards `seed` / `notify_attached` to it. In a default `--release` build the
+/// hook is compiled out entirely (audit finding AGT-008): this collapses to the
+/// zero-sized no-op below, which never reads the environment.
+#[cfg(any(feature = "test-hooks", debug_assertions))]
+#[derive(Default)]
+pub struct TestUpdateHook(Option<TestPendingUpdate>);
+
+#[cfg(any(feature = "test-hooks", debug_assertions))]
+impl TestUpdateHook {
+    /// Arm the hook from the environment, mirroring [`TestPendingUpdate::from_env`]
+    /// — `None` (a fully inert hook) unless `TERMIHUB_AGENT_TEST_PENDING_UPDATE`
+    /// is set to a truthy value.
+    pub fn from_env() -> Self {
+        Self(TestPendingUpdate::from_env())
+    }
+
+    /// Stage the armed pending update into the agent's state. A no-op when the
+    /// gate was unset.
+    pub async fn seed(&self, session_manager: &SessionManager) {
+        if let Some(hook) = self.0.as_ref() {
+            hook.seed(session_manager).await;
+        }
+    }
+
+    /// Announce the armed staged update to a client that just attached. A no-op
+    /// when the gate was unset.
+    pub fn notify_attached(&self, notification_tx: &NotificationSender, current_version: &str) {
+        if let Some(hook) = self.0.as_ref() {
+            hook.notify_attached(notification_tx, current_version);
+        }
+    }
+}
+
+/// Release build of [`TestUpdateHook`]: the #1546 test hook is compiled out
+/// (AGT-008), so this is a zero-sized, do-nothing stand-in that never consults
+/// the environment. Keeping the same surface lets the transport loops stay
+/// identical across builds without any `.unwrap()`/`.expect()`.
+#[cfg(not(any(feature = "test-hooks", debug_assertions)))]
+#[derive(Default)]
+pub struct TestUpdateHook;
+
+#[cfg(not(any(feature = "test-hooks", debug_assertions)))]
+impl TestUpdateHook {
+    /// Production build: the test hook does not exist, so this never reads the
+    /// environment and always yields an inert hook (equivalent to the gate being
+    /// unset).
+    pub fn from_env() -> Self {
+        Self
+    }
+
+    /// Inert in release — the hook was compiled out (AGT-008).
+    pub async fn seed(&self, _session_manager: &SessionManager) {}
+
+    /// Inert in release — the hook was compiled out (AGT-008).
+    pub fn notify_attached(&self, _notification_tx: &NotificationSender, _current_version: &str) {}
+}
 
 /// Default interval between self-update checks (24 hours).
 pub const DEFAULT_CHECK_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60);
