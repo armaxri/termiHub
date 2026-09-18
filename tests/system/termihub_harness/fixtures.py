@@ -150,12 +150,130 @@ def _runtime_works(cmd: str) -> bool:
     return result.returncode == 0
 
 
+# ── Pre-run stale-fixture reaper (audit finding TIN-011) ──────────────────────
+# A normal run tears its compose containers down via the run script's EXIT trap
+# (``scripts/test-system-linux.sh``) — but a crash, a ``SIGKILL``, or
+# ``--keep-infra`` bypasses that trap, leaving this checkout's containers behind
+# to pin the Docker VM. On the *next* run those orphans cause flaky cross-run
+# failures (a wedged sshd the fresh run silently reuses, a name still held). The
+# reaper removes them BEFORE bring-up so a normal run self-heals from a prior
+# crash.
+#
+# Scope is STRICT: only containers carrying THIS checkout's compose-project label
+# (``com.docker.compose.project=<compose_project>``) are ever touched. The
+# machine runs up to ten parallel checkouts, each with a distinct project name
+# (``termihub-test-6`` …), so a sibling checkout's containers — and any unrelated
+# Docker/Podman workload — are never in scope. Filtering on the compose *label*
+# (not a name glob) is what guarantees this: the app's own
+# ``termihub-<ts>-<pid>`` containers carry no compose label, so they are never
+# matched here; they also carry no per-checkout identifier, so reaping them
+# safely needs a separate change (TIN-011 follow-up: issue #3049).
+
+#: Compose-project label every ``compose``-managed container carries. Matching on
+#: it (rather than the container *name*) is what keeps the reap strictly within
+#: one checkout's project — a sibling's containers carry a different value.
+_COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+
+#: Process-once guard. The reaper runs at most once per pytest process (keyed by
+#: ``(runtime, project)``), so the *first* :meth:`ComposeFixture.ensure` heals a
+#: prior crash while later ``ensure`` calls in the same run never remove the
+#: containers *this* run just created — preserving warm within-run reuse.
+_reaped_projects: set[tuple[str, str]] = set()
+
+
+def stale_fixture_containers(runtime: str, project: str) -> list[str]:
+    """Names of ``project``'s compose containers currently present (any state).
+
+    Selected by the ``com.docker.compose.project`` **label**, so only
+    compose-managed fixtures of *exactly* this checkout match — never a sibling
+    checkout, and never an unrelated container that merely shares the
+    ``termihub`` name prefix. Returns ``[]`` (never raises) when the runtime
+    query fails, so a flaky ``ps`` degrades to a no-op reap.
+    """
+    try:
+        result = subprocess.run(
+            [
+                runtime,
+                "ps",
+                "-a",
+                "--filter",
+                f"label={_COMPOSE_PROJECT_LABEL}={project}",
+                "--format",
+                "{{.Names}}",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def reap_stale_fixtures(
+    project: Optional[str] = None, *, runtime: Optional[str] = None
+) -> list[str]:
+    """Remove stale fixture containers left by a crashed/killed prior run.
+
+    Scoped strictly to ``project`` (this checkout's compose project by default)
+    via the compose-project label — see the module note above. A no-op that
+    returns ``[]`` when no container runtime is available or nothing matches, so
+    it is always safe to call unconditionally before bring-up. Returns the names
+    of the containers it removed.
+    """
+    if runtime is None:
+        runtime = container_runtime()
+    if runtime is None:
+        return []
+    if project is None:
+        project = dev_local.compose_project()
+    names = stale_fixture_containers(runtime, project)
+    if not names:
+        return []
+    # ``rm -f`` stops-then-removes running orphans too (a crash leaves them
+    # *running*, having bypassed the teardown trap). Scoped to the names we just
+    # resolved for this project, so nothing outside it is affected. Best-effort:
+    # a container that vanished between the list and the remove is not an error.
+    try:
+        subprocess.run(
+            [runtime, "rm", "-f", *names],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return names
+
+
+def _reap_stale_fixtures_once(runtime: str, project: str) -> None:
+    """Reap ``project``'s stale containers the first time this run bring-up runs.
+
+    Idempotent per pytest process (guarded by :data:`_reaped_projects`), so the
+    reap self-heals a prior crash without ever tearing down containers the
+    current run created in an earlier suite.
+    """
+    key = (runtime, project)
+    if key in _reaped_projects:
+        return
+    _reaped_projects.add(key)
+    reap_stale_fixtures(project, runtime=runtime)
+
+
 class ComposeFixture:
     """On-demand access to the ``tests/docker`` compose services via Docker/Podman.
 
     Does **not** tear containers down — they are shared fixtures that survive
     across suites and runs (matching ``scripts/test-system.sh`` semantics, where
     the infra is brought up once and torn down by the run script, not the tests).
+
+    Before the *first* bring-up of a run it reaps any of **this checkout's**
+    stale fixture containers left over from a crashed/killed prior run (finding
+    TIN-011); see :func:`reap_stale_fixtures`.
     """
 
     def __init__(self, compose_file: Path = COMPOSE_FILE) -> None:
@@ -196,6 +314,10 @@ class ComposeFixture:
         # host ports (see ``dev_local`` / docs "Parallel test isolation"). The
         # ``ports`` we then probe are computed from the same offset, so they match.
         project = dev_local.compose_project()
+        # Self-heal from a prior crash/kill (or --keep-infra) that left this
+        # checkout's containers behind: reap them once, before the first
+        # bring-up, so ``compose up -d`` starts clean (finding TIN-011).
+        _reap_stale_fixtures_once(runtime, project)
         base = [runtime, "compose", "-p", project, "-f", str(self._compose_file)]
         env = {**os.environ, **dev_local.compose_env()}
         services = list(services)

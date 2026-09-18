@@ -1016,6 +1016,26 @@ which is required for the mutating fixtures — e.g. the network-fault tests app
 > used by the agent-deploy test: it is key-auth only (`PasswordAuthentication no`),
 > so it is incompatible with the password-auth path the test pins to.
 
+#### Pre-run stale-fixture reaper (self-healing from a crash)
+
+A normal run tears its containers down via the run script's `EXIT` trap, but a
+crash, a `SIGKILL`, or `--keep-infra` bypasses that trap and leaves this
+checkout's containers running — where they pin the Docker VM and cause flaky
+failures on the **next** run. Both entry points therefore reap this checkout's
+stale fixture containers **before** bring-up, so a normal run self-heals:
+
+- the Python harness (`ComposeFixture.ensure` → `reap_stale_fixtures`, run once
+  per pytest process), and
+- `scripts/test-system-linux.sh` (just before `compose up`).
+
+The reap is scoped **strictly** to this checkout via the
+`com.docker.compose.project=<compose_project>` label, so with up to ten parallel
+checkouts it never touches a sibling's containers or any unrelated Docker
+workload. The app's own `termihub-<ts>-<pid>` connection containers are **not**
+reaped here — they carry no compose label and no per-checkout identifier, so they
+cannot be scoped safely (session-SFTP orphans are covered separately by
+`test_session_sftp_no_orphan_on_quit.py`).
+
 ### Per-Machine Test Scripts
 
 Platform-specific orchestration scripts that start Docker containers, run all applicable tests, and tear down infrastructure:

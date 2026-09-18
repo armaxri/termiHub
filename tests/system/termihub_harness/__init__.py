@@ -41,7 +41,9 @@ from .fixtures import (
     ContainerRuntimeUnavailable,
     SshServerControl,
     container_runtime,
+    reap_stale_fixtures,
     stage_remote_agent_binary,
+    stale_fixture_containers,
     wait_for_port,
 )
 from .manual import (
@@ -158,7 +160,9 @@ __all__ = [
     "ContainerRuntimeUnavailable",
     "SshServerControl",
     "container_runtime",
+    "reap_stale_fixtures",
     "stage_remote_agent_binary",
+    "stale_fixture_containers",
     "wait_for_port",
     "REMOTE_AGENT_SERVICE",
     "REMOTE_AGENT_PORT",
