@@ -242,6 +242,10 @@ keyring = { version = "3", default-features = false, features = [
 ] }
 
 [dev-dependencies]
+# Paused-clock time control (`tokio::test(start_paused)`) for deterministic
+# timeout tests — the owned-task shutdown bounded-timeout path (ARCH-007) is
+# verified without a wall-clock sleep. Dev-only: absent from the release binary.
+tokio = { version = "1", features = ["test-util"] }
 # Property tests over the shadow LayoutStore's tree transitions (#2151); the
 # panel-tree algebra it drives is proptest-covered in `termihub-core` (#2143).
 proptest = "1"
