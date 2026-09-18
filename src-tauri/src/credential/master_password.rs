@@ -13,8 +13,9 @@ use rand::RngCore;
 use zeroize::Zeroize;
 
 use super::crypto::{
-    derive_key, derive_key_with_cost, Argon2Cost, EncryptedEnvelope, KdfParams, AAD,
-    ENVELOPE_VERSION, NONCE_LEN, SALT_LEN,
+    aad_for_version, classify_envelope_version, derive_key, derive_key_with_cost,
+    newer_version_message, too_old_version_message, Argon2Cost, EncryptedEnvelope, KdfParams,
+    VersionSupport, ENVELOPE_VERSION, NONCE_LEN, SALT_LEN,
 };
 use super::types::{CredentialKey, CredentialStoreStatus};
 use super::CredentialStore;
@@ -29,9 +30,14 @@ use crate::utils::fs::write_atomic;
 pub enum UnlockFailure {
     /// The password was wrong — decryption authentication failed. Retryable.
     WrongPassword,
-    /// The credentials file is missing, unreadable, malformed, or an
-    /// unsupported version. Not fixable by retrying the password.
+    /// The credentials file is missing, unreadable, malformed, or a version too
+    /// old to read. Not fixable by retrying the password.
     Corrupted(String),
+    /// The credentials file was written by a *newer* version of termiHub than
+    /// this one (`version > ENVELOPE_VERSION`) — the auto-update-then-rollback
+    /// case (PER-008). This is neither corruption nor a wrong password: updating
+    /// termiHub will read it, so the UI must NOT offer a destructive reset.
+    NewerVersion { found: u32 },
 }
 
 impl std::fmt::Display for UnlockFailure {
@@ -42,6 +48,9 @@ impl std::fmt::Display for UnlockFailure {
             }
             UnlockFailure::Corrupted(detail) => {
                 write!(f, "Credentials file is corrupted: {detail}")
+            }
+            UnlockFailure::NewerVersion { found } => {
+                write!(f, "{}", newer_version_message(*found))
             }
         }
     }
@@ -140,11 +149,22 @@ impl MasterPasswordStore {
         let envelope: EncryptedEnvelope = serde_json::from_str(&raw)
             .map_err(|e| UnlockFailure::Corrupted(format!("invalid file format: {e}")))?;
 
-        if envelope.version != ENVELOPE_VERSION {
-            return Err(UnlockFailure::Corrupted(format!(
-                "unsupported file version: {}",
-                envelope.version
-            )));
+        // Accept any version in the supported range; split the two out-of-range
+        // cases (PER-008). A too-old file is terminal corruption-class; a
+        // newer-than-this-build file is the recoverable rollback case and must
+        // NOT be flagged corrupt, or the UI would offer a destructive reset.
+        match classify_envelope_version(envelope.version) {
+            VersionSupport::Supported => {}
+            VersionSupport::TooOld => {
+                return Err(UnlockFailure::Corrupted(too_old_version_message(
+                    envelope.version,
+                )));
+            }
+            VersionSupport::Newer => {
+                return Err(UnlockFailure::NewerVersion {
+                    found: envelope.version,
+                });
+            }
         }
 
         let salt = BASE64
@@ -185,9 +205,12 @@ impl MasterPasswordStore {
             .map_err(|e| UnlockFailure::Corrupted(format!("cipher init failed: {e}")))?;
         let nonce = Nonce::from_slice(&nonce_bytes);
 
+        // Authenticate with the envelope's own version (bound as AAD), not the
+        // current one, so a supported-but-older vault authenticates (PER-008).
+        let aad = aad_for_version(envelope.version);
         let payload = aes_gcm::aead::Payload {
             msg: &ciphertext,
-            aad: AAD,
+            aad: &aad,
         };
         // An AEAD failure here is the wrong-password signal.
         let mut plaintext = cipher
@@ -353,9 +376,13 @@ impl MasterPasswordStore {
         let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
         let nonce = Nonce::from_slice(&nonce_bytes);
 
+        // Writes always seal at the current version (upgrade-on-write): a vault
+        // read at an older supported version is re-sealed at ENVELOPE_VERSION on
+        // its next save, so its AAD must match the version stamped below.
+        let aad = aad_for_version(ENVELOPE_VERSION);
         let payload = aes_gcm::aead::Payload {
             msg: plaintext.as_slice(),
-            aad: AAD,
+            aad: &aad,
         };
         let ciphertext = cipher
             .encrypt(nonce, payload)
@@ -576,12 +603,14 @@ mod tests {
     }
 
     #[test]
-    fn unlock_classified_unsupported_version_reports_corrupted() {
+    fn unlock_classified_newer_version_reports_newer_variant() {
+        // A newer-than-this-build version is the rollback case: it must classify
+        // as the distinct `NewerVersion` variant, NOT `Corrupted` — otherwise the
+        // UI offers a destructive reset for a recoverable downgrade (PER-008).
         let dir = tempfile::tempdir().unwrap();
         let store = make_store(dir.path());
         store.setup("pw").unwrap();
 
-        // Rewrite the envelope with an unsupported version number.
         let raw = fs::read_to_string(&store.file_path).unwrap();
         let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
         envelope.version = ENVELOPE_VERSION + 99;
@@ -593,9 +622,51 @@ mod tests {
 
         let err = store.unlock_classified("pw").unwrap_err();
         assert!(
-            matches!(err, UnlockFailure::Corrupted(_)),
-            "expected Corrupted for unsupported version, got {err:?}"
+            matches!(err, UnlockFailure::NewerVersion { found } if found == ENVELOPE_VERSION + 99),
+            "expected NewerVersion for a newer-than-current version, got {err:?}"
         );
+    }
+
+    #[test]
+    fn unlock_classified_too_old_version_reports_corrupted() {
+        // A too-old version (below the minimum supported) is terminal and
+        // classifies as `Corrupted` with a clear "no longer supported" message.
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        envelope.version = 0;
+        fs::write(
+            &store.file_path,
+            serde_json::to_string(&envelope).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let err = store.unlock_classified("pw").unwrap_err();
+        assert!(
+            matches!(&err, UnlockFailure::Corrupted(detail) if detail.contains("no longer supported")),
+            "expected Corrupted/no-longer-supported for a too-old version, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn save_always_writes_current_envelope_version() {
+        // Upgrade-on-write contract (PER-008): every save stamps ENVELOPE_VERSION,
+        // so a vault read at a supported-but-older version is transparently
+        // re-sealed at the current version on its next mutation. Only v1 exists
+        // today, so this asserts the write side of that contract directly.
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        let key = CredentialKey::new("conn-1", CredentialType::Password);
+        store.set(&key, "secret").unwrap();
+
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        assert_eq!(envelope.version, ENVELOPE_VERSION);
     }
 
     #[test]
