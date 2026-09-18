@@ -10,6 +10,7 @@ on:
     types: [closed]
 
 permissions:
+  contents: read
   issues: write
 
 jobs:
@@ -21,8 +22,20 @@ jobs:
     if: github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'develop'
 
     steps:
-      - name: Check out repository
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # SECURITY: check out the trusted base branch, NOT the merged PR head.
+      # A pull_request event's default checkout resolves to the PR's merge ref,
+      # whose tree the (untrusted) PR author controls — so the script this job
+      # runs with `issues: write` would be whatever the merged PR shipped. Pin
+      # the ref to the protected base branch (`develop`) and sparse-check-out
+      # only `scripts/` so only the trusted parser is materialised. The issue
+      # references themselves come from the event payload (PR_TITLE/PR_BODY env
+      # below), never from the checked-out tree, so behaviour is unchanged.
+      - name: Check out repository (base branch only)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          sparse-checkout: scripts
+          persist-credentials: false
 
       - name: Close referenced issues
         env:
