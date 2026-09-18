@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/connection/storage.rs:168
   - src-tauri/src/workspace/storage.rs:86
   - src-tauri/src/connection/manager.rs:187
-status: open
+status: fixed
+resolution: "#3102 — MAINTAINER chose single-instance. tauri-plugin-single-instance enforced (release builds only via #[cfg(not(debug_assertions))]; skipped in portable mode via detect_app_mode so different-data-dir portable copies coexist). 2nd launch focuses+unminimizes existing window and exits BEFORE any config/store write → only ever one writer, no cross-process clobber. should_enforce_single_instance(mode,is_debug) helper w/ 4 unit tests. Same-dir portable double-launch residual → #3100; CLI-arg forwarding → #3101"
 ---
 
 ## What

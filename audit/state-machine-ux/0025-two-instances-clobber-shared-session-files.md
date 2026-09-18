@@ -10,7 +10,8 @@ evidence:
   - src-tauri/Cargo.toml:1
   - src-tauri/src/lib.rs:1102
   - src-tauri/src/workspace/last_session.rs:96
-status: open
+status: fixed
+resolution: "#3102 — same fix as PER-005 (#3102 single-instance): last_session.json last-writer-wins clobber eliminated — the 2nd instance focuses the running window and exits before reaching the save_last_session write path, so there is never a concurrent writer. (SM-003 multi-desktop-to-same-REMOTE-agent is a DIFFERENT problem, still open.)"
 ---
 
 ## What
