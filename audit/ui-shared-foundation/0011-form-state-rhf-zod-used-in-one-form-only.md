@@ -16,7 +16,8 @@ evidence:
   - src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx:53
   - src/components/ThemeEditor/ThemeEditor.tsx:39
   - src/components/Settings/CustomRuleEditor.tsx:91
-status: open
+status: partial
+resolution: "#3074-3082 — RHF+zod editor migration, one-PR-per-editor. 7/8 editors FULLY migrated: CustomRuleEditor #3074, EmbeddedServerDialog #3075, MacroEditorDialog #3076, WorkflowEditorDialog #3077, ThemeEditor #3079, TunnelEditor #3080 (+ConnectionSettingsForm was already RHF). ConnectionEditor #3082 = top-level fields migrated (name w/ cross-namespace uniqueness superRefine, sourceFile, persistent); its connection-TYPE selector + icon/terminalOptions/agentSettings deliberately KEPT LOCAL (type-selector has ~40 derived effects + zero validation benefit; high-risk on core connect flow) → tracked #3081. Substantive intent achieved; remainder intentional-keep-local. Each: superRefine 1:1 validation, synchronous safeParse Save-gate, shared ui primitives"
 ---
 
 ## What
