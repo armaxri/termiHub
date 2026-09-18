@@ -59,7 +59,8 @@ use crate::session::manager::SessionManager;
 use crate::state::persistence::AgentState;
 
 pub use apply::{
-    prune_applied_pending_update, should_apply_deferred_update, SystemUpdateApplier, UpdateApplier,
+    cleanup_stale_update_backup, prune_applied_pending_update, should_apply_deferred_update,
+    SystemUpdateApplier, UpdateApplier,
 };
 pub use coordinate::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 pub use github::{current_asset_suffix, DEFAULT_REPO};

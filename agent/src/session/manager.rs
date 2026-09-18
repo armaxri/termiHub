@@ -31,7 +31,8 @@ use crate::daemon::client::{
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
-    prune_applied_pending_update, should_apply_deferred_update, SystemUpdateApplier, UpdateApplier,
+    cleanup_stale_update_backup, prune_applied_pending_update, should_apply_deferred_update,
+    SystemUpdateApplier, UpdateApplier,
 };
 
 /// Maximum number of concurrent sessions the agent supports.
@@ -463,6 +464,14 @@ impl SessionManager {
             current_exe.as_deref(),
         ) {
             info!("Cleared an already-applied pending agent update from persisted state");
+            // Reaching here means this process is the freshly re-execed new
+            // binary, so the self-update backup (the previous binary, kept in
+            // case the re-exec failed) is no longer needed — remove it (AGT-006).
+            // A successful re-exec never returns, so this is the only place the
+            // new agent can clean up its predecessor's backup.
+            if let Some(exe) = current_exe.as_deref() {
+                cleanup_stale_update_backup(exe);
+            }
             // Persist the prune under the cross-process lock, re-pruning the
             // freshly read on-disk copy so a peer worker's concurrent write is
             // merged rather than clobbered (AGT-016).
