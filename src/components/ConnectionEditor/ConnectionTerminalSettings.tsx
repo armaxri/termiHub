@@ -6,6 +6,7 @@ import type { ConnectionHighlightingOverride, HighlightRule } from "@/types/synt
 import { DEFAULT_LINE_ENDING, LINE_ENDING_OPTIONS, lineEndingLabel } from "@/utils/lineEndings";
 import { Button, Checkbox, Input, NumberInput, Select, Toggle } from "@/components/ui";
 import { CustomRuleEditor } from "@/components/Settings/CustomRuleEditor";
+import { SettingsField } from "@/components/Settings/SettingsField";
 import {
   addCustomRule,
   moveCustomRule,
@@ -228,19 +229,16 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
     <div className="settings-panel__category">
       <h3 className="settings-panel__category-title">Terminal</h3>
 
-      <label className="settings-form__field">
-        <span className="settings-form__label">Font Family</span>
+      <SettingsField label="Font Family" hint="Leave empty to use the global setting.">
         <Input
           type="text"
           value={options.fontFamily ?? ""}
           onChange={(e) => onChange({ ...options, fontFamily: e.target.value || undefined })}
           placeholder={`Use global default (${globalFontFamily})`}
         />
-        <span className="settings-form__hint">Leave empty to use the global setting.</span>
-      </label>
+      </SettingsField>
 
-      <label className="settings-form__field">
-        <span className="settings-form__label">Font Size</span>
+      <SettingsField label="Font Size" hint="Leave empty to use the global setting.">
         <NumberInput
           min={8}
           max={72}
@@ -248,11 +246,17 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           onValueChange={(v) => onChange({ ...options, fontSize: v === "" ? undefined : v })}
           placeholder={`Use global default (${globalFontSize})`}
         />
-        <span className="settings-form__hint">Leave empty to use the global setting.</span>
-      </label>
+      </SettingsField>
 
-      <label className="settings-form__field">
-        <span className="settings-form__label">Scrollback Buffer</span>
+      <SettingsField
+        label="Scrollback Buffer"
+        hint={
+          <>
+            Number of lines kept in scrollback (100–1 000 000). Leave empty for global default.
+            Larger values consume more memory — roughly 1–2 MB per 10 000 lines of typical output.
+          </>
+        }
+      >
         <NumberInput
           min={100}
           max={1000000}
@@ -262,14 +266,9 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           }
           placeholder={`Use global default (${globalScrollback})`}
         />
-        <span className="settings-form__hint">
-          Number of lines kept in scrollback (100–1 000 000). Leave empty for global default. Larger
-          values consume more memory — roughly 1–2 MB per 10 000 lines of typical output.
-        </span>
-      </label>
+      </SettingsField>
 
-      <label className="settings-form__field">
-        <span className="settings-form__label">Cursor Style</span>
+      <SettingsField label="Cursor Style">
         <Select
           value={options.cursorStyle ?? GLOBAL_DEFAULT}
           onChange={(v) =>
@@ -286,10 +285,12 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           ]}
           aria-label="Cursor Style"
         />
-      </label>
+      </SettingsField>
 
-      <label className="settings-form__field">
-        <span className="settings-form__label">Line Ending (Enter &amp; Paste)</span>
+      <SettingsField
+        label="Line Ending (Enter & Paste)"
+        hint="Sequence sent on Enter and used to normalize pasted text for this connection."
+      >
         <Select
           value={options.lineEnding ?? GLOBAL_DEFAULT}
           onChange={(v) =>
@@ -307,13 +308,18 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           ]}
           aria-label="Line Ending (Enter & Paste)"
         />
-        <span className="settings-form__hint">
-          Sequence sent on Enter and used to normalize pasted text for this connection.
-        </span>
-      </label>
+      </SettingsField>
 
-      <div className="settings-form__field">
-        <span className="settings-form__label">Log Session Output</span>
+      <SettingsField
+        label="Log Session Output"
+        hint={
+          <>
+            Write this connection&rsquo;s session output to a file on connect (
+            <code>&lt;connection&gt;-&lt;timestamp&gt;.log</code>). The terminal toolbar can also
+            start and stop logging on demand.
+          </>
+        }
+      >
         <Toggle
           checked={options.logToFile ?? false}
           onCheckedChange={(v) =>
@@ -328,70 +334,77 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           aria-label="Log Session Output"
           data-testid="connection-log-to-file"
         />
-        <span className="settings-form__hint">
-          Write this connection&rsquo;s session output to a file on connect (
-          <code>&lt;connection&gt;-&lt;timestamp&gt;.log</code>). The terminal toolbar can also
-          start and stop logging on demand.
-        </span>
-      </div>
+      </SettingsField>
 
       {options.logToFile ? (
-        <div className="settings-form__field">
-          <span className="settings-form__label">Timestamp Each Line</span>
+        <SettingsField label="Timestamp Each Line" hint="Prefix each logged line with a timestamp.">
           <Toggle
             checked={options.logTimestamps ?? false}
             onCheckedChange={(v) => onChange({ ...options, logTimestamps: v || undefined })}
             aria-label="Timestamp Each Line"
             data-testid="connection-log-timestamps"
           />
-          <span className="settings-form__hint">Prefix each logged line with a timestamp.</span>
-        </div>
+        </SettingsField>
       ) : null}
 
-      <div className="settings-form__field">
-        <span className="settings-form__label">Cursor Blink</span>
+      <SettingsField
+        label="Cursor Blink"
+        hint={
+          <>
+            Whether the terminal cursor blinks.
+            {options.cursorBlink != null && (
+              <button
+                type="button"
+                className="settings-form__hint-action"
+                onClick={() => onChange({ ...options, cursorBlink: undefined })}
+              >
+                Reset to global default
+              </button>
+            )}
+          </>
+        }
+      >
         <Toggle
           checked={options.cursorBlink ?? globalCursorBlink}
           onCheckedChange={(v) => onChange({ ...options, cursorBlink: v })}
           aria-label="Cursor Blink"
         />
-        <span className="settings-form__hint">
-          Whether the terminal cursor blinks.
-          {options.cursorBlink != null && (
-            <button
-              type="button"
-              className="settings-form__hint-action"
-              onClick={() => onChange({ ...options, cursorBlink: undefined })}
-            >
-              Reset to global default
-            </button>
-          )}
-        </span>
-      </div>
+      </SettingsField>
 
-      <div className="settings-form__field">
-        <span className="settings-form__label">Horizontal Scrolling</span>
+      <SettingsField
+        label="Horizontal Scrolling"
+        hint={
+          <>
+            Enable horizontal scrolling for this connection.
+            {options.horizontalScrolling != null && (
+              <button
+                type="button"
+                className="settings-form__hint-action"
+                onClick={() => onChange({ ...options, horizontalScrolling: undefined })}
+              >
+                Reset to global default
+              </button>
+            )}
+          </>
+        }
+      >
         <Toggle
           checked={options.horizontalScrolling ?? globalHorizontalScrolling}
           onCheckedChange={(v) => onChange({ ...options, horizontalScrolling: v })}
           aria-label="Horizontal Scrolling"
         />
-        <span className="settings-form__hint">
-          Enable horizontal scrolling for this connection.
-          {options.horizontalScrolling != null && (
-            <button
-              type="button"
-              className="settings-form__hint-action"
-              onClick={() => onChange({ ...options, horizontalScrolling: undefined })}
-            >
-              Reset to global default
-            </button>
-          )}
-        </span>
-      </div>
+      </SettingsField>
 
-      <label className="settings-form__field">
-        <span className="settings-form__label">Syntax Highlighting</span>
+      <SettingsField
+        label="Syntax Highlighting"
+        hint={
+          <>
+            Override terminal output syntax highlighting for this connection. &ldquo;Use global
+            default&rdquo; follows the global setting; &ldquo;Always on/off&rdquo; forces it for
+            this connection regardless of the global switch.
+          </>
+        }
+      >
         <Select
           value={highlightingOverride}
           onChange={(v) =>
@@ -408,12 +421,7 @@ export function ConnectionTerminalSettings({ options, onChange }: ConnectionTerm
           aria-label="Syntax Highlighting"
           data-testid="connection-syntax-highlighting"
         />
-        <span className="settings-form__hint">
-          Override terminal output syntax highlighting for this connection. &ldquo;Use global
-          default&rdquo; follows the global setting; &ldquo;Always on/off&rdquo; forces it for this
-          connection regardless of the global switch.
-        </span>
-      </label>
+      </SettingsField>
 
       <ConnectionAdditionalRules options={options} onChange={onChange} />
     </div>
