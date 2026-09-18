@@ -10,7 +10,8 @@ evidence:
   - scripts/internal/pnpm-audit-prod-gate.sh:75
   - scripts/internal/pnpm-audit-prod-gate.sh:95
   - .github/workflows/code-quality.yml:300
-status: open
+status: partial
+resolution: "develop — reclaim-partial: pnpm-audit-prod-gate.sh now retries w/ backoff (AUDIT_MAX_ATTEMPTS default 3) + unit test before the terminal soft-pass. Core soft-pass-on-registry-outage remains a deliberate security-vs-flakiness policy trade-off"
 ---
 
 ## What

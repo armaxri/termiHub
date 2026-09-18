@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/integration-fixtures.yml:67
   - core/src/backends/docker/mod.rs:1446
   - core/src/backends/docker/mod.rs:1513
-status: open
+status: fixed
+resolution: "develop — reclaim: no #864 fixture-content-gap #[ignore]s remain in core/ (only 2 unrelated live-host smokes survive). Trivial residual: stale '#864' comment in integration-fixtures.yml:105 (doc cleanup, folded into WA-CI-031 PR)"
 ---
 
 ## What

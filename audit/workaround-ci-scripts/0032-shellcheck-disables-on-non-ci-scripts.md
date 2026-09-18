@@ -9,7 +9,8 @@ subsystem: scripts
 evidence:
   - scripts/build-agents.sh:300
   - scripts/internal/pnpm-audit-prod-gate.sh:82
-status: open
+status: fixed
+resolution: "develop — reclaim: premise 'scripts CI never runs' now FALSE — shellcheck lane gates every PR (code-quality.yml:285) + requires one-line justification per disable (:280); cited disables now justified+CI-verified (pnpm-audit-prod-gate.sh:82, build-agents.sh:320/326/386/390)"
 ---
 
 ## What

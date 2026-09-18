@@ -11,7 +11,8 @@ evidence:
   - scripts/check.sh
   - scripts/build.sh
   - scripts/test-system-linux.sh
-status: open
+status: partial
+resolution: "develop — reclaim-partial: new shellcheck lane (code-quality.yml:285) statically gates shell scripts, closing the shell-bug drift. STILL: no lane functionally EXECUTES release-check.sh/build.sh/test-system-linux.sh (a --dry smoke lane would close it, grindable)"
 ---
 
 ## What

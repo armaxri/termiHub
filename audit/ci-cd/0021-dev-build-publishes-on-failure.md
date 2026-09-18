@@ -9,7 +9,8 @@ subsystem: .github/workflows/dev-build.yml
 evidence:
   - .github/workflows/dev-build.yml:381
   - .github/workflows/dev-build.yml:258
-status: open
+status: fixed
+resolution: "#3111 — dev-build no longer silently publishes an INCOMPLETE release when a platform build fails. ANNOTATE (not gate) chosen because dev-build.yml:390 explicitly comments 'Run even if some build jobs failed so the release is always updated' (deliberate best-effort). New 'Detect missing platform artifacts' step compares expected (primary installer/platform + all agent binaries) vs downloaded, emits ::warning:: per missing platform, prepends a '🚨 Incomplete Build' release-notes callout + appends '— INCOMPLETE (N missing)' to the title. All-green path verified byte-identical (locally executed detection). actionlint clean"
 ---
 
 ## What

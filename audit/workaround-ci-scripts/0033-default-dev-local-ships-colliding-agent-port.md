@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: default.dev.local.json
 evidence:
   - default.dev.local.json
-status: open
+status: fixed
+resolution: "develop — reclaim: E2E SSH base port moved off 2222 → 2214 (dev_agent_port stays 2222, no collision); regression test tests/system/tests/test_dev_local.py:95-105 (#1536). Verified fresh develop"
 ---
 
 ## What
