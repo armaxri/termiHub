@@ -52,11 +52,6 @@ class MonitoringUi(HarnessMixin):
             what="the monitoring dropdown",
         )
 
-    def monitoring_refresh(self) -> None:
-        """Open the monitoring dropdown and click Refresh."""
-        self.open_monitoring_dropdown()
-        self.driver.click("monitoring-refresh")
-
     def monitoring_disconnect(self) -> None:
         """Open the monitoring dropdown and click Disconnect."""
         self.open_monitoring_dropdown()
