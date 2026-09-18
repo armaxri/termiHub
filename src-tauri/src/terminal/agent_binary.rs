@@ -216,10 +216,16 @@ fn checksum_sidecar_path(binary_path: &Path) -> PathBuf {
 /// - Sidecar present and matching → `Ok(())`.
 /// - Sidecar present but the binary does not match, or the sidecar is malformed
 ///   → `Err` (the binary is rejected; it must never be installed or executed).
-/// - Sidecar absent → `Ok(())` with a warning: integrity cannot be verified
-///   (e.g. a legacy cache entry, a bundle without the sidecar, or an
-///   out-of-scope dev/branch build that does not yet publish checksums).
-fn verify_with_adjacent_sidecar(binary_path: &Path) -> Result<()> {
+/// - Sidecar absent → depends on `require_checksum`:
+///   - `true` (release builds, where [`release.yml`] publishes a sidecar for
+///     every agent asset) → **fail closed**: a missing sidecar is a hard error,
+///     so a cache or bundle entry with no published checksum is never installed
+///     or executed. This closes the substitution hole where an attacker could
+///     strip the `.sha256` to bypass verification (AGT-007).
+///   - `false` (dev/branch builds, which do not publish checksums yet) → tolerate
+///     with a warning: integrity cannot be verified but local iteration is not
+///     broken (e.g. a legacy cache entry or an out-of-scope dev/branch build).
+fn verify_with_adjacent_sidecar(binary_path: &Path, require_checksum: bool) -> Result<()> {
     let sidecar = checksum_sidecar_path(binary_path);
     match fs::read_to_string(&sidecar) {
         Ok(content) => {
@@ -230,6 +236,15 @@ fn verify_with_adjacent_sidecar(binary_path: &Path) -> Result<()> {
                 )
             })?;
             verify_file_checksum(binary_path, &expected)
+        }
+        Err(_) if require_checksum => {
+            // Release build: a published checksum is mandatory. Refuse to use an
+            // agent binary whose integrity cannot be verified.
+            bail!(
+                "No checksum sidecar for {} — refusing to use an unverifiable agent binary in a \
+                 release build",
+                binary_path.display()
+            )
         }
         Err(_) => {
             warn!(
@@ -291,7 +306,7 @@ where
 
     // The sidecar was just fetched next to `dest`; verify against it and clean
     // up both files on any mismatch or malformed sidecar.
-    if let Err(e) = verify_with_adjacent_sidecar(dest) {
+    if let Err(e) = verify_with_adjacent_sidecar(dest, require_checksum) {
         let _ = fs::remove_file(dest);
         let _ = fs::remove_file(&sidecar);
         return Err(e);
@@ -340,7 +355,9 @@ where
 
     if is_nonempty_file(&cached) {
         debug!("Using cached branch build binary: {}", cached.display());
-        verify_with_adjacent_sidecar(&cached)?;
+        // Branch builds do not publish checksums yet (out of scope for #1350), so
+        // a missing sidecar is tolerated — same relaxed posture as their download.
+        verify_with_adjacent_sidecar(&cached, /* require_checksum */ false)?;
         return Ok(cached);
     }
 
@@ -446,20 +463,27 @@ pub fn resolve_agent_binary<F>(
 where
     F: Fn(u64, u64),
 {
+    // Release builds must fail closed on a missing checksum on every resolution
+    // path (cache, bundle, download) — not just the download. Dev/branch builds
+    // stay relaxed so local iteration is not broken (AGT-007).
+    let require_checksum = !is_dev_build(version);
+
     // 1. Check local cache
     if let Some(path) = find_cached_binary(version, arch_suffix) {
         info!("Using cached agent binary: {}", path.display());
-        // Reject a cache entry that has been tampered with since it was fetched.
-        verify_with_adjacent_sidecar(&path)?;
+        // Reject a cache entry that has been tampered with since it was fetched,
+        // and (release builds) one that carries no published checksum at all.
+        verify_with_adjacent_sidecar(&path, require_checksum)?;
         return Ok(path);
     }
 
     // 2. Check bundled resources
     if let Some(path) = find_bundled_binary(app_handle, arch_suffix) {
         info!("Using bundled agent binary: {}", path.display());
-        // Verify against a bundled `.sha256` sidecar when one ships next to the
-        // binary; a mismatch rejects the bundle rather than deploying it.
-        verify_with_adjacent_sidecar(&path)?;
+        // Verify against a bundled `.sha256` sidecar; a mismatch rejects the
+        // bundle rather than deploying it, and a release build rejects a bundle
+        // that ships no sidecar at all.
+        verify_with_adjacent_sidecar(&path, require_checksum)?;
         // Copy to cache for future use, including the checksum sidecar so later
         // cache hits stay verifiable.
         let cache_path = cached_binary_path(version, arch_suffix);
@@ -926,7 +950,10 @@ mod tests {
         )
         .unwrap();
 
-        assert!(verify_with_adjacent_sidecar(&binary).is_ok());
+        // A present, matching sidecar is accepted in both postures — including a
+        // release build (require_checksum = true), which is the valid case.
+        assert!(verify_with_adjacent_sidecar(&binary, false).is_ok());
+        assert!(verify_with_adjacent_sidecar(&binary, true).is_ok());
     }
 
     #[test]
@@ -937,21 +964,42 @@ mod tests {
         fs::write(&binary, b"tampered").unwrap();
         fs::write(checksum_sidecar_path(&binary), SHA256_OF_ABC).unwrap();
 
+        // A checksum mismatch is rejected regardless of posture — dev and release.
         assert!(
-            verify_with_adjacent_sidecar(&binary).is_err(),
+            verify_with_adjacent_sidecar(&binary, false).is_err(),
             "a binary that does not match its sidecar must be rejected"
+        );
+        assert!(
+            verify_with_adjacent_sidecar(&binary, true).is_err(),
+            "a release build must reject a binary that does not match its sidecar"
         );
     }
 
     #[test]
-    fn verify_with_adjacent_sidecar_ok_when_sidecar_absent() {
-        // No sidecar present → cannot verify, but must not fail (legacy cache
-        // entries and out-of-scope dev builds have no published checksum yet).
+    fn verify_with_adjacent_sidecar_dev_ok_when_sidecar_absent() {
+        // Dev/branch posture (require_checksum = false): no sidecar present →
+        // cannot verify, but must not fail (legacy cache entries and out-of-scope
+        // dev builds have no published checksum yet).
         let tmp = tempfile::tempdir().unwrap();
         let binary = tmp.path().join("termihub-agent-linux-x64");
         fs::write(&binary, b"abc").unwrap();
 
-        assert!(verify_with_adjacent_sidecar(&binary).is_ok());
+        assert!(verify_with_adjacent_sidecar(&binary, false).is_ok());
+    }
+
+    #[test]
+    fn verify_with_adjacent_sidecar_release_fails_closed_when_sidecar_absent() {
+        // Release posture (require_checksum = true): a missing sidecar is a hard
+        // failure so an unverifiable cache/bundle entry is never used (AGT-007).
+        let tmp = tempfile::tempdir().unwrap();
+        let binary = tmp.path().join("termihub-agent-linux-x64");
+        fs::write(&binary, b"abc").unwrap();
+
+        let err = verify_with_adjacent_sidecar(&binary, true).unwrap_err();
+        assert!(
+            err.to_string().to_ascii_lowercase().contains("checksum"),
+            "error should explain the missing checksum, got: {err}"
+        );
     }
 
     #[test]
@@ -961,8 +1009,9 @@ mod tests {
         fs::write(&binary, b"abc").unwrap();
         fs::write(checksum_sidecar_path(&binary), "this-is-not-a-checksum").unwrap();
 
+        // A malformed sidecar is an integrity failure even in the relaxed posture.
         assert!(
-            verify_with_adjacent_sidecar(&binary).is_err(),
+            verify_with_adjacent_sidecar(&binary, false).is_err(),
             "a malformed sidecar must be treated as an integrity failure"
         );
     }
