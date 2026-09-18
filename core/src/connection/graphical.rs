@@ -196,6 +196,8 @@ pub struct CertPrompt {
 /// rectangle's own coordinate space. The frontend blits it into the shared
 /// `<canvas>` at (`x`, `y`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct DirtyRect {
     /// X offset of the rectangle within the framebuffer, in pixels.
@@ -227,6 +229,8 @@ impl DirtyRect {
 /// A protocol-agnostic framebuffer update: the current full dimensions plus the
 /// list of dirty rectangles that changed since the previous update.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct FrameUpdate {
     /// Full framebuffer width in pixels.
@@ -243,6 +247,8 @@ pub struct FrameUpdate {
 /// `shape` is `None`, only the position/visibility changed and the frontend
 /// keeps the current cursor image.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct CursorUpdate {
     /// Cursor X position within the framebuffer, in pixels.
@@ -253,11 +259,14 @@ pub struct CursorUpdate {
     pub visible: bool,
     /// Optional new cursor shape. `None` = position/visibility change only.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub shape: Option<CursorShape>,
 }
 
 /// An RGBA cursor bitmap with its hotspot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct CursorShape {
     /// Cursor image width in pixels.
@@ -383,6 +392,8 @@ pub struct RemoteClipboardFile {
 /// state-dot purely from this. Serialized camelCase for the
 /// `remote-desktop-state` event payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub enum GraphicalState {
     /// Establishing the transport (TCP / TLS).
