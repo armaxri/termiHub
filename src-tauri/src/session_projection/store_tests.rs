@@ -771,6 +771,94 @@ fn double_cancel_reconnect_is_idempotent() {
     assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
 }
 
+// ── Phantom-resurrection guard after remove (SM-006) ─────────────────────────
+//
+// Only the `connect` fold creates a region entry. Every post-lifecycle fold must
+// be a no-op for an id the store no longer tracks, so a late/async event arriving
+// after the user already closed the tab (`remove`) can never resurrect a phantom
+// `Connecting` entry for a session that is gone.
+
+#[test]
+fn a_late_dropped_after_remove_does_not_resurrect_a_phantom_entry() {
+    // The user closed the tab (`remove`); a genuine link drop for that gone tab
+    // lands late. It must not re-create the entry (SM-006).
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.remove("s1");
+    assert!(store.get("s1").is_none());
+
+    store.dropped("s1", Some("connection reset".to_string()));
+
+    assert!(
+        store.get("s1").is_none(),
+        "a late `dropped` must not resurrect a removed session"
+    );
+}
+
+#[test]
+fn a_late_session_lost_after_remove_does_not_resurrect_a_phantom_entry() {
+    // A resilient agent tab was closed (`remove`) while its recovery was still in
+    // flight; the agent later reports the live session unrecoverable. The
+    // `session_lost` fold must not re-create a phantom entry (SM-006).
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.remove("tab-1");
+    assert!(store.get("tab-1").is_none());
+
+    store.session_lost("tab-1", Some("gone".to_string()));
+
+    assert!(
+        store.get("tab-1").is_none(),
+        "a late `session_lost` must not resurrect a removed session"
+    );
+}
+
+#[test]
+fn late_post_lifecycle_folds_after_remove_never_resurrect_the_entry() {
+    // The full set of post-lifecycle folds SM-006 converts to no-op-on-unknown:
+    // each, arriving after `remove`, must leave the session absent. (`connect` is
+    // deliberately excluded — it is the one fold that legitimately creates.)
+    for fold in [
+        SessionLifecycleStore::connected as fn(&SessionLifecycleStore, &str),
+        SessionLifecycleStore::disconnect,
+        SessionLifecycleStore::reconnect,
+        SessionLifecycleStore::cancel_reconnect,
+    ] {
+        let store = deterministic_store();
+        store.connect("s1");
+        store.connected("s1");
+        store.remove("s1");
+
+        fold(&store, "s1");
+
+        assert!(
+            store.get("s1").is_none(),
+            "a post-lifecycle fold after remove must not resurrect a phantom entry"
+        );
+    }
+
+    // The message-carrying folds, exercised separately.
+    for fold in [
+        SessionLifecycleStore::dropped as fn(&SessionLifecycleStore, &str, Option<String>),
+        SessionLifecycleStore::connect_failed,
+        SessionLifecycleStore::session_lost,
+    ] {
+        let store = deterministic_store();
+        store.connect("s1");
+        store.connected("s1");
+        store.remove("s1");
+
+        fold(&store, "s1", Some("boom".to_string()));
+
+        assert!(
+            store.get("s1").is_none(),
+            "a post-lifecycle fold after remove must not resurrect a phantom entry"
+        );
+    }
+}
+
 #[test]
 fn cancel_reconnect_after_giveup_lands_the_user_dismissed_idle_state() {
     // A cancel arriving after the loop already exhausted its budget (terminal
