@@ -58,6 +58,18 @@ pub enum SessionStatus {
     /// exhausted its attempts. `error` carries the message; the user may
     /// manually reconnect.
     Failed,
+    /// A distinct terminal failure (SM-005): the connect was **rejected by
+    /// authentication** — wrong password/passphrase or a refused key. Unlike
+    /// [`Failed`](Self::Failed) (a transient failure the reconnect loop may have
+    /// exhausted after many attempts), an auth rejection is genuinely
+    /// **non-retryable**: the same credentials can never succeed, so the loop is
+    /// NOT armed and the tab never enters [`Reconnecting`](Self::Reconnecting) or
+    /// burns doomed reconnect attempts. The user must fix the credentials and
+    /// manually reconnect. `error` carries the message. Serialised as `authFailed`
+    /// for the frontend to key on (mirroring how [`SessionLost`](Self::SessionLost)
+    /// serialises as `sessionLost`).
+    #[serde(rename = "authFailed")]
+    AuthFailed,
     /// A distinct terminal state (#2512): a resilient **agent**-hosted tab
     /// re-established its transport on reconnect, but the **live agent session**
     /// it was attached to (its running process, e.g. a compile) could not be
@@ -339,6 +351,67 @@ impl SessionLifecycleStore {
             entry.error = error;
             entry.reconnect_error = None;
             // The connect never established a session; nothing to re-attach to (#2457).
+            entry.backend_session_id = None;
+        }
+    }
+
+    /// The initial connect was **rejected by authentication** (SM-005). Folds the
+    /// distinct terminal [`SessionStatus::AuthFailed`] with the message. Identical
+    /// to [`connect_failed`](Self::connect_failed) except for the terminal status:
+    /// an auth rejection is non-retryable, so — like the initial-connect failure —
+    /// the reconnect engine stays idle (no loop was ever armed for an initial
+    /// connect) and the frontend surfaces a "fix credentials & manually reconnect"
+    /// treatment rather than a transient "reconnect failed". Same no-op-on-unknown
+    /// guard (SM-006): only `connect` creates an entry.
+    pub fn connect_auth_failed(&self, session_id: &str, error: Option<String>) {
+        let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::AuthFailed;
+            entry.reconnect = INITIAL_RECONNECT_STATE;
+            entry.end_reason = Some(EndReason::Error);
+            entry.error = error;
+            entry.reconnect_error = None;
+            // The connect never established a session; nothing to re-attach to (#2457).
+            entry.backend_session_id = None;
+        }
+    }
+
+    /// A reconnect attempt was **rejected by authentication** (SM-005). Unlike
+    /// [`reconnect_failed`](Self::reconnect_failed) — whose transient failure arms
+    /// the next backoff window until the attempt budget is exhausted — an auth
+    /// rejection is non-retryable, so this stops the loop **immediately** and folds
+    /// the distinct terminal [`SessionStatus::AuthFailed`]: retrying the same
+    /// credentials can never succeed, so burning the remaining doomed attempts is
+    /// pointless. The user fixes credentials and manually reconnects.
+    ///
+    /// Feeds the engine a `Cancel` (→ `Gaveup`, not `Idle`) so the backend timer
+    /// cancels (it arms only on a `Waiting` phase) and the redrive's give-up
+    /// secret-scrub ([`crate::session_projection::redrive`]) fires exactly as an
+    /// exhausted loop would — no resolved secret outlives the terminated loop.
+    ///
+    /// Keeps the same still-current-run guard as `reconnect_failed` (TBE-011): a
+    /// stale auth failure arriving after the loop was cancelled / settled /
+    /// superseded (phase no longer `Connecting`) is a no-op, so it never resurrects
+    /// a user-stopped tab.
+    pub fn reconnect_auth_failed(&self, session_id: &str, error: Option<String>) {
+        let mut inner = self.lock();
+        let current = reconnect_of(&inner, session_id);
+        // Still-current-run guard (TBE-011): only settle an attempt actually in
+        // flight. Mirrors `reconnect_failed`'s phase guard.
+        if current.phase != ReconnectPhase::Connecting {
+            return;
+        }
+        inner.dirty.insert(session_id.to_string());
+        // Non-retryable: stop the loop now rather than arm the next backoff window.
+        let reconnect = inner.reconnect_event(current, ReconnectEvent::Cancel);
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::AuthFailed;
+            entry.reconnect = reconnect;
+            entry.end_reason = Some(EndReason::Error);
+            entry.error = error;
+            entry.reconnect_error = None;
+            // The reconnect attempt established no session; drop any re-attach id.
             entry.backend_session_id = None;
         }
     }

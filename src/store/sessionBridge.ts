@@ -70,6 +70,14 @@ export type ProjectedSessionStatus =
   | "disconnected"
   | "reconnecting"
   | "failed"
+  /** A genuine **authentication rejection** — wrong password/passphrase or a
+   * refused key (SM-005). A distinct, terminal, **non-retryable** failure: unlike
+   * `failed` (a transient failure the reconnect loop may have exhausted), the same
+   * credentials can never succeed, so the backend never armed a reconnect loop.
+   * The frontend renders the same terminal error treatment as `failed` with
+   * auth-specific wording; the user fixes credentials and manually reconnects.
+   * Twin of Rust `SessionStatus::AuthFailed`. */
+  | "authFailed"
   /** A resilient **agent** tab re-established its transport on reconnect, but the
    * live agent session it was attached to could not be recovered (agent
    * hard-restart / aged out / daemon died). Terminal state: the frontend renders
@@ -858,7 +866,13 @@ export function waitForBackendAgentReconnectOutcome(
     // (#2512): a distinct terminal outcome from a plain give-up — the frontend
     // renders the explicit session-lost notice, never a silent new shell.
     if (life.status === "sessionLost") return { kind: "sessionLost", error: life.error };
-    if (life.reconnect.phase === "gaveup" || life.status === "failed") {
+    if (
+      life.reconnect.phase === "gaveup" ||
+      life.status === "failed" ||
+      // An auth rejection is terminal + non-retryable (SM-005): the backend stopped
+      // the loop, so the wait settles as a give-up (never falls through to retry).
+      life.status === "authFailed"
+    ) {
       return { kind: "giveup", error: life.error };
     }
     if (life.status === "disconnected") return { kind: "giveup" };
@@ -937,7 +951,21 @@ export function effectiveReconnecting(projected: ProjectedSessionLifecycle | und
 export function effectiveDisconnectError(
   projected: ProjectedSessionLifecycle | undefined
 ): string | undefined {
-  return projected?.status === "failed" ? projected.error : undefined;
+  // Both terminal failure states surface their error through the same overlay
+  // treatment: `failed` (transient exhausted / initial-connect error) and the
+  // distinct non-retryable `authFailed` (SM-005).
+  return projected?.status === "failed" || projected?.status === "authFailed"
+    ? projected.error
+    : undefined;
+}
+
+/**
+ * Whether the projected session is in the terminal, non-retryable auth-rejection
+ * state (SM-005): the overlay shows the same terminal error treatment as `failed`
+ * but with auth-specific wording ("Authentication failed — check credentials").
+ */
+export function effectiveAuthFailed(projected: ProjectedSessionLifecycle | undefined): boolean {
+  return projected?.status === "authFailed";
 }
 
 /**
@@ -980,7 +1008,8 @@ export function effectiveExitInfo(
  *
  * A session is exited when the region shows it in one of the terminal-ended
  * statuses — `disconnected` (user kill / non-resilient drop / cancelled loop),
- * `failed` (initial-connect error / reconnect give-up) or `sessionLost` (#2512) —
+ * `failed` (initial-connect error / reconnect give-up), `authFailed` (a terminal
+ * non-retryable auth rejection, SM-005) or `sessionLost` (#2512) —
  * **or** when only the pure-metadata `session.exited` fired (a *clean* process exit
  * dispatches no status intent, so the region keeps its live `status` and records
  * the end solely as `exit`). A `reconnecting` session is deliberately **not**
@@ -993,6 +1022,7 @@ export function regionExited(projected: ProjectedSessionLifecycle | undefined): 
   return (
     projected.status === "disconnected" ||
     projected.status === "failed" ||
+    projected.status === "authFailed" ||
     projected.status === "sessionLost" ||
     projected.exit !== undefined
   );

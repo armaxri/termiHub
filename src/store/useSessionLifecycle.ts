@@ -29,6 +29,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { onReconnectCommandForTabId } from "@/store/appStore";
 import {
   currentSessionView,
+  effectiveAuthFailed,
   effectiveAutoReconnect,
   effectiveConnecting,
   effectiveConnectingMap,
@@ -115,8 +116,14 @@ export interface ProjectedSessionLifecycleSlice {
   connecting: boolean;
   /** True while the agent is actively reconnecting (region `status: reconnecting`). */
   reconnecting: boolean;
-  /** The failed-(re)connect error, if any (region `status: failed` + `error`). */
+  /** The failed-(re)connect error, if any (region `status: failed` or the
+   * terminal non-retryable `authFailed`, SM-005, + `error`). */
   disconnectError: string | undefined;
+  /** True when the projected status is the terminal, non-retryable `authFailed`
+   * state (SM-005): a genuine auth rejection. The overlay renders the same terminal
+   * error treatment as a plain failure but with auth-specific wording; the user
+   * must fix credentials and manually reconnect (the loop was never armed). */
+  authFailed: boolean;
   /** The reconnect-trigger cause shown while reconnecting, if any (mirrors
    * `terminalReconnectTriggerErrors`, #2442). */
   reconnectTriggerError: string | undefined;
@@ -191,6 +198,7 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
       connecting: effectiveConnecting(p),
       reconnecting: effectiveReconnecting(p),
       disconnectError: effectiveDisconnectError(p),
+      authFailed: effectiveAuthFailed(p),
       reconnectTriggerError: effectiveReconnectTriggerError(p),
       sessionLost: lost,
       sessionLostError: lost ? p?.error : undefined,

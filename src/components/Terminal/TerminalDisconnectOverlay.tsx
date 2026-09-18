@@ -160,6 +160,9 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
   // so the trigger error is region-owned rather than read from appStore directly.
   const lifecycle = useProjectedSessionLifecycle(tabId);
   const disconnectError = lifecycle.disconnectError;
+  // Terminal, non-retryable auth rejection (SM-005): same error overlay treatment
+  // as a plain failure, but with auth-specific heading/subheading wording.
+  const isAuthFailed = lifecycle.authFailed;
   const isReconnecting = lifecycle.reconnecting;
   const reconnectTriggerError = lifecycle.reconnectTriggerError;
   // Terminal session-lost state (#2512): a resilient agent tab reconnected its
@@ -334,8 +337,12 @@ export function TerminalDisconnectOverlay({ tabId }: TerminalDisconnectOverlayPr
               className="terminal-disconnect-overlay__icon terminal-disconnect-overlay__icon--error"
             />
           }
-          heading="Reconnect failed"
-          subheading="All reconnect attempts were exhausted. Scrollback is preserved below."
+          heading={isAuthFailed ? "Authentication failed" : "Reconnect failed"}
+          subheading={
+            isAuthFailed
+              ? "Check your credentials, then reconnect. Scrollback is preserved below."
+              : "All reconnect attempts were exhausted. Scrollback is preserved below."
+          }
           actions={
             <>
               <Button

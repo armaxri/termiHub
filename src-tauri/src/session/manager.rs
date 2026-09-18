@@ -165,7 +165,13 @@ pub trait EventEmitter: Clone + Send + Sync + 'static {
     /// owned by the client reconnect loop + the backend timer #2203, whose
     /// give-up is not yet source-foldable); and an **agent** connect (the frontend
     /// silently auto-retries it without an intent).
-    fn fold_connect_failed(&self, _tab_id: &str, _error: &str) {}
+    ///
+    /// `auth_failed` classifies the failure at the source from the typed core error
+    /// (`SessionError::AuthFailed`) **before** it is stringified (SM-005): a genuine
+    /// auth rejection folds the distinct, non-retryable terminal `AuthFailed` state
+    /// instead of the transient `Failed`, so the frontend surfaces "fix credentials
+    /// & reconnect" rather than a generic connect error.
+    fn fold_connect_failed(&self, _tab_id: &str, _error: &str, _auth_failed: bool) {}
 }
 
 impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
@@ -229,10 +235,14 @@ impl<R: tauri::Runtime> EventEmitter for tauri::AppHandle<R> {
         }
     }
 
-    fn fold_connect_failed(&self, tab_id: &str, error: &str) {
+    fn fold_connect_failed(&self, tab_id: &str, error: &str, auth_failed: bool) {
         use crate::session_projection::projection::fold_session_transition;
         fold_session_transition(self, |store| {
-            store.connect_failed(tab_id, Some(error.to_string()))
+            if auth_failed {
+                store.connect_auth_failed(tab_id, Some(error.to_string()))
+            } else {
+                store.connect_failed(tab_id, Some(error.to_string()))
+            }
         });
     }
 }
@@ -823,7 +833,13 @@ impl SessionManager {
                         .is_some_and(CancellationToken::is_cancelled);
                     if !cancelled {
                         if let Some(tab_id) = initial_connect_failed_tab_id(connect_id) {
-                            emitter.fold_connect_failed(&tab_id, &e.to_string());
+                            // Classify the auth rejection from the typed core error
+                            // BEFORE it is stringified (SM-005 / I18N-001): a genuine
+                            // `AuthFailed` folds the non-retryable terminal state, not
+                            // a transient `Failed`. Non-auth failures are unchanged.
+                            let auth_failed =
+                                matches!(e, termihub_core::errors::SessionError::AuthFailed);
+                            emitter.fold_connect_failed(&tab_id, &e.to_string(), auth_failed);
                         }
                     }
                     // Preserve a genuine auth rejection as the typed `AuthFailed`
@@ -2300,8 +2316,9 @@ mod tests {
     struct MockEventEmitter {
         outputs: std::sync::Arc<std::sync::Mutex<Vec<TerminalOutputEvent>>>,
         exits: std::sync::Arc<std::sync::Mutex<Vec<TerminalExitEvent>>>,
-        /// Recorded `fold_connect_failed` calls as `(tab_id, error)` (#2439).
-        connect_faileds: std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>,
+        /// Recorded `fold_connect_failed` calls as `(tab_id, error, auth_failed)`
+        /// (#2439; `auth_failed` added for SM-005).
+        connect_faileds: std::sync::Arc<std::sync::Mutex<Vec<(String, String, bool)>>>,
         fail_output: bool,
     }
 
@@ -2328,11 +2345,12 @@ mod tests {
         fn emit_exit(&self, event: &TerminalExitEvent) {
             self.exits.lock().unwrap().push(event.clone());
         }
-        fn fold_connect_failed(&self, tab_id: &str, error: &str) {
-            self.connect_faileds
-                .lock()
-                .unwrap()
-                .push((tab_id.to_string(), error.to_string()));
+        fn fold_connect_failed(&self, tab_id: &str, error: &str, auth_failed: bool) {
+            self.connect_faileds.lock().unwrap().push((
+                tab_id.to_string(),
+                error.to_string(),
+                auth_failed,
+            ));
         }
     }
 
@@ -3908,6 +3926,77 @@ mod tests {
         }
     }
 
+    /// A connection whose connect is rejected by **authentication** — returns the
+    /// typed `SessionError::AuthFailed` (SM-005), so the fold classifies it as an
+    /// auth rejection rather than a transient failure.
+    struct AuthFailConnect;
+
+    #[async_trait::async_trait]
+    impl ConnectionType for AuthFailConnect {
+        fn type_id(&self) -> &str {
+            "auth-failing"
+        }
+        fn display_name(&self) -> &str {
+            "AuthFailing"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            Capabilities {
+                monitoring: false,
+                file_browser: false,
+                graphical: false,
+                resize: true,
+                persistent: false,
+                terminal: true,
+            }
+        }
+        async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+            Err(SessionError::AuthFailed)
+        }
+        async fn connect_cancellable(
+            &mut self,
+            _settings: serde_json::Value,
+            _cancel: Option<CancellationToken>,
+        ) -> Result<(), SessionError> {
+            Err(SessionError::AuthFailed)
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            false
+        }
+        fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            None
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    fn auth_failing_manager() -> Arc<SessionManager> {
+        let mut registry = ConnectionTypeRegistry::new();
+        registry.register(
+            "auth-failing",
+            "AuthFailing",
+            "mock",
+            Box::new(|| Box::new(AuthFailConnect)),
+        );
+        Arc::new(SessionManager::new(registry, Arc::new(NullAgent)))
+    }
+
     fn failing_manager() -> Arc<SessionManager> {
         let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
         registry.register(
@@ -3949,6 +4038,40 @@ mod tests {
         assert!(
             folds[0].1.contains("connection refused"),
             "the failure error is carried into the fold"
+        );
+        assert!(
+            !folds[0].2,
+            "a transient failure must NOT be classified as an auth rejection (SM-005)"
+        );
+    }
+
+    /// A genuine **auth rejection** on an initial direct connect is classified from
+    /// the typed `SessionError::AuthFailed` and threaded into the fold as
+    /// `auth_failed == true` (SM-005), so the source folds the non-retryable
+    /// terminal `AuthFailed` state rather than the transient `Failed`.
+    #[tokio::test]
+    async fn create_connection_classifies_a_genuine_auth_failure_at_the_source() {
+        let manager = auth_failing_manager();
+        let emitter = MockEventEmitter::new();
+        let result = manager
+            .create_connection(
+                "auth-failing",
+                serde_json::json!({}),
+                None,            // no agent → direct connect
+                Some("tab-a:0"), // initial attempt
+                false,
+                false,
+                emitter.clone(),
+            )
+            .await;
+        assert!(matches!(result, Err(TerminalError::AuthFailed(_))));
+
+        let folds = emitter.connect_faileds.lock().unwrap();
+        assert_eq!(folds.len(), 1, "exactly one connect_failed fold");
+        assert_eq!(folds[0].0, "tab-a");
+        assert!(
+            folds[0].2,
+            "a genuine auth rejection must be classified as auth_failed (SM-005)"
         );
     }
 
