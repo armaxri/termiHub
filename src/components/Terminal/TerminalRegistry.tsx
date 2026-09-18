@@ -34,12 +34,20 @@ const LARGE_PASTE_THRESHOLD = 5000;
  * the paste action more than once for a single gesture, inserting the clipboard
  * content twice. Any second trigger for a tab within this window is dropped.
  *
- * 50 ms is short enough that no human deliberately pastes into the same terminal
- * twice that fast (a bounced signal arrives within a few ms), yet long enough to
- * swallow the duplicate. The guard is default-on and keyed per tab, so pasting
- * into two different tabs in quick succession is unaffected.
+ * The window is deliberately wide enough to tolerate the input-relay jitter of
+ * Windows Remote Desktop (mstsc, the OS session-remoting used to VIEW termiHub —
+ * unrelated to termiHub's own RDP / rdp-sidecar connection type). The original
+ * #2595 fix used 50 ms, which works locally (a bounced signal arrives within a
+ * few ms) but is far too tight over Windows Remote Desktop: the OS remote-desktop
+ * relay delivers the duplicated context-menu/mouse event with variable latency
+ * and coalescing, so the second trigger for a single right-click arrives WELL
+ * more than 50 ms later and slipped past the guard — still double-pasting. 300 ms
+ * absorbs that relay jitter while staying short enough that no human deliberately
+ * right-click-pastes the SAME tab twice that fast. The guard is default-on and
+ * keyed per tab, so pasting into two different tabs in quick succession is
+ * unaffected.
  */
-export const PASTE_DEBOUNCE_MS = 50;
+export const PASTE_DEBOUNCE_MS = 300;
 
 interface TerminalRegistryContextType {
   /** Register a terminal's xterm container element, xterm instance, and fit addon. */
@@ -383,7 +391,19 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       // Cmd/Ctrl+V) funnel through here, so guarding here covers every trigger.
       const now = Date.now();
       const lastPasteAt = lastPasteAtRef.current.get(tabId);
-      if (lastPasteAt !== undefined && now - lastPasteAt < PASTE_DEBOUNCE_MS) return;
+      const delta = lastPasteAt === undefined ? Infinity : now - lastPasteAt;
+      if (lastPasteAt !== undefined && delta < PASTE_DEBOUNCE_MS) {
+        // Diagnostic (#2595 remote-desktop follow-up): lets the maintainer confirm
+        // on a real Windows Remote Desktop (mstsc) setup that the duplicate trigger
+        // is being dropped, and see exactly how far apart the two triggers landed.
+        // A sanctioned DEBUG LogViewer line.
+        frontendLog("terminal_paste", `paste tab=${tabId} dropped duplicate, +${delta}ms`);
+        return;
+      }
+      frontendLog(
+        "terminal_paste",
+        `paste tab=${tabId} accepted, +${delta === Infinity ? "inf" : delta}ms`
+      );
       lastPasteAtRef.current.set(tabId, now);
 
       const text = await readClipboard();
