@@ -4,10 +4,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::MacroStore;
+use super::config::{Macro, MacroStore};
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{salvage_list_store, Salvage};
 
 const FILE_NAME: &str = "macros.json";
 
@@ -49,13 +50,29 @@ impl MacroStorage {
             });
         }
 
-        // Parse failed — back up and reset to defaults
+        // Parse failed — back up the corrupt file first
         let backup_path = self.file_path.with_extension("json.bak");
         let _ = fs::copy(&self.file_path, &backup_path);
         tracing::warn!(
             "Macros file is corrupt, backed up to {}",
             backup_path.display()
         );
+
+        // Granular recovery (PER-004): drop only the individually-corrupt macro
+        // entries and keep the rest; reset the whole store only when even the
+        // container is unparseable.
+        if let Salvage::Recovered {
+            data: store,
+            warnings,
+        } = salvage_list_store::<MacroStore, Macro>(&data, FILE_NAME, "macros")
+        {
+            self.save(&store)
+                .context("Failed to save salvaged macros")?;
+            return Ok(RecoveryResult {
+                data: store,
+                warnings,
+            });
+        }
 
         let parse_error = serde_json::from_str::<MacroStore>(&data)
             .err()
@@ -170,6 +187,39 @@ mod tests {
         // Backup should exist
         let backup = storage.file_path.with_extension("json.bak");
         assert!(backup.exists());
+    }
+
+    /// PER-004 granular salvage: a file with one valid macro and one corrupt
+    /// entry keeps the valid macro and drops only the corrupt one (rather than
+    /// resetting all of the user's hand-authored macros).
+    #[test]
+    fn corrupt_entry_is_dropped_and_rest_survive() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let mut value = serde_json::to_value(sample_store()).unwrap();
+        value["macros"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("corrupt macro entry"));
+        fs::write(
+            &storage.file_path,
+            serde_json::to_string_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.data.macros.len(), 1, "the valid macro survives");
+        assert_eq!(result.data.macros[0].id, "macro-1");
+        assert_eq!(result.warnings.len(), 1, "one entry was dropped");
+        assert!(result.warnings[0].message.contains("index 1"));
+
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists());
+
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert!(reloaded.warnings.is_empty());
+        assert_eq!(reloaded.data.macros.len(), 1);
     }
 
     /// A successful atomic save must leave only the target file behind — no
