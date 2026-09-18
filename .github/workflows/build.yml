@@ -10,6 +10,11 @@ concurrency:
   group: build-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token (CI-010). The job only checks out and compiles the app
+# (no bundle upload, no PR comment, no push) — read-only is sufficient.
+permissions:
+  contents: read
+
 jobs:
   # PR builds verify the app *compiles* on each platform. They intentionally do
   # NOT bundle installers (`--no-bundle`) — packaging (NSIS/MSI/DMG/AppImage)

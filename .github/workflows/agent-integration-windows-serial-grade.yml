@@ -60,6 +60,12 @@ concurrency:
   group: agent-integration-windows-serial-grade-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token (CI-010). This grading lane only checks out, builds, and
+# runs the quarantined test subset (writing to the job summary, which needs no
+# token scope) — no PR comment, check-run, or push — so read-only.
+permissions:
+  contents: read
+
 jobs:
   serial-grade:
     name: Serial grade quarantined agent-integration tests (windows-latest)

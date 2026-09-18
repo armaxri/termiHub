@@ -35,6 +35,12 @@ concurrency:
   group: integration-fixtures-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token (CI-010). The job checks out, brings up Docker fixtures,
+# and runs the core integration suite — no PR comment, check-run, or push — so a
+# read-only token is sufficient.
+permissions:
+  contents: read
+
 jobs:
   core-integration:
     name: core/tests against live fixtures

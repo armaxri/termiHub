@@ -24,6 +24,12 @@ concurrency:
   group: coverage-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token (CI-010). The job checks out, runs coverage, and uploads
+# the coverage artifact via the artifact API (no contents-write needed) — it does
+# not comment on the PR or push, so a read-only token is sufficient.
+permissions:
+  contents: read
+
 jobs:
   coverage:
     name: Unified Coverage (advisory)

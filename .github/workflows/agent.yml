@@ -17,6 +17,12 @@ concurrency:
   group: agent-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token (CI-010). Each job checks out, cross-builds the agent,
+# runs tests, and uploads build artifacts via the artifact API (which does not
+# use the GITHUB_TOKEN's contents scope) — so a read-only token suffices.
+permissions:
+  contents: read
+
 jobs:
   build-linux:
     name: Build (${{ matrix.target }})

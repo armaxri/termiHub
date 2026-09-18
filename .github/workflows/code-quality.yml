@@ -12,6 +12,12 @@ concurrency:
   group: code-quality-${{ github.ref }}
   cancel-in-progress: true
 
+# Least-privilege token (CI-010). Every job here only checks out, builds, tests,
+# and lints the tree — none comment on the PR, publish check runs, push, or
+# upload SARIF — so a read-only token is all that is needed.
+permissions:
+  contents: read
+
 jobs:
   # Rust Backend Quality Checks
   rust-quality:
@@ -116,15 +122,11 @@ jobs:
       - name: Check for unused dependencies (cargo-machete)
         run: cargo machete
 
-      # Prebuilt binary download (~seconds) instead of `cargo install cargo-audit`,
-      # which compiles from source (~3 min) on a cold cache.
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
-        with:
-          tool: cargo-audit
-
-      - name: Check for security vulnerabilities
-        run: cargo audit
+      # NOTE (CI-019): the RUSTSEC `cargo audit` gate is NOT run here — it runs
+      # once per PR in the dedicated `security-audit` job below (which invokes the
+      # identical bare `cargo audit` over the same workspace Cargo.lock, alongside
+      # the `cargo deny` supply-chain gate). Running it in both jobs was redundant;
+      # the single invocation in `security-audit` covers the same advisories.
 
       # Validate the plugin packaging tooling (#1994) against the example
       # plugins. The JSON-only theme plugin is packaged with --no-build (no
