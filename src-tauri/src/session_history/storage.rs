@@ -144,6 +144,38 @@ mod tests {
         assert!(backup.exists());
     }
 
+    /// PER-004 granular salvage: a file with one valid history entry and one
+    /// corrupt entry keeps the valid entry and drops only the corrupt one.
+    #[test]
+    fn corrupt_entry_is_dropped_and_rest_survive() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let mut value = serde_json::to_value(sample_store()).unwrap();
+        value["entries"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!("corrupt history entry"));
+        fs::write(
+            &storage.file_path,
+            serde_json::to_string_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.data.entries.len(), 1, "the valid entry survives");
+        assert_eq!(result.data.entries[0].title, "admin@host");
+        assert_eq!(result.warnings.len(), 1, "one entry was dropped");
+        assert!(result.warnings[0].message.contains("index 1"));
+
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists());
+
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert!(reloaded.warnings.is_empty());
+        assert_eq!(reloaded.data.entries.len(), 1);
+    }
+
     /// A successful atomic save must leave only the target file behind — no
     /// leftover temporary write artifacts in the config directory (PER-002).
     #[test]

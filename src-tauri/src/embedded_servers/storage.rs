@@ -4,10 +4,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::EmbeddedServerStore;
+use super::config::{EmbeddedServerConfig, EmbeddedServerStore};
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{salvage_list_store, Salvage};
 
 const FILE_NAME: &str = "embedded_servers.json";
 
@@ -47,13 +48,30 @@ impl EmbeddedServerStorage {
             });
         }
 
-        // Parse failed — back up and reset to defaults.
+        // Parse failed — back up the corrupt file first.
         let backup_path = self.file_path.with_extension("json.bak");
         let _ = fs::copy(&self.file_path, &backup_path);
         tracing::warn!(
             "Embedded servers file is corrupt, backed up to {}",
             backup_path.display()
         );
+
+        // Granular recovery (PER-004): drop only the individually-corrupt server
+        // entries and keep the rest; reset the whole store only when even the
+        // container is unparseable.
+        if let Salvage::Recovered {
+            data: store,
+            warnings,
+        } = salvage_list_store::<EmbeddedServerStore, EmbeddedServerConfig>(
+            &data, FILE_NAME, "servers",
+        ) {
+            self.save(&store)
+                .context("Failed to save salvaged embedded servers")?;
+            return Ok(RecoveryResult {
+                data: store,
+                warnings,
+            });
+        }
 
         let parse_error = serde_json::from_str::<EmbeddedServerStore>(&data)
             .err()
@@ -196,5 +214,60 @@ mod tests {
         // Backup should exist.
         let backup = storage.file_path.with_extension("json.bak");
         assert!(backup.exists());
+    }
+
+    /// PER-004 granular salvage: a file with one valid server and one corrupt
+    /// entry keeps the valid server and drops only the corrupt one (rather than
+    /// resetting every embedded server the user configured).
+    #[test]
+    fn corrupt_entry_is_dropped_and_rest_survive() {
+        use super::super::config::{EmbeddedServerConfig, ServerType};
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let good = EmbeddedServerStore {
+            version: "1".to_string(),
+            servers: vec![EmbeddedServerConfig {
+                id: "srv-1".to_string(),
+                name: "docs".to_string(),
+                server_type: ServerType::Http,
+                root_directory: "/tmp/docs".to_string(),
+                bind_host: "127.0.0.1".to_string(),
+                port: 8080,
+                auto_start: false,
+                read_only: true,
+                directory_listing: Some(true),
+                ftp_auth: None,
+                max_transfer_bytes: None,
+            }],
+        };
+        // Serialize the valid store, then append a corrupt (non-object) entry so
+        // the whole-file parse fails but the good server can still be salvaged.
+        let mut value = serde_json::to_value(&good).unwrap();
+        value["servers"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("corrupt server entry"));
+        fs::write(
+            &storage.file_path,
+            serde_json::to_string_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.data.servers.len(), 1, "the valid server survives");
+        assert_eq!(result.data.servers[0].id, "srv-1");
+        assert_eq!(result.warnings.len(), 1, "one entry was dropped");
+        assert!(result.warnings[0].message.contains("index 1"));
+
+        // The corrupt file must have been backed up.
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists());
+
+        // The rewritten file must now parse cleanly and hold only the survivor.
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert!(reloaded.warnings.is_empty());
+        assert_eq!(reloaded.data.servers.len(), 1);
     }
 }

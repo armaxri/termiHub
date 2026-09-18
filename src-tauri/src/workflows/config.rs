@@ -151,6 +151,12 @@ impl Default for WorkflowStore {
 impl crate::utils::migrate::VersionedStore for WorkflowStore {
     const STORE_NAME: &'static str = "workflows.json";
     const CURRENT_VERSION: u32 = 1;
+
+    /// Per-entry salvage (PER-004): drop only the individually-corrupt workflows
+    /// instead of resetting all of the user's authored automation.
+    fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+        crate::utils::migrate::salvage_list_store::<Self, Workflow>(raw, file_name, "workflows")
+    }
 }
 
 #[cfg(test)]

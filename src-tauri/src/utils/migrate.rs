@@ -105,6 +105,19 @@ pub trait VersionedStore: DeserializeOwned {
         let _ = from_version;
         Ok(value)
     }
+
+    /// Attempt granular, per-entry recovery of a readable-but-invalid file,
+    /// dropping only the corrupt entries instead of resetting the whole store
+    /// (PER-004).
+    ///
+    /// The default treats the store as **atomic** — no per-entry salvage — so
+    /// [`load_store_with_recovery`] falls back to a whole reset, preserving the
+    /// pre-existing behavior. A list-shaped store overrides this to delegate to
+    /// [`salvage_list_store`] with its collection field and entry type.
+    fn salvage(raw: &str, file_name: &str) -> Salvage<Self> {
+        let _ = (raw, file_name);
+        Salvage::Unsalvageable
+    }
 }
 
 /// Read a `version` field as an integer, accepting either a JSON string (`"2"`)
@@ -191,6 +204,96 @@ pub fn guard_not_newer(path: &Path, store: &'static str, current: u32) -> Result
     Ok(())
 }
 
+/// Outcome of a granular, per-entry salvage attempt on a list-shaped store.
+pub enum Salvage<T> {
+    /// The store was rebuilt from the entries that still parse; `warnings`
+    /// records each dropped entry.
+    Recovered {
+        data: T,
+        warnings: Vec<RecoveryWarning>,
+    },
+    /// The file could not be salvaged at the entry level — the JSON was not an
+    /// object with the expected array, every entry already parsed (so the
+    /// breakage is elsewhere), or the rebuilt store still failed to deserialize.
+    /// The caller falls back to a whole-store reset.
+    Unsalvageable,
+}
+
+/// Granular per-entry recovery for a flat, list-shaped store — the
+/// don't-reset-everything counterpart to `connection::storage`'s per-node
+/// recovery (PER-004).
+///
+/// When a store shaped `{ "version": …, "<field>": [ <entries> ], … }` fails a
+/// whole-file parse, this re-reads it as untyped JSON and validates each element
+/// of the `<field>` array against `Entry` individually, keeping the ones that
+/// parse and dropping only the corrupt ones (each recorded as a
+/// [`RecoveryWarning`]). The store is then rebuilt from the survivors **plus
+/// every other top-level field** (so unknown/`extra` fields are preserved) and
+/// returned as [`Salvage::Recovered`].
+///
+/// Returns [`Salvage::Unsalvageable`] — leaving the caller to whole-reset — when
+/// the raw JSON is unparseable, is not an object, has no `<field>` array, every
+/// entry already parses (so the breakage is in another field), or the rebuilt
+/// store still fails to deserialize. `Entry` is validated against the *current*
+/// on-disk entry shape; all wired stores are schema v1 with identity migration,
+/// so the on-disk shape and the current shape are the same.
+pub fn salvage_list_store<T, Entry>(raw: &str, file_name: &str, field: &str) -> Salvage<T>
+where
+    T: DeserializeOwned,
+    Entry: DeserializeOwned,
+{
+    let Ok(mut value) = serde_json::from_str::<Value>(raw) else {
+        return Salvage::Unsalvageable;
+    };
+
+    let Some(entries) = value.get(field).and_then(Value::as_array) else {
+        return Salvage::Unsalvageable;
+    };
+
+    let mut kept: Vec<Value> = Vec::with_capacity(entries.len());
+    let mut warnings: Vec<RecoveryWarning> = Vec::new();
+
+    for (index, entry) in entries.iter().enumerate() {
+        match serde_json::from_value::<Entry>(entry.clone()) {
+            Ok(_) => kept.push(entry.clone()),
+            Err(e) => {
+                let label = entry
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .or_else(|| entry.get("id").and_then(Value::as_str))
+                    .or_else(|| entry.get("title").and_then(Value::as_str))
+                    .unwrap_or("unknown");
+                warnings.push(RecoveryWarning {
+                    file_name: file_name.to_string(),
+                    message: format!("Removed corrupt entry at index {index} (\"{label}\")."),
+                    details: Some(e.to_string()),
+                });
+                tracing::warn!(
+                    "Dropped corrupt {file_name} entry at index {index} (\"{label}\"): {e}"
+                );
+            }
+        }
+    }
+
+    // Nothing was individually corrupt — the breakage is in some other field, so
+    // leave it to the caller's whole-store reset rather than returning a store we
+    // already know does not deserialize.
+    if warnings.is_empty() {
+        return Salvage::Unsalvageable;
+    }
+
+    // Rebuild with only the surviving entries; every other top-level field is
+    // carried through untouched.
+    if let Some(slot) = value.get_mut(field) {
+        *slot = Value::Array(kept);
+    }
+
+    match serde_json::from_value::<T>(value) {
+        Ok(data) => Salvage::Recovered { data, warnings },
+        Err(_) => Salvage::Unsalvageable,
+    }
+}
+
 /// Shared "load a versioned store with recovery" flow for the standard
 /// reset-to-default JSON stores.
 ///
@@ -261,9 +364,32 @@ where
             })
         }
         LoadOutcome::Corrupt(detail) => {
-            // Genuine corruption — back up and reset (pre-existing behavior).
+            // Genuine corruption. Back up the bad file first (unchanged).
             let backup = path.with_extension("json.bak");
             let _ = fs::copy(path, &backup);
+
+            // Granular recovery first (PER-004): for a list-shaped store, drop
+            // only the individually-corrupt entries and keep the rest, resetting
+            // the whole store only when even the container is unparseable. Atomic
+            // stores fall straight through to the reset below (default `salvage`).
+            if let Salvage::Recovered { data, warnings } = T::salvage(&raw, file_name) {
+                tracing::warn!(
+                    "{file_name} had {} corrupt entrie(s); salvaged the rest, backed up to {}",
+                    warnings.len(),
+                    backup.display()
+                );
+                // Persist the salvaged store so the drop is durable and the file
+                // parses cleanly next launch. Best-effort: the in-memory data is
+                // already correct, so a failed rewrite must not fail the load.
+                if let Ok(pretty) = serde_json::to_string_pretty(&data) {
+                    if let Err(e) = write_atomic(path, &pretty) {
+                        tracing::warn!("Could not persist salvaged {file_name}: {e}");
+                    }
+                }
+                return Ok(RecoveryResult { data, warnings });
+            }
+
+            // Unsalvageable — reset to defaults (pre-existing behavior).
             tracing::error!(
                 "{file_name} is corrupt, backed up to {} and reset to defaults",
                 backup.display()
@@ -525,5 +651,65 @@ mod tests {
         let result = load_store_with_recovery::<V1Store>(&path, "v1-store.json").unwrap();
         assert!(result.warnings.is_empty());
         assert!(result.data.items.is_empty());
+    }
+
+    /// PER-004 granular salvage: a readable store with one valid and one corrupt
+    /// entry keeps the valid one and drops only the corrupt one.
+    #[test]
+    fn salvage_list_store_drops_only_corrupt_entry() {
+        // `items` is `Vec<String>`; the object element cannot deserialize to a
+        // String, the two string elements can.
+        let raw = r#"{"version":"1","items":["a",{"not":"a string"},"b"]}"#;
+        match salvage_list_store::<V1Store, String>(raw, "v1-store.json", "items") {
+            Salvage::Recovered { data, warnings } => {
+                assert_eq!(data.items, vec!["a".to_string(), "b".to_string()]);
+                assert_eq!(warnings.len(), 1);
+                assert!(warnings[0].message.contains("index 1"));
+            }
+            Salvage::Unsalvageable => panic!("expected a granular recovery"),
+        }
+    }
+
+    /// When every entry parses, the breakage is in another field — salvage bows
+    /// out so the caller whole-resets rather than returning an unchanged store.
+    #[test]
+    fn salvage_list_store_all_valid_is_unsalvageable() {
+        let raw = r#"{"version":"1","items":["a","b"]}"#;
+        assert!(matches!(
+            salvage_list_store::<V1Store, String>(raw, "v1-store.json", "items"),
+            Salvage::Unsalvageable
+        ));
+    }
+
+    /// Unparseable JSON and a missing collection field are both unsalvageable.
+    #[test]
+    fn salvage_list_store_unparseable_or_missing_field_is_unsalvageable() {
+        assert!(matches!(
+            salvage_list_store::<V1Store, String>("not json {{{", "v1-store.json", "items"),
+            Salvage::Unsalvageable
+        ));
+        assert!(matches!(
+            salvage_list_store::<V1Store, String>(r#"{"version":"1"}"#, "v1-store.json", "items"),
+            Salvage::Unsalvageable
+        ));
+    }
+
+    /// The salvaged store preserves unknown top-level fields (PER-010) — they
+    /// ride through the rebuild via `V1Store`'s flattened `extra`.
+    #[test]
+    fn salvage_list_store_preserves_unknown_top_level_fields() {
+        let raw = r#"{"version":"1","items":["ok",42],"futureFlag":{"on":true}}"#;
+        match salvage_list_store::<V1Store, String>(raw, "v1-store.json", "items") {
+            Salvage::Recovered { data, warnings } => {
+                assert_eq!(data.items, vec!["ok".to_string()]);
+                assert_eq!(warnings.len(), 1);
+                assert_eq!(
+                    data.extra.get("futureFlag"),
+                    Some(&json!({"on": true})),
+                    "unknown field must survive granular salvage"
+                );
+            }
+            Salvage::Unsalvageable => panic!("expected a granular recovery"),
+        }
     }
 }
