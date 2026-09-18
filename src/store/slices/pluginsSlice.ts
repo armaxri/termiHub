@@ -19,6 +19,7 @@ import type { InstalledPlugin, JsonValue, PluginBackendType } from "@/types/plug
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Project the connection-type selector's plugin-backend entries from the
@@ -181,10 +182,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       applyTheme(theme, customThemes);
     } catch (err) {
       // Read-only refresh: log rather than toast, matching loadMacros.
-      frontendLog(
-        "app_store",
-        `Failed to load plugins: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to load plugins: ${errorMessage(err)}`);
     }
   },
 
@@ -195,7 +193,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       await get().loadPlugins();
       toast.success(`Installed ${installed.manifest.name}`, { id: toastId });
     } catch (err) {
-      toast.error(`Failed to install plugin: ${err instanceof Error ? err.message : String(err)}`, {
+      toast.error(`Failed to install plugin: ${errorMessage(err)}`, {
         id: toastId,
       });
       throw err;
@@ -210,12 +208,9 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       await get().loadPlugins();
       toast.success(`Uninstalled ${name}`, { id: toastId });
     } catch (err) {
-      toast.error(
-        `Failed to uninstall ${name}: ${err instanceof Error ? err.message : String(err)}`,
-        {
-          id: toastId,
-        }
-      );
+      toast.error(`Failed to uninstall ${name}: ${errorMessage(err)}`, {
+        id: toastId,
+      });
       throw err;
     }
   },
@@ -228,7 +223,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       await get().loadPlugins();
       toast.success(`Enabled ${name}`, { id: toastId });
     } catch (err) {
-      toast.error(`Failed to enable ${name}: ${err instanceof Error ? err.message : String(err)}`, {
+      toast.error(`Failed to enable ${name}: ${errorMessage(err)}`, {
         id: toastId,
       });
       throw err;
@@ -243,12 +238,9 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       await get().loadPlugins();
       toast.success(`Disabled ${name}`, { id: toastId });
     } catch (err) {
-      toast.error(
-        `Failed to disable ${name}: ${err instanceof Error ? err.message : String(err)}`,
-        {
-          id: toastId,
-        }
-      );
+      toast.error(`Failed to disable ${name}: ${errorMessage(err)}`, {
+        id: toastId,
+      });
       throw err;
     }
   },
@@ -261,7 +253,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       // schema defaults so the form still renders.
       frontendLog(
         "app_store",
-        `Failed to load settings for plugin ${pluginId}: ${err instanceof Error ? err.message : String(err)}`
+        `Failed to load settings for plugin ${pluginId}: ${errorMessage(err)}`
       );
       throw err;
     }
@@ -272,9 +264,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
     try {
       await apiUpdatePluginSettings(pluginId, settings);
     } catch (err) {
-      toast.error(
-        `Failed to save ${name} settings: ${err instanceof Error ? err.message : String(err)}`
-      );
+      toast.error(`Failed to save ${name} settings: ${errorMessage(err)}`);
       throw err;
     }
   },

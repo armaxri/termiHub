@@ -41,6 +41,7 @@ import {
 import type { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for the connections-tree domain (twin of the Rust
  * `CONNECTIONS_REGION` const). Shared (Open Design Decision #4). */
@@ -321,6 +322,6 @@ export function persistConnectionMutation<T>(
 
 /** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logConnectionBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("connection_bridge", `${kind} connection intent failed: ${message}`);
 }

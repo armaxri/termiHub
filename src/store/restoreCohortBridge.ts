@@ -46,6 +46,7 @@ import {
 } from "@/services/transport";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for a client's restore cohort
  * (`restore-cohort@<clientId>`, twin of the Rust `restore_cohort_region`). */
@@ -288,6 +289,6 @@ export function mirrorRestoreSettle(payload: {
 
 /** Log a bridge failure so a dropped restore summary is visible in the LogViewer. */
 export function logRestoreBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("restore_cohort_bridge", `${kind} restore intent failed: ${message}`);
 }

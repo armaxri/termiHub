@@ -4,6 +4,7 @@ import { useAppStore } from "@/store/appStore";
 import { lockCredentialStore } from "@/services/api";
 import { toast } from "@/components/ui";
 import "./CredentialStoreIndicator.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Status bar indicator showing the state of the credential store.
@@ -27,9 +28,7 @@ export function CredentialStoreIndicator() {
         await lockCredentialStore();
         toast.success("Credential store locked");
       } catch (err) {
-        toast.error(
-          `Failed to lock credential store: ${err instanceof Error ? err.message : String(err)}`
-        );
+        toast.error(`Failed to lock credential store: ${errorMessage(err)}`);
       }
     }
   }, [status, setUnlockDialogOpen]);

@@ -74,6 +74,7 @@ import { buildGatedTypeOptions } from "@/utils/experimentalTypes";
 import { partitionConnectionTypes } from "@/utils/pluginConnectionTypes";
 import { isWindows } from "@/utils/platform";
 import "./ConnectionEditor.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
 
@@ -912,7 +913,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         // Save & Connect suppresses the Button's default error toast so it can
         // choose the right severity; surface the save failure explicitly here.
         toast.error("Failed to save agent connection", {
-          description: err instanceof Error ? err.message : String(err),
+          description: errorMessage(err),
         });
         throw err;
       }

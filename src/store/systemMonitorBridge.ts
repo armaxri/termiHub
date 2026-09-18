@@ -40,6 +40,7 @@ import {
 import type { MonitoringEntry, SystemStats } from "@/types/monitoring";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for the system-monitor domain (twin of the Rust
  * `SYSTEM_MONITORS_REGION` const). Shared (Open Design Decision #4). */
@@ -244,6 +245,6 @@ export function dispatchMonitorIntentBestEffort(
 
 /** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logMonitorBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("monitor_bridge", `${kind} monitor intent failed: ${message}`);
 }

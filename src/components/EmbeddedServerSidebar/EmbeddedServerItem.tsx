@@ -10,6 +10,7 @@ import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
 import { serverStatusLabel } from "@/utils/statusLabel";
 import { formatBytes } from "@/utils/formatters";
+import { errorMessage } from "@/utils/errorMessage";
 import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
@@ -39,13 +40,6 @@ interface Props {
   rowRef?: (el: HTMLDivElement | null) => void;
   /** Roving-tabindex row props (role, tabIndex, aria-level, onFocus) for keyboard nav. */
   rowProps?: React.HTMLAttributes<HTMLDivElement>;
-}
-
-/** Extract a human-readable message from an unknown rejection value. */
-function errorMessage(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  if (typeof err === "string") return err;
-  return String(err);
 }
 
 function serverUrl(config: EmbeddedServerConfig): string {

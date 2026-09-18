@@ -3,6 +3,7 @@ import { Button, Modal, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { GIT_FOR_WINDOWS_WINGET_COMMAND } from "@/utils/gitBashSetup";
 import { guideGitForWindowsInstall, openGitForWindowsDownload } from "./guideGitBashInstall";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface GitBashSetupDialogProps {
   /** Whether the dialog is open (controlled). */
@@ -38,7 +39,7 @@ export function GitBashSetupDialog({
       onInstallGuided?.();
       onOpenChange(false);
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      const msg = errorMessage(e);
       frontendLog("git_bash_setup", `guided install failed to start: ${msg}`);
       throw e; // return the Button to idle and surface its error toast
     }

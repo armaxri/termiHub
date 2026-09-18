@@ -7,6 +7,7 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { registerCustomGrammars } from "@/utils/monacoCustomLanguages";
 import type { CustomLanguageGrammar } from "@/types/connection";
 import { Button, Input, Tooltip, EmptyState } from "@/components/ui";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface CustomGrammarsSettingsProps {
   visibleFields?: Set<string>;
@@ -137,7 +138,7 @@ export function CustomGrammarsSettings({ visibleFields }: CustomGrammarsSettings
     try {
       await registerCustomGrammars([entry]);
     } catch (err) {
-      setRegisterError(err instanceof Error ? err.message : String(err));
+      setRegisterError(errorMessage(err));
       return;
     }
     const updated = [...existing, entry];

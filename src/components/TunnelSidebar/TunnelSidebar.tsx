@@ -17,6 +17,7 @@ import {
 import { TunnelListItem } from "./TunnelListItem";
 import { newId } from "@/services/transport/ids";
 import "./TunnelSidebar.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 const DISCONNECTED: TunnelStatus = "disconnected";
 
@@ -85,7 +86,7 @@ export function TunnelSidebar() {
         .then(() => toast.success(`Duplicated "${original.name}"`))
         .catch((err: unknown) =>
           toast.error(`Failed to duplicate "${original.name}"`, {
-            description: err instanceof Error ? err.message : String(err),
+            description: errorMessage(err),
           })
         );
     },

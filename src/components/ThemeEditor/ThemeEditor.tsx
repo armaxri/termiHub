@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Button, Field, Input, Modal, Select } from "@/components/ui";
+import { Button, ColorInput, Field, Input, Modal, Select } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { BASE_THEME_ORDER, COLOR_TOKEN_GROUPS, previewTheme, resolveBaseTheme } from "@/themes";
 import type { ThemeColors, ThemeDefinition } from "@/themes/types";
@@ -134,8 +134,7 @@ export function ThemeEditor({ open, initialTheme, onSave, onCancel }: ThemeEdito
                 return (
                   <div key={token.key} className="theme-editor__row">
                     <span className="theme-editor__row-label">{token.label}</span>
-                    <input
-                      type="color"
+                    <ColorInput
                       className="theme-editor__swatch"
                       value={toSwatch(value)}
                       onChange={(e) => setColor(token.key, e.target.value)}

@@ -2,6 +2,7 @@ import React, { forwardRef, useCallback, useEffect, useRef, useState } from "rea
 import { frontendLog } from "@/utils/frontendLog";
 import { toast } from "./Toast";
 import "./ui.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Visual variant of the button. */
 export type ButtonVariant = "primary" | "secondary" | "ghost" | "danger";
@@ -217,7 +218,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
         (error: unknown) => {
           if (mounted.current) setAsyncState("idle");
           if (errorToast) {
-            const msg = error instanceof Error ? error.message : String(error);
+            const msg = errorMessage(error);
             toast.error(msg);
           }
         }

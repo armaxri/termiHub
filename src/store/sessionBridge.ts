@@ -55,6 +55,7 @@ import {
 } from "@/utils/reconnectBackoff";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for the session-lifecycle domain (twin of the Rust
  * `SESSION_LIFECYCLE_REGION` const). Shared (Open Design Decision #4). */
@@ -1068,6 +1069,6 @@ export function effectiveDisconnectErrorMap(
 
 /** Log a session-region write failure so the resilience recovery is visible in the LogViewer. */
 export function logSessionBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("session_bridge", `${kind} region write failed: ${message}`);
 }

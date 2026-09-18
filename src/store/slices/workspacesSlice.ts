@@ -11,6 +11,7 @@ import type { WorkspaceSummary, WorkspaceDefinition } from "@/types/workspace";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Workspaces domain slice — a cut of the appStore god-module split
@@ -61,10 +62,7 @@ export const createWorkspacesSlice: StateCreator<AppState, [], [], WorkspacesSli
       const workspaces = await apiGetWorkspaces();
       set({ workspaces });
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to load workspaces: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to load workspaces: ${errorMessage(err)}`);
     }
   },
 
@@ -73,10 +71,7 @@ export const createWorkspacesSlice: StateCreator<AppState, [], [], WorkspacesSli
       await apiSaveWorkspace(definition);
       await get().loadWorkspaces();
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to save workspace: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to save workspace: ${errorMessage(err)}`);
       throw err;
     }
   },
@@ -98,13 +93,8 @@ export const createWorkspacesSlice: StateCreator<AppState, [], [], WorkspacesSli
       await get().loadWorkspaces();
       toast.success("Duplicated workspace");
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to duplicate workspace: ${err instanceof Error ? err.message : String(err)}`
-      );
-      toast.error(
-        `Failed to duplicate workspace: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to duplicate workspace: ${errorMessage(err)}`);
+      toast.error(`Failed to duplicate workspace: ${errorMessage(err)}`);
     }
   },
 });

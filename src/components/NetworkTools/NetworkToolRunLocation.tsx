@@ -7,6 +7,7 @@ import { setNetworkToolRunLocation } from "@/services/networkApi";
 import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
 import type { NetworkTool } from "@/types/terminal";
 import { NETWORK_TOOL_LOCATION } from "./networkToolLocation";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface NetworkToolRunLocationProps {
   tool: NetworkTool;
@@ -40,7 +41,7 @@ export function NetworkToolRunLocation({ tool }: NetworkToolRunLocationProps) {
       setNetworkToolRunLocation(key, location).catch((err: unknown) => {
         setLocation(tool, previous); // roll back on failure
         toast.error("Couldn't change run location", {
-          description: err instanceof Error ? err.message : String(err),
+          description: errorMessage(err),
         });
       });
     },

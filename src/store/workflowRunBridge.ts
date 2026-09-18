@@ -52,6 +52,7 @@ import {
 import type { WorkflowRunOutputLine, WorkflowRunOutputStatus } from "@/store/appStore";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for a client's workflow run
  * (`workflow-run@<clientId>`, twin of the Rust `workflow_run_region`). */
@@ -416,7 +417,7 @@ export function dispatchWorkflowDismissOutput(): Promise<void> {
 
 /** Log a bridge issue so a projection hiccup is visible in the LogViewer. */
 export function logWorkflowBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("workflow_run_bridge", `${kind}: ${message}`);
 }
 

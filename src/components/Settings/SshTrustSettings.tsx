@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import { sshTrustList, sshTrustForget, type SshTrustedHost } from "@/services/api";
 import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface SshTrustSettingsProps {
   visibleFields?: Set<string>;
@@ -22,7 +23,7 @@ export function SshTrustSettings({ visibleFields }: SshTrustSettingsProps) {
     try {
       setHosts(await sshTrustList());
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       frontendLog("ssh_trust_settings", `failed to load trust store: ${message}`);
       toast.error(`Failed to load remembered SSH host keys: ${message}`);
     } finally {
@@ -50,7 +51,7 @@ export function SshTrustSettings({ visibleFields }: SshTrustSettingsProps) {
       );
       toast.success(`Revoked host key for ${host}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to revoke host key: ${message}`);
       throw err; // keep the async Button in its error path (no success flash)
     }
@@ -62,7 +63,7 @@ export function SshTrustSettings({ visibleFields }: SshTrustSettingsProps) {
       setHosts((prev) => prev.filter((h) => h.host !== host));
       toast.success(`Forgot all remembered host keys for ${host}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to forget host: ${message}`);
       throw err; // keep the async Button in its error path (no success flash)
     }

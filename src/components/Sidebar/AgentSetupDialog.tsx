@@ -31,6 +31,7 @@ import {
   toast,
 } from "@/components/ui";
 import "./AgentSetupDialog.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface AgentSetupDialogProps {
   open: boolean;
@@ -133,7 +134,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
     } catch (err) {
       setPhase({
         kind: "error",
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
       });
     }
   }, [agent, requestPassword, onOpenChange]);
@@ -266,7 +267,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
 
       setPhase({ kind: "running", step: "connect", message: "Setup started…" });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       stopProgressListener();
       setSubmitError(message);
       setLoading(false);
@@ -299,7 +300,7 @@ export function AgentSetupDialog({ open: isOpen, onOpenChange, agent }: AgentSet
         id: progressToastIdRef.current ?? undefined,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to cancel agent deploy: ${message}`);
       throw err;
     } finally {

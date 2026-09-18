@@ -10,6 +10,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { pluginDotState, pluginTypeIcon } from "./pluginPresentation";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import "./Plugins.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** A picked-and-validated package awaiting the user's install confirmation. */
 interface PendingInstall {
@@ -56,9 +57,7 @@ export function PluginManagerView() {
       })) as string | null;
     } catch (err) {
       frontendLog("plugin_manager", `File picker failed: ${err}`);
-      toast.error(
-        `Could not open file picker: ${err instanceof Error ? err.message : String(err)}`
-      );
+      toast.error(`Could not open file picker: ${errorMessage(err)}`);
       return;
     }
     if (!filePath) return;
@@ -72,7 +71,7 @@ export function PluginManagerView() {
       toast.dismiss(toastId);
       setPending({ filePath, manifest, trust });
     } catch (err) {
-      toast.error(`Invalid plugin package: ${err instanceof Error ? err.message : String(err)}`, {
+      toast.error(`Invalid plugin package: ${errorMessage(err)}`, {
         id: toastId,
       });
     }

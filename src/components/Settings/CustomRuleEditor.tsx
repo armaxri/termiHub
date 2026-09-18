@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Button, Checkbox, Field, Input } from "@/components/ui";
+import { Button, Checkbox, ColorInput, Field, Input } from "@/components/ui";
 import { compileRules, findMatches, normalizeHexColor } from "@/services/syntaxHighlighting";
 import { resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import { getThemedRuleColor } from "@/services/syntaxHighlightingRules";
@@ -176,9 +176,7 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
       <div className="custom-rule-editor__style">
         <span className="custom-rule-editor__style-label">Style</span>
         <div className="custom-rule-editor__row">
-          <input
-            type="color"
-            className="custom-rule-editor__color"
+          <ColorInput
             value={colorSwatch}
             onChange={(e) => setStyle({ color: e.target.value })}
             aria-label="Highlight color"

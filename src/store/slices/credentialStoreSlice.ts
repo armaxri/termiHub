@@ -4,6 +4,7 @@ import type { AppState } from "../appStore";
 import { CredentialStoreStatusInfo } from "@/types/credential";
 import { getCredentialStoreStatus as apiGetCredentialStoreStatus } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Credential-store domain slice (ARCH-001/FES-011, appStore god-module split via
@@ -56,10 +57,7 @@ export const createCredentialStoreSlice: StateCreator<AppState, [], [], Credenti
       const status = await apiGetCredentialStoreStatus();
       set({ credentialStoreStatus: status });
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to load credential store status: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to load credential store status: ${errorMessage(err)}`);
     }
   },
   unlockDialogOpen: false,

@@ -56,6 +56,7 @@ import { tagMonacoInput, testInputEditorOptions, moveEditorCursor } from "./edit
 import { isTestBridgeEnabled } from "@/testbridge/testMode";
 import { frontendLog, frontendError } from "@/utils/frontendLog";
 import "./FileEditor.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Maximum number of sudo-password attempts before falling back to the error banner. */
 const MAX_SUDO_ATTEMPTS = 3;
@@ -180,7 +181,7 @@ function readEditorStatus(editor: monaco.editor.IStandaloneCodeEditor): EditorSt
  * everything else falls back to the underlying error text.
  */
 function formatSaveError(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
+  const raw = errorMessage(err);
   if (/permission denied|eacces|\bnot permitted\b|access denied/i.test(raw)) {
     return `Permission denied — you don't have write access to this file. (${raw})`;
   }
@@ -443,9 +444,7 @@ export function FileEditor({
     } catch (err) {
       frontendLog(
         "file_editor",
-        `size probe failed for ${effectivePath}; large-file guard skipped: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `size probe failed for ${effectivePath}; large-file guard skipped: ${errorMessage(err)}`
       );
       return null;
     }
@@ -539,7 +538,7 @@ export function FileEditor({
         }
       } catch (err) {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(errorMessage(err));
           setLoading(false);
         }
       }
@@ -599,9 +598,9 @@ export function FileEditor({
         setExecCapable(false);
         frontendLog(
           "file_editor",
-          `session ${sessionId} is not SFTP-backed; advanced editor ops disabled: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `session ${sessionId} is not SFTP-backed; advanced editor ops disabled: ${errorMessage(
+            err
+          )}`
         );
       });
     return () => {
@@ -630,10 +629,7 @@ export function FileEditor({
       .catch((err) => {
         if (cancelled) return;
         setRemoteHome(null);
-        frontendLog(
-          "file_editor",
-          `remote home resolution failed: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("file_editor", `remote home resolution failed: ${errorMessage(err)}`);
       });
     return () => {
       cancelled = true;
@@ -665,9 +661,7 @@ export function FileEditor({
         setWritable("unknown");
         frontendLog(
           "file_editor",
-          `writability probe failed for ${filePath}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `writability probe failed for ${filePath}: ${errorMessage(err)}`
         );
       });
     return () => {
@@ -770,9 +764,7 @@ export function FileEditor({
     } catch (err) {
       frontendLog(
         "file_editor",
-        `external-change reload read failed for tab ${tabId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `external-change reload read failed for tab ${tabId}: ${errorMessage(err)}`
       );
       return;
     }
@@ -820,9 +812,7 @@ export function FileEditor({
     } catch (err) {
       frontendLog(
         "file_editor",
-        `large-file reload read failed for tab ${tabId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `large-file reload read failed for tab ${tabId}: ${errorMessage(err)}`
       );
       return;
     }
@@ -843,9 +833,7 @@ export function FileEditor({
     } catch (err) {
       frontendLog(
         "file_editor",
-        `conflict reload-from-disk read failed for tab ${tabId}: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `conflict reload-from-disk read failed for tab ${tabId}: ${errorMessage(err)}`
       );
       return;
     }
@@ -921,9 +909,7 @@ export function FileEditor({
       } catch (err) {
         frontendLog(
           "file_editor",
-          `failed to start local file watch for tab ${tabId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `failed to start local file watch for tab ${tabId}: ${errorMessage(err)}`
         );
         return;
       }
@@ -996,9 +982,7 @@ export function FileEditor({
       } catch (err) {
         frontendLog(
           "file_editor",
-          `remote stat poll failed for tab ${tabId}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `remote stat poll failed for tab ${tabId}: ${errorMessage(err)}`
         );
         return null;
       }
@@ -1102,9 +1086,7 @@ export function FileEditor({
       } catch (err) {
         frontendLog(
           "file_editor",
-          `elevated save threw for ${meta.filePath}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `elevated save threw for ${meta.filePath}: ${errorMessage(err)}`
         );
         setSaveError(formatSaveError(err));
         return "error";
@@ -1191,10 +1173,7 @@ export function FileEditor({
           try {
             await storeCredential(hostLabel, "sudo_password", password);
           } catch (err) {
-            frontendLog(
-              "file_editor",
-              `failed to persist sudo password: ${err instanceof Error ? err.message : String(err)}`
-            );
+            frontendLog("file_editor", `failed to persist sudo password: ${errorMessage(err)}`);
           }
         }
         setSudoDialogOpen(false);
@@ -1260,7 +1239,7 @@ export function FileEditor({
         setSaveCopyDialogOpen(false);
         frontendLog("file_editor", `saved a copy of ${meta.filePath} to ${destPath}`);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         toast.error(`Save a copy failed: ${message}`, { id: toastId });
         frontendLog("file_editor", `save a copy of ${meta.filePath} failed: ${message}`);
       } finally {
@@ -1289,7 +1268,7 @@ export function FileEditor({
         toast.dismiss(toastId);
         return;
       }
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Download failed: ${message}`, { id: toastId });
       frontendLog("file_editor", `download of ${meta.filePath} failed: ${message}`);
     }

@@ -47,6 +47,7 @@ import {
 } from "../workflowRunBridge";
 
 import { collectLiveTabs, getActiveTab, type AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** UI-facing metadata describing an in-flight workflow run (#1852). */
 export interface WorkflowRunState {
@@ -218,10 +219,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       const workflows = await apiListWorkflows();
       set({ workflows });
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to load workflows: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to load workflows: ${errorMessage(err)}`);
     }
   },
 
@@ -423,7 +421,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       } catch (err) {
         // A backend rejection (e.g. opt-in disabled at the trust boundary)
         // surfaces as a failed step rather than crashing the run.
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         frontendLog("workflow", `local process error: ${message}`);
         setWorkflowOutputProcessResult(1, false);
         return { exitCode: 1, timedOut: false, cancelled: false };

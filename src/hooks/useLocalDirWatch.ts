@@ -3,6 +3,7 @@ import { watchLocalDir, unwatchLocalDir } from "@/services/api";
 import { onLocalDirChanged } from "@/services/events";
 import { frontendLog } from "@/utils/frontendLog";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Coalesce a burst of directory events into a single refresh on the frontend
@@ -76,9 +77,7 @@ export function useLocalDirWatch(
       } catch (err) {
         frontendLog(
           "file_browser",
-          `failed to start local dir watch for ${path}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `failed to start local dir watch for ${path}: ${errorMessage(err)}`
         );
         return;
       }

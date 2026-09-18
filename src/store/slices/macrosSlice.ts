@@ -21,6 +21,7 @@ import { newId } from "@/services/transport/ids";
 import { currentSessionView, regionExited } from "../sessionBridge";
 
 import { collectLiveTabs, getActiveTab, type AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** UI-facing metadata describing an in-flight macro playback (#1675). */
 export interface MacroPlaybackState {
@@ -148,10 +149,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       const macros = await apiListMacros();
       set({ macros });
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to load macros: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to load macros: ${errorMessage(err)}`);
     }
   },
 
@@ -271,7 +269,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       toast.success(`Saved macro "${name}"`);
     } catch (err) {
       // Keep the dialog open so the user can retry without losing the capture.
-      toast.error(`Failed to save macro: ${err instanceof Error ? err.message : String(err)}`);
+      toast.error(`Failed to save macro: ${errorMessage(err)}`);
       throw err;
     }
   },

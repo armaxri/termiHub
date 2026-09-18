@@ -5,6 +5,7 @@ import { Copy } from "lucide-react";
 import { Modal, Button, toast } from "@/components/ui";
 import type { XServerError, XServerProgress } from "@/types/xserver";
 import "./XServerSetupDialog.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Which screen of the setup flow is showing. */
 export type XServerSetupPhase = "consent" | "provisioning" | "error";
@@ -177,8 +178,7 @@ export function XServerSetupContent({
   }
 
   function renderError() {
-    const message =
-      error?.message ?? (rawError instanceof Error ? rawError.message : String(rawError));
+    const message = error?.message ?? errorMessage(rawError);
     const isDependencyMissing = error?.kind === "dependencyMissing";
     const installCommand = isDependencyMissing ? error?.installCommand : undefined;
     return (

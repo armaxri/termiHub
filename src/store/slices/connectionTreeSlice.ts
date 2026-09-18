@@ -22,6 +22,7 @@ import { ConnectionConfig, TabContent } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Connection-tree domain slice — a cut of the appStore god-module split
@@ -190,14 +191,10 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         // every reader updates via the region diff — no frontend slice to splice.
         await apiReloadExternalConnections();
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to reload external connections: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to reload external connections: ${err instanceof Error ? err.message : String(err)}`,
-          { id: "reload-external-connections-error" }
-        );
+        frontendLog("app_store", `Failed to reload external connections: ${errorMessage(err)}`);
+        toast.error(`Failed to reload external connections: ${errorMessage(err)}`, {
+          id: "reload-external-connections-error",
+        });
       }
     },
 
@@ -209,13 +206,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       // authoritative view back, #2389).
       mirrorConnectionIntent("connection.toggleFolder", { folderId });
       persistFolder(toggled).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist folder toggle: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to save folder state: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist folder toggle: ${errorMessage(err)}`);
+        toast.error(`Failed to save folder state: ${errorMessage(err)}`);
       });
     },
 
@@ -225,10 +217,7 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       // `connections` region server-side (#2401), so the UI refreshes via the region
       // diff. No frontend slice to set.
       void loadConnections().catch((err) => {
-        frontendLog(
-          "app_store",
-          `focus reload failed: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `focus reload failed: ${errorMessage(err)}`);
       });
     },
 
@@ -248,13 +237,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
           toast.success(`Saved ${connection.name}`);
         })
         .catch((err) => {
-          frontendLog(
-            "app_store",
-            `Failed to persist new connection: ${err instanceof Error ? err.message : String(err)}`
-          );
-          toast.error(
-            `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
-          );
+          frontendLog("app_store", `Failed to persist new connection: ${errorMessage(err)}`);
+          toast.error(`Failed to save ${connection.name}: ${errorMessage(err)}`);
         });
     },
 
@@ -282,13 +266,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
           );
         })
         .catch((err) => {
-          frontendLog(
-            "app_store",
-            `Failed to persist imported connections: ${err instanceof Error ? err.message : String(err)}`
-          );
-          toast.error(
-            `Failed to import connections: ${err instanceof Error ? err.message : String(err)}`
-          );
+          frontendLog("app_store", `Failed to persist imported connections: ${errorMessage(err)}`);
+          toast.error(`Failed to import connections: ${errorMessage(err)}`);
         });
     },
 
@@ -312,13 +291,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
           toast.success(`Saved ${connection.name}`);
         })
         .catch((err) => {
-          frontendLog(
-            "app_store",
-            `Failed to persist connection update: ${err instanceof Error ? err.message : String(err)}`
-          );
-          toast.error(
-            `Failed to save ${connection.name}: ${err instanceof Error ? err.message : String(err)}`
-          );
+          frontendLog("app_store", `Failed to persist connection update: ${errorMessage(err)}`);
+          toast.error(`Failed to save ${connection.name}: ${errorMessage(err)}`);
         });
     },
 
@@ -347,13 +321,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
           toast.success(`Deleted ${conn?.name ?? "connection"}`);
         })
         .catch((err) => {
-          frontendLog(
-            "app_store",
-            `Failed to persist connection deletion: ${err instanceof Error ? err.message : String(err)}`
-          );
-          toast.error(
-            `Failed to delete ${conn?.name ?? "connection"}: ${err instanceof Error ? err.message : String(err)}`
-          );
+          frontendLog("app_store", `Failed to persist connection deletion: ${errorMessage(err)}`);
+          toast.error(`Failed to delete ${conn?.name ?? "connection"}: ${errorMessage(err)}`);
         });
     },
 
@@ -395,11 +364,9 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         .catch((err) => {
           frontendLog(
             "app_store",
-            `Failed to persist bulk connection deletion: ${err instanceof Error ? err.message : String(err)}`
+            `Failed to persist bulk connection deletion: ${errorMessage(err)}`
           );
-          toast.error(
-            `Failed to delete connections: ${err instanceof Error ? err.message : String(err)}`
-          );
+          toast.error(`Failed to delete connections: ${errorMessage(err)}`);
         });
     },
 
@@ -407,13 +374,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       mirrorConnectionIntent("connection.addFolder", { folder });
       frontendLog("connection_sync", `addFolder: persisting ${folder.id}`);
       persistFolder(folder).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist new folder: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to create folder ${folder.name}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist new folder: ${errorMessage(err)}`);
+        toast.error(`Failed to create folder ${folder.name}: ${errorMessage(err)}`);
       });
     },
 
@@ -425,11 +387,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       mirrorConnectionIntent("connection.removeFolder", { folderId });
       frontendLog("connection_sync", `deleteFolder: removing ${folderId}`);
       removeFolder(folderId).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist folder deletion: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(`Failed to delete folder: ${err instanceof Error ? err.message : String(err)}`);
+        frontendLog("app_store", `Failed to persist folder deletion: ${errorMessage(err)}`);
+        toast.error(`Failed to delete folder: ${errorMessage(err)}`);
       });
     },
 
@@ -449,13 +408,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         () => persistConnection(stripPassword(duplicate)),
         { kind: "connection.remove", payload: { connectionId: duplicate.id } }
       ).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist duplicated connection: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to duplicate ${original.name}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist duplicated connection: ${errorMessage(err)}`);
+        toast.error(`Failed to duplicate ${original.name}: ${errorMessage(err)}`);
       });
     },
 
@@ -471,13 +425,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         const updated = await apiMoveConnectionToFile(connectionId, currentSource, targetSource);
         mirrorConnectionIntent("connection.update", { connection: updated });
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to move connection to file: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to move ${conn.name}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to move connection to file: ${errorMessage(err)}`);
+        toast.error(`Failed to move ${conn.name}: ${errorMessage(err)}`);
       }
     },
 
@@ -493,13 +442,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       const moved = { ...existing, folderId };
       frontendLog("connection_sync", `moveConnectionToFolder: persisting ${connectionId}`);
       persistConnection(stripPassword(moved)).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist connection move: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to move ${moved.name}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist connection move: ${errorMessage(err)}`);
+        toast.error(`Failed to move ${moved.name}: ${errorMessage(err)}`);
       });
     },
 
@@ -521,13 +465,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         `bulkMoveConnectionsToFolder: persisting ${moved.length} connections`
       );
       Promise.all(moved.map((conn) => persistConnection(stripPassword(conn)))).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist bulk connection move: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to move connections: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist bulk connection move: ${errorMessage(err)}`);
+        toast.error(`Failed to move connections: ${errorMessage(err)}`);
       });
     },
 
@@ -551,13 +490,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       const connectionIds = conns.map((c) => c.id);
       mirrorConnectionIntent("connection.reorder", { oldIndex, newIndex });
       persistConnectionOrder(connectionIds).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist connection reorder: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to save connection order: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist connection reorder: ${errorMessage(err)}`);
+        toast.error(`Failed to save connection order: ${errorMessage(err)}`);
       });
     },
   };

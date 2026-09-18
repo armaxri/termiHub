@@ -7,6 +7,7 @@ import type {
   CheckResult,
   ScenarioResult,
 } from "./scenario";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Tunables for {@link runScenario}. */
 export interface RunOptions {
@@ -25,11 +26,6 @@ const DEFAULT_WAIT_TIMEOUT_MS = 5000;
 const DEFAULT_WAIT_INTERVAL_MS = 100;
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Extract a readable message from an unknown thrown value. */
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /** Structural deep-equality good enough for state values (primitives, ids, small objects). */
 function deepEqual(a: unknown, b: unknown): boolean {

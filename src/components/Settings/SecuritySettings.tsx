@@ -7,6 +7,7 @@ import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from 
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface SecuritySettingsProps {
   visibleFields?: Set<string>;
@@ -187,7 +188,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           : `Switched to ${modeLabel(targetMode)}`
       );
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       setPasswordError(message);
       toast.error(`Failed to switch credential store: ${message}`);
       throw err; // keep the async Button in its error path (no success flash)
@@ -219,7 +220,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
       resetChangePasswordDialog();
       toast.success("Master password changed");
     } catch (err) {
-      setChangePasswordError(err instanceof Error ? err.message : String(err));
+      setChangePasswordError(errorMessage(err));
       throw err; // keep the async Button in its error path (inline error, no toast)
     }
   }, [currentPasswordInput, changeNewPassword, changeConfirmPassword, resetChangePasswordDialog]);

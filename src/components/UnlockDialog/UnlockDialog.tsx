@@ -4,6 +4,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, ConfirmDialog, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import "./UnlockDialog.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface UnlockDialogProps {
   open: boolean;
@@ -86,7 +87,7 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
       toast.success("Credential store reset — set a new master password to start over");
       onOpenChange(false);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       frontendLog("credential", `Failed to reset credential store: ${message}`);
       toast.error(`Failed to reset credential store: ${message}`);
     } finally {

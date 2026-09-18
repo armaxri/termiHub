@@ -31,6 +31,7 @@ import {
   unregisterPlugin,
 } from "./pluginRuntimeCore";
 import type { HostToWorkerMessage, TermiHubPluginAPI, WorkerToHostMessage } from "./protocol";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The worker global, typed enough to install the plugin API and post messages. */
 const ctx = self as unknown as {
@@ -89,7 +90,7 @@ function loadPlugin(pluginId: string, entryUrls: string[]): void {
       post({
         t: "loadError",
         pluginId,
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
       });
     }
   }

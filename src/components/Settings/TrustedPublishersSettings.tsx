@@ -6,6 +6,7 @@ import type { TrustedPublisher } from "@/types/plugin";
 import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { fingerprintShort } from "@/components/Plugins/pluginPresentation";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Settings → Plugins → Trusted Publishers (#2036). Lists every publisher key the
@@ -23,7 +24,7 @@ export function TrustedPublishersSettings() {
     try {
       setPublishers(await listTrustedPublishers());
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       frontendLog("trusted_publishers", `failed to load trust store: ${message}`);
       toast.error(`Failed to load trusted publishers: ${message}`);
     } finally {
@@ -47,7 +48,7 @@ export function TrustedPublishersSettings() {
       setPublishers((prev) => prev.filter((p) => p.keyId !== publisher.keyId));
       toast.success(`Revoked trust for ${publisher.label}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to revoke publisher: ${message}`);
       throw err; // keep the async Button in its error path (no success flash)
     }
