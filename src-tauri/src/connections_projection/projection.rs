@@ -51,14 +51,16 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::commands::projection::ProjectionState;
 use crate::connection::config::{ConnectionFolder, SavedConnection};
 use crate::connection::manager::ConnectionManager;
 use crate::connections_projection::store::ConnectionsStore;
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    optional_str, optional_typed, required_str, required_usize, HandlerRegistry, Intent,
+    ProducedRegion, Projector,
+};
 
 /// The projection region id for the connections-tree domain (shared, per Open
 /// Design Decision #4).
@@ -231,35 +233,6 @@ fn store_of(app_handle: &AppHandle) -> Result<Arc<ConnectionsStore>, (String, St
         })
 }
 
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract a required unsigned-integer field from an intent payload.
-fn required_usize(intent: &Intent, key: &str) -> Result<usize, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_u64)
-        .map(|n| n as usize)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract an optional string field; absent or `null` → `None`.
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
-
 /// Parse the required `connection` object as a [`SavedConnection`].
 fn required_connection(intent: &Intent) -> Result<SavedConnection, (String, String)> {
     let value = intent.payload.get("connection").ok_or_else(|| {
@@ -300,21 +273,6 @@ fn required_replace(
         optional_typed(intent, "folders")?,
         optional_typed(intent, "connections")?,
     ))
-}
-
-/// Parse an optional typed field, treating an absent or `null` value as the
-/// type's default (an empty list). Lets a mirror that clears a whole array be
-/// expressed by omitting the field; a present-but-malformed field is a
-/// `bad_payload` rejection.
-fn optional_typed<T: serde::de::DeserializeOwned + Default>(
-    intent: &Intent,
-    key: &str,
-) -> Result<T, (String, String)> {
-    match intent.payload.get(key) {
-        None | Some(Value::Null) => Ok(T::default()),
-        Some(value) => serde_json::from_value(value.clone())
-            .map_err(|e| ("bad_payload".to_string(), format!("invalid {key}: {e}"))),
-    }
 }
 
 #[cfg(test)]

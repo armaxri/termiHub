@@ -56,10 +56,11 @@
 
 use std::sync::Arc;
 
-use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    optional_str, required_str, required_usize, HandlerRegistry, Intent, ProducedRegion, Projector,
+};
 use crate::workflow_projection::store::WorkflowRunStore;
 
 /// The projection region id for a client's workflow run
@@ -178,26 +179,6 @@ fn store_of(app_handle: &AppHandle) -> Result<Arc<WorkflowRunStore>, (String, St
         })
 }
 
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract a required non-negative integer field.
-fn required_usize(intent: &Intent, key: &str) -> Result<usize, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_u64)
-        .map(|n| n as usize)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
 /// Extract an optional array-of-strings field (e.g. `args`), defaulting to an
 /// empty vec when absent. Rejects a present-but-malformed value.
 fn optional_str_array(intent: &Intent, key: &str) -> Result<Vec<String>, (String, String)> {
@@ -214,15 +195,6 @@ fn optional_str_array(intent: &Intent, key: &str) -> Result<Vec<String>, (String
                 .ok_or_else(|| ("bad_payload".to_string(), format!("invalid '{key}' entry")))
         })
         .collect()
-}
-
-/// Extract an optional string field (e.g. a failure reason); absent → `None`.
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
 }
 
 #[cfg(test)]

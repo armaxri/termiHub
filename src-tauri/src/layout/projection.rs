@@ -70,7 +70,9 @@ use tauri::{AppHandle, Manager};
 use termihub_core::layout::panel_tree::{PanelNode, Tab};
 
 use crate::layout::store::{GroupLayout, LayoutError, LayoutStore, SplitIds};
-use crate::projection::{HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    optional_str, required_str, required_usize, HandlerRegistry, Intent, ProducedRegion, Projector,
+};
 
 /// The projection region id for a client's layout (`layout@<clientId>`).
 pub fn layout_region(client_id: &str) -> String {
@@ -411,36 +413,6 @@ fn store_of(app_handle: &AppHandle) -> Result<Arc<LayoutStore>, (String, String)
 /// Turn a [`LayoutError`] into an intent-ack `(code, message)` pair.
 fn to_ack_err(err: LayoutError) -> (String, String) {
     (err.code().to_string(), err.to_string())
-}
-
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract an optional string field (e.g. `groupId`, or a nullable `color`).
-/// Returns `None` when the key is absent or not a string.
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
-
-/// Extract a required non-negative integer field (e.g. a tab index).
-fn required_usize(intent: &Intent, key: &str) -> Result<usize, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_u64)
-        .map(|n| n as usize)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
 }
 
 /// Extract a required array of finite numbers (e.g. split `sizes`).

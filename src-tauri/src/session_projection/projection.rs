@@ -54,7 +54,10 @@ use tauri::{AppHandle, Manager};
 use termihub_core::reconnect_backoff::ReconnectPhase;
 
 use crate::commands::projection::ProjectionState;
-use crate::projection::{compute_ops, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    compute_ops, optional_str, required_str, DiffOp, HandlerRegistry, Intent, ProducedRegion,
+    Projector,
+};
 use crate::session::manager::SessionManager;
 use crate::session_projection::store::{
     RegionDelta, SessionLifecycleStore, TerminalExit, TerminalExitReason,
@@ -578,25 +581,6 @@ fn store_of(app_handle: &AppHandle) -> Result<Arc<SessionLifecycleStore>, (Strin
                 "session-lifecycle store is not initialized".to_string(),
             )
         })
-}
-
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract an optional string field (e.g. an error message); absent → `None`.
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
 }
 
 /// Extract the terminal exit cause from a `session.exited` payload (#2615):

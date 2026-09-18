@@ -52,7 +52,10 @@ use tauri::{AppHandle, Manager};
 use termihub_core::monitoring::{MonitorStatus, SystemStats};
 
 use crate::commands::projection::ProjectionState;
-use crate::projection::{compute_ops, DiffOp, HandlerRegistry, Intent, ProducedRegion, Projector};
+use crate::projection::{
+    compute_ops, optional_str, required_bool, required_str, DiffOp, HandlerRegistry, Intent,
+    ProducedRegion, Projector,
+};
 use crate::system_monitor_projection::store::{MonitorEntry, RegionDelta, SystemMonitorStore};
 
 /// The projection region id for the system-monitor domain (shared, per Open
@@ -353,34 +356,6 @@ fn store_of(app_handle: &AppHandle) -> Result<Arc<SystemMonitorStore>, (String, 
                 "system-monitor store is not initialized".to_string(),
             )
         })
-}
-
-/// Extract a required string field from an intent payload.
-fn required_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-/// Extract an optional string field; absent → `None`.
-fn optional_str(intent: &Intent, key: &str) -> Option<String> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-}
-
-/// Extract a required bool field from an intent payload.
-fn required_bool(intent: &Intent, key: &str) -> Result<bool, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_bool)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
 }
 
 /// Extract a required u64 field from an intent payload.

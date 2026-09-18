@@ -20,11 +20,15 @@
 //! a separate, untouched channel.
 
 mod frame;
+mod helpers;
 mod region;
 
 pub use frame::{
     DiffFrame, DiffKind, DiffOp, Intent, IntentAck, IntentErrorInfo, IntentStatus, ProducedRegion,
     ProjectionFrame, SnapshotFrame, SnapshotKind,
+};
+pub(crate) use helpers::{
+    bad_payload, optional_str, optional_typed, required_bool, required_str, required_usize,
 };
 pub use region::ProjectedStore;
 
