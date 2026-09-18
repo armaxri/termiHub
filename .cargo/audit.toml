@@ -7,4 +7,43 @@
 # key format parsing). We only extract raw RSA key components and rebuild
 # them via OpenSSL — we never perform RSA encryption/decryption through
 # this crate, so the timing sidechannel does not apply.
-ignore = ["RUSTSEC-2023-0071"]
+#
+# ---------------------------------------------------------------------------
+# Non-actionable TRANSITIVE advisories — conscious release sign-off (#3054).
+# Findings SUP-003 / SUP-004 / SUP-006. Every ID below is `unmaintained` or
+# `unsound` (NOT an exploitable vulnerability) on a crate pinned by upstream
+# (mostly the Tauri/GTK3 binding stack), so no app-side change can clear it.
+# These mirror the `[advisories] ignore` list in deny.toml so cargo-audit and
+# cargo-deny stay in agreement. Real vulnerabilities and yanked crates are NOT
+# listed here and still fail the gate. Revisit + remove per ID when upstream
+# ships a maintained/sound replacement — see #3054.
+# ---------------------------------------------------------------------------
+ignore = [
+    "RUSTSEC-2023-0071",
+    # -- unmaintained (no fix available; crate abandoned upstream) --
+    # proc-macro-error: unmaintained, via gtk3-macros / glib-macros.
+    "RUSTSEC-2024-0370",
+    # rustls-pemfile: unmaintained (superseded upstream), transitive.
+    "RUSTSEC-2025-0134",
+    # serial: unmaintained, transitive serial-port stack.
+    "RUSTSEC-2017-0008",
+    # unic-char-property: unmaintained, via the unic-* unicode stack.
+    "RUSTSEC-2025-0081",
+    # unic-char-range: unmaintained, via the unic-* unicode stack.
+    "RUSTSEC-2025-0075",
+    # unic-common: unmaintained, via the unic-* unicode stack.
+    "RUSTSEC-2025-0080",
+    # unic-ucd-ident: unmaintained, via the unic-* unicode stack.
+    "RUSTSEC-2025-0100",
+    # unic-ucd-version: unmaintained, via the unic-* unicode stack.
+    "RUSTSEC-2025-0098",
+    # -- unsound (no vulnerability path in our usage; no upstream fix) --
+    # event-listener: unsound (!Send tags cross threads via StackSlot), transitive.
+    "RUSTSEC-2026-0221",
+    # git2: unsound (UB in Remote::list()), Tauri/git transitive.
+    "RUSTSEC-2026-0183",
+    # git2: unsound (UB via Signature from buffer-created BlameHunk), transitive.
+    "RUSTSEC-2026-0184",
+    # glib: unsound VariantStrIter iterator impls, Tauri/GTK3 binding transitive.
+    "RUSTSEC-2024-0429",
+]
