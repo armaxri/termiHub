@@ -84,8 +84,9 @@ export interface RemoteDesktopSession {
  * `RemoteDesktopCanvas`, keyed off the returned `sessionId`.
  *
  * The session-ownership lifecycle mirrors `FileBrowserTab`: the owned session is
- * disconnected on unmount with a short deferral so React StrictMode's
- * mount→unmount→mount does not tear down a live session.
+ * disconnected on unmount, deferred to a microtask so React StrictMode's
+ * mount→unmount→mount (whose remount re-runs the effect synchronously in the
+ * same tick, cancelling the pending close) does not tear down a live session.
  */
 export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -100,7 +101,13 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
 
   const sessionIdRef = useRef<string | null>(null);
-  const pendingCloseRef = useRef<number | null>(null);
+  // Cancellation token for the on-unmount disconnect, deferred to a microtask so
+  // a same-tick effect re-run (React StrictMode's dev unmount→remount) can cancel
+  // it before the live session is disconnected. The re-run's effect body flips
+  // `cancelled` synchronously (below); the microtask drains only after that, so
+  // the distinction between a StrictMode remount and a real unmount is a
+  // deterministic ordering fact, not a wall-clock guess (FEC-014 / WA-FE-009).
+  const pendingCloseRef = useRef<{ cancelled: boolean } | null>(null);
   // Session id to adopt from a cross-window move, resolved once at first render
   // (#1904). A tab hydrated by `moveTabToWindow` carries `pendingScrollbackReplay`
   // + a live `sessionId`; the destination re-attaches to that session instead of
@@ -134,7 +141,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     let canceled = false;
 
     if (pendingCloseRef.current !== null) {
-      clearTimeout(pendingCloseRef.current);
+      pendingCloseRef.current.cancelled = true;
       pendingCloseRef.current = null;
     }
 
@@ -204,14 +211,19 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
           return;
         }
         sessionIdRef.current = null;
-        pendingCloseRef.current = window.setTimeout(() => {
-          pendingCloseRef.current = null;
+        const token = { cancelled: false };
+        pendingCloseRef.current = token;
+        queueMicrotask(() => {
+          // Cancelled by a remount's effect re-run — the session is still
+          // mounted; leave it connected.
+          if (token.cancelled) return;
+          if (pendingCloseRef.current === token) pendingCloseRef.current = null;
           fireAndForget(
             remoteDesktopDisconnect(id),
             `disconnect remote-desktop session ${id} on tab close`
           );
           setTabSessionId(tabId, null);
-        }, 50);
+        });
       }
     };
   }, [tabId, setTabSessionId, readTab, retryNonce]);
