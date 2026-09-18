@@ -4,7 +4,6 @@ import { fileURLToPath } from "url";
 
 import { resolveDevPort } from "./scripts/internal/dev-local.mjs";
 
-// @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 // Per-checkout dev port: TERMIHUB_DEV_PORT > dev.local.json's dev_port > 1420.
 // Reading dev.local.json here (not just the env var) is what stops a bare
