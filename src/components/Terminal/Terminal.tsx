@@ -77,6 +77,14 @@ const DEFAULT_CURSOR_BLINK = true;
  */
 const MAX_AGENT_SPAWN_ATTEMPTS = 5;
 
+// Fallback window for the workspace-launch initial command (FEC-003). The
+// command is normally sent the moment the first output chunk arrives for the
+// session (proof the backend is live and accepting input); this bounded timer
+// is a pure safety net so the command is never silently dropped if a backend
+// produces no early output. Kept at the historical 200 ms so the worst case is
+// never slower than the previous fixed-delay behaviour.
+const INITIAL_COMMAND_FALLBACK_MS = 200;
+
 /**
  * Resolves a tab's display title from the current store so the connect success
  * toast can name the connection. Falls back to a generic label if the tab has
@@ -914,8 +922,34 @@ export function Terminal({
           }
         };
 
+        // Initial command (workspace launch): send it once the session is
+        // actually READY rather than after a fixed 200 ms guess (FEC-003). The
+        // primary signal is the FIRST output chunk for THIS session — that proves
+        // the backend/PTY is live and accepting input. A bounded fallback timer
+        // (INITIAL_COMMAND_FALLBACK_MS) guarantees the command is never silently
+        // dropped for a backend that emits no early output; whichever of
+        // first-output / fallback fires first wins, and the `sent` guard makes it
+        // exactly-once. Both the timer and the output subscription are torn down
+        // in cleanupRef, so we never send into a torn-down or replaced session.
+        const initialCommandText =
+          initialCommand && !initialSessionIdRef.current ? initialCommand : null;
+        let initialCommandSent = false;
+        let initialCommandTimer: ReturnType<typeof setTimeout> | null = null;
+        const sendInitialCommand = () => {
+          if (initialCommandText === null || initialCommandSent) return;
+          initialCommandSent = true;
+          if (initialCommandTimer !== null) {
+            clearTimeout(initialCommandTimer);
+            initialCommandTimer = null;
+          }
+          sendInput(sessionId, initialCommandText + "\n");
+        };
+
         // Subscribe to output events via singleton dispatcher (O(1) routing)
         const unsubOutput = terminalDispatcher.subscribeOutput(sessionId, (data) => {
+          // First output chunk for this session is our readiness signal for the
+          // workspace-launch initial command (FEC-003). Idempotent via the guard.
+          sendInitialCommand();
           // Frontend-plugin protocol parsers now run in a sandbox worker (#2136),
           // so applying them is asynchronous. FAST PATH: when no parser is
           // registered (the default-off common case) and this session has no
@@ -1029,16 +1063,26 @@ export function Terminal({
           resizeTerminal(sessionId, xterm.cols, xterm.rows);
         }
 
-        // Send initial command after session connects (used by workspace launch)
-        if (initialCommand && !initialSessionIdRef.current) {
-          setTimeout(() => {
-            sendInput(sessionId, initialCommand + "\n");
-          }, 200);
+        // Arm the initial-command fallback (used by workspace launch). If no
+        // output chunk has arrived within INITIAL_COMMAND_FALLBACK_MS the command
+        // is sent anyway so it is never silently dropped (FEC-003). Cleared in
+        // cleanupRef and by sendInitialCommand once the first chunk fires.
+        if (initialCommandText !== null) {
+          initialCommandTimer = setTimeout(sendInitialCommand, INITIAL_COMMAND_FALLBACK_MS);
         }
 
         cleanupRef.current = () => {
           unsubOutput();
           unsubExit();
+          // Cancel the pending initial-command fallback and block any further
+          // send — the session is being torn down or replaced, so the command
+          // must never land in a dead/wrong session (FEC-003). Unsubscribing
+          // output above already stops the first-output path.
+          initialCommandSent = true;
+          if (initialCommandTimer !== null) {
+            clearTimeout(initialCommandTimer);
+            initialCommandTimer = null;
+          }
           // Cancel pending RAF and flush remaining buffered output
           if (rafId !== null) {
             cancelAnimationFrame(rafId);
