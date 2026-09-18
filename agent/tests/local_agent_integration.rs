@@ -1931,18 +1931,27 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child,
     let stderr_handle = stderr_file
         .reopen()
         .expect("failed to reopen daemon stderr capture file");
-    let child = Command::new(agent_binary())
+    let mut child = Command::new(agent_binary())
         .arg("--daemon")
         .arg(session_id)
         .env("TERMIHUB_TYPE_ID", "local")
         .env("TERMIHUB_SOCKET_PATH", socket_path)
-        .env("TERMIHUB_SETTINGS", "{}")
         .env("TERMIHUB_BUFFER_SIZE", "65536")
         .env("RUST_LOG", "warn")
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::from(stderr_handle))
         .spawn()
         .expect("failed to spawn daemon");
+    // The daemon reads its connection settings from stdin (AGT-021), not an env
+    // var. Write the JSON and close the pipe so the daemon reads to EOF.
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().expect("daemon stdin should be piped");
+        stdin
+            .write_all(b"{}")
+            .expect("failed to write daemon settings to stdin");
+    }
     (child, stderr_file)
 }
 
