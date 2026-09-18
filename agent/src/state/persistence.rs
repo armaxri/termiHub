@@ -868,6 +868,38 @@ mod tests {
         );
     }
 
+    /// AGT-021: `state.json` holds the full connection settings JSON for every
+    /// persisted session, so on a multi-user host it must never be world- or
+    /// group-readable. After a save the file must be `0o600` (owner read/write
+    /// only). Regression test — a save path that writes with the default umask
+    /// (world-readable `0o644`) fails this.
+    #[cfg(unix)]
+    #[test]
+    fn saved_state_is_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut state = AgentState::default();
+        state.sessions.insert(
+            "sess-1".to_string(),
+            make_session("ssh", Some("/tmp/s.sock")),
+        );
+        state.save_to(&path);
+
+        let mode = std::fs::metadata(&path)
+            .expect("state.json metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "state.json must be owner-only (0o600), got {mode:o} — it holds \
+             connection settings and must not be world/group readable"
+        );
+    }
+
     #[test]
     fn add_and_remove_session() {
         let tmp = TempDir::new().unwrap();
