@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -21,10 +21,9 @@ use termihub_core::connection::{
     Capabilities, ConnectionType, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
 use termihub_core::files::FileEntry;
-use termihub_core::output::coalescer::OutputCoalescer;
-use termihub_core::output::screen_clear::ScreenClearDetector;
 use termihub_core::output::session_log::{SessionLogConfig, SessionLogger};
-use tracing::{error, info, warn};
+use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
+use tracing::{info, warn};
 
 use crate::files::sftp::{ElevatedWriteResult, Writability};
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -33,6 +32,7 @@ use crate::utils::errors::TerminalError;
 use super::file_ops::FileOps;
 use super::line_ending::{normalize_line_endings, LineEnding};
 use super::monitoring_controller::MonitoringController;
+use super::output_sink::TerminalOutputSink;
 use super::persistent_controller::PersistentController;
 use super::remote_proxy::RemoteProxy;
 use super::retained_request::{RetainedConnectionRequest, RetainedRequestStore};
@@ -321,7 +321,7 @@ type OutputBuffers = Arc<StdMutex<HashMap<String, Arc<StdMutex<RingBuffer>>>>>;
 /// toolbar toggle or a per-connection setting). The output reader looks the
 /// logger up on each emitted chunk, so logging can be started and stopped mid
 /// session without disturbing the reader.
-type SessionLoggers = Arc<StdMutex<HashMap<String, Arc<StdMutex<SessionLogger>>>>>;
+pub(super) type SessionLoggers = Arc<StdMutex<HashMap<String, Arc<StdMutex<SessionLogger>>>>>;
 
 /// Backend `session_id` (uuid) → frontend `tab_id` identity bridge (#2431).
 ///
@@ -643,7 +643,7 @@ impl SessionManager {
     /// Looks the logger up per call so start/stop can happen mid-session. A
     /// write error is logged and swallowed — a failing transcript must never
     /// tear down the live session's output stream.
-    fn log_output(session_loggers: &SessionLoggers, session_id: &str, data: &[u8]) {
+    pub(super) fn log_output(session_loggers: &SessionLoggers, session_id: &str, data: &[u8]) {
         let logger = {
             let map = session_loggers
                 .lock()
@@ -1895,162 +1895,47 @@ impl SessionManager {
         session_tab_ids: SessionTabIds,
         cancel: CancellationToken,
     ) {
-        // Phase 1: optionally buffer until the screen-clear sequence.
-        if wait_for_clear {
-            let deadline = Instant::now() + CLEAR_WAIT_TIMEOUT;
+        // The mechanical forwarding loop (buffer-until-clear + coalescing
+        // stream) now lives in the shared core pump (finding DUP-011); the
+        // desktop delivery — capture + transcript + emit — is injected via
+        // `TerminalOutputSink`. The reader keeps its own `emitter` /
+        // `session_loggers` handles for the tier-specific settle below, so the
+        // sink is built from cheap clones.
+        let sink = TerminalOutputSink::new(
+            session_id.clone(),
+            emitter.clone(),
+            capture,
+            session_loggers.clone(),
+        );
+        let opts = PumpOptions {
+            wait_for_clear,
+            coalesce: true,
+            max_coalesce_bytes: MAX_COALESCE_BYTES,
+            clear_wait_timeout: CLEAR_WAIT_TIMEOUT,
+        };
 
-            let mut buffer = Vec::new();
-            let mut detector = ScreenClearDetector::new();
-
-            loop {
-                let remaining = deadline.saturating_duration_since(Instant::now());
-                if remaining.is_zero() {
-                    break;
-                }
-                let recv = tokio::select! {
-                    biased;
-                    // Deterministic teardown while still buffering startup output
-                    // (CONC-011): flush what we have and run the normal cleanup,
-                    // rather than waiting for the channel to close.
-                    _ = cancel.cancelled() => {
-                        Self::capture_bytes(&capture, &buffer);
-                        Self::log_output(&session_loggers, &session_id, &buffer);
-                        Self::emit_and_cleanup(
-                            &session_id,
-                            buffer,
-                            &emitter,
-                            &sessions,
-                            &output_buffers,
-                            &session_loggers,
-                            &session_tab_ids,
-                        )
-                        .await;
-                        return;
-                    }
-                    res = tokio::time::timeout(remaining, output_rx.recv()) => res,
-                };
-                match recv {
-                    Ok(Some(chunk)) => {
-                        let cleared = detector.feed(&chunk);
-                        buffer.extend_from_slice(&chunk);
-                        if cleared {
-                            break;
-                        }
-                    }
-                    Ok(None) => {
-                        // Channel closed during startup.
-                        Self::capture_bytes(&capture, &buffer);
-                        Self::log_output(&session_loggers, &session_id, &buffer);
-                        Self::emit_and_cleanup(
-                            &session_id,
-                            buffer,
-                            &emitter,
-                            &sessions,
-                            &output_buffers,
-                            &session_loggers,
-                            &session_tab_ids,
-                        )
-                        .await;
-                        return;
-                    }
-                    Err(_) => break, // Timeout
-                }
-            }
-
-            // Flush the buffered output as a single event.
-            if !buffer.is_empty() {
-                Self::capture_bytes(&capture, &buffer);
-                Self::log_output(&session_loggers, &session_id, &buffer);
-                let event = TerminalOutputEvent {
-                    session_id: session_id.clone(),
-                    data: buffer,
-                };
-                if !emitter.emit_output(&event) {
-                    return;
-                }
+        match run_output_pump(&session_id, &mut output_rx, &sink, Some(&cancel), &opts).await {
+            // A sink failure while flushing the pre-stream clear buffer returns
+            // WITHOUT settling — preserving the original no-settle asymmetry
+            // (old manager.rs:1968): no `terminal-exit`, no drop-fold.
+            PumpEnd::ClearFlushSinkClosed => {}
+            // Eof / Cancelled / a streaming-phase sink failure all settle the
+            // session exactly as the original loop did after its `break`: emit
+            // the exit event and run cleanup (the drop-fold lives here, #2439 —
+            // the DUP-010 seam).
+            _ => {
+                Self::emit_and_cleanup(
+                    &session_id,
+                    Vec::new(),
+                    &emitter,
+                    &sessions,
+                    &output_buffers,
+                    &session_loggers,
+                    &session_tab_ids,
+                )
+                .await;
             }
         }
-
-        // Phase 2: normal streaming with coalescing.
-        //
-        // Fast path (the common case, PERF-012): when a chunk arrives and no
-        // further chunk is already buffered, the owned `Vec` received from the
-        // channel is handed straight to the sink — it is never copied through
-        // the coalescer's pending buffer. The coalescer only takes a copy when
-        // 2+ chunks must be concatenated into a single event, where that
-        // concatenation copy is load-bearing (it produces the contiguous batch).
-        //
-        // Framing stays byte-for-byte identical to the always-coalesce form: a
-        // chunk merges with the next only when that next chunk is already
-        // available AND the running batch is still under MAX_COALESCE_BYTES —
-        // exactly the guard the original loop applied. A first chunk already at
-        // or above the cap is delivered alone, matching the original loop whose
-        // `pending_len() < MAX_COALESCE_BYTES` guard would never pull a follow-up
-        // after such a chunk.
-        let mut coalescer = OutputCoalescer::new();
-        loop {
-            // Normal delivery is the `recv` arm; the `cancel` arm only fires on
-            // deterministic teardown (CONC-011). `biased` checks cancel first,
-            // but it is never ready during normal streaming, so a chunk is always
-            // taken when one is available — delivery/coalescing is unchanged. Both
-            // futures are cancel-safe, so no pending chunk is lost.
-            let first_chunk = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => break,
-                chunk = output_rx.recv() => match chunk {
-                    Some(chunk) => chunk,
-                    None => break,
-                },
-            };
-            let data = if first_chunk.len() >= MAX_COALESCE_BYTES {
-                first_chunk
-            } else {
-                match output_rx.try_recv() {
-                    // Nothing else buffered: pass the owned chunk through uncopied.
-                    Err(_) => first_chunk,
-                    // More output waiting: concatenate into one contiguous batch.
-                    Ok(second) => {
-                        coalescer.push(&first_chunk);
-                        coalescer.push(&second);
-                        while coalescer.pending_len() < MAX_COALESCE_BYTES {
-                            match output_rx.try_recv() {
-                                Ok(chunk) => coalescer.push(&chunk),
-                                Err(_) => break,
-                            }
-                        }
-                        // Two non-empty chunks were pushed, so flush is Some;
-                        // fall back to the owned first chunk without panicking.
-                        coalescer.flush().unwrap_or(first_chunk)
-                    }
-                }
-            };
-
-            if data.is_empty() {
-                continue;
-            }
-
-            Self::capture_bytes(&capture, &data);
-            Self::log_output(&session_loggers, &session_id, &data);
-            let event = TerminalOutputEvent {
-                session_id: session_id.clone(),
-                data,
-            };
-            if !emitter.emit_output(&event) {
-                error!("Failed to emit terminal-output event");
-                break;
-            }
-        }
-
-        Self::emit_and_cleanup(
-            &session_id,
-            Vec::new(),
-            &emitter,
-            &sessions,
-            &output_buffers,
-            &session_loggers,
-            &session_tab_ids,
-        )
-        .await;
     }
 
     /// Mirror emitted output into a session's scrollback capture buffer (#1900).
@@ -2058,7 +1943,7 @@ impl SessionManager {
     /// The write is bounded by the [`RingBuffer`]'s 1 MiB capacity, so long
     /// histories are truncated to the most recent bytes — matching the concept's
     /// stated scrollback-fidelity limit.
-    fn capture_bytes(capture: &StdMutex<RingBuffer>, data: &[u8]) {
+    pub(super) fn capture_bytes(capture: &StdMutex<RingBuffer>, data: &[u8]) {
         capture
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

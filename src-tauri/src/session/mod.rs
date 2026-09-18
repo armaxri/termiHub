@@ -3,6 +3,7 @@ pub mod graphical_manager;
 pub mod line_ending;
 pub mod manager;
 mod monitoring_controller;
+mod output_sink;
 mod persistent_controller;
 pub mod rdp_trust_store;
 pub mod registry;
