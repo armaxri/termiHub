@@ -57,14 +57,15 @@ pub async fn run_stdio_loop(
 
     // Test-only (#1546): arm the deferred-update E2E hook when the env gate is
     // set. Seeded AFTER `SessionManager::new` so the #1551 startup prune has
-    // already run and cannot sweep the record we just staged. `None` — and so a
-    // completely untouched code path — in production.
-    if let Some(test_update) = crate::update::TestPendingUpdate::from_env() {
-        test_update.seed(&session_manager).await;
-        // stdio serves exactly one client, which attaches as this loop starts;
-        // the channel is unbounded, so a send before the loop is delivered to it.
-        test_update.notify_attached(&test_update_tx, env!("CARGO_PKG_VERSION"));
-    }
+    // already run and cannot sweep the record we just staged. Compiled out of
+    // release builds entirely (AGT-008): `TestUpdateHook` is an inert no-op that
+    // never reads the environment there, so this is a completely untouched code
+    // path in production.
+    let test_update = crate::update::TestUpdateHook::from_env();
+    test_update.seed(&session_manager).await;
+    // stdio serves exactly one client, which attaches as this loop starts;
+    // the channel is unbounded, so a send before the loop is delivered to it.
+    test_update.notify_attached(&test_update_tx, env!("CARGO_PKG_VERSION"));
 
     // Join the host-wide registry (ADR-11) so this worker's client is visible to
     // the host's other desktops, and cross-worker broadcasts reach ours. Started

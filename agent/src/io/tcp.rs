@@ -70,12 +70,12 @@ pub async fn run_tcp_listener(
 
     // Test-only (#1546): arm the deferred-update E2E hook when the env gate is
     // set. Seeded AFTER `SessionManager::new` so the #1551 startup prune has
-    // already run and cannot sweep the record we just staged. `None` — and so a
-    // completely untouched code path — in production.
-    let test_update = crate::update::TestPendingUpdate::from_env();
-    if let Some(test_update) = test_update.as_ref() {
-        test_update.seed(&session_manager).await;
-    }
+    // already run and cannot sweep the record we just staged. Compiled out of
+    // release builds entirely (AGT-008): `TestUpdateHook` is an inert no-op that
+    // never reads the environment there, so this is a completely untouched code
+    // path in production.
+    let test_update = crate::update::TestUpdateHook::from_env();
+    test_update.seed(&session_manager).await;
 
     // Test-only (#1579): stretch the startup window so a regression test can
     // observe the bind/accept ordering deterministically. `None` — and so a
@@ -130,9 +130,8 @@ pub async fn run_tcp_listener(
                 // anything queued before a client connects is discarded — which
                 // is exactly why a staged update is otherwise never replayed on
                 // attach and the deferred path is unreachable from a live test.
-                if let Some(test_update) = test_update.as_ref() {
-                    test_update.notify_attached(&test_update_tx, env!("CARGO_PKG_VERSION"));
-                }
+                // Inert (and compiled out) in release builds — see AGT-008.
+                test_update.notify_attached(&test_update_tx, env!("CARGO_PKG_VERSION"));
 
                 // As with accept(), a failure to build the per-connection
                 // handler must not kill the listener — drop this client and keep
