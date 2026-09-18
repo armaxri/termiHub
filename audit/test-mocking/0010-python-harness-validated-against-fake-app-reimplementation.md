@@ -9,7 +9,8 @@ subsystem: tests/system (harness)
 evidence:
   - tests/system/tests/fake_app.py:1
   - src/testbridge/dispatcher.ts
-status: open
+status: partial
+resolution: "#3104 — ts-rs rollout PR-3: generated the 3 genuinely-dup'd event WIRE DTOs from Rust — RemoteDesktopClipboardEvent→RemoteDesktopClipboardPayload, RemoteDesktopCertPromptEvent (subject/issuer #[ts(optional)]), SshHostKeyPromptEvent. EXCLUDED (honest per-type): TerminalOutput/ExitEvent (events.ts is the DECODED camelCase/Uint8Array projection, NOT the snake_case+base64 wire DTO — real wire twins are private in services/events.ts, not a dup), TerminalResizeEvent (no Rust struct), RemoteDesktopFrame/CursorEvent (#[serde(flatten)] over core FrameUpdate/CursorUpdate — would drag core graphical cluster, deferred), RemoteDesktopStateEvent (core GraphicalState enum reconcile, deferred), PersistentSessionStateEvent (required-nullable vs optional-nullable mismatch), RemoteStateChange/LockedEventPayload (no TS twin). Remaining #3088: core graphical cluster + AGT-028 agent/core protocol DTOs"
 ---
 
 ## What

@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/connection/config.rs:248
   - src-tauri/src/connection/config.rs:274
   - src/types/connection.ts:37
-status: open
+status: wontfix
+resolution: "scoping-verdict — SCOPING PASS = MIRAGE/net-negative. Desktop (src-tauri/src/connection/config.rs) and agent (agent/src/session/definitions.rs) persist TWO byte-frozen mutually-incompatible on-disk formats: agent = flat parallel arrays, snake_case, explicit id/folder_id/parent_id + session_type + persistent on disk; desktop = nested #[serde(tag=type)] camelCase tree, positional identity (NO ids on disk), version:2 + agents. Diverge on 4 INDEPENDENT axes (casing/topology/identity/field-set) — a single ConnectionStore<C> generic can't capture them (serde emits one casing/shape per derive); overlap = only name/is_expanded/icon (3 primitive fields). A shared generic would break ≥1 byte-frozen format (locked by round-trip tests both sides) or need more per-tier serde machinery than the ~4 structs it replaces, and would REGRESS ts-rs (one casing per type; agent config:Value→any). Any real convergence is a PRODUCT decision to unify the two file formats, not a mechanical dedup. Recommend close won't-fix. (4th dedup-mirage: cf DUP-010, ts-rs-config, ts-rs-events-mostly)"
 ---
 
 ## What
