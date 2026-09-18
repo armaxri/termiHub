@@ -119,6 +119,48 @@ mod tests {
         assert!(backup.exists());
     }
 
+    /// PER-004 granular salvage: a file with one valid workspace and one corrupt
+    /// entry keeps the valid workspace and drops only the corrupt one (rather
+    /// than resetting every saved workspace).
+    #[test]
+    fn corrupt_entry_is_dropped_and_rest_survive() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        // A valid single-workspace store, then a corrupt (non-object) entry
+        // appended so the whole-file parse fails but the good one is salvageable.
+        let mut value: serde_json::Value = serde_json::from_str(
+            r#"{"version":"1","workspaces":[{"id":"ws-1","name":"Work","tabGroups":[]}]}"#,
+        )
+        .unwrap();
+        value["workspaces"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("corrupt workspace entry"));
+        fs::write(
+            &storage.file_path,
+            serde_json::to_string_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(
+            result.data.workspaces.len(),
+            1,
+            "the valid workspace survives"
+        );
+        assert_eq!(result.data.workspaces[0].id, "ws-1");
+        assert_eq!(result.warnings.len(), 1, "one entry was dropped");
+        assert!(result.warnings[0].message.contains("index 1"));
+
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists());
+
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert!(reloaded.warnings.is_empty());
+        assert_eq!(reloaded.data.workspaces.len(), 1);
+    }
+
     /// PER-004 (the real downgrade hazard): a workspaces file written by a NEWER
     /// schema version whose *structure* an older build cannot parse must never be
     /// wiped. Here `workspaces` is no longer an array — the old fast-path typed

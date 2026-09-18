@@ -155,6 +155,42 @@ mod tests {
         assert!(backup.exists());
     }
 
+    /// PER-004 granular salvage: a file with one valid workflow and one corrupt
+    /// entry keeps the valid workflow and drops only the corrupt one.
+    #[test]
+    fn corrupt_entry_is_dropped_and_rest_survive() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let mut value = serde_json::to_value(sample_store()).unwrap();
+        value["workflows"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("corrupt workflow entry"));
+        fs::write(
+            &storage.file_path,
+            serde_json::to_string_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(
+            result.data.workflows.len(),
+            1,
+            "the valid workflow survives"
+        );
+        assert_eq!(result.data.workflows[0].name, "Login");
+        assert_eq!(result.warnings.len(), 1, "one entry was dropped");
+        assert!(result.warnings[0].message.contains("index 1"));
+
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists());
+
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert!(reloaded.warnings.is_empty());
+        assert_eq!(reloaded.data.workflows.len(), 1);
+    }
+
     /// A successful atomic save must leave only the target file behind — no
     /// leftover temporary write artifacts in the config directory (PER-003).
     #[test]

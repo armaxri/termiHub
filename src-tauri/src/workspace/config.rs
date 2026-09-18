@@ -170,6 +170,16 @@ pub struct WorkspaceStore {
 impl crate::utils::migrate::VersionedStore for WorkspaceStore {
     const STORE_NAME: &'static str = "workspaces.json";
     const CURRENT_VERSION: u32 = 1;
+
+    /// Per-entry salvage (PER-004): drop only the individually-corrupt workspace
+    /// definitions instead of resetting every saved workspace.
+    fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
+        crate::utils::migrate::salvage_list_store::<Self, WorkspaceDefinition>(
+            raw,
+            file_name,
+            "workspaces",
+        )
+    }
 }
 
 /// Export format for portable workspace definitions.

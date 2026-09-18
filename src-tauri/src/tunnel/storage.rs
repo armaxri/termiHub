@@ -4,10 +4,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::TunnelStore;
+use super::config::{TunnelConfig, TunnelStore};
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
+use crate::utils::migrate::{salvage_list_store, Salvage};
 
 const FILE_NAME: &str = "tunnels.json";
 
@@ -49,13 +50,29 @@ impl TunnelStorage {
             });
         }
 
-        // Parse failed — back up and reset to defaults
+        // Parse failed — back up the corrupt file first
         let backup_path = self.file_path.with_extension("json.bak");
         let _ = fs::copy(&self.file_path, &backup_path);
         tracing::warn!(
             "Tunnels file is corrupt, backed up to {}",
             backup_path.display()
         );
+
+        // Granular recovery (PER-004): drop only the individually-corrupt tunnel
+        // entries and keep the rest; reset the whole store only when even the
+        // container is unparseable.
+        if let Salvage::Recovered {
+            data: store,
+            warnings,
+        } = salvage_list_store::<TunnelStore, TunnelConfig>(&data, FILE_NAME, "tunnels")
+        {
+            self.save(&store)
+                .context("Failed to save salvaged tunnels")?;
+            return Ok(RecoveryResult {
+                data: store,
+                warnings,
+            });
+        }
 
         let parse_error = serde_json::from_str::<TunnelStore>(&data)
             .err()
@@ -139,6 +156,59 @@ mod tests {
         // Backup should exist
         let backup = storage.file_path.with_extension("json.bak");
         assert!(backup.exists());
+    }
+
+    /// PER-004 granular salvage: a file with one valid tunnel and one corrupt
+    /// entry keeps the valid tunnel and drops only the corrupt one.
+    #[test]
+    fn corrupt_entry_is_dropped_and_rest_survive() {
+        use super::super::config::{TunnelConfig, TunnelType};
+        use termihub_core::tunnel::config::LocalForwardConfig;
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+
+        let good = TunnelStore {
+            version: "1".to_string(),
+            tunnels: vec![TunnelConfig {
+                id: "tun-1".to_string(),
+                name: "db".to_string(),
+                ssh_connection_id: "conn-1".to_string(),
+                tunnel_type: TunnelType::Local(LocalForwardConfig {
+                    local_host: "127.0.0.1".to_string(),
+                    local_port: 5432,
+                    remote_host: "db.internal".to_string(),
+                    remote_port: 5432,
+                }),
+                host: Default::default(),
+                auto_start: false,
+                reconnect_on_disconnect: false,
+                companion_of: None,
+            }],
+        };
+        let mut value = serde_json::to_value(&good).unwrap();
+        value["tunnels"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::json!("corrupt tunnel entry"));
+        fs::write(
+            &storage.file_path,
+            serde_json::to_string_pretty(&value).unwrap(),
+        )
+        .unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert_eq!(result.data.tunnels.len(), 1, "the valid tunnel survives");
+        assert_eq!(result.data.tunnels[0].id, "tun-1");
+        assert_eq!(result.warnings.len(), 1, "one entry was dropped");
+        assert!(result.warnings[0].message.contains("index 1"));
+
+        let backup = storage.file_path.with_extension("json.bak");
+        assert!(backup.exists());
+
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert!(reloaded.warnings.is_empty());
+        assert_eq!(reloaded.data.tunnels.len(), 1);
     }
 
     /// A successful atomic save must leave only the target file behind — no
