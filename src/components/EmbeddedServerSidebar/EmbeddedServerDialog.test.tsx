@@ -196,4 +196,82 @@ describe("EmbeddedServerDialog", () => {
     expect(port.value).toBe("");
     expect(saveBtn.disabled).toBe(true);
   });
+
+  it("populates its fields from an existing config when editing", () => {
+    const existing: EmbeddedServerConfig = {
+      id: "srv-1",
+      name: "Docs Share",
+      serverType: "http",
+      rootDirectory: "/srv/docs",
+      bindHost: "127.0.0.1",
+      port: 8888,
+      autoStart: true,
+      readOnly: true,
+      directoryListing: false,
+    };
+    render(<EmbeddedServerDialog {...baseProps} config={existing} />);
+
+    expect(
+      (document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement).value
+    ).toBe("Docs Share");
+    expect(
+      (document.querySelector('[data-testid="server-dialog-root"]') as HTMLInputElement).value
+    ).toBe("/srv/docs");
+    expect(
+      (document.querySelector('[data-testid="server-dialog-port"]') as HTMLInputElement).value
+    ).toBe("8888");
+    // Editing an existing (already-valid) config leaves Save enabled immediately.
+    expect(
+      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).disabled
+    ).toBe(false);
+  });
+
+  it("a whitespace-only name is treated as empty and blocks Save", () => {
+    render(<EmbeddedServerDialog {...baseProps} />);
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
+      "   "
+    );
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-root"]') as HTMLInputElement,
+      "/srv/fw"
+    );
+    expect(
+      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).disabled
+    ).toBe(true);
+  });
+
+  it("preserves the other fields (bind host, toggles) in the saved payload", async () => {
+    const existing: EmbeddedServerConfig = {
+      id: "srv-2",
+      name: "Assets",
+      serverType: "http",
+      rootDirectory: "/srv/assets",
+      bindHost: "127.0.0.1",
+      port: 8080,
+      autoStart: true,
+      readOnly: true,
+      directoryListing: true,
+    };
+    const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
+    render(<EmbeddedServerDialog {...baseProps} config={existing} onSave={onSave} />);
+
+    await act(async () => {
+      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect(onSave.mock.calls[0][0]).toMatchObject({
+      id: "srv-2",
+      name: "Assets",
+      rootDirectory: "/srv/assets",
+      bindHost: "127.0.0.1",
+      port: 8080,
+      autoStart: true,
+      readOnly: true,
+      directoryListing: true,
+    });
+  });
 });
