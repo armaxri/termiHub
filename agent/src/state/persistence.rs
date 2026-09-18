@@ -191,8 +191,12 @@ impl AgentState {
             Ok(json) => {
                 // Atomic write (temp + rename) so a crash mid-write can never
                 // truncate state.json and lose the persisted session state (#2366).
-                if let Err(e) = crate::fs::write_atomic(path, &json) {
-                    warn!("Failed to write agent state to {}: {:#}", path.display(), e);
+                match crate::fs::write_atomic(path, &json) {
+                    // Restrict to owner-only right after the write (AGT-021).
+                    Ok(()) => restrict_state_permissions(path),
+                    Err(e) => {
+                        warn!("Failed to write agent state to {}: {:#}", path.display(), e)
+                    }
                 }
             }
             Err(e) => {
@@ -249,6 +253,35 @@ impl AgentState {
         config_dir()
     }
 }
+
+/// Restrict `state.json` to owner-only (`0o600`) access after it is written
+/// (AGT-021).
+///
+/// `state.json` stores each session's full connection settings JSON, so on a
+/// multi-user host it must never be readable by other local users. The atomic
+/// write routes through a `tempfile` temp file that is already created `0o600`,
+/// and the persist-rename preserves that mode — so there is no world-readable
+/// window. We nonetheless set the mode explicitly rather than relying on that
+/// implementation detail, so the owner-only guarantee holds even if the write
+/// path ever changes (e.g. a switch back to a umask-respecting write).
+/// Best-effort: a failure is logged, not fatal — the state is already written.
+#[cfg(unix)]
+fn restrict_state_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+        warn!(
+            "Failed to restrict permissions on agent state {}: {}",
+            path.display(),
+            e
+        );
+    }
+}
+
+/// No-op on non-unix: on Windows the state lives under `%APPDATA%`, whose NTFS
+/// ACLs already restrict it to the owner's profile, and there is no `chmod`
+/// analog to apply (AGT-021).
+#[cfg(not(unix))]
+fn restrict_state_permissions(_path: &Path) {}
 
 /// Quarantine a corrupt `state.json` by renaming it aside, preserving its bytes.
 ///
