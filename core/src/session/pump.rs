@@ -224,11 +224,14 @@ mod tests {
     use crate::errors::SessionError;
     use tokio::sync::mpsc;
 
+    /// Each recorded `send_output` batch: `(session_id, bytes)`.
+    type OutputRecord = Vec<(String, Vec<u8>)>;
+
     /// A fake [`OutputSink`] recording every forwarded `(session_id, bytes)`
     /// batch, optionally failing `send_output` after a configurable number of
     /// successful sends (to exercise the sink-closed paths).
     struct FakeSink {
-        outputs: Arc<Mutex<Vec<(String, Vec<u8>)>>>,
+        outputs: Arc<Mutex<OutputRecord>>,
         /// Number of successful sends before `send_output` starts returning Err.
         /// `usize::MAX` never fails.
         fail_after: usize,
@@ -250,7 +253,7 @@ mod tests {
             }
         }
 
-        fn recorded(&self) -> Vec<(String, Vec<u8>)> {
+        fn recorded(&self) -> OutputRecord {
             self.outputs.lock().unwrap().clone()
         }
     }
