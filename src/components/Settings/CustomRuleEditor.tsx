@@ -1,4 +1,7 @@
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Button, Checkbox, ColorInput, Field, Input } from "@/components/ui";
 import { compileRules, findMatches, normalizeHexColor } from "@/services/syntaxHighlighting";
 import { resolveActiveRules } from "@/services/syntaxHighlightingConfig";
@@ -16,6 +19,54 @@ const PREVIEW_SAMPLE = [
   "Processing file /tmp/data.csv ...",
   "Result: 42 items found",
 ];
+
+/**
+ * Client-side validation schema for a custom highlight rule (UX feedback only;
+ * the same checks the editor previously ran by hand, translated 1:1 into zod):
+ *
+ * - `name` must be non-empty once trimmed.
+ * - `style.color` must resolve to a `#RRGGBB` color.
+ * - `pattern` must pass the regex-safety gate — validation depends on the
+ *   sibling `wholeWord` / `caseSensitive` flags, so it lives in a cross-field
+ *   `superRefine` and re-runs whenever any of the three change.
+ *
+ * The schema mirrors the full {@link HighlightRule} shape so the resolver's
+ * value type matches the form's; only `name`, `pattern` and `style.color` are
+ * actually validated — the remaining fields (`id`, `enabled`, `priority`,
+ * `builtin`, the extra style flags) ride along and are preserved on save.
+ */
+const customRuleSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    pattern: z.string(),
+    style: z.object({
+      color: z.string(),
+      bold: z.boolean().optional(),
+      italic: z.boolean().optional(),
+      underline: z.boolean().optional(),
+    }),
+    caseSensitive: z.boolean().optional(),
+    wholeWord: z.boolean().optional(),
+    enabled: z.boolean(),
+    priority: z.number(),
+    builtin: z.boolean(),
+  })
+  .superRefine((rule, ctx) => {
+    if (rule.name.trim() === "") {
+      ctx.addIssue({ code: "custom", path: ["name"], message: "Name is required." });
+    }
+    if (normalizeHexColor(rule.style.color) === null) {
+      ctx.addIssue({ code: "custom", path: ["style", "color"], message: "Use a #RRGGBB color." });
+    }
+    const patternValidation = validateHighlightPattern(rule.pattern, {
+      wholeWord: rule.wholeWord,
+      caseSensitive: rule.caseSensitive,
+    });
+    if (!patternValidation.valid) {
+      ctx.addIssue({ code: "custom", path: ["pattern"], message: patternValidation.reason });
+    }
+  });
 
 interface CustomRuleEditorProps {
   /** The rule being edited, or `undefined` to create a new rule. */
@@ -82,44 +133,74 @@ function segmentLine(line: string, matches: ReturnType<typeof findMatches>): Seg
  * live static preview of sample terminal text with the rule (plus the other
  * active rules) applied.
  *
- * The pattern is validated for regex safety on every edit via
- * {@link validateHighlightPattern}; an invalid or catastrophic-backtracking
- * (ReDoS) pattern surfaces an inline error and blocks Save, so a dangerous
- * pattern can never be persisted or reach the terminal render loop.
+ * Backed by react-hook-form + zod (see {@link customRuleSchema}) — the pattern
+ * is validated for regex safety on every edit; an invalid or catastrophic-
+ * backtracking (ReDoS) pattern surfaces an inline error and blocks Save, so a
+ * dangerous pattern can never be persisted or reach the terminal render loop.
  */
 export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleEditorProps) {
-  const [draft, setDraft] = useState<HighlightRule>(() => rule ?? createCustomRule());
   const isNew = rule === undefined;
 
-  const patternValidation = useMemo(
-    () =>
-      validateHighlightPattern(draft.pattern, {
-        wholeWord: draft.wholeWord,
-        caseSensitive: draft.caseSensitive,
-      }),
-    [draft.pattern, draft.wholeWord, draft.caseSensitive]
-  );
+  // Seed a fresh rule for the create case once, so the generated id is stable
+  // across re-renders and the preview/save keep the same identity.
+  const initialRule = useMemo(() => rule ?? createCustomRule(), [rule]);
 
-  const nameError = draft.name.trim() === "" ? "Name is required." : undefined;
-  const colorValid = normalizeHexColor(draft.style.color) !== null;
-  const colorError = colorValid ? undefined : "Use a #RRGGBB color.";
-  const patternError = patternValidation.valid ? undefined : patternValidation.reason;
-  const canSave = !nameError && !colorError && patternValidation.valid;
+  const { control, getValues } = useForm<HighlightRule>({
+    defaultValues: initialRule,
+    resolver: zodResolver(customRuleSchema),
+    mode: "onChange",
+  });
+
+  // Live form values. `useWatch` can lag the seeded defaults by a render, and it
+  // only surfaces registered fields, so merge it over the initial rule to keep a
+  // complete draft for the preview and validity checks.
+  const watched = useWatch({ control });
+  const draft: HighlightRule = {
+    ...initialRule,
+    ...watched,
+    style: { ...initialRule.style, ...watched?.style },
+  };
+
+  // Deterministic, synchronous validity derived straight from the schema — the
+  // same approach ConnectionSettingsForm uses — rather than react-hook-form's
+  // async error proxy, so errors and the Save gate update on the same render as
+  // the edit (and stay testable without awaiting).
+  const validity = useMemo(() => {
+    const errors: Record<string, string> = {};
+    const result = customRuleSchema.safeParse(draft);
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        const key = issue.path.join(".");
+        if (!(key in errors)) errors[key] = issue.message;
+      }
+    }
+    return { valid: result.success, errors };
+    // `draft` is rebuilt every render from the watched values; keying on its
+    // serialization avoids recomputing when nothing actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(draft)]);
+
+  const nameError = validity.errors["name"];
+  const patternError = validity.errors["pattern"];
+  const colorError = validity.errors["style.color"];
+  const canSave = validity.valid;
 
   const previewLines = useMemo(() => {
     const compiled = compileRules(buildPreviewRules(draft, config));
     return PREVIEW_SAMPLE.map((line) => segmentLine(line, findMatches(line, compiled)));
-  }, [draft, config]);
-
-  const setStyle = (patch: Partial<HighlightRule["style"]>) =>
-    setDraft((d) => ({ ...d, style: { ...d.style, ...patch } }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [JSON.stringify(draft), config]);
 
   const handleSave = () => {
     if (!canSave) return;
+    const current = getValues();
     onSave({
-      ...draft,
-      name: draft.name.trim(),
-      style: { ...draft.style, color: normalizeHexColor(draft.style.color) ?? draft.style.color },
+      ...current,
+      name: current.name.trim(),
+      style: {
+        ...current.style,
+        color: normalizeHexColor(current.style.color) ?? current.style.color,
+      },
     });
   };
 
@@ -129,96 +210,146 @@ export function CustomRuleEditor({ rule, config, onSave, onCancel }: CustomRuleE
     <div className="custom-rule-editor" data-testid="custom-rule-editor">
       <div className="custom-rule-editor__title">{isNew ? "New Custom Rule" : "Edit Rule"}</div>
 
-      <Field label="Name" htmlFor="custom-rule-name" error={nameError}>
-        <Input
-          id="custom-rule-name"
-          value={draft.name}
-          placeholder="e.g. TODO markers"
-          error={!!nameError}
-          onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))}
-          data-testid="custom-rule-name"
-        />
-      </Field>
+      <Controller
+        name="name"
+        control={control}
+        render={({ field }) => (
+          <Field label="Name" htmlFor="custom-rule-name" error={nameError}>
+            <Input
+              id="custom-rule-name"
+              value={field.value ?? ""}
+              placeholder="e.g. TODO markers"
+              error={!!nameError}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              data-testid="custom-rule-name"
+            />
+          </Field>
+        )}
+      />
 
-      <Field label="Pattern (regex)" htmlFor="custom-rule-pattern" error={patternError}>
-        <Input
-          id="custom-rule-pattern"
-          value={draft.pattern}
-          placeholder="e.g. \\b(TODO|FIXME)\\b"
-          error={!!patternError}
-          spellCheck={false}
-          autoComplete="off"
-          autoCapitalize="off"
-          onChange={(e) => setDraft((d) => ({ ...d, pattern: e.target.value }))}
-          data-testid="custom-rule-pattern"
-        />
-      </Field>
+      <Controller
+        name="pattern"
+        control={control}
+        render={({ field }) => (
+          <Field label="Pattern (regex)" htmlFor="custom-rule-pattern" error={patternError}>
+            <Input
+              id="custom-rule-pattern"
+              value={field.value ?? ""}
+              placeholder="e.g. \\b(TODO|FIXME)\\b"
+              error={!!patternError}
+              spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="off"
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              data-testid="custom-rule-pattern"
+            />
+          </Field>
+        )}
+      />
 
       <div className="custom-rule-editor__row">
-        <label className="custom-rule-editor__check">
-          <Checkbox
-            checked={draft.caseSensitive ?? true}
-            onCheckedChange={(checked) => setDraft((d) => ({ ...d, caseSensitive: checked }))}
-            data-testid="custom-rule-case-sensitive"
-          />
-          Case sensitive
-        </label>
-        <label className="custom-rule-editor__check">
-          <Checkbox
-            checked={draft.wholeWord ?? false}
-            onCheckedChange={(checked) => setDraft((d) => ({ ...d, wholeWord: checked }))}
-            data-testid="custom-rule-whole-word"
-          />
-          Whole word
-        </label>
+        <Controller
+          name="caseSensitive"
+          control={control}
+          render={({ field }) => (
+            <label className="custom-rule-editor__check">
+              <Checkbox
+                checked={field.value ?? true}
+                onCheckedChange={(checked) => field.onChange(checked)}
+                data-testid="custom-rule-case-sensitive"
+              />
+              Case sensitive
+            </label>
+          )}
+        />
+        <Controller
+          name="wholeWord"
+          control={control}
+          render={({ field }) => (
+            <label className="custom-rule-editor__check">
+              <Checkbox
+                checked={field.value ?? false}
+                onCheckedChange={(checked) => field.onChange(checked)}
+                data-testid="custom-rule-whole-word"
+              />
+              Whole word
+            </label>
+          )}
+        />
       </div>
 
       <div className="custom-rule-editor__style">
         <span className="custom-rule-editor__style-label">Style</span>
+        <Controller
+          name="style.color"
+          control={control}
+          render={({ field }) => (
+            <div className="custom-rule-editor__row">
+              <ColorInput
+                value={colorSwatch}
+                onChange={(e) => field.onChange(e.target.value)}
+                aria-label="Highlight color"
+                data-testid="custom-rule-color"
+              />
+              <Input
+                value={field.value ?? ""}
+                error={!!colorError}
+                spellCheck={false}
+                autoComplete="off"
+                size="sm"
+                className="custom-rule-editor__color-hex"
+                onChange={(e) => field.onChange(e.target.value)}
+                data-testid="custom-rule-color-hex"
+                aria-label="Highlight color hex"
+              />
+            </div>
+          )}
+        />
         <div className="custom-rule-editor__row">
-          <ColorInput
-            value={colorSwatch}
-            onChange={(e) => setStyle({ color: e.target.value })}
-            aria-label="Highlight color"
-            data-testid="custom-rule-color"
+          <Controller
+            name="style.bold"
+            control={control}
+            render={({ field }) => (
+              <label className="custom-rule-editor__check">
+                <Checkbox
+                  checked={field.value ?? false}
+                  onCheckedChange={(checked) => field.onChange(checked)}
+                  data-testid="custom-rule-bold"
+                />
+                Bold
+              </label>
+            )}
           />
-          <Input
-            value={draft.style.color}
-            error={!!colorError}
-            spellCheck={false}
-            autoComplete="off"
-            size="sm"
-            className="custom-rule-editor__color-hex"
-            onChange={(e) => setStyle({ color: e.target.value })}
-            data-testid="custom-rule-color-hex"
-            aria-label="Highlight color hex"
+          <Controller
+            name="style.italic"
+            control={control}
+            render={({ field }) => (
+              <label className="custom-rule-editor__check">
+                <Checkbox
+                  checked={field.value ?? false}
+                  onCheckedChange={(checked) => field.onChange(checked)}
+                  data-testid="custom-rule-italic"
+                />
+                Italic
+              </label>
+            )}
           />
-        </div>
-        <div className="custom-rule-editor__row">
-          <label className="custom-rule-editor__check">
-            <Checkbox
-              checked={draft.style.bold ?? false}
-              onCheckedChange={(checked) => setStyle({ bold: checked })}
-              data-testid="custom-rule-bold"
-            />
-            Bold
-          </label>
-          <label className="custom-rule-editor__check">
-            <Checkbox
-              checked={draft.style.italic ?? false}
-              onCheckedChange={(checked) => setStyle({ italic: checked })}
-              data-testid="custom-rule-italic"
-            />
-            Italic
-          </label>
-          <label className="custom-rule-editor__check">
-            <Checkbox
-              checked={draft.style.underline ?? false}
-              onCheckedChange={(checked) => setStyle({ underline: checked })}
-              data-testid="custom-rule-underline"
-            />
-            Underline
-          </label>
+          <Controller
+            name="style.underline"
+            control={control}
+            render={({ field }) => (
+              <label className="custom-rule-editor__check">
+                <Checkbox
+                  checked={field.value ?? false}
+                  onCheckedChange={(checked) => field.onChange(checked)}
+                  data-testid="custom-rule-underline"
+                />
+                Underline
+              </label>
+            )}
+          />
         </div>
       </div>
 
