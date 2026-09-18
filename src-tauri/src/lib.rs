@@ -535,6 +535,30 @@ pub fn run() {
         // allowance (#2266). Fails closed on any bad request (see `plugin_protocol`).
         .register_uri_scheme_protocol(plugin_protocol::PLUGIN_URI_SCHEME, plugin_protocol::handle);
 
+    // Single-instance enforcement (per user) — findings PER-005 / SM-025.
+    // A second launch of the app focuses the already-running window and exits,
+    // so two copies can never clobber each other's shared config / last-session
+    // files (neither store takes a cross-process lock; `last_session` is
+    // last-writer-wins). Compiled out of debug builds entirely
+    // (`#[cfg(not(debug_assertions))]`) so the parallel dev-checkout workflow can
+    // keep running many debug copies at once — `scripts/dev.sh` produces a debug
+    // build. Even in a release build it is skipped in portable mode: two portable
+    // copies in different folders use different `data/` dirs and legitimately do
+    // not clobber, so a bundle-id-keyed global lock would wrongly block them.
+    #[cfg(not(debug_assertions))]
+    {
+        let app_mode = utils::portable::detect_app_mode().unwrap_or_else(|e| {
+            tracing::warn!("single-instance: app-mode detection failed, assuming installed: {e}");
+            utils::portable::AppMode::Installed
+        });
+        if utils::single_instance::should_enforce_single_instance(&app_mode, cfg!(debug_assertions))
+        {
+            builder = builder.plugin(tauri_plugin_single_instance::init(
+                utils::single_instance::on_second_instance,
+            ));
+        }
+    }
+
     // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
     // the webview before boot so the in-app WebSocket client connects out to the
     // runner — the cross-platform test transport (issue #801). Test-bridge-only

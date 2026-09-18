@@ -128,6 +128,13 @@ zeroize = { version = "1", features = ["derive"] }
 rand = "0.8"
 tauri-plugin-clipboard-manager = "2.3.2"
 tauri-plugin-cli = "2"
+# Single-instance enforcement (per user): a second launch focuses the running
+# window and exits, so two copies can never clobber each other's shared config /
+# last-session files (findings PER-005 / SM-025). Registered in `lib.rs` only for
+# installed release builds — gated `#[cfg(not(debug_assertions))]` so the parallel
+# dev-checkout workflow keeps running many debug copies, and skipped at runtime in
+# portable mode where separate data dirs mean separate copies legitimately coexist.
+tauri-plugin-single-instance = "2"
 if-addrs = "0.6"
 # Native OS credential store (macOS Keychain / Windows Credential Manager /
 # Linux Secret Service). Platform backends are enabled per-target below; the
