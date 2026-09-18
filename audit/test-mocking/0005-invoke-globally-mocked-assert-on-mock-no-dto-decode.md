@@ -11,7 +11,7 @@ evidence:
   - src/services/api.test.ts:6
   - src/services/api.test.ts:93
 status: partial
-resolution: "#3096 — ts-rs rollout advances the hand-mirror elimination: #3087 (src-tauri connection DTOs) + #3096 (core-crate ts-rs infra + EnvVar/VolumeMount dedup + CI gate `cargo test -p termihub-core export_bindings`). KEY finding: most core config DTOs (SshConfig/DockerConfig/FtpConfig/etc) are NOT hand-duplicated — connection config is schema-driven Record<string,unknown>, so there's nothing to dedup for them. Remaining ts-rs work (events payloads MOCK-010, agent/core protocol DTOs AGT-028) needs per-cluster dup pre-check; making Rust the typed source-of-truth for schema-driven config is a separate maintainer arch decision (ties FEC-008/#3083). Tracked #3088"
+resolution: "#3096+#3110 — ts-rs rollout advances the hand-mirror elimination: #3087 (src-tauri connection DTOs) + #3096 (core-crate ts-rs infra + EnvVar/VolumeMount dedup + CI gate `cargo test -p termihub-core export_bindings`) + #3104 (3 event wire DTOs) + #3110 (core graphical DTOs: DirtyRect/FrameUpdate/CursorShape/CursorUpdate/GraphicalState→GraphicalSessionState union; frame bytes = plain number[], no override). KEY finding: most core config DTOs (SshConfig/DockerConfig/FtpConfig/etc) are NOT hand-duplicated — connection config is schema-driven Record<string,unknown>, so there's nothing to dedup for them. Remaining ts-rs work (events payloads MOCK-010, agent/core protocol DTOs AGT-028) needs per-cluster dup pre-check; making Rust the typed source-of-truth for schema-driven config is a separate maintainer arch decision (ties FEC-008/#3083). Tracked #3088"
 ---
 
 ## What

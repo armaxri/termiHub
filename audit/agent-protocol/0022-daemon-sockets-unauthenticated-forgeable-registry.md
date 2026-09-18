@@ -10,8 +10,8 @@ evidence:
   - agent/src/registry_daemon/process.rs:236
   - agent/src/daemon/process.rs:194
   - agent/src/registry_daemon/client.rs:224
-status: partial
-resolution: "#3098 — daemon-socket peer-cred check: unix half LANDED in shared core::ipc::local_socket.rs unix_impl, gated on verify_peer_uid flag set when bound CurrentUserOnly (covers spawn+recovery accepts via shared DaemonListener::accept + registry daemon; desktop rendezvous uses Inherit, untouched). Reads peer uid via SO_PEERCRED(Linux)/getpeereid(macOS); positively-different uid dropped+logged, loop keeps serving. FAILS OPEN on cred-read error + matches euid|ruid so same-user reconnect NOT broken (test-guarded). Windows named-pipe SID check DEFERRED → #3097 Ready2Implement"
+status: fixed
+resolution: "#3098+#3108 — daemon-socket peer-cred check COMPLETE cross-platform. UNIX (#3098): shared core::ipc::local_socket.rs unix_impl, SO_PEERCRED(Linux)/getpeereid(macOS). WINDOWS (#3108, Closes #3097): windows_impl accept resolves client SID via GetNamedPipeClientProcessId→OpenProcess→OpenProcessToken→GetTokenInformation(TokenUser)→ConvertSidToStringSidW, compares to current_user_sid_string; RAII HandleGuard (no leaks), no FFI unwraps. Both: gated on CurrentUserOnly (Inherit rendezvous untouched), only positively-different uid/SID rejected+re-staged, FAIL-OPEN on lookup error so same-user reconnect never broken (test-guarded). Verified cargo check --target x86_64-pc-windows-msvc clean locally + Windows CI runner."
 ---
 
 ## What
