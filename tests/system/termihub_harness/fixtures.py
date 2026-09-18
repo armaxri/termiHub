@@ -408,6 +408,15 @@ def stage_remote_agent_binary(*, build_timeout: float = 900.0) -> Path:
     up. An existing per-target build is reused (a fresh musl cross-build is slow),
     and the copy into the context is always refreshed so a stale image is rebuilt.
 
+    The build enables ``--features test-hooks`` so this release binary still
+    carries the env-gated ``pending_update`` test hook that the armed
+    ``remote-agent-pending-update`` container drives (#1546). That hook is
+    compiled out of default release builds for security (audit finding AGT-008),
+    so a plain ``build-agents.sh`` would stage a binary the armed suite cannot
+    arm. The feature only *compiles the hook in*; it stays inert unless
+    ``TERMIHUB_AGENT_TEST_PENDING_UPDATE`` is set, which only the armed image
+    does — the shared ``remote-agent`` container is unaffected.
+
     Raises :class:`ContainerRuntimeUnavailable` — turned into a ``pytest.skip`` by
     the fixture — when the arch is unmapped or the cross-build is unavailable
     (e.g. ``cross``/Docker not set up on this host). This keeps the deployed-agent
@@ -419,7 +428,7 @@ def stage_remote_agent_binary(*, build_timeout: float = 900.0) -> Path:
         script = REPO_ROOT / "scripts" / "build-agents.sh"
         try:
             subprocess.run(
-                ["bash", str(script), "--targets", target],
+                ["bash", str(script), "--targets", target, "--features", "test-hooks"],
                 check=True,
                 timeout=build_timeout,
                 capture_output=True,
