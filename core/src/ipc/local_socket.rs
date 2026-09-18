@@ -436,6 +436,7 @@ mod windows_impl {
     use super::{BoxedReader, BoxedWriter, ListenerOptions, ListenerSecurity};
     use std::ffi::c_void;
     use std::io;
+    use std::os::windows::io::{AsRawHandle, RawHandle};
 
     use tokio::net::windows::named_pipe::{ClientOptions, NamedPipeServer, ServerOptions};
 
@@ -456,6 +457,12 @@ mod windows_impl {
         security: Option<security::SecurityAttributes>,
         /// The next pipe instance, waiting for a client to connect.
         next: Option<NamedPipeServer>,
+        /// Whether to verify each accepted peer is the same local user
+        /// (AGT-022). Set when bound with [`ListenerSecurity::CurrentUserOnly`];
+        /// the pipe already carries a per-user DACL, so this is a defence-in-depth
+        /// check that a same-SID peer is on the other end of every accepted pipe,
+        /// mirroring the unix `verify_peer_uid`.
+        verify_peer_sid: bool,
     }
 
     impl LocalSocketListener {
@@ -493,25 +500,46 @@ mod windows_impl {
                 name: address.to_string(),
                 security,
                 next: Some(next),
+                verify_peer_sid: options.security == ListenerSecurity::CurrentUserOnly,
             })
         }
 
         /// Accept the next client connection, returning erased read/write halves.
+        ///
+        /// On a [`ListenerSecurity::CurrentUserOnly`] endpoint the connected
+        /// peer's SID is verified (AGT-022): a connection from a *different*
+        /// local user is dropped and logged, and the loop keeps waiting for a
+        /// legitimate same-user client — so a foreign-SID peer never surfaces as
+        /// an error to the daemon's accept loop. The SID check fails **open**: if
+        /// the peer identity cannot be read the connection is allowed, so a
+        /// transient lookup failure can never reject a legitimate same-user
+        /// reconnect (the per-user DACL is the primary gate; this is
+        /// defence-in-depth, mirroring the unix peer-uid check).
         pub async fn accept(&mut self) -> io::Result<(BoxedReader, BoxedWriter)> {
-            let server = self
-                .next
-                .as_ref()
-                .expect("listener always holds a pending pipe instance");
-            server.connect().await?;
+            loop {
+                let server = self
+                    .next
+                    .as_ref()
+                    .expect("listener always holds a pending pipe instance");
+                server.connect().await?;
 
-            // Hand off the connected instance and stage a fresh one for the
-            // next client before serving this one, so no client races into a
-            // missing pipe.
-            let connected = self.next.take().expect("pending instance present");
-            self.next = Some(create_instance(&self.name, self.security.as_ref(), false)?);
+                // Hand off the connected instance and stage a fresh one for the
+                // next client before serving this one, so no client races into a
+                // missing pipe.
+                let connected = self.next.take().expect("pending instance present");
+                self.next = Some(create_instance(&self.name, self.security.as_ref(), false)?);
 
-            let (reader, writer) = tokio::io::split(connected);
-            Ok((Box::new(reader), Box::new(writer)))
+                if self.verify_peer_sid && !peer_is_current_user(connected.as_raw_handle()) {
+                    // Foreign-user peer: dropping the connected instance
+                    // disconnects it; loop back to the freshly staged instance
+                    // and keep listening (never error the accept loop).
+                    drop(connected);
+                    continue;
+                }
+
+                let (reader, writer) = tokio::io::split(connected);
+                return Ok((Box::new(reader), Box::new(writer)));
+            }
         }
 
         /// No-op on windows: the pipe disappears when its instances are dropped.
@@ -533,6 +561,51 @@ mod windows_impl {
             io::Error::new(io::ErrorKind::AddrInUse, e)
         } else {
             e
+        }
+    }
+
+    /// Whether the peer connected on a named-pipe server `pipe_handle` is the
+    /// **same local user** as this process (AGT-022 — the windows analog of the
+    /// unix `peer_is_current_user`).
+    ///
+    /// Resolves the connected client's SID (client PID → process token →
+    /// `TokenUser`) and compares it against our own SID. Only a *positively
+    /// different* SID is rejected. If either SID cannot be read the connection is
+    /// **allowed** (fail-open): the pipe's per-user DACL is the primary gate, so
+    /// this is a second layer, and a false reject would break a legitimate
+    /// same-user reconnect.
+    fn peer_is_current_user(pipe_handle: RawHandle) -> bool {
+        match security::peer_sid_string(pipe_handle) {
+            Ok(peer_sid) => match security::current_user_sid_string() {
+                Ok(our_sid) if peer_sid == our_sid => true,
+                Ok(our_sid) => {
+                    // Daemon stderr is redirected to its per-session log file, so
+                    // this rejection is captured there (tracing is an optional
+                    // core feature, so this always-compiled module logs directly).
+                    eprintln!(
+                        "termihub: rejecting local-IPC peer SID {peer_sid} on a \
+                         current-user-only named pipe (our SID {our_sid}) — refusing \
+                         a foreign-user connection (AGT-022)"
+                    );
+                    false
+                }
+                Err(e) => {
+                    eprintln!(
+                        "termihub: could not read our own SID ({e}); allowing the \
+                         local-IPC connection (the pipe's per-user DACL already \
+                         restricts access)"
+                    );
+                    true
+                }
+            },
+            Err(e) => {
+                eprintln!(
+                    "termihub: could not read local-IPC peer SID ({e}); allowing \
+                     the connection (the pipe's per-user DACL already restricts \
+                     access)"
+                );
+                true
+            }
         }
     }
 
@@ -591,6 +664,7 @@ mod windows_impl {
     /// Per-user security descriptor construction for the named pipe.
     mod security {
         use std::io;
+        use std::os::windows::io::RawHandle;
         use std::ptr;
 
         use windows_sys::Win32::Foundation::{CloseHandle, LocalFree, HANDLE, HLOCAL};
@@ -602,7 +676,25 @@ mod windows_impl {
             GetTokenInformation, TokenUser, PSECURITY_DESCRIPTOR, SECURITY_ATTRIBUTES, TOKEN_QUERY,
             TOKEN_USER,
         };
-        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        use windows_sys::Win32::System::Pipes::GetNamedPipeClientProcessId;
+        use windows_sys::Win32::System::Threading::{
+            GetCurrentProcess, OpenProcess, OpenProcessToken, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        /// RAII guard that closes an owned Win32 `HANDLE` on drop, so every early
+        /// return from the token-query sequence still releases its handles.
+        struct HandleGuard(HANDLE);
+
+        impl Drop for HandleGuard {
+            fn drop(&mut self) {
+                if !self.0.is_null() {
+                    // SAFETY: `self.0` is a handle this guard exclusively owns
+                    // (from OpenProcess / OpenProcessToken); it is closed exactly
+                    // once, here.
+                    unsafe { CloseHandle(self.0) };
+                }
+            }
+        }
 
         /// Owns a security descriptor restricting the pipe to the current user
         /// and `LocalSystem`, plus the `SECURITY_ATTRIBUTES` referencing it.
@@ -668,44 +760,80 @@ mod windows_impl {
 
         /// Resolve the current process user's SID into its string form.
         pub(super) fn current_user_sid_string() -> io::Result<String> {
-            // SAFETY: standard token-query FFI sequence; every handle and
-            // allocation is released before returning.
+            // SAFETY: standard token-query FFI sequence; the token handle is
+            // owned by `HandleGuard` and closed on every return path.
             unsafe {
                 let mut token: HANDLE = ptr::null_mut();
                 if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) == 0 {
                     return Err(io::Error::last_os_error());
                 }
-
-                // First call sizes the buffer; it is expected to "fail".
-                let mut len: u32 = 0;
-                GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut len);
-                if len == 0 {
-                    CloseHandle(token);
-                    return Err(io::Error::last_os_error());
-                }
-
-                let mut buf = vec![0u8; len as usize];
-                let ok = GetTokenInformation(
-                    token,
-                    TokenUser,
-                    buf.as_mut_ptr() as *mut _,
-                    len,
-                    &mut len,
-                );
-                CloseHandle(token);
-                if ok == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-
-                let token_user = &*(buf.as_ptr() as *const TOKEN_USER);
-                let mut sid_ptr: *mut u16 = ptr::null_mut();
-                if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_ptr) == 0 {
-                    return Err(io::Error::last_os_error());
-                }
-                let sid_string = wide_to_string(sid_ptr);
-                LocalFree(sid_ptr as HLOCAL);
-                Ok(sid_string)
+                let _token_guard = HandleGuard(token);
+                sid_string_from_token(token)
             }
+        }
+
+        /// Resolve the SID (string form) of the process on the client end of a
+        /// connected named-pipe server `pipe_handle` (AGT-022).
+        ///
+        /// `GetNamedPipeClientProcessId` → `OpenProcess(QUERY_LIMITED_INFORMATION)`
+        /// → `OpenProcessToken(TOKEN_QUERY)` → `TokenUser`. Every opened handle is
+        /// owned by a [`HandleGuard`] and closed on every return path; any FFI
+        /// failure returns an error so the caller can fail **open**. No `unwrap`:
+        /// each Win32 return is checked (a null/zero return becomes an error).
+        pub(super) fn peer_sid_string(pipe_handle: RawHandle) -> io::Result<String> {
+            // SAFETY: token-query FFI sequence over the connected pipe handle.
+            // `process`/`token` are each owned by a `HandleGuard` that closes them
+            // on scope exit, including the early-return error paths.
+            unsafe {
+                let mut pid: u32 = 0;
+                if GetNamedPipeClientProcessId(pipe_handle as HANDLE, &mut pid) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+
+                let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+                if process.is_null() {
+                    return Err(io::Error::last_os_error());
+                }
+                let _process_guard = HandleGuard(process);
+
+                let mut token: HANDLE = ptr::null_mut();
+                if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let _token_guard = HandleGuard(token);
+
+                sid_string_from_token(token)
+            }
+        }
+
+        /// Extract the `TokenUser` SID from an open access token as a string.
+        ///
+        /// # Safety
+        /// `token` must be a valid open access token handle carrying
+        /// `TOKEN_QUERY` access.
+        unsafe fn sid_string_from_token(token: HANDLE) -> io::Result<String> {
+            // First call sizes the buffer; it is expected to "fail".
+            let mut len: u32 = 0;
+            GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut len);
+            if len == 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let mut buf = vec![0u8; len as usize];
+            let ok =
+                GetTokenInformation(token, TokenUser, buf.as_mut_ptr() as *mut _, len, &mut len);
+            if ok == 0 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let token_user = &*(buf.as_ptr() as *const TOKEN_USER);
+            let mut sid_ptr: *mut u16 = ptr::null_mut();
+            if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_ptr) == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let sid_string = wide_to_string(sid_ptr);
+            LocalFree(sid_ptr as HLOCAL);
+            Ok(sid_string)
         }
 
         /// Encode a Rust string as a null-terminated UTF-16 buffer.
