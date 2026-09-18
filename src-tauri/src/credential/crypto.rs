@@ -492,4 +492,46 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Unsupported"));
     }
+
+    // --- PER-008: safe envelope version-range migration ---
+
+    #[test]
+    fn newer_version_reports_distinct_message_not_corruption() {
+        // A store written by a NEWER build (version > ENVELOPE_VERSION) — the
+        // auto-update-then-rollback case — must surface a distinct "newer
+        // version, update to unlock" message, NOT look like corruption. This is
+        // the key UX fix: a recoverable downgrade must not read as data loss.
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.version = ENVELOPE_VERSION + 1;
+
+        let msg = decrypt_with_password("pw", &envelope)
+            .unwrap_err()
+            .to_string()
+            .to_lowercase();
+        assert!(
+            msg.contains("newer version"),
+            "expected a distinct newer-version message, got: {msg}"
+        );
+        assert!(
+            !msg.contains("corrupt"),
+            "a downgrade must not read as corruption, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn too_old_version_reports_no_longer_supported() {
+        // A store whose format predates the minimum supported version is
+        // terminal: report it clearly as no-longer-supported.
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.version = 0;
+
+        let msg = decrypt_with_password("pw", &envelope)
+            .unwrap_err()
+            .to_string()
+            .to_lowercase();
+        assert!(
+            msg.contains("no longer supported"),
+            "expected a no-longer-supported message, got: {msg}"
+        );
+    }
 }

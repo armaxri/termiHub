@@ -599,6 +599,40 @@ mod tests {
     }
 
     #[test]
+    fn unlock_classified_newer_version_not_corrupted_message() {
+        // PER-008: a store written by a newer build (rollback case) must give a
+        // distinct "newer version" message and must NOT be reported as corrupt —
+        // otherwise a recoverable downgrade looks like data loss and the UI would
+        // offer a destructive "reset store".
+        let dir = tempfile::tempdir().unwrap();
+        let store = make_store(dir.path());
+        store.setup("pw").unwrap();
+
+        let raw = fs::read_to_string(&store.file_path).unwrap();
+        let mut envelope: EncryptedEnvelope = serde_json::from_str(&raw).unwrap();
+        envelope.version = ENVELOPE_VERSION + 99;
+        fs::write(
+            &store.file_path,
+            serde_json::to_string(&envelope).unwrap().as_bytes(),
+        )
+        .unwrap();
+
+        let msg = store
+            .unlock_classified("pw")
+            .unwrap_err()
+            .to_string()
+            .to_lowercase();
+        assert!(
+            msg.contains("newer version"),
+            "expected a distinct newer-version message, got: {msg}"
+        );
+        assert!(
+            !msg.contains("corrupt"),
+            "a downgrade must not read as corruption, got: {msg}"
+        );
+    }
+
+    #[test]
     fn unlock_classified_wrong_length_nonce_reports_corrupted() {
         let dir = tempfile::tempdir().unwrap();
         let store = make_store(dir.path());
