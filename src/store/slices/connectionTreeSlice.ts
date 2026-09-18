@@ -18,8 +18,9 @@ import {
   persistConnectionMutation,
 } from "@/store/connectionsBridge";
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
-import { ConnectionConfig, TabContent } from "@/types/terminal";
+import { TabContent } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
+import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 
 import type { AppState } from "../appStore";
 import { errorMessage } from "@/utils/errorMessage";
@@ -78,10 +79,10 @@ export interface ConnectionTreeSlice {
  * is never written to the plain config file.
  */
 function stripPassword(connection: SavedConnection): SavedConnection {
-  const cfg = connection.config.config as unknown as Record<string, unknown>;
-  const hasNonEmptyPassword =
-    typeof cfg.password === "string" && (cfg.password as string).length > 0;
-  if (hasNonEmptyPassword && cfg.savePassword) {
+  const cfg = connection.config.config;
+  const password = readConfigString(connection.config, "password");
+  const hasNonEmptyPassword = password !== undefined && password.length > 0;
+  if (hasNonEmptyPassword && readConfigBoolean(connection.config, "savePassword")) {
     return connection; // Let backend route non-empty password to credential store
   }
   if (cfg.password !== undefined) {
@@ -90,7 +91,7 @@ function stripPassword(connection: SavedConnection): SavedConnection {
       config: {
         ...connection.config,
         config: { ...cfg, password: undefined },
-      } as ConnectionConfig,
+      },
     };
   }
   return connection;

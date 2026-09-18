@@ -7,6 +7,7 @@ import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { buildCommands } from "@/services/commands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { ConnectionIcon } from "@/utils/connectionIcons";
+import { readConfigString } from "@/utils/connectionConfigFields";
 import { Modal, Input } from "@/components/ui";
 import type { SavedConnection } from "@/types/connection";
 import "./CommandPalette.css";
@@ -97,7 +98,7 @@ export function CommandPalette(): React.ReactElement {
       kind: "connection",
       key: `connection:${conn.id}`,
       label: conn.name,
-      host: String((conn.config.config as Record<string, unknown>).host ?? ""),
+      host: readConfigString(conn.config, "host") ?? "",
       connection: conn,
     }));
     const macroEntries: PaletteEntry[] = macros.map((m) => ({

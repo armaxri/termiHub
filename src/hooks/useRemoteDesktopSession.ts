@@ -152,10 +152,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       setMessage(null);
       setReconnectAttempt(0);
       try {
-        const id = await remoteDesktopConnect(
-          tab.config.type,
-          tab.config.config as Record<string, unknown>
-        );
+        const id = await remoteDesktopConnect(tab.config.type, tab.config.config);
         if (canceled) {
           fireAndForget(
             remoteDesktopDisconnect(id),

@@ -70,6 +70,7 @@ import { resolveFeatureEnabled } from "@/utils/featureFlags";
 import { fileManagerActionLabel } from "@/utils/platform";
 import { baseNameSelectionEnd } from "@/utils/fileNameSelection";
 import { frontendLog } from "@/utils/frontendLog";
+import { readConfigString } from "@/utils/connectionConfigFields";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { useLocalDirWatch } from "@/hooks/useLocalDirWatch";
@@ -717,9 +718,8 @@ function useFileBrowserSync() {
       setFileBrowserMode("local");
     } else if (activeTabConnectionType === "remote-session") {
       // Remote agent sessions: check if the agent's connection type supports file browsing
-      const cfg = activeTab.config.config as { agentId?: string; sessionType?: string };
-      const agentId = cfg.agentId;
-      const sessionType = cfg.sessionType ?? "local";
+      const agentId = readConfigString(activeTab.config, "agentId");
+      const sessionType = readConfigString(activeTab.config, "sessionType") ?? "local";
       if (agentId) {
         const agent = remoteAgents.find((a) => a.id === agentId);
         const agentConnectionTypes = agent?.capabilities?.connectionTypes ?? [];

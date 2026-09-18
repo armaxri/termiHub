@@ -1,4 +1,5 @@
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
+import { connectionConfigHost } from "@/utils/connectionConfigFields";
 
 /**
  * Result of filtering a connection tree by a search query.
@@ -19,8 +20,7 @@ export interface ConnectionTreeFilter {
 
 /** Extract the connection's host, if its config declares one. */
 function connectionHost(connection: SavedConnection): string {
-  const cfg = connection.config.config as unknown as Record<string, unknown>;
-  return typeof cfg.host === "string" ? cfg.host : "";
+  return connectionConfigHost(connection.config);
 }
 
 /**

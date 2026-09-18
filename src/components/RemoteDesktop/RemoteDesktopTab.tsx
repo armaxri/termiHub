@@ -7,6 +7,7 @@ import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
 import { remoteDesktopGetClipboard } from "@/services/api";
 import { fireAndForget } from "@/utils/frontendLog";
+import { readConfigString } from "@/utils/connectionConfigFields";
 import type { RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
 import { SCALE_MODE_LABELS } from "@/types/remoteDesktop";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
@@ -59,8 +60,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const title = useAppStore((s) => activeTreeTabs(s).find((t) => t.id === tabId)?.title ?? "");
   const host = useAppStore((s) => {
     const tab = activeTreeTabs(s).find((t) => t.id === tabId);
-    const cfg = tab?.config.config as Record<string, unknown> | undefined;
-    return (cfg?.host as string | undefined) ?? title ?? "remote";
+    return readConfigString(tab?.config, "host") ?? title ?? "remote";
   });
 
   const handleCtrlAltDel = useCallback(() => {

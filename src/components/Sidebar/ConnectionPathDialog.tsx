@@ -13,6 +13,7 @@ import {
 import { Modal, Button } from "@/components/ui";
 import { SavedConnection } from "@/types/connection";
 import { getJumpHosts } from "@/utils/jumpHost";
+import { readConfigString } from "@/utils/connectionConfigFields";
 import { probeConnectionPath, cancelConnectionPathProbe } from "@/services/api";
 import { onJumpHostHopStatus, onJumpHostProbeComplete, HopProbeStatus } from "@/services/events";
 import { frontendLog } from "@/utils/frontendLog";
@@ -62,9 +63,9 @@ function statusIcon(status: NodeStatus): { Icon: typeof User; spin: boolean } {
  */
 export function ConnectionPathDialog({ open, connection, onClose }: ConnectionPathDialogProps) {
   const hops = getJumpHosts(connection.config);
-  const settings = connection.config.config as Record<string, unknown>;
-  const targetHost = typeof settings.host === "string" ? settings.host : connection.name;
-  const targetUser = typeof settings.username === "string" ? settings.username : "";
+  const settings = connection.config.config;
+  const targetHost = readConfigString(connection.config, "host") ?? connection.name;
+  const targetUser = readConfigString(connection.config, "username") ?? "";
 
   // One status per probed node (gateway hops + target), excluding the "You"
   // origin. Keyed by the probe's node index so events map straight onto it.
