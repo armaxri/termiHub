@@ -7,6 +7,11 @@ mod agent_service;
 /// (the ordered agent list + per-agent sessions/definitions/folders). Drives the
 /// live UI (stateless-UI inversion complete, #2283) — see [`agents_projection`].
 mod agents_projection;
+/// Owned background-task tracking for deterministic shutdown (ARCH-007): an
+/// app-wide [`tokio_util::task::TaskTracker`] + [`tokio_util::sync::CancellationToken`]
+/// held in managed state, so long-lived background tasks are cancelled and
+/// awaited (bounded) at teardown instead of outliving it — see [`app_tasks`].
+mod app_tasks;
 /// Broadcast-membership authority (#2242, Phase 4 step 5b of #2139, part of
 /// #2206 / #2152): the client-scoped `broadcast@<clientId>` projection region +
 /// `broadcast.*` intents modeling the `appStore` broadcast-input membership slice
@@ -505,6 +510,9 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_cli::init())
+        // Owned background-task registry (ARCH-007): app-lifetime spawn sites
+        // register here so teardown can cancel + await them deterministically.
+        .manage(app_tasks::AppTasks::new())
         .manage(TransferRegistry::new())
         .manage(files::watcher::FileWatchManager::new())
         // NetworkManager needs the resolved config dir + AppHandle, neither of
