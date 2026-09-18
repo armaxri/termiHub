@@ -10,7 +10,8 @@ evidence:
   - scripts/smoke-test.sh:1
   - scripts/run-guided-manual.sh:1
   - scripts/test-system-linux.sh:1
-status: open
+status: fixed
+resolution: "#3040 — add blocking shellcheck CI lane (--severity=warning, catches SC2257 #2545 class) over 44 scripts; fixed 4 real findings incl dead --skip-build flag; pinned action+v0.11.0; .sh/.cmd parity deferred #3041"
 ---
 
 ## What

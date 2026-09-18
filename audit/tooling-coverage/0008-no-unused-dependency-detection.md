@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/code-quality.yml:290
   - Cargo.toml:1
   - package.json:22
-status: open
+status: fixed
+resolution: "#3042 — add blocking cargo-machete CI step + remove 4 unused crate deps (shellexpand, portable-pty, shlex, async_io_stream); vnc-rs name-mismatch ignore-listed; JS knip deferred #3043"
 ---
 
 ## What

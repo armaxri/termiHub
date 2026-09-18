@@ -9,7 +9,8 @@ subsystem: frontend / static-analysis
 evidence:
   - eslint.config.js:1
   - .claude/CLAUDE.md:1
-status: open
+status: fixed
+resolution: "#3036 — add no-console eslint rule on production src/** (tests off); zero sites needed allowlisting; import-cycle-detection half deferred #3037"
 ---
 
 ## What
