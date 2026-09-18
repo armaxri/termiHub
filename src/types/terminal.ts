@@ -1,4 +1,7 @@
 import type { ConnectionHighlightingConfig } from "./syntaxHighlighting";
+// ts-rs-generated DTO (audit DUP-030). Imported here so this module can both
+// re-export it (below) and reference it locally in the interfaces further down.
+import type { ConnectionConfig } from "./generated/ConnectionConfig";
 
 export type SessionId = string;
 
@@ -303,8 +306,8 @@ export interface VolumeMount {
 // identifies the connection type (e.g. "ssh", "local"), and `config` holds
 // type-specific settings as unstructured key-value pairs.
 // Generated from the Rust `ConnectionConfig` (src-tauri/src/terminal/backend.rs)
-// via ts-rs (audit DUP-030).
-export type { ConnectionConfig } from "./generated/ConnectionConfig";
+// via ts-rs (audit DUP-030). Imported at the top of this module; re-exported here.
+export type { ConnectionConfig };
 
 /**
  * Which terminals a broadcast session targets. Only `"all"` is wired up by the
