@@ -117,7 +117,7 @@ impl<T: Clone> RefPool<T> {
         let value = connect().await?;
         let generation = self.next_generation.fetch_add(1, Ordering::Relaxed);
         {
-            let mut entries = self.entries.lock().expect("session pool mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             entries.insert(
                 key.to_string(),
                 Entry {
@@ -138,7 +138,7 @@ impl<T: Clone> RefPool<T> {
     /// evicted value is dropped outside the lock to avoid `Drop` re-entrancy.
     fn try_acquire(&self, key: &str, is_alive: &impl Fn(&T) -> bool) -> Option<(T, u64)> {
         let evicted = {
-            let mut entries = self.entries.lock().expect("session pool mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             let entry = entries.get_mut(key)?;
             if is_alive(&entry.value) {
                 entry.ref_count += 1;
@@ -154,10 +154,7 @@ impl<T: Clone> RefPool<T> {
     }
 
     fn gate_for(&self, key: &str) -> Arc<AsyncMutex<()>> {
-        let mut gates = self
-            .gates
-            .lock()
-            .expect("session pool gates mutex poisoned");
+        let mut gates = self.gates.lock().unwrap_or_else(|e| e.into_inner());
         gates
             .entry(key.to_string())
             .or_insert_with(|| Arc::new(AsyncMutex::new(())))
@@ -185,7 +182,7 @@ impl<T: Clone> RefPool<T> {
     /// [`PooledRef`] to a gateway) cannot deadlock on the non-reentrant mutex.
     pub fn release(&self, key: &str, generation: u64) {
         let removed = {
-            let mut entries = self.entries.lock().expect("session pool mutex poisoned");
+            let mut entries = self.entries.lock().unwrap_or_else(|e| e.into_inner());
             match entries.get_mut(key) {
                 Some(entry) if entry.generation == generation => {
                     entry.ref_count = entry.ref_count.saturating_sub(1);
@@ -201,7 +198,7 @@ impl<T: Clone> RefPool<T> {
         if removed.is_some() {
             self.gates
                 .lock()
-                .expect("session pool gates mutex poisoned")
+                .unwrap_or_else(|e| e.into_inner())
                 .remove(key);
         }
         drop(removed); // value dropped here, outside the entries lock
@@ -211,7 +208,7 @@ impl<T: Clone> RefPool<T> {
     pub fn ref_count(&self, key: &str) -> usize {
         self.entries
             .lock()
-            .expect("session pool mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .get(key)
             .map(|e| e.ref_count)
             .unwrap_or(0)
@@ -219,10 +216,7 @@ impl<T: Clone> RefPool<T> {
 
     /// Number of live pooled entries.
     pub fn len(&self) -> usize {
-        self.entries
-            .lock()
-            .expect("session pool mutex poisoned")
-            .len()
+        self.entries.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 
     /// Whether the pool holds no live entries.

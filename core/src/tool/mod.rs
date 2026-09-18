@@ -110,13 +110,13 @@ impl CollectingHost {
     pub fn events(&self) -> Vec<ToolEvent> {
         self.events
             .lock()
-            .expect("tool host mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .clone()
     }
 
     /// Drain and return all collected events.
     pub fn take(&self) -> Vec<ToolEvent> {
-        std::mem::take(&mut *self.events.lock().expect("tool host mutex poisoned"))
+        std::mem::take(&mut *self.events.lock().unwrap_or_else(|e| e.into_inner()))
     }
 }
 
@@ -124,7 +124,7 @@ impl ToolHost for CollectingHost {
     fn emit(&self, event: ToolEvent) {
         self.events
             .lock()
-            .expect("tool host mutex poisoned")
+            .unwrap_or_else(|e| e.into_inner())
             .push(event);
     }
 }
