@@ -18,6 +18,7 @@ import { SaveAsConnectionDialog } from "./SaveAsConnectionDialog";
 import { fireAndForget } from "@/utils/frontendLog";
 import { connectionString } from "./connectionString";
 import "./RecentSessionsSidebar.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Recent-sessions list matcher: matches the (already lower-cased) query against
@@ -67,7 +68,7 @@ export function RecentSessionsSidebar() {
       try {
         await connect(synthetic);
       } catch (err) {
-        toast.error(`Failed to connect: ${err instanceof Error ? err.message : String(err)}`);
+        toast.error(`Failed to connect: ${errorMessage(err)}`);
       }
     },
     [connect]
@@ -92,7 +93,7 @@ export function RecentSessionsSidebar() {
   const handleTogglePin = useCallback(
     (entry: SessionHistoryEntry) => {
       void pinHistoryEntry(entry.dedupKey, !entry.pinned).catch((err) => {
-        toast.error(`Failed to update pin: ${err instanceof Error ? err.message : String(err)}`);
+        toast.error(`Failed to update pin: ${errorMessage(err)}`);
       });
     },
     [pinHistoryEntry]
@@ -103,9 +104,7 @@ export function RecentSessionsSidebar() {
       void removeHistoryEntry(entry.dedupKey)
         .then(() => toast.success(`Removed “${entry.title}” from history`))
         .catch((err) => {
-          toast.error(
-            `Failed to remove entry: ${err instanceof Error ? err.message : String(err)}`
-          );
+          toast.error(`Failed to remove entry: ${errorMessage(err)}`);
         });
     },
     [removeHistoryEntry]
@@ -133,7 +132,7 @@ export function RecentSessionsSidebar() {
     void clearSessionHistory()
       .then(() => toast.success("Cleared session history"))
       .catch((err) => {
-        toast.error(`Failed to clear history: ${err instanceof Error ? err.message : String(err)}`);
+        toast.error(`Failed to clear history: ${errorMessage(err)}`);
       });
   }, [clearSessionHistory]);
 

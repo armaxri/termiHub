@@ -15,6 +15,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { sessionHistoryTitle } from "@/utils/sessionHistoryTitle";
 
 import type { AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Recent-session history domain slice (#1883, extracted under #2077): the
@@ -71,10 +72,7 @@ export const createSessionHistorySlice: StateCreator<AppState, [], [], SessionHi
       const entries = await getSessionHistory();
       set({ sessionHistory: entries });
     } catch (err) {
-      frontendLog(
-        "session_history",
-        `Failed to load session history: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("session_history", `Failed to load session history: ${errorMessage(err)}`);
     }
   },
 
@@ -90,10 +88,7 @@ export const createSessionHistorySlice: StateCreator<AppState, [], [], SessionHi
       const entries = await apiRecordSession(connectionType, safeConfig, title, limit);
       set({ sessionHistory: entries });
     } catch (err) {
-      frontendLog(
-        "session_history",
-        `Failed to record session: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("session_history", `Failed to record session: ${errorMessage(err)}`);
     }
   },
 

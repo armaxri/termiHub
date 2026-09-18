@@ -239,6 +239,7 @@ import {
   setRestoreSettlementRenderer,
   type ProjectedSettlement,
 } from "@/store/restoreCohortBridge";
+import { errorMessage } from "@/utils/errorMessage";
 
 export type SidebarView =
   | "connections"
@@ -3171,7 +3172,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             [connectionId]: {
               ...state.persistentSessions[connectionId],
               state: "error",
-              errorMessage: err instanceof Error ? err.message : String(err),
+              errorMessage: errorMessage(err),
             },
           },
         }));
@@ -3207,7 +3208,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `attach_persistent_tab failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+          `attach_persistent_tab failed for ${connectionId}: ${errorMessage(err)}`
         );
       }
     },
@@ -3228,7 +3229,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `stop_persistent_session failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+          `stop_persistent_session failed for ${connectionId}: ${errorMessage(err)}`
         );
       }
     },
@@ -3298,7 +3299,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             [connectionId]: {
               ...state.persistentSessions[connectionId],
               state: "error",
-              errorMessage: err instanceof Error ? err.message : String(err),
+              errorMessage: errorMessage(err),
             },
           },
         }));
@@ -3351,7 +3352,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `attach_persistent_tab failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+          `attach_persistent_tab failed for ${connectionId}: ${errorMessage(err)}`
         );
         // Session is gone — remove the tab so the user does not see a blank terminal.
         if (actualPanelId) {
@@ -3387,7 +3388,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `adopt_persistent_session failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+          `adopt_persistent_session failed for ${connectionId}: ${errorMessage(err)}`
         );
         return;
       }
@@ -3461,7 +3462,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         } catch (err) {
           frontendLog(
             "app_store",
-            `restart_persistent attach failed for ${connectionId}: ${err instanceof Error ? err.message : String(err)}`
+            `restart_persistent attach failed for ${connectionId}: ${errorMessage(err)}`
           );
         }
       };
@@ -4582,10 +4583,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       layoutPersistTimer = setTimeout(() => {
         persistSettings({ ...currentSettingsView(), layout: updated }).catch((err) =>
-          frontendLog(
-            "app_store",
-            `Failed to persist layout config: ${err instanceof Error ? err.message : String(err)}`
-          )
+          frontendLog("app_store", `Failed to persist layout config: ${errorMessage(err)}`)
         );
       }, 300);
     },
@@ -4597,10 +4595,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       layoutPersistTimer = setTimeout(() => {
         persistSettings({ ...currentSettingsView(), layout: config }).catch((err) =>
-          frontendLog(
-            "app_store",
-            `Failed to persist layout preset: ${err instanceof Error ? err.message : String(err)}`
-          )
+          frontendLog("app_store", `Failed to persist layout preset: ${errorMessage(err)}`)
         );
       }, 300);
     },
@@ -4621,10 +4616,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       if (layoutPersistTimer) clearTimeout(layoutPersistTimer);
       layoutPersistTimer = setTimeout(() => {
         persistSettings({ ...currentSettingsView(), layout: updated }).catch((err) =>
-          frontendLog(
-            "app_store",
-            `Failed to persist layout config: ${err instanceof Error ? err.message : String(err)}`
-          )
+          frontendLog("app_store", `Failed to persist layout config: ${errorMessage(err)}`)
         );
       }, 300);
     },
@@ -4645,10 +4637,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         try {
           await ensureConnectionsSubscribed();
         } catch (subErr) {
-          frontendLog(
-            "app_store",
-            `connections region subscribe failed: ${subErr instanceof Error ? subErr.message : String(subErr)}`
-          );
+          frontendLog("app_store", `connections region subscribe failed: ${errorMessage(subErr)}`);
         }
         // The persisted settings document is region-authoritative (#2404): the
         // backend seeds the `settings` region from the persisted document at
@@ -4659,10 +4648,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         try {
           await ensureSettingsSubscribed();
         } catch (subErr) {
-          frontendLog(
-            "app_store",
-            `settings region subscribe failed: ${subErr instanceof Error ? subErr.message : String(subErr)}`
-          );
+          frontendLog("app_store", `settings region subscribe failed: ${errorMessage(subErr)}`);
         }
         // The agent list is region-authoritative (#2409): the backend seeds the
         // `agents` region from the persisted list at startup and re-folds it on the
@@ -4674,10 +4660,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         try {
           await ensureAgentsSubscribed();
         } catch (subErr) {
-          frontendLog(
-            "app_store",
-            `agents region subscribe failed: ${subErr instanceof Error ? subErr.message : String(subErr)}`
-          );
+          frontendLog("app_store", `agents region subscribe failed: ${errorMessage(subErr)}`);
         }
         // Still read the persisted document directly: it drives one-time startup
         // side-effects that do not live in the region view (theme apply, layout /
@@ -4721,7 +4704,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             .catch((err: unknown) => {
               frontendLog(
                 "app_store",
-                `Failed to register custom grammars on startup: ${err instanceof Error ? err.message : String(err)}`
+                `Failed to register custom grammars on startup: ${errorMessage(err)}`
               );
             });
         }
@@ -4730,24 +4713,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
           set({});
         });
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to load connections from backend: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to load connections: ${err instanceof Error ? err.message : String(err)}`,
-          { id: "load-connections-error" }
-        );
+        frontendLog("app_store", `Failed to load connections from backend: ${errorMessage(err)}`);
+        toast.error(`Failed to load connections: ${errorMessage(err)}`, {
+          id: "load-connections-error",
+        });
       }
       // Load connection type registry
       try {
         const connectionTypes = await getConnectionTypes();
         set({ connectionTypes });
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to load connection types: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to load connection types: ${errorMessage(err)}`);
       }
       // Detect platform default shell
       try {
@@ -4759,10 +4735,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           set({ defaultShell: shells[0] as ShellType });
         }
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to detect available shells: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to detect available shells: ${errorMessage(err)}`);
       }
       // Load SSH tunnels
       get().loadTunnels();
@@ -4789,10 +4762,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           set({ recoveryWarnings: warnings, recoveryDialogOpen: true });
         }
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to load recovery warnings: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to load recovery warnings: ${errorMessage(err)}`);
       }
       // Subscribe to persistent session state changes from the backend
       onPersistentSessionStateChanged((change) => {
@@ -4828,7 +4798,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }).catch((err: unknown) => {
         frontendLog(
           "app_store",
-          `Failed to subscribe to persistent session events: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to subscribe to persistent session events: ${errorMessage(err)}`
         );
       });
     },
@@ -4886,14 +4856,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           void get().loadPlugins(nextGate);
         }
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to save settings: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to save settings: ${err instanceof Error ? err.message : String(err)}`,
-          { id: "save-settings-error" }
-        );
+        frontendLog("app_store", `Failed to save settings: ${errorMessage(err)}`);
+        toast.error(`Failed to save settings: ${errorMessage(err)}`, { id: "save-settings-error" });
       }
     },
 
@@ -5473,13 +5437,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         config: agent.config,
         agentSettings: agent.agentSettings,
       }).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist new agent: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to save agent ${agent.name}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist new agent: ${errorMessage(err)}`);
+        toast.error(`Failed to save agent ${agent.name}: ${errorMessage(err)}`);
       });
     },
 
@@ -5497,13 +5456,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         config: agent.config,
         agentSettings: agent.agentSettings,
       }).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist agent update: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to save agent ${agent.name}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist agent update: ${errorMessage(err)}`);
+        toast.error(`Failed to save agent ${agent.name}: ${errorMessage(err)}`);
       });
     },
 
@@ -5516,13 +5470,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const agentIds = agents.map((a) => a.id);
       mirrorAgentIntent("agent.reorder", { oldIndex, newIndex });
       persistAgentOrder(agentIds).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist agent reorder: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to save agent order: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist agent reorder: ${errorMessage(err)}`);
+        toast.error(`Failed to save agent order: ${errorMessage(err)}`);
       });
     },
 
@@ -5536,7 +5485,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         apiDisconnectAgent(agentId).catch((err) => {
           frontendError(
             "app_store",
-            `Failed to disconnect agent ${agentId} during delete: ${err instanceof Error ? err.message : String(err)}`
+            `Failed to disconnect agent ${agentId} during delete: ${errorMessage(err)}`
           );
         });
       }
@@ -5545,13 +5494,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // the persisted-list fold reconciles server-side (#2403).
       mirrorAgentIntent("agent.remove", { id: agentId });
       removeAgent(agentId).catch((err) => {
-        frontendLog(
-          "app_store",
-          `Failed to persist agent deletion: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to delete agent ${agent?.name ?? ""}: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to persist agent deletion: ${errorMessage(err)}`);
+        toast.error(`Failed to delete agent ${agent?.name ?? ""}: ${errorMessage(err)}`);
       });
     },
 
@@ -5608,13 +5552,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       try {
         await apiDisconnectAgent(agentId);
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to disconnect agent ${agentId}: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to disconnect agent: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to disconnect agent ${agentId}: ${errorMessage(err)}`);
+        toast.error(`Failed to disconnect agent: ${errorMessage(err)}`);
       }
       // Optimistically force the region entry to disconnected and clear its live
       // sessions/folders (the store's `disconnect` does exactly this, #2409).
@@ -5692,11 +5631,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `Failed to refresh agent sessions for ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to refresh agent sessions for ${agentId}: ${errorMessage(err)}`
         );
-        toast.error(
-          `Failed to load agent sessions: ${err instanceof Error ? err.message : String(err)}`
-        );
+        toast.error(`Failed to load agent sessions: ${errorMessage(err)}`);
       }
     },
 
@@ -5708,11 +5645,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `Failed to save agent definition on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to save agent definition on ${agentId}: ${errorMessage(err)}`
         );
-        toast.error(
-          `Failed to save connection: ${err instanceof Error ? err.message : String(err)}`
-        );
+        toast.error(`Failed to save connection: ${errorMessage(err)}`);
       }
     },
 
@@ -5740,11 +5675,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `Failed to delete agent definition on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to delete agent definition on ${agentId}: ${errorMessage(err)}`
         );
-        toast.error(
-          `Failed to delete connection: ${err instanceof Error ? err.message : String(err)}`
-        );
+        toast.error(`Failed to delete connection: ${errorMessage(err)}`);
       }
     },
 
@@ -5756,11 +5689,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `Failed to update agent definition on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to update agent definition on ${agentId}: ${errorMessage(err)}`
         );
-        toast.error(
-          `Failed to update connection: ${err instanceof Error ? err.message : String(err)}`
-        );
+        toast.error(`Failed to update connection: ${errorMessage(err)}`);
       }
     },
 
@@ -5783,9 +5714,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `Failed to create agent folder on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to create agent folder on ${agentId}: ${errorMessage(err)}`
         );
-        toast.error(`Failed to create folder: ${err instanceof Error ? err.message : String(err)}`);
+        toast.error(`Failed to create folder: ${errorMessage(err)}`);
       }
     },
 
@@ -5801,12 +5732,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `Failed to update agent folder on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to update agent folder on ${agentId}: ${errorMessage(err)}`
         );
         if (isRename) {
-          toast.error(
-            `Failed to rename folder: ${err instanceof Error ? err.message : String(err)}`
-          );
+          toast.error(`Failed to rename folder: ${errorMessage(err)}`);
         }
       }
     },
@@ -5820,9 +5749,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `Failed to delete agent folder on ${agentId}: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to delete agent folder on ${agentId}: ${errorMessage(err)}`
         );
-        toast.error(`Failed to delete folder: ${err instanceof Error ? err.message : String(err)}`);
+        toast.error(`Failed to delete folder: ${errorMessage(err)}`);
       }
     },
 
@@ -5904,10 +5833,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const available = await checkVscode();
         set({ vscodeAvailable: available });
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to check VS Code availability: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to check VS Code availability: ${errorMessage(err)}`);
       }
     },
 
@@ -5931,10 +5857,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
         const connectionTypes = await getConnectionTypes();
         set({ connectionTypes });
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to refresh connection types: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to refresh connection types: ${errorMessage(err)}`);
       }
     },
 
@@ -6467,7 +6390,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog(
           "app_store",
-          `Failed to save current layout as workspace: ${err instanceof Error ? err.message : String(err)}`
+          `Failed to save current layout as workspace: ${errorMessage(err)}`
         );
         throw err;
       }
@@ -6514,13 +6437,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
           ...(totalTabs > 0 && windows ? { windows } : {}),
         });
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to save last session: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to save last session: ${errorMessage(err)}`);
         // Auto-save fires on every layout change (debounced); use a stable id so
         // repeated failures collapse into a single, replaceable toast.
-        toast.error(`Failed to save session: ${err instanceof Error ? err.message : String(err)}`, {
+        toast.error(`Failed to save session: ${errorMessage(err)}`, {
           id: "last-session-save-error",
         });
       }
@@ -6636,13 +6556,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
       try {
         await apiClearLastSession();
       } catch (err) {
-        frontendLog(
-          "app_store",
-          `Failed to clear last session: ${err instanceof Error ? err.message : String(err)}`
-        );
-        toast.error(
-          `Failed to clear saved session: ${err instanceof Error ? err.message : String(err)}`
-        );
+        frontendLog("app_store", `Failed to clear last session: ${errorMessage(err)}`);
+        toast.error(`Failed to clear saved session: ${errorMessage(err)}`);
       }
     },
 

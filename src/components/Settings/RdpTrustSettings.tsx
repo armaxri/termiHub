@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import { rdpTrustList, rdpTrustForget, type RdpTrustedHost } from "@/services/api";
 import { Button, Tooltip, EmptyState, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface RdpTrustSettingsProps {
   visibleFields?: Set<string>;
@@ -22,7 +23,7 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
     try {
       setHosts(await rdpTrustList());
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       frontendLog("rdp_trust_settings", `failed to load trust store: ${message}`);
       toast.error(`Failed to load remembered RDP certificates: ${message}`);
     } finally {
@@ -50,7 +51,7 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
       );
       toast.success(`Revoked certificate for ${host}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to revoke certificate: ${message}`);
       throw err; // keep the async Button in its error path (no success flash)
     }
@@ -62,7 +63,7 @@ export function RdpTrustSettings({ visibleFields }: RdpTrustSettingsProps) {
       setHosts((prev) => prev.filter((h) => h.host !== host));
       toast.success(`Forgot all remembered certificates for ${host}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to forget host: ${message}`);
       throw err; // keep the async Button in its error path (no success flash)
     }

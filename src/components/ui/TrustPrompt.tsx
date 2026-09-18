@@ -4,12 +4,8 @@ import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manage
 import { Modal } from "./Modal";
 import { Button } from "./Button";
 import { toast } from "./Toast";
+import { errorMessage } from "@/utils/errorMessage";
 import "./ui.css";
-
-/** Turn any thrown value into a human-readable string for a toast description. */
-function message(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /**
  * One host/identity fact rendered in the {@link TrustPrompt} `<dl>` (a host,
@@ -118,7 +114,7 @@ export function TrustPrompt({
         toast.success(`Copied ${noun} to clipboard`);
       })
       .catch((err: unknown) => {
-        toast.error(`Failed to copy ${noun}`, { description: message(err) });
+        toast.error(`Failed to copy ${noun}`, { description: errorMessage(err) });
       });
   };
 

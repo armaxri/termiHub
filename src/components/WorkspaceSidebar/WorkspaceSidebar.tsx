@@ -19,6 +19,7 @@ import { WorkspaceListItem } from "./WorkspaceListItem";
 import { SaveWorkspaceDialog, SaveWorkspaceScope } from "./SaveWorkspaceDialog";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import "./WorkspaceSidebar.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 export function WorkspaceSidebar() {
   const workspaces = useAppStore((s) => s.workspaces);
@@ -59,7 +60,7 @@ export function WorkspaceSidebar() {
       await deleteWorkspace(id);
       toast.success(`Deleted workspace ${name}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to delete workspace: ${message}`);
     }
   });
@@ -136,7 +137,7 @@ export function WorkspaceSidebar() {
         // Keep the dialog open so the user does not falsely believe the save
         // succeeded (disk full / permission / lock poisoned would otherwise
         // vanish silently — GAP G2).
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         frontendLog("workspace", `Failed to save workspace "${name}": ${message}`);
         toast.error(`Failed to save workspace: ${message}`);
       }

@@ -6,6 +6,7 @@ import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, RadioGroup } from "@/components/ui";
 import "./ExportDialog.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 type ExportMode = "plain" | "encrypted";
 
@@ -59,7 +60,7 @@ export function ExportDialog() {
       await writeTextFile(filePath, json);
       setOpen(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setExporting(false);
     }

@@ -13,6 +13,7 @@ import { TunnelConfig, TunnelState } from "@/types/tunnel";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for the SSH-tunnels domain (twin of the Rust const). */
 const TUNNELS_REGION = "tunnels";
@@ -93,10 +94,6 @@ function throwIfRejected(ack: IntentAck, what: string): void {
   if (ack.status === "rejected") {
     throw new Error(ack.error?.message ?? `Failed to ${what}`);
   }
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /**
@@ -185,7 +182,7 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
       await client.start();
       _client = client;
     } catch (err) {
-      frontendLog("app_store", `Failed to subscribe to tunnels projection: ${errMessage(err)}`);
+      frontendLog("app_store", `Failed to subscribe to tunnels projection: ${errorMessage(err)}`);
     }
   },
 
@@ -196,7 +193,7 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
       const ack = await dispatchTunnelIntent("tunnel.create", config);
       throwIfRejected(ack, "save tunnel");
     } catch (err) {
-      frontendLog("app_store", `Failed to save tunnel: ${errMessage(err)}`);
+      frontendLog("app_store", `Failed to save tunnel: ${errorMessage(err)}`);
       throw err;
     }
   },
@@ -209,7 +206,7 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
       throwIfRejected(ack, "delete tunnel");
       toast.success(`Deleted ${name}`, { id: toastId });
     } catch (err) {
-      toast.error(`Failed to delete ${name}: ${errMessage(err)}`, { id: toastId });
+      toast.error(`Failed to delete ${name}: ${errorMessage(err)}`, { id: toastId });
       throw err;
     }
   },
@@ -233,8 +230,8 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
       // resolve it to success/failure via `resolveFirstConnectToasts` (#2169).
       _awaitingFirstConnect.set(tunnelId, { verb: "start", toastId });
     } catch (err) {
-      frontendLog("app_store", `Failed to start tunnel: ${errMessage(err)}`);
-      toast.error(`Failed to start ${name}: ${errMessage(err)}`, { id: toastId });
+      frontendLog("app_store", `Failed to start tunnel: ${errorMessage(err)}`);
+      toast.error(`Failed to start ${name}: ${errorMessage(err)}`, { id: toastId });
       throw err;
     } finally {
       _tunnelStartInFlight.delete(tunnelId);
@@ -253,8 +250,8 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
       throwIfRejected(ack, "stop tunnel");
       toast.success(`Stopped ${name}`, { id: toastId });
     } catch (err) {
-      frontendLog("app_store", `Failed to stop tunnel: ${errMessage(err)}`);
-      toast.error(`Failed to stop ${name}: ${errMessage(err)}`, { id: toastId });
+      frontendLog("app_store", `Failed to stop tunnel: ${errorMessage(err)}`);
+      toast.error(`Failed to stop ${name}: ${errorMessage(err)}`, { id: toastId });
       throw err;
     } finally {
       _tunnelStopInFlight.delete(tunnelId);
@@ -279,8 +276,8 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
       // via `resolveFirstConnectToasts` (#2169).
       _awaitingFirstConnect.set(tunnelId, { verb: "reconnect", toastId });
     } catch (err) {
-      frontendLog("app_store", `Failed to reconnect tunnel: ${errMessage(err)}`);
-      toast.error(`Failed to reconnect ${name}: ${errMessage(err)}`, { id: toastId });
+      frontendLog("app_store", `Failed to reconnect tunnel: ${errorMessage(err)}`);
+      toast.error(`Failed to reconnect ${name}: ${errorMessage(err)}`, { id: toastId });
       throw err;
     } finally {
       _tunnelStopInFlight.delete(tunnelId);

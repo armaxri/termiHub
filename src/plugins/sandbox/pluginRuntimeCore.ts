@@ -27,6 +27,7 @@
 import { frontendLog } from "@/utils/frontendLog";
 import type { WidgetPosition } from "@/types/plugin";
 import type { ProtocolParser, StatusBarWidget, TermiHubPluginAPI, WidgetNode } from "./protocol";
+import { errorMessage } from "@/utils/errorMessage";
 
 export type { ProtocolParser, StatusBarWidget, TermiHubPluginAPI, WidgetNode };
 
@@ -108,7 +109,7 @@ const key = (pluginId: string, widgetId: string): string => `${pluginId}:${widge
 function logPluginError(pluginId: string, extId: string, phase: string, err: unknown): void {
   frontendLog(
     "plugin_runtime",
-    `Plugin "${pluginId}" ${phase} for "${extId}" threw: ${err instanceof Error ? err.message : String(err)}`
+    `Plugin "${pluginId}" ${phase} for "${extId}" threw: ${errorMessage(err)}`
   );
 }
 

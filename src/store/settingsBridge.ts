@@ -44,6 +44,7 @@ import {
 import type { AppSettings } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for the settings domain (twin of the Rust
  * `SETTINGS_REGION` const). Shared (Open Design Decision #4 / #6). */
@@ -325,6 +326,6 @@ export function mirrorSettingsIntent(
 
 /** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logSettingsBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("settings_bridge", `${kind} settings intent failed: ${message}`);
 }

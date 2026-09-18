@@ -50,6 +50,7 @@ import type { AgentDefinitionInfo, AgentFolderInfo, AgentSessionInfo } from "@/s
 import type { RemoteAgentDefinition } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for the agents domain (twin of the Rust
  * `AGENTS_REGION` const). Shared (Open Design Decision #4). */
@@ -396,6 +397,6 @@ export function mirrorAgentIntent(kind: AgentIntentKind, payload: Record<string,
 
 /** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logAgentBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("agent_bridge", `${kind} agent intent failed: ${message}`);
 }

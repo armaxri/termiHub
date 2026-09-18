@@ -33,6 +33,7 @@ import { Tooltip } from "@/components/ui";
 import { getActionAccelerator } from "@/services/keybindings";
 import { ActivityBarItem } from "./ActivityBarItem";
 import "./ActivityBar.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 interface ActivityBarItemDef {
   view: SidebarView;
@@ -116,10 +117,7 @@ export function ActivityBar({ horizontal }: ActivityBarProps) {
     } catch (err) {
       // Record the read failure in the user-openable LogViewer instead of the
       // unreachable DevTools console (OBS-005).
-      frontendError(
-        "activity_bar",
-        `failed to read import file: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendError("activity_bar", `failed to read import file: ${errorMessage(err)}`);
     }
   }, [setImportDialog]);
 

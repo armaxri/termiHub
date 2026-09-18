@@ -18,6 +18,7 @@ import {
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Embedded HTTP/FTP/TFTP server domain slice (#2113): the embedded-server config
@@ -58,10 +59,7 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
       }
       set({ embeddedServers: servers, embeddedServerStates });
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to load embedded servers: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to load embedded servers: ${errorMessage(err)}`);
     }
   },
 
@@ -89,10 +87,7 @@ export const createEmbeddedServersSlice: StateCreator<AppState, [], [], Embedded
         return { embeddedServers };
       });
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to save embedded server: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to save embedded server: ${errorMessage(err)}`);
       throw err;
     }
   },

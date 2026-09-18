@@ -12,6 +12,7 @@ import { setFileLogLevel, getLogFilePath } from "@/services/api";
 import { frontendError } from "@/utils/frontendLog";
 import { KeyPathInput } from "./KeyPathInput";
 import { SettingsField } from "./SettingsField";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Human-readable labels for the file-log verbosity levels (OBS-009). */
 const LOG_LEVEL_LABELS: Record<string, string> = {
@@ -89,7 +90,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
       setFileLogLevel(value)
         .then(() => toast.success(`Log verbosity set to ${LOG_LEVEL_LABELS[value] ?? value}`))
         .catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = errorMessage(err);
           frontendError("general_settings", `failed to set log level: ${message}`);
           toast.error(`Failed to change log verbosity: ${message}`);
         });

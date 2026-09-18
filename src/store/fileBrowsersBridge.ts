@@ -64,6 +64,7 @@ import type { FileClipboard } from "@/store/appStore";
 import type { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The active file-browser pane (twin of the Rust `mode` string; `"none"` is no
  * open browser). */
@@ -447,6 +448,6 @@ export function mirrorFileBrowserIntent(
 
 /** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logFileBrowsersBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("file_browsers_bridge", `${kind} file-browser intent failed: ${message}`);
 }

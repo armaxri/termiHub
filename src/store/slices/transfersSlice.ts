@@ -6,6 +6,7 @@ import { TransferState } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
 
 import { omitKey, windowOwnsTransferSession, withComposedLayout, type AppState } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * SFTP transfer domain slice — a cut of the appStore god-module split
@@ -108,9 +109,7 @@ export const createTransfersSlice: StateCreator<AppState, [], [], TransfersSlice
     } catch (err) {
       frontendLog(
         "sftp_transfer",
-        `cancelTransfer: cancel of ${transferId} failed: ${
-          err instanceof Error ? err.message : String(err)
-        }`
+        `cancelTransfer: cancel of ${transferId} failed: ${errorMessage(err)}`
       );
       throw err;
     }

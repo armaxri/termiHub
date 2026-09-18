@@ -56,6 +56,7 @@ import {
 import type { TransferEntry } from "@/types/transfer";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The projection region id for the transfer-queue domain (twin of the Rust
  * `TRANSFERS_REGION` const). Shared (Open Design Decision #4). */
@@ -279,6 +280,6 @@ export function dispatchTransferIntentBestEffort(
 
 /** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logTransferBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("transfer_bridge", `${kind} transfer intent failed: ${message}`);
 }

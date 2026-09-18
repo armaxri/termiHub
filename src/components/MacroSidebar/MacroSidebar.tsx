@@ -16,6 +16,7 @@ import { MacroEditorDialog, type MacroEditorResult } from "./MacroEditorDialog";
 import { newId } from "@/services/transport/ids";
 import { slugify } from "@/utils/slugify";
 import "./MacroSidebar.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Generate a unique macro id for a duplicated macro. */
 function generateMacroId(): string {
@@ -49,7 +50,7 @@ export function MacroSidebar() {
       await deleteMacroFromBackend(id);
       toast.success(`Deleted macro "${name}"`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to delete macro: ${message}`);
     }
   });
@@ -90,7 +91,7 @@ export function MacroSidebar() {
         await saveMacroToBackend(duplicate);
         toast.success(`Duplicated "${original.name}"`);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         toast.error(`Failed to duplicate "${original.name}"`, { description: message });
       }
     },
@@ -150,7 +151,7 @@ export function MacroSidebar() {
         toast.success(`Saved macro "${result.name}"`);
       } catch (err) {
         // Keep the dialog open so the edits are not lost on a failed save.
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         toast.error(`Failed to save macro: ${message}`);
         throw err;
       }

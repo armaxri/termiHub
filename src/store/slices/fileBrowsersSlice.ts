@@ -4,6 +4,7 @@ import { sessionListFiles, localListDir } from "@/services/api";
 import { currentFileBrowsersView, mirrorFileBrowserIntent } from "@/store/fileBrowsersBridge";
 
 import type { AppState, FileClipboard } from "../appStore";
+import { errorMessage } from "@/utils/errorMessage";
 
 // Per-pane monotonic request sequence for the file-browser list operations
 // (SM-007). A directory listing is async: if the user navigates from folder A to
@@ -104,7 +105,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== localFileBrowserRequestSeq) return;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
     }
   },
@@ -123,7 +124,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== localFileBrowserRequestSeq) return;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "local", error: message });
     }
   },
@@ -147,7 +148,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
     }
   },
@@ -168,7 +169,7 @@ export const createFileBrowsersSlice: StateCreator<AppState, [], [], FileBrowser
       });
     } catch (err) {
       if (requestSeq !== sessionFileBrowserRequestSeq) return;
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       mirrorFileBrowserIntent("fileBrowser.loadFailed", { pane: "session", error: message });
     }
   },

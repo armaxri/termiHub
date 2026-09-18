@@ -34,6 +34,7 @@ import { ThemeEditor } from "@/components/ThemeEditor/ThemeEditor";
 import { ThemePreview } from "./ThemePreview";
 import { SettingsField } from "./SettingsField";
 import "./AppearanceSettings.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Built-in theme options, hoisted so they are not rebuilt on every render. */
 const BUILTIN_THEME_OPTIONS: SelectOption[] = [
@@ -128,7 +129,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       await writeTextFile(filePath, serializeTheme(selectedCustom));
       toast.success(`Theme "${selectedCustom.name}" exported`);
     } catch (err) {
-      toast.error(`Failed to export theme: ${err instanceof Error ? err.message : String(err)}`);
+      toast.error(`Failed to export theme: ${errorMessage(err)}`);
     }
   };
 
@@ -149,7 +150,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     try {
       text = await readTextFile(filePath);
     } catch (err) {
-      toast.error(`Could not read theme file: ${err instanceof Error ? err.message : String(err)}`);
+      toast.error(`Could not read theme file: ${errorMessage(err)}`);
       return;
     }
 
@@ -157,7 +158,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
     try {
       result = parseThemeFile(text);
     } catch (err) {
-      toast.error(`Invalid theme file: ${err instanceof Error ? err.message : String(err)}`);
+      toast.error(`Invalid theme file: ${errorMessage(err)}`);
       return;
     }
 

@@ -14,6 +14,7 @@ import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { EmbeddedServerDialog } from "./EmbeddedServerDialog";
 import { newId } from "@/services/transport/ids";
 import "./EmbeddedServerSidebar.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Services sidebar panel for managing embedded HTTP/FTP/TFTP servers.
@@ -39,7 +40,7 @@ export function EmbeddedServerSidebar() {
       setEmbeddedServerRunLocation(serverId, location).catch((err: unknown) => {
         setServerLocation(serverId, previous);
         toast.error("Couldn't change run location", {
-          description: err instanceof Error ? err.message : String(err),
+          description: errorMessage(err),
         });
       });
     },
@@ -59,7 +60,7 @@ export function EmbeddedServerSidebar() {
       toast.success(`Deleted "${name}"`);
     } catch (err) {
       toast.error(`Failed to delete "${name}"`, {
-        description: err instanceof Error ? err.message : String(err),
+        description: errorMessage(err),
       });
     }
   });
@@ -99,7 +100,7 @@ export function EmbeddedServerSidebar() {
         return true;
       } catch (err) {
         toast.error(`Failed to save "${cfg.name}"`, {
-          description: err instanceof Error ? err.message : String(err),
+          description: errorMessage(err),
         });
         return false;
       }
@@ -122,7 +123,7 @@ export function EmbeddedServerSidebar() {
         toast.success(`Duplicated "${original.name}"`);
       } catch (err) {
         toast.error(`Failed to duplicate "${original.name}"`, {
-          description: err instanceof Error ? err.message : String(err),
+          description: errorMessage(err),
         });
       }
     },

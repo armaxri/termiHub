@@ -1,5 +1,6 @@
 import type { BridgeCommand, BridgeResponse } from "./protocol";
 import { isRequestEnvelope, type BridgeResponseEnvelope } from "./wsProtocol";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * The cross-platform half of the test bridge that lives **inside the app**.
@@ -101,7 +102,7 @@ export function runBridgeWebSocketClient(
       response = {
         ok: false,
         action: parsed.command.action,
-        error: error instanceof Error ? error.message : String(error),
+        error: errorMessage(error),
       };
     }
 

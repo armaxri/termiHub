@@ -2,14 +2,10 @@ import { useCallback } from "react";
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { writeTextFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { toast } from "@/components/ui";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** The single `*.json` filter every flat-sidebar file dialog uses. */
 const JSON_FILTERS = [{ name: "JSON", extensions: ["json"] }];
-
-/** Turn an unknown thrown value into a human-readable message for a toast. */
-function messageOf(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /** Options for a single export invocation returned by {@link useJsonFileExport}. */
 export interface JsonFileExportOptions {
@@ -48,7 +44,7 @@ export function useJsonFileExport(
         await writeTextFile(filePath, text);
         toast.success(successMessage);
       } catch (err) {
-        toast.error(`Failed to export ${entityLabel}: ${messageOf(err)}`);
+        toast.error(`Failed to export ${entityLabel}: ${errorMessage(err)}`);
       }
     },
     [entityLabel]
@@ -81,7 +77,7 @@ export function useJsonFileImport(
         const json = await readTextFile(filePath);
         await onParsed(json);
       } catch (err) {
-        toast.error(`Failed to import ${entityLabel}: ${messageOf(err)}`);
+        toast.error(`Failed to import ${entityLabel}: ${errorMessage(err)}`);
       }
     },
     [entityLabel]

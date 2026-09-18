@@ -2,6 +2,7 @@ import type { IntentAck } from "@/services/transport";
 
 import type { ProjectionDispatchRequest, ProjectionRecordingState } from "./projectionRecorder";
 import type { BridgeCommand, BridgeResponse } from "./protocol";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * The subset of {@link import("./projectionRecorder").ProjectionRecorder} the
@@ -438,7 +439,7 @@ export async function dispatchCommand(
         await deps.resizeWindow(command.width, command.height);
         return ok("resizeWindow");
       } catch (error) {
-        return fail("resizeWindow", error instanceof Error ? error.message : String(error));
+        return fail("resizeWindow", errorMessage(error));
       }
     }
 
@@ -738,7 +739,7 @@ export async function dispatchCommand(
       try {
         return ok("screenshot", await deps.screenshot());
       } catch (error) {
-        return fail("screenshot", error instanceof Error ? error.message : String(error));
+        return fail("screenshot", errorMessage(error));
       }
     }
 
@@ -750,7 +751,7 @@ export async function dispatchCommand(
         await deps.emitEvent(command.event, command.payload);
         return ok("emitEvent");
       } catch (error) {
-        return fail("emitEvent", error instanceof Error ? error.message : String(error));
+        return fail("emitEvent", errorMessage(error));
       }
     }
 
@@ -762,7 +763,7 @@ export async function dispatchCommand(
       try {
         return ok("severAgentTransport", await deps.severAgentTransport(command.agentId));
       } catch (error) {
-        return fail("severAgentTransport", error instanceof Error ? error.message : String(error));
+        return fail("severAgentTransport", errorMessage(error));
       }
     }
 
@@ -771,7 +772,7 @@ export async function dispatchCommand(
       try {
         return ok("projectionSubscribe", await deps.projection.subscribe(command.region));
       } catch (error) {
-        return fail("projectionSubscribe", error instanceof Error ? error.message : String(error));
+        return fail("projectionSubscribe", errorMessage(error));
       }
     }
 
@@ -786,7 +787,7 @@ export async function dispatchCommand(
         });
         return ok("projectionDispatch", ack);
       } catch (error) {
-        return fail("projectionDispatch", error instanceof Error ? error.message : String(error));
+        return fail("projectionDispatch", errorMessage(error));
       }
     }
 
@@ -795,7 +796,7 @@ export async function dispatchCommand(
       try {
         return ok("projectionState", deps.projection.state(command.subscriptionId));
       } catch (error) {
-        return fail("projectionState", error instanceof Error ? error.message : String(error));
+        return fail("projectionState", errorMessage(error));
       }
     }
 
@@ -805,7 +806,7 @@ export async function dispatchCommand(
         deps.projection.dropNext(command.subscriptionId, command.count);
         return ok("projectionDropNext");
       } catch (error) {
-        return fail("projectionDropNext", error instanceof Error ? error.message : String(error));
+        return fail("projectionDropNext", errorMessage(error));
       }
     }
 
@@ -814,7 +815,7 @@ export async function dispatchCommand(
       try {
         return ok("projectionResync", await deps.projection.resync(command.subscriptionId));
       } catch (error) {
-        return fail("projectionResync", error instanceof Error ? error.message : String(error));
+        return fail("projectionResync", errorMessage(error));
       }
     }
 
@@ -824,10 +825,7 @@ export async function dispatchCommand(
         deps.projection.unsubscribe(command.subscriptionId);
         return ok("projectionUnsubscribe");
       } catch (error) {
-        return fail(
-          "projectionUnsubscribe",
-          error instanceof Error ? error.message : String(error)
-        );
+        return fail("projectionUnsubscribe", errorMessage(error));
       }
     }
 

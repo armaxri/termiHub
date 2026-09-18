@@ -60,6 +60,7 @@ import type {
   TerminalTab,
 } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 // ── Minimal projected shapes (twins of the Rust `layout` view model) ──────────
 
@@ -531,7 +532,7 @@ export function moveTabPayload(
 
 /** Log a layout-region write failure so the resilience recovery is visible in the LogViewer. */
 export function logBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("layout_bridge", `${kind} region write failed: ${message}`);
 }
 
@@ -825,6 +826,6 @@ export function layoutSnapshotsEqual(a: LayoutSnapshot, b: LayoutSnapshot): bool
 
 /** Log a compose failure (a transient region↔content desync) so recovery is visible. */
 export function logRenderFallback(err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("layout_bridge", `compose skipped, kept last-good tree: ${message}`);
 }

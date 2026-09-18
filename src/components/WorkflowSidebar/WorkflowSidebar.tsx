@@ -20,6 +20,7 @@ import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEdito
 import { newId } from "@/services/transport/ids";
 import { slugify } from "@/utils/slugify";
 import "./WorkflowSidebar.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Generate a unique workflow id for a new or duplicated workflow. */
 function generateWorkflowId(): string {
@@ -72,7 +73,7 @@ export function WorkflowSidebar() {
       await deleteWorkflowFromBackend(id);
       toast.success(`Deleted workflow "${name}"`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       toast.error(`Failed to delete workflow: ${message}`);
     }
   });
@@ -132,7 +133,7 @@ export function WorkflowSidebar() {
         await saveWorkflowToBackend(duplicate);
         toast.success(`Duplicated "${original.name}"`);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         toast.error(`Failed to duplicate "${original.name}"`, { description: message });
       }
     },
@@ -211,7 +212,7 @@ export function WorkflowSidebar() {
         toast.success(`Saved workflow "${result.name}"`);
       } catch (err) {
         // Keep the dialog open so the edits are not lost on a failed save.
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         toast.error(`Failed to save workflow: ${message}`);
         throw err;
       }

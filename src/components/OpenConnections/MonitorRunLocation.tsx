@@ -12,6 +12,7 @@ import {
   type RunLocation,
 } from "@/utils/runLocation";
 import type { MonitoringEntry } from "@/types/monitoring";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Props for {@link MonitorRunLocation}. */
 interface MonitorRunLocationProps {
@@ -61,7 +62,7 @@ export function MonitorRunLocation({ entry }: MonitorRunLocationProps) {
       } catch (err: unknown) {
         setLocation(entry.key, previous); // roll back on failure
         toast.error("Couldn't change run location", {
-          description: err instanceof Error ? err.message : String(err),
+          description: errorMessage(err),
         });
       }
     },

@@ -128,6 +128,7 @@ export interface PluginThemeLoadResult {
 }
 
 export type { PluginFileReader } from "@/types/plugin";
+import { errorMessage } from "@/utils/errorMessage";
 
 /** Options for {@link loadPluginThemes}. */
 export interface LoadPluginThemesOptions {
@@ -170,7 +171,7 @@ export async function loadPluginThemes(
         pluginId,
         themeId: entry.id,
         file: entry.file,
-        message: err instanceof Error ? err.message : String(err),
+        message: errorMessage(err),
       });
     }
   }

@@ -15,6 +15,8 @@
  * a typed signal rather than on `raw.includes("auth failed")`.
  */
 
+import { errorMessage } from "./errorMessage";
+
 /**
  * Stable code emitted when SSH/agent authentication is genuinely rejected
  * (wrong password/passphrase or a refused key). Mirrors the Rust
@@ -46,7 +48,7 @@ export interface ParsedBackendError {
  * and the marker removed from `message`.
  */
 export function parseBackendError(error: unknown): ParsedBackendError {
-  const raw = error instanceof Error ? error.message : String(error);
+  const raw = errorMessage(error);
   const match = raw.match(CODE_MARKER_RE);
   if (!match) return { message: raw };
   const message = (raw.slice(0, match.index) + raw.slice(match.index! + match[0].length)).trim();

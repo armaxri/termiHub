@@ -19,6 +19,7 @@ import {
 import { FileEntry } from "@/types/connection";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 import { runBlockingTransfer, runTransfer, seedTransferQueueRow } from "./transferFeedback";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Hook for session-based file system operations.
@@ -89,9 +90,7 @@ export function useSessionFileSystem() {
         setSftpCapable(false);
         frontendLog(
           "session_file_browser",
-          `session ${sessionId} is not SFTP-backed; byte-based transfers: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          `session ${sessionId} is not SFTP-backed; byte-based transfers: ${errorMessage(err)}`
         );
       });
     return () => {

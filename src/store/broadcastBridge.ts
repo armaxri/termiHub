@@ -50,6 +50,7 @@ import {
 import type { BroadcastScope } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
 import { makeVersionGuard } from "./bridgeVersionGuard";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * The `broadcast@<clientId>` region view model — a twin of the Rust store
@@ -281,6 +282,6 @@ export interface BroadcastSlice {
 
 /** Log a bridge dispatch failure so it is visible in the LogViewer. */
 export function logBroadcastBridgeFallback(kind: string, err: unknown): void {
-  const message = err instanceof Error ? err.message : String(err);
+  const message = errorMessage(err);
   frontendLog("broadcast_bridge", `${kind} broadcast intent failed: ${message}`);
 }

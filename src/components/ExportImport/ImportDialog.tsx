@@ -5,6 +5,7 @@ import { useAppStore } from "@/store/appStore";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button } from "@/components/ui";
 import "./ImportDialog.css";
+import { errorMessage } from "@/utils/errorMessage";
 
 export function ImportDialog() {
   const open = useAppStore((s) => s.importDialogOpen);
@@ -28,7 +29,7 @@ export function ImportDialog() {
       previewImport(fileContent)
         .then(setPreview)
         .catch((err) => {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(errorMessage(err));
           setPreview(null);
         });
     } else {
@@ -66,7 +67,7 @@ export function ImportDialog() {
             err.kind === "wrongPassword" ? "Wrong password. Please try again." : err.message
           );
         } else {
-          setError(err instanceof Error ? err.message : String(err));
+          setError(errorMessage(err));
         }
       } finally {
         setImporting(false);

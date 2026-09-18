@@ -3,6 +3,7 @@ import { StateCreator } from "zustand";
 import type { AppState } from "../appStore";
 import { getAppMode as apiGetAppMode } from "@/services/api";
 import { frontendLog } from "@/utils/frontendLog";
+import { errorMessage } from "@/utils/errorMessage";
 
 /**
  * Portable-mode domain slice (ARCH-001/FES-011, appStore god-module split via
@@ -35,10 +36,7 @@ export const createPortableModeSlice: StateCreator<AppState, [], [], PortableMod
       const info = await apiGetAppMode();
       set({ isPortableMode: info.isPortable, portableDataDir: info.dataDir });
     } catch (err) {
-      frontendLog(
-        "app_store",
-        `Failed to load app mode: ${err instanceof Error ? err.message : String(err)}`
-      );
+      frontendLog("app_store", `Failed to load app mode: ${errorMessage(err)}`);
     }
   },
 });
