@@ -191,8 +191,12 @@ impl AgentState {
             Ok(json) => {
                 // Atomic write (temp + rename) so a crash mid-write can never
                 // truncate state.json and lose the persisted session state (#2366).
-                if let Err(e) = crate::fs::write_atomic(path, &json) {
-                    warn!("Failed to write agent state to {}: {:#}", path.display(), e);
+                match crate::fs::write_atomic(path, &json) {
+                    // Restrict to owner-only right after the write (AGT-021).
+                    Ok(()) => restrict_state_permissions(path),
+                    Err(e) => {
+                        warn!("Failed to write agent state to {}: {:#}", path.display(), e)
+                    }
                 }
             }
             Err(e) => {
@@ -249,6 +253,35 @@ impl AgentState {
         config_dir()
     }
 }
+
+/// Restrict `state.json` to owner-only (`0o600`) access after it is written
+/// (AGT-021).
+///
+/// `state.json` stores each session's full connection settings JSON, so on a
+/// multi-user host it must never be readable by other local users. The atomic
+/// write routes through a `tempfile` temp file that is already created `0o600`,
+/// and the persist-rename preserves that mode — so there is no world-readable
+/// window. We nonetheless set the mode explicitly rather than relying on that
+/// implementation detail, so the owner-only guarantee holds even if the write
+/// path ever changes (e.g. a switch back to a umask-respecting write).
+/// Best-effort: a failure is logged, not fatal — the state is already written.
+#[cfg(unix)]
+fn restrict_state_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+        warn!(
+            "Failed to restrict permissions on agent state {}: {}",
+            path.display(),
+            e
+        );
+    }
+}
+
+/// No-op on non-unix: on Windows the state lives under `%APPDATA%`, whose NTFS
+/// ACLs already restrict it to the owner's profile, and there is no `chmod`
+/// analog to apply (AGT-021).
+#[cfg(not(unix))]
+fn restrict_state_permissions(_path: &Path) {}
 
 /// Quarantine a corrupt `state.json` by renaming it aside, preserving its bytes.
 ///
@@ -865,6 +898,38 @@ mod tests {
             json.get("future_feature"),
             Some(&json!({ "enabled": true, "threshold": 42 })),
             "a newer version's field was erased on rollback save — data loss",
+        );
+    }
+
+    /// AGT-021: `state.json` holds the full connection settings JSON for every
+    /// persisted session, so on a multi-user host it must never be world- or
+    /// group-readable. After a save the file must be `0o600` (owner read/write
+    /// only). Regression test — a save path that writes with the default umask
+    /// (world-readable `0o644`) fails this.
+    #[cfg(unix)]
+    #[test]
+    fn saved_state_is_owner_readable_only() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+
+        let mut state = AgentState::default();
+        state.sessions.insert(
+            "sess-1".to_string(),
+            make_session("ssh", Some("/tmp/s.sock")),
+        );
+        state.save_to(&path);
+
+        let mode = std::fs::metadata(&path)
+            .expect("state.json metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "state.json must be owner-only (0o600), got {mode:o} — it holds \
+             connection settings and must not be world/group readable"
         );
     }
 

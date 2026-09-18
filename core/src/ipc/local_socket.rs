@@ -134,6 +134,11 @@ mod unix_impl {
     pub struct LocalSocketListener {
         listener: UnixListener,
         path: PathBuf,
+        /// Whether to verify each accepted peer is the same local user
+        /// (AGT-022). Set when bound with [`ListenerSecurity::CurrentUserOnly`];
+        /// the endpoint is already `0o700`, so this is a defence-in-depth check
+        /// that a same-uid peer is on the other end of every accepted socket.
+        verify_peer_uid: bool,
     }
 
     impl LocalSocketListener {
@@ -190,14 +195,34 @@ mod unix_impl {
                 std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700))?;
             }
 
-            Ok(Self { listener, path })
+            Ok(Self {
+                listener,
+                path,
+                verify_peer_uid: options.security == ListenerSecurity::CurrentUserOnly,
+            })
         }
 
         /// Accept the next client connection, returning erased read/write halves.
+        ///
+        /// On a [`ListenerSecurity::CurrentUserOnly`] endpoint the peer's uid is
+        /// verified (AGT-022): a connection from a *different* local user is
+        /// dropped and logged, and the loop keeps waiting for a legitimate
+        /// same-user client — so a foreign-uid peer never surfaces as an error to
+        /// the daemon's accept loop. The uid check fails **open**: if the peer
+        /// credential cannot be read it is allowed, so a transient `getsockopt`
+        /// failure can never reject a legitimate same-user reconnect (the `0o700`
+        /// endpoint is the primary gate; this is defence-in-depth).
         pub async fn accept(&mut self) -> io::Result<(BoxedReader, BoxedWriter)> {
-            let (stream, _addr) = self.listener.accept().await?;
-            let (reader, writer) = stream.into_split();
-            Ok((Box::new(reader), Box::new(writer)))
+            loop {
+                let (stream, _addr) = self.listener.accept().await?;
+                if self.verify_peer_uid && !peer_is_current_user(&stream) {
+                    // Foreign-user peer: drop it and keep listening.
+                    drop(stream);
+                    continue;
+                }
+                let (reader, writer) = stream.into_split();
+                return Ok((Box::new(reader), Box::new(writer)));
+            }
         }
 
         /// Remove the socket file. Call on listener shutdown when the endpoint
@@ -212,6 +237,91 @@ mod unix_impl {
         // SAFETY: `getuid` has no preconditions, never fails, and simply returns
         // the real uid of the calling process.
         unsafe { libc::getuid() }
+    }
+
+    /// Whether the peer connected on `stream` is the **same local user** as this
+    /// process (AGT-022).
+    ///
+    /// Reads the peer's uid from the accepted socket and compares it against our
+    /// effective *and* real uid — for a normal (non-setuid) daemon these are
+    /// equal, so this is simply "same user", but accepting either avoids a false
+    /// reject under an euid/ruid split. Only a *positively different* uid is
+    /// rejected. If the credential cannot be read the connection is **allowed**
+    /// (fail-open): the endpoint is already `0o700`-restricted, so this is a
+    /// second layer, and a false reject would break a legitimate reconnect.
+    fn peer_is_current_user(stream: &UnixStream) -> bool {
+        use std::os::unix::io::AsRawFd;
+        match peer_uid(stream.as_raw_fd()) {
+            Ok(peer) => {
+                // SAFETY: `geteuid`/`getuid` have no preconditions and never fail.
+                let euid = unsafe { libc::geteuid() };
+                let ruid = unsafe { libc::getuid() };
+                if peer == euid || peer == ruid {
+                    true
+                } else {
+                    // Daemon stderr is redirected to its per-session log file, so
+                    // this rejection is captured there (tracing is an optional
+                    // core feature, so this always-compiled module logs directly).
+                    eprintln!(
+                        "termihub: rejecting local-IPC peer uid {peer} on a \
+                         current-user-only endpoint (our uid {euid}) — refusing a \
+                         foreign-user connection (AGT-022)"
+                    );
+                    false
+                }
+            }
+            Err(e) => {
+                eprintln!(
+                    "termihub: could not read local-IPC peer credential ({e}); \
+                     allowing the connection (endpoint is already 0o700-restricted)"
+                );
+                true
+            }
+        }
+    }
+
+    /// Read the connecting peer's uid from an accepted Unix-domain-socket fd.
+    ///
+    /// Linux exposes it via `SO_PEERCRED`; macOS/BSD via `getpeereid`. Both
+    /// report the peer's credentials as of `connect(2)`, which is what lets the
+    /// accept side authenticate the connecting user.
+    #[cfg(target_os = "linux")]
+    pub(super) fn peer_uid(fd: std::os::unix::io::RawFd) -> io::Result<u32> {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: `fd` is a valid connected socket for the lifetime of this call;
+        // `cred`/`len` are correctly sized out-params for SO_PEERCRED.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                &mut cred as *mut libc::ucred as *mut libc::c_void,
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(cred.uid)
+    }
+
+    /// Read the connecting peer's uid via `getpeereid` on macOS/BSD.
+    #[cfg(not(target_os = "linux"))]
+    pub(super) fn peer_uid(fd: std::os::unix::io::RawFd) -> io::Result<u32> {
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        // SAFETY: `fd` is a valid connected socket for the lifetime of this call;
+        // `uid`/`gid` are valid out-params for `getpeereid`.
+        let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(uid)
     }
 
     /// Build a "refusing to use directory" permission error (AGT-020).
@@ -932,5 +1042,75 @@ mod tests {
         ensure_private_dir(&dir).expect("second call on owned dir must succeed");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// AGT-022: a `CurrentUserOnly` listener must still accept a connection from
+    /// the **same** local user (the normal, and only, legitimate case: the
+    /// desktop/agent and its session daemon all run as one user). The peer-uid
+    /// check must never reject or hang a same-user connect — that would break
+    /// every legitimate session reconnect. Regression guard for the check not
+    /// mis-firing on the same user.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn current_user_only_accepts_same_user_connection() {
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "termihub-core-ipc-peer-ok-{}-{n}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let address = dir.join("s.sock").to_string_lossy().into_owned();
+
+        let mut listener = LocalSocketListener::bind_with_options(
+            &address,
+            ListenerOptions {
+                security: ListenerSecurity::CurrentUserOnly,
+                stale_reclaim: StaleReclaim::Unconditional,
+            },
+        )
+        .await
+        .expect("bind current-user-only listener");
+
+        let server = tokio::spawn(async move {
+            // If a same-user peer were wrongly rejected, this accept would hang
+            // and the test would time out — exactly the reconnect-breaking
+            // failure the check must avoid.
+            let (mut reader, mut writer) = listener.accept().await.expect("accept same-user");
+            let mut b = [0u8; 2];
+            reader.read_exact(&mut b).await.expect("server read");
+            writer.write_all(&b).await.expect("server echo");
+            writer.flush().await.expect("server flush");
+        });
+
+        let (mut reader, mut writer) = connect(&address).await.expect("same-user connect");
+        writer.write_all(b"ok").await.expect("client write");
+        writer.flush().await.expect("client flush");
+        let mut got = [0u8; 2];
+        reader.read_exact(&mut got).await.expect("client read");
+        assert_eq!(&got, b"ok", "same-user round-trip must succeed");
+
+        server.await.expect("server task");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// AGT-022: the peer-credential helper reads the uid of the process on the
+    /// other end of a Unix socket. On a same-process socket pair that uid is our
+    /// own — this exercises the real `SO_PEERCRED`/`getpeereid` syscall path so a
+    /// platform quirk in reading the credential is caught, without needing a
+    /// second uid (which CI cannot provide to test a foreign-uid rejection).
+    #[cfg(unix)]
+    #[test]
+    fn peer_uid_of_socket_pair_is_current_user() {
+        use std::os::unix::io::AsRawFd;
+
+        let (a, _b) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+        let peer = super::unix_impl::peer_uid(a.as_raw_fd()).expect("read peer uid");
+        // SAFETY: `getuid`/`geteuid` never fail.
+        let ours_real = unsafe { libc::getuid() };
+        let ours_effective = unsafe { libc::geteuid() };
+        assert!(
+            peer == ours_real || peer == ours_effective,
+            "peer uid {peer} must match our uid (real {ours_real}, effective {ours_effective})"
+        );
     }
 }
