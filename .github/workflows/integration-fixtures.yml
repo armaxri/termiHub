@@ -54,18 +54,43 @@ jobs:
       - name: Bring up the Docker fixtures
         # `--wait` blocks until every container is healthy — viable because the
         # healthchecks were fixed to probe via bash /dev/tcp instead of an
-        # uninstalled `nc` (#852). The stress/fault/network profiles cover the
-        # sftp-stress, network-fault and tunnel-target ports the suite uses; the
-        # agent profile is omitted (no core/tests test targets it).
+        # uninstalled `nc` (#852). The suite runs with `--all-features`, so every
+        # feature-gated `require_docker!` test compiles AND runs — each must have
+        # its fixture up or (under TERMIHUB_REQUIRE_DOCKER=1) it hard-fails:
+        #   * stress   -> sftp-stress (sftp_stress.rs, `ssh`)
+        #   * fault    -> network-fault-proxy (network_resilience.rs, `ssh`)
+        #   * network  -> network-target / ssh-tunnel-target ports
+        #   * ftp      -> ftp-server:21 (ftp_file_browser/reconnect/transfer.rs, `ftp`)
+        #   * vnc      -> vnc-server:5900 + vnc-vencrypt-server:5900 (vnc.rs, `vnc`)
+        # The default-profile services (ssh-*, telnet, ssh-x11) come up regardless.
+        # The `agent` profile is omitted (no core/tests target it — the agent
+        # suite lives in the `agent` crate, not this `-p termihub-core` lane).
         run: |
           docker compose -f tests/docker/docker-compose.yml \
             --profile stress --profile fault --profile network \
+            --profile ftp --profile vnc \
             up -d --build --wait
 
       - name: Run core integration suite against the fixtures
         # `--all-features` enables the `docker` feature the integration tests
         # compile against; with the fixtures up, the `require_docker!` guards run
         # the tests instead of skipping them.
+        #
+        # TERMIHUB_REQUIRE_DOCKER=1 (TBE-006): this lane ALWAYS provisions the
+        # fixtures — the unconditional "Bring up the Docker fixtures" step above
+        # runs `docker compose … up -d --build --wait`, and `--wait` blocks until
+        # every container is healthy, so by the time this step runs Docker is
+        # guaranteed present. Without this var, a fixture that is nevertheless
+        # unreachable (a container that never mapped its port, a compose that
+        # partially came up) would make `require_docker!` *skip* the test and the
+        # lane would go falsely green — "tests passed" when they never ran. Setting
+        # it turns that missing/broken fixture into a hard FAIL instead of a silent
+        # skip, so this Docker-backed lane cannot report green without actually
+        # exercising the fixtures. Scoped to this step because it is the only one
+        # that runs the `require_docker!`-gated core/tests; the local/per-PR gate
+        # (no containers) leaves it unset, so those runs still skip as before.
+        env:
+          TERMIHUB_REQUIRE_DOCKER: "1"
         #
         # `--test-threads=1` is required: the suites share single-instance
         # containers, and running them concurrently makes them stomp on shared
