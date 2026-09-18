@@ -38,6 +38,8 @@ use super::ssh_trust_store::{SshTrustStore, TrustLookup};
 /// warns about prominently. `prompt_id` correlates the reply
 /// (`ssh_host_key_decision`) back to the blocked handshake.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct SshHostKeyPromptEvent {
     pub prompt_id: String,
     pub host: String,

@@ -53,6 +53,8 @@ pub struct RemoteDesktopCursorEvent {
 
 /// `remote-desktop-clipboard` payload (remote → local text).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct RemoteDesktopClipboardEvent {
     pub session_id: String,
     pub text: String,
@@ -82,13 +84,17 @@ pub struct RemoteDesktopStateEvent {
 /// for a previously-trusted host (`true`) — the possible-MITM case the dialog
 /// warns about prominently.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct RemoteDesktopCertPromptEvent {
     pub session_id: String,
     pub host: String,
     pub fingerprint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub subject: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub issuer: Option<String>,
     pub changed: bool,
 }
