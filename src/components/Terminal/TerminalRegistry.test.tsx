@@ -503,6 +503,84 @@ describe("pasteToTerminal debounce against bounced mouse signals (#2595)", () =>
   });
 });
 
+describe("pasteToTerminal remote-desktop-tolerant debounce window (#2595 follow-up)", () => {
+  // Right-click paste double-inserts the clipboard when termiHub is viewed over
+  // Windows Remote Desktop (mstsc, the OS session-remoting) — unrelated to
+  // termiHub's own RDP (rdp-sidecar) connection type. The OS remote-desktop input
+  // relay delivers the duplicated context-menu/mouse signal with variable latency,
+  // so the second paste trigger for one gesture arrives WELL more than the old
+  // 50 ms apart and slipped past the guard. The window must be wide enough to
+  // absorb that relay jitter (~250-300 ms). These tests use absolute spacings so
+  // they would FAIL with the old 50 ms constant, pinning the widened window.
+  let nowSpy: ReturnType<typeof vi.spyOn>;
+  let currentNow: number;
+
+  beforeEach(() => {
+    currentNow = 2_000_000;
+    nowSpy = vi.spyOn(Date, "now").mockImplementation(() => currentNow);
+    mockReadClipboard.mockResolvedValue("relayed");
+    vi.mocked(sendInput).mockClear();
+  });
+
+  afterEach(() => {
+    nowSpy.mockRestore();
+  });
+
+  it("has a remote-desktop-tolerant window (>= 250 ms), far wider than the old 50 ms", () => {
+    // Pins the constant so a future edit back down to a too-tight value is caught.
+    expect(PASTE_DEBOUNCE_MS).toBeGreaterThanOrEqual(250);
+  });
+
+  it("pastes only once when two triggers land 150 ms apart (inside the new window, outside the old 50 ms)", async () => {
+    act(() => {
+      registryActions.registerSession("tab-relay", "session-relay");
+    });
+
+    // 150 ms mimics a remote-desktop-relayed duplicate: it would have PASSED the
+    // old 50 ms guard (→ double paste) but must be swallowed by the widened window.
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-relay");
+      currentNow += 150;
+      await registryActions.pasteToTerminal("tab-relay");
+    });
+
+    expect(sendInput).toHaveBeenCalledTimes(1);
+    expect(sendInput).toHaveBeenCalledWith("session-relay", "relayed");
+  });
+
+  it("pastes into two different tabs even 150 ms apart (guard is keyed per tab)", async () => {
+    act(() => {
+      registryActions.registerSession("tab-relay-a", "session-relay-a");
+      registryActions.registerSession("tab-relay-b", "session-relay-b");
+    });
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-relay-a");
+      currentNow += 150;
+      await registryActions.pasteToTerminal("tab-relay-b");
+    });
+
+    expect(sendInput).toHaveBeenCalledTimes(2);
+    expect(sendInput).toHaveBeenCalledWith("session-relay-a", "relayed");
+    expect(sendInput).toHaveBeenCalledWith("session-relay-b", "relayed");
+  });
+
+  it("allows a genuinely later paste into the same tab (beyond the window)", async () => {
+    act(() => {
+      registryActions.registerSession("tab-relay-later", "session-relay-later");
+    });
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("tab-relay-later");
+      // Well beyond any remote-desktop relay jitter — a deliberate second paste applies.
+      currentNow += PASTE_DEBOUNCE_MS + 50;
+      await registryActions.pasteToTerminal("tab-relay-later");
+    });
+
+    expect(sendInput).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("fitTerminal", () => {
   let rafSpy: ReturnType<typeof vi.spyOn>;
 
