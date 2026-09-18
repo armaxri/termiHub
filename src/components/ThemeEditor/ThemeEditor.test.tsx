@@ -57,10 +57,28 @@ describe("ThemeEditor", () => {
     expect(q("theme-editor-hex-scrollbarThumbHover")).toBeTruthy();
   });
 
+  it("populates the base-theme select from the initial theme", () => {
+    render(createCustomTheme("light", "Light Based"));
+    expect(q("theme-editor-base").getAttribute("data-value")).toBe("light");
+  });
+
+  it("keeps Save enabled for a valid theme", () => {
+    render(createCustomTheme("dark", "Valid"));
+    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("disables Save when the name is blank", () => {
     render(createCustomTheme("dark", "X"));
     setValue(q<HTMLInputElement>("theme-editor-name"), "   ");
     expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("re-enables Save once a required name is restored", () => {
+    render(createCustomTheme("dark", "Recover"));
+    setValue(q<HTMLInputElement>("theme-editor-name"), "");
+    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    setValue(q<HTMLInputElement>("theme-editor-name"), "Named Again");
+    expect((q("theme-editor-save") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("saves the edited colors with a trimmed name", () => {
