@@ -787,6 +787,77 @@ mod tests {
     }
 
     #[test]
+    fn unknown_top_level_fields_round_trip_via_flatten() {
+        // PER-010: a top-level key written by a newer app version that this
+        // struct does not model must survive a load→save round-trip instead of
+        // being dropped — otherwise a downgrade/rollback erases whatever the
+        // newer version persisted into state.json. Without the
+        // `#[serde(flatten)] extra` catch-all this assertion fails (the key
+        // vanishes on re-serialize), which is what makes it a guard.
+        let json = json!({
+            "version": 1,
+            "sessions": {},
+            "update": {},
+            "future_field": { "a": 1, "b": [true, false] },
+            "another_new_key": "keep-me",
+        });
+
+        let state: AgentState = serde_json::from_value(json.clone()).unwrap();
+        let round_tripped = serde_json::to_value(&state).unwrap();
+        assert_eq!(
+            round_tripped.get("future_field"),
+            json.get("future_field"),
+            "unknown top-level key was dropped on save — a downgrade would lose it",
+        );
+        assert_eq!(
+            round_tripped.get("another_new_key"),
+            json.get("another_new_key"),
+        );
+        // Known fields still deserialize correctly alongside the catch-all.
+        assert_eq!(state.version, 1);
+        assert!(state.sessions.is_empty());
+    }
+
+    #[test]
+    fn empty_extra_keeps_serialized_state_clean() {
+        // An empty catch-all must not leak an `extra` key into state.json — a
+        // normal state with no unknown fields serializes exactly as before.
+        let json = serde_json::to_value(AgentState::default()).unwrap();
+        assert!(json.get("extra").is_none(), "flatten leaked an `extra` key");
+    }
+
+    #[test]
+    fn save_load_preserves_unknown_top_level_field_from_newer_version() {
+        // The real persistence path: a state.json written by a newer agent
+        // carries a top-level key this version does not model. Loading and
+        // re-saving (e.g. on a rollback/downgrade) must keep it verbatim rather
+        // than erase it (PER-010). Regression test for the drop-unknown gap.
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "version": 2,
+              "sessions": {},
+              "update": {},
+              "future_feature": { "enabled": true, "threshold": 42 }
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = AgentState::load_from(&path);
+        loaded.save_to(&path);
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            json.get("future_feature"),
+            Some(&json!({ "enabled": true, "threshold": 42 })),
+            "a newer version's field was erased on rollback save — data loss",
+        );
+    }
+
+    #[test]
     fn add_and_remove_session() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("state.json");
