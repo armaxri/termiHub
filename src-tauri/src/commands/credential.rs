@@ -162,6 +162,11 @@ pub struct UnlockError {
 
 impl From<UnlockFailure> for UnlockError {
     fn from(failure: UnlockFailure) -> Self {
+        // Only a genuinely corrupt/too-old file gets the destructive "reset
+        // store" affordance. A `NewerVersion` failure (auto-update-then-rollback,
+        // PER-008) is deliberately NOT flagged corrupted: the file is intact and
+        // readable by a newer build, so offering a reset would destroy recoverable
+        // data — the message tells the user to update termiHub instead.
         let corrupted = matches!(failure, UnlockFailure::Corrupted(_));
         UnlockError {
             message: failure.to_string(),

@@ -19,10 +19,101 @@ pub const ARGON2_PARALLELISM: u32 = 1;
 pub const SALT_LEN: usize = 32;
 /// Length of the AES-256-GCM nonce in bytes.
 pub const NONCE_LEN: usize = 12;
-/// Current envelope format version.
+/// Current envelope format version — every new encryption is written at this
+/// version.
+///
+/// # Versioning & migration contract (PER-008)
+///
+/// The envelope format is versioned so the on-disk crypto (KDF, AEAD, layout)
+/// can be hardened over time without orphaning existing vaults. **Reads accept
+/// the range [`MIN_SUPPORTED_ENVELOPE_VERSION`]`..=`[`ENVELOPE_VERSION`]; writes
+/// always use [`ENVELOPE_VERSION`].** An older-but-supported vault is therefore
+/// transparently re-sealed at the current version on its next save
+/// ("upgrade on write") — it is never eagerly rewritten on a read-only unlock.
+///
+/// To introduce a new format `N` safely:
+/// 1. Bump `ENVELOPE_VERSION` to `N`.
+/// 2. Teach [`decrypt_with_password`] (and the unlock path in `master_password`)
+///    to decrypt an envelope whose `version` is `N`. The version is bound as the
+///    AEAD AAD, so a version-`M` envelope MUST authenticate with `M`'s AAD, never
+///    the current one — always build it via [`aad_for_version`].
+/// 3. Leave `MIN_SUPPORTED_ENVELOPE_VERSION` covering every format still meant to
+///    be readable; raise it only to *drop* support for a format — a one-way,
+///    data-losing decision, after which a store at a dropped version is
+///    unreadable ("no longer supported").
+///
+/// A store written by a *newer* build (`version > ENVELOPE_VERSION`) — the
+/// auto-update-then-rollback case — is rejected with a distinct "written by a
+/// newer version" error, never as corruption, so a downgrade is recoverable by
+/// re-updating rather than looking like data loss.
 pub const ENVELOPE_VERSION: u32 = 1;
-/// Additional authenticated data: single version byte.
-pub const AAD: &[u8] = &[1];
+
+/// Oldest envelope format version this build can still read.
+///
+/// Reads accept `MIN_SUPPORTED_ENVELOPE_VERSION..=ENVELOPE_VERSION`. Today that
+/// range is just `{1}`; the constant exists so a future [`ENVELOPE_VERSION`]
+/// bump keeps older-but-supported vaults readable. See the migration contract on
+/// [`ENVELOPE_VERSION`].
+pub const MIN_SUPPORTED_ENVELOPE_VERSION: u32 = 1;
+
+/// The AEAD additional-authenticated-data for an envelope of the given format
+/// `version`: a single version byte.
+///
+/// The version is bound into the AEAD tag, so decryption of a version-`N`
+/// envelope MUST authenticate with `N`'s AAD — not the current
+/// [`ENVELOPE_VERSION`] — or an otherwise-valid unlock fails authentication.
+/// Encryption always uses `ENVELOPE_VERSION`. A version-1 envelope yields the
+/// single byte `[1]`, byte-for-byte identical to the original hardcoded AAD, so
+/// every existing `credentials.enc` stays readable across this change.
+pub fn aad_for_version(version: u32) -> [u8; 1] {
+    [version as u8]
+}
+
+/// How a stored envelope's format `version` relates to what this build reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VersionSupport {
+    /// Within `MIN_SUPPORTED_ENVELOPE_VERSION..=ENVELOPE_VERSION` — readable.
+    Supported,
+    /// Below `MIN_SUPPORTED_ENVELOPE_VERSION` — support was dropped; terminal.
+    TooOld,
+    /// Above `ENVELOPE_VERSION` — written by a newer build (downgrade/rollback).
+    Newer,
+}
+
+/// Classify a stored envelope `version` against this build's readable range.
+///
+/// This is the single gate every read path (unlock, import) uses so the two
+/// distinct rejection cases — too-old vs. newer-than-this-build — stay
+/// consistent everywhere. See the migration contract on [`ENVELOPE_VERSION`].
+pub fn classify_envelope_version(version: u32) -> VersionSupport {
+    if version < MIN_SUPPORTED_ENVELOPE_VERSION {
+        VersionSupport::TooOld
+    } else if version > ENVELOPE_VERSION {
+        VersionSupport::Newer
+    } else {
+        VersionSupport::Supported
+    }
+}
+
+/// User-facing message for a store written by a newer build than this one.
+///
+/// Deliberately distinct from any "corrupt" wording: this is the recoverable
+/// auto-update-then-rollback case, fixed by updating termiHub — not data loss.
+pub fn newer_version_message(version: u32) -> String {
+    format!(
+        "credential store was written by a newer version of termiHub \
+         (format version {version}, this build reads up to {ENVELOPE_VERSION}) \
+         — update termiHub to unlock"
+    )
+}
+
+/// User-facing message for a store whose format is older than this build reads.
+pub fn too_old_version_message(version: u32) -> String {
+    format!(
+        "credential store format version {version} is no longer supported \
+         (this build reads version {MIN_SUPPORTED_ENVELOPE_VERSION} and newer)"
+    )
+}
 
 /// Upper bound on the Argon2 memory cost (KiB) accepted from a stored envelope.
 ///
@@ -178,9 +269,13 @@ pub fn encrypt_with_cost(
     let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
+    // Bind the current format version into the AEAD tag. Reads authenticate with
+    // the envelope's own version (see `aad_for_version`), so writes must seal
+    // with the version they stamp on the envelope — always `ENVELOPE_VERSION`.
+    let aad = aad_for_version(ENVELOPE_VERSION);
     let payload = aes_gcm::aead::Payload {
         msg: plaintext,
-        aad: AAD,
+        aad: &aad,
     };
     let ciphertext = cipher
         .encrypt(nonce, payload)
@@ -242,12 +337,17 @@ pub fn decrypt_with_password(
     password: &str,
     envelope: &EncryptedEnvelope,
 ) -> std::result::Result<Vec<u8>, DecryptError> {
-    if envelope.version != ENVELOPE_VERSION {
-        return Err(anyhow::anyhow!(
-            "Unsupported encrypted envelope version: {}",
-            envelope.version
-        )
-        .into());
+    // Accept any version in the supported range; reject the two out-of-range
+    // cases with distinct, non-corruption messages (PER-008). A newer-than-this
+    // -build envelope is the recoverable rollback case, not data loss.
+    match classify_envelope_version(envelope.version) {
+        VersionSupport::Supported => {}
+        VersionSupport::TooOld => {
+            return Err(anyhow::anyhow!(too_old_version_message(envelope.version)).into());
+        }
+        VersionSupport::Newer => {
+            return Err(anyhow::anyhow!(newer_version_message(envelope.version)).into());
+        }
     }
 
     let salt = BASE64
@@ -288,9 +388,13 @@ pub fn decrypt_with_password(
     let cipher = Aes256Gcm::new_from_slice(&key).context("Failed to create cipher")?;
     let nonce = Nonce::from_slice(&nonce_bytes);
 
+    // Authenticate with the envelope's OWN version, not the current one: the
+    // version is bound as AAD, so a supported-but-older envelope must use its
+    // own version byte or a valid unlock would fail authentication (PER-008).
+    let aad = aad_for_version(envelope.version);
     let payload = aes_gcm::aead::Payload {
         msg: &ciphertext,
-        aad: AAD,
+        aad: &aad,
     };
     // AEAD authentication failure: the derived key (hence the password) is wrong,
     // or the ciphertext was tampered/corrupted — indistinguishable and handled
@@ -483,13 +587,93 @@ mod tests {
             .contains("algorithm"));
     }
 
-    #[test]
-    fn unsupported_version_fails() {
-        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
-        envelope.version = 99;
+    // --- PER-008: safe envelope version-range migration ---
 
-        let result = decrypt_with_password("pw", &envelope);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unsupported"));
+    #[test]
+    fn newer_version_reports_distinct_message_not_corruption() {
+        // A store written by a NEWER build (version > ENVELOPE_VERSION) — the
+        // auto-update-then-rollback case — must surface a distinct "newer
+        // version, update to unlock" message, NOT look like corruption. This is
+        // the key UX fix: a recoverable downgrade must not read as data loss.
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.version = ENVELOPE_VERSION + 1;
+
+        let msg = decrypt_with_password("pw", &envelope)
+            .unwrap_err()
+            .to_string()
+            .to_lowercase();
+        assert!(
+            msg.contains("newer version"),
+            "expected a distinct newer-version message, got: {msg}"
+        );
+        assert!(
+            !msg.contains("corrupt"),
+            "a downgrade must not read as corruption, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn too_old_version_reports_no_longer_supported() {
+        // A store whose format predates the minimum supported version is
+        // terminal: report it clearly as no-longer-supported.
+        let mut envelope = encrypt_with_password("pw", b"data").unwrap();
+        envelope.version = 0;
+
+        let msg = decrypt_with_password("pw", &envelope)
+            .unwrap_err()
+            .to_string()
+            .to_lowercase();
+        assert!(
+            msg.contains("no longer supported"),
+            "expected a no-longer-supported message, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn min_supported_version_is_accepted_on_read() {
+        // The range check must accept the minimum supported version. Today
+        // MIN == CURRENT == 1, so a normally-written envelope both is at the
+        // minimum and round-trips; the assertion documents the invariant that
+        // MIN is a readable member of the range, not an off-by-one boundary.
+        assert_eq!(
+            classify_envelope_version(MIN_SUPPORTED_ENVELOPE_VERSION),
+            VersionSupport::Supported
+        );
+        assert_eq!(
+            classify_envelope_version(ENVELOPE_VERSION),
+            VersionSupport::Supported
+        );
+
+        let envelope = encrypt_with_password("pw", b"data").unwrap();
+        assert_eq!(envelope.version, ENVELOPE_VERSION);
+        assert_eq!(decrypt_with_password("pw", &envelope).unwrap(), b"data");
+    }
+
+    #[test]
+    fn classify_envelope_version_boundaries() {
+        assert_eq!(classify_envelope_version(0), VersionSupport::TooOld);
+        assert_eq!(
+            classify_envelope_version(ENVELOPE_VERSION + 1),
+            VersionSupport::Newer
+        );
+    }
+
+    #[test]
+    fn aad_for_version_1_matches_legacy_single_byte() {
+        // Backward-compat invariant: version-1 envelopes were sealed with the
+        // original hardcoded AAD of `[1]`. The version-derived AAD MUST reproduce
+        // that exact byte, or every existing `credentials.enc` becomes
+        // undecryptable. Do not "fix" this to `version.to_le_bytes()`.
+        assert_eq!(aad_for_version(1), [1u8]);
+        assert_eq!(aad_for_version(ENVELOPE_VERSION), [ENVELOPE_VERSION as u8]);
+    }
+
+    #[test]
+    fn writes_always_use_current_envelope_version() {
+        // Upgrade-on-write contract: encryption always stamps ENVELOPE_VERSION,
+        // so a store read at a supported-but-older version is transparently
+        // re-sealed at the current version on its next save.
+        let envelope = encrypt_with_password("pw", b"data").unwrap();
+        assert_eq!(envelope.version, ENVELOPE_VERSION);
     }
 }
