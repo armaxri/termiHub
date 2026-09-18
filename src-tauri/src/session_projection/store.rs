@@ -309,18 +309,19 @@ impl SessionLifecycleStore {
         } else {
             INITIAL_RECONNECT_STATE
         };
-        let entry = inner
-            .sessions
-            .entry(session_id.to_string())
-            .or_insert_with(SessionLifecycle::connecting);
-        entry.status = SessionStatus::Connected;
-        entry.reconnect = reconnect;
-        entry.end_reason = None;
-        entry.error = None;
-        entry.reconnect_error = None;
-        // A fresh live session clears any stale exit cause (#2615) so the region
-        // never carries an exit for a connected tab.
-        entry.exit = None;
+        // No-op for an unknown/removed session (SM-006): only `connect` creates an
+        // entry, so a late `connected` for a tab the user already closed can never
+        // resurrect a phantom one.
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::Connected;
+            entry.reconnect = reconnect;
+            entry.end_reason = None;
+            entry.error = None;
+            entry.reconnect_error = None;
+            // A fresh live session clears any stale exit cause (#2615) so the region
+            // never carries an exit for a connected tab.
+            entry.exit = None;
+        }
     }
 
     /// `session.connectFailed` — the initial connect errored. Terminal `Failed`
@@ -328,17 +329,18 @@ impl SessionLifecycleStore {
     pub fn connect_failed(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
-        let entry = inner
-            .sessions
-            .entry(session_id.to_string())
-            .or_insert_with(SessionLifecycle::connecting);
-        entry.status = SessionStatus::Failed;
-        entry.reconnect = INITIAL_RECONNECT_STATE;
-        entry.end_reason = Some(EndReason::Error);
-        entry.error = error;
-        entry.reconnect_error = None;
-        // The connect never established a session; nothing to re-attach to (#2457).
-        entry.backend_session_id = None;
+        // No-op for an unknown/removed session (SM-006): the initial connect always
+        // folds `connect` first (`commands::session`), so a late `connectFailed`
+        // for a tab the user already closed must not resurrect a phantom entry.
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::Failed;
+            entry.reconnect = INITIAL_RECONNECT_STATE;
+            entry.end_reason = Some(EndReason::Error);
+            entry.error = error;
+            entry.reconnect_error = None;
+            // The connect never established a session; nothing to re-attach to (#2457).
+            entry.backend_session_id = None;
+        }
     }
 
     /// `session.disconnect` — a user-initiated graceful disconnect. Stops any
@@ -346,18 +348,19 @@ impl SessionLifecycleStore {
     pub fn disconnect(&self, session_id: &str) {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
-        let entry = inner
-            .sessions
-            .entry(session_id.to_string())
-            .or_insert_with(SessionLifecycle::connecting);
-        entry.status = SessionStatus::Disconnected;
-        entry.reconnect = INITIAL_RECONNECT_STATE;
-        entry.end_reason = Some(EndReason::User);
-        entry.error = None;
-        entry.reconnect_error = None;
-        // The session is torn down; drop the re-attach id so the region never
-        // advertises a dead backend session (#2457).
-        entry.backend_session_id = None;
+        // No-op for an unknown/removed session (SM-006): a user disconnect only
+        // fires for a live tab that already folded `connect`, so a late/duplicate
+        // `disconnect` for a removed tab must not resurrect a phantom entry.
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::Disconnected;
+            entry.reconnect = INITIAL_RECONNECT_STATE;
+            entry.end_reason = Some(EndReason::User);
+            entry.error = None;
+            entry.reconnect_error = None;
+            // The session is torn down; drop the re-attach id so the region never
+            // advertises a dead backend session (#2457).
+            entry.backend_session_id = None;
+        }
     }
 
     /// `session.dropped` — the link dropped without the user asking. Lands in
@@ -367,18 +370,19 @@ impl SessionLifecycleStore {
     pub fn dropped(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
-        let entry = inner
-            .sessions
-            .entry(session_id.to_string())
-            .or_insert_with(SessionLifecycle::connecting);
-        entry.status = SessionStatus::Disconnected;
-        entry.reconnect = INITIAL_RECONNECT_STATE;
-        entry.end_reason = Some(EndReason::Unexpected);
-        entry.error = error;
-        entry.reconnect_error = None;
-        // The backend session is gone on a genuine drop; drop the re-attach id
-        // (#2457). A backend-driven redrive sets the new id once it reconnects.
-        entry.backend_session_id = None;
+        // No-op for an unknown/removed session (SM-006): a drop only fires for a
+        // tab that already folded `connect`, so a late `dropped` arriving after the
+        // user closed the tab (`remove`) must not resurrect a phantom entry.
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::Disconnected;
+            entry.reconnect = INITIAL_RECONNECT_STATE;
+            entry.end_reason = Some(EndReason::Unexpected);
+            entry.error = error;
+            entry.reconnect_error = None;
+            // The backend session is gone on a genuine drop; drop the re-attach id
+            // (#2457). A backend-driven redrive sets the new id once it reconnects.
+            entry.backend_session_id = None;
+        }
     }
 
     /// `session.reconnect` — begin (or restart) the auto-reconnect loop. Feeds
@@ -390,21 +394,22 @@ impl SessionLifecycleStore {
         inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
         let reconnect = inner.reconnect_event(current, ReconnectEvent::Drop);
-        let entry = inner
-            .sessions
-            .entry(session_id.to_string())
-            .or_insert_with(SessionLifecycle::connecting);
-        entry.status = SessionStatus::Reconnecting;
-        entry.reconnect = reconnect;
-        entry.end_reason = None;
-        entry.reconnect_error = None;
-        // The loop is (re)starting from a dead session; drop the stale re-attach
-        // id so the frontend never re-attaches to a corpse (#2457). The redrive
-        // repopulates it via `set_backend_session_id` once an attempt succeeds.
-        entry.backend_session_id = None;
-        // A restart supersedes any prior exit cause (#2615): the tab is coming
-        // back, not exited.
-        entry.exit = None;
+        // No-op for an unknown/removed session (SM-006): a reconnect loop only arms
+        // for a tab that already folded `connect`, so a late `reconnect` for a tab
+        // the user already closed must not resurrect a phantom entry.
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::Reconnecting;
+            entry.reconnect = reconnect;
+            entry.end_reason = None;
+            entry.reconnect_error = None;
+            // The loop is (re)starting from a dead session; drop the stale re-attach
+            // id so the frontend never re-attaches to a corpse (#2457). The redrive
+            // repopulates it via `set_backend_session_id` once an attempt succeeds.
+            entry.backend_session_id = None;
+            // A restart supersedes any prior exit cause (#2615): the tab is coming
+            // back, not exited.
+            entry.exit = None;
+        }
     }
 
     /// Transient agent-transport-break reconnecting fold (#2555, moved to the
@@ -630,23 +635,27 @@ impl SessionLifecycleStore {
     /// manual "start new shell" action rather than the backend silently minting a
     /// replacement shell. Resets the reconnect loop to idle, clears the
     /// re-attach id (the backend session is gone), and records `Unexpected` as the
-    /// end reason (the live process was lost, not user-ended). Creates the entry
-    /// lazily so the redrive can fold it for a tab the store is already tracking.
+    /// end reason (the live process was lost, not user-ended). A no-op for an
+    /// unknown/removed session (SM-006): its callers only fold it for a tab the
+    /// store is already tracking (they guard on the live reconnecting state), so it
+    /// never needs to create the entry and must not resurrect a removed one.
     pub fn session_lost(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
         inner.dirty.insert(session_id.to_string());
-        let entry = inner
-            .sessions
-            .entry(session_id.to_string())
-            .or_insert_with(SessionLifecycle::connecting);
-        entry.status = SessionStatus::SessionLost;
-        entry.reconnect = INITIAL_RECONNECT_STATE;
-        entry.end_reason = Some(EndReason::Unexpected);
-        entry.error = error;
-        entry.reconnect_error = None;
-        // The live agent session could not be recovered; there is no backend
-        // session to re-attach to (#2512).
-        entry.backend_session_id = None;
+        // No-op for an unknown/removed session (SM-006): session-lost only resolves
+        // a tab the store is already tracking (its callers guard on the live
+        // reconnecting state — see `redrive`/`agent_manager`), so a late fold
+        // arriving after the user closed the tab must not resurrect a phantom entry.
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::SessionLost;
+            entry.reconnect = INITIAL_RECONNECT_STATE;
+            entry.end_reason = Some(EndReason::Unexpected);
+            entry.error = error;
+            entry.reconnect_error = None;
+            // The live agent session could not be recovered; there is no backend
+            // session to re-attach to (#2512).
+            entry.backend_session_id = None;
+        }
     }
 
     /// `session.remove` — the session/tab is gone; drop it from the region.

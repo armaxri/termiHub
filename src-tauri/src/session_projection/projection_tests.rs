@@ -701,14 +701,20 @@ fn server_side_connect_failed_fold_settles_the_session_failed() {
 /// between the source fold and the (still-present) client mirror.
 #[test]
 fn server_side_connect_failed_fold_matches_the_client_session_connect_failed_route() {
+    // Both paths first fold the initial `connect` — production always folds it at
+    // the source (`commands::session`) before a `connectFailed`, and post-SM-006
+    // only `connect` creates the entry, so the precondition is required for either
+    // path to have an entry to settle `Failed`.
     // (a) Server-side fold: the store method the fold applies at the source.
     let server = SessionLifecycleStore::new();
     server.set_rand_for_test(Box::new(|| 0.5));
+    server.connect("tab-1");
     server.connect_failed("tab-1", Some("boom".to_string()));
 
     // (b) Client route: the `session.connectFailed` intent through the registry.
     let client = Arc::new(SessionLifecycleStore::new());
     client.set_rand_for_test(Box::new(|| 0.5));
+    client.connect("tab-1");
     let projector = Arc::new(Projector::new());
     projector.register_region(SESSION_LIFECYCLE_REGION, client.snapshot());
     let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(client.clone())));
