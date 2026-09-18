@@ -98,17 +98,10 @@ class TestSshMonitoring(TerminalUi, TabsUi, SidebarUi, ConnectionsUi, PasswordPr
         time.sleep(7)  # auto-refresh interval is ~5s
         assert self.monitoring_stats() is not None
 
-    def test_refresh_button_keeps_stats(self):
-        self.connect_ssh_password(unique_name("ssh-mon-btn-refresh"))
-        self.wait_for_monitoring_stats()
-        self.monitoring_refresh()
-        assert self.wait(self.monitoring_stats, what="stats after refresh")
-
-    def test_dropdown_has_refresh_and_disconnect(self):
+    def test_dropdown_has_disconnect(self):
         self.connect_ssh_password(unique_name("ssh-mon-dropdown"))
         self.wait_for_monitoring_stats()
         self.open_monitoring_dropdown()
-        assert self.driver.exists("monitoring-refresh")
         assert self.driver.exists("monitoring-disconnect")
 
     # ── Hide on non-SSH tab ───────────────────────────────────────────────────

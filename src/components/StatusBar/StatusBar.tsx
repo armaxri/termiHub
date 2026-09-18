@@ -924,8 +924,8 @@ interface MonitoringDetailDropdownProps {
 /**
  * Hostname button with dropdown showing full monitoring details plus lifecycle
  * controls: Pause/Resume, a refresh-interval selector, and — depending on the
- * collector status — a Cancel (connecting) or Retry (offline) affordance, in
- * addition to the existing Refresh + Disconnect (#1233).
+ * collector status — a Cancel (connecting) or Retry (offline) affordance, plus
+ * Disconnect (#1233).
  */
 function MonitoringDetailDropdown({
   host,
