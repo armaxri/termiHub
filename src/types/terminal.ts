@@ -289,18 +289,15 @@ export type { UpdateStrategy } from "./generated/UpdateStrategy";
 // `deferred`/`updateStrategy` are retained for forward-compat + tolerant loading.
 export type { RemoteAgentConfig } from "./generated/RemoteAgentConfig";
 
-/** Key-value pair for Docker environment variables. */
-export interface EnvVar {
-  key: string;
-  value: string;
-}
+// Key-value pair for Docker environment variables.
+// Generated from the Rust `EnvVar` (core/src/config/mod.rs) via ts-rs
+// (audit DUP-030 / MOCK-005).
+export type { EnvVar } from "./generated/EnvVar";
 
-/** Host-to-container volume mount. */
-export interface VolumeMount {
-  hostPath: string;
-  containerPath: string;
-  readOnly?: boolean;
-}
+// Host-to-container volume mount.
+// Generated from the Rust `VolumeMount` (core/src/config/mod.rs) via ts-rs
+// (audit DUP-030 / MOCK-005).
+export type { VolumeMount } from "./generated/VolumeMount";
 
 // Generic connection configuration for saved connections. The `type` field
 // identifies the connection type (e.g. "ssh", "local"), and `config` holds

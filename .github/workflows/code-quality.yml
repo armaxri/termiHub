@@ -114,6 +114,8 @@ jobs:
       # `#[cfg]`-gated fields, so the output is platform-independent.
       - name: Regenerate ts-rs TypeScript bindings
         run: cargo test -p termihub --lib export_bindings
+      - name: Regenerate ts-rs TypeScript bindings (core crate)
+        run: cargo test -p termihub-core --lib export_bindings
       - name: Fail if generated TypeScript is stale
         run: git diff --exit-code -- src/types/generated
 

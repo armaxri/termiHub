@@ -117,6 +117,8 @@ impl Default for PtySize {
 
 /// A key-value pair for environment variables.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct EnvVar {
     pub key: String,
     pub value: String,
@@ -124,11 +126,18 @@ pub struct EnvVar {
 
 /// A Docker volume mount definition.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct VolumeMount {
     pub host_path: String,
     pub container_path: String,
+    // Always serialized (no `skip_serializing_if`), but the hand-written frontend
+    // interface marked it optional. Reproduce that `readOnly?: boolean` shape via
+    // the `Option` TS-gen alias so the generated DTO is byte-identical to the
+    // replaced hand-written type.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub read_only: bool,
 }
 
