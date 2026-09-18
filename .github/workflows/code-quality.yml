@@ -343,6 +343,25 @@ jobs:
         run: |
           python3 scripts/build-test-inventory.py --stdout >> "$GITHUB_STEP_SUMMARY"
 
+  # Static data-testid drift guard (TIN-012). The Python bridge harness
+  # (tests/system/) drives the app by data-testid selectors; when a component's
+  # testid is renamed or removed in src/** but the harness still references it,
+  # the harness silently breaks and only the slow nightly integration lane
+  # catches it — late. This purely-static check (stdlib only, no app build, no
+  # Docker, no uv) fails the PR the moment a harness-referenced testid is absent
+  # from src/**. It reuses the testid-catalog source scan, so it can never
+  # disagree with the catalog. See scripts/check-testid-drift.py.
+  testid-drift-guard:
+    name: Test-ID Drift Guard
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Check harness testid references against src/**
+        run: python3 scripts/check-testid-drift.py
+
   # Dependency Security Audit
   security-audit:
     name: Security Audit
