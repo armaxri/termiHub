@@ -229,6 +229,14 @@ proptest = "1"
 # state (e.g. the network-fault-proxy's `tc` qdisc) so the suite is parallel-safe
 # regardless of `--test-threads` (#864).
 serial_test = "3"
+# Generate the TypeScript connection-config DTOs from their Rust source of truth,
+# killing the hand-duplicated TS↔Rust interfaces behind audit findings
+# DUP-030/MOCK-005 (ts-rs rollout, part of #3088). The `#[derive(TS)]` and
+# `#[ts(...)]` attrs are gated behind `#[cfg_attr(test, …)]`, so ts-rs is compiled
+# ONLY under `cargo test` and is entirely absent from the release binary
+# (`cargo build`). Generation = running the emitted `export_bindings_*` tests; a
+# CI gate then fails on stale output. Matches the version wired for `src-tauri`.
+ts-rs = "12"
 
 [features]
 default = []
