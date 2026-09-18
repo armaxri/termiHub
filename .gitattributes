@@ -69,6 +69,11 @@ docker-compose.yml text eol=lf
 *.7z binary
 *.rar binary
 
+# ts-rs-generated TypeScript DTOs. `cargo test` rewrites these on every platform
+# (incl. the Windows matrix leg), so pin LF explicitly to keep the checked-in
+# output byte-stable and the staleness gate deterministic.
+src/types/generated/** text eol=lf
+
 # Lock files (preserve exactly as-is)
 package-lock.json binary
 pnpm-lock.yaml -text

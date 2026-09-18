@@ -1,4 +1,9 @@
 import { ConnectionConfig, RemoteAgentConfig, TerminalOptions, LineEnding } from "./terminal";
+// DTOs generated from their Rust source of truth via ts-rs (audit DUP-030 /
+// MOCK-005). Imported here so this module can both re-export them (below) and
+// reference them locally (e.g. the tree-node union, DEFAULT_AGENT_SETTINGS).
+import type { ConnectionFolder } from "./generated/ConnectionFolder";
+import type { AgentSettings } from "./generated/AgentSettings";
 import { SettingsSchema, Capabilities } from "./schema";
 import { KeybindingOverrideEntry } from "./keybindings";
 import type { SavedContainerRuntime, SpawnKind } from "./spawn";
@@ -45,12 +50,10 @@ export interface SavedConnection {
   sourceFile?: string | null;
 }
 
-export interface ConnectionFolder {
-  id: string;
-  name: string;
-  parentId: string | null;
-  isExpanded: boolean;
-}
+// In-memory representation of a folder (with a generated path-based ID).
+// Generated from the Rust `ConnectionFolder` (src-tauri/src/connection/config.rs)
+// via ts-rs (audit DUP-030).
+export type { ConnectionFolder };
 
 /**
  * A single jump host (bastion) hop in an SSH `ProxyJump` chain.
@@ -182,18 +185,11 @@ export interface ConnectionTypeInfo {
   capabilities: Capabilities;
 }
 
-/** Runtime behaviour preferences for a connected remote agent. */
-export interface AgentSettings {
-  enableMonitoring: boolean;
-  enableFileBrowser: boolean;
-  enableDocker: boolean;
-  defaultShell: string | null;
-  startingDirectory: string;
-  logLevel: "error" | "warn" | "info" | "debug" | "trace";
-  verboseTracing: boolean;
-  /** Ring-buffer size for persistent sessions in MiB (1–64). */
-  persistentScrollbackBufferSizeMb: number;
-}
+// Runtime behaviour preferences for a connected remote agent.
+// Generated from the Rust `AgentSettings` (src-tauri/src/connection/config.rs)
+// via ts-rs (audit DUP-030 / MOCK-005). The default *value* below stays
+// hand-written — ts-rs generates types, not values.
+export type { AgentSettings };
 
 export const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   enableMonitoring: true,

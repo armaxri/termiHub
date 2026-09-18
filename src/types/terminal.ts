@@ -1,4 +1,7 @@
 import type { ConnectionHighlightingConfig } from "./syntaxHighlighting";
+// ts-rs-generated DTO (audit DUP-030). Imported here so this module can both
+// re-export it (below) and reference it locally in the interfaces further down.
+import type { ConnectionConfig } from "./generated/ConnectionConfig";
 
 export type SessionId = string;
 
@@ -267,48 +270,24 @@ export interface TerminalOptions {
   syntaxHighlighting?: ConnectionHighlightingConfig;
 }
 
-/** An external connection file configured for a remote agent. */
-export interface ExternalAgentFile {
-  /** Absolute path on the remote host. */
-  path: string;
-  enabled: boolean;
-}
+// An external connection file configured for a remote agent.
+// Generated from the Rust `ExternalAgentFile` (src-tauri/src/terminal/backend.rs)
+// via ts-rs — do not hand-edit the shape here (audit DUP-030).
+export type { ExternalAgentFile } from "./generated/ExternalAgentFile";
 
-/**
- * How a shared remote agent binary is updated when a newer desktop deploys.
- *
- * `"immediate"` (hard shutdown + redeploy) and `"coordinated"` (SI-5, notify
- * connected hosts) are honored today. `"deferred"` (SI-6) is not implemented, so
- * its control is hidden from the connection editor (WA-FE-002); the variant is
- * retained here so existing configs that already persisted it still load. See
- * #1354.
- */
-export type UpdateStrategy = "immediate" | "coordinated" | "deferred";
+// How a shared remote agent binary is updated when a newer desktop deploys.
+// `"immediate"` (hard shutdown + redeploy) and `"coordinated"` (SI-5, notify
+// connected hosts) are honored today; `"deferred"` (SI-6) is not implemented, so
+// its control is hidden from the connection editor (WA-FE-002); the variant is
+// retained so existing configs that already persisted it still load. See #1354.
+// Generated from the Rust `UpdateStrategy` via ts-rs (audit DUP-030).
+export type { UpdateStrategy } from "./generated/UpdateStrategy";
 
-/** SSH transport configuration for a remote agent (no session details). */
-export interface RemoteAgentConfig {
-  host: string;
-  port: number;
-  username: string;
-  authMethod: "password" | "key" | "agent";
-  password?: string;
-  keyPath?: string;
-  savePassword?: boolean;
-  /** Path to the agent binary on the remote host (default: ~/.local/bin/termihub-agent). */
-  agentPath?: string;
-  /** External connection files to load on the remote host (read-only). */
-  externalConnectionFiles?: ExternalAgentFile[];
-  /**
-   * Whether the agent may check GitHub and update itself in the background.
-   * Opt-in; defaults to `false`. The self-update mechanism (SI-8) is not yet
-   * implemented, so the toggle is hidden from the connection editor
-   * (WA-FE-002). This field is retained for forward-compat and tolerant loading
-   * of existing configs that already persisted the preference.
-   */
-  allowSelfUpdate?: boolean;
-  /** Update strategy for this agent's binary. Defaults to `"immediate"`. */
-  updateStrategy?: UpdateStrategy;
-}
+// SSH transport configuration for a remote agent (no session details).
+// Generated from the Rust `RemoteAgentConfig` (src-tauri/src/terminal/backend.rs)
+// via ts-rs (audit DUP-030). `allowSelfUpdate` (SI-8, hidden per WA-FE-002) and
+// `deferred`/`updateStrategy` are retained for forward-compat + tolerant loading.
+export type { RemoteAgentConfig } from "./generated/RemoteAgentConfig";
 
 /** Key-value pair for Docker environment variables. */
 export interface EnvVar {
@@ -323,15 +302,12 @@ export interface VolumeMount {
   readOnly?: boolean;
 }
 
-/**
- * Generic connection configuration for saved connections.
- * The `type` field identifies the connection type (e.g. "ssh", "local"),
- * and `config` holds type-specific settings as unstructured key-value pairs.
- */
-export interface ConnectionConfig {
-  type: string;
-  config: Record<string, unknown>;
-}
+// Generic connection configuration for saved connections. The `type` field
+// identifies the connection type (e.g. "ssh", "local"), and `config` holds
+// type-specific settings as unstructured key-value pairs.
+// Generated from the Rust `ConnectionConfig` (src-tauri/src/terminal/backend.rs)
+// via ts-rs (audit DUP-030). Imported at the top of this module; re-exported here.
+export type { ConnectionConfig };
 
 /**
  * Which terminals a broadcast session targets. Only `"all"` is wired up by the

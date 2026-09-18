@@ -105,6 +105,18 @@ jobs:
       - name: Clippy ftp feature in isolation (guards #1499)
         run: cargo clippy -p termihub-core --features ftp --all-targets -- -D warnings
 
+      # ts-rs codegen staleness gate (audit DUP-030). The TypeScript DTOs in
+      # src/types/generated/ are generated from their Rust source of truth by the
+      # ts-rs `export_bindings_*` tests. Regenerate them, then fail if the tree
+      # changed — i.e. a Rust struct was edited without committing the refreshed
+      # binding, which would let the TS↔Rust contract drift silently. Regenerating
+      # is fast (unit-level) and one platform suffices: cluster-1 has no
+      # `#[cfg]`-gated fields, so the output is platform-independent.
+      - name: Regenerate ts-rs TypeScript bindings
+        run: cargo test -p termihub --lib export_bindings
+      - name: Fail if generated TypeScript is stale
+        run: git diff --exit-code -- src/types/generated
+
       # Fail the PR when a crate declares a dependency it never uses (TOOL-008).
       # Unused deps grow build time and supply-chain surface. cargo-machete
       # statically scans each crate's sources for usage — no build required.
