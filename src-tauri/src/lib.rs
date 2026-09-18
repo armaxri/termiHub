@@ -272,6 +272,25 @@ fn run_app_teardown(app_handle: &tauri::AppHandle) {
         // Session-scoped SSH+SFTP connections are torn down with their owning
         // sessions by `SessionManager`, so there is no standalone SFTP session
         // registry to close here since the UUID `SftpManager` was retired (#2314).
+
+        // Deterministic owned-task shutdown (ARCH-007). After the managers above
+        // have signalled their own resources to stop, cancel the app-wide token
+        // and wait — bounded — for every task spawned via `AppTasks` to finish,
+        // so no tracked background task outlives teardown. This teardown task is
+        // itself *not* tracked (bare `async_runtime::spawn` above), so awaiting
+        // the tracker cannot deadlock against the caller; the bound guarantees a
+        // wedged task cannot hang exit.
+        if let Some(tasks) = handle.try_state::<app_tasks::AppTasks>() {
+            match tasks.shutdown(app_tasks::DEFAULT_SHUTDOWN_TIMEOUT).await {
+                app_tasks::ShutdownOutcome::Completed => {
+                    info!("All owned background tasks finished on teardown (ARCH-007)")
+                }
+                app_tasks::ShutdownOutcome::TimedOut => warn!(
+                    timeout = ?app_tasks::DEFAULT_SHUTDOWN_TIMEOUT,
+                    "Owned-task shutdown timed out; proceeding with exit (ARCH-007)"
+                ),
+            }
+        }
     });
 }
 
@@ -1530,9 +1549,21 @@ pub fn run() {
                             }
                         }
                     });
-                    tauri::async_runtime::spawn(async move {
-                        if let Err(e) = spawn::ipc_server::serve(&endpoint, handler).await {
-                            tracing::warn!("spawn IPC server stopped: {e}");
+                    // App-lifetime accept loop: owned by `AppTasks` (ARCH-007) so
+                    // teardown cancels the token (breaking the accept) and awaits
+                    // it, rather than leaving the IPC server accepting on exit.
+                    let tasks = app.state::<app_tasks::AppTasks>();
+                    let cancel = tasks.cancellation_token();
+                    tasks.spawn(async move {
+                        tokio::select! {
+                            res = spawn::ipc_server::serve(&endpoint, handler) => {
+                                if let Err(e) = res {
+                                    tracing::warn!("spawn IPC server stopped: {e}");
+                                }
+                            }
+                            _ = cancel.cancelled() => {
+                                tracing::info!("spawn IPC server cancelled on shutdown (ARCH-007)");
+                            }
                         }
                     });
                 }
@@ -1560,17 +1591,28 @@ pub fn run() {
             // all others detect the mtime change and reload within ~1 second.
             {
                 let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
+                // App-lifetime poll loop: owned by `AppTasks` (ARCH-007) so the
+                // 1s watcher stops at teardown (via the cancellation token)
+                // instead of polling on past shutdown.
+                let tasks = app.state::<app_tasks::AppTasks>();
+                let cancel = tasks.cancellation_token();
+                tasks.spawn(async move {
                     use std::time::SystemTime;
                     let mut last_mtime: Option<SystemTime> = std::fs::metadata(&connections_file)
                         .ok()
                         .and_then(|m| m.modified().ok());
-                    let mut interval =
-                        tokio::time::interval(std::time::Duration::from_secs(1));
-                    interval
-                        .set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
+                    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                     loop {
-                        interval.tick().await;
+                        tokio::select! {
+                            _ = interval.tick() => {}
+                            _ = cancel.cancelled() => {
+                                tracing::info!(
+                                    "connections.json watcher cancelled on shutdown (ARCH-007)"
+                                );
+                                break;
+                            }
+                        }
                         let current_mtime = std::fs::metadata(&connections_file)
                             .ok()
                             .and_then(|m| m.modified().ok());

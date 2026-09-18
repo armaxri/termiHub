@@ -87,11 +87,6 @@ impl AppTasks {
         self.cancel.clone()
     }
 
-    /// Whether shutdown has been requested (the token has been cancelled).
-    pub fn is_cancelled(&self) -> bool {
-        self.cancel.is_cancelled()
-    }
-
     /// Request cancellation and wait — bounded by `timeout` — for every tracked
     /// task to finish.
     ///
@@ -154,11 +149,14 @@ mod tests {
             token.cancelled().await;
         });
 
-        assert!(!tasks.is_cancelled());
+        assert!(!tasks.cancellation_token().is_cancelled());
         let outcome = tasks.shutdown(Duration::from_secs(5)).await;
 
         assert_eq!(outcome, ShutdownOutcome::Completed);
-        assert!(tasks.is_cancelled(), "shutdown must cancel the token");
+        assert!(
+            tasks.cancellation_token().is_cancelled(),
+            "shutdown must cancel the token"
+        );
     }
 
     /// A wedged task that ignores cancellation must not hang shutdown: the
@@ -183,6 +181,6 @@ mod tests {
         let tasks = AppTasks::new();
         let outcome = tasks.shutdown(Duration::from_secs(5)).await;
         assert_eq!(outcome, ShutdownOutcome::Completed);
-        assert!(tasks.is_cancelled());
+        assert!(tasks.cancellation_token().is_cancelled());
     }
 }
