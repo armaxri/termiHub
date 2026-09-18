@@ -1,4 +1,7 @@
-import { useState, useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import "./EmbeddedServerSidebar.css";
 import { AlertTriangle } from "lucide-react";
 import { Modal, Button, Input, NumberInput, Select, Checkbox, RadioGroup } from "@/components/ui";
@@ -30,6 +33,53 @@ interface Props {
  */
 type ServerFormState = Omit<EmbeddedServerConfig, "port"> & { port: number | "" };
 
+/**
+ * Client-side validation schema (UX gate only; the same checks the dialog
+ * previously ran by hand, translated 1:1 into zod):
+ *
+ * - `name` must be non-empty once trimmed.
+ * - `rootDirectory` must be non-empty once trimmed.
+ * - `port` must not be blank (a cleared field is `""`).
+ *
+ * The schema mirrors the full {@link ServerFormState} shape so the resolver's
+ * value type matches the form's; only `name`, `rootDirectory` and `port` are
+ * actually gated — the remaining fields ride along and are preserved on save.
+ */
+const ftpAuthSchema = z.union([
+  z.object({ type: z.literal("anonymous") }),
+  z.object({ type: z.literal("credentials"), username: z.string(), password: z.string() }),
+]);
+
+const serverFormSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    serverType: z.enum(["http", "ftp", "tftp"]),
+    rootDirectory: z.string(),
+    bindHost: z.string(),
+    port: z.union([z.number(), z.literal("")]),
+    autoStart: z.boolean(),
+    readOnly: z.boolean(),
+    directoryListing: z.boolean().optional(),
+    ftpAuth: ftpAuthSchema.optional(),
+    maxTransferBytes: z.number().optional(),
+  })
+  .superRefine((form, ctx) => {
+    if (form.name.trim() === "") {
+      ctx.addIssue({ code: "custom", path: ["name"], message: "Name is required." });
+    }
+    if (form.rootDirectory.trim() === "") {
+      ctx.addIssue({
+        code: "custom",
+        path: ["rootDirectory"],
+        message: "Root directory is required.",
+      });
+    }
+    if (form.port === "") {
+      ctx.addIssue({ code: "custom", path: ["port"], message: "Port is required." });
+    }
+  });
+
 /** Blank default config used when creating a new server. */
 function defaultConfig(): ServerFormState {
   return {
@@ -48,18 +98,31 @@ function defaultConfig(): ServerFormState {
 
 /**
  * Create / edit dialog for an embedded server configuration.
+ *
+ * Backed by react-hook-form + zod (see {@link serverFormSchema}). Validity is
+ * derived synchronously from the schema so Save re-gates on the same render as
+ * an edit; the protocol switch, LAN-bind confirmation, and FTP-auth union are
+ * driven imperatively through `setValue` because they touch several fields at
+ * once, matching the previous hand-rolled behavior exactly.
  */
 export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Props) {
-  const [form, setForm] = useState<ServerFormState>(defaultConfig());
   const [lanWarning, setLanWarning] = useState(false);
   const [interfaces, setInterfaces] = useState<NetworkInterface[]>([
     { name: "Loopback", addr: "127.0.0.1" },
     { name: "All Interfaces", addr: "0.0.0.0" },
   ]);
 
+  const { control, getValues, setValue, reset } = useForm<ServerFormState>({
+    defaultValues: config ? { ...config } : defaultConfig(),
+    resolver: zodResolver(serverFormSchema),
+    mode: "onChange",
+  });
+
+  // Reload the working copy each time the dialog opens so a prior edit never
+  // leaks in and the network-interface list refreshes.
   useEffect(() => {
     if (open) {
-      setForm(config ? { ...config } : defaultConfig());
+      reset(config ? { ...config } : defaultConfig());
       setLanWarning(false);
       listNetworkInterfaces()
         .then(setInterfaces)
@@ -67,31 +130,44 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           /* keep defaults on error */
         });
     }
-  }, [open, config]);
+  }, [open, config, reset]);
 
-  const set = <K extends keyof ServerFormState>(key: K, value: ServerFormState[K]) =>
-    setForm((f) => ({ ...f, [key]: value }));
+  // Subscribe to every field so validity + derived reads re-run on each edit,
+  // then take a complete, fresh snapshot from `getValues()` (which reflects
+  // `setValue` synchronously) for the schema check.
+  useWatch({ control });
+  const form = getValues();
+
+  // Deterministic, synchronous validity derived straight from the schema — the
+  // same approach ConnectionSettingsForm / CustomRuleEditor use — so the Save
+  // gate updates on the same render as the edit (and stays testable without
+  // awaiting react-hook-form's async error proxy).
+  const canSave = useMemo(
+    () => serverFormSchema.safeParse(form).success,
+    // `form` is a fresh snapshot every render; key on its serialization so the
+    // check only recomputes when a value actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [JSON.stringify(form)]
+  );
 
   const handleProtocolChange = (type: ServerType) => {
-    setForm((f) => ({
-      ...f,
-      serverType: type,
-      port: DEFAULT_PORTS[type],
-      directoryListing: type === "http" ? (f.directoryListing ?? true) : undefined,
-      ftpAuth: type === "ftp" ? (f.ftpAuth ?? { type: "anonymous" }) : undefined,
-    }));
+    const cur = getValues();
+    setValue("serverType", type);
+    setValue("port", DEFAULT_PORTS[type]);
+    setValue("directoryListing", type === "http" ? (cur.directoryListing ?? true) : undefined);
+    setValue("ftpAuth", type === "ftp" ? (cur.ftpAuth ?? { type: "anonymous" }) : undefined);
   };
 
   const handleBindHostChange = (addr: string) => {
     if (addr === "0.0.0.0") {
       setLanWarning(true);
     } else {
-      set("bindHost", addr);
+      setValue("bindHost", addr);
     }
   };
 
   const handleLanConfirm = () => {
-    setForm((f) => ({ ...f, bindHost: "0.0.0.0" }));
+    setValue("bindHost", "0.0.0.0");
     setLanWarning(false);
   };
 
@@ -100,10 +176,11 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
   };
 
   const handleSubmit = async () => {
-    if (!form.name.trim() || !form.rootDirectory.trim() || form.port === "") return;
+    const values = getValues();
+    if (!canSave || values.port === "") return;
     // Close only when the save actually succeeded; on failure the dialog stays
     // open (the sidebar surfaces the error via toast) so the user can retry.
-    const saved = await onSave({ ...form, port: form.port });
+    const saved = await onSave({ ...values, port: values.port });
     if (saved) onOpenChange(false);
   };
 
@@ -159,7 +236,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
             <Button
               variant="primary"
               onClick={handleSubmit}
-              disabled={!form.name.trim() || !form.rootDirectory.trim() || form.port === ""}
+              disabled={!canSave}
               data-testid="server-dialog-save"
             >
               Save
@@ -171,12 +248,19 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           {/* Name */}
           <label className="server-dialog__label">
             Name
-            <Input
-              value={form.name}
-              onChange={(e) => set("name", e.target.value)}
-              placeholder="e.g. Firmware Share"
-              data-testid="server-dialog-name"
-              autoFocus
+            <Controller
+              name="name"
+              control={control}
+              render={({ field }) => (
+                <Input
+                  value={field.value ?? ""}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  onBlur={field.onBlur}
+                  placeholder="e.g. Firmware Share"
+                  data-testid="server-dialog-name"
+                  autoFocus
+                />
+              )}
             />
           </label>
 
@@ -200,11 +284,18 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           {/* Root directory */}
           <label className="server-dialog__label">
             Root Directory
-            <Input
-              value={form.rootDirectory}
-              onChange={(e) => set("rootDirectory", e.target.value)}
-              placeholder="/path/to/directory"
-              data-testid="server-dialog-root"
+            <Controller
+              name="rootDirectory"
+              control={control}
+              render={({ field }) => (
+                <Input
+                  value={field.value ?? ""}
+                  onChange={(e) => field.onChange(e.target.value)}
+                  onBlur={field.onBlur}
+                  placeholder="/path/to/directory"
+                  data-testid="server-dialog-root"
+                />
+              )}
             />
           </label>
 
@@ -230,13 +321,19 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
               </label>
               <label className="server-dialog__label server-dialog__label--inline">
                 Port
-                <NumberInput
-                  className="server-dialog__input--port"
-                  min={1}
-                  max={65535}
-                  value={form.port}
-                  onValueChange={(v) => set("port", v)}
-                  data-testid="server-dialog-port"
+                <Controller
+                  name="port"
+                  control={control}
+                  render={({ field }) => (
+                    <NumberInput
+                      className="server-dialog__input--port"
+                      min={1}
+                      max={65535}
+                      value={field.value}
+                      onValueChange={field.onChange}
+                      data-testid="server-dialog-port"
+                    />
+                  )}
                 />
               </label>
             </div>
@@ -246,30 +343,48 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
           <fieldset className="server-dialog__fieldset">
             <legend className="server-dialog__legend">Options</legend>
             <label className="server-dialog__check">
-              <Checkbox
-                checked={form.autoStart}
-                onCheckedChange={(checked) => set("autoStart", checked)}
-                aria-label="Auto-start when termiHub launches"
-                data-testid="server-dialog-autostart"
+              <Controller
+                name="autoStart"
+                control={control}
+                render={({ field }) => (
+                  <Checkbox
+                    checked={field.value}
+                    onCheckedChange={(checked) => field.onChange(checked)}
+                    aria-label="Auto-start when termiHub launches"
+                    data-testid="server-dialog-autostart"
+                  />
+                )}
               />
               <span>Auto-start when termiHub launches</span>
             </label>
             <label className="server-dialog__check">
-              <Checkbox
-                checked={form.readOnly}
-                onCheckedChange={(checked) => set("readOnly", checked)}
-                aria-label="Read-only (disable uploads / writes)"
-                data-testid="server-dialog-readonly"
+              <Controller
+                name="readOnly"
+                control={control}
+                render={({ field }) => (
+                  <Checkbox
+                    checked={field.value}
+                    onCheckedChange={(checked) => field.onChange(checked)}
+                    aria-label="Read-only (disable uploads / writes)"
+                    data-testid="server-dialog-readonly"
+                  />
+                )}
               />
               <span>Read-only (disable uploads / writes)</span>
             </label>
             {form.serverType === "http" && (
               <label className="server-dialog__check">
-                <Checkbox
-                  checked={form.directoryListing ?? false}
-                  onCheckedChange={(checked) => set("directoryListing", checked)}
-                  aria-label="Allow directory listing"
-                  data-testid="server-dialog-dirlisting"
+                <Controller
+                  name="directoryListing"
+                  control={control}
+                  render={({ field }) => (
+                    <Checkbox
+                      checked={field.value ?? false}
+                      onCheckedChange={(checked) => field.onChange(checked)}
+                      aria-label="Allow directory listing"
+                      data-testid="server-dialog-dirlisting"
+                    />
+                  )}
                 />
                 <span>Allow directory listing</span>
               </label>
@@ -283,7 +398,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
               <RadioGroup
                 value={ftpAnon ? "anonymous" : "credentials"}
                 onValueChange={(v) =>
-                  set(
+                  setValue(
                     "ftpAuth",
                     v === "anonymous"
                       ? { type: "anonymous" }
@@ -316,7 +431,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                       value={ftpCreds.username}
                       onChange={(e) => {
                         const u = e.target.value;
-                        set("ftpAuth", {
+                        setValue("ftpAuth", {
                           type: "credentials",
                           username: u,
                           password: ftpCreds.password,
@@ -332,7 +447,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                       value={ftpCreds.password}
                       onChange={(e) => {
                         const p = e.target.value;
-                        set("ftpAuth", {
+                        setValue("ftpAuth", {
                           type: "credentials",
                           username: ftpCreds.username,
                           password: p,
