@@ -725,6 +725,14 @@ impl SessionManager {
     // routing flags + the connect-time signals: spawn origin #1466, resilient
     // reconnect #2439); grouping them into a struct would only obscure the call.
     #[allow(clippy::too_many_arguments)]
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            type_id = %type_id,
+            agent_id = agent_id.unwrap_or("direct"),
+            session_id = tracing::field::Empty,
+        )
+    )]
     pub async fn create_connection<E: EventEmitter>(
         &self,
         type_id: &str,
@@ -767,6 +775,9 @@ impl SessionManager {
         };
 
         let session_id = uuid::Uuid::new_v4().to_string();
+        // Attach the freshly-minted id to the connect span so every nested event
+        // (proxy handshake, local connect, initial command) groups under it (OBS-004).
+        tracing::Span::current().record("session_id", session_id.as_str());
 
         let (connection, remote_session_id): (Box<dyn ConnectionType>, Option<String>) =
             if let Some(aid) = agent_id {
@@ -1125,6 +1136,7 @@ impl SessionManager {
     /// so that backends that release resources in `disconnect()` (not just `Drop`)
     /// — notably Serial, which clears `output_tx` to stop its reader thread —
     /// are cleaned up immediately.
+    #[tracing::instrument(skip_all, fields(session_id = %session_id))]
     pub async fn close_session(&self, session_id: &str) -> Result<(), TerminalError> {
         // Clear the identity bridge entry (#2431) **before** disconnecting — the
         // session is gone, so its tab mapping must not linger. Clearing it *first*
@@ -1622,6 +1634,15 @@ impl SessionManager {
     /// Only ever called for a resilient agent tab, so the identity bridge is
     /// recorded with `resilient: true`. The retained request is left untouched:
     /// the same live agent session id remains valid for the next drop.
+    #[tracing::instrument(
+        skip_all,
+        fields(
+            tab_id = %tab_id,
+            agent_id = %agent_id,
+            remote_session_id = %remote_session_id,
+            session_id = tracing::field::Empty,
+        )
+    )]
     pub async fn reattach_agent_session<E: EventEmitter>(
         &self,
         tab_id: &str,
@@ -1630,6 +1651,7 @@ impl SessionManager {
         emitter: E,
     ) -> Result<String, TerminalError> {
         let session_id = uuid::Uuid::new_v4().to_string();
+        tracing::Span::current().record("session_id", session_id.as_str());
 
         // Re-establish the desktop side against the surviving daemon.
         // `reconnect_existing` calls `register_session_output` + `attach_session`
@@ -2469,6 +2491,38 @@ mod tests {
         }
         let sessions_guard = sessions.lock().await;
         assert!(!sessions_guard.contains_key("sess-1"));
+    }
+
+    /// OBS-004: closing a session must emit its identity as a **structured
+    /// `tracing` field** and run inside a lifecycle **span** named `close_session`,
+    /// so a supporter can group and filter `termihub.log` by session rather than
+    /// grepping message text. Guards against a regression back to string
+    /// interpolation or a missing span.
+    // Serialized against every other thread-local `tracing` default-subscriber
+    // test (see `utils::log_capture`, `terminal::agent_manager`): a concurrent
+    // guard drop transiently reverts the global max-level to OFF and would drop
+    // our captured events (a well-known parallel-`tracing`-test race).
+    #[tokio::test]
+    #[serial_test::serial(tracing_default_subscriber)]
+    async fn close_session_log_carries_session_id_field_and_span() {
+        let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
+        manager
+            .insert_test_session("sess-obs-004", Box::new(MockConnection::default()))
+            .await;
+
+        let (capture, guard) = crate::terminal::agent_manager::tracing_capture::install();
+        manager.close_session("sess-obs-004").await.unwrap();
+        drop(guard);
+
+        let events = capture.events();
+        let closed = events
+            .iter()
+            .find(|e| e.message() == "Closed session")
+            .expect("close_session emits a 'Closed session' event");
+        assert_eq!(closed.field("session_id"), Some("sess-obs-004"));
+        assert_eq!(closed.span.as_deref(), Some("close_session"));
+        // The id is a field, not interpolated into the message.
+        assert!(!closed.message().contains("sess-obs-004"));
     }
 
     #[test]
