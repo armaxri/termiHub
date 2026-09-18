@@ -637,7 +637,11 @@ impl SessionManager {
                         title,
                         created_at: now.to_rfc3339(),
                         daemon_socket: Some(client.endpoint().to_string()),
-                        settings,
+                        // Strip plaintext secrets before they reach state.json:
+                        // the daemon already holds the live settings (handed over
+                        // stdin) and recovery reattaches over the socket, so the
+                        // on-disk copy never needs the secret values (AGT-021).
+                        settings: crate::state::persistence::redact_persisted_secrets(&settings),
                         definition_id,
                     };
                     let id_for_state = id.clone();
