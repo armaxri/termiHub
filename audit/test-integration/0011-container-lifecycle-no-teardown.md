@@ -10,7 +10,8 @@ evidence:
   - tests/system/termihub_harness/fixtures.py:153
   - scripts/test-system-linux.sh:100
   - docs/testing.md:1807
-status: open
+status: fixed
+resolution: "#3050 — pre-run reaper: reap_stale_fixtures() prunes THIS checkout's stale compose containers (scoped strictly by com.docker.compose.project label, never termihub-* glob) before bring-up in fixtures.py + test-system-linux.sh; live-proven vs dummies; label-less app termihub-<ts>-<pid> containers unscopeable -> deferred #3049"
 ---
 
 ## What

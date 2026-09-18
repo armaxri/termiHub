@@ -10,7 +10,8 @@ evidence:
   - src/test/setup.ts:153
   - src/test/setup.ts:190
   - src/utils/monacoCustomLanguages.ts
-status: open
+status: partial
+resolution: "develop — monaco custom-language registration branches now exercised+asserted (monacoCustomLanguages.test.ts, addresses TFE-009 ~2% branch); remaining: not run vs real monaco languages namespace, global test/setup.ts:171 still hard-codes monaco/shiki lang lists (upgrade drift)"
 ---
 
 ## What

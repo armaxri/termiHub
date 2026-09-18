@@ -10,7 +10,8 @@ evidence:
   - docs/remote-protocol.md:316
   - docs/remote-protocol.md:2416
   - agent/src/protocol/methods.rs:63
-status: open
+status: fixed
+resolution: "#3052 — docs/remote-protocol.md initialize request params + capabilities sub-object corrected to camelCase to match InitializeParams/Capabilities rename_all; result top-level left snake (matches wire+desktop reader); params-camel/result-snake unification (wire-breaking) deferred #3051"
 ---
 
 ## What

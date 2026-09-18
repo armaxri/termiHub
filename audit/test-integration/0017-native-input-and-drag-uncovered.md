@@ -9,7 +9,8 @@ subsystem: src/testbridge, tests/system
 evidence:
   - docs/test-bridge.md:567
   - docs/testing.md:1413
-status: open
+status: partial
+resolution: "develop — split/drag drop-zone testids exist: PanelDropZone.tsx:57/86 panel-drop-edge/center-<panel> + PanelDropZone.test.tsx closes the no-stable-testid gap; remaining: native OS pointer DnD/IME/focus inherently uncovered by synthetic-event bridge (by design)"
 ---
 
 ## What

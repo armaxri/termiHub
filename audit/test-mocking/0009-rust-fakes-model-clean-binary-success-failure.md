@@ -10,7 +10,8 @@ evidence:
   - core/src/backends/ssh/monitoring.rs:526
   - core/src/backends/ssh/monitoring.rs:508
   - src-tauri/src/session/remote_proxy.rs:803
-status: open
+status: partial
+resolution: "develop — ssh monitoring timeout/stall fault-mode added: collect_once bounded by tokio timeout + collect_once_times_out_as_failure (monitoring.rs:728, #1228); remaining: FakeTransport.collect still only clean Ok/Err (:582) — no truncated/malformed/variant sample fed to parser"
 ---
 
 ## What

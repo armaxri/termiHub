@@ -12,7 +12,8 @@ evidence:
   - core/src/backends/mock_remote_desktop.rs:77
   - src-tauri/src/session/registry.rs:81
   - src/utils/experimentalTypes.ts:9
-status: open
+status: fixed
+resolution: "develop — mock remote-desktop out of default build: src-tauri/Cargo.toml:18 default=[ftp,vnc,rdp-sidecar] (mock excluded, DEAD-001); registration #[cfg(feature=mock-remote-desktop)] registry.rs:44, feature opt-in Cargo.toml:31"
 ---
 
 ## What

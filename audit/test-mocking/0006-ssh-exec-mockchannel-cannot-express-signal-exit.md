@@ -9,7 +9,8 @@ subsystem: core/backends/ssh/exec
 evidence:
   - core/src/backends/ssh/exec.rs:218
   - core/src/backends/ssh/exec.rs:270
-status: open
+status: fixed
+resolution: "develop — signal-death representable+tested: ExecEvent::Signal(String) (exec.rs:67) mapped from ChannelMsg::ExitSignal (:272) to 128+signum/terminated_by_signal (:120); regression signal_killed_command_reports_failure_not_exit_zero (:518) + signal_death_makes_probe_report_not_capable (:547) (CORE-004/TBE-001)"
 ---
 
 ## What

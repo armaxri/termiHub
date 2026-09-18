@@ -13,7 +13,8 @@ evidence:
   - src/types/tunnel.ts:76
   - src/types/monitoring.ts:9
   - src/types/remoteDesktop.ts:11
-status: open
+status: partial
+resolution: "develop — first step done: untyped remoteStates/setRemoteState map retired from appStore (SM-011); per-tab status derives from session-lifecycle region (sessionBridge.ts:59). Residual architectural: 5 divergent status vocabularies + retry caps still coexist, no single canonical enum/backoff engine"
 ---
 
 ## What

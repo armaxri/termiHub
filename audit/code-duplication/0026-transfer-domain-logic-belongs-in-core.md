@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/files/transfer/state.rs
   - src-tauri/src/files/transfer/scheduler.rs
   - src-tauri/src/files/transfer/retry.rs
-status: open
+status: partial
+resolution: "develop — retry backoff now delegates to core util::backoff::capped_exponential_delay (files/transfer/retry.rs:37, resolves DUP-007 overlap); remaining in src-tauri not core: TransferState machine+MAX_RETRIES (state.rs:33), SessionScheduler (scheduler.rs:32), resume_offset/ThroughputMeter ETA (retry.rs:51/65) — no core::files::transfer yet"
 ---
 
 ## What

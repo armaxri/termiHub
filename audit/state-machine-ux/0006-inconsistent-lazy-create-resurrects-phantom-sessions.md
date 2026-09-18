@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/session_projection/store.rs:614
   - src/store/appStore.ts:5801
   - src/components/Terminal/Terminal.tsx:925
-status: open
+status: fixed
+resolution: "#3053 — session_projection/store.rs: converted 6 post-lifecycle folds (connected/connect_failed/disconnect/dropped/reconnect/session_lost) to no-op-on-unknown so a late event can't resurrect a removed tab; left connect (must create) + agent_transport_reconnecting + set_exit (clean-exit precedes entry, test-pinned) creating; 87 module tests green"
 ---
 
 ## What

@@ -12,7 +12,8 @@ evidence:
   - src/testbridge/testMode.ts:34
   - src/testbridge/dispatcher.ts:362
   - src-tauri/tauri.test.conf.json:6
-status: open
+status: partial
+resolution: "develop — runtime-activation hole CLOSED: testMode.ts:44 hard-gates PROD build (import.meta.env.PROD && !VITE_TEST_BRIDGE); remaining is bundle hygiene only (dispatcher still statically imported TerminalView.tsx:33, dead-in-prod not tree-shaken) -> #3043-class"
 ---
 
 ## What

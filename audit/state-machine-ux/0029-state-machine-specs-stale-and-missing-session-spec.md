@@ -10,7 +10,8 @@ evidence:
   - docs/audits/remote-agent-lifecycle-state-machine.md:1
   - docs/audits/workspace-save-restore-state-machine.md:1
   - docs/audits/http-monitor-state-machine.md:1
-status: open
+status: partial
+resolution: "develop — half done: all 8 docs/audits/*state-machine*.md now carry Historical/Superseded banner (:3). Residual: recommended new session/connection-lifecycle reference spec still not written (only remote-agent-lifecycle exists)"
 ---
 
 ## What

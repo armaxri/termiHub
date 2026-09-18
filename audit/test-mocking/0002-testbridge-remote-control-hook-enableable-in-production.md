@@ -12,7 +12,8 @@ evidence:
   - src/testbridge/TestBridge.tsx:136
   - src-tauri/src/lib.rs:1480
   - src-tauri/src/commands/agent.rs:127
-status: open
+status: fixed
+resolution: "develop — runtime-enable vector closed both ends: backend test_sever_agent_transport #[cfg(feature=test-bridge)] (commands/agent.rs:130 + lib.rs:1718); frontend isTestBridgeEnabled hard-gates import.meta.env.PROD (testMode.ts:47, SEC-005) + testMode.test.ts:65"
 ---
 
 ## What

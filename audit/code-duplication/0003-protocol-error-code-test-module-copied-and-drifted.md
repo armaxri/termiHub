@@ -10,7 +10,8 @@ evidence:
   - core/src/protocol/errors.rs:75
   - agent/src/protocol/errors.rs:5
   - core/src/protocol/errors.rs:68
-status: open
+status: fixed
+resolution: "develop — agent test-module copy gone: agent/src/protocol/errors.rs is now just `pub use termihub_core::protocol::errors::*` (#2944); core owns+tests codes incl TUNNEL_START_FAILED/SERVICE_START_FAILED (core/src/protocol/errors.rs:69,73,103)"
 ---
 
 ## What

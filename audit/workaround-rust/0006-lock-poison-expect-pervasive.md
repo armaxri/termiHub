@@ -14,7 +14,8 @@ evidence:
   - src-tauri/src/session/ssh_trust_store.rs:119
   - src-tauri/src/session/rdp_trust_store.rs:115
   - src-tauri/src/session/ssh_host_key_verifier.rs:123
-status: open
+status: fixed
+resolution: "#3048 — poison-recovery tail: converted 10 remaining prod .expect('...poisoned') lock sites to .unwrap_or_else(|e| e.into_inner()) in ssh/session_pool.rs (7) + tool/mod.rs (3); rest of listed sites were test code (verified), no poison-policy ambiguity"
 ---
 
 ## What

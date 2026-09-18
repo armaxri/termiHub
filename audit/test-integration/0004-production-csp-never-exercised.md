@@ -10,7 +10,8 @@ evidence:
   - src-tauri/tauri.test.conf.json:6
   - .github/workflows/system-integration.yml:250
   - tests/system/tests/test_csp.py
-status: open
+status: partial
+resolution: "develop — prod connect-src pinned+unit-guarded: test_bridge.rs:247 PROD_CSP + relax_csp_adds_ws_sources_to_connect_src proves no ws:// leaks non-connect-src; remaining: no e2e boot under shipped CSP (integration lane runs relaxed), PROD_CSP hand-mirrors tauri.conf.json:25 (drift risk)"
 ---
 
 ## What
