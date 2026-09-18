@@ -50,7 +50,9 @@ describe("readConfigBoolean", () => {
   });
 
   it("returns undefined for a non-boolean field (no truthy coercion)", () => {
-    expect(readConfigBoolean(cfg({ enableMonitoring: "true" }), "enableMonitoring")).toBeUndefined();
+    expect(
+      readConfigBoolean(cfg({ enableMonitoring: "true" }), "enableMonitoring")
+    ).toBeUndefined();
     expect(readConfigBoolean(cfg({ enableMonitoring: 1 }), "enableMonitoring")).toBeUndefined();
   });
 
