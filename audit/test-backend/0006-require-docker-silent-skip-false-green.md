@@ -11,7 +11,7 @@ evidence:
   - core/tests/common/mod.rs:49
   - .github/workflows/code-quality.yml:88
 status: fixed
-resolution: "#3038 — set TERMIHUB_REQUIRE_DOCKER=1 on fixtures-lane test step (docker compose --wait guarantees Docker up) so missing fixture hard-fails not green-skips; other lanes correctly deferred; dead sftp gate -> #3039"
+resolution: "#3038 — set TERMIHUB_REQUIRE_DOCKER=1 on fixtures-lane test step (docker compose --wait guarantees Docker up) so missing fixture hard-fails not green-skips; EXPOSED+closed 2 latent false-greens: ftp+vnc profiles were unprovisioned so 20 fixture tests (FTP 13, VNC 7) never ran -> fixer added --profile ftp --profile vnc (proven live); dead sftp gate -> #3039"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - scripts/build-testid-catalog.py:30
   - tests/system/tests/test_testid_catalog.py:1
   - .github/workflows/system-integration.yml:9
-status: open
+status: fixed
+resolution: "#3045 — add blocking static testid-drift guard (AST-scan harness refs vs src/** testids, no app build); caught+fixed real drift (stale monitoring-refresh ref from #1232); catalog-widening follow-up #3044"
 ---
 
 ## What
