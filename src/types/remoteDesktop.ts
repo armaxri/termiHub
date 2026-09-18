@@ -84,11 +84,14 @@ export interface RemoteDesktopCursorPayload extends CursorUpdate {
   session_id: string;
 }
 
-/** `remote-desktop-clipboard` event payload (remote → local text). */
-export interface RemoteDesktopClipboardPayload {
-  session_id: string;
-  text: string;
-}
+/**
+ * `remote-desktop-clipboard` event payload (remote → local text).
+ *
+ * Generated from the Rust `RemoteDesktopClipboardEvent` via ts-rs (MOCK-010,
+ * ts-rs rollout #3088); re-exported under the historical `…Payload` name so
+ * consumers stay unchanged.
+ */
+export type { RemoteDesktopClipboardEvent as RemoteDesktopClipboardPayload } from "./generated/RemoteDesktopClipboardEvent";
 
 /**
  * One file the remote copied to its clipboard, surfaced to the host for a local
@@ -123,15 +126,12 @@ export interface RemoteDesktopStatePayload {
  * distinguishes first contact (`false`) from a *changed* fingerprint for a
  * previously-trusted host (`true`) — the possible-MITM case the dialog warns
  * about prominently.
+ *
+ * Generated from the Rust `RemoteDesktopCertPromptEvent` via ts-rs (MOCK-010,
+ * ts-rs rollout #3088); re-exported under the historical `…Payload` name so
+ * consumers stay unchanged.
  */
-export interface RemoteDesktopCertPromptPayload {
-  session_id: string;
-  host: string;
-  fingerprint: string;
-  subject?: string;
-  issuer?: string;
-  changed: boolean;
-}
+export type { RemoteDesktopCertPromptEvent as RemoteDesktopCertPromptPayload } from "./generated/RemoteDesktopCertPromptEvent";
 
 /** Whether a state means the session is painting (or about to). */
 export function isLiveState(state: GraphicalSessionState): boolean {

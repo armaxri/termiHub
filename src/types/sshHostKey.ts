@@ -7,12 +7,9 @@
  * correlates the user's reply (`sshHostKeyDecision`) back to the blocked SSH
  * handshake; `changed` is `true` for the possible-MITM case (a different key for
  * a previously-trusted host) that the dialog warns about prominently.
+ *
+ * Generated from the Rust `SshHostKeyPromptEvent` via ts-rs (MOCK-010, ts-rs
+ * rollout #3088); re-exported under the historical `…Payload` name so consumers
+ * stay unchanged.
  */
-export interface SshHostKeyPromptPayload {
-  prompt_id: string;
-  host: string;
-  port: number;
-  key_type: string;
-  fingerprint: string;
-  changed: boolean;
-}
+export type { SshHostKeyPromptEvent as SshHostKeyPromptPayload } from "./generated/SshHostKeyPromptEvent";
