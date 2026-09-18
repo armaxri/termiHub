@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/code-quality.yml:261
   - .github/workflows/system-integration.yml:1
   - .github/workflows/system-integration.yml:81
-status: open
+status: partial
+resolution: "develop — reclaim-partial: per-PR testid-drift-guard job added (code-quality.yml:420-429, static check-testid-drift.py) closes the #1568 stale-testid mechanism per-PR. STILL: behavioural integration lane still dark per-PR — code-quality.yml:400 pytest -m 'not integration', :355 cargo test --workspace no Docker, system-integration.yml schedule/dispatch-only, integration-fixtures.yml backend-path-only (no src/**). Nightly-cadence = maintainer"
 ---
 
 ## What

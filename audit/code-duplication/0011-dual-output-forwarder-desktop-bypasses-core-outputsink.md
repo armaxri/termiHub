@@ -11,7 +11,8 @@ evidence:
   - agent/src/session/manager.rs:1148
   - src-tauri/src/session/manager.rs:141
   - src-tauri/src/session/manager.rs:1804
-status: open
+status: fixed
+resolution: "#3093 — extracted the mechanical output-forwarding loop into core::session::run_output_pump<S: OutputSink> (PumpOptions/PumpEnd; both phases moved verbatim — PERF-012 fast path, biased selects, byte-framing identity, ScreenClearDetector/OutputCoalescer). Desktop TerminalOutputSink<E:EventEmitter> adapter folds capture_bytes+log_output+emit_output; send_exit/send_error inert (settle stays in emit_and_cleanup). run_output_reader signature + 3 call sites UNCHANGED; ClearFlushSinkClosed preserves the no-settle asymmetry. EventEmitter/emit_and_cleanup/persistent_controller UNTOUCHED, OutputSink NOT widened (scope-corrected: NOT deleting EventEmitter = that's DUP-010). Desktop suite passed UNEDITED (77/77 + 1995/1995), 12 new core pump tests (core 819/819). Agent-forwarder migration → follow-up #3092"
 ---
 
 ## What

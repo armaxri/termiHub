@@ -9,7 +9,8 @@ subsystem: src/components/Sidebar/FileBrowser
 evidence:
   - src/components/Sidebar/FileBrowser.tsx:1732
   - src/components/TransferQueue/TransferQueue.tsx:45
-status: open
+status: partial
+resolution: "develop — reclaim-partial: footer+panel share one control model (FileBrowser.tsx:988-990 Cancel routes through shared useTransferControls not a divergent one). STILL: footer intentionally Cancel-only (scoped to active session) vs panel full set — control sets not identical (product-scoped)"
 ---
 
 ## What

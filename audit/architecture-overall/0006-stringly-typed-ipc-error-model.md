@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/utils/errors.rs:92
   - core/src/errors.rs:11
   - src/services/api.ts:1262
-status: open
+status: partial
+resolution: "develop — reclaim-partial: stable locale-independent code markers in error Display strings (errors.rs:15-20 [thub-code:auth_failed]) mitigate i18n substring-match hazard. STILL: serialize is serialize_str(to_string()) (errors.rs:121-125), no structured {code,message} wire envelope, 108 cmds still Result<_,String> → ERR-008/TAURI-008 architectural"
 ---
 
 ## What

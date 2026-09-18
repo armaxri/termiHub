@@ -12,7 +12,8 @@ evidence:
   - .github/workflows/system-integration.yml:1
   - .github/workflows/integration-fixtures.yml:530
   - tests/system/conftest.py:319
-status: open
+status: partial
+resolution: "develop — reclaim-partial: same as CI-001 — testid-drift-guard is the only new per-PR guard; real backends/app-launch never run per-PR. Grindable extension: path-trigger integration-fixtures onto src/**+tests/system/** + thin per-PR app-launch smoke (both unimplemented)"
 ---
 
 ## What

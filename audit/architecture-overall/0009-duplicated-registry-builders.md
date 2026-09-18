@@ -9,7 +9,8 @@ subsystem: src-tauri/src/session/registry.rs, agent/src/registry.rs
 evidence:
   - src-tauri/src/session/registry.rs:14
   - agent/src/registry.rs:14
-status: open
+status: fixed
+resolution: "develop — reclaim: core now owns the shared backend register set — termihub_core::connection::register_core_backends called by BOTH src-tauri/src/session/registry.rs:23 (build_desktop_registry) + agent/src/registry.rs:21; desktop layers only ftp/graphical extras (registry.rs:29-74). Duplicated register-block gone (the recommended fix). Verified fresh develop"
 ---
 
 ## What

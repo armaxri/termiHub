@@ -10,7 +10,8 @@ evidence:
   - src/store/layoutBridge.ts:18
   - src/store/layoutBridge.ts:542
   - src/store/appStore.ts:2002
-status: open
+status: partial
+resolution: "develop — reclaim-partial: region is sole layout authority (appStore.ts:420-423 rootPanel/activePanelId no longer stored, composed on demand; local-mutation fallback gone → logBridgeFallback layoutBridge.ts:534). STILL: local layout algebra splitPanel/setLayoutLocal (appStore.ts:4341) remains as optimistic mirror → #2562 full reducer removal open"
 ---
 
 ## What
