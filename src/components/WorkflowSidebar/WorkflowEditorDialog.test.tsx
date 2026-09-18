@@ -288,6 +288,65 @@ describe("WorkflowEditorDialog", () => {
     expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
   });
 
+  it("re-enables Save once a valid name is restored", () => {
+    render();
+    setInput("workflow-editor-name", "");
+    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    setInput("workflow-editor-name", "Valid again");
+    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("enables Save and saves a trimmed payload when the form and step list are valid", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render({ onSave });
+
+    // A valid form (non-empty name) plus a non-empty step list => Save enabled.
+    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(false);
+
+    setInput("workflow-editor-name", "  Trim me  ");
+    setInput("workflow-editor-description", "  spaced desc  ");
+    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
+    await flush();
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
+    // Name and description are trimmed on save, exactly as before the migration.
+    expect(result.name).toBe("Trim me");
+    expect(result.description).toBe("spaced desc");
+    expect(result.steps).toHaveLength(3);
+    expect(result.triggers).toEqual([{ kind: "manual" }]);
+  });
+
+  it("omits an all-whitespace description as undefined on save", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render({ onSave });
+
+    setInput("workflow-editor-description", "   ");
+    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
+    await flush();
+
+    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
+    expect(result.description).toBeUndefined();
+  });
+
+  it("keeps a valid step list from enabling Save while the name is invalid", () => {
+    render();
+    // Step list is non-empty (valid) but the form is invalid => Save blocked,
+    // proving the gate ANDs form validity with the step-list condition.
+    setInput("workflow-editor-name", "   ");
+    expect(query("workflow-editor-steps")).not.toBeNull();
+    expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("populates the form fields from the workflow in edit mode", () => {
+    render();
+    expect((query("workflow-editor-name") as HTMLInputElement).value).toBe("Prod login");
+    expect((query("workflow-editor-description") as HTMLInputElement).value).toBe(
+      "Log in and check health"
+    );
+    expect((query("workflow-editor-tags") as HTMLInputElement).value).toBe("ops, prod");
+  });
+
   it("disables Save and shows the empty hint when all steps are removed", () => {
     render();
     act(() => (query("workflow-editor-step-delete-2") as HTMLButtonElement).click());

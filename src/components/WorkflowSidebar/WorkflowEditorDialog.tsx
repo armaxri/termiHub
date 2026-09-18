@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
+import { Controller, useForm, useWatch } from "react-hook-form";
+import { zodResolver } from "@hookform/resolvers/zod";
+import { z } from "zod";
 import { Plus } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
@@ -27,6 +30,41 @@ export interface WorkflowEditorResult {
   steps: WorkflowStep[];
   triggers: WorkflowTrigger[];
 }
+
+/**
+ * The scalar text fields backed by react-hook-form. The typed step list and
+ * triggers stay in imperative local state (add/remove/reorder/edit are not a
+ * natural fit for an RHF field-array here), and their validity is AND-ed with
+ * this form's at the Save gate — see {@link WorkflowEditorDialog}.
+ */
+interface WorkflowFormValues {
+  name: string;
+  description: string;
+  tags: string;
+}
+
+/**
+ * Client-side validation schema for the workflow's scalar fields (UX feedback
+ * only; the same check the dialog previously ran by hand, translated 1:1 into
+ * zod, part of #3073 / UISF-011):
+ *
+ * - `name` must be non-empty once trimmed.
+ * - `description` and `tags` are free-text and always valid.
+ *
+ * The step-list requirement ("a workflow needs at least one step") is not a
+ * form field, so it stays out of the schema and is AND-ed into the Save gate.
+ */
+const workflowFormSchema = z
+  .object({
+    name: z.string(),
+    description: z.string(),
+    tags: z.string(),
+  })
+  .superRefine((values, ctx) => {
+    if (values.name.trim() === "") {
+      ctx.addIssue({ code: "custom", path: ["name"], message: "Name is required." });
+    }
+  });
 
 export interface WorkflowEditorDialogProps {
   /** Whether the dialog is open. */
@@ -72,9 +110,14 @@ export function WorkflowEditorDialog({
   onOpenChange,
   onSave,
 }: WorkflowEditorDialogProps) {
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [tags, setTags] = useState("");
+  // Scalar fields live in react-hook-form; the typed step list and triggers
+  // stay in imperative local state (their edit surface is not a natural field
+  // array), and their validity is AND-ed into the Save gate below.
+  const { control, getValues, reset } = useForm<WorkflowFormValues>({
+    defaultValues: { name: "", description: "", tags: "" },
+    resolver: zodResolver(workflowFormSchema),
+    mode: "onChange",
+  });
   const [entries, setEntries] = useState<WorkflowStepEntry[]>([]);
   const [triggers, setTriggers] = useState<WorkflowTrigger[]>([]);
 
@@ -84,16 +127,31 @@ export function WorkflowEditorDialog({
   // leaks in and cancel truly discards.
   useEffect(() => {
     if (open && workflow) {
-      setName(workflow.name);
-      setDescription(workflow.description ?? "");
-      setTags(workflow.tags.join(", "));
+      reset({
+        name: workflow.name,
+        description: workflow.description ?? "",
+        tags: workflow.tags.join(", "),
+      });
       setEntries(workflow.steps.map((step) => ({ uid: stepUid(), step: { ...step } })));
       setTriggers(workflow.triggers.map((t) => ({ ...t })));
     }
-  }, [open, workflow]);
+  }, [open, workflow, reset]);
 
-  const trimmedName = name.trim();
-  const canSave = trimmedName.length > 0 && entries.length > 0;
+  // Deterministic, synchronous form validity derived straight from the schema
+  // (same approach as CustomRuleEditor / ConnectionSettingsForm) rather than
+  // react-hook-form's async error proxy, so the Save gate updates on the same
+  // render as the edit and stays testable without awaiting.
+  const watched = useWatch({ control });
+  const formValid = useMemo(() => {
+    return workflowFormSchema.safeParse({
+      name: watched.name ?? "",
+      description: watched.description ?? "",
+      tags: watched.tags ?? "",
+    }).success;
+  }, [watched.name, watched.description, watched.tags]);
+
+  // Preserves today's exact gate: a valid form AND at least one step.
+  const canSave = formValid && entries.length > 0;
 
   const updateStep = (uid: string, step: WorkflowStep) => {
     setEntries((prev) => prev.map((e) => (e.uid === uid ? { ...e, step } : e)));
@@ -131,10 +189,11 @@ export function WorkflowEditorDialog({
   // is disabled to avoid a duplicate.
   const handleSave = () => {
     if (!canSave) return;
+    const values = getValues();
     return onSave({
-      name: trimmedName,
-      description: description.trim() || undefined,
-      tags: parseTags(tags),
+      name: values.name.trim(),
+      description: values.description.trim() || undefined,
+      tags: parseTags(values.tags),
       steps: entries.map((e) => e.step),
       triggers,
     });
@@ -171,33 +230,54 @@ export function WorkflowEditorDialog({
         </>
       }
     >
-      <Field label="Name" htmlFor="workflow-editor-name">
-        <Input
-          id="workflow-editor-name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Workflow name"
-          data-testid="workflow-editor-name"
-        />
-      </Field>
-      <Field label="Description (optional)" htmlFor="workflow-editor-description">
-        <Input
-          id="workflow-editor-description"
-          value={description}
-          onChange={(e) => setDescription(e.target.value)}
-          placeholder="What this workflow does"
-          data-testid="workflow-editor-description"
-        />
-      </Field>
-      <Field label="Tags (optional, comma-separated)" htmlFor="workflow-editor-tags">
-        <Input
-          id="workflow-editor-tags"
-          value={tags}
-          onChange={(e) => setTags(e.target.value)}
-          placeholder="ops, release"
-          data-testid="workflow-editor-tags"
-        />
-      </Field>
+      <Controller
+        name="name"
+        control={control}
+        render={({ field }) => (
+          <Field label="Name" htmlFor="workflow-editor-name">
+            <Input
+              id="workflow-editor-name"
+              value={field.value ?? ""}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              placeholder="Workflow name"
+              data-testid="workflow-editor-name"
+            />
+          </Field>
+        )}
+      />
+      <Controller
+        name="description"
+        control={control}
+        render={({ field }) => (
+          <Field label="Description (optional)" htmlFor="workflow-editor-description">
+            <Input
+              id="workflow-editor-description"
+              value={field.value ?? ""}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              placeholder="What this workflow does"
+              data-testid="workflow-editor-description"
+            />
+          </Field>
+        )}
+      />
+      <Controller
+        name="tags"
+        control={control}
+        render={({ field }) => (
+          <Field label="Tags (optional, comma-separated)" htmlFor="workflow-editor-tags">
+            <Input
+              id="workflow-editor-tags"
+              value={field.value ?? ""}
+              onChange={(e) => field.onChange(e.target.value)}
+              onBlur={field.onBlur}
+              placeholder="ops, release"
+              data-testid="workflow-editor-tags"
+            />
+          </Field>
+        )}
+      />
 
       <div className="workflow-editor__section-header">
         <span className="workflow-editor__section-title">Steps ({entries.length})</span>
