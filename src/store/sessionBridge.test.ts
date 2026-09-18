@@ -22,7 +22,9 @@ import {
   __emitSessionViewForTest,
   currentSessionView,
   dispatchSessionIntent,
+  effectiveAuthFailed,
   effectiveAutoReconnect,
+  effectiveDisconnectError,
   effectiveExited,
   effectiveExitedMap,
   effectiveReconnectingMap,
@@ -516,6 +518,35 @@ describe("regionExited — the overlay mount-gate predicate (#2621)", () => {
       d: life("connected", { exit: { reason: "dropped", code: null } }),
     });
     expect(map).toEqual({ b: true, d: true });
+  });
+});
+
+describe("authFailed — terminal non-retryable auth rejection (SM-005)", () => {
+  const life = (
+    status: ProjectedSessionLifecycle["status"],
+    extra = {}
+  ): ProjectedSessionLifecycle => ({ status, reconnect: initialReconnectState, ...extra });
+
+  it("is a terminal (exited) state, like `failed`", () => {
+    expect(regionExited(life("authFailed"))).toBe(true);
+    expect(effectiveExited(life("authFailed"))).toBe(true);
+  });
+
+  it("surfaces its error through the same overlay treatment as `failed`", () => {
+    // Both terminal failure states render their message via `effectiveDisconnectError`.
+    expect(effectiveDisconnectError(life("authFailed", { error: "Authentication failed" }))).toBe(
+      "Authentication failed"
+    );
+    expect(effectiveDisconnectError(life("failed", { error: "boom" }))).toBe("boom");
+    // A live/reconnecting session has no disconnect error.
+    expect(effectiveDisconnectError(life("reconnecting"))).toBeUndefined();
+  });
+
+  it("effectiveAuthFailed distinguishes the auth-rejection state from a plain failure", () => {
+    expect(effectiveAuthFailed(life("authFailed"))).toBe(true);
+    expect(effectiveAuthFailed(life("failed"))).toBe(false);
+    expect(effectiveAuthFailed(life("connected"))).toBe(false);
+    expect(effectiveAuthFailed(undefined)).toBe(false);
   });
 });
 

@@ -39,6 +39,7 @@ use crate::session::manager::SessionManager;
 use crate::session_projection::projection::fold_session_transition;
 use crate::session_projection::store::SessionLifecycleStore;
 use crate::session_projection::timer::{ReconnectRedrive, ReconnectTimerDriver};
+use crate::utils::errors::TerminalError;
 
 /// Production [`ReconnectRedrive`] over a Tauri [`AppHandle`]. Resolves the
 /// managed [`SessionManager`], [`SessionLifecycleStore`] and
@@ -199,12 +200,15 @@ impl<R: Runtime> ReconnectRedrive for AppReconnectRedrive<R> {
                     sync_timer(&app, &tab_id);
                 }
                 Err(e) => {
-                    // Fold the failure at the source: the engine either arms the
-                    // next backoff window (stay reconnecting) or gives up
-                    // (terminal `Failed`). Re-sync re-arms / cancels the timer.
-                    fold_session_transition(&app, |store| {
-                        store.reconnect_failed(&tab_id, Some(e.to_string()));
-                    });
+                    // Fold the failure at the source. A genuine **auth rejection**
+                    // (typed `TerminalError::AuthFailed`, classified before the
+                    // error is stringified — SM-005) is non-retryable: fold the
+                    // terminal `AuthFailed` and stop the loop now rather than burn
+                    // the remaining doomed attempts. A transient failure keeps the
+                    // exact existing behaviour: the engine either arms the next
+                    // backoff window (stay reconnecting) or gives up (terminal
+                    // `Failed`). Re-sync re-arms / cancels the timer either way.
+                    fold_reconnect_failure(&app, &tab_id, e);
                     sync_timer(&app, &tab_id);
                     clear_retained_on_giveup(&app, &tab_id);
                 }
@@ -282,12 +286,37 @@ async fn reattach_or_lose<R: Runtime>(
         Err(e) => {
             // A transient attach failure re-arms the next backoff window (or gives
             // up), exactly like a failed create — a transport hiccup, distinct
-            // from a gone session (which folds session-lost above).
-            fold_session_transition(app, |store| {
-                store.reconnect_failed(tab_id, Some(e.to_string()));
-            });
+            // from a gone session (which folds session-lost above). A genuine auth
+            // rejection is instead folded terminal + non-retryable (SM-005).
+            fold_reconnect_failure(app, tab_id, e);
             sync_timer(app, tab_id);
             clear_retained_on_giveup(app, tab_id);
+        }
+    }
+}
+
+/// Fold a reconnect attempt's failure into the shared store, classifying a genuine
+/// **auth rejection** apart from a transient failure (SM-005). The typed
+/// [`TerminalError::AuthFailed`] (set at the connect chokepoints from
+/// `SessionError::AuthFailed`, never by parsing message text — I18N-001) folds the
+/// terminal, **non-retryable** [`SessionStatus::AuthFailed`](crate::session_projection::store::SessionStatus::AuthFailed):
+/// the loop stops now rather than burning its remaining doomed attempts against
+/// credentials that can never work. Every other failure keeps the exact transient
+/// behaviour — [`SessionLifecycleStore::reconnect_failed`] arms the next backoff
+/// window or gives up. The inner `AuthFailed(msg)` payload is used directly so the
+/// clean human message reaches the overlay without the wire marker.
+fn fold_reconnect_failure<R: Runtime>(app: &AppHandle<R>, tab_id: &str, error: TerminalError) {
+    match error {
+        TerminalError::AuthFailed(msg) => {
+            fold_session_transition(app, |store| {
+                store.reconnect_auth_failed(tab_id, Some(msg));
+            });
+        }
+        other => {
+            let msg = other.to_string();
+            fold_session_transition(app, |store| {
+                store.reconnect_failed(tab_id, Some(msg));
+            });
         }
     }
 }

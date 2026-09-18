@@ -50,6 +50,124 @@ fn connect_failed_is_terminal_with_the_message() {
     assert_eq!(s.error.as_deref(), Some("auth denied"));
 }
 
+// ── Non-retryable auth failure (SM-005) ──────────────────────────────────────
+//
+// An authentication rejection (wrong password/key) is genuinely non-recoverable
+// without new credentials, so it must NOT arm the reconnect loop the way a
+// transient drop does. It folds directly to the terminal, distinct `AuthFailed`
+// state carrying the message; the user fixes credentials and manually reconnects.
+
+#[test]
+fn connect_auth_failed_folds_terminal_authfailed_without_arming_a_loop() {
+    // An initial connect rejected by auth folds straight to terminal `AuthFailed`
+    // — never `Reconnecting`, never a backoff window — so the doomed loop that a
+    // transient failure would spin is never started (SM-005).
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connect_auth_failed("s1", Some("Authentication failed".to_string()));
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.status, SessionStatus::AuthFailed);
+    assert_eq!(s.end_reason, Some(EndReason::Error));
+    assert_eq!(s.error.as_deref(), Some("Authentication failed"));
+    // The reconnect engine is idle: no backoff window armed, so the backend timer
+    // driver (which arms only on a `Waiting` phase) never schedules a retry.
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+    assert_eq!(s.reconnect.delay_ms, 0);
+    assert_ne!(
+        s.status,
+        SessionStatus::Reconnecting,
+        "an auth rejection must never enter the reconnecting state"
+    );
+}
+
+#[test]
+fn reconnect_auth_failed_mid_loop_stops_immediately_and_is_terminal() {
+    // An auth rejection arriving mid-reconnect-loop stops the loop at once: the
+    // tab folds terminal `AuthFailed` and does NOT arm the next backoff window
+    // (contrast a transient reconnect failure, which backs off — see the
+    // regression guard below). `Gaveup` (not `Idle`) so the backend timer cancels
+    // and the redrive's give-up secret-scrub fires, exactly as an exhausted loop.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1"); // waiting, window 1
+    store.reconnect_attempt("s1"); // connecting, attempt 1
+    store.reconnect_auth_failed("s1", Some("Authentication failed".to_string()));
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.status, SessionStatus::AuthFailed);
+    assert_eq!(s.end_reason, Some(EndReason::Error));
+    assert_eq!(s.error.as_deref(), Some("Authentication failed"));
+    // The loop stopped — no next backoff window is armed.
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Gaveup);
+    assert_eq!(s.reconnect.delay_ms, 0);
+}
+
+#[test]
+fn transient_reconnect_failure_still_backs_off_unchanged_by_the_auth_path() {
+    // Regression guard for the transient path: a NON-auth reconnect failure must
+    // keep its exact existing behaviour — arm the next backoff window and stay
+    // `Reconnecting`. The auth path must not perturb it.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    store.reconnect_attempt("s1"); // connecting, attempt 1
+    store.reconnect_failed("s1", Some("host unreachable".to_string()));
+    let s = store.get("s1").unwrap();
+    assert_eq!(s.status, SessionStatus::Reconnecting);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Waiting);
+    assert_eq!(s.reconnect.attempt, 1);
+    assert_eq!(
+        s.reconnect.delay_ms, 2_000,
+        "next window doubled — unchanged"
+    );
+}
+
+#[test]
+fn stale_reconnect_auth_failed_after_cancel_does_not_resurrect_the_loop() {
+    // The still-current-run guard applies to the auth fold too (TBE-011): a user
+    // Stop mid-attempt, then a superseded in-flight connect finally errors with an
+    // auth rejection — it must not flip the user-cancelled `Disconnected` tab to
+    // `AuthFailed`.
+    let store = deterministic_store();
+    store.connect("s1");
+    store.connected("s1");
+    store.reconnect("s1");
+    store.reconnect_attempt("s1"); // connecting, attempt 1
+    store.cancel_reconnect("s1"); // user Stop → Disconnected(User)
+
+    store.reconnect_auth_failed("s1", Some("Authentication failed".to_string()));
+
+    let s = store.get("s1").unwrap();
+    assert_eq!(
+        s.status,
+        SessionStatus::Disconnected,
+        "a stale auth failure must not resurrect a user-cancelled tab"
+    );
+    assert_eq!(s.end_reason, Some(EndReason::User));
+}
+
+#[test]
+fn reconnect_auth_failed_on_an_unknown_session_is_a_noop() {
+    let store = deterministic_store();
+    store.reconnect_auth_failed("ghost", Some("Authentication failed".to_string()));
+    assert!(store.get("ghost").is_none());
+}
+
+#[test]
+fn auth_failed_serializes_as_auth_failed_for_the_frontend() {
+    // The frontend keys off the serialized status string; pin it so the renderer
+    // and this backend state stay in agreement (SM-005).
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connect_auth_failed("tab-1", Some("Authentication failed".to_string()));
+    let snapshot = store.snapshot();
+    assert_eq!(
+        snapshot["sessions"]["tab-1"]["status"],
+        serde_json::json!("authFailed")
+    );
+}
+
 #[test]
 fn user_disconnect_lands_idle_with_reason_user() {
     let store = deterministic_store();
