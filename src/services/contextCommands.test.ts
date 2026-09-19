@@ -47,6 +47,7 @@ describe("CONTEXT_COMMANDS registry", () => {
         "clear-terminal",
         "close-tab",
         "close-tab-group",
+        "copy",
         "find-in-terminal",
         "focus-down",
         "focus-left",
@@ -55,8 +56,10 @@ describe("CONTEXT_COMMANDS registry", () => {
         "move-tab-to-new-window",
         "next-tab",
         "next-tab-group",
+        "paste",
         "prev-tab",
         "prev-tab-group",
+        "select-all",
       ].sort()
     );
   });
@@ -270,6 +273,53 @@ describe("clear-terminal / find-in-terminal", () => {
     window.removeEventListener("termihub:clear-terminal", listener);
     expect(events).toHaveLength(0);
     expect(toggleSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("clipboard commands (copy / paste / select-all)", () => {
+  const CASES: Array<[string, string]> = [
+    ["copy", "termihub:copy-selection"],
+    ["paste", "termihub:paste"],
+    ["select-all", "termihub:select-all"],
+  ];
+
+  it("are available only when the active tab is a terminal", () => {
+    for (const [action] of CASES) {
+      expect(CONTEXT_COMMANDS[action].isAvailable()).toBe(false);
+    }
+    addActiveTab("editor");
+    for (const [action] of CASES) {
+      expect(CONTEXT_COMMANDS[action].isAvailable()).toBe(false);
+    }
+    addActiveTab("terminal");
+    for (const [action] of CASES) {
+      expect(CONTEXT_COMMANDS[action].isAvailable()).toBe(true);
+    }
+  });
+
+  it("dispatch the matching terminal command event for the focused terminal", () => {
+    const tabId = addActiveTab("terminal");
+    for (const [action, eventName] of CASES) {
+      const events: CustomEvent[] = [];
+      const listener = (e: Event) => events.push(e as CustomEvent);
+      window.addEventListener(eventName, listener);
+      CONTEXT_COMMANDS[action].run();
+      window.removeEventListener(eventName, listener);
+      expect(events).toHaveLength(1);
+      expect(events[0].detail.tabId).toBe(tabId);
+    }
+  });
+
+  it("run() is inert on a non-terminal tab", () => {
+    addActiveTab("editor");
+    for (const [action, eventName] of CASES) {
+      const events: CustomEvent[] = [];
+      const listener = (e: Event) => events.push(e as CustomEvent);
+      window.addEventListener(eventName, listener);
+      CONTEXT_COMMANDS[action].run();
+      window.removeEventListener(eventName, listener);
+      expect(events).toHaveLength(0);
+    }
   });
 });
 

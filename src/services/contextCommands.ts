@@ -108,9 +108,7 @@ function focusPanel(dir: FocusDirection): void {
 
 /** Clear the focused terminal (no-op when the active tab is not a terminal). */
 function clearActiveTerminal(): void {
-  const tab = activeTerminalTab();
-  if (!tab) return;
-  window.dispatchEvent(new CustomEvent("termihub:clear-terminal", { detail: { tabId: tab.id } }));
+  dispatchToActiveTerminal("termihub:clear-terminal");
 }
 
 /** Toggle the search bar of the focused terminal. */
@@ -118,6 +116,19 @@ function findInActiveTerminal(): void {
   const tab = activeTerminalTab();
   if (!tab) return;
   useAppStore.getState().toggleTerminalSearch(tab.id);
+}
+
+/**
+ * Dispatch a terminal command event for the active terminal tab. The
+ * {@link TerminalCommandBridge} (rendered inside the terminal registry provider)
+ * listens and calls the matching registry method, so palette/keyboard callers
+ * outside that provider reach the exact handler the focused-terminal shortcut
+ * uses. No-op when the active tab is not a terminal.
+ */
+function dispatchToActiveTerminal(eventName: string): void {
+  const tab = activeTerminalTab();
+  if (!tab) return;
+  window.dispatchEvent(new CustomEvent(eventName, { detail: { tabId: tab.id } }));
 }
 
 /**
@@ -184,6 +195,23 @@ export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
   "find-in-terminal": {
     isAvailable: () => activeTerminalTab() !== null,
     run: findInActiveTerminal,
+  },
+  // Clipboard actions delegate to the focused terminal via the command bridge
+  // (copy the current selection, paste the clipboard, select the whole buffer),
+  // driving the same registry handlers the Cmd/Ctrl shortcuts use. Each is a safe
+  // no-op when it has no work to do (e.g. copy with no selection), matching the
+  // shortcut's own guarding.
+  copy: {
+    isAvailable: () => activeTerminalTab() !== null,
+    run: () => dispatchToActiveTerminal("termihub:copy-selection"),
+  },
+  paste: {
+    isAvailable: () => activeTerminalTab() !== null,
+    run: () => dispatchToActiveTerminal("termihub:paste"),
+  },
+  "select-all": {
+    isAvailable: () => activeTerminalTab() !== null,
+    run: () => dispatchToActiveTerminal("termihub:select-all"),
   },
   "move-tab-to-new-window": {
     isAvailable: () => activeTerminalTab() !== null,
