@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
-import { Play, StopCircle } from "lucide-react";
+import { Download, Play, StopCircle } from "lucide-react";
 import { Button, Field, Input, NumberInput } from "@/components/ui";
+import { exportNetworkResults, tracerouteHopsToCsv } from "./exportResults";
 import {
   networkTraceroute,
   networkTracerouteCancel,
@@ -59,6 +60,10 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
     subscribe,
   });
 
+  const handleExport = useCallback(async () => {
+    await exportNetworkResults(`traceroute-${host || "results"}`, tracerouteHopsToCsv(hops));
+  }, [host, hops]);
+
   const columns = [
     { key: "hop", label: "Hop" },
     { key: "ip", label: "Host" },
@@ -90,6 +95,16 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
       <div className="network-panel__header">
         <span className="network-panel__title">Traceroute</span>
         <div className="network-panel__actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Download size={14} />}
+            disabled={hops.length === 0}
+            onClick={handleExport}
+            data-testid="traceroute-export"
+          >
+            Export
+          </Button>
           {status === "running" ? (
             <Button
               variant="danger"

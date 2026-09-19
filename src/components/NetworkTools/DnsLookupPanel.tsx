@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef } from "react";
-import { Play, StopCircle } from "lucide-react";
+import { Download, Play, StopCircle } from "lucide-react";
 import { Button, Field, Input, Select } from "@/components/ui";
+import { dnsRecordsToCsv, exportNetworkResults } from "./exportResults";
 import { networkDnsLookup } from "@/services/networkApi";
 import type { DnsRecord, DnsRecordType, DnsResult } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
@@ -95,6 +96,10 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
     cancelRef.current?.();
   }, []);
 
+  const handleExport = useCallback(async () => {
+    await exportNetworkResults(`dns-${hostname || "results"}`, dnsRecordsToCsv(records));
+  }, [hostname, records]);
+
   const columns = [
     { key: "recordType", label: "Type" },
     { key: "name", label: "Name" },
@@ -114,6 +119,16 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       <div className="network-panel__header">
         <span className="network-panel__title">DNS Lookup</span>
         <div className="network-panel__actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Download size={14} />}
+            disabled={records.length === 0}
+            onClick={handleExport}
+            data-testid="dns-export"
+          >
+            Export
+          </Button>
           {running && (
             <Button
               variant="danger"

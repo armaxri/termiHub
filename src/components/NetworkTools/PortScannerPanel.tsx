@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from "react";
-import { Play, ServerCog, StopCircle } from "lucide-react";
+import { Download, Play, ServerCog, StopCircle } from "lucide-react";
 import { Button, ConfirmDialog, Field, Input, NumberInput } from "@/components/ui";
+import { exportNetworkResults, portScanResultsToCsv } from "./exportResults";
 import { FleetOnboardDialog } from "@/components/Sidebar/FleetOnboardDialog";
 import { portScanResultsToRows } from "@/services/fleetOnboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
@@ -165,11 +166,25 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
   const liveOpen = useMemo(() => results.filter((r) => r.state === "open").length, [results]);
   const [onboardOpen, setOnboardOpen] = useState(false);
 
+  const handleExport = useCallback(async () => {
+    await exportNetworkResults(`port-scan-${host || "results"}`, portScanResultsToCsv(results));
+  }, [host, results]);
+
   return (
     <form className="network-panel" data-testid="port-scanner-panel">
       <div className="network-panel__header">
         <span className="network-panel__title">Port Scanner</span>
         <div className="network-panel__actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Download size={14} />}
+            disabled={results.length === 0}
+            onClick={handleExport}
+            data-testid="port-scanner-export"
+          >
+            Export
+          </Button>
           {liveOpen > 0 && status !== "running" && (
             <Button
               variant="secondary"
