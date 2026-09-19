@@ -270,6 +270,12 @@ export interface LayoutConfig {
   sidebarView?: string;
   /** Whether the sidebar is currently collapsed. Persisted across restarts. */
   sidebarCollapsed?: boolean;
+  /**
+   * Whether the file browser shows hidden (dot-prefixed) entries. Persisted
+   * across restarts; absent/false hides them, matching the standard
+   * file-explorer default.
+   */
+  showHiddenFiles?: boolean;
 }
 
 export const DEFAULT_LAYOUT: LayoutConfig = {

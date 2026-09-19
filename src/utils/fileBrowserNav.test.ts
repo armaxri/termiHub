@@ -3,6 +3,7 @@ import {
   splitPathSegments,
   sortEntries,
   filterEntries,
+  filterHiddenEntries,
   findTypeAheadIndex,
   resolveSymlinkTarget,
 } from "./fileBrowserNav";
@@ -135,6 +136,34 @@ describe("filterEntries", () => {
 
   it("matches the readme regardless of case", () => {
     expect(filterEntries(entries, "readme").map((e) => e.name)).toEqual(["README.md"]);
+  });
+});
+
+describe("filterHiddenEntries", () => {
+  const entries: FileEntry[] = [
+    entry(".bashrc"),
+    entry("README.md"),
+    entry(".git", { isDirectory: true }),
+    entry("src", { isDirectory: true }),
+  ];
+
+  it("hides dot-prefixed files and directories by default", () => {
+    expect(filterHiddenEntries(entries, false).map((e) => e.name)).toEqual(["README.md", "src"]);
+  });
+
+  it("shows every entry when hidden files are toggled on", () => {
+    expect(filterHiddenEntries(entries, true).map((e) => e.name)).toEqual([
+      ".bashrc",
+      "README.md",
+      ".git",
+      "src",
+    ]);
+  });
+
+  it("does not mutate the input array", () => {
+    const copy = [...entries];
+    filterHiddenEntries(entries, false);
+    expect(entries).toEqual(copy);
   });
 });
 
