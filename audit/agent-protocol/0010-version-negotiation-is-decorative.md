@@ -11,7 +11,8 @@ evidence:
   - agent/src/handler/dispatch.rs:76
   - src-tauri/src/terminal/agent_manager.rs:1752
   - docs/remote-protocol.md:251
-status: open
+status: fixed
+resolution: "reclaim — protocol version negotiation now enforced (was decorative): agent/src/handler/dispatch.rs:332-341 negotiate_protocol_version enforces major-version match (None=incompatible) and selects lower shared version"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - src/services/regexSafety.ts:88
   - src/services/regexSafety.ts:32
   - src/services/regexSafety.ts:185
-status: open
+status: fixed
+resolution: "reclaim — scslre adopted for regex-safety: src/services/regexSafety.ts:32 import { analyse } from scslre; package.json:65 scslre ^0.3.0"
 ---
 
 ## What

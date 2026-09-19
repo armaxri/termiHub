@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/session/manager.rs:1
   - src-tauri/src/spawn/registry.rs:1
   - src-tauri/src/tunnel/tunnel_manager.rs:1
-status: open
+status: partial
+resolution: "#3131 — = ARCH-002 (same finding). Slice1 setup()→boot phases done #3131; module splits remaining pre-release"
 ---
 
 ## What

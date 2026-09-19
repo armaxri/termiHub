@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/utils/test_bridge.rs:36
   - src-tauri/src/utils/test_bridge.rs:184
   - src-tauri/src/lib.rs:1643
-status: open
+status: fixed
+resolution: "reclaim — test_bridge fully #[cfg(feature="test-bridge")] (lib.rs:433,524,593,631) and test-bridge NOT in default features (src-tauri/Cargo.toml:18,46) — compiled out of release"
 ---
 
 ## What
