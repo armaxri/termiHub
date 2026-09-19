@@ -47,13 +47,12 @@ describe("buildCommands", () => {
     expect(ids).toContain("close-tab-group");
     expect(ids).toContain("next-tab-group");
     expect(ids).toContain("prev-tab-group");
-    // …while the palette's own shortcut has no runner and stays out…
+    // …and the clipboard actions now delegate to the focused terminal (PROD-054)…
+    expect(ids).toContain("copy");
+    expect(ids).toContain("paste");
+    expect(ids).toContain("select-all");
+    // …while the palette's own shortcut has no runner and stays out.
     expect(ids).not.toContain("command-palette");
-    // …and the clipboard actions stay out until a focused-terminal command seam
-    // exists (deferred follow-up to UX-028).
-    expect(ids).not.toContain("copy");
-    expect(ids).not.toContain("paste");
-    expect(ids).not.toContain("select-all");
   });
 
   it("runs the matching store action", () => {
