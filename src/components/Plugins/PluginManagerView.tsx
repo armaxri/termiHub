@@ -4,10 +4,10 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import { assessPluginTrust, validatePlugin } from "@/services/api";
 import type { InstalledPlugin, PluginManifest, PluginTrustInfo } from "@/types/plugin";
-import { Button, SearchInput, toast } from "@/components/ui";
+import { Button, SearchInput, StatusDot, toast } from "@/components/ui";
 import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
 import { frontendLog } from "@/utils/frontendLog";
-import { pluginDotState, pluginTypeIcon } from "./pluginPresentation";
+import { pluginDotState, pluginDotTone, pluginTypeIcon } from "./pluginPresentation";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import "./Plugins.css";
 import { errorMessage } from "@/utils/errorMessage";
@@ -114,10 +114,10 @@ export function PluginManagerView() {
                 title={`${manifest.name} v${manifest.version}`}
                 data-testid={`plugin-row-${manifest.id}`}
               >
-                <span
-                  className={`plugin-state-dot plugin-state-dot--${dot}`}
-                  data-testid={`plugin-state-dot-${manifest.id}`}
-                  aria-hidden="true"
+                <StatusDot
+                  tone={pluginDotTone(dot)}
+                  testId={`plugin-state-dot-${manifest.id}`}
+                  ariaHidden
                 />
                 <TypeIcon className="plugin-row__icon" aria-hidden="true" />
                 <span className="plugin-row__name">{manifest.name}</span>

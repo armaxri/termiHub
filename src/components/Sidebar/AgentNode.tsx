@@ -36,7 +36,8 @@ import {
   Power,
 } from "lucide-react";
 import { ConnectionIcon } from "@/utils/connectionIcons";
-import { Button, Tooltip, toast } from "@/components/ui";
+import { Button, StatusDot, Tooltip, toast } from "@/components/ui";
+import type { StatusTone } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { frontendError, frontendLog } from "@/utils/frontendLog";
@@ -72,13 +73,16 @@ const EMPTY_SESSIONS: AgentSessionInfo[] = [];
 const EMPTY_DEFINITIONS: AgentDefinitionInfo[] = [];
 const EMPTY_FOLDERS: AgentFolderInfo[] = [];
 
-/** CSS modifier class for each connection state dot. */
-const STATE_DOT_CLASSES: Record<string, string> = {
-  connected: "agent-node__state-dot--connected",
-  connecting: "agent-node__state-dot--connecting",
-  reconnecting: "agent-node__state-dot--reconnecting",
-  disconnected: "agent-node__state-dot--disconnected",
-};
+/**
+ * Tone for an agent connection-state dot, from the shared `--state-*` palette.
+ * Any non-connected, non-(re)connecting state (including unknown) reads as
+ * disconnected, matching the previous `agent-node__state-dot` default.
+ */
+function agentStateTone(connectionState: string): StatusTone {
+  if (connectionState === "connected") return "connected";
+  if (connectionState === "connecting" || connectionState === "reconnecting") return "connecting";
+  return "disconnected";
+}
 
 /**
  * Shared roving-tabindex / filter plumbing threaded through the agent tree so
@@ -197,16 +201,6 @@ function AgentConnectionItem({
   );
 
   const isRunning = runState === "running" || runState === "attached";
-  const isTransitioning = runState === "starting" || runState === "stopping";
-  const hasError = runState === "error";
-
-  const stateDotClass = isRunning
-    ? "connection-tree__state-dot--running"
-    : isTransitioning
-      ? "connection-tree__state-dot--transitioning"
-      : hasError
-        ? "connection-tree__state-dot--error"
-        : "connection-tree__state-dot--stopped";
 
   return (
     <ContextMenu.Root>
@@ -252,7 +246,6 @@ function AgentConnectionItem({
           {definition.persistent && (
             <PersistentStateDot
               runState={runState}
-              stateDotClass={stateDotClass}
               connectionId={`${agentId}:${definition.id}`}
               dotTestId={`persistent-state-dot-${definition.id}`}
             />
@@ -1217,12 +1210,12 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
               onClick={() => toggleRemoteAgent(agent.id)}
             >
               <Chevron size={16} className="connection-tree__chevron" />
-              <span
-                className={`agent-node__state-dot ${STATE_DOT_CLASSES[agent.connectionState] ?? "agent-node__state-dot--disconnected"}`}
-                role="img"
-                aria-label={connectionStateLabel(agent.connectionState)}
+              <StatusDot
+                tone={agentStateTone(agent.connectionState)}
+                size="sm"
+                label={connectionStateLabel(agent.connectionState)}
                 title={connectionStateLabel(agent.connectionState)}
-                data-testid={`agent-state-${agent.id}`}
+                testId={`agent-state-${agent.id}`}
               />
               <Server size={14} />
               <span className="connection-list__group-title">{agent.name}</span>
