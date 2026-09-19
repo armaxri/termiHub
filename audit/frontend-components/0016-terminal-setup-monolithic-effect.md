@@ -9,7 +9,8 @@ subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:375
   - src/components/Terminal/Terminal.tsx:1110
-status: open
+status: partial
+resolution: "#3118 — Slice 1 landed. REFRAMED (scoping): the reconnect BACKOFF FSM was already pure+backend-authoritative (reconnectBackoff.ts + backend timer) — Terminal.tsx doesn't own it. Extracted the establishment-path SELECTOR (former Terminal.tsx:467-546) into pure src/components/Terminal/terminalConnectionPlan.ts resolveEstablishmentPlan() (module-scope, no store reads/await/new-dep); wired as a no-fall-through switch running identical effects. 77-case exhaustive test table (never-fall-through, reattach-to-corpse guard, forceFresh one-shot, replay choice); ALL existing Terminal.* reconnect DOM suites pass UNEDITED. Cleanup/StrictMode/subscription/agent-spawn UNTOUCHED, exhaustive-deps preserved by construction. REMAINING: Slice 2 = resolveAgentSpawnAction (Phase D agent-spawn loop, former :695-778); Slice 3 = resolveBackendOutcomePlan (optional). TFE-002 same finding"
 ---
 
 ## What

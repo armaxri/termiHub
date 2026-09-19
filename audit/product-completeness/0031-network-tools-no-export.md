@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/NetworkTools
 evidence:
   - src/components/NetworkTools/PortScanPanel.tsx:1
-status: open
+status: fixed
+resolution: "#3120 — network-tool result export: Export control (Download btn, disabled when empty) on Ping/Traceroute/PortScanner/DNS panels → CSV via shared src/components/NetworkTools/exportResults.ts using same save()+writeTextFile() path as LogViewer (no new file-write). RFC-4180 escaped, sanitized filenames, toast success/error, cancel=no-op. WoL/HTTP-Monitor excluded (no discrete result set). 10 new tests"
 ---
 
 ## What

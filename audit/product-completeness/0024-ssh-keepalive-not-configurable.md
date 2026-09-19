@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/ssh
 evidence:
   - core/src/backends/ssh/auth.rs:122
-status: open
+status: fixed
+resolution: "#3121 — configurable SSH keepalive: SshConfig gains optional keepaliveIntervalSecs/keepaliveMaxCount (camelCase, skip_if_none) + accessors falling back to DEFAULT 30/3 when absent (no behavior change, byte-stable saved connections). auth.rs uses config.keepalive_interval()/max_count(). Schema-driven advanced fields (Number, placeholders 30/3) via DynamicForm. SshConfig not ts-rs-exported → no generated types. 1751 core tests"
 ---
 
 ## What
