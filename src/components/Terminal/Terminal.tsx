@@ -57,6 +57,7 @@ import { getRenderedCellWidth } from "./xtermDimensions";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import { currentSessionView, waitForBackendAgentReconnectOutcome } from "@/store/sessionBridge";
+import { resolveEstablishmentPlan } from "./terminalConnectionPlan";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -484,18 +485,36 @@ export function Terminal({
             return { terminalForceFreshReconnect: next };
           });
         }
+        // Classify the establishment path with the pure selector (FEC-016). It
+        // reads only this explicit snapshot — the corpse guard (never reattach
+        // to the dead mount-time id on reconnect) and the never-fall-through rule
+        // (a `reconnecting` region always awaits the backend redrive) live there.
+        // The side-effectful effect for the chosen kind runs inline below.
+        const plan = resolveEstablishmentPlan({
+          isReconnect,
+          forceFresh,
+          hasPersistentConnection: !!persistentConnectionId,
+          regionStatus: currentSessionView()[tabId]?.status,
+          initialSessionId: initialSessionIdRef.current ?? null,
+          replayScrollbackOnAttach: !!replayScrollbackRef.current,
+        });
         let reattachSessionId: string | null;
-        if (isReconnect) {
-          if (forceFresh) {
+        switch (plan.kind) {
+          case "freshCreate":
             // Skip every re-attach branch: a fresh `create_connection` below opens
-            // a new shell for the tab (an explicit user choice on the session-lost
-            // notice, where auto re-attach is deliberately suppressed).
+            // a new shell for the tab. This is an initial connect, an explicit
+            // "start new shell" (force-fresh), or a user-initiated reconnect (the
+            // user clicked Reconnect / Try Again). `setTerminalConnecting(true)`
+            // there dispatches `session.connect`, resetting the region to
+            // `connecting`.
             reattachSessionId = null;
-          } else if (persistentConnectionId) {
+            break;
+          case "restartPersistent":
             // Persistent/agent tab: restart the background session and reattach
             // to its (possibly new) live id — never to the dead mount-time id.
             reattachSessionId = await useAppStore.getState().restartPersistentSessionForTab(tabId);
-          } else if (currentSessionView()[tabId]?.status === "reconnecting") {
+            break;
+          case "awaitBackendRedrive": {
             // Backend-driven automatic reconnect (#2205 PR-B): a genuine drop folded
             // the `session-lifecycle` region to `reconnecting` and the backend
             // redrive is the SOLE reconnect authority — it re-establishes the
@@ -532,18 +551,20 @@ export function Terminal({
               return;
             }
             reattachSessionId = outcome.sessionId;
-          } else {
-            // User-initiated reconnect (the region is not reconnecting — the user
-            // clicked Reconnect / Try Again after a disconnect or give-up): start
-            // fresh via the client `create_connection` below, exactly as an initial
-            // connect does. `setTerminalConnecting(true)` there dispatches
-            // `session.connect`, resetting the region to `connecting`.
-            reattachSessionId = null;
+            break;
           }
-          if (isCanceled()) return;
-        } else {
-          reattachSessionId = initialSessionIdRef.current ?? null;
+          case "reattach":
+            // Initial mount: reattach to the session captured at mount time
+            // (workspace restore / persistent attach / cross-window re-parent).
+            // The scrollback-replay dance below keys off persistentConnectionId /
+            // replayScrollbackRef exactly as before (mirrored by plan.replay).
+            reattachSessionId = plan.sessionId;
+            break;
         }
+        // A `restartPersistent` / `awaitBackendRedrive` awaited above; the create
+        // loop and reattach block below have their own cancel checks, and on the
+        // no-await paths (fresh / reattach) the signal cannot have newly aborted.
+        if (isCanceled()) return;
 
         if (reattachSessionId) {
           sessionId = reattachSessionId;
