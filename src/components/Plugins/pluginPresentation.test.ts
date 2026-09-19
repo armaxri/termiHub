@@ -13,6 +13,7 @@ import {
   fingerprintShort,
   hasSettings,
   pluginDotState,
+  pluginHasNativeCode,
   pluginStatusLabel,
   pluginTypeLabel,
   trustBanner,
@@ -112,6 +113,24 @@ describe("hasSettings", () => {
     expect(
       hasSettings(manifest({ settings: { ns: { type: "string", default: "", description: "" } } }))
     ).toBe(true);
+  });
+});
+
+describe("pluginHasNativeCode", () => {
+  it("is true for a terminalBackend (native Rust dynamic library)", () => {
+    expect(
+      pluginHasNativeCode({
+        terminalBackend: { connectionType: "k8s", displayName: "K8s", configSchema: {} },
+      })
+    ).toBe(true);
+  });
+
+  it("is false for JS/JSON-only extension points", () => {
+    expect(pluginHasNativeCode({ theme: { themes: [] } })).toBe(false);
+    expect(
+      pluginHasNativeCode({ statusBarWidget: { entryPoint: "w.js", position: "right" } })
+    ).toBe(false);
+    expect(pluginHasNativeCode({})).toBe(false);
   });
 });
 

@@ -366,6 +366,41 @@
   font-weight: 600;
 }
 
+/* Native-code (unsandboxed) warning — shown when the package ships a native
+   terminal backend (Rust dynamic library). Warning tone, separate from the
+   provenance banner so it is impossible to miss. */
+.plugin-install__native {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  padding: 10px var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  border: 1px solid var(--color-warning);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.plugin-install__native-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--color-warning);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.plugin-install__native-title {
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
+.plugin-install__native-desc {
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
 .plugin-install__meta {
   display: flex;
   flex-direction: column;

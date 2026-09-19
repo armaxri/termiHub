@@ -169,6 +169,19 @@ export function hasSettings(manifest: PluginManifest): boolean {
 }
 
 /**
+ * True when the plugin ships **native code** — a `terminalBackend` extension is a
+ * compiled Rust dynamic library (see {@link PluginExtensions.terminalBackend}).
+ * Native code loads into the termiHub process itself: it runs **unsandboxed with
+ * full application privileges**, so the install/trust prompt must call this out
+ * explicitly regardless of the coarse permissions the manifest lists. The other
+ * extension points (protocol parsers, themes, status-bar widgets) are JS/JSON
+ * data and carry no native-code risk.
+ */
+export function pluginHasNativeCode(extensions: PluginExtensions): boolean {
+  return extensions.terminalBackend != null;
+}
+
+/**
  * Render a `sha256:`-prefixed key fingerprint truncated for display
  * (e.g. `sha256:ab12…9f0e`), so the full 64-hex digest does not dominate a
  * banner or settings row. Short or missing values are returned unchanged.
