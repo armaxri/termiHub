@@ -34,6 +34,8 @@ import {
   ChevronUp,
   ChevronDown,
   ExternalLink,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -62,6 +64,7 @@ import { formatBytes, formatRelativeTime, formatAbsoluteTime } from "@/utils/for
 import {
   sortEntries,
   filterEntries,
+  filterHiddenEntries,
   resolveSymlinkTarget,
   type FileSortKey,
   type SortDirection,
@@ -343,6 +346,14 @@ export function MultiSelectMenuItems({
         data-testid="multi-select-paste"
       >
         <ClipboardPaste size={14} /> Paste
+      </Item>
+      <Separator className="context-menu__separator" />
+      <Item
+        className="context-menu__item"
+        onSelect={() => onAction("download")}
+        data-testid="multi-select-download"
+      >
+        <Download size={14} /> Download ({count} items)
       </Item>
       <Separator className="context-menu__separator" />
       <Item
@@ -1003,12 +1014,23 @@ export function FileBrowser() {
   });
   const [filterQuery, setFilterQuery] = useState("");
 
-  // Sorted, then filtered — the single source of order for both the rendered
-  // rows and keyboard navigation, so the two never disagree. Kept as two memos
-  // so filter keystrokes don't re-sort the whole directory.
+  // Persisted show/hide toggle for hidden (dot-prefixed) entries (PROD-008).
+  // Lives on the layout config so it survives restarts alongside the other
+  // file-browser view prefs; default (absent) hides them.
+  const showHiddenFiles = useAppStore((s) => s.layoutConfig.showHiddenFiles ?? false);
+  const updateLayoutConfig = useAppStore((s) => s.updateLayoutConfig);
+
+  // Hidden filter first, then sort, then the text filter — the single source of
+  // order for both the rendered rows and keyboard navigation, so the two never
+  // disagree. Kept as separate memos so filter keystrokes don't re-sort the
+  // whole directory and toggling hidden files doesn't re-run the text filter.
+  const visibleEntries = useMemo(
+    () => filterHiddenEntries(fileEntries, showHiddenFiles),
+    [fileEntries, showHiddenFiles]
+  );
   const sortedEntries = useMemo(
-    () => sortEntries(fileEntries, sort.key, sort.dir),
-    [fileEntries, sort.key, sort.dir]
+    () => sortEntries(visibleEntries, sort.key, sort.dir),
+    [visibleEntries, sort.key, sort.dir]
   );
   const displayEntries = useMemo(
     () => filterEntries(sortedEntries, filterQuery),
@@ -1372,6 +1394,18 @@ export function FileBrowser() {
         case "cut":
           cutEntry(entries);
           break;
+        case "download": {
+          // Reuse the single-download path for each selected entry (PROD-005):
+          // every download surfaces its own transfer feedback, and a selected
+          // directory recurses through the same backend copy the single
+          // download uses. Sequential so the local Save-as dialogs don't race.
+          void (async () => {
+            for (const entry of entries) {
+              await downloadFile(entry.path, entry.name);
+            }
+          })();
+          break;
+        }
         case "delete": {
           setDeleteConfirm({
             message: `Delete ${entries.length} items?`,
@@ -1401,7 +1435,7 @@ export function FileBrowser() {
         }
       }
     },
-    [displayEntries, selectedPaths, copyEntry, cutEntry, deleteEntry]
+    [displayEntries, selectedPaths, copyEntry, cutEntry, deleteEntry, downloadFile]
   );
 
   const handleCreateDir = useCallback(() => {
@@ -1545,6 +1579,17 @@ export function FileBrowser() {
               onClick={refresh}
               aria-label="Refresh file list"
               data-testid="file-browser-refresh"
+            />
+          </Tooltip>
+          <Tooltip content={showHiddenFiles ? "Hide hidden files" : "Show hidden files"} side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              icon={showHiddenFiles ? <Eye size={14} /> : <EyeOff size={14} />}
+              onClick={() => updateLayoutConfig({ showHiddenFiles: !showHiddenFiles })}
+              aria-pressed={showHiddenFiles}
+              aria-label={showHiddenFiles ? "Hide hidden files" : "Show hidden files"}
+              data-testid="file-browser-toggle-hidden"
             />
           </Tooltip>
           {mode === "local" && (
