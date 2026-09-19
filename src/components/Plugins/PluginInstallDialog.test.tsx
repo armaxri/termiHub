@@ -104,6 +104,30 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
     expect(text).toContain("read and write files");
   });
 
+  it("warns that a native terminal-backend plugin runs unsandboxed", () => {
+    render(manifest());
+    const warning = document.querySelector('[data-testid="plugin-install-native-warning"]');
+    expect(warning).not.toBeNull();
+    const text = warning!.textContent ?? "";
+    expect(text).toContain("unsandboxed");
+    expect(text).toContain("full application privileges");
+  });
+
+  it("omits the native-code warning for a non-native (theme-only) plugin", () => {
+    render(
+      manifest({
+        permissions: [],
+        extensions: { theme: { themes: [{ id: "t", name: "T", file: "t.json" }] } },
+      })
+    );
+    expect(document.querySelector('[data-testid="plugin-install-native-warning"]')).toBeNull();
+  });
+
+  it("hides the native-code warning for a tampered (blocked) package", () => {
+    render(manifest(), trust({ level: "tampered", warning: "blocked", isBlocked: true }));
+    expect(document.querySelector('[data-testid="plugin-install-native-warning"]')).toBeNull();
+  });
+
   it("shows a no-permissions note when none are requested", () => {
     render(manifest({ permissions: [] }));
     expect(document.querySelector('[data-testid="plugin-install-no-perms"]')).not.toBeNull();

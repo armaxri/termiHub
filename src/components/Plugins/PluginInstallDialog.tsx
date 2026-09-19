@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { Package, ShieldAlert } from "lucide-react";
+import { Cpu, Package, ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import type { PluginManifest, PluginTrustInfo } from "@/types/plugin";
 import { Button, Checkbox, Modal } from "@/components/ui";
 import {
   PERMISSION_DESCRIPTIONS,
   PERMISSION_LABELS,
+  pluginHasNativeCode,
   pluginTypeLabel,
   trustBanner,
 } from "./pluginPresentation";
@@ -75,6 +76,7 @@ export function PluginInstallDialog({
   const banner = trustBanner(trust);
   const BannerIcon = banner.icon;
   const blocked = trust.isBlocked;
+  const isNative = pluginHasNativeCode(manifest.extensions);
 
   const handleInstall = async () => {
     // installPlugin / enablePlugin own their own pending → success/error toasts
@@ -146,6 +148,21 @@ export function PluginInstallDialog({
           )}
         </div>
       </div>
+
+      {!blocked && isNative && (
+        <div className="plugin-install__native" data-testid="plugin-install-native-warning">
+          <Cpu className="plugin-install__native-icon" aria-hidden="true" />
+          <div>
+            <span className="plugin-install__native-title">Native code — runs unsandboxed</span>{" "}
+            <span className="plugin-install__native-desc">
+              — this plugin includes a native terminal backend that loads into termiHub and runs
+              with full application privileges. It is not sandboxed: once enabled it can access
+              anything termiHub can — your files, network, and credentials — regardless of the
+              permissions listed below. Only install native plugins from sources you trust.
+            </span>
+          </div>
+        </div>
+      )}
 
       {!blocked && (
         <>
