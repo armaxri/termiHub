@@ -6,7 +6,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
@@ -119,11 +118,14 @@ where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     let russh_config = Arc::new(russh::client::Config {
-        // SSH-level keepalives: send every 30 s, abort after 3 unanswered. On
+        // SSH-level keepalives: send every `keepalive_interval` (default 30 s),
+        // abort after `keepalive_max_count` unanswered (default 3). Both are
+        // configurable per connection (PROD-024) and fall back to the historical
+        // defaults when unset, so existing connections are unchanged. On
         // exhaustion russh ends the session task and fires the handler's
         // `disconnected`, which drives the native liveness watch (#1297).
-        keepalive_interval: Some(Duration::from_secs(30)),
-        keepalive_max: 3,
+        keepalive_interval: Some(config.keepalive_interval()),
+        keepalive_max: config.keepalive_max_count() as usize,
         ..Default::default()
     });
 
@@ -393,7 +395,7 @@ fn agent_status_for_sock(sock: Option<std::ffi::OsString>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
+    use std::time::{Duration, Instant};
 
     /// Spawn a TCP listener that accepts one connection but never speaks SSH,
     /// so the handshake hangs. Returns the bound port.
