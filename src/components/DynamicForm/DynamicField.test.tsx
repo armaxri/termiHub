@@ -781,4 +781,57 @@ describe("DynamicField", () => {
       expect(container.querySelector(".settings-form__required")).toBeNull();
     });
   });
+
+  // PROD-019: a schema boolean whose backend feature is unavailable on the
+  // current platform (RDP audio output on Linux) is disabled and annotated, so
+  // the user cannot flip a control that does nothing. On other platforms it is a
+  // normal, enabled toggle with no extra note.
+  describe("platform-unavailable boolean field (PROD-019)", () => {
+    const originalUserAgent = navigator.userAgent;
+
+    function setUserAgent(ua: string) {
+      Object.defineProperty(navigator, "userAgent", { value: ua, configurable: true });
+    }
+
+    afterEach(() => {
+      setUserAgent(originalUserAgent);
+    });
+
+    function booleanField(key: string): SettingsField {
+      return {
+        key,
+        label: "Redirect Audio Output",
+        fieldType: { type: "boolean" },
+        required: false,
+        default: false,
+      };
+    }
+
+    it("disables the RDP audio toggle and shows a Linux note on Linux", () => {
+      setUserAgent("Mozilla/5.0 (X11; Linux x86_64) jsdom");
+      renderField(booleanField("audioRedirection"), false, vi.fn());
+      const toggle = query("field-audioRedirection") as HTMLButtonElement;
+      expect(toggle).toBeTruthy();
+      expect(toggle.disabled).toBe(true);
+      const note = query("field-audioRedirection-platform-note");
+      expect(note).toBeTruthy();
+      expect(note?.textContent).toContain("Not available on Linux");
+    });
+
+    it("leaves the RDP audio toggle enabled with no note on macOS", () => {
+      setUserAgent("Mozilla/5.0 (Macintosh; Intel Mac OS X) jsdom");
+      renderField(booleanField("audioRedirection"), false, vi.fn());
+      const toggle = query("field-audioRedirection") as HTMLButtonElement;
+      expect(toggle.disabled).toBe(false);
+      expect(query("field-audioRedirection-platform-note")).toBeNull();
+    });
+
+    it("does not annotate an unrelated boolean field on Linux", () => {
+      setUserAgent("Mozilla/5.0 (X11; Linux x86_64) jsdom");
+      renderField(booleanField("driveRedirection"), false, vi.fn());
+      const toggle = query("field-driveRedirection") as HTMLButtonElement;
+      expect(toggle.disabled).toBe(false);
+      expect(query("field-driveRedirection-platform-note")).toBeNull();
+    });
+  });
 });

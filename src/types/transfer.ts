@@ -14,6 +14,26 @@ export type { TransferQueueState };
 /** Direction of a transfer, driving the up/down icon and verb in the UI. */
 export type TransferDirection = "download" | "upload";
 
+/**
+ * Whether a transfer belonging to a session of the given connection type can be
+ * paused / resumed / retried from the queue (audit PROD-009).
+ *
+ * Only the FTP rich-queue executor implements those controls; a legacy SFTP
+ * transfer (SSH / Docker / agent file browsing) has no pause/resume/retry
+ * support, so `transfer_pause` / `transfer_resume` / `transfer_retry` return a
+ * no-op `false` for it (see {@link file://src/services/api.ts} `transferPause`).
+ * The queue therefore hides those buttons for non-pausable transfers rather than
+ * showing controls that do nothing. Cancel and Remove work for every executor
+ * and are always shown.
+ *
+ * `undefined` (the owning session/tab is gone, or its type is unknown) is
+ * treated as non-pausable — the honest default is to hide a control we cannot
+ * confirm works.
+ */
+export function isPausableTransferConnectionType(connectionType: string | undefined): boolean {
+  return connectionType === "ftp";
+}
+
 /** The terminal states — a transfer in one of these will not move on its own. */
 export const TERMINAL_TRANSFER_STATES: readonly TransferQueueState[] = [
   "completed",

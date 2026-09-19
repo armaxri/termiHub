@@ -40,11 +40,11 @@ function handlers() {
   };
 }
 
-function render(e: TransferEntry, h = handlers()) {
+function render(e: TransferEntry, pausable = true, h = handlers()) {
   act(() => {
     root.render(
       <TooltipProvider>
-        <TransferEntryRow entry={e} {...h} />
+        <TransferEntryRow entry={e} pausable={pausable} {...h} />
       </TooltipProvider>
     );
   });
@@ -190,5 +190,12 @@ describe("TransferEntryRow", () => {
       query("transfer-remove")?.click();
     });
     expect(h.onRemove).toHaveBeenCalledWith("t1");
+  });
+
+  // PROD-009: a non-pausable (legacy SFTP) transfer hides Pause but keeps Cancel.
+  it("hides Pause for a non-pausable active transfer while keeping Cancel", () => {
+    render(entry({ state: "active" }), false);
+    expect(query("transfer-pause")).toBeNull();
+    expect(query("transfer-cancel")).not.toBeNull();
   });
 });

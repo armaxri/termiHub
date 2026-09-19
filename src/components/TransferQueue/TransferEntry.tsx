@@ -8,6 +8,12 @@ import { TransferControls } from "./TransferControls";
 export interface TransferEntryProps {
   /** The transfer to render. */
   entry: TransferEntry;
+  /**
+   * Whether this transfer's executor supports pause / resume / retry (audit
+   * PROD-009). Drives whether those controls are shown; see
+   * {@link TransferControls}.
+   */
+  pausable: boolean;
   /** Pause an active transfer. */
   onPause: (id: string) => void | Promise<void>;
   /** Resume a paused transfer. */
@@ -65,6 +71,7 @@ function byteCountLabel(entry: TransferEntry): string {
  */
 export function TransferEntryRow({
   entry,
+  pausable,
   onPause,
   onResume,
   onCancel,
@@ -128,6 +135,7 @@ export function TransferEntryRow({
 
       <TransferControls
         state={state}
+        pausable={pausable}
         onPause={() => onPause(entry.id)}
         onResume={() => onResume(entry.id)}
         onCancel={() => onCancel(entry.id)}
