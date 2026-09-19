@@ -1724,6 +1724,34 @@ Run on **Windows** against a **local CMD** session (the ConPTY path):
    (e.g. a large file dump) must still render and scroll normally with no
    visible slowdown.
 
+### Right-click paste inserts the clipboard exactly once (Windows/WebView2, #2595)
+
+A single right-click paste in the terminal used to insert the clipboard **twice**
+on Windows. Two paste routes fired for one gesture: termiHub's own right-click
+quick action (`handleQuickAction` → `pasteToTerminal`, debounced) **and** a native
+`paste` event that WebView2/RDP injects into xterm's focused helper `<textarea>`,
+which xterm re-emits as terminal input via `onData` — bypassing termiHub's paste
+debounce and never appearing in the Log Viewer. The fix suppresses xterm's native
+textarea paste (a capture-phase listener that `preventDefault` +
+`stopImmediatePropagation`), so the only paste route is termiHub's
+`pasteToTerminal`. The suppression is unit-tested in
+`Terminal.native-paste.test.tsx`, but the native WebView2/RDP paste event cannot
+be reproduced in CI, so the end-to-end confirmation stays a **manual Windows step**.
+
+Run on **Windows** (native, and ideally also over Remote Desktop / mstsc):
+
+1. Copy a distinctive single-line string to the clipboard (e.g. `echo-once-2595`).
+2. Open any terminal tab (local shell is fine), focus it, and **right-click once**
+   with **no text selected**.
+3. **Expected:** the clipboard string is inserted **exactly once** on the command
+   line — never doubled (`echo-once-2595`, not `echo-once-2595echo-once-2595`).
+4. Regression checks — each must still paste exactly once:
+   - **Ctrl+V** in the terminal.
+   - The context-menu **Paste** item.
+   - Right-click **with text selected** must **copy** the selection (not paste).
+5. Optionally repeat over an RDP session, where the duplicate was most reliably
+   reproduced.
+
 ### Connections sidebar renders fully on first paint (#1828)
 
 Verifies that the Connections sidebar lays out completely on launch, with no
