@@ -2,8 +2,11 @@ import { describe, it, expect } from "vitest";
 import type { ProjectedSessionStatus } from "@/store/sessionBridge";
 import {
   resolveEstablishmentPlan,
+  resolveAgentSpawnAction,
   type EstablishmentPlan,
   type EstablishmentPlanInput,
+  type AgentSpawnAction,
+  type AgentSpawnActionInput,
 } from "./terminalConnectionPlan";
 
 /** Base snapshot: an initial mount with no session — the plain fresh-create case. */
@@ -216,5 +219,116 @@ describe("resolveEstablishmentPlan", () => {
       );
       expect(plan.kind).toBe("restartPersistent");
     });
+  });
+});
+
+const MAX_AGENT_SPAWN_ATTEMPTS = 5;
+
+/** Base snapshot: agent up, first attempt — the plain retry case. */
+function baseSpawnInput(overrides: Partial<AgentSpawnActionInput> = {}): AgentSpawnActionInput {
+  return {
+    agentState: "connected",
+    attempt: 0,
+    maxAttempts: MAX_AGENT_SPAWN_ATTEMPTS,
+    ...overrides,
+  };
+}
+
+describe("resolveAgentSpawnAction", () => {
+  describe("agent transport state decides before the attempt count", () => {
+    it("connecting → waitForAgent (regardless of attempt)", () => {
+      for (const attempt of [0, 3, MAX_AGENT_SPAWN_ATTEMPTS, MAX_AGENT_SPAWN_ATTEMPTS + 10]) {
+        expect(
+          resolveAgentSpawnAction(baseSpawnInput({ agentState: "connecting", attempt }))
+        ).toEqual<AgentSpawnAction>({ kind: "waitForAgent" });
+      }
+    });
+
+    it("reconnecting → waitForAgent (regardless of attempt)", () => {
+      for (const attempt of [0, 3, MAX_AGENT_SPAWN_ATTEMPTS, MAX_AGENT_SPAWN_ATTEMPTS + 10]) {
+        expect(
+          resolveAgentSpawnAction(baseSpawnInput({ agentState: "reconnecting", attempt }))
+        ).toEqual<AgentSpawnAction>({ kind: "waitForAgent" });
+      }
+    });
+
+    it("disconnected → reconnectAgentThenWait (regardless of attempt, even when exhausted)", () => {
+      for (const attempt of [0, 3, MAX_AGENT_SPAWN_ATTEMPTS, MAX_AGENT_SPAWN_ATTEMPTS + 10]) {
+        expect(
+          resolveAgentSpawnAction(baseSpawnInput({ agentState: "disconnected", attempt }))
+        ).toEqual<AgentSpawnAction>({ kind: "reconnectAgentThenWait" });
+      }
+    });
+  });
+
+  describe("agent up (connected / undefined) — bounded retry vs give-up", () => {
+    for (const agentState of ["connected", undefined] as const) {
+      const label = agentState ?? "undefined (agent not found)";
+
+      it(`${label}: attempt below the max retries → retryAfterDelay(attempt+1)`, () => {
+        for (let attempt = 0; attempt < MAX_AGENT_SPAWN_ATTEMPTS; attempt++) {
+          expect(
+            resolveAgentSpawnAction(baseSpawnInput({ agentState, attempt }))
+          ).toEqual<AgentSpawnAction>({ kind: "retryAfterDelay", attempt: attempt + 1 });
+        }
+      });
+
+      it(`${label}: the give-up boundary — attempt == maxAttempts-1 retries, attempt == maxAttempts gives up`, () => {
+        // Matches the former inline `attempt++; if (attempt > MAX_AGENT_SPAWN_ATTEMPTS)`:
+        // the pre-increment attempt gives up exactly when attempt >= maxAttempts.
+        expect(
+          resolveAgentSpawnAction(
+            baseSpawnInput({ agentState, attempt: MAX_AGENT_SPAWN_ATTEMPTS - 1 })
+          )
+        ).toEqual<AgentSpawnAction>({
+          kind: "retryAfterDelay",
+          attempt: MAX_AGENT_SPAWN_ATTEMPTS,
+        });
+        expect(
+          resolveAgentSpawnAction(baseSpawnInput({ agentState, attempt: MAX_AGENT_SPAWN_ATTEMPTS }))
+        ).toEqual<AgentSpawnAction>({ kind: "giveUp" });
+      });
+
+      it(`${label}: attempts past the max continue to give up`, () => {
+        for (const attempt of [
+          MAX_AGENT_SPAWN_ATTEMPTS,
+          MAX_AGENT_SPAWN_ATTEMPTS + 1,
+          MAX_AGENT_SPAWN_ATTEMPTS + 5,
+        ]) {
+          expect(
+            resolveAgentSpawnAction(baseSpawnInput({ agentState, attempt }))
+          ).toEqual<AgentSpawnAction>({ kind: "giveUp" });
+        }
+      });
+    }
+  });
+
+  describe("exhaustive agentState × attempt table", () => {
+    const states: AgentSpawnActionInput["agentState"][] = [
+      "connecting",
+      "reconnecting",
+      "disconnected",
+      "connected",
+      undefined,
+    ];
+    for (const agentState of states) {
+      for (const attempt of [0, 1, 4, 5, 6]) {
+        it(`agentState=${agentState ?? "undefined"}, attempt=${attempt}`, () => {
+          const action = resolveAgentSpawnAction(baseSpawnInput({ agentState, attempt }));
+          if (agentState === "connecting" || agentState === "reconnecting") {
+            expect(action).toEqual<AgentSpawnAction>({ kind: "waitForAgent" });
+          } else if (agentState === "disconnected") {
+            expect(action).toEqual<AgentSpawnAction>({ kind: "reconnectAgentThenWait" });
+          } else if (attempt < MAX_AGENT_SPAWN_ATTEMPTS) {
+            expect(action).toEqual<AgentSpawnAction>({
+              kind: "retryAfterDelay",
+              attempt: attempt + 1,
+            });
+          } else {
+            expect(action).toEqual<AgentSpawnAction>({ kind: "giveUp" });
+          }
+        });
+      }
+    }
   });
 });
