@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Play, StopCircle } from "lucide-react";
+import { Download, Play, StopCircle } from "lucide-react";
 import { Button, Field, Input, NumberInput } from "@/components/ui";
+import { exportNetworkResults, pingResultsToCsv } from "./exportResults";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkPingStart,
@@ -146,6 +147,10 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
     taskIdRef.current = null;
   }, []);
 
+  const handleExport = useCallback(async () => {
+    await exportNetworkResults(`ping-${host || "results"}`, pingResultsToCsv(results));
+  }, [host, results]);
+
   // Cleanup on unmount.
   useEffect(() => {
     return () => {
@@ -168,6 +173,16 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
       <div className="network-panel__header">
         <span className="network-panel__title">Ping</span>
         <div className="network-panel__actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Download size={14} />}
+            disabled={results.length === 0}
+            onClick={handleExport}
+            data-testid="ping-export"
+          >
+            Export
+          </Button>
           {status === "running" ? (
             <Button
               variant="danger"
