@@ -144,4 +144,27 @@ describe("QuickConnectBar", () => {
       "admin@prod"
     );
   });
+
+  it("cancels the pending blur timer on unmount (no state update after teardown)", () => {
+    vi.useFakeTimers();
+    try {
+      render([sshEntry()]);
+      focusInput();
+      const beforeBlur = vi.getTimerCount();
+      // Blur (focusout) arms the 120ms delayed setFocused(false) timer.
+      act(() => {
+        input().dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+      });
+      // Exactly one new timer (the blur timer) must be armed.
+      expect(vi.getTimerCount()).toBe(beforeBlur + 1);
+      // Unmount before the 120ms delay elapses. Without the unmount cleanup the
+      // blur timer would survive and fire setFocused(false) after teardown.
+      act(() => root.unmount());
+      // The cleanup must have cancelled the pending blur timer, leaving no more
+      // than the pre-blur baseline of unrelated timers.
+      expect(vi.getTimerCount()).toBeLessThanOrEqual(beforeBlur);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
