@@ -138,7 +138,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 > ⚠️ **`run-local-process` runs on your LOCAL machine.** Every other step type sends text into the terminal session (i.e. runs on the remote host when you are connected). `run-local-process` instead launches a program on the computer running termiHub. It is **off by default** and stays inert until you explicitly opt in under **Settings → Security**, and each program must be authorized via a per-program allowlist / per-run confirmation. Arguments are passed as a discrete list (no shell interpretation). This is a power-user orchestration capability — safe to ignore entirely if you don't use it. Imported workflows are **never** auto-authorized.
 >
-> The Workflows panel is **experimental** and behind the experimental-features toggle — enable **Settings → General → Allow Experimental Features** to use it. Design reference: [`docs/concepts/backlog/workflow-automation.html`](docs/concepts/backlog/workflow-automation.html).
+> The Workflows panel is **experimental** and behind the experimental-features toggle — enable **Settings → General → Allow Experimental Features** to use it. Design reference: [`docs/concepts/implemented/workflow-automation.html`](docs/concepts/implemented/workflow-automation.html).
 
 ### Platform Support
 

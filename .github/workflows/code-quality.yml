@@ -503,6 +503,16 @@ jobs:
       - name: Cargo Deny (supply-chain gate)
         run: cargo deny check advisories bans licenses sources
 
+      # Advisory-only visibility for duplicate dependency versions (SUP-010).
+      # deny.toml keeps `multiple-versions = "allow"` — duplicates are common in a
+      # large tree and are not a supply-chain signal on their own, so they must
+      # NOT gate CI. This step just prints the current duplicates so the count is
+      # visible in the log and its trend can be watched over time; it never fails
+      # the build (`continue-on-error`, and `|| true` so an empty tree is fine).
+      - name: Cargo Tree (duplicate versions, advisory)
+        continue-on-error: true
+        run: cargo tree --duplicates --workspace --edges normal || true
+
   # Check conventional commits (PR only)
   commit-lint:
     name: Lint Commit Messages

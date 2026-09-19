@@ -37,7 +37,17 @@ jobs:
           # If changelog is empty, generate from commits
           if [ -z "$CHANGELOG" ]; then
             echo "No changelog entry found, generating from commits..."
-            CHANGELOG=$(git log $(git describe --tags --abbrev=0 HEAD^)..HEAD --pretty=format:"- %s (%h)" --no-merges)
+            # Find the previous tag to bound the log range. On the VERY FIRST
+            # release there is no prior tag (and HEAD^ may not even resolve on a
+            # single-commit history), so `git describe` fails — fall back to the
+            # full history (root commit..HEAD) instead of erroring the release.
+            if PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null); then
+              RANGE="${PREV_TAG}..HEAD"
+            else
+              echo "No previous tag found (first release); using full history."
+              RANGE="HEAD"
+            fi
+            CHANGELOG=$(git log "$RANGE" --pretty=format:"- %s (%h)" --no-merges)
           fi
 
           # Save to file (multiline support)
