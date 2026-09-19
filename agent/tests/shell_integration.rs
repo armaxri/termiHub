@@ -187,21 +187,31 @@ impl Drop for DaemonHandle {
 ///
 /// Returns a handle that cleans up the process on drop.
 fn spawn_daemon(session_id: &str, socket_path: &Path) -> DaemonHandle {
-    let child = Command::new(agent_binary())
+    let mut child = Command::new(agent_binary())
         .arg("--daemon")
         .arg(session_id)
         .env("TERMIHUB_SOCKET_PATH", socket_path)
         .env("TERMIHUB_TYPE_ID", "local")
-        .env(
-            "TERMIHUB_SETTINGS",
-            serde_json::json!({"shell": "/bin/sh"}).to_string(),
-        )
         .env("TERMIHUB_BUFFER_SIZE", "65536")
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("Failed to spawn daemon process");
+
+    // The daemon reads its connection settings from stdin (AGT-021), not an env
+    // var. Write the JSON and close the pipe so the daemon reads to EOF.
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().expect("daemon stdin should be piped");
+        stdin
+            .write_all(
+                serde_json::json!({"shell": "/bin/sh"})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .expect("failed to write daemon settings to stdin");
+    }
 
     DaemonHandle {
         child,

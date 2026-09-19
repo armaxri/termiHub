@@ -36,27 +36,30 @@ struct DaemonConfig {
 }
 
 impl DaemonConfig {
-    /// Read configuration from environment variables.
+    /// Build the daemon configuration from the environment plus the connection
+    /// `settings` handed to the daemon out-of-band.
+    ///
+    /// The `settings` JSON is passed on the daemon's **stdin** (see
+    /// [`read_settings_from_stdin`]), never through an environment variable: a
+    /// connection config carries resolved plaintext secrets (SSH/VNC/RDP/FTP
+    /// passwords and key passphrases), and an env var is world-readable for the
+    /// same user via `/proc/<pid>/environ` for the process's whole lifetime,
+    /// which the `0o600` on `state.json` cannot cover (AGT-021). Stdin is a
+    /// private pipe between the spawning worker and this daemon.
     ///
     /// Required env vars:
     /// - `TERMIHUB_TYPE_ID` — connection type identifier (e.g., `"local"`, `"ssh"`)
-    /// - `TERMIHUB_SETTINGS` — JSON settings for `ConnectionType::connect()`
     ///
     /// Optional env vars:
     /// - `TERMIHUB_SOCKET_PATH` — transport endpoint (socket path on unix,
     ///   pipe name on windows; default: auto-generated)
     /// - `TERMIHUB_BUFFER_SIZE` — ring buffer size in bytes (default: 1 MiB)
-    fn from_env(session_id: &str) -> anyhow::Result<Self> {
+    fn from_env(session_id: &str, settings: serde_json::Value) -> anyhow::Result<Self> {
         let endpoint = std::env::var("TERMIHUB_SOCKET_PATH")
             .unwrap_or_else(|_| transport::session_endpoint(session_id));
 
         let type_id = std::env::var("TERMIHUB_TYPE_ID")
             .map_err(|_| anyhow::anyhow!("TERMIHUB_TYPE_ID env var is required"))?;
-
-        let settings: serde_json::Value = std::env::var("TERMIHUB_SETTINGS")
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
         let buffer_size = std::env::var("TERMIHUB_BUFFER_SIZE")
             .ok()
@@ -73,13 +76,49 @@ impl DaemonConfig {
     }
 }
 
+/// Read the connection `settings` JSON from the daemon's stdin, to EOF.
+///
+/// The spawning worker writes the settings JSON to this daemon's stdin pipe and
+/// then closes it; we read the whole stream and parse it. This keeps plaintext
+/// secrets out of the environment (AGT-021) — stdin is a private channel, unlike
+/// `/proc/<pid>/environ`. An empty stream (no settings supplied) parses to an
+/// empty object, preserving the previous env-absent default; a non-empty but
+/// malformed stream is a hard error so a broken handoff fails the connect
+/// cleanly rather than silently connecting with empty settings.
+fn read_settings_from_stdin() -> anyhow::Result<serde_json::Value> {
+    use std::io::Read;
+    let mut raw = String::new();
+    std::io::stdin()
+        .read_to_string(&mut raw)
+        .map_err(|e| anyhow::anyhow!("failed to read daemon settings from stdin: {e}"))?;
+    parse_settings_payload(&raw)
+}
+
+/// Parse the settings payload read from stdin.
+///
+/// Split out from [`read_settings_from_stdin`] so the parsing rules (empty →
+/// `{}`, malformed → error) are unit-testable without a real stdin pipe.
+fn parse_settings_payload(raw: &str) -> anyhow::Result<serde_json::Value> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(serde_json::Value::Object(serde_json::Map::new()));
+    }
+    serde_json::from_str(trimmed)
+        .map_err(|e| anyhow::anyhow!("failed to parse daemon settings JSON from stdin: {e}"))
+}
+
 /// Entry point for the session daemon process.
 ///
 /// Creates a [`ConnectionType`] instance from the registry, connects it
 /// using the settings from environment variables, and runs the event loop
 /// that bridges the connection to the agent via the Unix socket.
 pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
-    let config = DaemonConfig::from_env(session_id)?;
+    // Read the connection settings from stdin BEFORE anything else: the
+    // spawning worker writes the settings JSON to our stdin and closes it, and
+    // we must drain that pipe to EOF. Doing it up front keeps the secret-bearing
+    // config off the environment (AGT-021).
+    let settings = read_settings_from_stdin()?;
+    let config = DaemonConfig::from_env(session_id, settings)?;
 
     info!(
         "Session daemon starting: id={}, type={}, buffer={}",
@@ -529,15 +568,41 @@ mod tests {
     }
 
     #[test]
+    fn parse_settings_payload_empty_is_empty_object() {
+        // An absent/empty settings stream must default to an empty object, so a
+        // daemon spawned without settings behaves exactly as the old env-absent
+        // path did rather than erroring.
+        assert_eq!(parse_settings_payload("").unwrap(), serde_json::json!({}));
+        assert_eq!(
+            parse_settings_payload("   \n\t ").unwrap(),
+            serde_json::json!({})
+        );
+    }
+
+    #[test]
+    fn parse_settings_payload_parses_json() {
+        let v = parse_settings_payload(r#"{"host":"192.168.1.1","port":22}"#).unwrap();
+        assert_eq!(v["host"], "192.168.1.1");
+        assert_eq!(v["port"], 22);
+    }
+
+    #[test]
+    fn parse_settings_payload_rejects_malformed_json() {
+        // A malformed handoff must fail the connect cleanly, never silently
+        // fall back to empty settings.
+        let err = parse_settings_payload("{not json").unwrap_err();
+        assert!(err.to_string().contains("parse daemon settings"));
+    }
+
+    #[test]
     fn daemon_config_requires_type_id() {
         let _guard = ENV_LOCK.lock().unwrap();
 
         std::env::remove_var("TERMIHUB_TYPE_ID");
-        std::env::remove_var("TERMIHUB_SETTINGS");
         std::env::remove_var("TERMIHUB_SOCKET_PATH");
         std::env::remove_var("TERMIHUB_BUFFER_SIZE");
 
-        let result = DaemonConfig::from_env("test-123");
+        let result = DaemonConfig::from_env("test-123", serde_json::json!({}));
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("TERMIHUB_TYPE_ID"));
     }
@@ -547,11 +612,14 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
 
         std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
-        std::env::set_var("TERMIHUB_SETTINGS", r#"{"host":"192.168.1.1","port":22}"#);
         std::env::set_var("TERMIHUB_SOCKET_PATH", "/tmp/test-daemon.sock");
         std::env::set_var("TERMIHUB_BUFFER_SIZE", "2097152");
 
-        let config = DaemonConfig::from_env("test-456").unwrap();
+        let config = DaemonConfig::from_env(
+            "test-456",
+            serde_json::json!({"host":"192.168.1.1","port":22}),
+        )
+        .unwrap();
         assert_eq!(config.session_id, "test-456");
         assert_eq!(config.type_id, "ssh");
         assert_eq!(config.settings["host"], "192.168.1.1");
@@ -561,7 +629,6 @@ mod tests {
 
         // Clean up
         std::env::remove_var("TERMIHUB_TYPE_ID");
-        std::env::remove_var("TERMIHUB_SETTINGS");
         std::env::remove_var("TERMIHUB_SOCKET_PATH");
         std::env::remove_var("TERMIHUB_BUFFER_SIZE");
     }
@@ -571,11 +638,10 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
 
         std::env::set_var("TERMIHUB_TYPE_ID", "local");
-        std::env::remove_var("TERMIHUB_SETTINGS");
         std::env::remove_var("TERMIHUB_SOCKET_PATH");
         std::env::remove_var("TERMIHUB_BUFFER_SIZE");
 
-        let config = DaemonConfig::from_env("test-789").unwrap();
+        let config = DaemonConfig::from_env("test-789", serde_json::json!({})).unwrap();
         assert_eq!(config.type_id, "local");
         assert_eq!(config.settings, serde_json::json!({}));
         assert_eq!(config.buffer_size, DEFAULT_BUFFER_SIZE);
@@ -606,27 +672,29 @@ mod tests {
     // `docs/testing.md` → "SSH agent forwarding through the remote agent".
     //
     // These tests pin the agent-side seam: the `forwardAgent` flag survives the
-    // `TERMIHUB_SETTINGS` transport untouched and, fed to the core parser
-    // exactly as the daemon feeds it at connect time, yields an SshConfig with
-    // forwarding enabled. The connector request, the handler bridge, and the
+    // settings handoff untouched and, fed to the core parser exactly as the
+    // daemon feeds it at connect time, yields an SshConfig with forwarding
+    // enabled. The connector request, the handler bridge, and the
     // no-agent-available no-op themselves are covered by core unit tests.
 
-    /// `forwardAgent: true` in the connection settings survives the env-var
-    /// transport into the daemon and maps to `SshConfig.forward_agent`, so the
+    /// `forwardAgent: true` in the connection settings survives the settings
+    /// handoff into the daemon and maps to `SshConfig.forward_agent`, so the
     /// reused core SSH backend requests forwarding on the agent's SSH leg.
     #[test]
     fn daemon_ssh_settings_carry_forward_agent() {
         let _guard = ENV_LOCK.lock().unwrap();
 
         std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
-        std::env::set_var(
-            "TERMIHUB_SETTINGS",
-            r#"{"host":"target.example","username":"me","authMethod":"agent","forwardAgent":true}"#,
-        );
         std::env::remove_var("TERMIHUB_SOCKET_PATH");
         std::env::remove_var("TERMIHUB_BUFFER_SIZE");
 
-        let config = DaemonConfig::from_env("fwd-agent-1").unwrap();
+        let settings = serde_json::json!({
+            "host": "target.example",
+            "username": "me",
+            "authMethod": "agent",
+            "forwardAgent": true,
+        });
+        let config = DaemonConfig::from_env("fwd-agent-1", settings).unwrap();
         // The flag reaches the daemon verbatim …
         assert_eq!(config.settings["forwardAgent"], serde_json::json!(true));
         // … and the daemon feeds exactly these settings to the core SSH backend,
@@ -638,7 +706,6 @@ mod tests {
         );
 
         std::env::remove_var("TERMIHUB_TYPE_ID");
-        std::env::remove_var("TERMIHUB_SETTINGS");
     }
 
     /// With `forwardAgent` absent (every pre-#1699 saved connection), the
@@ -649,14 +716,11 @@ mod tests {
         let _guard = ENV_LOCK.lock().unwrap();
 
         std::env::set_var("TERMIHUB_TYPE_ID", "ssh");
-        std::env::set_var(
-            "TERMIHUB_SETTINGS",
-            r#"{"host":"target.example","username":"me"}"#,
-        );
         std::env::remove_var("TERMIHUB_SOCKET_PATH");
         std::env::remove_var("TERMIHUB_BUFFER_SIZE");
 
-        let config = DaemonConfig::from_env("fwd-agent-2").unwrap();
+        let settings = serde_json::json!({"host":"target.example","username":"me"});
+        let config = DaemonConfig::from_env("fwd-agent-2", settings).unwrap();
         let ssh = termihub_core::backends::ssh::parse_ssh_settings(&config.settings);
         assert!(
             !ssh.forward_agent,
@@ -664,7 +728,6 @@ mod tests {
         );
 
         std::env::remove_var("TERMIHUB_TYPE_ID");
-        std::env::remove_var("TERMIHUB_SETTINGS");
     }
 
     // ── Generation-counter regression tests ──────────────────────────────

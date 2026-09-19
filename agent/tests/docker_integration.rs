@@ -170,23 +170,36 @@ fn spawn_docker_daemon(session_id: &str, socket_path: &Path, image: &str) -> Dae
         "image": image,
     });
 
-    let child = Command::new(agent_binary())
+    let mut child = Command::new(agent_binary())
         .arg("--daemon")
         .arg(session_id)
         .env("TERMIHUB_SOCKET_PATH", socket_path)
         .env("TERMIHUB_TYPE_ID", "docker")
-        .env("TERMIHUB_SETTINGS", settings.to_string())
         .env("TERMIHUB_BUFFER_SIZE", "65536")
-        .stdin(std::process::Stdio::null())
+        .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("Failed to spawn daemon process");
 
+    // The daemon reads its connection settings from stdin (AGT-021), not an env
+    // var. Write the JSON and close the pipe so the daemon reads to EOF.
+    write_settings_to_stdin(&mut child, &settings);
+
     DaemonHandle {
         child,
         socket_path: socket_path.to_path_buf(),
     }
+}
+
+/// Hand the connection settings to a freshly spawned daemon over its stdin pipe.
+fn write_settings_to_stdin(child: &mut std::process::Child, settings: &serde_json::Value) {
+    use std::io::Write;
+    let mut stdin = child.stdin.take().expect("daemon stdin should be piped");
+    stdin
+        .write_all(settings.to_string().as_bytes())
+        .expect("failed to write daemon settings to stdin");
+    // `stdin` drops here → EOF.
 }
 
 async fn wait_for_socket(path: &Path, timeout: Duration) -> bool {

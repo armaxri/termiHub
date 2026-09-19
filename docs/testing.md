@@ -2763,9 +2763,10 @@ operator's keys reach the final target **end to end** transparently — this is
 standard OpenSSH agent chaining, not a termiHub relay. The no-agent-available case
 (agent host has no live ssh-agent) is the same graceful no-op as the desktop path.
 
-The agent-side seam (the `forwardAgent` flag surviving the `TERMIHUB_SETTINGS`
-daemon transport and mapping to `SshConfig.forward_agent`) is covered by **Rust
-unit tests** (`agent/src/daemon/process.rs`); the connector request, handler
+The agent-side seam (the `forwardAgent` flag surviving the settings handoff into
+the daemon — passed over the daemon's stdin, not an env var (AGT-021) — and
+mapping to `SshConfig.forward_agent`) is covered by **Rust unit tests**
+(`agent/src/daemon/process.rs`); the connector request, handler
 bridge and no-op are covered by the core tests from #1699. End-to-end forwarding
 needs a live agent + real SSH server (integration lane only, not per-PR CI), so
 verify manually:

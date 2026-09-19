@@ -100,13 +100,69 @@ pub struct PersistedSession {
     pub created_at: String,
     /// Path to the daemon Unix socket.
     pub daemon_socket: Option<String>,
-    /// Full connection settings for reconnection.
+    /// Connection settings, **with plaintext secrets redacted** before writing
+    /// (see [`redact_persisted_secrets`], AGT-021).
+    ///
+    /// Recovery reattaches to the surviving daemon over its socket
+    /// (`recover_sessions`) — it never re-handshakes from these settings — and
+    /// the snapshot reported to the desktop does not include settings, so the
+    /// secret values are never needed from disk. What is kept is enough to
+    /// report a recovered session's shape (host/port/type) after a restart.
     pub settings: serde_json::Value,
     /// ID of the saved connection definition this session was created from.
     /// Survives agent restart so clients can re-link a recovered session
     /// to its source definition.
     #[serde(default)]
     pub definition_id: Option<String>,
+}
+
+/// JSON object keys (matched case-insensitively) that carry a plaintext secret
+/// across the backend connection config schemas: SSH/FTP/RDP/VNC and jump-host
+/// `password` (which also holds a key **passphrase** for key auth — see
+/// `core::backends::ssh::auth`), and the VNC SSH-gateway `sshPassword`.
+const SECRET_SETTINGS_KEYS: &[&str] = &["password", "sshpassword"];
+
+/// Object keys whose *values* are free-form user data we must not walk into:
+/// `env`/`envVars` map arbitrary user-named variables to values we cannot
+/// classify as secret or not, so redacting inside them is out of scope
+/// (AGT-021) — a variable a user happens to name `password` is left alone.
+const OPAQUE_SETTINGS_SUBTREES: &[&str] = &["env", "envvars", "env_vars"];
+
+/// Return a copy of `settings` with every known plaintext-secret field removed,
+/// for persisting to `state.json`.
+///
+/// Walks the JSON recursively so nested secrets are covered too — a jump-host
+/// hop's `password` inside the `proxyJump` array, or a tunnelled VNC's
+/// `sshPassword` — while never descending into `env`/`envVars` subtrees, whose
+/// user-defined values cannot be classified (documented residual, AGT-021).
+/// Secret keys are dropped entirely rather than nulled, so a dump of
+/// `state.json` shows no secret-named field at all. The live (unredacted)
+/// settings stay with the daemon (handed over stdin) and in the in-memory
+/// `SessionInfo` for the current session; only the on-disk copy is scrubbed.
+pub fn redact_persisted_secrets(settings: &serde_json::Value) -> serde_json::Value {
+    let mut redacted = settings.clone();
+    redact_in_place(&mut redacted);
+    redacted
+}
+
+fn redact_in_place(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.retain(|k, _| !SECRET_SETTINGS_KEYS.contains(&k.to_ascii_lowercase().as_str()));
+            for (k, v) in map.iter_mut() {
+                if OPAQUE_SETTINGS_SUBTREES.contains(&k.to_ascii_lowercase().as_str()) {
+                    continue;
+                }
+                redact_in_place(v);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for v in items.iter_mut() {
+                redact_in_place(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 impl AgentState {
@@ -341,6 +397,67 @@ mod tests {
     use super::*;
     use serde_json::json;
     use tempfile::TempDir;
+
+    #[test]
+    fn redact_persisted_secrets_strips_secret_fields_keeps_the_rest() {
+        let settings = json!({
+            "host": "target.example",
+            "port": 22,
+            "username": "me",
+            "authMethod": "password",
+            "password": "s3cr3t",
+            "sshPassword": "gateway-pw",
+            "savePassword": true,
+        });
+
+        let redacted = redact_persisted_secrets(&settings);
+
+        // Secrets gone entirely (not merely nulled)…
+        assert!(
+            redacted.get("password").is_none(),
+            "password must be dropped"
+        );
+        assert!(
+            redacted.get("sshPassword").is_none(),
+            "sshPassword must be dropped"
+        );
+        // … while non-secret fields survive untouched, including the
+        // similarly-named but non-secret `savePassword` flag.
+        assert_eq!(redacted["host"], "target.example");
+        assert_eq!(redacted["port"], 22);
+        assert_eq!(redacted["username"], "me");
+        assert_eq!(redacted["authMethod"], "password");
+        assert_eq!(redacted["savePassword"], true);
+
+        // The input value is not mutated — the live copy keeps its secrets.
+        assert_eq!(settings["password"], "s3cr3t");
+    }
+
+    #[test]
+    fn redact_persisted_secrets_strips_nested_jump_host_and_leaves_env_alone() {
+        let settings = json!({
+            "host": "target.example",
+            "password": "top-level-pw",
+            "proxyJump": [
+                { "host": "bastion", "username": "jump", "password": "hop-pw" },
+            ],
+            // User-defined env values are opaque: a variable a user names
+            // "password" must be left alone (documented residual).
+            "env": { "PASSWORD": "user-env-value", "FOO": "bar" },
+        });
+
+        let redacted = redact_persisted_secrets(&settings);
+
+        assert!(redacted.get("password").is_none());
+        assert!(
+            redacted["proxyJump"][0].get("password").is_none(),
+            "a jump-host hop password must be redacted too"
+        );
+        assert_eq!(redacted["proxyJump"][0]["host"], "bastion");
+        // env subtree is preserved verbatim, even a `PASSWORD`-named variable.
+        assert_eq!(redacted["env"]["PASSWORD"], "user-env-value");
+        assert_eq!(redacted["env"]["FOO"], "bar");
+    }
 
     fn make_session(type_id: &str, socket: Option<&str>) -> PersistedSession {
         PersistedSession {

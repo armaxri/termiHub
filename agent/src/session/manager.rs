@@ -222,6 +222,51 @@ fn daemon_log(session_id: &str) -> Option<std::fs::File> {
     }
 }
 
+/// Build the `termihub-agent --daemon <id>` command, minus the connection
+/// settings.
+///
+/// The settings JSON is deliberately **not** placed in the environment — it
+/// carries resolved plaintext secrets and is handed to the daemon over stdin
+/// instead (AGT-021), so the child's stdin is configured as a pipe here. Only
+/// the non-secret coordinates (endpoint, type id, buffer size, and the
+/// agent-forwarding relay endpoint) travel via env vars.
+fn build_daemon_command(
+    agent_exe: &std::path::Path,
+    session_id: &str,
+    type_id: &str,
+    endpoint: &str,
+    buffer_size_bytes: usize,
+    ssh_auth_sock: Option<&str>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new(agent_exe);
+    command
+        .arg("--daemon")
+        .arg(session_id)
+        .env("TERMIHUB_SOCKET_PATH", endpoint)
+        .env("TERMIHUB_TYPE_ID", type_id)
+        .env("TERMIHUB_BUFFER_SIZE", buffer_size_bytes.to_string())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null());
+    // Point the daemon's core SSH agent-forwarding bridge at the per-session
+    // relay endpoint, so it reaches the desktop's agent rather than the agent
+    // host's own local agent. Overriding the inherited value is the intent:
+    // over the TCP transport there is nothing useful to inherit. The channel
+    // differs by platform — `SSH_AUTH_SOCK` for the unix relay socket (#1727),
+    // the dedicated pipe-name variable for the Windows relay pipe (#2038,
+    // kept clear of `SSH_AUTH_SOCK` so a real local OpenSSH agent is not
+    // shadowed).
+    if let Some(endpoint) = ssh_auth_sock {
+        #[cfg(windows)]
+        command.env(
+            termihub_core::backends::ssh::agent_forward::AGENT_PIPE_ENV,
+            endpoint,
+        );
+        #[cfg(not(windows))]
+        command.env("SSH_AUTH_SOCK", endpoint);
+    }
+    command
+}
+
 /// Production [`DaemonLauncher`] that spawns real `termihub-agent --daemon` processes.
 pub struct SystemDaemonLauncher;
 
@@ -240,39 +285,37 @@ impl DaemonLauncher for SystemDaemonLauncher {
         let settings_json = serde_json::to_string(settings)?;
         let agent_exe = std::env::current_exe()?;
 
-        let mut command = std::process::Command::new(&agent_exe);
-        command
-            .arg("--daemon")
-            .arg(session_id)
-            .env("TERMIHUB_SOCKET_PATH", &endpoint)
-            .env("TERMIHUB_TYPE_ID", type_id)
-            .env("TERMIHUB_SETTINGS", &settings_json)
-            .env("TERMIHUB_BUFFER_SIZE", buffer_size_bytes.to_string())
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null());
-        // Point the daemon's core SSH agent-forwarding bridge at the per-session
-        // relay endpoint, so it reaches the desktop's agent rather than the agent
-        // host's own local agent. Overriding the inherited value is the intent:
-        // over the TCP transport there is nothing useful to inherit. The channel
-        // differs by platform — `SSH_AUTH_SOCK` for the unix relay socket (#1727),
-        // the dedicated pipe-name variable for the Windows relay pipe (#2038,
-        // kept clear of `SSH_AUTH_SOCK` so a real local OpenSSH agent is not
-        // shadowed).
-        if let Some(endpoint) = ssh_auth_sock {
-            #[cfg(windows)]
-            command.env(
-                termihub_core::backends::ssh::agent_forward::AGENT_PIPE_ENV,
-                endpoint,
-            );
-            #[cfg(not(windows))]
-            command.env("SSH_AUTH_SOCK", endpoint);
-        }
+        let mut command = build_daemon_command(
+            &agent_exe,
+            session_id,
+            type_id,
+            &endpoint,
+            buffer_size_bytes,
+            ssh_auth_sock.as_deref(),
+        );
         crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
         crate::daemon::spawn::configure_detachment(&mut command);
 
         let mut child = command
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn daemon: {e}"))?;
+
+        // Hand the connection settings to the daemon over its private stdin pipe
+        // rather than an environment variable: the config carries resolved
+        // plaintext secrets (SSH/VNC/RDP/FTP passwords, key passphrases), and an
+        // env var is readable via `/proc/<pid>/environ` by the same user for the
+        // daemon's whole lifetime (AGT-021). Write on a dedicated thread and let
+        // the handle drop (closing the pipe → EOF): the daemon drains stdin to
+        // EOF at startup, so writing off-thread avoids any deadlock even if the
+        // JSON exceeds the pipe buffer while the daemon is still starting up. A
+        // write failure (daemon died early) is surfaced by the connect race
+        // below, not here.
+        if let Some(mut stdin) = child.stdin.take() {
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let _ = stdin.write_all(settings_json.as_bytes());
+            });
+        }
 
         // The transport retries while the daemon binds its endpoint during slow
         // startup work. Race that connect against the daemon process exiting so
@@ -594,7 +637,11 @@ impl SessionManager {
                         title,
                         created_at: now.to_rfc3339(),
                         daemon_socket: Some(client.endpoint().to_string()),
-                        settings,
+                        // Strip plaintext secrets before they reach state.json:
+                        // the daemon already holds the live settings (handed over
+                        // stdin) and recovery reattaches over the socket, so the
+                        // on-disk copy never needs the secret values (AGT-021).
+                        settings: crate::state::persistence::redact_persisted_secrets(&settings),
                         definition_id,
                     };
                     let id_for_state = id.clone();
@@ -1491,6 +1538,45 @@ impl SessionManagerApi for SessionManager {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// AGT-021: the spawned daemon command must never carry the connection
+    /// settings — and thus its plaintext secrets — in an environment variable
+    /// (readable via `/proc/<pid>/environ`). Settings travel over stdin instead,
+    /// so the built command exposes only the non-secret coordinates in its env.
+    #[test]
+    fn build_daemon_command_never_puts_settings_or_secrets_in_env() {
+        let secret = "sup3r-s3cret-pw";
+        let command = build_daemon_command(
+            std::path::Path::new("/usr/bin/termihub-agent"),
+            "sess-1",
+            "ssh",
+            "/tmp/sess-1.sock",
+            65536,
+            Some("/tmp/agent.sock"),
+        );
+
+        for (key, value) in command.get_envs() {
+            assert_ne!(
+                key, "TERMIHUB_SETTINGS",
+                "the settings env var must be gone (AGT-021)"
+            );
+            if let Some(value) = value {
+                assert!(
+                    !value.to_string_lossy().contains(secret),
+                    "no daemon env value may carry a connection secret"
+                );
+            }
+        }
+
+        // The non-secret coordinates are still present.
+        let keys: Vec<String> = command
+            .get_envs()
+            .map(|(k, _)| k.to_string_lossy().into_owned())
+            .collect();
+        assert!(keys.iter().any(|k| k == "TERMIHUB_SOCKET_PATH"));
+        assert!(keys.iter().any(|k| k == "TERMIHUB_TYPE_ID"));
+        assert!(keys.iter().any(|k| k == "TERMIHUB_BUFFER_SIZE"));
+    }
 
     fn test_notification_tx() -> NotificationSender {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
