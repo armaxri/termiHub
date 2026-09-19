@@ -58,6 +58,7 @@ vi.mock("@xterm/addon-unicode11", () => ({
 }));
 vi.mock("@xterm/addon-search", () => ({
   SearchAddon: class {
+    onDidChangeResults = vi.fn(() => ({ dispose: vi.fn() }));
     dispose = vi.fn();
   },
 }));

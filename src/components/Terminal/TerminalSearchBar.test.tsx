@@ -17,6 +17,9 @@ const findNext = vi.fn();
 const findPrevious = vi.fn();
 const clearSearchDecorations = vi.fn();
 const focusTerminal = vi.fn();
+const onSearchResults = vi.fn(
+  (_tabId: string, _listener: (r: { resultIndex: number; resultCount: number }) => void) => vi.fn()
+);
 
 vi.mock("./TerminalRegistry", () => ({
   useTerminalRegistry: () => ({
@@ -24,6 +27,7 @@ vi.mock("./TerminalRegistry", () => ({
     findPrevious,
     clearSearchDecorations,
     focusTerminal,
+    onSearchResults,
   }),
 }));
 
@@ -144,5 +148,72 @@ describe("TerminalSearchBar (Button migration)", () => {
       "foo",
       expect.objectContaining({ caseSensitive: false, regex: false })
     );
+  });
+});
+
+describe("TerminalSearchBar match count + whole word (PROD-058)", () => {
+  async function typeQuery(text: string) {
+    const input = container.querySelector<HTMLInputElement>(".terminal-search-bar__input")!;
+    const setter = Object.getOwnPropertyDescriptor(
+      window.HTMLInputElement.prototype,
+      "value"
+    )!.set!;
+    await act(async () => {
+      setter.call(input, text);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await flush();
+  }
+
+  it("shows the match count when the addon reports results", async () => {
+    let emit: ((r: { resultIndex: number; resultCount: number }) => void) | null = null;
+    onSearchResults.mockImplementation(
+      (_tabId: string, listener: (r: { resultIndex: number; resultCount: number }) => void) => {
+        emit = listener;
+        return vi.fn();
+      }
+    );
+    await render();
+    await typeQuery("foo");
+
+    const count = () => container.querySelector(".terminal-search-bar__count")!.textContent;
+
+    // onDidChangeResults → "current / total".
+    await act(async () => emit!({ resultIndex: 0, resultCount: 3 }));
+    await flush();
+    expect(count()).toBe("1/3");
+
+    // Navigating to the third match updates the current index.
+    await act(async () => emit!({ resultIndex: 2, resultCount: 3 }));
+    await flush();
+    expect(count()).toBe("3/3");
+
+    // No matches → explicit "No results".
+    await act(async () => emit!({ resultIndex: -1, resultCount: 0 }));
+    await flush();
+    expect(count()).toBe("No results");
+  });
+
+  it("passes wholeWord through to find when the toggle is enabled", async () => {
+    await render();
+    await typeQuery("foo");
+    findNext.mockClear();
+
+    // Toggling whole-word re-runs the search with the option flipped on.
+    await act(async () => {
+      buttonByLabel("Match Whole Word").click();
+    });
+    await flush();
+
+    expect(findNext).toHaveBeenLastCalledWith(
+      TAB_ID,
+      "foo",
+      expect.objectContaining({ wholeWord: true })
+    );
+
+    // And reflects its pressed state through the Button variant.
+    const toggle = buttonByLabel("Match Whole Word");
+    expect(toggle.className).toContain("ui-btn--secondary");
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
   });
 });
