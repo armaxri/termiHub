@@ -96,6 +96,20 @@ export function filterEntries(entries: FileEntry[], query: string): FileEntry[] 
 }
 
 /**
+ * Filter out hidden (dot-prefixed) entries unless `showHidden` is true.
+ *
+ * Hidden detection is name-based (a leading `.`), which covers POSIX dotfiles on
+ * every backend. The Windows hidden ATTRIBUTE is not carried on {@link FileEntry}
+ * today, so attribute-hidden files on Windows are not filtered — that is left as
+ * a follow-up until the backends surface the attribute. Default (`showHidden`
+ * false) matches the standard file-explorer default of hiding dotfiles.
+ */
+export function filterHiddenEntries(entries: FileEntry[], showHidden: boolean): FileEntry[] {
+  if (showHidden) return entries;
+  return entries.filter((e) => !e.name.startsWith("."));
+}
+
+/**
  * Find the index of the next entry whose label starts with `buffer`
  * (case-insensitive), searching circularly from `currentIndex`.
  *
