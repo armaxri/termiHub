@@ -57,7 +57,7 @@ import { getRenderedCellWidth } from "./xtermDimensions";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import { currentSessionView, waitForBackendAgentReconnectOutcome } from "@/store/sessionBridge";
-import { resolveEstablishmentPlan } from "./terminalConnectionPlan";
+import { resolveEstablishmentPlan, resolveAgentSpawnAction } from "./terminalConnectionPlan";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -726,14 +726,24 @@ export function Terminal({
                   (a) => a.id === agentId
                 )?.connectionState;
 
-                if (agentState === "connecting" || agentState === "reconnecting") {
+                // The *decision* — which action this failure warrants — is a pure
+                // function of the agent transport state and the bounded attempt
+                // counter (FEC-016). The concrete effects for the chosen action
+                // run inline below, unchanged.
+                const action = resolveAgentSpawnAction({
+                  agentState,
+                  attempt,
+                  maxAttempts: MAX_AGENT_SPAWN_ATTEMPTS,
+                });
+
+                if (action.kind === "waitForAgent") {
                   // Park tab; TerminalView wakes it via retryTerminalSpawn
                   // once the agent emits "connected".
                   useAppStore.getState().setTerminalWaitingForAgent(tabId, agentId);
                   return;
                 }
 
-                if (agentState === "disconnected") {
+                if (action.kind === "reconnectAgentThenWait") {
                   // The agent transport itself is gone — retrying createTerminal
                   // would fail with "Agent not connected" forever. Re-establish
                   // the agent connection and park the tab; TerminalView wakes it
@@ -759,11 +769,10 @@ export function Terminal({
                   return;
                 }
 
-                // Agent is up but the session creation failed. Bound the retries
-                // so a session that can never be created surfaces an error
-                // instead of spinning forever.
-                attempt++;
-                if (attempt > MAX_AGENT_SPAWN_ATTEMPTS) {
+                if (action.kind === "giveUp") {
+                  // Agent is up but the session creation kept failing and the
+                  // bounded retries are exhausted — surface an error instead of
+                  // spinning forever.
                   useAppStore.getState().setTerminalAutoRetrying(tabId, 0);
                   useAppStore.getState().setTerminalSpawnError(tabId, null);
                   useAppStore
@@ -771,6 +780,11 @@ export function Terminal({
                     .setTerminalDisconnectWithError(tabId, backendErrorMessage(err));
                   return;
                 }
+
+                // action.kind === "retryAfterDelay": the agent is up but the
+                // session creation failed transiently; advance the attempt
+                // counter and auto-retry after the backoff.
+                attempt = action.attempt;
 
                 // Show a brief "Connection failed" state so the user can see
                 // each attempt's outcome, then auto-retry.  Clear the retry
