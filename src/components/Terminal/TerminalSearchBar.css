@@ -19,3 +19,15 @@
 .terminal-search-bar .terminal-search-bar__input {
   width: 180px;
 }
+
+/* "current / total" match summary. Fixed min-width so the toggle buttons do not
+   shift as the count text changes width between searches. */
+.terminal-search-bar__count {
+  min-width: 52px;
+  padding: 0 var(--spacing-xxs);
+  font-size: var(--font-size-xs);
+  color: var(--text-muted);
+  text-align: center;
+  white-space: nowrap;
+  user-select: none;
+}

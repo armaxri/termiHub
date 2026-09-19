@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import type { SearchAddon, ISearchResultChangeEvent } from "@xterm/addon-search";
 import { TerminalPortalProvider, useTerminalRegistry, PASTE_DEBOUNCE_MS } from "./TerminalRegistry";
 import { sendInput } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
@@ -14,6 +15,7 @@ import type { TerminalTab } from "@/types/terminal";
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
   onThemeChange: vi.fn(() => vi.fn()),
+  getXtermTheme: vi.fn(() => ({ yellow: "#e5e510", brightYellow: "#f5f543" })),
 }));
 
 vi.mock("@/services/api", () => ({
@@ -727,5 +729,78 @@ describe("fitTerminal — degenerate-container guard (#2693)", () => {
     });
 
     expect(fitAddon.fit).not.toHaveBeenCalled();
+  });
+});
+
+describe("search results wiring (PROD-058)", () => {
+  /** Minimal SearchAddon mock with a controllable onDidChangeResults emitter. */
+  function createMockSearchAddon() {
+    const listeners = new Set<(r: ISearchResultChangeEvent) => void>();
+    return {
+      findNext: vi.fn(() => true),
+      findPrevious: vi.fn(() => true),
+      clearDecorations: vi.fn(),
+      onDidChangeResults: vi.fn((cb: (r: ISearchResultChangeEvent) => void) => {
+        listeners.add(cb);
+        return { dispose: vi.fn(() => listeners.delete(cb)) };
+      }),
+      emit: (r: ISearchResultChangeEvent) => listeners.forEach((l) => l(r)),
+    };
+  }
+
+  it("forwards the addon's onDidChangeResults to onSearchResults subscribers", () => {
+    const addon = createMockSearchAddon();
+    act(() => {
+      registryActions.registerSearchAddon("tab-1", addon as unknown as SearchAddon);
+    });
+
+    const received: ISearchResultChangeEvent[] = [];
+    const unsubscribe = registryActions.onSearchResults("tab-1", (r) => received.push(r));
+
+    act(() => addon.emit({ resultIndex: 1, resultCount: 4 }));
+    expect(received).toEqual([{ resultIndex: 1, resultCount: 4 }]);
+
+    // After unsubscribing, further events are not delivered.
+    unsubscribe();
+    act(() => addon.emit({ resultIndex: 2, resultCount: 4 }));
+    expect(received).toHaveLength(1);
+  });
+
+  it("enables decorations (required for the count) and forwards wholeWord to the addon", () => {
+    const addon = createMockSearchAddon();
+    act(() => {
+      registryActions.registerSearchAddon("tab-1", addon as unknown as SearchAddon);
+    });
+
+    registryActions.findNext("tab-1", "foo", {
+      wholeWord: true,
+      caseSensitive: false,
+      regex: false,
+    });
+    expect(addon.findNext).toHaveBeenCalledWith(
+      "foo",
+      expect.objectContaining({
+        wholeWord: true,
+        // onDidChangeResults only fires when decorations are set.
+        decorations: expect.objectContaining({ matchBackground: expect.any(String) }),
+      })
+    );
+
+    registryActions.findPrevious("tab-1", "foo", { wholeWord: true });
+    expect(addon.findPrevious).toHaveBeenCalledWith(
+      "foo",
+      expect.objectContaining({ wholeWord: true, decorations: expect.any(Object) })
+    );
+  });
+
+  it("disposes the results subscription when the tab is unregistered", () => {
+    const addon = createMockSearchAddon();
+    act(() => {
+      registryActions.registerSearchAddon("tab-1", addon as unknown as SearchAddon);
+    });
+    const disposable = addon.onDidChangeResults.mock.results[0].value as { dispose: () => void };
+
+    act(() => registryActions.unregister("tab-1"));
+    expect(disposable.dispose).toHaveBeenCalledTimes(1);
   });
 });

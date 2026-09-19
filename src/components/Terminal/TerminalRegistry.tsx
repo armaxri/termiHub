@@ -7,9 +7,14 @@ import {
   useEffect,
   ReactNode,
 } from "react";
-import { Terminal as XTerm } from "@xterm/xterm";
+import { Terminal as XTerm, type IDisposable } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { SearchAddon, type ISearchOptions } from "@xterm/addon-search";
+import {
+  SearchAddon,
+  type ISearchOptions,
+  type ISearchDecorationOptions,
+  type ISearchResultChangeEvent,
+} from "@xterm/addon-search";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import {
@@ -24,9 +29,30 @@ import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { frontendLog } from "@/utils/frontendLog";
 import { bufferToLogicalLines } from "@/utils/terminalBuffer";
+import { getXtermTheme } from "@/themes";
 import { isFitReady, isProposedFitSafe } from "./safeFit";
 
 const LARGE_PASTE_THRESHOLD = 5000;
+
+/**
+ * Build the decoration options passed to every search so the search addon
+ * highlights all matches AND emits `onDidChangeResults` (the addon only fires
+ * that event — the source of the "current / total" count — when `decorations`
+ * are set). Colors must be solid `#RRGGBB`; the theme's ANSI colors are solid
+ * hex (unlike the `rgba()` selection color), so the highlight is sourced from
+ * them and follows the active theme.
+ */
+function buildSearchDecorations(): ISearchDecorationOptions {
+  const theme = getXtermTheme();
+  const match = theme.yellow ?? "#e5e510";
+  const active = theme.brightYellow ?? theme.yellow ?? "#f5f543";
+  return {
+    matchBackground: match,
+    matchOverviewRuler: match,
+    activeMatchBackground: active,
+    activeMatchColorOverviewRuler: active,
+  };
+}
 
 /**
  * Minimum spacing between two paste triggers for the *same* terminal tab. A
@@ -117,6 +143,15 @@ interface TerminalRegistryContextType {
   sendInputToTerminal: (tabId: string, data: string) => Promise<boolean>;
   /** Register a search addon for a terminal tab. */
   registerSearchAddon: (tabId: string, addon: SearchAddon) => void;
+  /**
+   * Subscribe to search result-count changes for a tab (current index + total
+   * match count). Returns an unsubscribe function. Backed by the search addon's
+   * `onDidChangeResults` event.
+   */
+  onSearchResults: (
+    tabId: string,
+    listener: (results: ISearchResultChangeEvent) => void
+  ) => () => void;
   /** Search forward in the terminal. */
   findNext: (tabId: string, query: string, options?: ISearchOptions) => boolean;
   /** Search backward in the terminal. */
@@ -148,6 +183,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
   const fitAddonRegistryRef = useRef(new Map<string, FitAddon>());
   const sessionRegistryRef = useRef(new Map<string, SessionId>());
   const searchAddonRegistryRef = useRef(new Map<string, SearchAddon>());
+  // Last-known result counts per tab + the `onDidChangeResults` subscriptions
+  // wiring the addon to the search bar. Listeners let the (React) search bar
+  // reactively render "current / total" without polling.
+  const searchResultsListenersRef = useRef(
+    new Map<string, Set<(results: ISearchResultChangeEvent) => void>>()
+  );
+  const searchResultsDisposableRef = useRef(new Map<string, IDisposable>());
   // Per-tab timestamp of the last accepted paste, used to drop a bounced/duplicated
   // paste trigger for the same tab within PASTE_DEBOUNCE_MS (#2595).
   const lastPasteAtRef = useRef(new Map<string, number>());
@@ -168,6 +210,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     fitAddonRegistryRef.current.delete(tabId);
     sessionRegistryRef.current.delete(tabId);
     searchAddonRegistryRef.current.delete(tabId);
+    searchResultsDisposableRef.current.get(tabId)?.dispose();
+    searchResultsDisposableRef.current.delete(tabId);
+    searchResultsListenersRef.current.delete(tabId);
     lastPasteAtRef.current.delete(tabId);
   }, []);
 
@@ -464,13 +509,41 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
 
   const registerSearchAddon = useCallback((tabId: string, addon: SearchAddon) => {
     searchAddonRegistryRef.current.set(tabId, addon);
+    // A reconnect re-registers a fresh addon for the same tab; dispose the prior
+    // subscription so we never leak a listener onto a disposed addon.
+    searchResultsDisposableRef.current.get(tabId)?.dispose();
+    const disposable = addon.onDidChangeResults((results) => {
+      const listeners = searchResultsListenersRef.current.get(tabId);
+      if (listeners) for (const listener of listeners) listener(results);
+    });
+    searchResultsDisposableRef.current.set(tabId, disposable);
   }, []);
+
+  const onSearchResults = useCallback(
+    (tabId: string, listener: (results: ISearchResultChangeEvent) => void): (() => void) => {
+      let listeners = searchResultsListenersRef.current.get(tabId);
+      if (!listeners) {
+        listeners = new Set();
+        searchResultsListenersRef.current.set(tabId, listeners);
+      }
+      listeners.add(listener);
+      return () => {
+        const set = searchResultsListenersRef.current.get(tabId);
+        if (!set) return;
+        set.delete(listener);
+        if (set.size === 0) searchResultsListenersRef.current.delete(tabId);
+      };
+    },
+    []
+  );
 
   const findNext = useCallback(
     (tabId: string, query: string, options?: ISearchOptions): boolean => {
       const addon = searchAddonRegistryRef.current.get(tabId);
       if (!addon || !query) return false;
-      return addon.findNext(query, options);
+      // Always pass decorations: the addon only highlights all matches and emits
+      // the `onDidChangeResults` count event when decorations are set.
+      return addon.findNext(query, { ...options, decorations: buildSearchDecorations() });
     },
     []
   );
@@ -479,7 +552,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     (tabId: string, query: string, options?: ISearchOptions): boolean => {
       const addon = searchAddonRegistryRef.current.get(tabId);
       if (!addon || !query) return false;
-      return addon.findPrevious(query, options);
+      return addon.findPrevious(query, { ...options, decorations: buildSearchDecorations() });
     },
     []
   );
@@ -512,6 +585,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       pasteToTerminal,
       sendInputToTerminal,
       registerSearchAddon,
+      onSearchResults,
       findNext,
       findPrevious,
       clearSearchDecorations,
@@ -539,6 +613,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       pasteToTerminal,
       sendInputToTerminal,
       registerSearchAddon,
+      onSearchResults,
       findNext,
       findPrevious,
       clearSearchDecorations,
