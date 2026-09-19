@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/Settings/KeyboardSettings
 evidence:
   - src/components/Settings/KeyboardSettings.tsx:264
-status: open
+status: fixed
+resolution: "#3119 — keymap import/export: JSON Export/Import beside the HTML cheat-sheet in KeyboardSettings, reusing useJsonFile save/open dialog flow. New pure keybindingIo.ts (mirrors macroIo/themeIO): versioned envelope, lossless round-trip through the {action,key} persisted shape, validate-before-apply (malformed → error toast, existing bindings untouched)"
 ---
 
 ## What

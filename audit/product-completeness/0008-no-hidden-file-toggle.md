@@ -9,7 +9,8 @@ subsystem: core/files, src/components/Sidebar/FileBrowser
 evidence:
   - core/src/files/local.rs:9
   - src/components/Sidebar/FileBrowser.tsx:1364
-status: open
+status: fixed
+resolution: "#3117 — hidden-files toggle: filterHiddenEntries(entries,showHidden) in fileBrowserNav.ts (dot-prefix, no mutation) applied as visibleEntries memo; toolbar Eye/EyeOff toggle (aria-pressed), defaults HIDDEN, persists via new LayoutConfig.showHiddenFiles through existing updateLayoutConfig→persistSettings. Windows hidden-ATTRIBUTE deferred (FileEntry has no attr field; name-based only, noted follow-up)"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/CommandPalette
 evidence:
   - src/components/CommandPalette/CommandPalette.tsx:15
-status: open
+status: fixed
+resolution: "#3119 — workspaces in command palette: new 'workspace' entry kind, each saved workspace = 'Launch Workspace: <name>' invoking existing s.launchWorkspace (same path WorkspaceSidebar uses); mirrored connection-entry pattern, no new entry system"
 ---
 
 ## What

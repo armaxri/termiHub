@@ -9,7 +9,8 @@ subsystem: src/components/Sidebar/FileBrowser
 evidence:
   - src/components/Sidebar/FileBrowser.tsx:280
   - src/components/Sidebar/FileBrowser.tsx:1229
-status: open
+status: fixed
+resolution: "#3117 — multi-file download: handleMultiAction gains a download branch + 'Download (N items)' MultiSelectMenuItems entry; iterates selected entries calling existing downloadFile(path,name) — NO new transfer plumbing, reuses single-download local_copy path (dir recurse via isDirectory). Sequential to avoid Save-as dialog races"
 ---
 
 ## What
