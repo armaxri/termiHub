@@ -1,0 +1,15 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/main.tsx",
+    "src/test/setup.ts",
+    "src/**/*.test.{ts,tsx}",
+    "src/testbridge/**/*.{ts,tsx}",
+    "src/test/**/*.{ts,tsx}"
+  ],
+  "project": ["src/**/*.{ts,tsx}"],
+  "ignore": ["src/types/generated/**"],
+  "vite": {
+    "config": ["vite.config.ts", "vitest.config.ts"]
+  }
+}
