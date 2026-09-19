@@ -365,6 +365,20 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: pnpm test:coverage
 
+      # Publish the vitest coverage report (html + lcov + text) as a downloadable
+      # CI artifact (TOOL-004). `pnpm test:coverage` writes it to coverage/ (see
+      # vitest.config.ts) but nothing surfaced it before, so the html report was
+      # only ever produced locally. `if: always()` uploads it even when the
+      # coverage step failed a threshold, so a coverage drop can be inspected from
+      # the failed run. This is a plain artifact upload — advisory only, no gate.
+      - name: Upload coverage report artifact
+        if: always() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: frontend-coverage
+          path: coverage/
+          if-no-files-found: warn
+
       - name: Run frontend tests
         if: matrix.os != 'ubuntu-latest'
         run: pnpm test
