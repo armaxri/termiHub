@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { RotateCcw, Download, X } from "lucide-react";
+import { RotateCcw, Download, Upload, FileDown, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { KeyCombo, KeyBinding, ShortcutCategory } from "@/types/keybindings";
@@ -9,14 +9,17 @@ import {
   serializeCombo,
   serializeBinding,
   setOverride,
+  setOverrides,
   clearOverrides,
   checkConflict,
   getOverrides,
   unbindAction,
   isUnboundCombo,
 } from "@/services/keybindings";
+import { serializeKeybindings, parseKeybindingEnvelope } from "@/services/keybindingIo";
 import { exportCheatSheet } from "@/utils/cheatSheetPdf";
-import { Button, Toggle, Tooltip, SearchInput } from "@/components/ui";
+import { Button, Toggle, Tooltip, SearchInput, toast } from "@/components/ui";
+import { useJsonFileExport, useJsonFileImport } from "@/hooks/useJsonFile";
 import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
 import "./KeyboardSettings.css";
 
@@ -88,6 +91,32 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
     clearOverrides();
     persistOverrides();
   }, [persistOverrides]);
+
+  // JSON export/import of the current keybinding overrides (PROD-055), reusing the
+  // shared flat-sidebar file dialog flow. A cancelled dialog is a silent no-op.
+  const exportKeybindingsToFile = useJsonFileExport("keyboard shortcuts");
+  const importKeybindingsFromFile = useJsonFileImport("keyboard shortcuts");
+
+  const handleExportJson = useCallback(() => {
+    void exportKeybindingsToFile({
+      defaultPath: "termihub-keyboard-shortcuts.json",
+      content: () => serializeKeybindings(getOverrides()),
+      successMessage: "Exported keyboard shortcuts",
+    });
+  }, [exportKeybindingsToFile]);
+
+  // The envelope is validated before any override is applied, so a malformed file
+  // surfaces an error toast and leaves the existing bindings untouched.
+  const handleImportJson = useCallback(() => {
+    void importKeybindingsFromFile(async (json) => {
+      const entries = parseKeybindingEnvelope(json);
+      setOverrides(entries);
+      persistOverrides();
+      toast.success(
+        `Imported ${entries.length} keyboard shortcut${entries.length === 1 ? "" : "s"}`
+      );
+    });
+  }, [importKeybindingsFromFile, persistOverrides]);
 
   const passthroughEnabled = settings.terminalKeyPassthrough !== false;
   const handleTogglePassthrough = useCallback(() => {
@@ -270,6 +299,26 @@ export function KeyboardSettings({ visibleFields }: KeyboardSettingsProps) {
           title="Save a one-page HTML cheat sheet of all shortcuts"
         >
           Save HTML Cheat Sheet
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<FileDown size={14} />}
+          onClick={handleExportJson}
+          data-testid="keyboard-settings-export-json"
+          title="Export your custom keyboard shortcuts to a JSON file"
+        >
+          Export Shortcuts
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          icon={<Upload size={14} />}
+          onClick={handleImportJson}
+          data-testid="keyboard-settings-import-json"
+          title="Import keyboard shortcuts from a JSON file, replacing your custom bindings"
+        >
+          Import Shortcuts
         </Button>
       </div>
     </div>
