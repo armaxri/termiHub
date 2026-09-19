@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/plugin/capabilities
 evidence:
   - core/src/plugin/capabilities.rs:16
-status: open
+status: fixed
+resolution: "#3128 — plugin install/trust dialog warns on native code: warning callout (Cpu icon, --color-warning, testid plugin-install-native-warning) shown when a manifest declares terminalBackend (the one native extension = compiled Rust dylib) — states it runs UNSANDBOXED with full app privileges, can reach files/network/creds regardless of listed permissions. JS/JSON-only + blocked pkgs don't show it. pluginHasNativeCode() helper + tests. No sandboxing built (PLG-009 = maintainer)"
 ---
 
 ## What
