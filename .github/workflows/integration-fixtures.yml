@@ -101,8 +101,7 @@ jobs:
         # `--test-threads=1` is required: the suites share single-instance
         # containers, and running them concurrently makes them stomp on shared
         # state (e.g. the network-fault-proxy's `tc` qdisc → "Exclusivity flag
-        # on, cannot modify"). A handful of tests are `#[ignore]`d for pre-existing
-        # fixture-content gaps tracked in #864; they will be re-enabled there.
+        # on, cannot modify").
         run: cargo test -p termihub-core --all-features -- --test-threads=1
 
       - name: Dump container logs on failure
