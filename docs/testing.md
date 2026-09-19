@@ -1155,6 +1155,31 @@ E2E test coverage: all WebdriverIO specs have been ported to the cross-platform 
 - For serial port tests: host-side virtual serial ports via `socat` + echo server, set up by `scripts/test-system-linux.sh` (see also `examples/serial/`)
 - Test on each target OS (macOS, Linux, Windows) for cross-platform items
 
+### Dark theme renders the modern design-system palette (UI-001)
+
+The built-in dark theme was reconciled with the ui-modernization design system:
+`src/themes/dark.ts` now carries the modern `variables.css` palette (the source
+of truth) instead of the old classic VS-Code values. This is a purely visual
+change graded by eye; the token values themselves are locked by unit tests
+(`src/themes/contrast.test.ts`, `src/themes/themes.test.ts`).
+
+Steps (dark theme active — the default):
+
+1. Launch the app (`./scripts/dev.sh`) with the theme set to **Dark**.
+   Expected: the app chrome (editor/terminal background, panels) reads as a deep
+   blue-charcoal (`#0f1117`), not the flat neutral gray `#1e1e1e` of the old
+   theme. There should be **no** white/gray flash on initial paint — the pre-paint
+   background now matches at `#0f1117`.
+2. Look at the accent color — active tab underline, focused control ring, primary
+   buttons, the activity-bar indicator. Expected: a brighter modern blue
+   (`#3d7de8`), not the old teal-ish `#007acc`.
+3. Open a terminal and read some output. Expected: the terminal surface matches
+   the app background (`#0f1117`); ANSI colors render normally (terminal-standard
+   hues, unchanged); muted/secondary text is legible (WCAG AA).
+4. Switch to the **Light** theme and back. Expected: the light theme is
+   completely unchanged by this work; switching back restores the modern dark
+   palette cleanly.
+
 ### Multi-window close-with-live-tabs & per-OS quit policy (#1903)
 
 The close decision surface and the classification/store branches are covered by
