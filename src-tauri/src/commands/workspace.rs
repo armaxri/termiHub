@@ -5,7 +5,9 @@ use tauri_plugin_cli::CliExt;
 
 use crate::connection::manager::ConnectionManager;
 use crate::utils::errors::TerminalError;
-use crate::workspace::config::{WorkspaceDefinition, WorkspaceImportPreview, WorkspaceSummary};
+use crate::workspace::config::{
+    WorkspaceDefinition, WorkspaceImportPreview, WorkspaceImportResult, WorkspaceSummary,
+};
 use crate::workspace::last_session::{LastSession, LastSessionManager};
 use crate::workspace::manager::WorkspaceManager;
 
@@ -138,13 +140,14 @@ pub fn export_workspaces(
 }
 
 /// Import workspaces from portable JSON (connection names resolved to IDs).
-/// Returns the number of workspaces imported.
+/// Returns the number of workspaces imported plus any non-fatal warnings
+/// (e.g. dangling connection references) for the UI to surface.
 #[tauri::command]
 pub fn import_workspaces(
     json: String,
     workspace_manager: State<'_, WorkspaceManager>,
     connection_manager: State<'_, ConnectionManager>,
-) -> Result<usize, TerminalError> {
+) -> Result<WorkspaceImportResult, TerminalError> {
     let name_to_id = build_name_to_id_map(&connection_manager)?;
     workspace_manager.import_json(&json, &name_to_id)
 }

@@ -94,3 +94,19 @@ export interface WorkspaceImportPreview {
   workspaceCount: number;
   totalTabCount: number;
 }
+
+/**
+ * Outcome of importing workspaces from portable JSON.
+ *
+ * Carries the number of workspaces imported plus any non-fatal warnings raised
+ * during the import — most notably dangling connection references, where an
+ * imported tab points at a connection that no longer exists. The tab is kept
+ * regardless; the warning lets the UI tell the user the workspace is partially
+ * broken instead of failing silently.
+ */
+export interface WorkspaceImportResult {
+  /** Number of workspaces added to the store (duplicates by name are skipped). */
+  importedCount: number;
+  /** Human-readable, non-blocking warnings raised during the import. */
+  warnings: string[];
+}
