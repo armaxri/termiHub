@@ -18,7 +18,8 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"docs/**/*.md\" \"*.md\"",
     "markdownlint": "markdownlint-cli2 \"docs/**/*.md\" \"*.md\"",
     "markdownlint:fix": "markdownlint-cli2 --fix \"docs/**/*.md\" \"*.md\"",
-    "knip": "knip"
+    "knip": "knip",
+    "size": "node scripts/internal/bundle-size.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
