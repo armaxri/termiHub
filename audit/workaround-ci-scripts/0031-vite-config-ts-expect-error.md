@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: vite.config.ts
 evidence:
   - vite.config.ts:7
-status: open
+status: fixed
+resolution: "#3113 — vite.config.ts @ts-expect-error over process.env.TAURI_DEV_HOST was an UNUSED directive (TS2578) — process already typed via @types/node in tsconfig.node.json context; fix = delete the suppression (no dep/types plumbing). Also removed the WA-CI-023-residual stale '#864 fixture-content gaps' comment in integration-fixtures.yml (no such ignores remain in core/)"
 ---
 
 ## What

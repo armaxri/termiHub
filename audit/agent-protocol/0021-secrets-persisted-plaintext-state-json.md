@@ -11,7 +11,7 @@ evidence:
   - agent/src/session/manager.rs:519
   - agent/src/session/manager.rs:244
 status: fixed
-resolution: "#3098 — agent state.json (holds full per-session connection JSON) now written owner-only 0o600 on unix via explicit set_permissions after the atomic write (persistence.rs) + regression test. Was already incidentally 0o600 via #2366 tempfile-preserve-on-rename; fix makes the invariant explicit + no longer dependent on tempfile internals, no world-readable window. Windows = documented no-op (NTFS %APPDATA% ACLs). Secret-stripping (settings holding full connection JSON) deferred as product-adjacent"
+resolution: "#3098+#3112 — FULLY CLOSED both halves. PERMS (#3098): state.json written owner-only 0o600 on unix (explicit set_permissions, regression test; Windows NTFS ACLs). SECRET-AT-REST minimize-plaintext (#3112, maintainer-approved): (1) daemon settings now passed over STDIN pipe not TERMIHUB_SETTINGS env — closes the /proc/<pid>/environ same-user exposure 0o600 can't reach (env fully removed, all readers incl 3 integration spawners updated, verified end-to-end via real daemon in shell_integration); (2) redact_persisted_secrets recursively drops password/sshPassword at any depth (nested proxyJump/tunnelled VNC) before writing state.json — verified no persisted-settings consumer needs the secret (recover reattaches over socket, SessionSnapshot has no settings field). Residual (documented): user-defined env/envVars values not classifiable as secret, left untouched"
 ---
 
 ## What
