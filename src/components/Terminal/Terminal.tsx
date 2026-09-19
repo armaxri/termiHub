@@ -5,6 +5,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { WebLinksAddon } from "@xterm/addon-web-links";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
@@ -49,6 +50,7 @@ import {
   discardSandboxSession,
 } from "@/plugins/sandbox/pluginSandboxHost";
 import { resolveLineEnding } from "@/utils/lineEndings";
+import { safeOpenExternal } from "@/utils/safeOpenExternal";
 import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
@@ -1316,6 +1318,16 @@ export function Terminal({
     const serializeAddon = new SerializeAddon();
     xterm.loadAddon(serializeAddon);
 
+    // Clickable web links (PROD-056). URLs in terminal output become clickable
+    // and are opened through the app's scheme-allowlisted external-open path
+    // (safeOpenExternal, SEC-012) — never a raw OS opener — so a link can only
+    // ever hand an http/https/mailto URL to the OS handler. The addon never
+    // opens anything itself; it only surfaces the clicked URI to this handler.
+    const webLinksAddon = new WebLinksAddon((_event, uri) => {
+      fireAndForget(safeOpenExternal(uri), "open terminal web link");
+    });
+    xterm.loadAddon(webLinksAddon);
+
     xterm.open(scrollViewport);
 
     // GPU-accelerated rendering (#2078). The WebGL addon replaces xterm's DOM
@@ -1663,6 +1675,9 @@ export function Terminal({
       // Reset the renderer flag so a reconnect starts on the DOM-safe path
       // (refresh enabled) until the new xterm re-activates WebGL (#2107).
       webglRendererActiveRef.current = false;
+      // Dispose the web-links addon alongside the other addons so its link
+      // provider is removed deterministically before the terminal (PROD-056).
+      webLinksAddon.dispose();
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;
