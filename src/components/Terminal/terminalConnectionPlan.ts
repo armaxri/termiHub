@@ -117,3 +117,86 @@ export function resolveEstablishmentPlan(input: EstablishmentPlanInput): Establi
   }
   return { kind: "freshCreate" };
 }
+
+/**
+ * The next step for an AGENT tab whose `createTerminal` call just failed inside
+ * the client fresh-create loop (Phase D). This is the *pure* decision only — the
+ * caller runs the concrete side-effectful effect for the chosen kind (park the
+ * tab, re-establish the agent transport, surface a give-up error, or wait out
+ * the retry backoff and try again).
+ *
+ * Mirrors {@link resolveEstablishmentPlan}: a pure function over an explicit
+ * input snapshot, no store reads, no `await`, no timers.
+ *
+ * - `waitForAgent`            — the agent transport is still (re)connecting, so
+ *                               parking the tab and letting `retryTerminalSpawn`
+ *                               wake it once the agent emits "connected" is the
+ *                               only sane move; retrying `createTerminal` now
+ *                               would just fail again.
+ * - `reconnectAgentThenWait`  — the agent transport itself is gone; retrying
+ *                               `createTerminal` would fail with "Agent not
+ *                               connected" forever, so the caller re-establishes
+ *                               the agent connection and parks the tab.
+ * - `retryAfterDelay`         — the agent is up (or its state is unknown) and the
+ *                               session creation failed transiently; retry after
+ *                               the backoff. `attempt` is the (1-based) attempt
+ *                               number this retry advances the tab to.
+ * - `giveUp`                  — the bounded retries are exhausted; surface a
+ *                               disconnect-with-error instead of spinning forever.
+ */
+export type AgentSpawnAction =
+  | { kind: "waitForAgent" }
+  | { kind: "reconnectAgentThenWait" }
+  | { kind: "giveUp" }
+  | { kind: "retryAfterDelay"; attempt: number };
+
+/** Explicit input snapshot for {@link resolveAgentSpawnAction}. */
+export interface AgentSpawnActionInput {
+  /**
+   * The agent's current transport `connectionState`, or `undefined` when the
+   * agent is not found in the projected view (treated the same as `connected`:
+   * a transient session-creation failure, not a transport problem).
+   */
+  agentState?: "connecting" | "reconnecting" | "disconnected" | "connected";
+  /**
+   * Attempts already made for this tab (the loop's pre-increment counter). The
+   * give-up boundary is `attempt >= maxAttempts`, matching the former inline
+   * `attempt++; if (attempt > MAX_AGENT_SPAWN_ATTEMPTS)` exactly.
+   */
+  attempt: number;
+  /** Maximum number of bounded retries (= `MAX_AGENT_SPAWN_ATTEMPTS`). */
+  maxAttempts: number;
+}
+
+/**
+ * Decide the next step after an agent-session `createTerminal` failure.
+ *
+ * Derived verbatim from the former inline agent-spawn retry branch in
+ * `Terminal.tsx`. The transport-state checks come first (a still-connecting or
+ * disconnected agent is handled regardless of the attempt count); only when the
+ * agent is up (or unknown) does the bounded retry-vs-give-up decision apply.
+ *
+ * @param input explicit snapshot of the state the decision reads
+ * @returns the chosen {@link AgentSpawnAction}
+ */
+export function resolveAgentSpawnAction(input: AgentSpawnActionInput): AgentSpawnAction {
+  const { agentState, attempt, maxAttempts } = input;
+
+  // The agent transport is still (re)connecting — park and wait for "connected".
+  if (agentState === "connecting" || agentState === "reconnecting") {
+    return { kind: "waitForAgent" };
+  }
+
+  // The agent transport itself is gone — re-establish it, then park and wait.
+  if (agentState === "disconnected") {
+    return { kind: "reconnectAgentThenWait" };
+  }
+
+  // Agent is up ("connected") or its state is unknown (`undefined`): the session
+  // creation itself failed transiently. Bound the retries so a session that can
+  // never be created surfaces an error instead of spinning forever.
+  if (attempt < maxAttempts) {
+    return { kind: "retryAfterDelay", attempt: attempt + 1 };
+  }
+  return { kind: "giveUp" };
+}

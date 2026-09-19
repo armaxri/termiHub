@@ -336,10 +336,15 @@ export function TunnelListItem({
             <span className="tunnel-item__host-label">{hostBadge.label}</span>
           </span>
           {isActive && state?.stats && (
-            <div className="tunnel-item__stats">
+            <div className="tunnel-item__stats" data-testid={`tunnel-stats-${tunnel.id}`}>
               <span>↑ {formatBytes(state.stats.bytesSent)}</span>
               <span>↓ {formatBytes(state.stats.bytesReceived)}</span>
-              <span>{state.stats.activeConnections} conn</span>
+              <span
+                data-testid={`tunnel-conn-stat-${tunnel.id}`}
+                title="Active / total connections"
+              >
+                {state.stats.activeConnections} / {state.stats.totalConnections} conn
+              </span>
             </div>
           )}
           {reach && (
