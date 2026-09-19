@@ -45,6 +45,18 @@ pub enum SessionError {
     #[error("Spawn failed: {0}")]
     SpawnFailed(String),
 
+    /// A transport-level failure while establishing the connection (TCP connect,
+    /// DNS, or SSH handshake transport) — the host could not be reached.
+    ///
+    /// This is a **typed, locale-independent** discriminant, distinct from a
+    /// credential rejection ([`AuthFailed`](Self::AuthFailed)): it is returned
+    /// when the remote could not be contacted at all. Consumers classify an
+    /// "unreachable host" by matching this variant rather than by parsing the
+    /// English "Connection failed" text, which is one localization or rewording
+    /// away from silently misclassifying (I18N-002 / ERR-003).
+    #[error("Connection failed: {0}")]
+    ConnectionFailed(String),
+
     /// Authentication was genuinely rejected by the remote (wrong password,
     /// wrong passphrase, or a refused public key).
     ///
@@ -134,6 +146,20 @@ mod tests {
         assert!(!matches!(
             SessionError::SpawnFailed("Password auth failed: timeout".into()),
             SessionError::AuthFailed
+        ));
+    }
+
+    /// The typed connection-failure variant renders a stable human message and
+    /// is a distinct discriminant callers can match on without parsing text — it
+    /// must never collapse into `SpawnFailed` (I18N-002 / ERR-003).
+    #[test]
+    fn connection_failed_is_a_distinct_typed_variant() {
+        let err = SessionError::ConnectionFailed("timed out".into());
+        assert_eq!(err.to_string(), "Connection failed: timed out");
+        assert!(matches!(err, SessionError::ConnectionFailed(_)));
+        assert!(!matches!(
+            SessionError::SpawnFailed("Connection failed: timed out".into()),
+            SessionError::ConnectionFailed(_)
         ));
     }
 
