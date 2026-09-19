@@ -6,8 +6,8 @@ use tauri::AppHandle;
 
 use super::config::{
     count_tabs, WorkspaceDefinition, WorkspaceExportData, WorkspaceExportEntry,
-    WorkspaceImportPreview, WorkspaceLayoutNode, WorkspaceStore, WorkspaceSummary, WorkspaceTabDef,
-    WorkspaceTabGroupDef,
+    WorkspaceImportPreview, WorkspaceImportResult, WorkspaceLayoutNode, WorkspaceStore,
+    WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
 };
 use super::storage::WorkspaceStorage;
 use crate::connection::recovery::RecoveryWarning;
@@ -190,11 +190,15 @@ impl WorkspaceManager {
     /// Import workspaces from portable JSON.
     /// Connection names are resolved back to IDs. Skips workspaces whose
     /// name already exists.
+    ///
+    /// Returns a [`WorkspaceImportResult`] carrying the number of workspaces
+    /// imported and any non-fatal warnings (e.g. dangling connection references,
+    /// PER-009) so the caller can surface them to the user.
     pub fn import_json(
         &self,
         json: &str,
         name_to_id: &HashMap<String, String>,
-    ) -> Result<usize, TerminalError> {
+    ) -> Result<WorkspaceImportResult, TerminalError> {
         let data: WorkspaceExportData = serde_json::from_str(json)
             .map_err(|e| TerminalError::WorkspaceError(format!("Invalid import data: {e}")))?;
 
@@ -204,6 +208,7 @@ impl WorkspaceManager {
             .map_err(|e| TerminalError::WorkspaceError(e.to_string()))?;
 
         let mut count = 0;
+        let mut warnings: Vec<String> = Vec::new();
         for entry in data.workspaces {
             // Skip if a workspace with the same name already exists
             if store.workspaces.iter().any(|ws| ws.name == entry.name) {
@@ -240,13 +245,15 @@ impl WorkspaceManager {
 
             // Surface any dangling connection references instead of silently
             // keeping them (PER-009). The tab and its raw ref are preserved above;
-            // here we only record a warning so the user learns the workspace is
+            // here we record a warning (both into the recovery-warning list and
+            // in the returned result) so the user learns the workspace is
             // partially broken. Never auto-delete the tab or the reference.
-            record_dangling_ref_warnings(
+            let ws_warnings = record_dangling_ref_warnings(
                 &definition.name,
                 &mut unresolved,
                 &self.recovery_warnings,
             );
+            warnings.extend(ws_warnings);
 
             store.workspaces.push(definition);
             count += 1;
@@ -256,7 +263,10 @@ impl WorkspaceManager {
             .save(&store)
             .map_err(|e| TerminalError::WorkspaceError(e.to_string()))?;
 
-        Ok(count)
+        Ok(WorkspaceImportResult {
+            imported_count: count,
+            warnings,
+        })
     }
 
     /// Preview an import file without importing.
@@ -285,37 +295,50 @@ impl WorkspaceManager {
 /// appends a [`RecoveryWarning`] to the manager's warning list — reusing the same
 /// machinery that reports corrupt/recovered stores elsewhere. The referencing tab
 /// is intentionally left untouched; this only surfaces the dangling reference.
+///
+/// Returns the human-readable warning messages so the import path can also hand
+/// them back to the caller (and, ultimately, the UI) rather than only recording
+/// them server-side.
 fn record_dangling_ref_warnings(
     workspace_name: &str,
     unresolved: &mut Vec<String>,
     recovery_warnings: &Mutex<Vec<RecoveryWarning>>,
-) {
+) -> Vec<String> {
     if unresolved.is_empty() {
-        return;
+        return Vec::new();
     }
     unresolved.sort();
     unresolved.dedup();
 
-    let Ok(mut warnings) = recovery_warnings.lock() else {
-        return;
-    };
-    for name in unresolved.drain(..) {
+    let mut messages: Vec<String> = Vec::with_capacity(unresolved.len());
+    for name in unresolved.iter() {
         tracing::warn!(
             workspace = %workspace_name,
             connection = %name,
             "imported workspace references a connection that no longer exists; \
              the tab was kept but will not connect until the connection is restored"
         );
-        warnings.push(RecoveryWarning {
-            file_name: "workspaces.json".to_string(),
-            message: format!(
-                "Workspace \"{workspace_name}\" references connection \"{name}\", \
-                 which no longer exists. The tab was kept but will not connect \
-                 until the connection is restored."
-            ),
-            details: None,
-        });
+        messages.push(format!(
+            "Workspace \"{workspace_name}\" references connection \"{name}\", \
+             which no longer exists. The tab was kept but will not connect \
+             until the connection is restored."
+        ));
     }
+    unresolved.clear();
+
+    // Also record into the shared recovery-warning list (best-effort; a poisoned
+    // lock must not drop the messages already destined for the caller).
+    if let Ok(mut warnings) = recovery_warnings.lock() {
+        for message in messages.iter() {
+            warnings.push(RecoveryWarning {
+                file_name: "workspaces.json".to_string(),
+                message: message.clone(),
+                details: None,
+            });
+        }
+    }
+
+    messages
 }
 
 /// Replace connection ref IDs with connection names for export.
@@ -741,7 +764,7 @@ mod tests {
                 .into_iter()
                 .collect();
 
-        let count = mgr.import_json(json, &name_to_id).unwrap();
+        let count = mgr.import_json(json, &name_to_id).unwrap().imported_count;
         assert_eq!(count, 1);
 
         let workspaces = mgr.get_workspaces().unwrap();
@@ -773,7 +796,10 @@ mod tests {
             ]
         }"#;
 
-        let count = mgr.import_json(json, &HashMap::new()).unwrap();
+        let count = mgr
+            .import_json(json, &HashMap::new())
+            .unwrap()
+            .imported_count;
         assert_eq!(count, 1); // Only "New One" imported
 
         let workspaces = mgr.get_workspaces().unwrap();
@@ -831,7 +857,10 @@ mod tests {
         // Import into a fresh manager
         let dir2 = TempDir::new().unwrap();
         let mgr2 = create_test_manager(&dir2);
-        let count = mgr2.import_json(&exported, &name_to_id).unwrap();
+        let count = mgr2
+            .import_json(&exported, &name_to_id)
+            .unwrap()
+            .imported_count;
         assert_eq!(count, 2);
 
         let workspaces = mgr2.get_workspaces().unwrap();
@@ -875,8 +904,8 @@ mod tests {
         }"#;
 
         // Empty connection set → the referenced name cannot resolve.
-        let count = mgr.import_json(json, &HashMap::new()).unwrap();
-        assert_eq!(count, 1);
+        let result = mgr.import_json(json, &HashMap::new()).unwrap();
+        assert_eq!(result.imported_count, 1);
 
         // (a) The tab is still present and its ref is retained verbatim — no data loss.
         let workspaces = mgr.get_workspaces().unwrap();
@@ -888,17 +917,31 @@ mod tests {
             panic!("Expected leaf layout");
         }
 
-        // (b) A recovery warning was produced naming the workspace + missing connection.
+        // (b) The warning is returned to the caller (so the UI can surface it),
+        // naming the workspace + missing connection.
+        assert_eq!(result.warnings.len(), 1);
+        assert!(
+            result.warnings[0].contains("Broken Setup"),
+            "returned warning should name the workspace, got: {}",
+            result.warnings[0]
+        );
+        assert!(
+            result.warnings[0].contains("Deleted Server"),
+            "returned warning should name the missing connection, got: {}",
+            result.warnings[0]
+        );
+
+        // (c) The same warning is also recorded in the recovery-warning list.
         let warnings = mgr.take_recovery_warnings();
         assert_eq!(warnings.len(), 1);
         assert!(
             warnings[0].message.contains("Broken Setup"),
-            "warning should name the workspace, got: {}",
+            "recovery warning should name the workspace, got: {}",
             warnings[0].message
         );
         assert!(
             warnings[0].message.contains("Deleted Server"),
-            "warning should name the missing connection, got: {}",
+            "recovery warning should name the missing connection, got: {}",
             warnings[0].message
         );
     }

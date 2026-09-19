@@ -3,7 +3,12 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { WorkspaceDefinition, WorkspaceImportPreview, WorkspaceSummary } from "@/types/workspace";
+import {
+  WorkspaceDefinition,
+  WorkspaceImportPreview,
+  WorkspaceImportResult,
+  WorkspaceSummary,
+} from "@/types/workspace";
 
 /** Get all workspace summaries for sidebar display. */
 export async function getWorkspaces(): Promise<WorkspaceSummary[]> {
@@ -40,9 +45,12 @@ export async function exportWorkspaces(): Promise<string> {
   return await invoke<string>("export_workspaces");
 }
 
-/** Import workspaces from portable JSON. Returns the number imported. */
-export async function importWorkspaces(json: string): Promise<number> {
-  return await invoke<number>("import_workspaces", { json });
+/**
+ * Import workspaces from portable JSON. Returns the number imported plus any
+ * non-fatal warnings (e.g. dangling connection references) for the UI to surface.
+ */
+export async function importWorkspaces(json: string): Promise<WorkspaceImportResult> {
+  return await invoke<WorkspaceImportResult>("import_workspaces", { json });
 }
 
 /** Preview a workspace import file without importing. */

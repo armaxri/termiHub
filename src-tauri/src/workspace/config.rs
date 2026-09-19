@@ -213,6 +213,22 @@ pub struct WorkspaceImportPreview {
     pub total_tab_count: usize,
 }
 
+/// Outcome of importing workspaces from portable JSON.
+///
+/// Carries the number of workspaces actually imported plus any non-fatal
+/// warnings surfaced during the import — most notably dangling connection
+/// references (PER-009), where a workspace tab points at a connection that no
+/// longer resolves. The tab is kept regardless; the warning lets the UI tell the
+/// user the imported workspace is partially broken instead of failing silently.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceImportResult {
+    /// Number of workspaces added to the store (duplicates by name are skipped).
+    pub imported_count: usize,
+    /// Human-readable, non-blocking warnings raised during the import.
+    pub warnings: Vec<String>,
+}
+
 impl Default for WorkspaceStore {
     fn default() -> Self {
         Self {

@@ -183,11 +183,20 @@ export function WorkspaceSidebar() {
   // A cancelled file dialog is a silent no-op. A parse failure or duplicate-skip
   // must be reported so the user can tell if 0, some, or all workspaces imported
   // (GAP G8).
+  //
+  // Dangling connection references (a tab pointing at a connection that no longer
+  // exists) are non-fatal: the workspace still imports and the tab is kept, but
+  // the user must learn it will not connect until the connection is restored.
+  // Surface each such warning as a persistent error toast alongside the success
+  // count so the partial breakage is never silent (#3013).
   const handleImport = useCallback(() => {
     void importWorkspacesFromFile(async (json) => {
-      const count = await importWorkspaces(json);
+      const { importedCount, warnings } = await importWorkspaces(json);
       await loadWorkspaces();
-      toast.success(`Imported ${count} workspace${count === 1 ? "" : "s"}`);
+      toast.success(`Imported ${importedCount} workspace${importedCount === 1 ? "" : "s"}`);
+      for (const warning of warnings) {
+        toast.error(warning);
+      }
     });
   }, [loadWorkspaces, importWorkspacesFromFile]);
 
