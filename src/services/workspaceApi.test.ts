@@ -88,11 +88,12 @@ describe("workspaceApi", () => {
   });
 
   it("importWorkspaces invokes correct command with json", async () => {
-    mockedInvoke.mockResolvedValue(2);
+    const importResult = { importedCount: 2, warnings: [] };
+    mockedInvoke.mockResolvedValue(importResult);
     const json = '{"version":"1","workspaces":[]}';
     const result = await importWorkspaces(json);
     expect(mockedInvoke).toHaveBeenCalledWith("import_workspaces", { json });
-    expect(result).toBe(2);
+    expect(result).toEqual(importResult);
   });
 
   it("previewImportWorkspaces invokes correct command", async () => {
