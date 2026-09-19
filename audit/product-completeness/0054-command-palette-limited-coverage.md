@@ -9,7 +9,8 @@ subsystem: src/services/commands
 evidence:
   - src/services/commands.ts:79
   - src/services/commands.ts:36
-status: open
+status: fixed
+resolution: "#3125 — command palette full action coverage: palette already generated from keybinding registry w/ coverage-guard test; only gap was clipboard trio (copy/paste/select-all) deliberately excluded pending a focused-terminal seam. Added the seam: TerminalCommandBridge events + selectAllInTerminal + CONTEXT_COMMANDS entries dispatching to the SAME registry methods the Cmd/Ctrl shortcuts use (focus-mutually-exclusive, no double-exec); removed from PALETTE_EXCLUDED_ACTIONS. Only command-palette itself stays excluded (self-referential)"
 ---
 
 ## What

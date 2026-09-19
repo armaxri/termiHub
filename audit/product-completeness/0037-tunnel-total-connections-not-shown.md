@@ -9,7 +9,8 @@ subsystem: core/tunnel, src/components/TunnelSidebar
 evidence:
   - core/src/tunnel/config.rs:76
   - src/components/TunnelSidebar/TunnelListItem.tsx:333
-status: open
+status: fixed
+resolution: "#3122 — display-only: TunnelStats.totalConnections already flowed to TunnelListItem but only activeConnections rendered → now shows 'active / total conn'. No backend/collection change"
 ---
 
 ## What

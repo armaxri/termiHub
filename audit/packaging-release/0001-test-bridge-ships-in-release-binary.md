@@ -12,7 +12,8 @@ evidence:
   - src-tauri/src/utils/test_bridge.rs:184
   - src-tauri/src/lib.rs:394
   - src-tauri/src/lib.rs:1643
-status: open
+status: fixed
+resolution: "develop — reclaim: test-bridge now behind a default-off cargo feature (src-tauri/Cargo.toml:46 test-bridge=[], not in default); all call sites #[cfg(feature=test-bridge)]-gated (lib.rs:593/1964/433/631/1219/1336/1792). Release compiles it OUT — structurally true now, not env-var-dependent. (May also resolve WA-CI-027 — recheck)"
 ---
 
 ## What

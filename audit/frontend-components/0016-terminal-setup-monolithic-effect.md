@@ -9,8 +9,8 @@ subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:375
   - src/components/Terminal/Terminal.tsx:1110
-status: partial
-resolution: "#3118 — Slice 1 landed. REFRAMED (scoping): the reconnect BACKOFF FSM was already pure+backend-authoritative (reconnectBackoff.ts + backend timer) — Terminal.tsx doesn't own it. Extracted the establishment-path SELECTOR (former Terminal.tsx:467-546) into pure src/components/Terminal/terminalConnectionPlan.ts resolveEstablishmentPlan() (module-scope, no store reads/await/new-dep); wired as a no-fall-through switch running identical effects. 77-case exhaustive test table (never-fall-through, reattach-to-corpse guard, forceFresh one-shot, replay choice); ALL existing Terminal.* reconnect DOM suites pass UNEDITED. Cleanup/StrictMode/subscription/agent-spawn UNTOUCHED, exhaustive-deps preserved by construction. REMAINING: Slice 2 = resolveAgentSpawnAction (Phase D agent-spawn loop, former :695-778); Slice 3 = resolveBackendOutcomePlan (optional). TFE-002 same finding"
+status: fixed
+resolution: "#3118+#3123 — SUBSTANTIVE INTENT ACHIEVED (Slices 1+2). REFRAMED (scoping): the reconnect BACKOFF FSM was already pure+backend-authoritative (reconnectBackoff.ts + backend timer) — Terminal.tsx didn't own it. Both real inline decision points extracted into pure tested src/components/Terminal/terminalConnectionPlan.ts: (S1 #3118) resolveEstablishmentPlan (establishment-path selector, ex-:467-546, 77 cases); (S2 #3123) resolveAgentSpawnAction (agent-spawn retry decision, ex-:695-778, give-up boundary algebraically identical). Both: no-fall-through switch running identical effects; ALL existing Terminal.* reconnect DOM suites (491 tests) pass UNEDITED; cleanup/StrictMode/subscription/timers UNTOUCHED; exhaustive-deps preserved by construction. Slice 3 (resolveBackendOutcomePlan) = OPTIONAL trivial mapping over the already-clean waitForBackendAgentReconnectOutcome — low value, skip unless convenient. TFE-002 same finding"
 ---
 
 ## What

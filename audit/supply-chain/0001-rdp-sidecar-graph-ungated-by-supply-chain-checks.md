@@ -13,7 +13,8 @@ evidence:
   - rdp-sidecar/Cargo.lock
   - .github/workflows/code-quality.yml:343
   - rdp-sidecar/vendor/ironrdp-rdpsnd
-status: open
+status: fixed
+resolution: "develop — reclaim: RDP-sidecar 556-crate graph now gated — dedicated CI job rdp-sidecar-quality (code-quality.yml:171, working-directory rdp-sidecar) runs cargo deny check advisories/bans/licenses/sources against sidecar-scoped rdp-sidecar/deny.toml. Audit blind spot closed (underlying #1725 RustCrypto conflict separate/open)"
 ---
 
 ## What

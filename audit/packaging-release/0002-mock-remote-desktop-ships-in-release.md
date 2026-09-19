@@ -10,7 +10,8 @@ evidence:
   - src-tauri/Cargo.toml:18
   - src-tauri/src/session/registry.rs:81
   - src/utils/experimentalTypes.ts:11
-status: open
+status: fixed
+resolution: "develop — reclaim: mock-remote-desktop out of default features (src-tauri/Cargo.toml:18 default=[ftp,vnc,rdp-sidecar]). Same as PROD-066/MOCK-001/PARITY-009"
 ---
 
 ## What

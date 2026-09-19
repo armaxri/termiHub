@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/files/transfer/mod.rs:244
   - src-tauri/src/files/transfer/registry.rs:549
   - src/components/TransferQueue/TransferControls.tsx:46
-status: open
+status: fixed
+resolution: "#3124 — hide non-functional transfer controls: only FTP rich-queue is pausable (SFTP pause/resume/retry are no-op). New isPausableTransferConnectionType(connectionType) (ftp→pausable) in types/transfer.ts; TransferQueue resolves sessionId→tab→connectionType (useShallow) → passes pausable to TransferControls which hides Pause/Resume/Retry for non-pausable. Cancel/Remove stay for all. No SFTP-pause impl (that's PROD-010/0012)"
 ---
 
 ## What

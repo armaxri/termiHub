@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/utils/panelTree, src/components/SplitView
 evidence:
   - src/utils/panelTree.ts:1
-status: open
+status: fixed
+resolution: "#3122 — soft split guard: MIN_USABLE_PANE_PERCENT(5%)+leafSizePercent+canSplitLeaf in panelTree.ts; splitPanel + splitPanelWithTab edge-drop no-op + toast.error('Pane too small to split further') when target share would halve below min; center drops (tab re-stack) never blocked. Percentage floor (store has no px), below SplitView minSize=10 resize floor"
 ---
 
 ## What
