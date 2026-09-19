@@ -11,7 +11,8 @@ evidence:
   - src/themes/dark.ts:9
   - src/themes/engine.ts:135
   - index.html:8
-status: open
+status: fixed
+resolution: "#3114 — MAINTAINER chose MODERN palette. dark.ts reconciled to variables.css design-system values (bgPrimary #0f1117, accentColor #3d7de8, accentHover #5a94f0, textPrimary #dde1ec, borderPrimary #2a2f40, terminalBg #0f1117 — all 40 mapped keys); engine.ts writes these over :root so the app now renders modern not classic #1e1e1e. ANSI hues kept (terminal-standard), ansiBlack #1e1e1e→#0f1117; index.html pre-paint bg #1e1e1e→#0f1117; light.ts untouched. Judgment call: --text-muted #656e80 failed WCAG-AA contrast ratchet (#2070 contrast.test) → lightened to #838c9c (5.0:1) in BOTH dark.ts+variables.css rather than weakening the test. 6609 tests pass. Needs live eyeball (visual)"
 ---
 
 ## What
