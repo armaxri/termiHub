@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { matchSorter } from "match-sorter";
-import { TerminalSquare, Play, Workflow as WorkflowIcon } from "lucide-react";
+import { TerminalSquare, Play, Workflow as WorkflowIcon, LayoutGrid } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
@@ -52,6 +52,13 @@ type PaletteEntry =
       label: string;
       /** The workflow to run against the active terminal (manual trigger). */
       workflowId: string;
+    }
+  | {
+      kind: "workspace";
+      key: string;
+      label: string;
+      /** The saved workspace to launch, replacing the current layout. */
+      workspaceId: string;
     };
 
 /**
@@ -70,8 +77,10 @@ export function CommandPalette(): React.ReactElement {
   const { connections } = useProjectedConnections();
   const macros = useAppStore((s) => s.macros);
   const workflows = useAppStore((s) => s.workflows);
+  const workspaces = useAppStore((s) => s.workspaces);
   const playMacro = useAppStore((s) => s.playMacro);
   const runWorkflow = useAppStore((s) => s.runWorkflow);
+  const launchWorkspace = useAppStore((s) => s.launchWorkspace);
   // Context-bound command availability depends on live panel/terminal state;
   // subscribe so the entry list (and its disabled affordances) recompute when
   // the focused panel, its tabs, or the active panel change.
@@ -113,13 +122,25 @@ export function CommandPalette(): React.ReactElement {
       label: `Run Workflow: ${w.name}`,
       workflowId: w.id,
     }));
-    return [...commandEntries, ...macroEntries, ...workflowEntries, ...connectionEntries];
+    const workspaceEntries: PaletteEntry[] = workspaces.map((ws) => ({
+      kind: "workspace",
+      key: `workspace:${ws.id}`,
+      label: `Launch Workspace: ${ws.name}`,
+      workspaceId: ws.id,
+    }));
+    return [
+      ...commandEntries,
+      ...macroEntries,
+      ...workflowEntries,
+      ...workspaceEntries,
+      ...connectionEntries,
+    ];
     // buildCommands() reads live panel/terminal state via the store to compute
     // each context command's availability; rootPanel and activePanelId are listed
     // so the entries (and their disabled affordances) recompute when focus moves,
     // even though they are not referenced directly in this closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connections, macros, workflows, rootPanel, activePanelId]);
+  }, [connections, macros, workflows, workspaces, rootPanel, activePanelId]);
 
   // Ranked results. An empty query returns every entry in declaration order.
   const results = useMemo<PaletteEntry[]>(() => {
@@ -166,11 +187,13 @@ export function CommandPalette(): React.ReactElement {
         void playMacro(entry.macroId, { timingMode: "real-time" });
       } else if (entry.kind === "workflow") {
         void runWorkflow(entry.workflowId);
+      } else if (entry.kind === "workspace") {
+        void launchWorkspace(entry.workspaceId);
       } else {
         void connect(entry.connection);
       }
     },
-    [connect, playMacro, runWorkflow, setOpen]
+    [connect, playMacro, runWorkflow, launchWorkspace, setOpen]
   );
 
   const handleKeyDown = useCallback(
@@ -256,6 +279,8 @@ export function CommandPalette(): React.ReactElement {
                       <Play size={16} />
                     ) : entry.kind === "workflow" ? (
                       <WorkflowIcon size={16} />
+                    ) : entry.kind === "workspace" ? (
+                      <LayoutGrid size={16} />
                     ) : (
                       <ConnectionIcon
                         config={entry.connection.config}
@@ -273,6 +298,8 @@ export function CommandPalette(): React.ReactElement {
                     <span className="command-palette__type">macro</span>
                   ) : entry.kind === "workflow" ? (
                     <span className="command-palette__type">workflow</span>
+                  ) : entry.kind === "workspace" ? (
+                    <span className="command-palette__type">workspace</span>
                   ) : (
                     <span className="command-palette__type">{entry.connection.config.type}</span>
                   )}

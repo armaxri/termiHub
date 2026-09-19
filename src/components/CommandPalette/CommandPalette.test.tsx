@@ -147,6 +147,20 @@ describe("CommandPalette", () => {
     expect(connectSpy).not.toHaveBeenCalled();
   });
 
+  it("lists saved workspaces and launches the highlighted one on Enter", () => {
+    const launchWorkspace = vi.fn(() => Promise.resolve());
+    useAppStore.setState({
+      launchWorkspace,
+      workspaces: [{ id: "ws-1", name: "Dev Layout", connectionCount: 2 }],
+    });
+    typeInto("launch workspace: dev");
+    expect(activeLabel()).toBe("Launch Workspace: Dev Layout");
+    keydown("Enter");
+    expect(launchWorkspace).toHaveBeenCalledWith("ws-1");
+    expect(useAppStore.getState().commandPaletteOpen).toBe(false);
+    expect(connectSpy).not.toHaveBeenCalled();
+  });
+
   it("connects the highlighted connection on Enter and closes", () => {
     typeInto("production");
     keydown("Enter");
