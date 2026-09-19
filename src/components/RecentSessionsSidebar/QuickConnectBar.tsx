@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CornerDownLeft, Zap } from "lucide-react";
 import { Button, Input, Tooltip, toast } from "@/components/ui";
 import type { ConnectionConfig } from "@/types/terminal";
@@ -29,6 +29,20 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
   const [value, setValue] = useState("");
   const [focused, setFocused] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Tracks the pending blur timer so it can be cancelled on re-blur or unmount.
+  const blurTimerRef = useRef<number | null>(null);
+
+  // Cancel any pending blur timer on unmount so it never fires setState after
+  // the component is gone (which reds test teardown — see #3109).
+  useEffect(
+    () => () => {
+      if (blurTimerRef.current !== null) {
+        window.clearTimeout(blurTimerRef.current);
+        blurTimerRef.current = null;
+      }
+    },
+    []
+  );
 
   const suggestions = useMemo(() => {
     const q = value.trim().toLowerCase();
@@ -74,7 +88,15 @@ export function QuickConnectBar({ history, defaultUser, onConnect }: QuickConnec
           onChange={(e) => setValue(e.target.value)}
           onFocus={() => setFocused(true)}
           // Delay so a suggestion mousedown can register before the list unmounts.
-          onBlur={() => window.setTimeout(() => setFocused(false), 120)}
+          onBlur={() => {
+            if (blurTimerRef.current !== null) {
+              window.clearTimeout(blurTimerRef.current);
+            }
+            blurTimerRef.current = window.setTimeout(() => {
+              blurTimerRef.current = null;
+              setFocused(false);
+            }, 120);
+          }}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
               e.preventDefault();
