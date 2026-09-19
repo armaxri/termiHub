@@ -20,6 +20,54 @@ export interface ClassifiedAgentError {
   rawError: string;
 }
 
+/**
+ * Locale-independent backend error-code slugs (the `[thub-code:<code>]` marker
+ * emitted by the Rust `codes` module in `src-tauri/src/utils/errors.rs`) mapped
+ * to their frontend category. This is the mirror of that Rust single source of
+ * truth — keep the two in sync. Classifying by these codes (rather than by
+ * matching English message text) is what makes the outcome correct under any
+ * locale or rewording (I18N-002 / ERR-003).
+ */
+const CODE_TO_CATEGORY: Record<string, AgentErrorCategory> = {
+  [AUTH_FAILED_CODE]: "auth-failure",
+  unreachable: "unreachable",
+  agent_missing: "agent-missing",
+  agent_outdated: "agent-outdated",
+  already_connected: "already-connected",
+};
+
+/** Static per-category presentation (title + user-facing message). */
+const CATEGORY_PRESENTATION: Record<
+  Exclude<AgentErrorCategory, "unknown">,
+  { title: string; message: string }
+> = {
+  unreachable: {
+    title: "Could Not Reach Host",
+    message:
+      "The host could not be reached. Check that the hostname, port, and network connection are correct.",
+  },
+  "auth-failure": {
+    title: "Authentication Failed",
+    message:
+      "SSH authentication was rejected. Check your username, password, or SSH key configuration.",
+  },
+  "agent-missing": {
+    title: "Agent Not Installed",
+    message:
+      "SSH connected successfully, but the termihub-agent binary could not be started on the remote host.",
+  },
+  "agent-outdated": {
+    title: "Agent Version Incompatible",
+    message:
+      "The remote agent binary is not compatible with this version of termiHub. Please re-deploy the agent to update it.",
+  },
+  "already-connected": {
+    title: "Already Connected",
+    message:
+      "This agent is already connected. You can force a reconnect to drop the existing connection and establish a new one.",
+  },
+};
+
 /** Classify a backend error string into a user-facing error. */
 export function classifyAgentError(error: unknown): ClassifiedAgentError {
   const parsed = parseBackendError(error);
@@ -27,39 +75,24 @@ export function classifyAgentError(error: unknown): ClassifiedAgentError {
   // never leaks into the error dialog.
   const raw = parsed.message;
 
-  // Prefer the typed, locale-independent auth signal (I18N-001): a genuine
-  // credential rejection is identified by the backend code, not by matching
-  // English text — so it stays correct under any locale or rewording. The
-  // English substring below remains only as a fallback for legacy/uncoded
-  // errors (the remaining non-auth categories are still text-matched — I18N-002).
-  if (parsed.code === AUTH_FAILED_CODE) {
-    return {
-      category: "auth-failure",
-      title: "Authentication Failed",
-      message:
-        "SSH authentication was rejected. Check your username, password, or SSH key configuration.",
-      rawError: raw,
-    };
+  // Prefer the typed, locale-independent code marker (I18N-002 / ERR-003): the
+  // backend tags each connection/agent error with a stable `[thub-code:<code>]`
+  // marker, so classification stays correct under any locale or rewording. The
+  // English substring checks below remain only as a fallback for legacy/uncoded
+  // errors, so no existing input regresses if a marker is ever missing.
+  if (parsed.code) {
+    const category = CODE_TO_CATEGORY[parsed.code];
+    if (category && category !== "unknown") {
+      return { category, ...CATEGORY_PRESENTATION[category], rawError: raw };
+    }
   }
 
   if (raw.includes("Connection failed")) {
-    return {
-      category: "unreachable",
-      title: "Could Not Reach Host",
-      message:
-        "The host could not be reached. Check that the hostname, port, and network connection are correct.",
-      rawError: raw,
-    };
+    return { category: "unreachable", ...CATEGORY_PRESENTATION.unreachable, rawError: raw };
   }
 
   if (raw.toLowerCase().includes("auth failed") || raw.includes("Authentication failed")) {
-    return {
-      category: "auth-failure",
-      title: "Authentication Failed",
-      message:
-        "SSH authentication was rejected. Check your username, password, or SSH key configuration.",
-      rawError: raw,
-    };
+    return { category: "auth-failure", ...CATEGORY_PRESENTATION["auth-failure"], rawError: raw };
   }
 
   if (
@@ -67,21 +100,13 @@ export function classifyAgentError(error: unknown): ClassifiedAgentError {
     raw.includes("Read initialize response") ||
     raw.includes("Write initialize failed")
   ) {
-    return {
-      category: "agent-missing",
-      title: "Agent Not Installed",
-      message:
-        "SSH connected successfully, but the termihub-agent binary could not be started on the remote host.",
-      rawError: raw,
-    };
+    return { category: "agent-missing", ...CATEGORY_PRESENTATION["agent-missing"], rawError: raw };
   }
 
   if (raw.includes("Initialize rejected") || raw.includes("Unsupported protocol version")) {
     return {
       category: "agent-outdated",
-      title: "Agent Version Incompatible",
-      message:
-        "The remote agent binary is not compatible with this version of termiHub. Please re-deploy the agent to update it.",
+      ...CATEGORY_PRESENTATION["agent-outdated"],
       rawError: raw,
     };
   }
@@ -89,9 +114,7 @@ export function classifyAgentError(error: unknown): ClassifiedAgentError {
   if (raw.includes("is already connected")) {
     return {
       category: "already-connected",
-      title: "Already Connected",
-      message:
-        "This agent is already connected. You can force a reconnect to drop the existing connection and establish a new one.",
+      ...CATEGORY_PRESENTATION["already-connected"],
       rawError: raw,
     };
   }

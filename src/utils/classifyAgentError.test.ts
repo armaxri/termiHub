@@ -94,4 +94,93 @@ describe("classifyAgentError", () => {
     expect(result.rawError).toBe("Authentifizierung fehlgeschlagen");
     expect(result.rawError).not.toContain("thub-code");
   });
+
+  // Marker-first classification (I18N-002 / ERR-003): a `[thub-code:<code>]`
+  // marker classifies the error regardless of the human message language, and
+  // the marker is always stripped from the displayed raw error.
+  describe("typed code markers classify regardless of message language (I18N-002)", () => {
+    const cases: Array<{
+      code: string;
+      category: string;
+      title: string;
+      // A localized/reworded message no English substring test would match.
+      localized: string;
+    }> = [
+      {
+        code: "unreachable",
+        category: "unreachable",
+        title: "Could Not Reach Host",
+        localized: "Verbindung fehlgeschlagen: Zeitüberschreitung",
+      },
+      {
+        code: "auth_failed",
+        category: "auth-failure",
+        title: "Authentication Failed",
+        localized: "認証に失敗しました",
+      },
+      {
+        code: "agent_missing",
+        category: "agent-missing",
+        title: "Agent Not Installed",
+        localized: "Ausführung fehlgeschlagen: Datei nicht gefunden",
+      },
+      {
+        code: "agent_outdated",
+        category: "agent-outdated",
+        title: "Agent Version Incompatible",
+        localized: "Initialisierung abgelehnt: nicht unterstützte Version",
+      },
+      {
+        code: "already_connected",
+        category: "already-connected",
+        title: "Already Connected",
+        localized: "エージェントは既に接続されています",
+      },
+    ];
+
+    it.each(cases)(
+      "maps [thub-code:$code] to $category",
+      ({ code, category, title, localized }) => {
+        const result = classifyAgentError(`[thub-code:${code}] ${localized}`);
+        expect(result.category).toBe(category);
+        expect(result.title).toBe(title);
+        // The marker is stripped from the raw error shown in the dialog.
+        expect(result.rawError).toBe(localized);
+        expect(result.rawError).not.toContain("thub-code");
+      }
+    );
+
+    it("wraps the real backend ConnectionFailed rendering (marker mid-message)", () => {
+      // TerminalError::ConnectionFailed renders "Connection failed: [marker] {e}".
+      const result = classifyAgentError(
+        "Connection failed: [thub-code:unreachable] Connection refused (os error 111)"
+      );
+      expect(result.category).toBe("unreachable");
+      expect(result.rawError).not.toContain("thub-code");
+    });
+
+    it("falls back to substring matching when no marker is present", () => {
+      // An uncoded/legacy error still classifies via the English substrings, so
+      // nothing regresses if a marker is ever missing.
+      expect(classifyAgentError("SSH error: Connection failed: refused").category).toBe(
+        "unreachable"
+      );
+      expect(classifyAgentError("Remote agent error: Exec failed: nope").category).toBe(
+        "agent-missing"
+      );
+      expect(classifyAgentError("Remote agent error: Initialize rejected: bad").category).toBe(
+        "agent-outdated"
+      );
+      expect(classifyAgentError("Remote agent error: Agent x is already connected").category).toBe(
+        "already-connected"
+      );
+    });
+
+    it("ignores an unknown code marker and falls through to substrings", () => {
+      // A future/unrecognized code must not be mistaken for a known category;
+      // classification continues with the substring fallback.
+      const result = classifyAgentError("[thub-code:some_future_code] Connection failed: refused");
+      expect(result.category).toBe("unreachable");
+    });
+  });
 });
