@@ -12,7 +12,8 @@ evidence:
   - Cargo.lock:1454
   - deny.toml:101
   - core/Cargo.toml:51
-status: open
+status: partial
+resolution: "#3126 — doc-note: deny.toml bans comment expanded to enumerate the full ~18-crate pre-release RustCrypto set accepted (comment-only, no policy change). REAL fix (russh on stable RustCrypto, #1037) is maintainer + needs sign-off"
 ---
 
 ## What

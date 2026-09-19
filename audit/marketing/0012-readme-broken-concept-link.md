@@ -9,7 +9,8 @@ subsystem: README.md
 evidence:
   - README.md:120
   - docs/concepts/implemented/workflow-automation.html
-status: open
+status: fixed
+resolution: "#3126 — README broken concept link fixed: docs/concepts/backlog/workflow-automation.html → implemented/ (target verified). Other backlog links checked (wsl-path one still legitimately in backlog/)"
 ---
 
 ## What

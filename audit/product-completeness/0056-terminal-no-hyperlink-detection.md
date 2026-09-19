@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:2
-status: open
+status: fixed
+resolution: "#3127 — clickable terminal web links: added @xterm/addon-web-links@0.12.0 (0.12 has no xterm peer conflict vs repo xterm 6), registered w/ the other addons, click handler routes through existing safeOpenExternal allowlist (http/https/mailto) not raw opener, disposed in existing cleanup path before xterm.dispose without touching ordering"
 ---
 
 ## What

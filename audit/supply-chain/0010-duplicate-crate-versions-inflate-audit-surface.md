@@ -9,7 +9,8 @@ subsystem: workspace
 evidence:
   - Cargo.lock
   - deny.toml:116
-status: open
+status: fixed
+resolution: "#3126 — advisory cargo tree --duplicates report step added to Security Audit CI job (continue-on-error, non-gating) for duplicate-version visibility; deny.toml multiple-versions=allow policy unchanged"
 ---
 
 ## What

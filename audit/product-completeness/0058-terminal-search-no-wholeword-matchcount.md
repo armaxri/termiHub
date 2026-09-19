@@ -9,7 +9,8 @@ subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/TerminalSearchBar.tsx:17
   - src/components/Terminal/TerminalRegistry.tsx:449
-status: open
+status: fixed
+resolution: "#3127 — terminal search match count + whole-word: wired searchAddon.onDidChangeResults through TerminalRegistry (onSearchResults) → TerminalSearchBar shows N/M / 'M matches' / 'No results'. Load-bearing: onDidChangeResults only fires when decorations passed → findNext/Prev now pass theme-derived decoration colors (also highlights all matches). Added Match-Whole-Word toggle (mirrors case/regex), wholeWord forwarded through find"
 ---
 
 ## What

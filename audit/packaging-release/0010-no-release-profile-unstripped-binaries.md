@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: Cargo.toml
 evidence:
   - Cargo.toml:45
-status: open
+status: fixed
+resolution: "#3126 — release binaries stripped: strip=true added to root [profile.release] + rdp-sidecar/[profile.release]. strip only (no lto/codegen changes). cargo check --release green"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/themes
 evidence:
   - src/themes/types.ts:1
-status: open
+status: wontfix
+resolution: "redundant — verify-or-defer verdict: font already fully configurable (app Settings→Appearance fontFamily/fontSize/lineHeight applied to xterm in Terminal.tsx + per-connection terminalOptions override); themes are purely color defs (ThemeColors). Adding font to theme = 3rd competing font source w/ ambiguous precedence + blurs theme=colors/appearance=font separation. Not worth it"
 ---
 
 ## What

@@ -9,7 +9,8 @@ subsystem: .github/workflows/release.yml
 evidence:
   - .github/workflows/release.yml:28
   - .github/workflows/release.yml:40
-status: open
+status: fixed
+resolution: "#3126 — release.yml changelog range no longer breaks on first release: git describe --tags HEAD^ wrapped in conditional, falls back to full history when no prior tag; has-prior-tag path identical"
 ---
 
 ## What

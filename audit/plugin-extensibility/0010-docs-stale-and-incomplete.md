@@ -10,7 +10,8 @@ evidence:
   - docs/plugin-authoring.md:8
   - docs/plugin-authoring.md:186
   - docs/plugin-authoring.md:99
-status: open
+status: partial
+resolution: "#3126 — doc-note: corrected 2 stale status sentences in docs/plugin-authoring.md (host/loader/UI ARE wired lib.rs:1992/1995 + frontend extension points run). Version-story + SDK-dependency-line parts entangled w/ maintainer PLG-001/002"
 ---
 
 ## What
