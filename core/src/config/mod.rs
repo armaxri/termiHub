@@ -17,6 +17,19 @@ use std::time::Duration;
 /// raise it further per connection via `connectTimeoutSecs`.
 pub const DEFAULT_SSH_CONNECT_TIMEOUT_SECS: u64 = 45;
 
+/// Default SSH-level keepalive interval (seconds) when a connection does not
+/// configure its own `keepaliveIntervalSecs`. russh sends a keepalive request
+/// this often on an otherwise idle session so a half-open transport is detected
+/// promptly. Preserves the historical hardcoded 30 s the SSH backend used before
+/// the interval became configurable (PROD-024).
+pub const DEFAULT_SSH_KEEPALIVE_INTERVAL_SECS: u64 = 30;
+
+/// Default number of consecutive unanswered SSH keepalives tolerated before the
+/// session is torn down, when a connection does not configure its own
+/// `keepaliveMaxCount`. Preserves the historical hardcoded 3 the SSH backend used
+/// before it became configurable (PROD-024).
+pub const DEFAULT_SSH_KEEPALIVE_MAX_COUNT: u32 = 3;
+
 /// Default telnet connect timeout (seconds) when a connection does not configure
 /// its own `connectTimeoutSecs`. Bounds how long a connect to an unreachable
 /// telnet host may block before failing. Preserves the historical hardcoded 10 s
@@ -374,6 +387,18 @@ pub struct SshConfig {
     /// failing. `None` falls back to [`DEFAULT_SSH_CONNECT_TIMEOUT_SECS`] (#841).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connect_timeout_secs: Option<u64>,
+    /// SSH-level keepalive interval (seconds). `None` falls back to
+    /// [`DEFAULT_SSH_KEEPALIVE_INTERVAL_SECS`] (30 s), the value the backend used
+    /// before this became configurable, so existing saved connections are
+    /// unchanged (PROD-024). Omitted from the serialized form when unset.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keepalive_interval_secs: Option<u64>,
+    /// Number of consecutive unanswered SSH keepalives tolerated before the
+    /// session is torn down. `None` falls back to
+    /// [`DEFAULT_SSH_KEEPALIVE_MAX_COUNT`] (3) (PROD-024). Omitted from the
+    /// serialized form when unset so existing saved connections stay byte-stable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keepalive_max_count: Option<u32>,
     /// Optional jump host (`ProxyJump`) chain, ordered outermost → innermost
     /// (`ssh -J edge,bastion` ⇒ `[edge, bastion]`). Empty means a direct
     /// connection. Accepts the legacy `jumpHosts` key for forward compatibility.
@@ -397,6 +422,21 @@ impl SshConfig {
                 .unwrap_or(DEFAULT_SSH_CONNECT_TIMEOUT_SECS),
         )
     }
+
+    /// SSH-level keepalive interval, falling back to the default when unset.
+    pub fn keepalive_interval(&self) -> Duration {
+        Duration::from_secs(
+            self.keepalive_interval_secs
+                .unwrap_or(DEFAULT_SSH_KEEPALIVE_INTERVAL_SECS),
+        )
+    }
+
+    /// Consecutive unanswered keepalives tolerated, falling back to the default
+    /// when unset.
+    pub fn keepalive_max_count(&self) -> u32 {
+        self.keepalive_max_count
+            .unwrap_or(DEFAULT_SSH_KEEPALIVE_MAX_COUNT)
+    }
 }
 
 impl Default for SshConfig {
@@ -417,6 +457,8 @@ impl Default for SshConfig {
             enable_file_browser: None,
             save_password: None,
             connect_timeout_secs: None,
+            keepalive_interval_secs: None,
+            keepalive_max_count: None,
             proxy_jump: Vec::new(),
             forward_agent: false,
         }
@@ -1360,6 +1402,8 @@ mod tests {
             enable_file_browser: Some(false),
             save_password: None,
             connect_timeout_secs: Some(15),
+            keepalive_interval_secs: Some(45),
+            keepalive_max_count: Some(6),
             proxy_jump: Vec::new(),
             forward_agent: true,
         };
@@ -1379,7 +1423,54 @@ mod tests {
         assert_eq!(back.enable_file_browser, Some(false));
         assert!(back.save_password.is_none());
         assert_eq!(back.connect_timeout_secs, Some(15));
+        assert_eq!(back.keepalive_interval_secs, Some(45));
+        assert_eq!(back.keepalive_max_count, Some(6));
         assert!(back.forward_agent);
+    }
+
+    // --- configurable keepalive tests (PROD-024) ---
+
+    #[test]
+    fn ssh_config_keepalive_roundtrip() {
+        let cfg = SshConfig {
+            keepalive_interval_secs: Some(10),
+            keepalive_max_count: Some(2),
+            ..SshConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(json.contains("\"keepaliveIntervalSecs\":10"), "got: {json}");
+        assert!(json.contains("\"keepaliveMaxCount\":2"), "got: {json}");
+        let back: SshConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.keepalive_interval_secs, Some(10));
+        assert_eq!(back.keepalive_max_count, Some(2));
+        assert_eq!(back.keepalive_interval(), Duration::from_secs(10));
+        assert_eq!(back.keepalive_max_count(), 2);
+    }
+
+    #[test]
+    fn ssh_config_keepalive_defaults_omitted_and_fall_back() {
+        // Unset keepalive fields are never written, keeping saved JSON byte-stable.
+        let json = serde_json::to_string(&SshConfig::default()).unwrap();
+        assert!(!json.contains("keepaliveIntervalSecs"), "got: {json}");
+        assert!(!json.contains("keepaliveMaxCount"), "got: {json}");
+        // And a connection with them unset uses the historical 30 s / 3.
+        let cfg = SshConfig::default();
+        assert_eq!(cfg.keepalive_interval_secs, None);
+        assert_eq!(cfg.keepalive_max_count, None);
+        assert_eq!(cfg.keepalive_interval(), Duration::from_secs(30));
+        assert_eq!(cfg.keepalive_max_count(), 3);
+        // The fallbacks match the documented default constants.
+        assert_eq!(DEFAULT_SSH_KEEPALIVE_INTERVAL_SECS, 30);
+        assert_eq!(DEFAULT_SSH_KEEPALIVE_MAX_COUNT, 3);
+    }
+
+    #[test]
+    fn ssh_config_keepalive_absent_deserializes_to_none() {
+        // A saved connection from before these fields existed must still load.
+        let json = r#"{ "host": "h", "username": "u", "authMethod": "agent" }"#;
+        let cfg: SshConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.keepalive_interval_secs, None);
+        assert_eq!(cfg.keepalive_max_count, None);
     }
 
     // --- agent forwarding (ForwardAgent) tests (#1699) ---
