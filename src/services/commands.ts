@@ -36,18 +36,14 @@ export interface PaletteCommand {
  *
  * - `command-palette` — opens the palette itself; a self-referential entry is
  *   pointless inside the palette.
- * - `copy` / `paste` / `select-all` — clipboard actions bound to the focused
- *   terminal's live xterm instance (`copySelectionToClipboard`/`pasteToTerminal`
- *   in the `TerminalRegistry` React context, `xterm.selectAll()`). They have no
- *   store action or dispatch seam to invoke from here yet; wiring them needs a
- *   new focused-terminal command seam — tracked as a follow-up to UX-028.
+ *
+ * The clipboard actions (`copy` / `paste` / `select-all`) were previously excluded
+ * for want of a focused-terminal command seam; they are now surfaced through
+ * {@link CONTEXT_COMMANDS}, which routes them to the focused terminal via the
+ * terminal command bridge (PROD-054), so they invoke the same registry handlers
+ * the Cmd/Ctrl shortcuts use.
  */
-export const PALETTE_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set([
-  "command-palette",
-  "copy",
-  "paste",
-  "select-all",
-]);
+export const PALETTE_EXCLUDED_ACTIONS: ReadonlySet<string> = new Set(["command-palette"]);
 
 /**
  * Store-only runners: actions that operate purely on global store state and are

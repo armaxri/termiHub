@@ -118,6 +118,8 @@ interface TerminalRegistryContextType {
   getTerminalSelection: (tabId: string) => string | undefined;
   /** Clear the current text selection in a terminal. */
   clearTerminalSelection: (tabId: string) => void;
+  /** Select the entire terminal buffer (no-op if the tab has no terminal). */
+  selectAllInTerminal: (tabId: string) => void;
   /** Copy the current text selection to the clipboard (no-op if nothing selected). */
   copySelectionToClipboard: (tabId: string) => Promise<void>;
   /**
@@ -397,6 +399,11 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     if (xterm) xterm.clearSelection();
   }, []);
 
+  const selectAllInTerminal = useCallback((tabId: string) => {
+    const xterm = xtermRegistryRef.current.get(tabId);
+    if (xterm) xterm.selectAll();
+  }, []);
+
   const copySelectionToClipboard = useCallback(
     async (tabId: string) => {
       const selection = getTerminalSelection(tabId);
@@ -578,6 +585,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       openTerminalInEditor,
       getTerminalSelection,
       clearTerminalSelection,
+      selectAllInTerminal,
       copySelectionToClipboard,
       getSessionId,
       registerSession,
@@ -606,6 +614,7 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
       openTerminalInEditor,
       getTerminalSelection,
       clearTerminalSelection,
+      selectAllInTerminal,
       copySelectionToClipboard,
       getSessionId,
       registerSession,
