@@ -6,10 +6,10 @@ permission and extension-point model, the native-backend ABI (and its important
 caveat), and how to produce a validated package with the `package-plugin` script.
 
 > **Status.** The plugin _package format_, _manifest validation_ and the
-> _packaging tooling_ described here are implemented. The runtime **host/loader**
-> (installing, enabling, and executing plugins) and the plugin **management UI**
-> are tracked separately and may not be present in every build. This document is
-> the authoring contract; it stays accurate regardless of loader progress.
+> _packaging tooling_ described here are implemented, and so are the runtime
+> **host/loader** (installing, enabling, and executing plugins — wired in
+> `src-tauri/src/lib.rs`) and the plugin **management UI**. This document is the
+> authoring contract for the shipped host.
 
 The two worked examples referenced throughout live under
 [`examples/plugins/`](../examples/plugins):
@@ -184,7 +184,9 @@ for a complete example.
 JavaScript extension points (`protocolParser` transforms terminal output;
 `statusBarWidget` renders a widget into the status bar). Each names a JS
 `entryPoint` inside the package's `frontend/` directory. These are validated for
-presence today; wiring them into the running app is host/loader work.
+presence and executed by the shipped frontend plugin host — `protocolParser` and
+`statusBarWidget` run in the plugin sandbox (`src/plugins/sandbox/`) and render
+into the app (e.g. the status bar via `PluginStatusBarWidgets`).
 
 ## Native backends and the ABI
 
