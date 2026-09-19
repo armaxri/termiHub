@@ -1078,6 +1078,84 @@ termiHub provides optional credential encryption with two storage modes:
 
 Credential storage is managed through the Security section in Settings.
 
+### Content-Security-Policy & capability scoping
+
+termiHub ships a deliberately tight webview Content-Security-Policy and a scoped Tauri capability
+set. This section documents the current posture, the three deliberate relaxations that remain, and
+the reasoning behind each — so future maintainers and auditors can see they are considered
+trade-offs, not oversights. (Audit finding SEC-013: maintainer-accepted; further tightening is
+deferred post-release — see the follow-up issue linked from that finding.)
+
+#### The policy
+
+The CSP lives in `src-tauri/tauri.conf.json` (`app.security.csp`):
+
+```
+default-src 'self';
+script-src 'self' plugin://localhost http://plugin.localhost 'wasm-unsafe-eval';
+style-src 'self' 'unsafe-inline';
+img-src 'self' data: blob:;
+font-src 'self' data:;
+connect-src 'self' ipc: http://ipc.localhost;
+worker-src 'self' blob:;
+child-src 'self' blob:;
+object-src 'none';
+frame-src 'none';
+base-uri 'self';
+form-action 'none'
+```
+
+The baseline is strict: `default-src 'self'`, **no** `unsafe-eval`, **no** inline or remote
+`script-src` hosts (only the local Tauri plugin origins), `object-src 'none'`, `frame-src 'none'`,
+`base-uri 'self'`, and `form-action 'none'`. There is no path by which remote content can be loaded
+or arbitrary JavaScript evaluated.
+
+#### The three deliberate relaxations
+
+1. **`script-src 'wasm-unsafe-eval'` — required by the Shiki WASM highlighter.**
+   The External-Files editor uses Monaco with TextMate-grammar syntax highlighting powered by
+   [Shiki](https://shiki.style/) (`src/utils/monacoCustomLanguages.ts`, via `@shikijs/monaco`).
+   Shiki's regex engine is Oniguruma compiled to **WebAssembly** (`onig.wasm`), and instantiating a
+   WASM module requires `'wasm-unsafe-eval'`. This is a **WASM-compilation-only** relaxation — it
+   permits `WebAssembly.compile`/`instantiate`, and does **not** enable JavaScript `eval` or
+   `new Function`. It is removable only by dropping Shiki-based highlighting.
+
+2. **`style-src 'unsafe-inline'` + `dangerousDisableAssetCspModification: ["style-src"]` — forced by third-party runtime `<style>` injection.**
+   Several bundled libraries inject `<style>` elements into the document at runtime — xterm.js
+   (terminal rendering), sonner (toasts), and Monaco (editor). Those styles have no ahead-of-time
+   hash, so `'unsafe-inline'` is required for them to apply. Tauri, by default, auto-appends a hash
+   for `index.html`'s inline styles to the `style-src` directive; per **CSP Level 3**, the presence
+   of a hash or nonce **cancels** `'unsafe-inline'`, which broke xterm/sonner styling (fixed in
+   commit `9f4594ab`). Setting `dangerousDisableAssetCspModification: ["style-src"]` disables that
+   auto-hash injection for `style-src` only, keeping `'unsafe-inline'` effective.
+   Note that termiHub's **own** theming does **not** rely on this: the theme engine writes CSS
+   custom properties through the CSSOM (`element.style.setProperty`, `src/themes/engine.ts`), which
+   is a scripted style mutation exempt from `style-src` entirely. A nonce/hash-based `style-src` is
+   high-effort and fragile here (the library-generated styles are dynamic with no stable hash set,
+   and Tauri exposes no runtime-nonce hook), so it is deferred.
+
+3. **Unscoped `fs` / `opener` capabilities — because they back user-driven, dialog-picked paths.**
+   `capabilities/default.json` grants `fs:allow-read-text-file` / `fs:allow-write-text-file` and
+   `opener:allow-open-path` without a static `fs:scope`. These back **user-initiated** flows where
+   the user chooses an arbitrary location through the OS **save/open dialog**: exporting and
+   importing config, themes, logs, and connection definitions, and "open / reveal in OS" actions on
+   file-browser entries. A static path scope is a poor fit for locations the user picks at runtime.
+   External **URL** opening is a separate concern and is already **application-level allowlisted** —
+   `src/utils/safeOpenExternal.ts` restricts schemes to `http`/`https`/`mailto` before handing off
+   to the opener. Scoping the **app-owned** (non-dialog) paths — config, logs, and the portable
+   `data/` directory — while keeping user-dialog exports working is a possible future refinement and
+   is deferred.
+
+#### Threat-model note
+
+termiHub is a local desktop terminal application; it does not load remote web content into its
+webview and has no server-side surface. Against that model, the residual risk from the three
+relaxations above is low: `'wasm-unsafe-eval'` does not enable JS `eval`, `'unsafe-inline'` applies
+only to `style-src` (styling, not script execution), and the unscoped filesystem/opener permissions
+are exercised only through explicit user actions (OS dialogs and app-level allowlists). Each is a
+deliberate, documented trade-off rather than an oversight, and each has a tracked path to future
+tightening.
+
 ### Experimental Features
 
 termiHub provides an opt-in mechanism for features that are under active development and not yet ready for general availability.
