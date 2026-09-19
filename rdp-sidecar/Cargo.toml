@@ -11,6 +11,12 @@ publish = false
 # per lockfile (#1725). Resolving IronRDP in its own graph — with no russh —
 # dissolves the conflict.
 
+# Strip the symbol table + debug info from the release sidecar binary (PKG-010),
+# matching the root workspace's release profile. This crate has its own Cargo.lock
+# and profile (workspace-excluded), so it needs the setting declared here too.
+[profile.release]
+strip = true
+
 [[bin]]
 name = "termihub-rdp-helper"
 path = "src/main.rs"

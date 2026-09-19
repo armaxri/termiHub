@@ -62,6 +62,10 @@ debug = 0
 # op — negligible for a terminal hub, and not on any measured hot loop.
 [profile.release]
 overflow-checks = true
+# Strip the symbol table + debug info from release binaries (PKG-010). Smaller
+# shipped binaries; symbols are not needed by users and are recoverable from a
+# debug build when profiling. Does not affect behaviour or optimization level.
+strip = true
 
 [workspace.dependencies]
 async-trait = "0.1"
