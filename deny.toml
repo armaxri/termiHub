@@ -117,12 +117,22 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 [bans]
 # Pre-release RustCrypto stack — documented release sign-off (#2074).
 #
-# The SSH auth path pulls a pre-release RustCrypto stack via russh 0.61.1:
-# rsa 0.10.0-rc.x and ssh-key 0.7.0-rc.x (which in turn pinned the yanked
-# crypto-bigint 0.7.x line, now resolved to the non-yanked 0.7.5). These RC
-# crates are a deliberate, accepted risk for this release: russh has not yet
-# cut a stable release on the final RustCrypto 0.7/0.10 line. Upgrading to a
-# russh release built on stable RustCrypto is tracked in #1037. Until then the
+# The SSH auth path pulls a pre-release RustCrypto stack via russh 0.61.1. The
+# accepted set is wider than just rsa + ssh-key — russh 0.61 pulls the whole
+# in-flight RustCrypto 0.7/0.10 line and the matching Dalek pre-releases. The
+# pre-release crates the tree currently carries (from Cargo.lock) are:
+#   - rsa 0.10.0-rc, ssh-key 0.7.0-rc, ssh-encoding 0.3.0-rc, ssh-cipher 0.3.0-rc
+#   - crypto-bigint 0.7.x (was yanked at 0.7.0-0.7.4; now the non-yanked 0.7.5)
+#   - AEAD/cipher: aead 0.6.0-rc, aes-gcm 0.11.0-rc
+#   - hashes/KDF: blake2 0.11.0-rc, argon2 0.6.0-rc
+#   - elliptic-curve 0.14.0-rc, ecdsa 0.17.0-rc, p256/p384/p521 0.14.0-rc,
+#     primefield 0.14.0-rc, primeorder 0.14.0-rc, rustcrypto-ff 0.14.0-rc,
+#     rustcrypto-group 0.14.0-rc, pkcs1 0.8.0-rc
+#   - Dalek edge (ride alongside via the SSH stack): curve25519-dalek 5.0.0-pre,
+#     ed25519-dalek 3.0.0-pre
+# These RC/pre crates are a deliberate, accepted risk for this release: russh has
+# not yet cut a stable release on the final RustCrypto 0.7/0.10 line. Upgrading to
+# a russh release built on stable RustCrypto is tracked in #1037. Until then the
 # yanked gate above guards against the versions silently regressing to a yanked
 # release, which is the concrete failure mode we care about.
 #
