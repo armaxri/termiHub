@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { filterAgentTree, agentDefinitionMatchesQuery } from "./agentTreeSearch";
+import {
+  filterAgentTree,
+  agentDefinitionMatchesQuery,
+  agentNameMatchesQuery,
+} from "./agentTreeSearch";
 import type { AgentDefinitionInfo, AgentFolderInfo } from "@/services/api";
 
 function def(id: string, name: string, folderId: string | null = null): AgentDefinitionInfo {
@@ -18,6 +22,29 @@ describe("agentDefinitionMatchesQuery", () => {
   it("matches by (case-insensitive) name substring", () => {
     expect(agentDefinitionMatchesQuery(def("d1", "Web Server"), "web")).toBe(true);
     expect(agentDefinitionMatchesQuery(def("d1", "Web Server"), "db")).toBe(false);
+  });
+
+  it("matches by name ignoring diacritics (match-sorter normalization)", () => {
+    expect(agentDefinitionMatchesQuery(def("d1", "Café Runner"), "cafe")).toBe(true);
+  });
+
+  it("keeps substring semantics: an unordered character set is not a match", () => {
+    expect(agentDefinitionMatchesQuery(def("d1", "Web Server"), "ws")).toBe(false);
+  });
+});
+
+describe("agentNameMatchesQuery", () => {
+  it("matches everything on an empty query", () => {
+    expect(agentNameMatchesQuery("Dev Agent (dev0)", "")).toBe(true);
+  });
+
+  it("matches by (case-insensitive) name substring", () => {
+    expect(agentNameMatchesQuery("Dev Agent (dev0)", "dev0")).toBe(true);
+    expect(agentNameMatchesQuery("Dev Agent (dev0)", "prod")).toBe(false);
+  });
+
+  it("matches ignoring diacritics", () => {
+    expect(agentNameMatchesQuery("Zürich Agent", "zurich")).toBe(true);
   });
 });
 

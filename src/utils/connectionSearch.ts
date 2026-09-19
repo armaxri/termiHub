@@ -1,5 +1,6 @@
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { connectionConfigHost } from "@/utils/connectionConfigFields";
+import { textFieldsMatchQuery } from "@/utils/searchMatching";
 
 /**
  * Result of filtering a connection tree by a search query.
@@ -26,15 +27,15 @@ function connectionHost(connection: SavedConnection): string {
 /**
  * Whether a connection matches the (already normalized) query by name or host.
  * An empty query matches everything.
+ *
+ * Matching goes through {@link textFieldsMatchQuery} (match-sorter), so it is
+ * case- and diacritic-insensitive while keeping substring semantics.
  */
 export function connectionMatchesQuery(
   connection: SavedConnection,
   normalizedQuery: string
 ): boolean {
-  if (!normalizedQuery) return true;
-  if (connection.name.toLowerCase().includes(normalizedQuery)) return true;
-  if (connectionHost(connection).toLowerCase().includes(normalizedQuery)) return true;
-  return false;
+  return textFieldsMatchQuery([connection.name, connectionHost(connection)], normalizedQuery);
 }
 
 /**
