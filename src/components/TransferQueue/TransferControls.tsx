@@ -6,6 +6,13 @@ import type { TransferQueueState } from "@/types/transfer";
 export interface TransferControlsProps {
   /** Current lifecycle state, driving which controls are shown. */
   state: TransferQueueState;
+  /**
+   * Whether this transfer's executor supports pause / resume / retry (audit
+   * PROD-009). `false` for legacy SFTP transfers — whose Pause/Resume/Retry
+   * controls are inert — so those buttons are hidden rather than shown as dead.
+   * Cancel and Remove work for every executor and are unaffected.
+   */
+  pausable: boolean;
   /** Pause an active transfer. */
   onPause: () => void | Promise<void>;
   /** Resume a paused transfer. */
@@ -23,11 +30,16 @@ const ICON = 14;
 /**
  * State-appropriate action buttons for one Transfer Queue row (#1337).
  *
- * - `active`    → Pause, Cancel
- * - `paused`    → Resume, Cancel
+ * - `active`    → Pause*, Cancel
+ * - `paused`    → Resume*, Cancel
  * - `queued`    → Cancel
  * - `completed` → Remove
- * - `failed` / `cancelled` → Retry, Remove
+ * - `failed` / `cancelled` → Retry*, Remove
+ *
+ * *Pause/Resume/Retry only render for a `pausable` transfer (the FTP rich-queue
+ * executor). Legacy SFTP transfers cannot pause/resume/retry, so those controls
+ * are hidden for them instead of shown as dead buttons (audit PROD-009). Cancel
+ * and Remove always render.
  *
  * Each button composes the shared {@link Button} primitive (ghost, icon-only);
  * async control handlers drive the primitive's pending → error/success
@@ -35,6 +47,7 @@ const ICON = 14;
  */
 export function TransferControls({
   state,
+  pausable,
   onPause,
   onResume,
   onCancel,
@@ -43,7 +56,7 @@ export function TransferControls({
 }: TransferControlsProps) {
   return (
     <span className="transfer-row__actions">
-      {state === "active" && (
+      {pausable && state === "active" && (
         <Tooltip content="Pause" side="top">
           <Button
             iconOnly
@@ -57,7 +70,7 @@ export function TransferControls({
         </Tooltip>
       )}
 
-      {state === "paused" && (
+      {pausable && state === "paused" && (
         <Tooltip content="Resume" side="top">
           <Button
             iconOnly
@@ -71,7 +84,7 @@ export function TransferControls({
         </Tooltip>
       )}
 
-      {(state === "failed" || state === "cancelled") && (
+      {pausable && (state === "failed" || state === "cancelled") && (
         <Tooltip content="Retry" side="top">
           <Button
             iconOnly

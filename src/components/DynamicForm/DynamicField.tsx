@@ -6,6 +6,7 @@ import { KeyPathInput } from "@/components/Settings/KeyPathInput";
 import { listSerialPorts } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
+import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
 
 interface DynamicFieldProps {
   field: SettingsField;
@@ -76,9 +77,15 @@ export function DynamicField({
   const controlId = `${reactId}-${field.key}`;
   const errorId = `${controlId}-error`;
   const descriptionId = field.description ? `${controlId}-description` : undefined;
+  // Platform-honesty note (audit PROD-019): a non-null result means this field's
+  // backend feature does nothing on the current platform, so it is disabled and
+  // annotated (e.g. RDP audio output on Linux).
+  const platformNote = fieldPlatformLimitation(field.key);
+  const platformNoteId = platformNote ? `${controlId}-platform-note` : undefined;
   const hasError = Boolean(error);
   const describedBy =
-    [hasError ? errorId : null, descriptionId].filter(Boolean).join(" ") || undefined;
+    [hasError ? errorId : null, descriptionId, platformNoteId].filter(Boolean).join(" ") ||
+    undefined;
   const a11y: FieldA11y = { id: controlId, describedBy, invalid: hasError };
 
   return (
@@ -91,7 +98,8 @@ export function DynamicField({
         a11y,
         testIdBase,
         availablePorts,
-        onBlur
+        onBlur,
+        platformNote != null
       )}
       {error && (
         <p
@@ -106,6 +114,15 @@ export function DynamicField({
       {field.description && (
         <p id={descriptionId} className="settings-form__hint">
           {field.description}
+        </p>
+      )}
+      {platformNote && (
+        <p
+          id={platformNoteId}
+          className="settings-form__hint settings-form__hint--warning"
+          data-testid={`${testIdBase}-platform-note`}
+        >
+          {platformNote}
         </p>
       )}
       {credentialSaved && (
@@ -128,7 +145,10 @@ function renderFieldInput(
   a11y: FieldA11y,
   testIdBase: string,
   availablePorts?: string[],
-  onBlur?: () => void
+  onBlur?: () => void,
+  /** Force-disable the control because its feature is unavailable on this
+   * platform (audit PROD-019). Currently only honoured by boolean toggles. */
+  platformDisabled = false
 ): React.ReactNode {
   switch (fieldType.type) {
     case "text":
@@ -171,6 +191,7 @@ function renderFieldInput(
           onChange={onChange}
           a11y={a11y}
           testIdBase={testIdBase}
+          disabled={platformDisabled}
         />
       );
     case "select":
@@ -451,7 +472,8 @@ function BooleanField({
   onChange,
   a11y,
   testIdBase,
-}: FieldProps & { a11y: FieldA11y; testIdBase: string }) {
+  disabled = false,
+}: FieldProps & { a11y: FieldA11y; testIdBase: string; disabled?: boolean }) {
   return (
     <>
       {/* No `htmlFor`: the Toggle is a Radix switch associated via `aria-label`,
@@ -461,6 +483,7 @@ function BooleanField({
         id={a11y.id}
         checked={(value as boolean) ?? (field.default as boolean) ?? false}
         onCheckedChange={(checked) => onChange(checked)}
+        disabled={disabled}
         aria-label={field.label}
         aria-describedby={a11y.describedBy}
         data-testid={testIdBase}
