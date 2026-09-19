@@ -9,7 +9,8 @@ subsystem: frontend / static-analysis
 evidence:
   - eslint.config.js:1
   - package.json:15
-status: open
+status: fixed
+resolution: "#3130 — knip added advisory: knip@6 dev-dep + knip.json (entrypoints main.tsx/vite/vitest/test-setup/testbridge, ignore generated) + pnpm knip script + CI step continue-on-error+||true. Reports real findings (mostly unused type exports); cleanup = future work. Cannot fail CI"
 ---
 
 ## What

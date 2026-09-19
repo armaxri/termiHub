@@ -9,7 +9,8 @@ subsystem: ci / release
 evidence:
   - package.json:7
   - .github/workflows/release.yml:1
-status: open
+status: fixed
+resolution: "#3130 — bundle-size budget advisory: scripts/internal/bundle-size.mjs (pure node) + pnpm size + dedicated bundle-size CI job. Current dist ~32MiB, budget 48MiB (~50% headroom). Always exits 0, job continue-on-error. Cannot fail CI"
 ---
 
 ## What

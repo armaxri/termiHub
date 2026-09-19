@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/code-quality.yml:223
   - .gitignore:16
   - coverage/index.html:1
-status: open
+status: fixed
+resolution: "#3130 — coverage report uploaded as CI artifact: actions/upload-artifact after pnpm test:coverage on ubuntu leg (if:always()&&ubuntu, if-no-files-found:warn). Advisory, cannot fail CI"
 ---
 
 ## What
