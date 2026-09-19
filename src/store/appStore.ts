@@ -195,6 +195,7 @@ import {
   splitLeaf,
   simplifyTree,
   edgeToSplit,
+  canSplitLeaf,
   markActiveLeaf,
   normalizeSizes,
 } from "@/utils/panelTree";
@@ -4344,7 +4345,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // never drifts from the region's `layout.split`; the mirror composes it back.
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
-      const { activePanelId } = getComposedLayout(prev);
+      const { activePanelId, rootPanel: preRoot } = getComposedLayout(prev);
+      // Soft guard (PROD-060): block a split that would shrink the active pane
+      // below the minimum usable size, rather than producing an unusable sliver.
+      if (activePanelId && !canSplitLeaf(preRoot, activePanelId)) {
+        toast.error("Pane too small to split further");
+        return;
+      }
       // Mint the new leaf and wrapping-container ids here (not inside the algebra)
       // so the very same ids are threaded through the `layout.split` intent and
       // adopted by the authoritative region — optimistic id == authoritative id,
@@ -4441,6 +4448,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // the mirror composes the result back.
       const prev = get();
       const pre = currentLayoutSnapshot(prev);
+      // Soft guard (PROD-060): an edge drop splits the target pane; block it when
+      // the target is already too small to split without producing a sliver. A
+      // center drop only re-stacks the tab (no new pane) and is never blocked.
+      if (edgeToSplit(edge) && !canSplitLeaf(getComposedLayout(prev).rootPanel, targetPanelId)) {
+        toast.error("Pane too small to split further");
+        return;
+      }
       const next = setLayoutLocal((state) => {
         const splitInfo = edgeToSplit(edge);
 

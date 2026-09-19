@@ -240,6 +240,52 @@ export function simplifyTree(root: PanelNode): PanelNode {
   return { ...root, children: flattened, ...(sizes ? { sizes } : {}) };
 }
 
+/**
+ * Minimum share of the whole window a pane may occupy and still be considered
+ * usable, expressed as a percentage. A split halves the target pane's share, so
+ * a pane must hold at least twice this before it can be split without producing
+ * an unusable sliver. Kept below SplitView's per-container resize floor
+ * (`minSize={10}`) so ordinary multi-pane layouts are never blocked — only
+ * degenerate slivers are. (PROD-060)
+ */
+export const MIN_USABLE_PANE_PERCENT = 5;
+
+/**
+ * Effective share (0–100) of the whole window occupied by a leaf, obtained by
+ * multiplying the size slot at each ancestor split along the path to the leaf.
+ * A container without explicit `sizes` divides its space evenly. Returns 0 when
+ * the leaf is not in the tree.
+ */
+export function leafSizePercent(root: PanelNode, leafId: string): number {
+  const path = buildPath(root, leafId);
+  if (path === null) return 0;
+  let pct = 100;
+  for (const { node, childIndex } of path) {
+    const sizes = node.sizes;
+    let slotFraction: number;
+    if (sizes && sizes.length === node.children.length) {
+      const total = sizes.reduce((a, b) => a + b, 0);
+      slotFraction = total > 0 ? (sizes[childIndex] ?? 0) / total : 1 / node.children.length;
+    } else {
+      slotFraction = 1 / node.children.length;
+    }
+    pct *= slotFraction;
+  }
+  return pct;
+}
+
+/**
+ * Whether a leaf can be split without producing a pane below the minimum usable
+ * size. A split halves the target's share, so it is blocked when half the leaf's
+ * current share would fall below {@link MIN_USABLE_PANE_PERCENT}. A missing leaf
+ * is treated as un-splittable. This is the soft guard behind the split actions
+ * (PROD-060): callers no-op the split and surface a recoverable notice.
+ */
+export function canSplitLeaf(root: PanelNode, leafId: string): boolean {
+  if (!findLeaf(root, leafId)) return false;
+  return leafSizePercent(root, leafId) / 2 >= MIN_USABLE_PANE_PERCENT;
+}
+
 /** Convert a DropEdge to split direction and position, or null for center. */
 export function edgeToSplit(
   edge: DropEdge
