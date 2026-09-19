@@ -1,71 +1,86 @@
 import { ThemeDefinition } from "./types";
 
-/** Built-in dark theme — extracted from the current variables.css and Terminal.tsx values. */
+/**
+ * Built-in dark theme — the canonical MODERN design-system palette (UI-001,
+ * maintainer-approved). Every core surface/accent/text/border/state token here
+ * mirrors the modern dark `:root` values in `src/styles/variables.css`, which is
+ * the source of truth (the ui-modernization concept). The theme engine writes
+ * these over `:root` via COLOR_TO_CSS_VAR, so what renders now equals the design
+ * system. Terminal-specific tokens with no `variables.css` counterpart (the 16
+ * ANSI colors) keep the terminal-standard hues but sit coherently on the modern
+ * `#0f1117` base (ansiBlack tracks the terminal background — see below).
+ */
 export const darkTheme: ThemeDefinition = {
   id: "dark",
   name: "Dark",
   colorScheme: "dark",
   colors: {
     // Backgrounds
-    bgPrimary: "#1e1e1e",
-    bgSecondary: "#252526",
-    bgTertiary: "#2d2d2d",
-    bgHover: "#2a2d2e",
-    bgActive: "#37373d",
-    bgInput: "#3c3c3c",
-    bgDropdown: "#252526",
+    bgPrimary: "#0f1117",
+    bgSecondary: "#161b24",
+    bgTertiary: "#1c2130",
+    bgHover: "#1f2434",
+    bgActive: "#252b3a",
+    bgInput: "#1a1e2c",
+    bgDropdown: "#161b24",
 
     // Activity bar
-    activityBarBg: "#333333",
-    activityBarActive: "#ffffff",
-    activityBarInactive: "#858585",
-    activityBarIndicator: "#ffffff",
+    activityBarBg: "#0b0d12",
+    activityBarActive: "#e4e8f4",
+    activityBarInactive: "#525d6e",
+    activityBarIndicator: "#3d7de8",
 
     // Sidebar
-    sidebarBg: "#252526",
-    sidebarHeaderBg: "#252526",
+    sidebarBg: "#161b24",
+    sidebarHeaderBg: "#161b24",
 
     // Tab bar
-    tabBg: "#2d2d2d",
-    tabActiveBg: "#1e1e1e",
-    tabBorder: "#252526",
+    tabBg: "#1c2130",
+    tabActiveBg: "#0f1117",
+    tabBorder: "#12151d",
 
     // Text
-    textPrimary: "#cccccc",
-    textSecondary: "#969696",
-    textMuted: "#909090",
-    textDisabled: "#5a5a5a",
-    textAccent: "#4fc1ff",
-    textLink: "#3794ff",
+    textPrimary: "#dde1ec",
+    textSecondary: "#7b8597",
+    // A11Y-007 / #2070: the raw design-system muted (#656e80) fails WCAG AA
+    // (~3.4:1 on the sidebar surface). Lightened within the same modern
+    // bluish-gray family to meet AA (5.0:1 on #161b24, 5.5:1 on #0f1117) —
+    // locked by contrast.test.ts. variables.css --text-muted matches.
+    textMuted: "#838c9c",
+    textDisabled: "#3d4557",
+    textAccent: "#5aa6ff",
+    textLink: "#4190ee",
 
     // Borders
-    borderPrimary: "#474747",
-    borderSecondary: "#2b2b2b",
+    borderPrimary: "#2a2f40",
+    borderSecondary: "#1a1e2a",
 
     // Accent / focus
-    accentColor: "#007acc",
-    accentHover: "#1c97ea",
-    focusBorder: "#007fd4",
+    accentColor: "#3d7de8",
+    accentHover: "#5a94f0",
+    focusBorder: "#3d7de8",
 
     // Status
-    colorSuccess: "#89d185",
-    colorWarning: "#cca700",
-    colorError: "#f48771",
-    colorInfo: "#75beff",
+    colorSuccess: "#7dcf88",
+    colorWarning: "#d4a843",
+    colorError: "#ef6b5a",
+    colorInfo: "#6db0ff",
 
     // State dots
-    stateConnected: "#0dbc79",
-    stateConnecting: "#e5e510",
-    stateDisconnected: "#cd3131",
+    stateConnected: "#2dd79c",
+    stateConnecting: "#f0c040",
+    stateDisconnected: "#e05555",
 
     // Terminal
-    terminalBg: "#1e1e1e",
-    terminalFg: "#cccccc",
+    terminalBg: "#0f1117",
+    terminalFg: "#dde1ec",
     terminalCursor: "#aeafad",
-    terminalSelection: "rgba(38, 79, 120, 0.5)",
+    terminalSelection: "rgba(61, 125, 232, 0.35)",
 
-    // ANSI 16
-    ansiBlack: "#1e1e1e",
+    // ANSI 16 — terminal-standard hues (no variables.css counterpart). Kept as
+    // the established palette so shell output renders correctly; ansiBlack tracks
+    // the modern terminal background (#0f1117) so "black" cells match the surface.
+    ansiBlack: "#0f1117",
     ansiRed: "#cd3131",
     ansiGreen: "#0dbc79",
     ansiYellow: "#e5e510",

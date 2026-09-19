@@ -43,8 +43,11 @@
   --text-primary: #dde1ec;
   --text-secondary: #7b8597;
   /* Muted: lower emphasis than secondary (badges, counts, incidental labels).
-     Per-theme values are supplied by the theme engine; this is the dark default. */
-  --text-muted: #656e80;
+     Per-theme values are supplied by the theme engine; this is the dark default.
+     A11Y-007 / #2070: raised from #656e80 (which failed WCAG AA, ~3.4:1 on the
+     sidebar surface) into the same bluish-gray family at an AA-compliant
+     luminance — kept in sync with dark.ts and locked by contrast.test.ts. */
+  --text-muted: #838c9c;
   --text-disabled: #3d4557;
   --text-accent: #5aa6ff;
   --text-link: #4190ee;
