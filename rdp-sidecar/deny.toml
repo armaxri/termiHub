@@ -42,20 +42,6 @@ ignore = [
     # CredSSP client validates the server's public key and does not perform
     # attacker-observable private-key decryption through this crate.
     "RUSTSEC-2023-0071",
-    # RUSTSEC-2026-0194 / RUSTSEC-2026-0195: quadratic attribute-name check and
-    # unbounded namespace-declaration allocation in `quick-xml < 0.41.0`. Both
-    # are memory/CPU DoS reachable only when quick-xml parses UNTRUSTED XML at
-    # runtime. In this tree quick-xml is a *build-time proc-macro* dependency
-    # only: it is pulled via wayland-scanner (wl-clipboard-rs -> wayland-*) to
-    # generate Wayland protocol bindings from the trusted, in-crate protocol XML
-    # at compile time on Linux. It never sees RDP-server or other untrusted
-    # input in the shipped binary, so neither advisory is reachable at runtime.
-    # The fix needs quick-xml >= 0.41.0, a semver-incompatible bump gated behind
-    # an upstream wayland-scanner release (wayland-scanner 0.31.10 pins ^0.39),
-    # so `cargo update -p quick-xml` cannot resolve it. Tracked for a dependency
-    # bump in the follow-up filed with PKG-013.
-    "RUSTSEC-2026-0194",
-    "RUSTSEC-2026-0195",
     # RUSTSEC-2024-0429: unsoundness in `glib`'s `VariantStrIter` Iterator /
     # DoubleEndedIterator impls. Non-actionable transitive advisory accepted as
     # a release sign-off (#3054; findings SUP-003/004/006). `glib` is pinned by
