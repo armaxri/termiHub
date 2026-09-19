@@ -195,6 +195,13 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
                 .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
         })
     };
+    let opt_u32 = |key: &str| -> Option<u32> {
+        settings.get(key).and_then(|v| {
+            v.as_u64()
+                .and_then(|n| u32::try_from(n).ok())
+                .or_else(|| v.as_str().and_then(|s| s.parse().ok()))
+        })
+    };
 
     let port: u16 = parse_port_setting(settings.get("port"));
 
@@ -236,6 +243,8 @@ pub fn parse_ssh_settings(settings: &serde_json::Value) -> SshConfig {
         enable_file_browser: opt_bool("enableFileBrowser"),
         save_password: opt_bool("savePassword"),
         connect_timeout_secs: opt_u64("connectTimeoutSecs"),
+        keepalive_interval_secs: opt_u64("keepaliveIntervalSecs"),
+        keepalive_max_count: opt_u32("keepaliveMaxCount"),
         proxy_jump,
         forward_agent: bool_field("forwardAgent", false),
     }
@@ -491,6 +500,58 @@ impl ConnectionType for Ssh {
                             required: false,
                             default: None,
                             placeholder: Some("45".to_string()),
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "keepaliveIntervalSecs".to_string(),
+                            label: "Keepalive Interval (s)".to_string(),
+                            description: Some(
+                                "Seconds between SSH keepalive probes on an idle connection"
+                                    .to_string(),
+                            ),
+                            help_text: Some(
+                                "How often termiHub sends an SSH-level keepalive on an otherwise \
+                                 idle session so a half-open link (e.g. a dropped VPN or NAT \
+                                 timeout) is detected promptly. Lower it for flaky links that need \
+                                 faster drop detection; raise it to reduce traffic on metered \
+                                 connections. Leave empty to use the default (30 s)."
+                                    .to_string(),
+                            ),
+                            field_type: FieldType::Number {
+                                min: Some(1.0),
+                                max: Some(3600.0),
+                            },
+                            required: false,
+                            default: None,
+                            placeholder: Some("30".to_string()),
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "keepaliveMaxCount".to_string(),
+                            label: "Max Missed Keepalives".to_string(),
+                            description: Some(
+                                "Consecutive unanswered keepalives before the session is dropped"
+                                    .to_string(),
+                            ),
+                            help_text: Some(
+                                "After this many keepalive probes go unanswered in a row, termiHub \
+                                 tears the SSH session down and reports the link as lost. Combined \
+                                 with the keepalive interval this bounds how long a dead link \
+                                 lingers before detection (interval x count). Leave empty to use \
+                                 the default (3)."
+                                    .to_string(),
+                            ),
+                            field_type: FieldType::Number {
+                                min: Some(1.0),
+                                max: Some(100.0),
+                            },
+                            required: false,
+                            default: None,
+                            placeholder: Some("3".to_string()),
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,
                             visible_when: None,
@@ -1077,6 +1138,8 @@ mod tests {
                 "shell",
                 "enableX11Forwarding",
                 "connectTimeoutSecs",
+                "keepaliveIntervalSecs",
+                "keepaliveMaxCount",
                 "env",
                 "shellIntegration",
                 "resilientReconnect",
@@ -1113,6 +1176,60 @@ mod tests {
         });
         let config = parse_ssh_settings(&settings);
         assert_eq!(config.connect_timeout_secs, Some(5));
+    }
+
+    #[test]
+    fn parse_ssh_settings_reads_keepalive_settings() {
+        let settings = serde_json::json!({
+            "host": "h",
+            "username": "u",
+            "authMethod": "password",
+            "keepaliveIntervalSecs": 15,
+            "keepaliveMaxCount": 5,
+        });
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.keepalive_interval_secs, Some(15));
+        assert_eq!(config.keepalive_max_count, Some(5));
+        // The configured values drive the effective keepalive behaviour.
+        assert_eq!(
+            config.keepalive_interval(),
+            std::time::Duration::from_secs(15)
+        );
+        assert_eq!(config.keepalive_max_count(), 5);
+    }
+
+    #[test]
+    fn parse_ssh_settings_keepalive_settings_accept_string_numbers() {
+        // The dynamic form may serialize number fields as strings.
+        let settings = serde_json::json!({
+            "host": "h",
+            "username": "u",
+            "authMethod": "password",
+            "keepaliveIntervalSecs": "20",
+            "keepaliveMaxCount": "4",
+        });
+        let config = parse_ssh_settings(&settings);
+        assert_eq!(config.keepalive_interval_secs, Some(20));
+        assert_eq!(config.keepalive_max_count, Some(4));
+    }
+
+    #[test]
+    fn parse_ssh_settings_keepalive_defaults_to_none_and_historical_values() {
+        let settings = serde_json::json!({
+            "host": "h",
+            "username": "u",
+            "authMethod": "password",
+        });
+        let config = parse_ssh_settings(&settings);
+        // Absent fields parse to None so existing connections are byte-stable...
+        assert_eq!(config.keepalive_interval_secs, None);
+        assert_eq!(config.keepalive_max_count, None);
+        // ...and the effective values fall back to the historical 30 s / 3.
+        assert_eq!(
+            config.keepalive_interval(),
+            std::time::Duration::from_secs(30)
+        );
+        assert_eq!(config.keepalive_max_count(), 3);
     }
 
     #[test]
