@@ -68,6 +68,25 @@ describe("formatElapsed", () => {
     expect(formatElapsed(65)).toBe("1m 05s");
     expect(formatElapsed(600)).toBe("10m 00s");
   });
+
+  it("rolls over into an hours bucket instead of overflowing minutes (#2859)", () => {
+    // The last minute before the hour still reads in minutes.
+    expect(formatElapsed(3599)).toBe("59m 59s");
+    // At/after an hour it switches to "Hh MMm" (seconds dropped at hour scale).
+    expect(formatElapsed(3600)).toBe("1h 00m");
+    expect(formatElapsed(3661)).toBe("1h 01m");
+    // The bug: 7200s used to render "120m 00s"; now "2h 00m".
+    expect(formatElapsed(7200)).toBe("2h 00m");
+    expect(formatElapsed(3600 + 5 * 60 + 3)).toBe("1h 05m");
+    // The last minute before a day still reads in hours.
+    expect(formatElapsed(24 * 3600 - 1)).toBe("23h 59m");
+  });
+
+  it("rolls over into a days bucket at/after 24 hours (#2859)", () => {
+    expect(formatElapsed(24 * 3600)).toBe("1d 00h");
+    expect(formatElapsed(90000)).toBe("1d 01h");
+    expect(formatElapsed(2 * 86400 + 3 * 3600)).toBe("2d 03h");
+  });
 });
 
 describe("formatRelativeAgo", () => {

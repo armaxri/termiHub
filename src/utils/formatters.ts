@@ -88,18 +88,35 @@ export function formatRate(bytesPerSec: number | null | undefined): string {
 }
 
 /**
- * Format an elapsed duration in whole seconds as a compact readout: `5s`,
- * `1m 05s`. Shared home for the terminal connection overlay's elapsed timer.
+ * Format an elapsed duration in whole seconds as a compact readout that rolls
+ * over cleanly at each scale (#2859), so a long span never overflows a single
+ * unit (e.g. the old `"120m 00s"` for two hours). Buckets:
  *
- * Kept as literal digits (not locale-formatted): the values are single/double
- * digit counts with an intentional zero-padded `mm ss` shape, where locale
- * grouping/decimals do not apply.
+ * - `< 60s` → `"45s"`
+ * - `< 60m` → `"5m 03s"` (minutes + zero-padded seconds)
+ * - `< 24h` → `"2h 05m"` (hours + zero-padded minutes; seconds dropped — at the
+ *   hour scale they add noise to an ETA/elapsed label rather than precision)
+ * - `>= 24h` → `"1d 03h"` (days + zero-padded hours)
+ *
+ * Kept as literal digits (not locale-formatted): the values are small integer
+ * counts with an intentional zero-padded shape on the trailing unit, where
+ * locale grouping/decimals do not apply. The leading unit is unpadded.
  */
 export function formatElapsed(seconds: number): string {
   if (seconds < 60) return `${seconds}s`;
-  const mins = Math.floor(seconds / 60);
-  const secs = seconds % 60;
-  return `${mins}m ${String(secs).padStart(2, "0")}s`;
+  if (seconds < 3600) {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}m ${String(secs).padStart(2, "0")}s`;
+  }
+  if (seconds < 86400) {
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    return `${hours}h ${String(mins).padStart(2, "0")}m`;
+  }
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  return `${days}d ${String(hours).padStart(2, "0")}h`;
 }
 
 /** Options for {@link formatRelativeTime} / {@link formatRelativeAgo}. */
