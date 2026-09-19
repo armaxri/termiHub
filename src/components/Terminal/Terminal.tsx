@@ -1330,6 +1330,35 @@ export function Terminal({
 
     xterm.open(scrollViewport);
 
+    // Suppress xterm's own native-paste route so the ONLY paste path is
+    // termiHub's pasteToTerminal() (#2595). xterm registers a `paste` listener on
+    // its internal helper <textarea> (and on its root element) that reads the
+    // clipboard directly and emits the text as terminal input via onData. On
+    // Windows/WebView2 (and over RDP) a single right-click injects a *native*
+    // paste event into that focused textarea, so the clipboard is inserted TWICE:
+    // once by termiHub's own right-click quick action (handleQuickAction →
+    // pasteToTerminal, debounced + in-flight-guarded) and once by this native
+    // xterm path, which bypasses both guards and is never logged. Ctrl+V is
+    // already immune because attachCustomKeyEventHandler preventDefaults the key
+    // event so no native paste ever fires; that same treatment simply was never
+    // extended to right-click/native paste. A capture-phase listener on the
+    // textarea runs before xterm's own (bubble-phase) handler; preventDefault
+    // alone does not stop xterm (it reads clipboardData itself), so
+    // stopImmediatePropagation is required to keep xterm's same-node and
+    // root-element handlers from firing. All deliberate paste routes still work
+    // because none dispatch a DOM paste event: Ctrl+V (preventDefaulted +
+    // routed), the right-click quick action, and the context-menu "Paste" item
+    // all call pasteToTerminal() directly. There is no middle-click / X11
+    // primary-selection paste support in the terminal to regress (middle-click is
+    // wired only to close tabs).
+    const xtermTextarea: HTMLTextAreaElement | null =
+      xterm.textarea ?? xterm.element?.querySelector("textarea") ?? null;
+    const suppressNativePaste = (e: ClipboardEvent) => {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    };
+    xtermTextarea?.addEventListener("paste", suppressNativePaste, true);
+
     // GPU-accelerated rendering (#2078). The WebGL addon replaces xterm's DOM
     // renderer with a WebGL2 canvas renderer — the single biggest render-
     // throughput win on high-volume output. It must be loaded AFTER open() so it
@@ -1678,6 +1707,9 @@ export function Terminal({
       // Dispose the web-links addon alongside the other addons so its link
       // provider is removed deterministically before the terminal (PROD-056).
       webLinksAddon.dispose();
+      // Remove the native-paste suppressor before disposing xterm so the listener
+      // never outlives its textarea (StrictMode double-invoke teardown, #2595).
+      xtermTextarea?.removeEventListener("paste", suppressNativePaste, true);
       xterm.dispose();
       el.remove();
       terminalElRef.current = null;
