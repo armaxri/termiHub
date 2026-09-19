@@ -35,6 +35,23 @@ describe("connectionMatchesQuery", () => {
   it("empty query matches everything", () => {
     expect(connectionMatchesQuery(conn("c1", "Anything"), "")).toBe(true);
   });
+
+  it("matches by name ignoring diacritics (match-sorter normalization)", () => {
+    expect(connectionMatchesQuery(conn("c1", "Café Server"), "cafe")).toBe(true);
+    expect(connectionMatchesQuery(conn("c1", "São Paulo Box"), "sao")).toBe(true);
+  });
+
+  it("matches by host ignoring diacritics", () => {
+    expect(connectionMatchesQuery(conn("c1", "Box", { host: "münchen.example" }), "munchen")).toBe(
+      true
+    );
+  });
+
+  it("keeps substring semantics: an unordered character set is not a match", () => {
+    // "ws" would fuzzy-match "Web Server" only below the CONTAINS threshold;
+    // like the previous `.includes()` check, it must not match here.
+    expect(connectionMatchesQuery(conn("c1", "Web Server"), "ws")).toBe(false);
+  });
 });
 
 describe("filterConnectionTree", () => {

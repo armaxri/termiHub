@@ -1,4 +1,5 @@
 import { AgentDefinitionInfo, AgentFolderInfo } from "@/services/api";
+import { textFieldsMatchQuery } from "@/utils/searchMatching";
 
 /**
  * Result of filtering a remote-agent connection tree by a search query.
@@ -25,25 +26,28 @@ function parentOf(value: string | null | undefined): string | null {
 
 /**
  * Whether a remote agent matches the (already normalized) query by its own
- * name/label (e.g. `dev0` matching "Dev Agent (dev0)"). Case-insensitive
- * substring; an empty query matches everything. Used to surface an agent in the
- * Remote Agents search even when none of its saved connections match (#2485).
+ * name/label (e.g. `dev0` matching "Dev Agent (dev0)"). Matching is case- and
+ * diacritic-insensitive (via {@link textFieldsMatchQuery}) while keeping
+ * substring semantics; an empty query matches everything. Used to surface an
+ * agent in the Remote Agents search even when none of its saved connections
+ * match (#2485).
  */
 export function agentNameMatchesQuery(agentName: string, normalizedQuery: string): boolean {
-  if (!normalizedQuery) return true;
-  return agentName.toLowerCase().includes(normalizedQuery);
+  return textFieldsMatchQuery([agentName], normalizedQuery);
 }
 
 /**
  * Whether an agent definition matches the (already normalized) query by name.
  * An empty query matches everything.
+ *
+ * Matching goes through {@link textFieldsMatchQuery} (match-sorter), so it is
+ * case- and diacritic-insensitive while keeping substring semantics.
  */
 export function agentDefinitionMatchesQuery(
   definition: AgentDefinitionInfo,
   normalizedQuery: string
 ): boolean {
-  if (!normalizedQuery) return true;
-  return definition.name.toLowerCase().includes(normalizedQuery);
+  return textFieldsMatchQuery([definition.name], normalizedQuery);
 }
 
 /**
