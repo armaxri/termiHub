@@ -22,11 +22,11 @@ function handlers() {
   };
 }
 
-function render(state: TransferQueueState, h = handlers()) {
+function render(state: TransferQueueState, pausable = true, h = handlers()) {
   act(() => {
     root.render(
       <TooltipProvider>
-        <TransferControls state={state} {...h} />
+        <TransferControls state={state} pausable={pausable} {...h} />
       </TooltipProvider>
     );
   });
@@ -108,5 +108,38 @@ describe("TransferControls", () => {
     expect(h.onRetry).toHaveBeenCalledTimes(1);
     act(() => query("transfer-remove")?.click());
     expect(h.onRemove).toHaveBeenCalledTimes(1);
+  });
+
+  // PROD-009: a non-pausable (legacy SFTP) transfer must hide Pause/Resume/Retry
+  // — those controls are inert for it — while Cancel and Remove stay available.
+  describe("non-pausable (SFTP) transfer", () => {
+    it("active state hides Pause but keeps Cancel", () => {
+      render("active", false);
+      expect(query("transfer-pause")).toBeNull();
+      expect(query("transfer-cancel")).not.toBeNull();
+    });
+
+    it("paused state hides Resume but keeps Cancel", () => {
+      render("paused", false);
+      expect(query("transfer-resume")).toBeNull();
+      expect(query("transfer-cancel")).not.toBeNull();
+    });
+
+    it("failed state hides Retry but keeps Remove", () => {
+      render("failed", false);
+      expect(query("transfer-retry")).toBeNull();
+      expect(query("transfer-remove")).not.toBeNull();
+    });
+
+    it("cancelled state hides Retry but keeps Remove", () => {
+      render("cancelled", false);
+      expect(query("transfer-retry")).toBeNull();
+      expect(query("transfer-remove")).not.toBeNull();
+    });
+
+    it("queued state still shows Cancel", () => {
+      render("queued", false);
+      expect(query("transfer-cancel")).not.toBeNull();
+    });
   });
 });

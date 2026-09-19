@@ -45,7 +45,9 @@ import { TooltipProvider, toast } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { transferCancel, transferPause, transferResume, transferRetry } from "@/services/api";
 import { ensureTransfersSubscribed, currentTransfersView } from "@/store/transfersBridge";
+import { seedLayoutState } from "@/test/layoutState";
 import type { TransferEntry } from "@/types/transfer";
+import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import {
   fakeTransferEntry,
   installTransferHarness,
@@ -74,6 +76,26 @@ let teardown: () => void;
 /** Seed the authoritative region with the given rows (the panel renders from it). */
 function seed(entries: TransferEntry[], minimized = false) {
   transport.seed(transfersView(entries, minimized));
+}
+
+/**
+ * Seed a single live tab owning `sessionId` with the given `connectionType`, so
+ * the panel can resolve a transfer's pausability (audit PROD-009): only an
+ * `ftp`-typed session's transfer shows Pause/Resume/Retry.
+ */
+function seedLiveTab(connectionType: string, sessionId = "sess-a") {
+  const tab: TerminalTab = {
+    id: "tab-1",
+    sessionId,
+    title: sessionId,
+    connectionType,
+    contentType: "file-browser",
+    config: { type: connectionType, config: {} },
+    panelId: "leaf-1",
+    isActive: true,
+  };
+  const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs: [tab], activeTabId: "tab-1" };
+  seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
 }
 
 function query(testId: string): HTMLElement | null {
@@ -201,6 +223,9 @@ describe("TransferQueue panel", () => {
   // the real backend outcome — success only on a true state change, an accurate
   // message on a silent no-op, and an error toast on a rejection.
   function renderPanel(entries: TransferEntry[]) {
+    // These honest-control tests exercise Pause/Resume/Retry, which only render
+    // for a pausable (FTP) transfer (audit PROD-009), so seed an FTP session.
+    seedLiveTab("ftp");
     seed(entries);
     act(() =>
       root.render(
@@ -281,6 +306,35 @@ describe("TransferQueue panel", () => {
     });
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.info).toHaveBeenCalledWith("Transfer already finished");
+  });
+
+  // PROD-009: an SFTP-session (non-FTP) transfer can't pause/resume/retry, so
+  // those inert controls are hidden while Cancel stays available.
+  it("hides Pause for an SFTP-session transfer but keeps Cancel; FTP shows Pause", () => {
+    seedLiveTab("ssh"); // legacy SFTP file browsing rides on an ssh session
+    seed([entry({ id: "t1", state: "active" })]);
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <TransferQueue />
+        </TooltipProvider>
+      )
+    );
+    expect(query("transfer-pause")).toBeNull();
+    expect(query("transfer-cancel")).not.toBeNull();
+
+    act(() => root.unmount());
+    seedLiveTab("ftp");
+    root = createRoot(container);
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <TransferQueue />
+        </TooltipProvider>
+      )
+    );
+    expect(query("transfer-pause")).not.toBeNull();
+    expect(query("transfer-cancel")).not.toBeNull();
   });
 });
 
