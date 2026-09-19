@@ -329,7 +329,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [], loadWorkspaces });
     dialogOpen.mockResolvedValue("/tmp/workspaces.json");
     fsReadTextFile.mockResolvedValue("{}");
-    apiImportWorkspaces.mockResolvedValue(3);
+    apiImportWorkspaces.mockResolvedValue({ importedCount: 3, warnings: [] });
 
     act(() => {
       root.render(withTooltip(<WorkspaceSidebar />));
@@ -350,7 +350,7 @@ describe("WorkspaceSidebar", () => {
     useAppStore.setState({ workspaces: [], loadWorkspaces });
     dialogOpen.mockResolvedValue("/tmp/workspaces.json");
     fsReadTextFile.mockResolvedValue("{}");
-    apiImportWorkspaces.mockResolvedValue(1);
+    apiImportWorkspaces.mockResolvedValue({ importedCount: 1, warnings: [] });
 
     act(() => {
       root.render(withTooltip(<WorkspaceSidebar />));
@@ -360,6 +360,35 @@ describe("WorkspaceSidebar", () => {
     await flush();
 
     expect(toastSuccess).toHaveBeenCalledWith("Imported 1 workspace");
+  });
+
+  it("surfaces a warning toast per dangling connection reference and still imports", async () => {
+    const loadWorkspaces = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ workspaces: [], loadWorkspaces });
+    dialogOpen.mockResolvedValue("/tmp/workspaces.json");
+    fsReadTextFile.mockResolvedValue("{}");
+    const warnings = [
+      'Workspace "Broken Setup" references connection "Deleted Server", which no longer exists. ' +
+        "The tab was kept but will not connect until the connection is restored.",
+      'Workspace "Broken Setup" references connection "Old Router", which no longer exists. ' +
+        "The tab was kept but will not connect until the connection is restored.",
+    ];
+    apiImportWorkspaces.mockResolvedValue({ importedCount: 1, warnings });
+
+    act(() => {
+      root.render(withTooltip(<WorkspaceSidebar />));
+    });
+
+    act(() => (query("workspace-import-btn") as HTMLButtonElement).click());
+    await flush();
+
+    // The workspace still imports (success toast + reload) …
+    expect(loadWorkspaces).toHaveBeenCalledTimes(1);
+    expect(toastSuccess).toHaveBeenCalledWith("Imported 1 workspace");
+    // … and each dangling-ref warning is surfaced, naming workspace + connection.
+    expect(toastError).toHaveBeenCalledTimes(2);
+    expect(toastError).toHaveBeenNthCalledWith(1, warnings[0]);
+    expect(toastError).toHaveBeenNthCalledWith(2, warnings[1]);
   });
 
   it("surfaces an error toast when import fails", async () => {
