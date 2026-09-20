@@ -626,6 +626,28 @@ mod files_params {
     pub(super) fn set_permissions(connection_id: &str, path: &str, mode: u32) -> Value {
         json!({ "connection_id": connection_id, "path": path, "mode": mode })
     }
+
+    /// `FilesSetOwnerParams` requires snake_case `connection_id`/`path` plus the
+    /// optional numeric `uid`/`gid` (a `null`/absent side is left unchanged).
+    pub(super) fn set_owner(
+        connection_id: &str,
+        path: &str,
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Value {
+        json!({ "connection_id": connection_id, "path": path, "uid": uid, "gid": gid })
+    }
+
+    /// `FilesCreateSymlinkParams` requires snake_case `connection_id`/`target`/
+    /// `link_path`.
+    pub(super) fn create_symlink(connection_id: &str, target: &str, link_path: &str) -> Value {
+        json!({ "connection_id": connection_id, "target": target, "link_path": link_path })
+    }
+
+    /// `FilesCopyParams` requires snake_case `connection_id`/`src`/`dest`.
+    pub(super) fn copy(connection_id: &str, src: &str, dest: &str) -> Value {
+        json!({ "connection_id": connection_id, "src": src, "dest": dest })
+    }
 }
 
 #[async_trait::async_trait]
@@ -710,6 +732,38 @@ impl FileBrowser for RemoteFileBrowserProxy {
         self.rpc(
             termihub_core::protocol::methods::CONNECTION_FILES_SET_PERMISSIONS,
             files_params::set_permissions(&self.remote_session_id, path, mode),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn set_owner(
+        &self,
+        path: &str,
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Result<(), FileError> {
+        self.rpc(
+            termihub_core::protocol::methods::CONNECTION_FILES_SET_OWNER,
+            files_params::set_owner(&self.remote_session_id, path, uid, gid),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn create_symlink(&self, target: &str, link_path: &str) -> Result<(), FileError> {
+        self.rpc(
+            termihub_core::protocol::methods::CONNECTION_FILES_CREATE_SYMLINK,
+            files_params::create_symlink(&self.remote_session_id, target, link_path),
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn copy(&self, src: &str, dest: &str) -> Result<(), FileError> {
+        self.rpc(
+            termihub_core::protocol::methods::CONNECTION_FILES_COPY,
+            files_params::copy(&self.remote_session_id, src, dest),
         )
         .await?;
         Ok(())
@@ -2306,6 +2360,47 @@ mod tests {
             assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
             assert_eq!(parsed.path, PATH);
             assert_eq!(parsed.mode, 0o755);
+        }
+
+        #[test]
+        fn set_owner_params_deserialize_into_agent_struct() {
+            let params = files_params::set_owner(CONN, PATH, Some(1000), Some(50));
+            let parsed: agent::FilesSetOwnerParams = serde_json::from_value(params).expect(
+                "desktop set_owner params must match the agent's FilesSetOwnerParams contract",
+            );
+            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
+            assert_eq!(parsed.path, PATH);
+            assert_eq!(parsed.uid, Some(1000));
+            assert_eq!(parsed.gid, Some(50));
+
+            // A `None` side must serialize as JSON `null` and parse back to `None`.
+            let parsed_none: agent::FilesSetOwnerParams =
+                serde_json::from_value(files_params::set_owner(CONN, PATH, None, Some(50)))
+                    .expect("partial set_owner params must still match the agent contract");
+            assert_eq!(parsed_none.uid, None);
+            assert_eq!(parsed_none.gid, Some(50));
+        }
+
+        #[test]
+        fn create_symlink_params_deserialize_into_agent_struct() {
+            let params = files_params::create_symlink(CONN, "/real", "/link");
+            let parsed: agent::FilesCreateSymlinkParams = serde_json::from_value(params).expect(
+                "desktop create_symlink params must match the agent's \
+                 FilesCreateSymlinkParams contract",
+            );
+            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
+            assert_eq!(parsed.target, "/real");
+            assert_eq!(parsed.link_path, "/link");
+        }
+
+        #[test]
+        fn copy_params_deserialize_into_agent_struct() {
+            let params = files_params::copy(CONN, "/a", "/b");
+            let parsed: agent::FilesCopyParams = serde_json::from_value(params)
+                .expect("desktop copy params must match the agent's FilesCopyParams contract");
+            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
+            assert_eq!(parsed.src, "/a");
+            assert_eq!(parsed.dest, "/b");
         }
     }
 

@@ -68,6 +68,9 @@ pub const CONNECTION_FILES_RENAME: &str = "connection.files.rename";
 pub const CONNECTION_FILES_STAT: &str = "connection.files.stat";
 pub const CONNECTION_FILES_MKDIR: &str = "connection.files.mkdir";
 pub const CONNECTION_FILES_SET_PERMISSIONS: &str = "connection.files.set_permissions";
+pub const CONNECTION_FILES_SET_OWNER: &str = "connection.files.set_owner";
+pub const CONNECTION_FILES_CREATE_SYMLINK: &str = "connection.files.create_symlink";
+pub const CONNECTION_FILES_COPY: &str = "connection.files.copy";
 
 // Connection-scoped system monitoring.
 pub const CONNECTION_MONITORING_SUBSCRIBE: &str = "connection.monitoring.subscribe";
@@ -523,6 +526,36 @@ pub struct FilesSetPermissionsParams {
     pub path: String,
     /// The low 12 bits of a Unix mode (e.g. `0o755`).
     pub mode: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesSetOwnerParams {
+    pub connection_id: Option<String>,
+    pub path: String,
+    /// New owner user id, or `None`/absent to leave it unchanged.
+    #[serde(default)]
+    pub uid: Option<u32>,
+    /// New owner group id, or `None`/absent to leave it unchanged.
+    #[serde(default)]
+    pub gid: Option<u32>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesCreateSymlinkParams {
+    pub connection_id: Option<String>,
+    /// The path the link points at (stored verbatim; may be relative/dangling).
+    pub target: String,
+    /// The path of the new link to create.
+    pub link_path: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct FilesCopyParams {
+    pub connection_id: Option<String>,
+    /// Source path (same backend as `dest`).
+    pub src: String,
+    /// Destination path (same backend as `src`).
+    pub dest: String,
 }
 
 /// Type alias for backward compatibility — stat results use the same shape
@@ -1953,6 +1986,41 @@ mod tests {
     }
 
     #[test]
+    fn files_set_owner_params_serde() {
+        // Both ids present.
+        let json = json!({"connection_id": "conn-1", "path": "/a", "uid": 1000, "gid": 1000});
+        let params: FilesSetOwnerParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.connection_id, Some("conn-1".to_string()));
+        assert_eq!(params.path, "/a");
+        assert_eq!(params.uid, Some(1000));
+        assert_eq!(params.gid, Some(1000));
+
+        // Absent ids default to None (change only the specified side).
+        let json = json!({"path": "/a", "gid": 20});
+        let params: FilesSetOwnerParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.uid, None);
+        assert_eq!(params.gid, Some(20));
+    }
+
+    #[test]
+    fn files_create_symlink_params_serde() {
+        let json = json!({"connection_id": "conn-1", "target": "/real", "link_path": "/link"});
+        let params: FilesCreateSymlinkParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.connection_id, Some("conn-1".to_string()));
+        assert_eq!(params.target, "/real");
+        assert_eq!(params.link_path, "/link");
+    }
+
+    #[test]
+    fn files_copy_params_serde() {
+        let json = json!({"connection_id": "conn-1", "src": "/a", "dest": "/b"});
+        let params: FilesCopyParams = serde_json::from_value(json).unwrap();
+        assert_eq!(params.connection_id, Some("conn-1".to_string()));
+        assert_eq!(params.src, "/a");
+        assert_eq!(params.dest, "/b");
+    }
+
+    #[test]
     fn files_stat_result_serializes_camel_case() {
         let result = FilesStatResult {
             name: "log".to_string(),
@@ -2103,6 +2171,12 @@ mod tests {
             CONNECTION_FILES_SET_PERMISSIONS,
             "connection.files.set_permissions"
         );
+        assert_eq!(CONNECTION_FILES_SET_OWNER, "connection.files.set_owner");
+        assert_eq!(
+            CONNECTION_FILES_CREATE_SYMLINK,
+            "connection.files.create_symlink"
+        );
+        assert_eq!(CONNECTION_FILES_COPY, "connection.files.copy");
         assert_eq!(
             CONNECTION_MONITORING_SUBSCRIBE,
             "connection.monitoring.subscribe"
