@@ -97,14 +97,16 @@ describe("PluginManagerView (#1997)", () => {
     render();
 
     expect(container.querySelector('[data-testid="plugin-row-k8s"]')).not.toBeNull();
+    // The dot renders via the shared StatusDot primitive: enabled → connected,
+    // disabled → disabled, error → disconnected tone (UISF-003 follow-up).
     expect(container.querySelector('[data-testid="plugin-state-dot-k8s"]')?.className).toContain(
-      "plugin-state-dot--enabled"
+      "status-dot--connected"
     );
     expect(container.querySelector('[data-testid="plugin-state-dot-logcol"]')?.className).toContain(
-      "plugin-state-dot--disabled"
+      "status-dot--disabled"
     );
     expect(container.querySelector('[data-testid="plugin-state-dot-aws"]')?.className).toContain(
-      "plugin-state-dot--error"
+      "status-dot--disconnected"
     );
     expect(container.querySelector('[data-testid="plugin-row-k8s"]')?.textContent).toContain(
       "v1.2.0"

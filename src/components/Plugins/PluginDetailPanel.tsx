@@ -5,13 +5,14 @@ import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { PluginDetailMeta } from "@/types/terminal";
 import type { InstalledPlugin } from "@/types/plugin";
-import { Button, ConfirmDialog } from "@/components/ui";
+import { Button, ConfirmDialog, StatusDot } from "@/components/ui";
 import {
   PERMISSION_DESCRIPTIONS,
   PERMISSION_LABELS,
   extensionPoints,
   hasSettings,
   pluginDotState,
+  pluginDotTone,
   pluginStatusLabel,
   pluginTypeIcon,
   pluginTypeLabel,
@@ -101,7 +102,7 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
               className={`plugin-detail__status plugin-detail__status--${dot}`}
               data-testid="plugin-detail-status"
             >
-              <span className={`plugin-state-dot plugin-state-dot--${dot}`} aria-hidden="true" />
+              <StatusDot tone={pluginDotTone(dot)} ariaHidden />
               {pluginStatusLabel(state)}
             </span>
           </div>

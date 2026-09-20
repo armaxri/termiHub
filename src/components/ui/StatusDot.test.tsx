@@ -26,7 +26,17 @@ describe("StatusDot", () => {
   });
 
   it("maps each tone to its modifier class", () => {
-    for (const tone of ["neutral", "success", "warning", "error", "notice"] as const) {
+    for (const tone of [
+      "neutral",
+      "success",
+      "warning",
+      "error",
+      "notice",
+      "connected",
+      "connecting",
+      "disconnected",
+      "disabled",
+    ] as const) {
       render(<StatusDot tone={tone} testId="dot" />);
       const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
       expect(dot.classList.contains("status-dot")).toBe(true);
@@ -34,16 +44,47 @@ describe("StatusDot", () => {
     }
   });
 
-  it("defaults to the md size (no sm modifier)", () => {
+  it("defaults to the md size (no sm/lg modifier)", () => {
     render(<StatusDot tone="success" testId="dot" />);
     const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
     expect(dot.classList.contains("status-dot--sm")).toBe(false);
+    expect(dot.classList.contains("status-dot--lg")).toBe(false);
   });
 
   it("adds the sm modifier for the small size", () => {
     render(<StatusDot tone="success" size="sm" testId="dot" />);
     const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
     expect(dot.classList.contains("status-dot--sm")).toBe(true);
+  });
+
+  it("adds the lg modifier for the large size", () => {
+    render(<StatusDot tone="success" size="lg" testId="dot" />);
+    const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    expect(dot.classList.contains("status-dot--lg")).toBe(true);
+  });
+
+  it("adds the pulse and dimmed modifiers only when requested", () => {
+    render(<StatusDot tone="connecting" pulse dimmed testId="dot" />);
+    const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    expect(dot.classList.contains("status-dot--pulse")).toBe(true);
+    expect(dot.classList.contains("status-dot--dimmed")).toBe(true);
+
+    render(<StatusDot tone="connecting" testId="dot" />);
+    const plain = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    expect(plain.classList.contains("status-dot--pulse")).toBe(false);
+    expect(plain.classList.contains("status-dot--dimmed")).toBe(false);
+  });
+
+  it("hides the dot from assistive tech when ariaHidden is set", () => {
+    render(<StatusDot tone="disabled" ariaHidden testId="dot" />);
+    const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    expect(dot.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("forwards a native title tooltip", () => {
+    render(<StatusDot tone="connected" title="Attached: shell, logs" testId="dot" />);
+    const dot = container.querySelector('[data-testid="dot"]') as HTMLElement;
+    expect(dot.getAttribute("title")).toBe("Attached: shell, logs");
   });
 
   it("exposes a non-colour accessible name when a label is given", () => {

@@ -861,6 +861,11 @@
   height: 7px;
 }
 
+.status-dot--lg {
+  width: 9px;
+  height: 9px;
+}
+
 .status-dot--neutral {
   background-color: var(--text-secondary);
 }
@@ -879,6 +884,52 @@
 
 .status-dot--notice {
   background-color: var(--color-notice);
+}
+
+/* Connection/run-state palette (`--state-*`), kept distinct from the semantic
+   tones so migrated connection dots keep their exact colours (UISF-003
+   follow-up). `disabled` is the muted "off" tone. */
+.status-dot--connected {
+  background-color: var(--state-connected);
+}
+
+.status-dot--connecting {
+  background-color: var(--state-connecting);
+}
+
+.status-dot--disconnected {
+  background-color: var(--state-disconnected);
+}
+
+.status-dot--disabled {
+  background-color: var(--text-disabled);
+}
+
+/* A muted/stopped state keeps its tone but reads as inactive. */
+.status-dot--dimmed {
+  opacity: 0.4;
+}
+
+/* An in-flight transition (connecting / starting / stopping) pulses to draw the
+   eye; the animation is suppressed under reduced-motion below. */
+.status-dot--pulse {
+  animation: status-dot-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes status-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-dot--pulse {
+    animation: none;
+  }
 }
 
 /* === EmptyState (UISF-002) ===

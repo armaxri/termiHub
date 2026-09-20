@@ -19,17 +19,9 @@
   color: var(--text-primary);
 }
 
-.shell-integration__dot {
-  width: 9px;
-  height: 9px;
-  border-radius: var(--radius-xl);
-  background: var(--text-disabled);
-  flex-shrink: 0;
-}
-
-.shell-integration__dot--on {
-  background: var(--color-success);
-}
+/* The registration status dot renders via the shared StatusDot primitive
+   (src/components/ui/StatusDot.tsx): `success` when registered, `disabled` when
+   not (UISF-003 follow-up). */
 
 .shell-integration__stale {
   margin-left: auto;

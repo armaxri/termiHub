@@ -113,22 +113,8 @@
   border-top: 1px solid var(--border-secondary);
 }
 
-/* ── State dot ────────────────────────────────────────────────────────── */
-.plugin-state-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  flex: 0 0 auto;
-  background: var(--text-disabled);
-}
-
-.plugin-state-dot--enabled {
-  background: var(--state-connected);
-}
-
-.plugin-state-dot--error {
-  background: var(--state-disconnected);
-}
+/* The plugin state dot renders via the shared StatusDot primitive
+   (src/components/ui/StatusDot.tsx); see pluginDotTone (UISF-003 follow-up). */
 
 /* ── Detail panel (main area) ─────────────────────────────────────────── */
 .plugin-detail {

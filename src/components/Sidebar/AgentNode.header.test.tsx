@@ -139,30 +139,34 @@ describe("AgentNode — header presentation (#2524)", () => {
   });
 
   describe("state dot tracks connectionState (never stale green)", () => {
-    it("shows the connected modifier when connected", () => {
+    // The dot renders via the shared StatusDot primitive, so state now maps to
+    // the `--state-*` tones: connected → connected, (re)connecting → connecting,
+    // everything else → disconnected (UISF-003 follow-up).
+    it("shows the connected tone when connected", () => {
       renderAgent(makeAgent({ connectionState: "connected" }));
-      expect(stateDot()?.className).toContain("agent-node__state-dot--connected");
+      const cls = stateDot()?.className ?? "";
+      expect(cls).toContain("status-dot--connected");
     });
 
-    it("shows the disconnected modifier — not connected — when disconnected", () => {
+    it("shows the disconnected tone — not connected — when disconnected", () => {
       renderAgent(makeAgent({ connectionState: "disconnected" }));
       const cls = stateDot()?.className ?? "";
-      expect(cls).toContain("agent-node__state-dot--disconnected");
-      expect(cls).not.toContain("agent-node__state-dot--connected");
+      expect(cls).toContain("status-dot--disconnected");
+      expect(cls).not.toContain("status-dot--connected");
     });
 
-    it("shows the reconnecting modifier — not connected — while reconnecting", () => {
+    it("shows the connecting tone — not connected — while reconnecting", () => {
       renderAgent(makeAgent({ connectionState: "reconnecting" }));
       const cls = stateDot()?.className ?? "";
-      expect(cls).toContain("agent-node__state-dot--reconnecting");
-      expect(cls).not.toContain("agent-node__state-dot--connected");
+      expect(cls).toContain("status-dot--connecting");
+      expect(cls).not.toContain("status-dot--connected");
     });
 
-    it("shows the connecting modifier — not connected — while connecting", () => {
+    it("shows the connecting tone — not connected — while connecting", () => {
       renderAgent(makeAgent({ connectionState: "connecting" }));
       const cls = stateDot()?.className ?? "";
-      expect(cls).toContain("agent-node__state-dot--connecting");
-      expect(cls).not.toContain("agent-node__state-dot--connected");
+      expect(cls).toContain("status-dot--connecting");
+      expect(cls).not.toContain("status-dot--connected");
     });
 
     it.each([

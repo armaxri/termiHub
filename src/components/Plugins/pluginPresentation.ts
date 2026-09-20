@@ -26,9 +26,26 @@ import type {
   PluginState,
   PluginTrustInfo,
 } from "@/types/plugin";
+import type { StatusTone } from "@/components/ui";
 
 /** Coarse visual state of a plugin's status dot. */
 export type PluginDotState = "enabled" | "disabled" | "error";
+
+/**
+ * Map a plugin dot-state to a shared {@link StatusDot} tone, preserving the
+ * exact colours the bespoke `plugin-state-dot--*` classes used: enabled →
+ * connected (green), error → disconnected (red), disabled → the muted off tone.
+ */
+export function pluginDotTone(dot: PluginDotState): StatusTone {
+  switch (dot) {
+    case "enabled":
+      return "connected";
+    case "error":
+      return "disconnected";
+    default:
+      return "disabled";
+  }
+}
 
 /**
  * Collapse the five install/runtime {@link PluginState}s into the three visual

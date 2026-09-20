@@ -7,11 +7,26 @@ import "./ui.css";
  *
  * `notice` is the brighter amber reserved for update/attention cues
  * (`--color-notice`), distinct from the softer `warning` (`--color-warning`).
+ *
+ * The `connected` / `connecting` / `disconnected` tones are the dedicated
+ * connection/run-state palette (`--state-*`), kept distinct from the semantic
+ * `success` / `warning` / `error` tones so connection dots keep their exact
+ * colours (UISF-003 follow-up). `disabled` is the muted "off" tone
+ * (`--text-disabled`).
  */
-export type StatusTone = "neutral" | "success" | "warning" | "error" | "notice";
+export type StatusTone =
+  | "neutral"
+  | "success"
+  | "warning"
+  | "error"
+  | "notice"
+  | "connected"
+  | "connecting"
+  | "disconnected"
+  | "disabled";
 
-/** Diameter variant for a {@link StatusDot}: `sm` 7px · `md` 8px. */
-export type StatusDotSize = "sm" | "md";
+/** Diameter variant for a {@link StatusDot}: `sm` 7px · `md` 8px · `lg` 9px. */
+export type StatusDotSize = "sm" | "md" | "lg";
 
 /** Props for the shared {@link StatusDot} primitive. */
 export interface StatusDotProps {
@@ -27,6 +42,23 @@ export interface StatusDotProps {
    * sits beside text already conveying the same state.
    */
   label?: string;
+  /**
+   * Pulse the dot to signal an in-flight transition (connecting / starting /
+   * stopping). Disabled under `prefers-reduced-motion`.
+   */
+  pulse?: boolean;
+  /**
+   * Dim the dot (reduced opacity) for a muted/stopped state that keeps its tone
+   * but reads as inactive (the persistent-session "stopped" dot).
+   */
+  dimmed?: boolean;
+  /** Native tooltip text shown on hover (e.g. attached-tab list, state word). */
+  title?: string;
+  /**
+   * Hide the dot from assistive technology (`aria-hidden`). Use when adjacent
+   * text already conveys the same state, so the dot is purely decorative.
+   */
+  ariaHidden?: boolean;
   /** Extra class for layout tweaks (margin) at the call site. */
   className?: string;
   /** Test hook forwarded to the dot element. */
@@ -47,6 +79,10 @@ export function StatusDot({
   tone,
   size = "md",
   label,
+  pulse = false,
+  dimmed = false,
+  title,
+  ariaHidden,
   className,
   testId,
 }: StatusDotProps): React.ReactElement {
@@ -54,6 +90,9 @@ export function StatusDot({
     "status-dot",
     `status-dot--${tone}`,
     size === "sm" ? "status-dot--sm" : "",
+    size === "lg" ? "status-dot--lg" : "",
+    pulse ? "status-dot--pulse" : "",
+    dimmed ? "status-dot--dimmed" : "",
     className ?? "",
   ]
     .filter(Boolean)
@@ -64,6 +103,8 @@ export function StatusDot({
       className={classes}
       role={label ? "img" : undefined}
       aria-label={label}
+      aria-hidden={ariaHidden}
+      title={title}
       data-testid={testId}
     />
   );
