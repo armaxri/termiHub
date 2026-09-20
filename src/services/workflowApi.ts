@@ -6,7 +6,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { Workflow } from "@/types/workflow";
+import { Workflow, WorkflowRun } from "@/types/workflow";
 
 /** List all stored workflows. */
 export async function listWorkflows(): Promise<Workflow[]> {
@@ -26,4 +26,22 @@ export async function saveWorkflow(workflow: Workflow): Promise<Workflow> {
 /** Delete a workflow by ID. */
 export async function deleteWorkflow(workflowId: string): Promise<void> {
   await invoke("delete_workflow", { workflowId });
+}
+
+/** List all recorded workflow runs, most-recent first (PROD-0046). */
+export async function listWorkflowRuns(): Promise<WorkflowRun[]> {
+  return await invoke<WorkflowRun[]>("list_workflow_runs");
+}
+
+/**
+ * Record a finished workflow run. Returns the updated (capped, newest-first)
+ * history list.
+ */
+export async function recordWorkflowRun(run: WorkflowRun): Promise<WorkflowRun[]> {
+  return await invoke<WorkflowRun[]>("record_workflow_run", { run });
+}
+
+/** Clear the entire workflow run history. Returns the (now empty) list. */
+export async function clearWorkflowRunHistory(): Promise<WorkflowRun[]> {
+  return await invoke<WorkflowRun[]>("clear_workflow_run_history");
 }

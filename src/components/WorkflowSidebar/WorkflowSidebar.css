@@ -93,3 +93,44 @@
   font-size: var(--font-size-2xs);
   line-height: 16px;
 }
+
+/* Persisted run-history panel (PROD-0046). */
+.workflow-history {
+  display: flex;
+  flex-direction: column;
+  max-height: 40%;
+  border-top: 1px solid var(--border-primary);
+}
+
+.workflow-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--spacing-xxs) var(--spacing-sm);
+}
+
+.workflow-history__title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.workflow-history__list {
+  overflow-y: auto;
+  padding: var(--spacing-xxs) 0;
+}
+
+.workflow-history__empty {
+  padding: var(--spacing-sm) var(--spacing-md);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.workflow-history__meta {
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}

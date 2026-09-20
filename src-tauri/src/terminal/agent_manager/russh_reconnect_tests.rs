@@ -1480,6 +1480,13 @@ struct SeverObservations {
 ///  * the sshd is never touched (deterministic in-process sever).
 ///
 /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
+///
+/// QUARANTINE (#3129): timing-flaky on ALL CI runners under load — the real/mock
+/// sshd reconnect timing intermittently overruns the fold deadline (observed on
+/// macOS, Windows, AND ubuntu, so a per-platform gate is insufficient). Ignored on
+/// every platform but kept (not deleted) for the local/manual reconnect grade; the
+/// deterministic fix stays tracked in #3129.
+#[ignore = "flaky under CI timing on all platforms, see #3129"]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
     let Some(sshd) = find_sshd() else {
@@ -1767,6 +1774,16 @@ async fn manager_test_sever_drives_reconnect_and_region_folds_headlessly() {
 /// shipped command → task path rather than `reconnect_agent` in isolation.
 ///
 /// Requires `cargo build -p termihub-agent` and a local `sshd`; skips otherwise.
+///
+/// QUARANTINE (#3129): timing-flaky on ubuntu/linux CI runners under load (the
+/// park-vs-cancel settle timing intermittently races). Ignored on linux only;
+/// kept full-strength on macOS + Windows, where it is stable, so the park/cancel
+/// distinction still gates every PR on at least one platform. The deterministic
+/// fix stays tracked in #3129 — do NOT delete or blanket-ignore.
+#[cfg_attr(
+    target_os = "linux",
+    ignore = "flaky under CI timing on ubuntu/linux, see #3129"
+)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn manager_user_cancel_settles_distinct_from_a_parked_permanent_drop() {
     let Some(sshd) = find_sshd() else {

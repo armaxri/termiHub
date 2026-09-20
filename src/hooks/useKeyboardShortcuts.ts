@@ -67,7 +67,7 @@ export function useKeyboardShortcuts() {
         const wfId = matchHotkeyWorkflow(e, useAppStore.getState().workflows);
         if (wfId) {
           e.preventDefault();
-          void useAppStore.getState().runWorkflow(wfId);
+          void useAppStore.getState().runWorkflow(wfId, { triggeredBy: "hotkey" });
         }
         return;
       }
