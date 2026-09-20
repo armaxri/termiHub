@@ -396,11 +396,12 @@ export function updateSplitSizes(
 
 // --- Panel tree building/capture for workspace launch ---
 
-let panelIdCounter = 0;
-
 function generatePanelId(): string {
-  panelIdCounter++;
-  return `ws-panel-${panelIdCounter}`;
+  // Globally unique by construction (#2868, mirroring the FES-004 tab-id fix): a
+  // per-window monotonic counter collides across desktop windows, and panel ids
+  // double as layout/session-region keys. The `ws-panel-` prefix stays for
+  // debuggability. Old persisted `ws-panel-N` ids remain valid (ids are opaque).
+  return newId("ws-panel");
 }
 
 function generateTabId(): string {
