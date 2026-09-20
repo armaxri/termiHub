@@ -287,6 +287,53 @@
   width: 100%;
 }
 
+/* Per-core CPU mini-bars in the monitoring dropdown (#3178). */
+.monitoring-menu__cores {
+  padding: var(--spacing-xs) var(--spacing-md);
+}
+
+.monitoring-menu__cores-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--spacing-xxs);
+  margin-top: var(--spacing-xxs);
+}
+
+.monitoring-menu__core-track {
+  display: flex;
+  align-items: flex-end;
+  width: var(--spacing-sm);
+  height: var(--spacing-xl);
+  background-color: var(--bg-tertiary);
+  border-radius: var(--radius-xs);
+  overflow: hidden;
+}
+
+.monitoring-menu__core-fill {
+  width: 100%;
+  border-radius: var(--radius-xs);
+  transition: height var(--transition-fast);
+}
+
+.monitoring-menu__core-fill--normal {
+  background-color: var(--text-accent);
+}
+
+.monitoring-menu__core-fill--warning {
+  background-color: var(--color-warning);
+}
+
+.monitoring-menu__core-fill--critical {
+  background-color: var(--color-error);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitoring-menu__core-fill {
+    transition: none;
+  }
+}
+
 .monitoring-menu__label {
   color: var(--text-muted);
   white-space: nowrap;
