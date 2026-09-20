@@ -22,6 +22,21 @@ pub enum FtpAuth {
     Credentials { username: String, password: String },
 }
 
+/// Optional HTTP Basic authentication credentials for an embedded HTTP server
+/// (PROD-0035).
+///
+/// When present on an HTTP server's [`EmbeddedServerConfig`], the server
+/// challenges every request with `401 Unauthorized` +
+/// `WWW-Authenticate: Basic` until a matching `Authorization: Basic` header is
+/// supplied. Absent (`http_auth: None`) the server serves unauthenticated,
+/// exactly as before this field existed.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpBasicAuth {
+    pub username: String,
+    pub password: String,
+}
+
 /// Configuration for a single embedded server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -50,6 +65,13 @@ pub struct EmbeddedServerConfig {
     /// Authentication for FTP servers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ftp_auth: Option<FtpAuth>,
+    /// Optional HTTP Basic authentication (HTTP only, PROD-0035).
+    ///
+    /// `None` (the default, and the shape of every config written before this
+    /// field existed) serves the directory unauthenticated exactly as before;
+    /// `Some(_)` protects it behind a Basic-auth challenge.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http_auth: Option<HttpBasicAuth>,
     /// Maximum size, in bytes, of a single file transfer.
     ///
     /// Currently enforced by the TFTP server (which is unauthenticated by
@@ -191,6 +213,7 @@ mod tests {
             read_only: true,
             directory_listing: Some(true),
             ftp_auth: None,
+            http_auth: None,
             max_transfer_bytes: None,
         };
         let json = serde_json::to_string(&config).unwrap();

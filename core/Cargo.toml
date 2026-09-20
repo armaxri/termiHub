@@ -155,6 +155,11 @@ ed25519-dalek = { version = "2", features = ["rand_core"], optional = true }
 # 64-byte signature in `signature.json` (#2036), and by the `docker` feature to
 # move file content across the `docker exec` boundary (LIBBE-001).
 base64 = { version = "0.22", optional = true }
+# Constant-time equality for the embedded HTTP server's Basic-auth credential
+# check (PROD-0035), so credential verification cannot leak via timing. Already
+# in the workspace tree (a transitive dependency of `argon2`), so this adds no
+# new supply-chain surface. Behind the optional `embedded-servers` feature.
+subtle = { version = "2", optional = true }
 # HTTP client for the periodic HTTP monitor service (#2592), hostable on the
 # desktop or a remote agent. `rustls-tls` avoids an OpenSSL dependency for the
 # agent's musl cross-compilation; `blocking` backs the offline unit test that
@@ -254,6 +259,12 @@ embedded-servers = [
     "dep:tracing",
     "dep:anyhow",
     "tokio/fs",
+    # Optional HTTP Basic auth for the HTTP server (PROD-0035): `base64` decodes
+    # the `Authorization: Basic` header, `sha2` reduces credentials to a
+    # fixed-length digest, and `subtle` compares those digests in constant time.
+    "dep:base64",
+    "dep:sha2",
+    "dep:subtle",
 ]
 # Plugin package format + manifest schema/validation (#1989), plus the native
 # host loader (#1995). Pulls `zip` to read `.termihub-plugin` archives,
