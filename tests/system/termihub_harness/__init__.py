@@ -43,6 +43,7 @@ from .fixtures import (
     container_runtime,
     reap_stale_fixtures,
     stage_remote_agent_binary,
+    stale_app_containers,
     stale_fixture_containers,
     wait_for_port,
 )
@@ -162,6 +163,7 @@ __all__ = [
     "container_runtime",
     "reap_stale_fixtures",
     "stage_remote_agent_binary",
+    "stale_app_containers",
     "stale_fixture_containers",
     "wait_for_port",
     "REMOTE_AGENT_SERVICE",
