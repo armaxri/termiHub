@@ -452,6 +452,59 @@ fn generate_container_name() -> String {
     format!("{CONTAINER_PREFIX}-{ts}-{pid}")
 }
 
+/// Docker/OCI label key stamping the checkout that owns an app-spawned container.
+///
+/// The container *name* (`termihub-<ts>-<pid>`) carries no per-checkout
+/// identifier, so a crashed run's orphaned containers cannot be attributed —
+/// or safely reaped — by name without risking a sibling checkout's containers
+/// on the shared machine. This label makes them attributable: the pre-run
+/// reaper (`tests/system/termihub_harness/fixtures.py`,
+/// `scripts/test-system-linux.sh`) removes only the containers carrying *this*
+/// checkout's value (TIN-011 follow-up, #3049).
+const CHECKOUT_LABEL_KEY: &str = "com.termihub.checkout";
+
+/// Environment variables (in precedence order) naming the owning checkout.
+///
+/// Set by the parallel-test resolver (`scripts/internal/dev-local-env.sh` and
+/// `termihub_harness.dev_local`) to this checkout's compose-project value (e.g.
+/// `termihub-test-5`) — the exact value the reaper filters on. Unset in normal
+/// (non-test) use, so production containers carry no checkout label.
+const CHECKOUT_ENV_VARS: [&str; 2] = ["TERMIHUB_TEST_PROJECT", "COMPOSE_PROJECT_NAME"];
+
+/// The owning checkout's identifier for this process, if it is running under the
+/// parallel-test harness — the first non-empty [`CHECKOUT_ENV_VARS`] value.
+fn checkout_label_value() -> Option<String> {
+    for var in CHECKOUT_ENV_VARS {
+        if let Ok(value) = std::env::var(var) {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Labels to stamp on every container this process creates.
+///
+/// Carries `com.termihub.checkout=<checkout>` only when a checkout identifier is
+/// present (parallel-test runs); an empty map otherwise, so production containers
+/// stay unlabelled. Kept pure (takes the resolved checkout) so the mapping is
+/// unit-testable without touching the process environment.
+fn container_labels_for(checkout: Option<&str>) -> std::collections::HashMap<String, String> {
+    let mut labels = std::collections::HashMap::new();
+    if let Some(checkout) = checkout {
+        labels.insert(CHECKOUT_LABEL_KEY.to_string(), checkout.to_string());
+    }
+    labels
+}
+
+/// Labels to stamp on every container this process creates, resolved from the
+/// environment. See [`container_labels_for`].
+fn container_labels() -> std::collections::HashMap<String, String> {
+    container_labels_for(checkout_label_value().as_deref())
+}
+
 /// Build the `HostConfig.binds` strings for a set of [`VolumeMount`]s.
 ///
 /// Each mount renders as `"<host_path>:<container_path>"`, with a trailing
@@ -769,11 +822,21 @@ impl ConnectionType for Docker {
         // Build volume binds.
         let binds = build_volume_binds(&config.volumes);
 
+        // Attribute the container to the owning checkout under the test harness so
+        // a crashed run's orphan can be reaped per-checkout (#3049); empty (→ no
+        // label) in normal use.
+        let labels = container_labels();
+
         // Create container configuration.
         let container_config = Config {
             image: Some(config.image.clone()),
             tty: Some(true),
             open_stdin: Some(true),
+            labels: if labels.is_empty() {
+                None
+            } else {
+                Some(labels)
+            },
             env: if env.is_empty() { None } else { Some(env) },
             working_dir: config.working_directory.clone(),
             // Use `tail -f /dev/null` to keep the container alive.
@@ -1093,6 +1156,34 @@ mod tests {
     fn monitoring_always_none() {
         let docker = Docker::new();
         assert!(docker.monitoring().is_none());
+    }
+
+    // --- Container labelling (per-checkout reap attribution, #3049) ---
+
+    #[test]
+    fn container_name_carries_prefix_ts_and_pid() {
+        let name = generate_container_name();
+        let pid = std::process::id().to_string();
+        assert!(name.starts_with(&format!("{CONTAINER_PREFIX}-")));
+        assert!(name.ends_with(&format!("-{pid}")));
+    }
+
+    #[test]
+    fn no_checkout_means_no_labels() {
+        // Production (no test-harness checkout env) → container carries no label.
+        assert!(container_labels_for(None).is_empty());
+    }
+
+    #[test]
+    fn checkout_is_stamped_under_the_termihub_checkout_label() {
+        // The label the reaper filters on, carrying exactly this checkout's value
+        // — so an orphaned app container is attributable to one checkout only.
+        let labels = container_labels_for(Some("termihub-test-5"));
+        assert_eq!(
+            labels.get(CHECKOUT_LABEL_KEY),
+            Some(&"termihub-test-5".to_string())
+        );
+        assert_eq!(labels.len(), 1);
     }
 
     #[test]
