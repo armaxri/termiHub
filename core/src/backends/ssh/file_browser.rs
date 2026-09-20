@@ -6,9 +6,12 @@
 use std::any::Any;
 use std::sync::Arc;
 
+use std::io::SeekFrom;
+
 use russh_sftp::client::fs::File;
 use russh_sftp::client::SftpSession;
-use tokio::io::AsyncReadExt;
+use russh_sftp::protocol::OpenFlags;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::Mutex;
 
 use crate::config::SshConfig;
@@ -209,6 +212,67 @@ impl SftpTransferChannel {
             .create(path)
             .await
             .map_err(|e| FileError::OperationFailed(format!("create remote file failed: {e}")))
+    }
+
+    /// Open an existing remote file for streaming reads, seeked to `offset`
+    /// (the resume source for a download, PROD-0012).
+    ///
+    /// Opens read-only and positions the file pointer at `offset` so the copy
+    /// loop reads only the not-yet-fetched tail. `offset == 0` is equivalent to
+    /// [`open_read`](Self::open_read). The returned handle implements
+    /// [`AsyncRead`](tokio::io::AsyncRead).
+    ///
+    /// An error at a non-zero `offset` (a server that refuses `SSH_FXP_READ`
+    /// past EOF, or the file having shrunk) lets the caller fall back to a
+    /// restart-from-zero resume.
+    pub async fn open_read_at(&self, path: &str, offset: u64) -> Result<File, FileError> {
+        let mut file = self.open_read(path).await?;
+        if offset > 0 {
+            file.seek(SeekFrom::Start(offset)).await.map_err(|e| {
+                FileError::OperationFailed(format!("seek remote read to {offset} failed: {e}"))
+            })?;
+        }
+        Ok(file)
+    }
+
+    /// Open a remote file for streaming writes at `offset`, **without
+    /// truncating** an existing partial (the resume destination for an upload,
+    /// PROD-0012).
+    ///
+    /// Opens with `CREATE | WRITE` (never `TRUNCATE`) and seeks to `offset`, so
+    /// a resumed upload writes to byte `offset` onward and preserves the bytes
+    /// already present. For a fresh (truncating) transfer use
+    /// [`create_write`](Self::create_write) (`offset == 0` here does not
+    /// truncate, so the caller chooses the truncating vs appending open
+    /// explicitly). The returned handle implements
+    /// [`AsyncWrite`](tokio::io::AsyncWrite).
+    ///
+    /// An error at a non-zero `offset` lets the caller fall back to a
+    /// restart-from-zero resume.
+    pub async fn open_write_at(&self, path: &str, offset: u64) -> Result<File, FileError> {
+        let mut file = self
+            .sftp
+            .open_with_flags(path, OpenFlags::CREATE | OpenFlags::WRITE)
+            .await
+            .map_err(|e| {
+                FileError::OperationFailed(format!("open remote file for append failed: {e}"))
+            })?;
+        if offset > 0 {
+            file.seek(SeekFrom::Start(offset)).await.map_err(|e| {
+                FileError::OperationFailed(format!("seek remote write to {offset} failed: {e}"))
+            })?;
+        }
+        Ok(file)
+    }
+
+    /// Best-effort size (in bytes) of a remote file via SFTP `stat`, used to
+    /// byte-verify a resume offset before appending (PROD-0012).
+    ///
+    /// Returns `None` when the size is unavailable or the file does not exist,
+    /// so the caller treats an un-stattable destination as "cannot trust the
+    /// partial" and restarts from zero.
+    pub async fn remote_file_size(&self, path: &str) -> Option<u64> {
+        self.sftp.metadata(path).await.ok().and_then(|m| m.size)
     }
 
     /// Remove a remote file — used to clean up a partial upload on cancel/error.
