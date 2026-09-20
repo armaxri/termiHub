@@ -104,8 +104,8 @@
 
   /* Scrollbar */
   --scrollbar-bg: transparent;
-  --scrollbar-thumb: rgba(90, 102, 130, 0.3);
-  --scrollbar-thumb-hover: rgba(90, 102, 130, 0.55);
+  --scrollbar-thumb: rgba(90, 102, 130, 0.45);
+  --scrollbar-thumb-hover: rgba(90, 102, 130, 0.65);
   --scrollbar-width: 8px;
 
   /* Spacing */

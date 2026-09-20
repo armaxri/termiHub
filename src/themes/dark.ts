@@ -98,7 +98,7 @@ export const darkTheme: ThemeDefinition = {
     ansiBrightWhite: "#e5e5e5",
 
     // Scrollbar
-    scrollbarThumb: "rgba(121, 121, 121, 0.4)",
+    scrollbarThumb: "rgba(121, 121, 121, 0.5)",
     scrollbarThumbHover: "rgba(100, 100, 100, 0.7)",
   },
 };
