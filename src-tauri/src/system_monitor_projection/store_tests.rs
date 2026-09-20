@@ -24,6 +24,11 @@ fn sample(hostname: &str, cpu: f64) -> SystemStats {
         disk_used_kb: 40_000_000,
         disk_used_percent: 40.0,
         os_info: "Linux 6.1".to_string(),
+        swap_total_kb: 4_000_000,
+        swap_used_kb: 1_000_000,
+        swap_used_percent: 25.0,
+        net_rx_bytes_per_sec: 1024.0,
+        net_tx_bytes_per_sec: 512.0,
     }
 }
 

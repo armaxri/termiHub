@@ -6,7 +6,7 @@
 
 use crate::errors::CoreError;
 
-use super::types::{CpuCounters, SystemStats};
+use super::types::{CpuCounters, NetCounters, SystemStats};
 
 /// The compound command executed on Linux hosts to gather all metrics
 /// in a single round-trip.
@@ -19,8 +19,13 @@ use super::types::{CpuCounters, SystemStats};
 /// output. `/proc` is already locale-invariant, so this is defence-in-depth for
 /// the `df`/`uname` legs and guards against any future parsed command being
 /// appended here.
+///
+/// The trailing `cat /proc/net/dev` supplies cumulative per-interface network
+/// byte counters (NET throughput). It is appended last so a host that lacks it
+/// still yields every earlier metric; a failure there only drops the network
+/// leg (parsed as `0`), it does not lose the rest of the already-emitted output.
 pub const MONITORING_COMMAND: &str =
-    "export LC_ALL=C LANG=C; hostname && cat /proc/loadavg && head -1 /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr";
+    "export LC_ALL=C LANG=C; hostname && cat /proc/loadavg && head -1 /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr && cat /proc/net/dev";
 
 /// Compute CPU usage percentage from the delta between two counter snapshots.
 /// Returns a value between 0.0 and 100.0.
@@ -60,9 +65,10 @@ pub fn parse_cpu_line(line: &str) -> CpuCounters {
 ///     && cat /proc/uptime && df -Pk / && uname -sr
 /// ```
 ///
-/// `cpu_usage_percent` in the returned `SystemStats` is set to 0.0; the caller
-/// is responsible for computing the actual value from counter deltas.
-pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError> {
+/// `cpu_usage_percent` and the `net_*_bytes_per_sec` fields in the returned
+/// `SystemStats` are set to 0.0; the caller is responsible for computing the
+/// actual values from the returned [`CpuCounters`] / [`NetCounters`] deltas.
+pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters, NetCounters), CoreError> {
     let lines: Vec<&str> = output.lines().collect();
     if lines.len() < 6 {
         return Err(CoreError::Other(
@@ -107,6 +113,8 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
     let mut mem_buffers_kb: u64 = 0;
     let mut mem_cached_kb: u64 = 0;
     let mut mem_sreclaimable_kb: u64 = 0;
+    let mut swap_total_kb: u64 = 0;
+    let mut swap_free_kb: u64 = 0;
     let mut meminfo_end = 3;
 
     for (i, line) in lines.iter().enumerate().skip(3) {
@@ -124,6 +132,10 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
             mem_cached_kb = parse_meminfo_value(line);
         } else if line.starts_with("SReclaimable:") {
             mem_sreclaimable_kb = parse_meminfo_value(line);
+        } else if line.starts_with("SwapTotal:") {
+            swap_total_kb = parse_meminfo_value(line);
+        } else if line.starts_with("SwapFree:") {
+            swap_free_kb = parse_meminfo_value(line);
         }
         // /proc/uptime line starts with a digit — signals end of meminfo
         if !line.contains(':') && line.chars().next().is_some_and(|c| c.is_ascii_digit()) {
@@ -163,6 +175,15 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
         0.0
     };
 
+    // Swap: used = total - free. A host with no swap reports SwapTotal 0, which
+    // yields 0 used / 0 % rather than an error.
+    let swap_used_kb = swap_total_kb.saturating_sub(swap_free_kb);
+    let swap_used_percent = if swap_total_kb > 0 {
+        (swap_used_kb as f64 / swap_total_kb as f64) * 100.0
+    } else {
+        0.0
+    };
+
     // df output: find the data line (skip header)
     let mut disk_total_kb: u64 = 0;
     let mut disk_used_kb: u64 = 0;
@@ -190,16 +211,28 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
         }
     }
 
-    // uname -sr: last non-empty line
+    // uname -sr: last non-empty line that is neither a df row (starts with `/`)
+    // nor part of the trailing `/proc/net/dev` block. Net/dev header lines carry
+    // a `|` and its interface rows carry a `:`; `uname -sr` output ("Linux 5.15.0",
+    // "Darwin 22.1.0", …) has neither, so excluding both reliably lands on uname
+    // even though the network block now follows it in the command output.
     let os_info = lines
         .iter()
         .rev()
         .find(|l| {
             let trimmed = l.trim();
-            !trimmed.is_empty() && !trimmed.starts_with('/')
+            !trimmed.is_empty()
+                && !trimmed.starts_with('/')
+                && !trimmed.contains(':')
+                && !trimmed.contains('|')
         })
         .map(|s| s.trim().to_string())
         .unwrap_or_default();
+
+    // Network counters from the trailing `/proc/net/dev` block. Absent on hosts
+    // whose kernel omits it (parsed as 0); the caller diffs successive snapshots
+    // to derive the per-second rates.
+    let net_counters = parse_net_dev(output);
 
     let stats = SystemStats {
         hostname,
@@ -213,9 +246,14 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters), CoreError
         disk_used_kb,
         disk_used_percent,
         os_info,
+        swap_total_kb,
+        swap_used_kb,
+        swap_used_percent,
+        net_rx_bytes_per_sec: 0.0,
+        net_tx_bytes_per_sec: 0.0,
     };
 
-    Ok((stats, cpu_counters))
+    Ok((stats, cpu_counters, net_counters))
 }
 
 /// Extract the numeric kB value from a `/proc/meminfo` line like
@@ -247,6 +285,59 @@ pub fn parse_df_output(output: &str) -> (u64, u64, f64) {
     (0, 0, 0.0)
 }
 
+/// Sum cumulative receive/transmit byte counters across all non-loopback
+/// interfaces from `/proc/net/dev` output.
+///
+/// Each interface row is `iface: rxbytes rxpackets … txbytes txpackets …` — 8
+/// receive columns followed by 8 transmit columns after the `:`. We take
+/// column 0 (rx bytes) and column 8 (tx bytes). The two header lines carry no
+/// `:` and are skipped, as is `lo` (loopback). Lines from other sections of the
+/// combined monitoring output never match: only `/proc/net/dev` rows have ≥16
+/// numeric fields after a colon, so this is safe to run over the whole output.
+/// When the interface counter is very large the kernel may glue it to the `:`
+/// (`eth0:12345…`); splitting on the first `:` handles that.
+pub fn parse_net_dev(output: &str) -> NetCounters {
+    let mut rx_bytes: u64 = 0;
+    let mut tx_bytes: u64 = 0;
+    for line in output.lines() {
+        let Some(colon) = line.find(':') else {
+            continue;
+        };
+        let name = line[..colon].trim();
+        if name.is_empty() || name == "lo" {
+            continue;
+        }
+        let fields: Vec<u64> = line[colon + 1..]
+            .split_whitespace()
+            .map(|s| s.parse().unwrap_or(0))
+            .collect();
+        if fields.len() >= 16 {
+            rx_bytes = rx_bytes.saturating_add(fields[0]);
+            tx_bytes = tx_bytes.saturating_add(fields[8]);
+        }
+    }
+    NetCounters { rx_bytes, tx_bytes }
+}
+
+/// Compute network throughput in bytes/sec from the delta between two cumulative
+/// counter snapshots taken `elapsed_secs` apart.
+///
+/// Returns `(rx_bytes_per_sec, tx_bytes_per_sec)`. A non-positive `elapsed_secs`
+/// yields `(0.0, 0.0)`; a counter that went backwards (reboot / interface reset)
+/// contributes `0` for that direction via a saturating subtraction.
+pub fn net_rate_from_delta(
+    prev: &NetCounters,
+    curr: &NetCounters,
+    elapsed_secs: f64,
+) -> (f64, f64) {
+    if elapsed_secs <= 0.0 {
+        return (0.0, 0.0);
+    }
+    let rx = curr.rx_bytes.saturating_sub(prev.rx_bytes) as f64 / elapsed_secs;
+    let tx = curr.tx_bytes.saturating_sub(prev.tx_bytes) as f64 / elapsed_secs;
+    (rx, tx)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -263,7 +354,9 @@ mod tests {
         );
     }
 
-    /// Helper: build sample output with the given cpu line.
+    /// Helper: build sample output with the given cpu line. Includes swap lines
+    /// in the meminfo section and a trailing `/proc/net/dev` block so the full
+    /// `MONITORING_COMMAND` layout is exercised.
     fn sample_output(cpu_line: &str) -> String {
         format!(
             "\
@@ -275,10 +368,16 @@ MemFree:         8000000 kB
 MemAvailable:   12000000 kB
 Buffers:          500000 kB
 Cached:          3000000 kB
+SwapTotal:       4000000 kB
+SwapFree:        3000000 kB
 12345.67 45678.90
 Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        50000000  20000000  28000000      42% /
-Linux 5.15.0"
+Linux 5.15.0
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:  1000000    1000    0    0    0     0          0         0  1000000    1000    0    0    0     0       0          0
+  eth0:  5000000   45678    0    0    0     0          0         0  2000000   23456    0    0    0     0       0          0"
         )
     }
 
@@ -286,7 +385,7 @@ Linux 5.15.0"
     fn parse_stats_basic() {
         let output = sample_output("cpu  10000 500 3000 80000 1000 0 200 0 0 0");
 
-        let (stats, counters) = parse_stats(&output).unwrap();
+        let (stats, counters, net) = parse_stats(&output).unwrap();
         assert_eq!(stats.hostname, "myhost");
         assert!((stats.load_average[0] - 0.15).abs() < 0.001);
         assert!((stats.load_average[1] - 0.10).abs() < 0.001);
@@ -301,7 +400,18 @@ Linux 5.15.0"
         assert_eq!(stats.disk_total_kb, 50000000);
         assert_eq!(stats.disk_used_kb, 20000000);
         assert!((stats.disk_used_percent - 42.0).abs() < 0.1);
+        // os_info must remain uname even though /proc/net/dev now follows it.
         assert_eq!(stats.os_info, "Linux 5.15.0");
+        // Swap: used = 4_000_000 - 3_000_000 = 1_000_000 → 25%.
+        assert_eq!(stats.swap_total_kb, 4_000_000);
+        assert_eq!(stats.swap_used_kb, 1_000_000);
+        assert!((stats.swap_used_percent - 25.0).abs() < 0.1);
+        // parse_stats leaves net rates at 0 (caller computes from the delta);
+        // the cumulative counters exclude `lo`.
+        assert!((stats.net_rx_bytes_per_sec - 0.0).abs() < 0.001);
+        assert!((stats.net_tx_bytes_per_sec - 0.0).abs() < 0.001);
+        assert_eq!(net.rx_bytes, 5_000_000);
+        assert_eq!(net.tx_bytes, 2_000_000);
     }
 
     #[test]
@@ -408,7 +518,7 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        100000000  60000000  38000000      60% /
 Linux 6.1.0";
 
-        let (stats, _) = parse_stats(output).unwrap();
+        let (stats, _, _) = parse_stats(output).unwrap();
         // used = 8000000 - 2000000 = 6000000, percent = 75%
         assert!((stats.memory_used_percent - 75.0).abs() < 0.1);
         assert!((stats.disk_used_percent - 60.0).abs() < 0.1);
@@ -433,7 +543,7 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        100000000  60000000  38000000      60% /
 Linux 3.10.0";
 
-        let (stats, _) = parse_stats(output).unwrap();
+        let (stats, _, _) = parse_stats(output).unwrap();
         // available ≈ MemFree + Buffers + Cached + SReclaimable
         //         = 1_000_000 + 200_000 + 2_000_000 + 300_000 = 3_500_000
         // (SwapCached must NOT be counted).
@@ -464,7 +574,7 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        100000000  60000000  38000000      60% /
 Linux 6.1.0";
 
-        let (stats, _) = parse_stats(output).unwrap();
+        let (stats, _, _) = parse_stats(output).unwrap();
         assert_eq!(stats.memory_available_kb, 6_000_000);
         // used = 8_000_000 - 6_000_000 = 2_000_000 → 25%.
         assert!((stats.memory_used_percent - 25.0).abs() < 0.1);
@@ -487,5 +597,111 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
         assert_eq!(total, 0);
         assert_eq!(used, 0);
         assert!((pct - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn parse_net_dev_sums_non_loopback_interfaces() {
+        // Two real interfaces plus loopback; `lo` must be excluded and the rest
+        // summed. rx = col 0, tx = col 8 (after the 8 receive columns).
+        let output = "\
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:  9999999    1000    0    0    0     0          0         0  9999999    1000    0    0    0     0       0          0
+  eth0:  5000000   45678    0    0    0     0          0         0  2000000   23456    0    0    0     0       0          0
+  wlan0:  1000000    5000    0    0    0     0          0         0   500000    4000    0    0    0     0       0          0";
+        let net = parse_net_dev(output);
+        assert_eq!(net.rx_bytes, 6_000_000);
+        assert_eq!(net.tx_bytes, 2_500_000);
+    }
+
+    #[test]
+    fn parse_net_dev_handles_counter_glued_to_colon() {
+        // The kernel column is fixed-width; a very large counter can be printed
+        // with no space after the `:`. Splitting on the first `:` must still work.
+        let output = "\
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+  eth0:99999999999   45678    0    0    0     0          0         0  2000000   23456    0    0    0     0       0          0";
+        let net = parse_net_dev(output);
+        assert_eq!(net.rx_bytes, 99_999_999_999);
+        assert_eq!(net.tx_bytes, 2_000_000);
+    }
+
+    #[test]
+    fn parse_net_dev_absent_yields_zero() {
+        // Non-net output (or a host whose kernel omits /proc/net/dev): no row has
+        // ≥16 numeric fields after a colon, so counters stay 0 rather than erroring.
+        let output = "\
+myhost
+MemTotal:       16384000 kB
+Linux 5.15.0";
+        let net = parse_net_dev(output);
+        assert_eq!(net.rx_bytes, 0);
+        assert_eq!(net.tx_bytes, 0);
+    }
+
+    #[test]
+    fn parse_stats_no_swap_reports_zero() {
+        // A host with swap disabled reports SwapTotal 0 (or omits the lines).
+        let output = "\
+noswap
+0.10 0.05 0.01 1/50 999
+cpu  1000 0 500 9000 200 0 0 0 0 0
+MemTotal:       8000000 kB
+MemAvailable:   4000000 kB
+SwapTotal:             0 kB
+SwapFree:              0 kB
+100.0 200.0
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/sda1        10000000   5000000   5000000      50% /
+Linux 6.1.0";
+        let (stats, _, _) = parse_stats(output).unwrap();
+        assert_eq!(stats.swap_total_kb, 0);
+        assert_eq!(stats.swap_used_kb, 0);
+        assert!((stats.swap_used_percent - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn net_rate_from_delta_computes_bytes_per_sec() {
+        let prev = NetCounters {
+            rx_bytes: 1_000,
+            tx_bytes: 2_000,
+        };
+        let curr = NetCounters {
+            rx_bytes: 3_000,
+            tx_bytes: 4_000,
+        };
+        // 2000 bytes over 2.0s = 1000 B/s each direction.
+        let (rx, tx) = net_rate_from_delta(&prev, &curr, 2.0);
+        assert!((rx - 1000.0).abs() < 0.001);
+        assert!((tx - 1000.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn net_rate_from_delta_zero_elapsed_returns_zero() {
+        let c = NetCounters {
+            rx_bytes: 5_000,
+            tx_bytes: 5_000,
+        };
+        let (rx, tx) = net_rate_from_delta(&c, &c, 0.0);
+        assert!((rx - 0.0).abs() < 0.001);
+        assert!((tx - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn net_rate_from_delta_counter_reset_yields_zero() {
+        // A reboot/interface reset makes the new counter smaller; saturating_sub
+        // clamps the negative delta to 0 rather than underflowing.
+        let prev = NetCounters {
+            rx_bytes: 10_000,
+            tx_bytes: 10_000,
+        };
+        let curr = NetCounters {
+            rx_bytes: 100,
+            tx_bytes: 100,
+        };
+        let (rx, tx) = net_rate_from_delta(&prev, &curr, 2.0);
+        assert!((rx - 0.0).abs() < 0.001);
+        assert!((tx - 0.0).abs() < 0.001);
     }
 }

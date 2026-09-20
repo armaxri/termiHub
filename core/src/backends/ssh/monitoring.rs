@@ -13,7 +13,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
@@ -23,8 +23,9 @@ use crate::errors::CoreError;
 use crate::monitoring::{
     parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatus,
     MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
-    MonitoringSubscription, BACKOFF_CAP, DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS,
-    DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD, MONITORING_COMMAND,
+    MonitoringSubscription, NetDeltaTracker, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
+    DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
+    MONITORING_COMMAND,
 };
 
 use super::handler::{ForwardedChannelRegistry, SshSession};
@@ -359,6 +360,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
         tokio::spawn(async move {
             let mut session = session;
             let mut cpu_tracker = CpuDeltaTracker::new();
+            let mut net_tracker = NetDeltaTracker::new();
             let mut loop_state = CollectLoopState::with_threshold(stale_threshold);
 
             while alive_clone.load(Ordering::SeqCst) {
@@ -375,19 +377,24 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                 // un-dims and the next collect keeps the loop `Live`.
                 if let Some(status) = loop_state.resume() {
                     emit_status(&status_tx, status).await;
-                    // Drop the stale CPU baseline so the first post-resume
-                    // sample does not report a spurious rate from the gap.
+                    // Drop the stale CPU/network baselines so the first
+                    // post-resume sample does not report a spurious rate from
+                    // the paused gap.
                     cpu_tracker = CpuDeltaTracker::new();
+                    net_tracker = NetDeltaTracker::new();
                 }
 
                 // A collect error, a parse error, or a stat send failure all
                 // mean "no fresh sample this tick" → count as a failure.
                 let collected = match collect_once(&*transport, &session, collect_timeout).await {
                     Ok(output) => match parse_stats(&output) {
-                        Ok((mut stats, counters)) => {
+                        Ok((mut stats, counters, net_counters)) => {
                             if let Some(pct) = cpu_tracker.update(counters) {
                                 stats.cpu_usage_percent = pct;
                             }
+                            let (rx, tx_rate) = net_tracker.update(net_counters, Instant::now());
+                            stats.net_rx_bytes_per_sec = rx;
+                            stats.net_tx_bytes_per_sec = tx_rate;
                             if tx.send(stats).await.is_err() {
                                 break;
                             }

@@ -478,6 +478,11 @@ mod tests {
             disk_used_kb: 500,
             disk_used_percent: 50.0,
             os_info: "test".into(),
+            swap_total_kb: 1000,
+            swap_used_kb: 250,
+            swap_used_percent: 25.0,
+            net_rx_bytes_per_sec: 128.0,
+            net_tx_bytes_per_sec: 64.0,
         }
     }
 

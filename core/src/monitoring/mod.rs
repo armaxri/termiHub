@@ -11,8 +11,8 @@ pub mod status;
 pub mod types;
 
 pub use parser::{
-    cpu_percent_from_delta, parse_cpu_line, parse_df_output, parse_meminfo_value, parse_stats,
-    MONITORING_COMMAND,
+    cpu_percent_from_delta, net_rate_from_delta, parse_cpu_line, parse_df_output,
+    parse_meminfo_value, parse_net_dev, parse_stats, MONITORING_COMMAND,
 };
 pub use provider::{
     MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
@@ -21,9 +21,10 @@ pub use status::{
     BackoffSchedule, CollectLoopState, MonitorStatus, MonitorStatusReceiver, MonitorStatusSender,
     BACKOFF_CAP, DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_STALE_THRESHOLD,
 };
-pub use types::{CpuCounters, SystemStats};
+pub use types::{CpuCounters, NetCounters, SystemStats};
 
 use crate::errors::CoreError;
+use std::time::Instant;
 
 /// Default interval between system-monitoring stat collections, in milliseconds.
 ///
@@ -73,6 +74,46 @@ impl CpuDeltaTracker {
 }
 
 impl Default for CpuDeltaTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Maintains previous network counters + timestamp for calculating throughput.
+///
+/// Network throughput (bytes/sec) requires diffing two cumulative counter
+/// snapshots over the wall-clock interval between them. This struct encapsulates
+/// that state, mirroring [`CpuDeltaTracker`], so consumers do not manage the
+/// `Option<(NetCounters, Instant)>` themselves.
+pub struct NetDeltaTracker {
+    previous: Option<(NetCounters, Instant)>,
+}
+
+impl NetDeltaTracker {
+    /// Create a new tracker with no previous snapshot.
+    pub fn new() -> Self {
+        Self { previous: None }
+    }
+
+    /// Update with new cumulative counters observed at `now`, returning
+    /// `(rx_bytes_per_sec, tx_bytes_per_sec)`.
+    ///
+    /// The first call returns `(0.0, 0.0)` (no prior snapshot to diff against).
+    pub fn update(&mut self, current: NetCounters, now: Instant) -> (f64, f64) {
+        let result = self
+            .previous
+            .as_ref()
+            .map(|(prev, prev_instant)| {
+                let elapsed = now.duration_since(*prev_instant).as_secs_f64();
+                net_rate_from_delta(prev, &current, elapsed)
+            })
+            .unwrap_or((0.0, 0.0));
+        self.previous = Some((current, now));
+        result
+    }
+}
+
+impl Default for NetDeltaTracker {
     fn default() -> Self {
         Self::new()
     }
@@ -187,5 +228,49 @@ mod tests {
         };
         // Default should behave the same as new() — first call returns None
         assert!(tracker.update(counters).is_none());
+    }
+
+    #[test]
+    fn net_delta_tracker_first_call_returns_zero() {
+        let mut tracker = NetDeltaTracker::new();
+        let counters = NetCounters {
+            rx_bytes: 1_000,
+            tx_bytes: 2_000,
+        };
+        let (rx, tx) = tracker.update(counters, Instant::now());
+        assert!((rx - 0.0).abs() < 0.001);
+        assert!((tx - 0.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn net_delta_tracker_second_call_returns_rate() {
+        let mut tracker = NetDeltaTracker::new();
+        let start = Instant::now();
+        // Prime with the first snapshot.
+        let _ = tracker.update(
+            NetCounters {
+                rx_bytes: 1_000,
+                tx_bytes: 2_000,
+            },
+            start,
+        );
+        // Second snapshot 2s later: +2000 rx / +4000 tx → 1000 / 2000 B/s.
+        let (rx, tx) = tracker.update(
+            NetCounters {
+                rx_bytes: 3_000,
+                tx_bytes: 6_000,
+            },
+            start + std::time::Duration::from_secs(2),
+        );
+        assert!((rx - 1000.0).abs() < 0.001, "rx rate was {rx}");
+        assert!((tx - 2000.0).abs() < 0.001, "tx rate was {tx}");
+    }
+
+    #[test]
+    fn net_delta_tracker_default_matches_new() {
+        let mut tracker = NetDeltaTracker::default();
+        let (rx, tx) = tracker.update(NetCounters::default(), Instant::now());
+        assert!((rx - 0.0).abs() < 0.001);
+        assert!((tx - 0.0).abs() < 0.001);
     }
 }

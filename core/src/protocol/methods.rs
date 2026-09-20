@@ -2015,6 +2015,11 @@ mod tests {
                 disk_used_kb: 20000000,
                 disk_used_percent: 42.0,
                 os_info: "Linux 5.15.0".to_string(),
+                swap_total_kb: 2_000_000,
+                swap_used_kb: 500_000,
+                swap_used_percent: 25.0,
+                net_rx_bytes_per_sec: 1024.0,
+                net_tx_bytes_per_sec: 2048.0,
             },
         );
         let v = serde_json::to_value(&data).unwrap();
@@ -2030,6 +2035,11 @@ mod tests {
         assert_eq!(v["diskUsedKb"], 20000000);
         assert_eq!(v["diskUsedPercent"], 42.0);
         assert_eq!(v["osInfo"], "Linux 5.15.0");
+        assert_eq!(v["swapTotalKb"], 2_000_000);
+        assert_eq!(v["swapUsedKb"], 500_000);
+        assert_eq!(v["swapUsedPercent"], 25.0);
+        assert_eq!(v["netRxBytesPerSec"], 1024.0);
+        assert_eq!(v["netTxBytesPerSec"], 2048.0);
         // The flattened stats must not appear under a nested `stats` key.
         assert!(v.get("stats").is_none());
         // Verify camelCase (no snake_case keys)
