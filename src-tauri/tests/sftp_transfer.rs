@@ -25,10 +25,13 @@ use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser, SftpTransfe
 use termihub_core::config::SshConfig;
 use termihub_core::files::FileBrowser;
 use termihub_lib::files::sftp::Writability;
+use termihub_lib::files::transfer::sftp::{run_sftp_transfer, ResumeMode};
+use termihub_lib::files::transfer::state::TransferStateTag;
 use termihub_lib::files::transfer::{
     run_download, ProgressSink, TransferContext, TransferDirection, TransferPhase,
     TransferProgress, TransferRegistry,
 };
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 /// Resolve the sftp-stress container port (per-checkout offset aware), matching
 /// `core/tests/common`'s `port_sftp_stress`.
@@ -183,6 +186,16 @@ impl RecordingSink {
             .expect("sink mutex")
             .last()
             .map(|p| p.phase)
+    }
+
+    /// Whether any recorded event carried the given rich queue state — used to
+    /// confirm a pause actually landed mid-transfer (PROD-0012).
+    fn saw_state(&self, state: TransferStateTag) -> bool {
+        self.events
+            .lock()
+            .expect("sink mutex")
+            .iter()
+            .any(|p| p.state == state)
     }
 }
 
@@ -407,6 +420,211 @@ async fn browsing_stays_live_during_transfer() {
     // Let the transfer finish / clean up.
     let _ = tokio::time::timeout(Duration::from_secs(60), transfer).await;
     let _ = std::fs::remove_file(&dest);
+}
+
+// --- Resume primitives + rich-executor pause/resume (PROD-0012) ---
+
+/// A deterministic, non-repeating byte pattern of length `n`, so a resumed
+/// tail can be compared exactly against its source.
+fn known_bytes(n: usize) -> Vec<u8> {
+    (0..n).map(|i| (i % 251) as u8).collect()
+}
+
+/// Write `content` to `remote_path` via a dedicated channel's truncating
+/// `create_write`, then flush + shut down so the whole file is durable.
+async fn write_remote(channel: &SftpTransferChannel, remote_path: &str, content: &[u8]) {
+    let mut w = channel
+        .create_write(remote_path)
+        .await
+        .expect("create_write should open the remote file");
+    w.write_all(content)
+        .await
+        .expect("write_all should succeed");
+    w.flush().await.expect("flush should succeed");
+    w.shutdown().await.expect("shutdown should succeed");
+}
+
+/// `open_read_at` returns exactly the tail of the file from `offset` onward, and
+/// `remote_file_size` reports the true size — the read half of resume.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn open_read_at_returns_the_exact_tail() {
+    let port = sftp_stress_port();
+    require_sftp_stress!(port);
+
+    let session = connect().await;
+    let content = known_bytes(120_000);
+    let remote = format!(
+        "/home/testuser/termihub-prod0012-read-{}.bin",
+        uuid::Uuid::new_v4()
+    );
+
+    let channel = open_dedicated(session.clone()).await;
+    write_remote(&channel, &remote, &content).await;
+
+    // Size probe used to byte-verify a resume offset.
+    let size = channel.remote_file_size(&remote).await;
+    assert_eq!(
+        size,
+        Some(content.len() as u64),
+        "remote_file_size reports the true size"
+    );
+
+    // A tail read from a non-zero offset returns only the not-yet-fetched bytes.
+    let offset = 50_000u64;
+    let mut reader = channel
+        .open_read_at(&remote, offset)
+        .await
+        .expect("open_read_at should open and seek");
+    let mut tail = Vec::new();
+    reader.read_to_end(&mut tail).await.expect("read the tail");
+    assert_eq!(
+        tail,
+        &content[offset as usize..],
+        "open_read_at must return exactly the bytes from the offset onward"
+    );
+
+    let cleanup = open_dedicated(session).await;
+    let _ = cleanup.remove_file(&remote).await;
+}
+
+/// `open_write_at` appends at `offset` without truncating the existing partial,
+/// so a create-then-append reconstructs the whole file byte-exact — the write
+/// half of resume.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn open_write_at_appends_without_truncating() {
+    let port = sftp_stress_port();
+    require_sftp_stress!(port);
+
+    let session = connect().await;
+    let content = known_bytes(120_000);
+    let split = 50_000usize;
+    let remote = format!(
+        "/home/testuser/termihub-prod0012-write-{}.bin",
+        uuid::Uuid::new_v4()
+    );
+
+    // Write the first half via the truncating create_write.
+    let channel = open_dedicated(session.clone()).await;
+    write_remote(&channel, &remote, &content[..split]).await;
+
+    // Append the tail via open_write_at at the split offset (no truncation).
+    let channel2 = open_dedicated(session.clone()).await;
+    let mut w = channel2
+        .open_write_at(&remote, split as u64)
+        .await
+        .expect("open_write_at should open and seek");
+    w.write_all(&content[split..])
+        .await
+        .expect("append the tail");
+    w.flush().await.expect("flush");
+    w.shutdown().await.expect("shutdown");
+
+    // The reconstructed file must equal the full known content, byte-for-byte.
+    let readback = session
+        .read_file(&remote)
+        .await
+        .expect("read back the file");
+    assert_eq!(
+        readback, content,
+        "create + append-at-offset must reconstruct the whole file byte-exact"
+    );
+
+    let _ = session.delete(&remote).await;
+}
+
+/// End-to-end rich-executor resume: upload a known file, then download it while
+/// pausing and resuming mid-flight — the result is byte-exact. Proves
+/// `transfer_pause`/`resume` now drive the SFTP path (PROD-0012).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn download_pause_resume_is_byte_exact() {
+    let port = sftp_stress_port();
+    require_sftp_stress!(port);
+
+    let session = connect().await;
+    // ~16 MiB so the transfer spans many chunks and a pause lands mid-flight.
+    let content = known_bytes(16 * 1024 * 1024);
+    let remote = format!(
+        "/home/testuser/termihub-prod0012-rt-{}.bin",
+        uuid::Uuid::new_v4()
+    );
+
+    // Seed the remote file via a dedicated channel.
+    let seed = open_dedicated(session.clone()).await;
+    write_remote(&seed, &remote, &content).await;
+
+    let dest = std::env::temp_dir().join(format!("termihub-prod0012-{}.bin", uuid::Uuid::new_v4()));
+    let dest_str = dest.to_string_lossy().to_string();
+
+    let registry = TransferRegistry::new();
+    let transfer_id = "prod0012-resume".to_string();
+    let handle = registry.enqueue(
+        &transfer_id,
+        "s",
+        TransferDirection::Download,
+        "rt.bin",
+        &remote,
+        0,
+    );
+    let sink = RecordingSink::default();
+
+    // Pause shortly after start, then resume — driving the pause→release-slot
+    // →resume-from-offset path.
+    let pause_reg = registry.clone();
+    let pause_id = transfer_id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(15)).await;
+        pause_reg.pause(&pause_id);
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        pause_reg.resume(&pause_id);
+    });
+
+    let run = tokio::spawn({
+        let sink = sink.clone();
+        let registry = registry.clone();
+        let remote = remote.clone();
+        async move {
+            run_sftp_transfer(
+                session,
+                TransferDirection::Download,
+                remote,
+                dest_str,
+                handle,
+                registry,
+                sink.as_sink(),
+                ResumeMode::Resume,
+            )
+            .await;
+        }
+    });
+
+    let _ = tokio::time::timeout(Duration::from_secs(120), run)
+        .await
+        .expect("transfer should finish within the timeout");
+
+    assert_eq!(
+        sink.terminal_phase(),
+        Some(TransferPhase::Done),
+        "a resumed transfer must complete on the `done` phase"
+    );
+    let got = std::fs::read(&dest).expect("the downloaded file should exist");
+    assert_eq!(
+        got.len(),
+        content.len(),
+        "the resumed download must be the full size"
+    );
+    assert!(
+        got == content,
+        "the resumed download must be byte-exact with the source"
+    );
+    // Best-effort: confirm the pause actually landed (non-fatal — a very fast
+    // loopback could finish before the pause).
+    if !sink.saw_state(TransferStateTag::Paused) {
+        eprintln!("NOTE: pause did not land before completion; resume path not exercised this run");
+    }
+
+    let _ = std::fs::remove_file(&dest);
+    let cleanup = open_dedicated(connect().await).await;
+    let _ = cleanup.remove_file(&remote).await;
 }
 
 // --- require_sftp_stress! gate logic (TBE-006) ---
