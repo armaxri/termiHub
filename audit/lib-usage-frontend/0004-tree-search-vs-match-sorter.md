@@ -10,7 +10,8 @@ evidence:
   - src/utils/connectionSearch.ts:30
   - src/utils/agentTreeSearch.ts:32
   - src/components/CommandPalette/CommandPalette.tsx:126
-status: open
+status: fixed
+resolution: "#3135 — connectionSearch.ts + agentTreeSearch.ts leaf predicates routed through match-sorter via new shared src/utils/searchMatching.ts (textFieldsMatchQuery, rankings.CONTAINS threshold to preserve exact substring inclusion semantics); tree-filter structure untouched; gains diacritic-insensitive matching. 26 tests green"
 ---
 
 ## What
