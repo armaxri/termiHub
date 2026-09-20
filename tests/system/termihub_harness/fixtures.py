@@ -159,20 +159,32 @@ def _runtime_works(cmd: str) -> bool:
 # reaper removes them BEFORE bring-up so a normal run self-heals from a prior
 # crash.
 #
-# Scope is STRICT: only containers carrying THIS checkout's compose-project label
-# (``com.docker.compose.project=<compose_project>``) are ever touched. The
-# machine runs up to ten parallel checkouts, each with a distinct project name
-# (``termihub-test-6`` …), so a sibling checkout's containers — and any unrelated
-# Docker/Podman workload — are never in scope. Filtering on the compose *label*
-# (not a name glob) is what guarantees this: the app's own
-# ``termihub-<ts>-<pid>`` containers carry no compose label, so they are never
-# matched here; they also carry no per-checkout identifier, so reaping them
-# safely needs a separate change (TIN-011 follow-up: issue #3049).
+# Scope is STRICT: only containers carrying THIS checkout's label are ever
+# touched. The machine runs up to ten parallel checkouts, each with a distinct
+# project name (``termihub-test-6`` …), so a sibling checkout's containers — and
+# any unrelated Docker/Podman workload — are never in scope. Two kinds of orphan
+# are reaped, each matched by a *label* (never a container-name glob, which would
+# hit a sibling):
+#
+# * **Compose fixtures** — the ``tests/docker`` SSH/telnet/… containers, carrying
+#   ``com.docker.compose.project=<compose_project>``.
+# * **App-backend containers** — the app's own ``termihub-<ts>-<pid>`` containers
+#   from a crashed run. They carry no compose label, but the Docker backend now
+#   stamps ``com.termihub.checkout=<compose_project>`` on every container it
+#   creates under the test harness (see ``core/src/backends/docker/mod.rs``), so
+#   they too are attributable to exactly one checkout (TIN-011 follow-up, #3049).
 
 #: Compose-project label every ``compose``-managed container carries. Matching on
 #: it (rather than the container *name*) is what keeps the reap strictly within
 #: one checkout's project — a sibling's containers carry a different value.
 _COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
+
+#: Checkout label the app stamps on every Docker-backend container it creates
+#: under the test harness, valued with this checkout's compose-project (mirrors
+#: ``CHECKOUT_LABEL_KEY`` in ``core/src/backends/docker/mod.rs``). Matching on it
+#: — not the shared ``termihub-`` name prefix — is what lets a crashed run's
+#: orphaned ``termihub-<ts>-<pid>`` containers be reaped for THIS checkout only.
+_APP_CHECKOUT_LABEL = "com.termihub.checkout"
 
 #: Process-once guard. The reaper runs at most once per pytest process (keyed by
 #: ``(runtime, project)``), so the *first* :meth:`ComposeFixture.ensure` heals a
@@ -181,14 +193,13 @@ _COMPOSE_PROJECT_LABEL = "com.docker.compose.project"
 _reaped_projects: set[tuple[str, str]] = set()
 
 
-def stale_fixture_containers(runtime: str, project: str) -> list[str]:
-    """Names of ``project``'s compose containers currently present (any state).
+def _containers_with_label(runtime: str, label_selector: str) -> list[str]:
+    """Names of containers (any state) matching a single ``label=…`` selector.
 
-    Selected by the ``com.docker.compose.project`` **label**, so only
-    compose-managed fixtures of *exactly* this checkout match — never a sibling
-    checkout, and never an unrelated container that merely shares the
-    ``termihub`` name prefix. Returns ``[]`` (never raises) when the runtime
-    query fails, so a flaky ``ps`` degrades to a no-op reap.
+    The one query both reaper listings share. Matching on a **label** — never a
+    container-name glob — is what keeps every reap strictly within one checkout.
+    Returns ``[]`` (never raises) when the runtime query fails, so a flaky ``ps``
+    degrades to a no-op reap.
     """
     try:
         result = subprocess.run(
@@ -197,7 +208,7 @@ def stale_fixture_containers(runtime: str, project: str) -> list[str]:
                 "ps",
                 "-a",
                 "--filter",
-                f"label={_COMPOSE_PROJECT_LABEL}={project}",
+                f"label={label_selector}",
                 "--format",
                 "{{.Names}}",
             ],
@@ -213,16 +224,43 @@ def stale_fixture_containers(runtime: str, project: str) -> list[str]:
     return [line.strip() for line in result.stdout.splitlines() if line.strip()]
 
 
+def stale_fixture_containers(runtime: str, project: str) -> list[str]:
+    """Names of ``project``'s compose containers currently present (any state).
+
+    Selected by the ``com.docker.compose.project`` **label**, so only
+    compose-managed fixtures of *exactly* this checkout match — never a sibling
+    checkout, and never an unrelated container that merely shares the
+    ``termihub`` name prefix.
+    """
+    return _containers_with_label(runtime, f"{_COMPOSE_PROJECT_LABEL}={project}")
+
+
+def stale_app_containers(runtime: str, project: str) -> list[str]:
+    """Names of ``project``'s app-spawned Docker-backend containers (any state).
+
+    These are the app's own ``termihub-<ts>-<pid>`` containers a crashed/killed
+    run leaked. They are selected by the ``com.termihub.checkout`` **label** the
+    Docker backend stamps with this checkout's project value — never by the
+    ``termihub-<ts>-<pid>`` name glob, which would also match a sibling
+    checkout's app containers on the shared machine (that is exactly what makes a
+    name-glob reap unsafe here — finding TIN-011 follow-up, #3049).
+    """
+    return _containers_with_label(runtime, f"{_APP_CHECKOUT_LABEL}={project}")
+
+
 def reap_stale_fixtures(
     project: Optional[str] = None, *, runtime: Optional[str] = None
 ) -> list[str]:
-    """Remove stale fixture containers left by a crashed/killed prior run.
+    """Remove stale containers left by a crashed/killed prior run.
 
-    Scoped strictly to ``project`` (this checkout's compose project by default)
-    via the compose-project label — see the module note above. A no-op that
-    returns ``[]`` when no container runtime is available or nothing matches, so
-    it is always safe to call unconditionally before bring-up. Returns the names
-    of the containers it removed.
+    Covers both kinds of this checkout's orphan — the ``tests/docker`` compose
+    fixtures *and* the app's own ``termihub-<ts>-<pid>`` Docker-backend
+    containers — each selected strictly by a per-checkout **label** (see the
+    module note above), never by a container-name glob. Scoped to ``project``
+    (this checkout's compose project by default). A no-op that returns ``[]``
+    when no container runtime is available or nothing matches, so it is always
+    safe to call unconditionally before bring-up. Returns the names of the
+    containers it removed.
     """
     if runtime is None:
         runtime = container_runtime()
@@ -230,7 +268,14 @@ def reap_stale_fixtures(
         return []
     if project is None:
         project = dev_local.compose_project()
-    names = stale_fixture_containers(runtime, project)
+    # Both label-scoped listings for this checkout; de-duplicate while preserving
+    # order (a container carries at most one of the two labels, but be defensive).
+    names = list(
+        dict.fromkeys(
+            stale_fixture_containers(runtime, project)
+            + stale_app_containers(runtime, project)
+        )
+    )
     if not names:
         return []
     # ``rm -f`` stops-then-removes running orphans too (a crash leaves them

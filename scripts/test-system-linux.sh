@@ -231,12 +231,26 @@ fi
 # STRICTLY to this checkout via the compose-project label, so the up-to-ten
 # parallel checkouts never touch each other's containers.
 REAP_PROJECT="${TERMIHUB_TEST_PROJECT:-${COMPOSE_PROJECT_NAME:-termihub}}"
+# Two label-scoped listings, both strictly this checkout's:
+#  - compose fixtures  (com.docker.compose.project)
+#  - app-backend containers (com.termihub.checkout) — the app's own
+#    termihub-<ts>-<pid> containers a crashed app run leaked (#3049). The label
+#    (stamped by core/src/backends/docker) is what makes a name-glob-free,
+#    per-checkout reap possible; never filter these by the shared termihub- name.
 STALE_CONTAINERS=$(
     $CONTAINER_CMD ps -aq \
         --filter "label=com.docker.compose.project=${REAP_PROJECT}" 2>/dev/null || true
 )
+STALE_APP_CONTAINERS=$(
+    $CONTAINER_CMD ps -aq \
+        --filter "label=com.termihub.checkout=${REAP_PROJECT}" 2>/dev/null || true
+)
+# Merge and de-duplicate the two id lists (a container carries at most one label).
+STALE_CONTAINERS=$(
+    printf '%s\n%s\n' "$STALE_CONTAINERS" "$STALE_APP_CONTAINERS" | sort -u | sed '/^$/d'
+)
 if [ -n "$STALE_CONTAINERS" ]; then
-    echo "Reaping stale fixture containers for project '${REAP_PROJECT}' (prior crash/keep-infra)..."
+    echo "Reaping stale fixture + app containers for project '${REAP_PROJECT}' (prior crash/keep-infra)..."
     # shellcheck disable=SC2086  # word-splitting the id list is intended here
     $CONTAINER_CMD rm -f $STALE_CONTAINERS >/dev/null 2>&1 || true
 fi
