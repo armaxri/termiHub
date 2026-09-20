@@ -660,7 +660,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
         // removing itself (e.g. reconnection failed after a dropped connection).
         if let Some(existing) = agents.get(agent_id) {
             if existing.alive.load(Ordering::SeqCst) {
-                return Err(TerminalError::RemoteError(format!(
+                return Err(TerminalError::already_connected(format!(
                     "Agent {} is already connected",
                     agent_id
                 )));
@@ -728,7 +728,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             let exec_cmd = config_clone.agent_exec_command();
             channel.exec(false, exec_cmd.as_str()).await.map_err(|e| {
                 emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                TerminalError::RemoteError(format!("Exec failed: {}", e))
+                TerminalError::agent_missing(format!("Exec failed: {}", e))
             })?;
 
             // 3. Blocking handshake: initialize
@@ -761,7 +761,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             );
             channel.data(req_line.as_bytes()).await.map_err(|e| {
                 emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                TerminalError::RemoteError(format!("Write initialize failed: {}", e))
+                TerminalError::agent_missing(format!("Write initialize failed: {}", e))
             })?;
             info!(
                 "Agent {}: initialize written, awaiting response line from agent",
@@ -845,7 +845,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     }
                     jsonrpc::HandshakeOutcome::Rejected(message) => {
                         emit_agent_state(&app_handle_clone, &agent_id_str, "disconnected");
-                        return Err(TerminalError::RemoteError(format!(
+                        return Err(TerminalError::agent_outdated(format!(
                             "Initialize rejected: {}",
                             message
                         )));

@@ -94,7 +94,10 @@ async fn do_connect_and_authenticate(
     // interrupt a hung connect; a blocking std connect would ignore them (#841).
     let tokio_tcp = tokio::net::TcpStream::connect(&addr)
         .await
-        .map_err(|e| SessionError::SpawnFailed(format!("Connection failed: {e}")))?;
+        // Typed, locale-independent discriminant so consumers classify an
+        // unreachable host structurally rather than by matching the "Connection
+        // failed" text (I18N-002 / ERR-003).
+        .map_err(|e| SessionError::ConnectionFailed(e.to_string()))?;
 
     // Configure TCP keepalives on the connected socket before the SSH
     // handshake so a half-open transport is torn down promptly. Shared with the
