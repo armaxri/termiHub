@@ -6,10 +6,10 @@
 //! feature-gated behind `ftp` (the commands are always present so the IPC
 //! surface is stable, but return an error when the feature is off).
 
-use tauri::State;
+use tauri::{Manager, State};
 use tracing::debug;
 
-use crate::files::transfer::{TransferRegistry, TransferSnapshot};
+use crate::files::transfer::{TransferPersistenceManager, TransferRegistry, TransferSnapshot};
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
 #[cfg(feature = "ftp")]
@@ -108,6 +108,20 @@ pub async fn session_copy_remote(
         &dst_path,
         0,
     );
+    // Durable queue (PROD-0011): persist metadata only (references/paths, never
+    // credentials) so a restart rehydrates this remote-to-remote copy as paused.
+    // A remote-to-remote copy has no local endpoint, so `local_path` is None.
+    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+        pm.record_registration(
+            &transfer_id,
+            &dst_session,
+            TransferDirection::Upload,
+            &file_name,
+            &dst_path,
+            None,
+            0,
+        );
+    }
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {
@@ -173,6 +187,20 @@ pub async fn ftp_download(
             &remote_path,
             0,
         );
+        // Durable queue (PROD-0011): persist metadata only — the FTP `config`
+        // (which carries credentials) is deliberately NOT persisted, only the
+        // session reference and paths.
+        if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+            pm.record_registration(
+                &transfer_id,
+                &session_id,
+                TransferDirection::Download,
+                &file_name,
+                &remote_path,
+                Some(local_path.clone()),
+                0,
+            );
+        }
         let registry = (*registry).clone();
         let sink = transfer::app_progress_sink(app_handle);
         tauri::async_runtime::spawn(async move {
@@ -239,6 +267,19 @@ pub async fn ftp_upload(
             &remote_path,
             0,
         );
+        // Durable queue (PROD-0011): persist metadata only — never the FTP
+        // `config` credentials, only the session reference and paths.
+        if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+            pm.record_registration(
+                &transfer_id,
+                &session_id,
+                TransferDirection::Upload,
+                &file_name,
+                &remote_path,
+                Some(local_path.clone()),
+                0,
+            );
+        }
         let registry = (*registry).clone();
         let sink = transfer::app_progress_sink(app_handle);
         tauri::async_runtime::spawn(async move {

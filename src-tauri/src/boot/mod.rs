@@ -762,13 +762,23 @@ fn seed_projection_regions(
             store.snapshot(),
         );
     }
-    // Seed the shared `transfers` region with the (empty) store
-    // baseline at version 0, so a subscriber attaches to a real region
-    // before the first `transfer.*` intent (#2229).
+    // Seed the shared `transfers` region (#2229). Before registering it,
+    // rehydrate any transfers that a previous run persisted while still
+    // in-flight (PROD-0011): they come back as *paused* rows so the Transfer
+    // Queue panel shows them on startup and the user explicitly resumes them
+    // (never auto-resumed). They flow through the same shared region, so no
+    // frontend change is needed. On an empty/missing/corrupt store this seeds
+    // nothing and the region starts empty as before.
     if let Some(store) = app
         .handle()
         .try_state::<Arc<transfers_projection::TransferStore>>()
     {
+        if let Some(pm) = app
+            .handle()
+            .try_state::<crate::files::transfer::TransferPersistenceManager>()
+        {
+            seed_rehydrated_transfers(store.as_ref(), pm.load_incomplete_as_paused());
+        }
         projection_state.projector.register_region(
             transfers_projection::projection::TRANSFERS_REGION,
             store.snapshot(),
@@ -781,6 +791,78 @@ fn seed_projection_regions(
             commands::projection_diag::initial_view(),
         );
     }
+}
+
+/// Initialize the durable transfer-queue persistence (PROD-0011) and manage it.
+///
+/// A corrupt/newer `transfers.json` is handled by the shared recovery layer
+/// (backed up + reset, or left intact for a newer version); the warning is logged
+/// rather than surfaced, since this is an internal queue file, not user data. On a
+/// hard init failure the app still starts — the queue is simply not durable this
+/// run.
+fn init_transfer_persistence(app: &tauri::App) {
+    match crate::files::transfer::TransferPersistenceManager::new(app.handle()) {
+        Ok(manager) => {
+            for w in manager.take_recovery_warnings() {
+                tracing::warn!(file = %w.file_name, details = ?w.details, "{}", w.message);
+            }
+            app.manage(manager);
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize transfer-queue persistence (PROD-0011): {e}");
+        }
+    }
+}
+
+/// Seed rehydrated (paused) transfers from a previous run into the shared
+/// `transfers` store, so the Transfer Queue panel shows them on startup
+/// (PROD-0011). Each persisted incomplete transfer is rendered as a `paused` row;
+/// the user explicitly resumes it (never auto-resumed). A no-op when nothing was
+/// persisted.
+fn seed_rehydrated_transfers(
+    store: &transfers_projection::TransferStore,
+    records: Vec<crate::files::transfer::PersistedTransfer>,
+) {
+    use crate::files::transfer::TransferDirection as EngineDirection;
+    use std::collections::HashMap;
+    use transfers_projection::store::{TransferDirection, TransferEntry, TransferQueueState};
+
+    if records.is_empty() {
+        return;
+    }
+    let mut queue: HashMap<String, TransferEntry> = HashMap::with_capacity(records.len());
+    for r in records {
+        let direction = match r.direction {
+            EngineDirection::Download => TransferDirection::Download,
+            EngineDirection::Upload => TransferDirection::Upload,
+        };
+        let total_bytes = (r.total > 0).then_some(r.total);
+        let percent = total_bytes.map(|t| {
+            ((r.transferred as f64 / t as f64) * 100.0)
+                .round()
+                .clamp(0.0, 100.0) as u32
+        });
+        let entry = TransferEntry {
+            id: r.transfer_id.clone(),
+            session_id: r.session_id,
+            direction,
+            name: r.file_name,
+            path: (!r.remote_path.is_empty()).then_some(r.remote_path),
+            state: TransferQueueState::Paused,
+            transferred: r.transferred,
+            total_bytes,
+            percent,
+            speed_bytes_per_sec: None,
+            error: None,
+            attempt: None,
+            max_attempts: None,
+            updated_at: r.updated_at_ms,
+        };
+        queue.insert(r.transfer_id, entry);
+    }
+    // The store is empty at startup; replacing with the rehydrated set (panel not
+    // minimized) makes every persisted in-flight transfer show as paused.
+    store.replace(queue, false);
 }
 
 fn init_reconnect_driver(
@@ -829,6 +911,11 @@ fn init_reconnect_driver(
 }
 
 pub(crate) fn init_projection(app: &tauri::App) {
+    // Durable transfer queue (PROD-0011): initialize persistence with recovery
+    // loading and manage it *before* seeding, so the `transfers` region can be
+    // rehydrated from disk below (and later registrations/progress persist). On
+    // failure the app still starts; the queue simply is not durable this run.
+    init_transfer_persistence(app);
     // Stateless-UI projection substrate (#2149) + SSH-tunnels pilot
     // (#2150). Built here — not in the builder chain — so the tunnel
     // manager (managed just above) can seed the `tunnels` region and
