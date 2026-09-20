@@ -22,6 +22,7 @@ import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
+import { useMonitorHistory } from "@/store/useMonitorHistory";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
@@ -43,6 +44,7 @@ import { connectionConfigFields, readConfigString } from "@/utils/connectionConf
 import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator";
 import { TransferQueueIndicator } from "@/components/TransferQueue";
 import { Tooltip, Spinner, EmptyState, SearchInput, toast } from "@/components/ui";
+import { MetricSparkline } from "./MetricSparkline";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
@@ -691,6 +693,19 @@ function MonitoringStatus() {
     }
   }, [activeMonitorKey, cancelMonitoring]);
 
+  // Client-side rolling CPU% history for the active monitor (PROD-0030). The
+  // region retains only the latest sample, so the window is reconstructed here
+  // from the `sampleCount`-gated stream. The first (priming) sample reports CPU
+  // 0% with no prior delta (audit gap G10), so it is recorded as a gap (`null`)
+  // to match the "CPU —" placeholder rather than a misleading 0.
+  const cpuForHistory =
+    monitoringSampleCount >= 2 && monitoringStats ? monitoringStats.cpuUsagePercent : null;
+  const cpuHistory = useMonitorHistory({
+    key: activeMonitorKey,
+    sampleCount: monitoringSampleCount,
+    value: cpuForHistory,
+  });
+
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring
   if (!monitoringEnabled) return null;
 
@@ -789,6 +804,7 @@ function MonitoringStatus() {
         status={monitoringStatus}
         paused={monitoringPaused}
         intervalMs={monitoringInterval}
+        cpuHistory={cpuHistory}
         onDisconnect={() => activeMonitorKey && disconnectMonitoring(activeMonitorKey)}
         onSetPaused={handleSetPaused}
         onSetInterval={handleSetInterval}
@@ -940,6 +956,8 @@ interface MonitoringDetailDropdownProps {
   paused: boolean;
   /** Current per-entry refresh interval in ms (#1233). */
   intervalMs: number;
+  /** Rolling CPU% history for the sparkline (oldest first); nulls are gaps (PROD-0030). */
+  cpuHistory: (number | null)[];
   onDisconnect: () => void;
   /** Pause/resume collection (#1233). */
   onSetPaused: (paused: boolean) => void | Promise<void>;
@@ -965,6 +983,7 @@ function MonitoringDetailDropdown({
   status,
   paused,
   intervalMs,
+  cpuHistory,
   onDisconnect,
   onSetPaused,
   onSetInterval,
@@ -1025,6 +1044,34 @@ function MonitoringDetailDropdown({
                     {stats.loadAverage.map((v) => v.toFixed(2)).join(" ")}
                   </span>
                 </div>
+              </div>
+              <DropdownMenu.Separator className="monitoring-menu__separator" />
+            </>
+          )}
+          {/*
+            Client-side CPU% history sparkline (PROD-0030). Rendered only once a
+            real (post-priming) sample exists, so a just-connected monitor shows
+            the numbers without an empty chart. The last-known percentage labels
+            the row so the sparkline has a concrete current value beside it.
+          */}
+          {cpuHistory.some((v) => v != null) && (
+            <>
+              <div className="monitoring-menu__spark" data-testid="monitoring-cpu-sparkline">
+                <div className="monitoring-menu__spark-header">
+                  <span className="monitoring-menu__label">CPU</span>
+                  <span className="monitoring-menu__value">
+                    {(() => {
+                      const latest = cpuHistory[cpuHistory.length - 1];
+                      return latest == null ? "—" : `${latest.toFixed(0)}%`;
+                    })()}
+                  </span>
+                </div>
+                <MetricSparkline
+                  values={cpuHistory}
+                  min={0}
+                  max={100}
+                  ariaLabel="CPU usage history"
+                />
               </div>
               <DropdownMenu.Separator className="monitoring-menu__separator" />
             </>
