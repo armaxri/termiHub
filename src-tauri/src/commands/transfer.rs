@@ -16,11 +16,12 @@ use crate::utils::fs::file_name_of;
 
 /// Pause an in-flight transfer.
 ///
-/// Returns `true` when the transfer accepted the pause (a live *rich* transfer),
-/// and `false` when it was a no-op — an unknown/finished id, or a *legacy*
-/// SFTP transfer, which the queue model does not (yet) support pausing. The
-/// frontend uses this to give honest feedback instead of a blanket success
-/// toast (#1336; audit FEC-004 / UX-016).
+/// Returns `true` when the transfer accepted the pause (a live *rich* transfer —
+/// FTP *and*, since PROD-0012, SFTP), and `false` when it was a no-op: an
+/// unknown/finished id, or a transfer on a non-streaming path that cannot pause
+/// (Docker/FTP-listing/agent byte-based copies). The frontend uses this to give
+/// honest feedback instead of a blanket success toast (#1336; audit
+/// FEC-004 / UX-016).
 #[tauri::command]
 pub fn transfer_pause(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
     debug!(transfer_id, "transfer pause");

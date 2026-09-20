@@ -12,10 +12,9 @@ use tracing::{debug, info};
 use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::files::FileEntry;
 
-use crate::commands::files::open_transfer_channel;
 use crate::connection::manager::ConnectionManager;
 use crate::files::sftp::{ElevatedWriteResult, Writability};
-use crate::files::transfer::{self, TransferContext, TransferDirection, TransferRegistry};
+use crate::files::transfer::{self, TransferDirection, TransferRegistry};
 use crate::session::line_ending::LineEnding;
 use crate::session::manager::{
     PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager,
@@ -574,11 +573,13 @@ pub async fn session_has_exec_capability(
 
 /// Start a download (remote → local) over a session's SFTP connection.
 ///
-/// Registers a `transfer_id`, runs a chunked copy on a **dedicated** SFTP
-/// channel in the background, and returns the id immediately — the copy does not
-/// hold the session lock, so listing / navigating the same session stays live
-/// during the transfer (#1245). Progress and completion are reported via
-/// `transfer-progress` events (mirror of `sftp_download`, #2312).
+/// Enqueues a `transfer_id` on the **rich** transfer-queue model and runs it in
+/// the background on a dedicated SFTP channel, returning the id immediately —
+/// the copy does not hold the session lock, so listing / navigating the same
+/// session stays live during the transfer (#1245). Progress and completion are
+/// reported via `transfer-progress` events. Because it rides the rich model, the
+/// generic `transfer_pause`/`resume`/`retry` commands now work for SFTP, with
+/// byte-verified offset resume (PROD-0012).
 #[tauri::command]
 pub async fn session_download(
     session_id: String,
@@ -589,38 +590,32 @@ pub async fn session_download(
     app_handle: tauri::AppHandle,
 ) -> Result<String, TerminalError> {
     debug!(session_id, remote_path, local_path, "Session SFTP download");
+    // Resolve (and validate) the SFTP browser up front so an unsupported /
+    // unreachable session errors here rather than silently on the queue.
     let browser = manager.sftp_transfer_browser(&session_id).await?;
-    let (dedicated, total) = open_transfer_channel(browser, Some(remote_path.clone())).await?;
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
     let file_name = file_name_of(&remote_path);
-    let token = registry.register(
+    let handle = registry.enqueue(
         &transfer_id,
         &session_id,
         TransferDirection::Download,
         &file_name,
         &remote_path,
-        total,
+        0,
     );
-    let ctx = TransferContext {
-        transfer_id: transfer_id.clone(),
-        session_id,
-        direction: TransferDirection::Download,
-        file_name,
-        path: remote_path.clone(),
-        total,
-    };
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {
-        transfer::run_download(
-            dedicated,
+        transfer::sftp::run_sftp_transfer(
+            browser,
+            TransferDirection::Download,
             remote_path,
             local_path,
-            ctx,
-            token,
+            handle,
             registry,
             sink,
+            transfer::sftp::DEFAULT_RESUME_MODE,
         )
         .await;
     });
@@ -629,9 +624,10 @@ pub async fn session_download(
 
 /// Start an upload (local → remote) over a session's SFTP connection.
 ///
-/// Registers a `transfer_id`, runs a chunked copy on a dedicated SFTP channel in
-/// the background, and returns the id immediately (#1245). Mirrors
-/// [`session_download`] and the standalone `sftp_upload` (#2312).
+/// Enqueues a `transfer_id` on the rich transfer-queue model and runs it in the
+/// background on a dedicated SFTP channel, returning the id immediately (#1245).
+/// Mirrors [`session_download`]; pause/resume/retry work via the generic
+/// `transfer_*` commands with byte-verified offset resume (PROD-0012).
 #[tauri::command]
 pub async fn session_upload(
     session_id: String,
@@ -643,43 +639,29 @@ pub async fn session_upload(
 ) -> Result<String, TerminalError> {
     debug!(session_id, local_path, remote_path, "Session SFTP upload");
     let browser = manager.sftp_transfer_browser(&session_id).await?;
-    let (dedicated, _total) = open_transfer_channel(browser, None).await?;
-
-    // Local files are cheap to stat, so we can report a real total for uploads.
-    let total = tokio::fs::metadata(&local_path)
-        .await
-        .map(|m| m.len())
-        .unwrap_or(0);
 
     let transfer_id = uuid::Uuid::new_v4().to_string();
     let file_name = file_name_of(&remote_path);
-    let token = registry.register(
+    let handle = registry.enqueue(
         &transfer_id,
         &session_id,
         TransferDirection::Upload,
         &file_name,
         &remote_path,
-        total,
+        0,
     );
-    let ctx = TransferContext {
-        transfer_id: transfer_id.clone(),
-        session_id,
-        direction: TransferDirection::Upload,
-        file_name,
-        path: remote_path.clone(),
-        total,
-    };
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {
-        transfer::run_upload(
-            dedicated,
-            local_path,
+        transfer::sftp::run_sftp_transfer(
+            browser,
+            TransferDirection::Upload,
             remote_path,
-            ctx,
-            token,
+            local_path,
+            handle,
             registry,
             sink,
+            transfer::sftp::DEFAULT_RESUME_MODE,
         )
         .await;
     });

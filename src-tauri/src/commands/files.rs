@@ -1,6 +1,6 @@
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
-use termihub_core::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
+use termihub_core::backends::ssh::SftpFileBrowser;
 use termihub_core::files::FileBrowser;
 use tracing::debug;
 
@@ -9,25 +9,6 @@ use crate::files::transfer::TransferRegistry;
 use crate::files::FileEntry;
 use crate::utils::errors::TerminalError;
 use crate::utils::vscode;
-
-/// Open a dedicated [`SftpTransferChannel`] off `browser` and (for downloads)
-/// stat the remote size. Both are awaited directly on the async core browser —
-/// no `spawn_blocking` / `block_in_place` bridging is needed. Returns the
-/// dedicated channel plus the known total size (`0` = indeterminate).
-pub(crate) async fn open_transfer_channel(
-    browser: std::sync::Arc<SftpFileBrowser>,
-    remote_path: Option<String>,
-) -> Result<(SftpTransferChannel, u64), TerminalError> {
-    let dedicated = browser
-        .open_dedicated_channel()
-        .await
-        .map_err(sftp_op_error)?;
-    let total = match &remote_path {
-        Some(path) => browser.remote_size(path).await,
-        None => 0,
-    };
-    Ok((dedicated, total))
-}
 
 /// Cancel an in-flight transfer by id. Unknown / already-finished ids are a
 /// harmless no-op (issue #1245).
