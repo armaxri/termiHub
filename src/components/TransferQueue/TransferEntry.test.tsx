@@ -198,4 +198,51 @@ describe("TransferEntryRow", () => {
     expect(query("transfer-pause")).toBeNull();
     expect(query("transfer-cancel")).not.toBeNull();
   });
+
+  // UX-020 / #2905: the compact variant is the file-browser sidebar footer row —
+  // one component, one data source, shared with the wide panel row.
+  describe("compact variant", () => {
+    function renderCompact(e: TransferEntry, pausable = false, h = handlers()) {
+      act(() => {
+        root.render(
+          <TooltipProvider>
+            <TransferEntryRow entry={e} pausable={pausable} compact {...h} />
+          </TooltipProvider>
+        );
+      });
+      return h;
+    }
+
+    it("marks the row compact and shows name, percent, and the same controls", () => {
+      renderCompact(entry({ state: "active", percent: 78 }));
+      expect(query("transfer-row")?.className).toContain("transfer-row--compact");
+      expect(query("transfer-row-name")?.textContent).toContain("report.pdf");
+      expect(container.textContent).toContain("78%");
+      expect(query("transfer-cancel")).not.toBeNull();
+    });
+
+    it("shows transferred bytes for an indeterminate active transfer", () => {
+      renderCompact(
+        entry({ state: "active", percent: null, totalBytes: null, transferred: 45 * 1024 * 1024 })
+      );
+      const bytes = query("transfer-row-bytes");
+      expect(bytes?.textContent).toContain("45");
+      expect(bytes?.textContent).toContain("MB");
+    });
+
+    it("retains a completed row with a done status and only a Remove control", () => {
+      const h = renderCompact(entry({ state: "completed", percent: 100, transferred: 100 }));
+      expect(query("transfer-row-status")?.textContent?.toLowerCase()).toContain("done");
+      expect(query("transfer-cancel")).toBeNull();
+      expect(query("transfer-remove")).not.toBeNull();
+      act(() => query("transfer-remove")?.click());
+      expect(h.onRemove).toHaveBeenCalledWith("t1");
+    });
+
+    it("shows Pause + Cancel for a pausable active transfer", () => {
+      renderCompact(entry({ state: "active" }), true);
+      expect(query("transfer-pause")).not.toBeNull();
+      expect(query("transfer-cancel")).not.toBeNull();
+    });
+  });
 });
