@@ -10,6 +10,8 @@ import {
   sessionRenameFile,
   sessionMkdir,
   sessionSetPermissions,
+  sessionSetOwner,
+  sessionCreateSymlink,
   sessionDownload,
   sessionUpload,
   sessionCopyRemote,
@@ -311,6 +313,26 @@ export function useSessionFileSystem() {
     [sessionFileBrowserId, refreshSession]
   );
 
+  const setOwner = useCallback(
+    async (path: string, uid: number | null, gid: number | null) => {
+      if (!sessionFileBrowserId) return;
+      await sessionSetOwner(sessionFileBrowserId, path, uid, gid);
+      refreshSession();
+    },
+    [sessionFileBrowserId, refreshSession]
+  );
+
+  const createSymlink = useCallback(
+    async (target: string, linkName: string) => {
+      if (!sessionFileBrowserId) return;
+      const linkPath =
+        sessionCurrentPath === "/" ? `/${linkName}` : `${sessionCurrentPath}/${linkName}`;
+      await sessionCreateSymlink(sessionFileBrowserId, target, linkPath);
+      refreshSession();
+    },
+    [sessionFileBrowserId, sessionCurrentPath, refreshSession]
+  );
+
   const openInVscode = useCallback(
     async (remotePath: string) => {
       // Only an SFTP-backed session can drive VS Code remote open (download →
@@ -465,9 +487,14 @@ export function useSessionFileSystem() {
     deleteEntry,
     renameEntry,
     setPermissions,
-    // chmod maps to an SFTP `setstat`, so only an SFTP-backed (SSH) session
-    // supports it; byte-based backends (Docker / FTP / remote-agent) do not.
+    setOwner,
+    createSymlink,
+    // chmod / chown / symlink map to SFTP `setstat` / `symlink`, so only an
+    // SFTP-backed (SSH) session supports them; byte-based backends (Docker / FTP /
+    // remote-agent) do not.
     supportsPermissions: sftpCapable,
+    supportsOwner: sftpCapable,
+    supportsSymlink: sftpCapable,
     openInVscode,
     copyEntry,
     cutEntry,

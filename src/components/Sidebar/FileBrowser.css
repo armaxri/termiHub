@@ -545,3 +545,51 @@
   font-size: var(--font-size-sm);
   color: var(--text-secondary);
 }
+
+/* --- Owner (chown) editor dialog --- */
+.owner-dialog,
+.symlink-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.owner-dialog__target,
+.symlink-dialog__target {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.owner-dialog__hint {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.owner-dialog__field,
+.symlink-dialog__field {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+}
+
+.owner-dialog__field label,
+.symlink-dialog__field label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  min-width: 10ch;
+}
+
+.owner-dialog__field .ui-input {
+  width: 12ch;
+  font-family: var(--font-mono);
+}
+
+.symlink-dialog__field .ui-input {
+  flex: 1;
+}

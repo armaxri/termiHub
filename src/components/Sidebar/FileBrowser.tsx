@@ -18,6 +18,8 @@ import {
   Pencil,
   Trash2,
   KeyRound,
+  UserCog,
+  Link2,
   MoreHorizontal,
   FolderOpen,
   MonitorOff,
@@ -74,6 +76,8 @@ import { useOsFileDrop } from "@/hooks/useOsFileDrop";
 import { useLocalDirWatch } from "@/hooks/useLocalDirWatch";
 import { ConfirmDeleteDialog } from "./ConfirmDeleteDialog";
 import { PermissionsDialog } from "./PermissionsDialog";
+import { OwnerDialog } from "./OwnerDialog";
+import { SymlinkDialog } from "./SymlinkDialog";
 import { FileBrowserPathBar } from "./FileBrowserPathBar";
 import "./FileBrowser.css";
 
@@ -96,6 +100,10 @@ interface FileRowProps {
   vscodeAvailable: boolean;
   /** Whether this backend can chmod the entry (SFTP-backed or local Unix). */
   canChangePermissions: boolean;
+  /** Whether this backend can chown the entry (SFTP-backed or local Unix). */
+  canChangeOwner: boolean;
+  /** Whether this backend can create a symlink (SFTP-backed or local Unix). */
+  canCreateSymlink: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
   onPaste: () => void;
@@ -126,6 +134,8 @@ export function FileMenuItems({
   entry,
   vscodeAvailable,
   canChangePermissions = false,
+  canChangeOwner = false,
+  canCreateSymlink = false,
   onNavigate,
   onContextAction,
   onPaste,
@@ -139,6 +149,10 @@ export function FileMenuItems({
   vscodeAvailable: boolean;
   /** Whether this backend can chmod the entry (SFTP-backed or local Unix). */
   canChangePermissions?: boolean;
+  /** Whether this backend can chown the entry (SFTP-backed or local Unix). */
+  canChangeOwner?: boolean;
+  /** Whether this backend can create a symlink (SFTP-backed or local Unix). */
+  canCreateSymlink?: boolean;
   onNavigate: (entry: FileEntry) => void;
   onContextAction: (entry: FileEntry, action: string) => void;
   onPaste: () => void;
@@ -287,6 +301,24 @@ export function FileMenuItems({
           data-testid={`${testIdPrefix}-permissions`}
         >
           <KeyRound size={14} /> Change Permissions
+        </Item>
+      )}
+      {canChangeOwner && (
+        <Item
+          className="context-menu__item"
+          onSelect={() => onContextAction(entry, "owner")}
+          data-testid={`${testIdPrefix}-owner`}
+        >
+          <UserCog size={14} /> Change Owner
+        </Item>
+      )}
+      {canCreateSymlink && (
+        <Item
+          className="context-menu__item"
+          onSelect={() => onContextAction(entry, "symlink")}
+          data-testid={`${testIdPrefix}-symlink`}
+        >
+          <Link2 size={14} /> Create Symlink…
         </Item>
       )}
       <Item
@@ -469,6 +501,8 @@ function FileRow({
   entry,
   vscodeAvailable,
   canChangePermissions,
+  canChangeOwner,
+  canCreateSymlink,
   onNavigate,
   onContextAction,
   onPaste,
@@ -488,6 +522,8 @@ function FileRow({
     entry,
     vscodeAvailable,
     canChangePermissions,
+    canChangeOwner,
+    canCreateSymlink,
     onNavigate,
     onContextAction,
     onPaste,
@@ -953,6 +989,10 @@ export function FileBrowser() {
     renameEntry,
     setPermissions,
     supportsPermissions,
+    setOwner,
+    createSymlink,
+    supportsOwner,
+    supportsSymlink,
     openInVscode,
     copyEntry,
     cutEntry,
@@ -1017,6 +1057,8 @@ export function FileBrowser() {
     onConfirm: () => void;
   } | null>(null);
   const [permissionsTarget, setPermissionsTarget] = useState<FileEntry | null>(null);
+  const [ownerTarget, setOwnerTarget] = useState<FileEntry | null>(null);
+  const [symlinkTarget, setSymlinkTarget] = useState<FileEntry | null>(null);
   const [sort, setSort] = useState<{ key: FileSortKey; dir: SortDirection }>({
     key: "name",
     dir: "asc",
@@ -1227,6 +1269,16 @@ export function FileBrowser() {
           setPermissionsTarget(entry);
           break;
         }
+        case "owner": {
+          // Opens the chown editor dialog for this entry.
+          setOwnerTarget(entry);
+          break;
+        }
+        case "symlink": {
+          // Opens the create-symlink dialog; the entry is the link target.
+          setSymlinkTarget(entry);
+          break;
+        }
         case "delete": {
           setDeleteConfirm({
             message: `Delete ${entry.isDirectory ? "directory" : "file"} "${entry.name}"?`,
@@ -1282,6 +1334,38 @@ export function FileBrowser() {
       }
     },
     [setPermissions]
+  );
+
+  const handleApplyOwner = useCallback(
+    async (entry: FileEntry, uid: number | null, gid: number | null) => {
+      try {
+        await setOwner(entry.path, uid, gid);
+        toast.success(`Owner updated for "${entry.name}"`);
+      } catch (err) {
+        frontendLog("file_browser", `chown failed for ${entry.path}: ${err}`);
+        toast.error(`Failed to change owner for "${entry.name}": ${err}`);
+        // Re-throw so the dialog stays open and its Apply button resets.
+        throw err;
+      }
+    },
+    [setOwner]
+  );
+
+  const handleCreateSymlink = useCallback(
+    async (entry: FileEntry, linkName: string) => {
+      try {
+        // The selected entry is the link's target; `linkName` is the new link,
+        // created in the current directory.
+        await createSymlink(entry.path, linkName);
+        toast.success(`Created symlink "${linkName}"`);
+      } catch (err) {
+        frontendLog("file_browser", `symlink create failed for ${entry.path}: ${err}`);
+        toast.error(`Failed to create symlink "${linkName}": ${err}`);
+        // Re-throw so the dialog stays open and its Create button resets.
+        throw err;
+      }
+    },
+    [createSymlink]
   );
 
   const handleShareVia = useCallback(
@@ -1832,6 +1916,8 @@ export function FileBrowser() {
                           entry={entry}
                           vscodeAvailable={vscodeAvailable}
                           canChangePermissions={supportsPermissions && !!entry.permissions}
+                          canChangeOwner={supportsOwner && !!entry.permissions}
+                          canCreateSymlink={supportsSymlink}
                           onNavigate={handleNavigate}
                           onContextAction={handleContextAction}
                           onPaste={handlePaste}
@@ -1913,6 +1999,16 @@ export function FileBrowser() {
         entry={permissionsTarget}
         onApply={handleApplyPermissions}
         onClose={() => setPermissionsTarget(null)}
+      />
+      <OwnerDialog
+        entry={ownerTarget}
+        onApply={handleApplyOwner}
+        onClose={() => setOwnerTarget(null)}
+      />
+      <SymlinkDialog
+        entry={symlinkTarget}
+        onApply={handleCreateSymlink}
+        onClose={() => setSymlinkTarget(null)}
       />
       {activeTransfers.length > 0 && (
         <div className="file-browser__transfers" data-testid="file-browser-transfers">
