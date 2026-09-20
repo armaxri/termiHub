@@ -447,6 +447,11 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
       false
     );
     expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
+
+    // #2906: the tracked SFTP path defers its terminal toast to the
+    // transfer-progress event path, so the paste helper must NOT raise its own
+    // success toast (no double-toast).
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
   });
 });
 
@@ -528,6 +533,101 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
       await api.openInVscode("/remote/dir/file.txt");
     });
     expect(vi.mocked(sessionVscodeOpenRemote)).not.toHaveBeenCalled();
+  });
+
+  // #2906: a byte-based upload is a blocking round-trip with no
+  // transfer-progress event, so it must surface its own success/error toast
+  // rather than completing silently.
+  it("surfaces a success toast when a byte-based upload succeeds", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.uploadFileFromPath("/local/data.csv");
+    });
+    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      "docker-1",
+      "/remote/dir/data.csv",
+      expect.any(Uint8Array)
+    );
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.success).mock.calls[0][0])).toContain("data.csv");
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error toast when a byte-based upload fails", async () => {
+    vi.mocked(sessionWriteFile).mockRejectedValueOnce(new Error("disk full"));
+    const api = await mountHook();
+    await act(async () => {
+      await api.uploadFileFromPath("/local/data.csv");
+    });
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("disk full");
+  });
+
+  // #2906: a byte-based paste has no dedicated channel, so the previous
+  // event-deferring wrapper left success silent — it must now toast itself.
+  it("surfaces a success toast when a byte-based paste succeeds", async () => {
+    const api = await mountHook();
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "file.bin",
+          path: "/remote/src/file.bin",
+          isDirectory: false,
+          size: 10,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "docker-1",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      "docker-1",
+      "/remote/dir/file.bin",
+      expect.any(Uint8Array)
+    );
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.success).mock.calls[0][0])).toContain("file.bin");
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled();
+  });
+
+  it("surfaces an error toast when a byte-based paste fails", async () => {
+    vi.mocked(sessionReadFile).mockRejectedValueOnce(new Error("no such file"));
+    const api = await mountHook();
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "file.bin",
+          path: "/remote/src/file.bin",
+          isDirectory: false,
+          size: 10,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "docker-1",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("no such file");
   });
 
   // #2469: a byte-based backend has no dedicated transfer channel, so a

@@ -128,3 +128,51 @@ export async function runBlockingTransfer(
     return false;
   }
 }
+
+/**
+ * Run a transfer whose transport shape is only known once it runs — the paste
+ * case, where a single leg may drive the dedicated SFTP channel *or* fall back
+ * to a byte-based (Docker / FTP / remote-agent) round-trip depending on both
+ * endpoints' capabilities. The `action` resolves to whether it drove the
+ * **tracked** (event-emitting) channel:
+ *   - `true`  → the `transfer-progress` event path owns the terminal success
+ *     toast (`useTransferEvents`, #1286), so this helper only dismisses the
+ *     pending toast — never a double toast on the SFTP path;
+ *   - `false` → the byte-based leg emits no event and would otherwise complete
+ *     silently (#2906), so this helper raises the success toast itself.
+ *
+ * Errors mirror {@link runTransfer}: a {@link TransferTerminalError} was already
+ * surfaced (or intentionally suppressed on cancel) by the event path, so it only
+ * dismisses the pending toast; any other error is surfaced here via `toast.error`.
+ * The rejection is always swallowed so callers never produce an unhandled
+ * rejection. Returns whether the transfer succeeded.
+ */
+export async function runMaybeTrackedTransfer(
+  label: string,
+  action: () => Promise<boolean>,
+  messages: { loading: string; success: string }
+): Promise<boolean> {
+  const toastId = toast.loading(messages.loading);
+  try {
+    const tracked = await action();
+    if (tracked) {
+      // Dedicated channel: the transfer-progress event path raises the success
+      // toast, so avoid a second one here.
+      toast.dismiss(toastId);
+    } else {
+      // Byte-based round-trip: no event will cover it, so own the success toast.
+      toast.success(messages.success, { id: toastId });
+    }
+    return true;
+  } catch (error) {
+    if (error instanceof TransferTerminalError) {
+      // The event path already surfaced this (or is quiet on cancel).
+      toast.dismiss(toastId);
+      return false;
+    }
+    const message = transferErrorMessage(error);
+    frontendLog("file_transfer", `${label} failed: ${message}`);
+    toast.error(`${label} failed: ${message}`, { id: toastId });
+    return false;
+  }
+}
