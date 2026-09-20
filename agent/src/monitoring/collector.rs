@@ -26,7 +26,8 @@ pub use termihub_core::monitoring::{LocalCollector, StatsCollector};
 
 use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
-    parse_stats, CpuDeltaTracker, NetDeltaTracker, SystemStats, MONITORING_COMMAND,
+    parse_stats, CpuDeltaTracker, NetDeltaTracker, PerCoreCpuTracker, SystemStats,
+    MONITORING_COMMAND,
 };
 
 // ── SSH collector ───────────────────────────────────────────────────
@@ -38,6 +39,7 @@ use termihub_core::monitoring::{
 pub struct SshCollector {
     session: SshSession,
     cpu_tracker: CpuDeltaTracker,
+    per_core_tracker: PerCoreCpuTracker,
     net_tracker: NetDeltaTracker,
 }
 
@@ -56,6 +58,7 @@ impl SshCollector {
         Ok(Self {
             session,
             cpu_tracker: CpuDeltaTracker::new(),
+            per_core_tracker: PerCoreCpuTracker::new(),
             net_tracker: NetDeltaTracker::new(),
         })
     }
@@ -98,12 +101,13 @@ impl StatsCollector for SshCollector {
         let output = self
             .exec(MONITORING_COMMAND)
             .map_err(|e| CoreError::Other(e.to_string()))?;
-        let (mut stats, counters, net_counters) =
+        let (mut stats, counters, per_core_counters, net_counters) =
             parse_stats(&output).map_err(|e| CoreError::Other(e.to_string()))?;
 
         // First sample has no prior snapshot to diff against, so report 0 %/0 B/s;
         // core's Cpu/NetDeltaTracker encapsulate that previous-snapshot state.
         stats.cpu_usage_percent = self.cpu_tracker.update(counters).unwrap_or(0.0);
+        stats.per_core_cpu_percent = self.per_core_tracker.update(&per_core_counters);
         let (net_rx, net_tx) = self.net_tracker.update(net_counters, Instant::now());
         stats.net_rx_bytes_per_sec = net_rx;
         stats.net_tx_bytes_per_sec = net_tx;

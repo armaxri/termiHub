@@ -2020,6 +2020,7 @@ mod tests {
                 swap_used_percent: 25.0,
                 net_rx_bytes_per_sec: 1024.0,
                 net_tx_bytes_per_sec: 2048.0,
+                per_core_cpu_percent: vec![50.0, 90.0],
             },
         );
         let v = serde_json::to_value(&data).unwrap();
@@ -2040,6 +2041,7 @@ mod tests {
         assert_eq!(v["swapUsedPercent"], 25.0);
         assert_eq!(v["netRxBytesPerSec"], 1024.0);
         assert_eq!(v["netTxBytesPerSec"], 2048.0);
+        assert_eq!(v["perCoreCpuPercent"], json!([50.0, 90.0]));
         // The flattened stats must not appear under a nested `stats` key.
         assert!(v.get("stats").is_none());
         // Verify camelCase (no snake_case keys)

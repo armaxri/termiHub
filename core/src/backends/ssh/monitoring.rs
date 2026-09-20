@@ -23,7 +23,7 @@ use crate::errors::CoreError;
 use crate::monitoring::{
     parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatus,
     MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
-    MonitoringSubscription, NetDeltaTracker, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
+    MonitoringSubscription, NetDeltaTracker, PerCoreCpuTracker, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
     DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
     MONITORING_COMMAND,
 };
@@ -360,6 +360,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
         tokio::spawn(async move {
             let mut session = session;
             let mut cpu_tracker = CpuDeltaTracker::new();
+            let mut per_core_tracker = PerCoreCpuTracker::new();
             let mut net_tracker = NetDeltaTracker::new();
             let mut loop_state = CollectLoopState::with_threshold(stale_threshold);
 
@@ -381,6 +382,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     // post-resume sample does not report a spurious rate from
                     // the paused gap.
                     cpu_tracker = CpuDeltaTracker::new();
+                    per_core_tracker = PerCoreCpuTracker::new();
                     net_tracker = NetDeltaTracker::new();
                 }
 
@@ -388,10 +390,12 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                 // mean "no fresh sample this tick" → count as a failure.
                 let collected = match collect_once(&*transport, &session, collect_timeout).await {
                     Ok(output) => match parse_stats(&output) {
-                        Ok((mut stats, counters, net_counters)) => {
+                        Ok((mut stats, counters, per_core_counters, net_counters)) => {
                             if let Some(pct) = cpu_tracker.update(counters) {
                                 stats.cpu_usage_percent = pct;
                             }
+                            stats.per_core_cpu_percent =
+                                per_core_tracker.update(&per_core_counters);
                             let (rx, tx_rate) = net_tracker.update(net_counters, Instant::now());
                             stats.net_rx_bytes_per_sec = rx;
                             stats.net_tx_bytes_per_sec = tx_rate;
@@ -438,6 +442,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                             // let the next collect emit `Live` on success.
                             session = new_session;
                             cpu_tracker = CpuDeltaTracker::new();
+                            per_core_tracker = PerCoreCpuTracker::new();
                             continue;
                         }
                         None => {

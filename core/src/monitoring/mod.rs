@@ -91,6 +91,49 @@ impl Default for CpuDeltaTracker {
     }
 }
 
+/// Maintains one [`CpuDeltaTracker`] per logical core for per-core usage (#3178).
+///
+/// Per-core CPU percentages are delta-based just like the aggregate, so each core
+/// needs its own previous-snapshot state. This wraps a `Vec<CpuDeltaTracker>` and
+/// mirrors [`CpuDeltaTracker::update`]'s priming behaviour: the first sample (and
+/// the first sample after the core count changes, e.g. CPU hotplug) reports
+/// `0.0` for every core.
+pub struct PerCoreCpuTracker {
+    trackers: Vec<CpuDeltaTracker>,
+}
+
+impl PerCoreCpuTracker {
+    /// Create a tracker with no cores primed yet.
+    pub fn new() -> Self {
+        Self {
+            trackers: Vec::new(),
+        }
+    }
+
+    /// Update with the current per-core counters, returning each core's usage
+    /// percentage (`0.0 <= pct <= 100.0`) in core order.
+    ///
+    /// The first call returns all-`0.0` (no prior snapshot). When the number of
+    /// reported cores changes, the trackers are reset so the next sample re-primes
+    /// rather than diffing mismatched cores.
+    pub fn update(&mut self, current: &[CpuCounters]) -> Vec<f64> {
+        if self.trackers.len() != current.len() {
+            self.trackers = (0..current.len()).map(|_| CpuDeltaTracker::new()).collect();
+        }
+        current
+            .iter()
+            .zip(self.trackers.iter_mut())
+            .map(|(counters, tracker)| tracker.update(counters.clone()).unwrap_or(0.0))
+            .collect()
+    }
+}
+
+impl Default for PerCoreCpuTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Maintains previous network counters + timestamp for calculating throughput.
 ///
 /// Network throughput (bytes/sec) requires diffing two cumulative counter
@@ -240,6 +283,86 @@ mod tests {
         };
         // Default should behave the same as new() — first call returns None
         assert!(tracker.update(counters).is_none());
+    }
+
+    #[test]
+    fn per_core_cpu_tracker_first_call_returns_zeros() {
+        let mut tracker = PerCoreCpuTracker::new();
+        let cores = vec![
+            CpuCounters {
+                user: 100,
+                idle: 900,
+                ..Default::default()
+            },
+            CpuCounters {
+                user: 200,
+                idle: 800,
+                ..Default::default()
+            },
+        ];
+        let pct = tracker.update(&cores);
+        assert_eq!(pct, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn per_core_cpu_tracker_second_call_returns_per_core_percentages() {
+        let mut tracker = PerCoreCpuTracker::new();
+
+        // Prime.
+        let first = vec![
+            CpuCounters {
+                user: 10,
+                idle: 90,
+                ..Default::default()
+            },
+            CpuCounters {
+                user: 10,
+                idle: 90,
+                ..Default::default()
+            },
+        ];
+        assert_eq!(tracker.update(&first), vec![0.0, 0.0]);
+
+        // core0: +10 active / +100 total = 10%. core1: +50 active / +100 total = 50%.
+        let second = vec![
+            CpuCounters {
+                user: 20,
+                idle: 180,
+                ..Default::default()
+            },
+            CpuCounters {
+                user: 60,
+                idle: 140,
+                ..Default::default()
+            },
+        ];
+        let pct = tracker.update(&second);
+        assert_eq!(pct.len(), 2);
+        assert!((pct[0] - 10.0).abs() < 0.01, "core0 pct was {}", pct[0]);
+        assert!((pct[1] - 50.0).abs() < 0.01, "core1 pct was {}", pct[1]);
+        // Every per-core value stays within range.
+        assert!(pct.iter().all(|p| (0.0..=100.0).contains(p)));
+    }
+
+    #[test]
+    fn per_core_cpu_tracker_core_count_change_re_primes() {
+        let mut tracker = PerCoreCpuTracker::new();
+        let two = vec![CpuCounters::default(), CpuCounters::default()];
+        let _ = tracker.update(&two);
+        // Core count changes (e.g. hotplug): the next sample re-primes to 0.0.
+        let four = vec![
+            CpuCounters::default(),
+            CpuCounters::default(),
+            CpuCounters::default(),
+            CpuCounters::default(),
+        ];
+        assert_eq!(tracker.update(&four), vec![0.0, 0.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn per_core_cpu_tracker_empty_input_yields_empty() {
+        let mut tracker = PerCoreCpuTracker::new();
+        assert!(tracker.update(&[]).is_empty());
     }
 
     #[test]

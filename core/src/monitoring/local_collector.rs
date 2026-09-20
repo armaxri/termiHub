@@ -79,6 +79,17 @@ impl StatsCollector for LocalCollector {
 
         let cpu_usage_percent = self.sys.global_cpu_usage() as f64;
 
+        // Per-core usage in core order (#3178). `refresh_cpu_usage` above updates
+        // every logical CPU, so this is a delta-based percentage like the
+        // aggregate. Cross-platform: `sysinfo` exposes per-CPU on Linux, macOS,
+        // and Windows alike, so no `#[cfg]` gating is needed.
+        let per_core_cpu_percent: Vec<f64> = self
+            .sys
+            .cpus()
+            .iter()
+            .map(|cpu| cpu.cpu_usage() as f64)
+            .collect();
+
         let mem_total_kb = self.sys.total_memory() / 1024;
         let mem_used_kb = self.sys.used_memory() / 1024;
         let mem_available_kb = mem_total_kb.saturating_sub(mem_used_kb);
@@ -143,6 +154,7 @@ impl StatsCollector for LocalCollector {
             swap_used_percent,
             net_rx_bytes_per_sec,
             net_tx_bytes_per_sec,
+            per_core_cpu_percent,
         })
     }
 }
@@ -258,6 +270,31 @@ mod tests {
             "cpu_usage_percent out of range on second sample: {}",
             second.cpu_usage_percent
         );
+    }
+
+    #[test]
+    fn local_collector_reports_per_core_cpu_in_range() {
+        // `sysinfo` reports one entry per logical core; each must be a valid
+        // percentage. The second sample has a prior delta so the values are real
+        // (the first sample is all-0 by priming), but both must stay in range.
+        let mut collector = LocalCollector::new();
+        let first = collector.collect("test").expect("first collect");
+        assert!(
+            !first.per_core_cpu_percent.is_empty(),
+            "sysinfo should report at least one logical core"
+        );
+        let second = collector.collect("test").expect("second collect");
+        assert_eq!(
+            second.per_core_cpu_percent.len(),
+            first.per_core_cpu_percent.len(),
+            "core count must be stable between samples"
+        );
+        for pct in &second.per_core_cpu_percent {
+            assert!(
+                pct.is_finite() && (0.0..=100.0).contains(pct),
+                "per-core cpu out of range: {pct}"
+            );
+        }
     }
 
     #[test]
