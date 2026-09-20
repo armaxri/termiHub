@@ -83,7 +83,7 @@ export const solarizedDarkTheme: ThemeDefinition = {
     ansiBrightWhite: "#fdf6e3", // base3
 
     // Scrollbar
-    scrollbarThumb: "rgba(88, 110, 117, 0.4)",
+    scrollbarThumb: "rgba(88, 110, 117, 0.5)",
     scrollbarThumbHover: "rgba(88, 110, 117, 0.7)",
   },
 };

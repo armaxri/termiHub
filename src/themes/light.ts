@@ -83,7 +83,7 @@ export const lightTheme: ThemeDefinition = {
     ansiBrightWhite: "#ffffff",
 
     // Scrollbar
-    scrollbarThumb: "rgba(100, 100, 100, 0.3)",
-    scrollbarThumbHover: "rgba(100, 100, 100, 0.5)",
+    scrollbarThumb: "rgba(100, 100, 100, 0.45)",
+    scrollbarThumbHover: "rgba(100, 100, 100, 0.65)",
   },
 };

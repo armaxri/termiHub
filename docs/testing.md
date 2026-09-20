@@ -1180,6 +1180,32 @@ Steps (dark theme active — the default):
    completely unchanged by this work; switching back restores the modern dark
    palette cleanly.
 
+### Scrollbars are persistently visible on all platforms (#3144)
+
+The global scrollbar (`src/styles/global.css`) was previously "subtle, auto-hide":
+the thumb was transparent at rest and only appeared while the scroll host was
+hovered/focused. On Windows this read as "no scrollbar" and made scrolling very
+hard, so the thumb is now shown at rest on every platform (still brightening on
+direct hover). The CSS behavior is locked by unit tests
+(`src/styles/tokenDiscipline.test.ts` → "persistent scrollbar (#3144)"), but the
+visual read on Windows must be confirmed by eye.
+
+Steps (ideally on Windows, where the regression was reported; repeat on
+macOS/Linux for parity):
+
+1. Launch the app (`./scripts/dev.sh`) and open any scrollable surface — the
+   connection sidebar with many entries, the Settings panel, or a terminal with
+   scrollback. Expected: the scrollbar thumb is **visible at rest** (a subtle
+   but clearly present bar in the gutter), without needing to hover the area.
+2. Hover the pointer directly over the thumb. Expected: it **brightens** a step
+   (the hover affordance), then returns to the resting shade when the pointer
+   leaves.
+3. Confirm there is no horizontal or vertical **layout shift** when a surface
+   gains/loses its scrollbar — the gutter stays consistently reserved.
+4. Switch between **Dark**, **Light**, and the **Solarized** themes. Expected:
+   the resting thumb reads well against each background — visible-but-subtle on
+   both dark and light surfaces.
+
 ### Multi-window close-with-live-tabs & per-OS quit policy (#1903)
 
 The close decision surface and the classification/store branches are covered by
