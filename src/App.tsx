@@ -8,6 +8,7 @@ import { TerminalView } from "@/components/Terminal";
 import { PasswordPrompt } from "@/components/PasswordPrompt";
 import { SshHostKeyPrompt } from "@/components/SshHostKeyPrompt/SshHostKeyPrompt";
 import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProcessAuthDialog";
+import { WorkflowParamPromptDialog } from "@/components/WorkflowSidebar/WorkflowParamPromptDialog";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
@@ -323,6 +324,7 @@ function App() {
           <PasswordPrompt />
           <SshHostKeyPrompt />
           <LocalProcessAuthDialog />
+          <WorkflowParamPromptDialog />
           <CustomizeLayoutDialog />
           <ExportDialog />
           <ImportDialog />

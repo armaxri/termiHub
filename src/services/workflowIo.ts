@@ -12,6 +12,8 @@
 
 import type {
   Workflow,
+  WorkflowParameter,
+  WorkflowParameterType,
   WorkflowStep,
   WorkflowStepKind,
   WorkflowTrigger,
@@ -186,6 +188,64 @@ function validateTrigger(raw: unknown, where: string, triggerIndex: number): Wor
   }
 }
 
+/** The recognised parameter value types (PROD-0040). */
+const PARAMETER_TYPES: readonly WorkflowParameterType[] = [
+  "string",
+  "number",
+  "boolean",
+  "enum",
+] as const;
+
+/**
+ * Validate one raw workflow parameter (PROD-0040), throwing a clear error that
+ * names the offending parameter. Returns a normalised {@link WorkflowParameter}
+ * with only the optional fields that were actually present, so an imported
+ * parameter round-trips without gaining empty keys.
+ */
+function validateParameter(raw: unknown, where: string, paramIndex: number): WorkflowParameter {
+  const at = `parameter ${paramIndex} of ${where}`;
+  if (!isRecord(raw)) {
+    throw new Error(`Invalid workflow file: ${at} is malformed.`);
+  }
+  if (typeof raw.name !== "string" || raw.name.trim() === "") {
+    throw new Error(`Invalid workflow file: ${at} is missing a name.`);
+  }
+  const type = raw.type as WorkflowParameterType;
+  if (typeof raw.type !== "string" || !PARAMETER_TYPES.includes(type)) {
+    throw new Error(`Invalid workflow file: ${at} has unknown type "${String(raw.type)}".`);
+  }
+  const param: WorkflowParameter = { name: raw.name, type };
+  if (raw.label !== undefined) {
+    if (typeof raw.label !== "string") {
+      throw new Error(`Invalid workflow file: ${at} has a non-string "label".`);
+    }
+    param.label = raw.label;
+  }
+  if (raw.default !== undefined) {
+    if (
+      typeof raw.default !== "string" &&
+      typeof raw.default !== "number" &&
+      typeof raw.default !== "boolean"
+    ) {
+      throw new Error(`Invalid workflow file: ${at} has an invalid "default".`);
+    }
+    param.default = raw.default;
+  }
+  if (raw.required !== undefined) {
+    if (typeof raw.required !== "boolean") {
+      throw new Error(`Invalid workflow file: ${at} has a non-boolean "required".`);
+    }
+    param.required = raw.required;
+  }
+  if (raw.options !== undefined) {
+    if (!Array.isArray(raw.options) || raw.options.some((o) => typeof o !== "string")) {
+      throw new Error(`Invalid workflow file: ${at} has invalid "options".`);
+    }
+    param.options = raw.options as string[];
+  }
+  return param;
+}
+
 /**
  * Validate one raw workflow entry from an imported file, throwing a clear error
  * that names the offending workflow (by index). Returns a normalised
@@ -224,6 +284,18 @@ function validateWorkflow(raw: unknown, index: number): Workflow {
     tags = raw.tags as string[];
   }
 
+  let parameters: WorkflowParameter[] | undefined;
+  if (raw.parameters !== undefined) {
+    if (!Array.isArray(raw.parameters)) {
+      throw new Error(`Invalid workflow file: ${label} has malformed parameters.`);
+    }
+    // Preserve the field only when it carries entries, so a parameter-free
+    // workflow round-trips byte-identically (no empty `parameters` key).
+    if (raw.parameters.length > 0) {
+      parameters = raw.parameters.map((p, i) => validateParameter(p, label, i));
+    }
+  }
+
   return {
     id: typeof raw.id === "string" ? raw.id : "",
     name: raw.name,
@@ -231,6 +303,7 @@ function validateWorkflow(raw: unknown, index: number): Workflow {
     tags,
     steps,
     triggers,
+    ...(parameters ? { parameters } : {}),
     createdAt: typeof raw.createdAt === "string" ? raw.createdAt : "",
     updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
   };

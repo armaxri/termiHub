@@ -30,8 +30,9 @@ import {
   type WorkflowRunHandle,
   type WorkflowAuthorizeLocalProcessSeam,
   type WorkflowRunLocalProcessSeam,
+  type WorkflowParamValues,
 } from "@/services/workflowRunner";
-import { Workflow, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
+import { Workflow, WorkflowParameter, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
 import { frontendLog } from "@/utils/frontendLog";
 
 import { currentSessionView, regionExited } from "../sessionBridge";
@@ -130,6 +131,22 @@ export interface RunWorkflowOptions {
  */
 export type LocalProcessAuthDecision = "once" | "always" | "cancel";
 
+/**
+ * State backing the open workflow-parameter prompt (PROD-0040), or `null` when
+ * none is open. Set when a run reaches a workflow that declares parameters; the
+ * prompt collects a value per parameter (pre-filled from each `default`) and
+ * resolves the pending promise with the collected values, or `null` when the
+ * user cancels (the run then does not start).
+ */
+export interface WorkflowParamPromptState {
+  /** The name of the workflow requesting values, for the prompt copy. */
+  workflowName: string;
+  /** The parameters to collect, in declaration order. */
+  parameters: WorkflowParameter[];
+  /** Resolver wired to the pending prompt promise (`null` = cancelled). */
+  resolve: (values: WorkflowParamValues | null) => void;
+}
+
 /** State backing the open local-process authorization dialog (#1857). */
 export interface LocalProcessPromptState {
   /** The program the step wants to spawn. */
@@ -227,6 +244,14 @@ export interface WorkflowsSlice {
   localProcessPrompt: LocalProcessPromptState | null;
   /** Resolve the open local-process authorization prompt with the user's choice. */
   resolveLocalProcessPrompt: (decision: LocalProcessAuthDecision) => void;
+  /**
+   * Pending workflow-parameter prompt (PROD-0040), or `null` when none is open.
+   * Set when a run starts a workflow that declares parameters; resolved by the
+   * user via the prompt dialog with the collected values (or `null` to cancel).
+   */
+  workflowParamPrompt: WorkflowParamPromptState | null;
+  /** Resolve the open workflow-parameter prompt with collected values (or `null` to cancel). */
+  resolveWorkflowParamPrompt: (values: WorkflowParamValues | null) => void;
 }
 
 export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice> = (set, get) => ({
@@ -322,6 +347,26 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     if (workflow.steps.length === 0) {
       toast.info(`Workflow "${workflow.name}" has no steps to run`);
       return;
+    }
+
+    // Collect declared parameter values before starting the run (PROD-0040).
+    // The prompt pre-fills each field from its `default`; cancelling it aborts
+    // the run before any in-flight run is disturbed. A parameter-free workflow
+    // skips this entirely and runs with an empty value map (identity pass).
+    let paramValues: WorkflowParamValues = {};
+    const parameters = workflow.parameters ?? [];
+    if (parameters.length > 0) {
+      const collected = await new Promise<WorkflowParamValues | null>((resolve) => {
+        set({
+          workflowParamPrompt: { workflowName: workflow.name, parameters, resolve },
+        });
+      });
+      set({ workflowParamPrompt: null });
+      if (collected === null) {
+        toast.info(`Workflow "${workflow.name}" cancelled`);
+        return;
+      }
+      paramValues = collected;
     }
 
     // Only one run at a time — cancel any in-flight run first.
@@ -512,7 +557,8 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
             description: `${completed} / ${stepTotal} steps`,
           });
         },
-      }
+      },
+      paramValues
     );
     activeWorkflowRun = handle;
 
@@ -595,5 +641,14 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     // Clear first so a second click cannot double-resolve the promise.
     set({ localProcessPrompt: null });
     prompt.resolve(decision);
+  },
+
+  workflowParamPrompt: null,
+  resolveWorkflowParamPrompt: (values) => {
+    const prompt = get().workflowParamPrompt;
+    if (!prompt) return;
+    // Clear first so a second submit/cancel cannot double-resolve the promise.
+    set({ workflowParamPrompt: null });
+    prompt.resolve(values);
   },
 });

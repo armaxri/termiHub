@@ -206,6 +206,9 @@ export function WorkflowSidebar() {
         tags: result.tags,
         steps: result.steps,
         triggers: result.triggers,
+        // Omit the key entirely when there are no parameters, so a
+        // parameter-free workflow serialises byte-identically (PROD-0040).
+        parameters: result.parameters.length > 0 ? result.parameters : undefined,
       };
       try {
         await saveWorkflowToBackend(updated);
