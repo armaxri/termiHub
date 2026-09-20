@@ -316,7 +316,12 @@ jobs:
         continue-on-error: true
         run: pnpm size >> "$GITHUB_STEP_SUMMARY"
 
-  # Shell-script static analysis (audit finding TOOL-012).
+  # Shell-script quality: static analysis + cross-platform parity + headless
+  # smoke (audit finding TOOL-012 / WA-CI-029).
+  #
+  # Three gates run here (all blocking): ShellCheck static analysis, the
+  # .sh<->.cmd parity check, and a headless --help smoke that actually EXECUTES
+  # scripts (catching the runtime set -u/expansion faults static checks miss).
   #
   # No CI lane ran shellcheck over the repo's shell scripts, so shell bugs
   # shipped silently — including the SC2257-class defect that broke
@@ -350,6 +355,26 @@ jobs:
           severity: warning
           version: v0.11.0
           ignore_paths: node_modules target graft
+
+      # Cross-platform script-parity gate (TOOL-012 / WA-CI-029). ShellCheck
+      # only sees the .sh half; nothing enforced that each user-facing
+      # scripts/**/*.sh has its Windows .cmd twin (and vice-versa), so the pairs
+      # drifted. This BLOCKING check fails when a .sh lacks a .cmd (or a .cmd a
+      # .sh), minus the documented single-platform ALLOWLIST inside the script
+      # (per-OS test-system orchestrators + Unix-only internal helpers).
+      - name: Check script cross-platform parity (.sh <-> .cmd)
+        run: ./scripts/internal/check-script-parity.sh
+
+      # Headless smoke of shell scripts (TOOL-012 / WA-CI-029). ShellCheck and
+      # `bash -n` are static and never RUN a script, so they miss runtime
+      # `set -u` / expansion faults on first execution — the class that broke
+      # verify-agent-reconnect.sh (#2545). This step actually executes each
+      # script's non-destructive `--help` fast path (real shebang + set flags +
+      # top-of-file sourcing + arg parser) and asserts a clean exit 0. Scoped to
+      # the safe --help path so it needs no Docker/network/app-build and is
+      # deterministic, not flaky.
+      - name: Headless smoke of shell scripts (--help paths)
+        run: ./scripts/internal/check-script-headless.sh
 
   # Run tests
   tests:
