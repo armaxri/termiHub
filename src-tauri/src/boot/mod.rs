@@ -914,6 +914,24 @@ pub(crate) fn init_secondary_managers(
         }
     }
 
+    // Initialize the workflow run-history manager with recovery loading
+    // (PROD-0046). On failure, the app still starts but run history is
+    // unavailable (recording is fire-and-forget on the frontend regardless).
+    match workflows::history_manager::WorkflowRunHistoryManager::new(app.handle()) {
+        Ok(manager) => {
+            recovery_warnings.extend(manager.take_recovery_warnings());
+            app.manage(manager);
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize workflow run-history manager: {e}");
+            recovery_warnings.push(RecoveryWarning {
+                file_name: "runs.json".to_string(),
+                message: "Could not initialize workflow run-history storage. Run history is unavailable until the app is restarted.".to_string(),
+                details: Some(e.to_string()),
+            });
+        }
+    }
+
     // Initialize the last-session manager. On failure the app still starts;
     // session restore is simply unavailable until the next launch.
     match workspace::last_session::LastSessionManager::new(app.handle()) {

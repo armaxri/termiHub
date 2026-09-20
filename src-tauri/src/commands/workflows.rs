@@ -2,6 +2,8 @@ use tauri::State;
 
 use crate::utils::errors::TerminalError;
 use crate::workflows::config::Workflow;
+use crate::workflows::history::WorkflowRun;
+use crate::workflows::history_manager::WorkflowRunHistoryManager;
 use crate::workflows::manager::WorkflowManager;
 
 /// List all stored workflows.
@@ -36,4 +38,30 @@ pub fn delete_workflow(
     manager: State<'_, WorkflowManager>,
 ) -> Result<(), TerminalError> {
     manager.delete_workflow(&workflow_id)
+}
+
+/// List all recorded workflow runs, most-recent first (PROD-0046).
+#[tauri::command]
+pub fn list_workflow_runs(
+    manager: State<'_, WorkflowRunHistoryManager>,
+) -> Result<Vec<WorkflowRun>, TerminalError> {
+    manager.list()
+}
+
+/// Record a finished workflow run. Returns the updated (capped, newest-first)
+/// history list.
+#[tauri::command]
+pub fn record_workflow_run(
+    run: WorkflowRun,
+    manager: State<'_, WorkflowRunHistoryManager>,
+) -> Result<Vec<WorkflowRun>, TerminalError> {
+    manager.record(run)
+}
+
+/// Clear the entire workflow run history.
+#[tauri::command]
+pub fn clear_workflow_run_history(
+    manager: State<'_, WorkflowRunHistoryManager>,
+) -> Result<Vec<WorkflowRun>, TerminalError> {
+    manager.clear()
 }
