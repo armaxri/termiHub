@@ -15,8 +15,8 @@ evidence:
   - src/components/UpdateNotification/UpdateNotification.tsx:73
   - src/components/Settings/ShellIntegrationSettings.tsx:173
   - src/components/Plugins/PluginDetailPanel.tsx:101
-status: partial
-resolution: "#2942 — promoted SidebarStatusDot->shared ui/StatusDot (notice tone + size prop); migrated update-indicator/settings/notification dots. State-palette dots (agent/connection-tree/plugin) -> follow-up #2943"
+status: fixed
+resolution: "#3138 — COMPLETE: #2942 promoted SidebarStatusDot->shared ui/StatusDot; #3138 then consolidated the remaining state-palette dots (agent/connection-tree/plugin/shell-integration) onto ui/StatusDot with connection-state tones + lg size + pulse/dimmed modifiers. No hand-rolled status dots remain."
 ---
 
 ## What

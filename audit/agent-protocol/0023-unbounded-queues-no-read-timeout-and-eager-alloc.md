@@ -11,7 +11,7 @@ evidence:
   - agent/src/daemon/protocol.rs:131
   - agent/src/daemon/process.rs:315
 status: fixed
-resolution: "#3016 — bound registry outbound queue (cap 256, drop-slow-worker) + 64KiB registry frame ceiling + 5s registry mid-frame timeout; session-daemon heartbeat deferred #3015; 6 tests"
+resolution: "#3016 — registry outbound queue bounded (cap 256, drop-slow-worker) + 64KiB registry frame ceiling + 5s registry mid-frame timeout (#3016). Session-daemon read loops later got a 30s mid-frame timeout + 16MiB cap (#3141) so a mid-frame-stalled peer is detected; the fully-silent-wedge case still needs an app-level heartbeat, tracked in follow-up #3140."
 ---
 
 ## What

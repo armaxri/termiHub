@@ -13,8 +13,8 @@ evidence:
   - src/components/ConnectionEditor/ConnectionTerminalSettings.tsx:231
   - src/components/ConnectionEditor/JumpHostEntry.tsx:53
   - src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx:172
-status: partial
-resolution: "#3071 — added optional error slot to SettingsField (mirrors ui/Field ui-field__msg + AlertCircle + role=alert + aria-invalid/describedby, backward-compat); migrated 10/11 raw settings-form__field blocks in ConnectionTerminalSettings.tsx to SettingsField (1 bespoke ConnectionAdditionalRules header deferred). Remaining: full ui/Field↔SettingsField unification + other panels → follow-up #3070"
+status: fixed
+resolution: "#3152 — COMPLETE: #3071 added the error slot to SettingsField; #3070/#3152 then unified ui/Field and Settings/SettingsField — ui/Field is the single primitive (optional htmlFor->span+aria-label, hint, variant=settings) and SettingsField is a thin wrapper. Remaining hand-written settings-form__field blocks in other panels tracked in follow-up #3151."
 ---
 
 ## What
