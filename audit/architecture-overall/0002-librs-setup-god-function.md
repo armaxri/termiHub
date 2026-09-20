@@ -11,7 +11,7 @@ evidence:
   - src-tauri/src/lib.rs:774
   - src-tauri/src/lib.rs:1322
 status: partial
-resolution: "#3131 — TAURI-009 same. Slice 1 DONE (#3131): the ~1000-line Tauri setup() god-closure in lib.rs extracted into ordered boot::init_* phase functions (new src-tauri/src/boot.rs) — pure move, all 9 ordering invariants preserved, generate_handler!/builder-chain/.run()/run_app_teardown untouched, 2040 tests pass. REMAINING (now TO-DO pre-release per fix-all mandate): Slice 2 (builder/logging extraction), Slice 3 (test-module relocation), and the deferred PROD-MODULE SPLITS (agent_manager.rs ~6467 / session/manager.rs ~5352 — ~half tests; split prod impl blocks along seams; hot reconnect path → Plan-scope + verify-or-defer). Brief for S1 was scratchpad/arch-002-slice1-brief.md"
+resolution: "#3179 — = TAURI-009. Slices 1-8 DONE: setup()->boot (#3131), lib.rs decomposition logging/builder (#3142), agent_manager test-mod relocation (#3159), session/manager test-mod relocation (#3156), session file-ops carve (#3176), session monitoring carve (#3179), agent_manager DTO carve (#3174). REMAINING: S9 (agent events/notification carve — GATED verify-or-defer, brushes live output path) + the DEFERRED reconnect-machinery carve (agent_io_task etc., ventilator-grade — own reviewed slice, russh gate)"
 ---
 
 ## What

@@ -12,7 +12,7 @@ evidence:
   - src/utils/classifyAgentError.ts:79
   - src/utils/frontendLog.ts:31
 status: partial
-resolution: "develop — durable error channel exists: frontendError mirrors ERROR/WARN to backend durable log (frontendLog.ts:133/:26). Remaining cross-cutting: 364 toast sites not routed through it, typed-envelope classification is ERR-003 (in-progress), display-string sanitization absent — folds w/ TAURI-008"
+resolution: "#3168 — same cluster: structured {code,message} envelope + FE dual-read shim landed #3168 (supersedes the old 'no wire envelope' note). Remaining: Phase 2 hotspot retypes + Phase 3 FE consumption"
 ---
 
 ## What

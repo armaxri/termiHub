@@ -13,7 +13,7 @@ evidence:
   - src-tauri/src/spawn/registry.rs:1
   - src-tauri/src/tunnel/tunnel_manager.rs:1
 status: partial
-resolution: "#3131 — = ARCH-002 (same finding). Slice1 setup()→boot phases done #3131; module splits remaining pre-release"
+resolution: "#3179 — = ARCH-002. Slices 1-8 merged (test relocations + file-ops/monitoring/DTO carves); S9 + reconnect-machinery carve remain (gated/deferred)"
 ---
 
 ## What

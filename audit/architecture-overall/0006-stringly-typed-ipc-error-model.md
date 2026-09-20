@@ -11,7 +11,7 @@ evidence:
   - core/src/errors.rs:11
   - src/services/api.ts:1262
 status: partial
-resolution: "develop — reclaim-partial: stable locale-independent code markers in error Display strings (errors.rs:15-20 [thub-code:auth_failed]) mitigate i18n substring-match hazard. STILL: serialize is serialize_str(to_string()) (errors.rs:121-125), no structured {code,message} wire envelope, 108 cmds still Result<_,String> → ERR-008/TAURI-008 architectural"
+resolution: "#3168 — Structured IPC error envelope NOW LANDED (#3168 Phase 0+1): TerminalError serializes {code,message,details} with a ts-rs IpcErrorCode enum + FE dual-read shim (backendErrorCode.ts) + errorMessage() object-aware. Phase 2 retype of raw-String cmds underway (#3169 small files, #3184 connection.rs). REMAINING: session/agent/network/files hotspots + Phase 3 (FE structural consumption / drop substring fallback)"
 ---
 
 ## What
