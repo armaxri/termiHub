@@ -137,6 +137,40 @@ function hasStandaloneRawHex(css: string): boolean {
     .some((line) => !varFallbackRe.test(line) && rawHexRe.test(line));
 }
 
+/**
+ * True when `css` uses a raw `px` value in a `padding` / `margin` / `gap` /
+ * `row-gap` / `column-gap` declaration that is NOT on the `--spacing-*` scale
+ * (UI-009, #2898).
+ *
+ * The `--spacing-*` scale in variables.css is the single source of spacing
+ * truth; component CSS must reference a token rather than a raw px. Two
+ * carve-outs, mirroring the font-size guard:
+ *  - a px inside a `var(--token, <fallback>)` is an acceptable defensive default
+ *    and is ignored (the whole `var(...)` group is blanked before scanning), and
+ *  - `1px` (and `-1px`) is a hairline/nudge, not a spacing step, and is exempt —
+ *    it is the CSS analogue of a 1px border and never maps onto the scale.
+ *
+ * Any other raw px (`6px`, `10px`, `3px`, …) in these properties is an off-scale
+ * spacing value and returns true. Only the physical box properties are scanned;
+ * positional offsets (`top`/`left`/`inset`) are not spacing-scale members.
+ *
+ * @param css Contents of a CSS file.
+ * @returns Whether any spacing declaration carries an off-scale raw px value.
+ */
+function hasOffScaleSpacingPx(css: string): boolean {
+  const declRe =
+    /(?:^|[;{}\s])(?:(?:padding|margin)(?:-(?:top|right|bottom|left))?|gap|row-gap|column-gap)\s*:\s*([^;{}]*)/gi;
+  for (const m of stripCssComments(css).matchAll(declRe)) {
+    // Blank out var(...) groups so a px in a `var(--token, 12px)` fallback is exempt.
+    const value = m[1].replace(/var\([^)]*\)/g, " ");
+    for (const px of value.matchAll(/(-?\d+)px/gi)) {
+      if (Math.abs(Number(px[1])) === 1) continue; // 1px hairline/nudge — not a scale step
+      return true;
+    }
+  }
+  return false;
+}
+
 describe("CSS token discipline (#1059)", () => {
   it("finds component CSS files to scan", () => {
     expect(cssFiles.length).toBeGreaterThan(0);
@@ -558,6 +592,132 @@ describe("type scale (UI-005)", () => {
       "Reference a --font-size-* token from src/styles/variables.css instead of a raw px " +
         `font-size in: ${offenders.join(", ")}`
     ).toEqual([]);
+  });
+});
+
+/**
+ * Spacing-scale guard (UI-009, #2898).
+ *
+ * The `--spacing-*` scale in variables.css
+ * (xxs 2 · xs 4 · sm 8 · md 12 · lg 16 · xl 24 · 2xl 32) is the single source of
+ * spacing truth. #2897 tokenized every `padding`/`margin`/`gap` px that EXACTLY
+ * matched a token (behaviour-preserving — no rounding), and this change swept the
+ * two exact-match stragglers it missed. This guard is the ratchet that keeps NEW
+ * off-scale spacing px from creeping back in.
+ *
+ * SPACING_PX_ALLOWLIST is a shrinking ratchet: files that still carry off-scale
+ * spacing px (`6px`, `10px`, `3px`, …) whose reconciliation is a genuine
+ * layout/density decision — snap onto the nearest tier vs. add an intermediate
+ * 6/10/20 tier, deferred to the maintainer (#2898's remaining scope, see the
+ * follow-up). It is deliberately over-permissive, is never asserted to be free of
+ * stale entries, and MUST shrink toward empty: as each file's residuals are
+ * reconciled, its entry is removed. A currently-clean file (one not in the list)
+ * that introduces a new off-scale spacing px FAILS.
+ *
+ * Paths are repo-relative suffixes (POSIX separators), matched with `endsWith`.
+ */
+const SPACING_PX_ALLOWLIST: string[] = [
+  "components/ActivityBar/ActivityBar.css",
+  "components/AgentVersionBadge/AgentVersionBadge.css",
+  "components/ConnectionEditor/ConnectionEditor.css",
+  "components/ConnectionEditor/SshConfigImportDialog.css",
+  "components/EmbeddedServerSidebar/EmbeddedServerSidebar.css",
+  "components/FileEditor/FileEditor.css",
+  "components/KeyboardShortcuts/ShortcutsOverlay.css",
+  "components/MacroSidebar/MacroEditorDialog.css",
+  "components/MacroSidebar/MacroSidebar.css",
+  "components/NetworkTools/NetworkTools.css",
+  "components/OpenConnections/OpenConnectionsModal.css",
+  "components/PasswordInput/PasswordInput.css",
+  "components/Plugins/Plugins.css",
+  "components/RecentSessionsSidebar/RecentSessionsSidebar.css",
+  "components/RemoteDesktop/RemoteDesktopTab.css",
+  "components/Settings/PortableModeSettings.css",
+  "components/Settings/SettingsNav.css",
+  "components/Settings/SettingsPanel.css",
+  "components/Settings/UpdateSettings.css",
+  "components/Sidebar/BulkSshImportDialog.css",
+  "components/Sidebar/ConnectionList.css",
+  "components/Sidebar/ConnectionPathDialog.css",
+  "components/Sidebar/FleetOnboardDialog.css",
+  "components/SidebarListItem/SidebarListItem.css",
+  "components/SplitView/PanelErrorBoundary.css",
+  "components/StatusBar/StatusBar.css",
+  "components/Terminal/TabBar.css",
+  "components/Terminal/TabGroupChips.css",
+  "components/Terminal/TerminalSearchBar.css",
+  "components/Terminal/TerminalViewModeBanner.css",
+  "components/TransferQueue/TransferQueue.css",
+  "components/TunnelEditor/TunnelEditor.css",
+  "components/TunnelSidebar/TunnelSidebar.css",
+  "components/UpdateNotification/UpdateNotification.css",
+  "components/WorkflowSidebar/LocalProcessAuthDialog.css",
+  "components/WorkflowSidebar/WorkflowEditorDialog.css",
+  "components/WorkflowSidebar/WorkflowRunOutput.css",
+  "components/WorkflowSidebar/WorkflowSidebar.css",
+  "components/WorkspaceEditor/WorkspaceEditor.css",
+  "components/WorkspaceSidebar/WorkspaceSidebar.css",
+  "components/ui/ui.css",
+];
+
+describe("spacing scale (UI-009)", () => {
+  it("defines the full spacing tier scale in variables.css", () => {
+    const css = stripCssComments(readFileSync(join(STYLES_DIR, "variables.css"), "utf8"));
+    for (const tok of [
+      "--spacing-xxs",
+      "--spacing-xs",
+      "--spacing-sm",
+      "--spacing-md",
+      "--spacing-lg",
+      "--spacing-xl",
+      "--spacing-2xl",
+    ]) {
+      expect(css.includes(`${tok}:`), `variables.css must define ${tok}`).toBe(true);
+    }
+  });
+
+  it("introduces no new off-scale raw px in padding/margin/gap outside the allowlist", () => {
+    const offenders: string[] = [];
+    for (const file of cssFiles) {
+      if (SPACING_PX_ALLOWLIST.some((allowed) => toPosix(file).endsWith(allowed))) continue;
+      if (hasOffScaleSpacingPx(readFileSync(file, "utf8"))) offenders.push(toPosix(file));
+    }
+    expect(
+      offenders,
+      "Reference a --spacing-* token from src/styles/variables.css instead of a raw px " +
+        `padding/margin/gap value in: ${offenders.join(", ")}`
+    ).toEqual([]);
+  });
+});
+
+describe("off-scale spacing detection (UI-009)", () => {
+  it("flags an off-scale raw px in padding/margin/gap", () => {
+    expect(hasOffScaleSpacingPx(".a {\n  padding: 6px;\n}")).toBe(true);
+    expect(hasOffScaleSpacingPx(".a {\n  gap: 10px;\n}")).toBe(true);
+    expect(hasOffScaleSpacingPx(".a {\n  margin-left: 3px;\n}")).toBe(true);
+  });
+
+  it("flags an off-scale member inside a shorthand alongside a token", () => {
+    expect(hasOffScaleSpacingPx(".a {\n  padding: 6px var(--spacing-sm);\n}")).toBe(true);
+  });
+
+  it("accepts values already on the token scale", () => {
+    expect(
+      hasOffScaleSpacingPx(".a {\n  padding: var(--spacing-sm) var(--spacing-md);\n  gap: 0;\n}")
+    ).toBe(false);
+  });
+
+  it("exempts a px inside a var() fallback (defensive default)", () => {
+    expect(hasOffScaleSpacingPx(".a {\n  padding: var(--spacing-md, 12px);\n}")).toBe(false);
+  });
+
+  it("exempts 1px hairlines/nudges", () => {
+    expect(hasOffScaleSpacingPx(".a {\n  padding: 1px var(--spacing-xs);\n}")).toBe(false);
+    expect(hasOffScaleSpacingPx(".a {\n  margin-bottom: -1px;\n}")).toBe(false);
+  });
+
+  it("does not scan positional offsets (top/left/inset are not spacing steps)", () => {
+    expect(hasOffScaleSpacingPx(".a {\n  top: 6px;\n  inset: 6px 5px;\n}")).toBe(false);
   });
 });
 
