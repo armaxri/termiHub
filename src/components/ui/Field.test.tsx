@@ -98,4 +98,68 @@ describe("Field", () => {
     expect(ids).toContain("port-hint");
     expect(ids).toContain("port-error");
   });
+
+  it("renders an optional hint below the control", () => {
+    render(
+      <Field data-testid="field" label="Host" htmlFor="host" hint="Reachable hostname">
+        <Input id="host" />
+      </Field>
+    );
+    const hint = document.querySelector('[data-testid="field"] .ui-field__hint');
+    expect(hint?.textContent).toBe("Reachable hostname");
+    expect(hint?.classList.contains("ui-field__hint--warning")).toBe(false);
+  });
+
+  it("applies the warning hint variant", () => {
+    render(
+      <Field data-testid="field" label="Host" htmlFor="host" hint="Careful" hintVariant="warning">
+        <Input id="host" />
+      </Field>
+    );
+    const hint = document.querySelector('[data-testid="field"] .ui-field__hint');
+    expect(hint?.classList.contains("ui-field__hint--warning")).toBe(true);
+  });
+
+  it("omits the hint element when no hint is provided", () => {
+    render(
+      <Field data-testid="field" label="Host" htmlFor="host">
+        <Input id="host" />
+      </Field>
+    );
+    expect(document.querySelector('[data-testid="field"] .ui-field__hint')).toBeNull();
+  });
+
+  it("renders the settings variant scaffold and error test hook", () => {
+    render(
+      <Field data-testid="field" variant="settings" label="Cursor Blink" error="Nope">
+        <Input data-testid="settings-control" />
+      </Field>
+    );
+    expect(document.querySelector(".settings-form__field")).toBeTruthy();
+    expect(document.querySelector(".settings-form__label")?.textContent).toBe("Cursor Blink");
+    expect(document.querySelector('[data-testid="settings-field-error"]')).toBeTruthy();
+  });
+
+  it("renders a span label and derives aria-label when htmlFor is omitted", () => {
+    render(
+      <Field data-testid="field" label="Cursor Blink">
+        <input type="text" data-testid="no-id-control" />
+      </Field>
+    );
+    expect(document.querySelector('[data-testid="field"] label')).toBeNull();
+    const spanLabel = document.querySelector('[data-testid="field"] span');
+    expect(spanLabel?.textContent).toBe("Cursor Blink");
+    const control = document.querySelector('[data-testid="no-id-control"]');
+    expect(control?.getAttribute("aria-label")).toBe("Cursor Blink");
+  });
+
+  it("preserves an explicit aria-label on the control when htmlFor is omitted", () => {
+    render(
+      <Field data-testid="field" label="Field Label">
+        <input type="text" aria-label="Explicit Label" data-testid="no-id-control" />
+      </Field>
+    );
+    const control = document.querySelector('[data-testid="no-id-control"]');
+    expect(control?.getAttribute("aria-label")).toBe("Explicit Label");
+  });
 });
