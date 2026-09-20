@@ -1742,6 +1742,37 @@ export async function sessionUpload(
 }
 
 /**
+ * Copy a file directly from one SFTP-backed session to another, streaming the
+ * bytes **through the desktop with no local staging file** (PROD-0013).
+ *
+ * Registers ONE background transfer on the rich queue model — reading the source
+ * session's dedicated SFTP channel and writing the destination session's channel
+ * — and resolves with the bytes transferred once it completes. Replaces the
+ * download-to-temp + upload round-trip (two rows + a local disk copy) for the
+ * SFTP↔SFTP paste case; pause/resume/retry and byte-verified offset resume all
+ * work as for {@link sessionDownload}/{@link sessionUpload}. `onRegistered` fires
+ * once with the backend `transferId` the instant the start command returns, for
+ * seeding the Transfer Queue ahead of any progress event (#1632). Both endpoints
+ * must be SFTP-backed.
+ */
+export async function sessionCopyRemote(
+  srcSession: string,
+  srcPath: string,
+  dstSession: string,
+  dstPath: string,
+  onRegistered?: (transferId: string) => void
+): Promise<number> {
+  const transferId = await invoke<string>("session_copy_remote", {
+    srcSession,
+    srcPath,
+    dstSession,
+    dstPath,
+  });
+  onRegistered?.(transferId);
+  return await awaitTransfer(transferId);
+}
+
+/**
  * Open a remote file in VS Code over a session's SFTP connection: download, open
  * with `--wait`, re-upload on close (#2383). The standalone `vscode_open_remote`
  * command it once mirrored was retired in #2314.
