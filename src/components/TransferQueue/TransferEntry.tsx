@@ -14,6 +14,16 @@ export interface TransferEntryProps {
    * {@link TransferControls}.
    */
   pausable: boolean;
+  /**
+   * Render the narrow, two-line **compact variant** for the file-browser sidebar
+   * footer (~250–350px) instead of the wide multi-column Transfer Queue row
+   * (UX-020 / #2905). The compact variant stacks a head line (direction icon,
+   * name, percent/status, controls) over a full-width progress bar, reusing the
+   * same data, {@link TransferControls}, {@link Progress}, and status/byte
+   * derivations — so both surfaces share one component and one data source
+   * rather than a divergent bespoke row. Defaults to `false` (the wide row).
+   */
+  compact?: boolean;
   /** Pause an active transfer. */
   onPause: (id: string) => void | Promise<void>;
   /** Resume a paused transfer. */
@@ -72,6 +82,7 @@ function byteCountLabel(entry: TransferEntry): string {
 export function TransferEntryRow({
   entry,
   pausable,
+  compact = false,
   onPause,
   onResume,
   onCancel,
@@ -83,6 +94,61 @@ export function TransferEntryRow({
   const status = statusLabel(entry);
   const indeterminate = entry.percent == null && entry.state === "active";
   const state: TransferQueueState = entry.state;
+
+  const controls = (
+    <TransferControls
+      state={state}
+      pausable={pausable}
+      onPause={() => onPause(entry.id)}
+      onResume={() => onResume(entry.id)}
+      onCancel={() => onCancel(entry.id)}
+      onRetry={() => onRetry(entry.id)}
+      onRemove={() => onRemove(entry.id)}
+    />
+  );
+
+  if (compact) {
+    // Compact head readout: percent while it is known, else the transferred-byte
+    // count for an indeterminate active transfer (so it still shows movement) —
+    // matching the byte-based feedback in the wide row (#3149 / UX-019).
+    const meta =
+      entry.percent != null ? `${entry.percent}%` : indeterminate ? byteCountLabel(entry) : "";
+    return (
+      <div className="transfer-row transfer-row--compact" data-testid="transfer-row">
+        <div className="transfer-row__compact-head">
+          <span className="transfer-row__dir" title={dirTitle} aria-label={dirTitle}>
+            {isUpload ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+          </span>
+          <span className="transfer-row__name" title={entry.name} data-testid="transfer-row-name">
+            {entry.name}
+          </span>
+          {meta && (
+            <span className="transfer-row__pct" data-testid="transfer-row-bytes">
+              {meta}
+            </span>
+          )}
+          {status && (
+            <span
+              className={`transfer-row__status transfer-row__status--${state}`}
+              title={entry.error}
+              data-testid="transfer-row-status"
+            >
+              {state === "queued" && <Clock size={12} />}
+              {status}
+            </span>
+          )}
+          {controls}
+        </div>
+        <Progress
+          className={`transfer-row__bar transfer-row__bar--${state}`}
+          value={entry.percent ?? 0}
+          max={100}
+          indeterminate={indeterminate}
+          label={`${entry.name} — ${entry.percent != null ? `${entry.percent}%` : dirTitle}`}
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="transfer-row" data-testid="transfer-row">
@@ -133,15 +199,7 @@ export function TransferEntryRow({
         {status}
       </span>
 
-      <TransferControls
-        state={state}
-        pausable={pausable}
-        onPause={() => onPause(entry.id)}
-        onResume={() => onResume(entry.id)}
-        onCancel={() => onCancel(entry.id)}
-        onRetry={() => onRetry(entry.id)}
-        onRemove={() => onRemove(entry.id)}
-      />
+      {controls}
     </div>
   );
 }

@@ -436,6 +436,14 @@ jobs:
   # Build and upload Windows agent binaries as release assets (native MSVC build).
   # cross-rs cannot build the MSVC ABI, so this runs native cargo on a Windows
   # runner. The binary is emitted as termihub-agent.exe.
+  #
+  # The ARM64 leg cross-compiles aarch64-pc-windows-msvc from the x64
+  # windows-latest runner: rustup adds the target's std (via the toolchain
+  # `targets:` input) and the runner's Visual Studio ships the ARM64 MSVC build
+  # tools/linker, so `cargo build --target aarch64-pc-windows-msvc` links without
+  # an emulated ARM64 runner. The desktop resolves ARM64 Windows remotes to the
+  # windows-arm64 artifact (src-tauri/src/terminal/agent_binary.rs), so this asset
+  # must ship for those hosts to install the agent (#3060).
   agent-binaries-windows:
     name: Agent Binary (${{ matrix.target }})
     needs: create-release
@@ -447,6 +455,8 @@ jobs:
         include:
           - target: x86_64-pc-windows-msvc
             artifact_name: termihub-agent-windows-x64.exe
+          - target: aarch64-pc-windows-msvc
+            artifact_name: termihub-agent-windows-arm64.exe
 
     steps:
       - name: Checkout code
@@ -523,6 +533,7 @@ jobs:
             termihub-agent-macos-arm64
             termihub-agent-macos-x64
             termihub-agent-windows-x64.exe
+            termihub-agent-windows-arm64.exe
           )
           for a in "${agents[@]}"; do
             expected+=("$a" "${a}.sha256")
