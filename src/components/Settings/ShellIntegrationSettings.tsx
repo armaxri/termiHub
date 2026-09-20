@@ -14,7 +14,7 @@ import type {
   ShellIntegrationSettings as ShellIntegrationSettingsType,
   ShellIntegrationStatus,
 } from "@/types/connection";
-import { Button, Field, Select, Toggle, Tooltip, toast } from "@/components/ui";
+import { Button, Field, Select, StatusDot, Toggle, Tooltip, toast } from "@/components/ui";
 import type { ToastPromiseMessages } from "@/components/ui";
 import {
   getShellIntegrationStatus,
@@ -169,10 +169,7 @@ export function ShellIntegrationSettings() {
       {/* Registration status + actions */}
       <div className="shell-integration__card" data-testid="shell-integration-status-card">
         <div className="shell-integration__status-line">
-          <span
-            className={`shell-integration__dot${status?.registered ? " shell-integration__dot--on" : ""}`}
-            aria-hidden
-          />
+          <StatusDot tone={status?.registered ? "success" : "disabled"} size="lg" ariaHidden />
           <span data-testid="shell-integration-status-text">
             {status?.registered ? "Registered" : "Not registered"}
           </span>

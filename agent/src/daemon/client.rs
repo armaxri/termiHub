@@ -585,7 +585,12 @@ async fn reader_loop(
     on_exit: ExitHookSlot,
 ) {
     loop {
-        match protocol::read_frame_async(&mut reader).await {
+        // Steady-state reads use the mid-frame timeout (#3015): a peer that
+        // begins a frame and then wedges must fail the session (so reconnect /
+        // redrive takes over) instead of parking this reader task forever. The
+        // wait for a frame's first byte stays unbounded, so an idle-but-alive
+        // session — no output for hours — is never torn down.
+        match protocol::read_session_frame_timeout(&mut reader).await {
             Ok(Some(frame)) => match frame.msg_type {
                 MSG_OUTPUT => {
                     send_output_notification(notification_tx, session_id, &frame.payload);
@@ -858,6 +863,106 @@ mod tests {
             ran.load(Ordering::SeqCst),
             "exit hook must run when the daemon connection reaches EOF"
         );
+    }
+
+    /// #3015 (wedged peer): a daemon that begins a frame and then wedges —
+    /// writes a partial frame and never completes it, while the socket stays
+    /// connected — must fail the session within a bounded time so the normal
+    /// reconnect/redrive path takes over, rather than parking the reader forever.
+    ///
+    /// `start_paused` lets [`SESSION_MID_FRAME_TIMEOUT`] elapse in virtual time,
+    /// so the test is instant yet exercises the real mid-frame timeout path.
+    #[tokio::test(start_paused = true)]
+    async fn reader_loop_fails_a_peer_that_stalls_mid_frame() {
+        use tokio::io::AsyncWriteExt;
+
+        let (client_sock, mut server_sock) = tokio::io::duplex(64 * 1024);
+        // The daemon side writes a single frame-type byte, beginning a frame, then
+        // stalls forever without sending the rest. The connection stays open, so
+        // the client sees a mid-frame stall — not an EOF.
+        server_sock
+            .write_all(&[MSG_OUTPUT])
+            .await
+            .expect("write partial frame header");
+
+        let reader: BoxedReader = Box::new(client_sock);
+        let (on_exit, ran) = recording_exit_hook();
+        let alive = Arc::new(AtomicBool::new(true));
+        let pbr = Arc::new(Mutex::new(None));
+
+        reader_loop(
+            reader,
+            "sess",
+            &make_notification_tx(),
+            &alive,
+            pbr,
+            on_exit,
+        )
+        .await;
+
+        assert!(
+            !alive.load(Ordering::SeqCst),
+            "a peer that wedges mid-frame must be marked dead (#3015)"
+        );
+        assert!(
+            ran.load(Ordering::SeqCst),
+            "the exit hook must fire so reconnect/redrive takes over (#3015)"
+        );
+        // Keep the daemon side alive until after the timeout fired.
+        drop(server_sock);
+    }
+
+    /// #3015 (idle guardrail): an idle-but-alive session — the peer sends no
+    /// bytes at all but the connection stays open — must NEVER be torn down. The
+    /// mid-frame timeout only bounds a frame that has *started*; with no first
+    /// byte in flight the reader waits unbounded, exactly as a shell parked at a
+    /// prompt for hours requires.
+    #[tokio::test(start_paused = true)]
+    async fn reader_loop_keeps_an_idle_but_alive_peer() {
+        let (client_sock, server_sock) = tokio::io::duplex(64 * 1024);
+        // The peer is idle: it sends nothing, but never drops the connection.
+
+        let reader: BoxedReader = Box::new(client_sock);
+        let (on_exit, ran) = recording_exit_hook();
+        let alive = Arc::new(AtomicBool::new(true));
+        let alive_for_task = alive.clone();
+        let ran_for_task = ran.clone();
+        let pbr = Arc::new(Mutex::new(None));
+
+        let task = tokio::spawn(async move {
+            reader_loop(
+                reader,
+                "sess",
+                &make_notification_tx(),
+                &alive_for_task,
+                pbr,
+                on_exit,
+            )
+            .await;
+            // If the reader ever returns, the session was (wrongly) torn down.
+            ran_for_task.store(true, Ordering::SeqCst);
+        });
+
+        // Advance far past any mid-frame timeout. Because the peer sent no first
+        // byte, there is no mid-frame timer at all — the reader must stay parked.
+        tokio::time::advance(Duration::from_secs(3600)).await;
+        tokio::task::yield_now().await;
+
+        assert!(
+            alive.load(Ordering::SeqCst),
+            "an idle-but-alive peer must NOT be torn down (#3015)"
+        );
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "no exit path may run for a merely-idle session (#3015)"
+        );
+        assert!(
+            !task.is_finished(),
+            "the reader must still be parked waiting for the next frame (#3015)"
+        );
+
+        task.abort();
+        drop(server_sock);
     }
 
     /// Regression for #2437: a clean [`DaemonClient::detach`] must leave the
