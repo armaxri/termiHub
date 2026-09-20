@@ -78,4 +78,20 @@ export interface SystemStats {
   diskUsedKb: number;
   diskUsedPercent: number;
   osInfo: string;
+  /**
+   * Total swap space in kB. `0` when the host has no swap or the metric is
+   * unavailable (older agents / non-Linux SSH remotes) — never absent.
+   */
+  swapTotalKb: number;
+  /** Used swap space in kB. `0` when unavailable (see {@link swapTotalKb}). */
+  swapUsedKb: number;
+  /** Percentage of swap in use (0–100). `0` when unavailable. */
+  swapUsedPercent: number;
+  /**
+   * Network receive throughput in bytes/sec over the last collection interval.
+   * `0` on the first sample (no prior delta) or when unavailable.
+   */
+  netRxBytesPerSec: number;
+  /** Network transmit throughput in bytes/sec (see {@link netRxBytesPerSec}). */
+  netTxBytesPerSec: number;
 }
