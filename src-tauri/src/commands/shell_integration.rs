@@ -9,7 +9,25 @@ use crate::connection::shell_integration::{
     self, PickedTarget, ShellIntegrationSettings, ShellIntegrationStatus,
 };
 use crate::spawn::registry;
+use crate::utils::errors::TerminalError;
 use crate::utils::portable::detect_app_mode;
+
+/// Map an OS context-menu registration failure into a typed [`TerminalError`]
+/// (ARCH-006 / TAURI-008 / ERR-008 Phase 2), preserving the exact anyhow chain
+/// text (`{:#}`) the command previously surfaced as a raw `String`. The failure
+/// is a generic backend-operation failure with no more specific variant, so it
+/// maps to [`TerminalError::InternalError`].
+fn registration_error(e: &anyhow::Error) -> TerminalError {
+    TerminalError::InternalError(format!("{e:#}"))
+}
+
+/// Map a settings-persistence failure into a typed [`TerminalError`], preserving
+/// the exact message text (`Display`) the command previously surfaced as a raw
+/// `String`. Maps to [`TerminalError::InternalError`] — a settings-store write
+/// failure has no more specific existing variant.
+fn persist_error(e: impl std::fmt::Display) -> TerminalError {
+    TerminalError::InternalError(e.to_string())
+}
 
 /// Build the current shell-integration status from persisted settings + runtime
 /// facts (executable path, portable mode, detected file managers).
@@ -59,7 +77,7 @@ fn fold_settings(app: &AppHandle) {
 #[tauri::command]
 pub fn get_shell_integration_status(
     manager: State<'_, ConnectionManager>,
-) -> Result<ShellIntegrationStatus, String> {
+) -> Result<ShellIntegrationStatus, TerminalError> {
     Ok(current_status(&manager))
 }
 
@@ -74,10 +92,10 @@ pub fn get_shell_integration_status(
 pub fn install_shell_integration(
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<ShellIntegrationStatus, String> {
+) -> Result<ShellIntegrationStatus, TerminalError> {
     let mut settings = manager.get_settings();
-    registry::register(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
-    manager.save_settings(settings).map_err(|e| e.to_string())?;
+    registry::register(&mut settings.shell_integration).map_err(|e| registration_error(&e))?;
+    manager.save_settings(settings).map_err(persist_error)?;
     fold_settings(&app);
     Ok(current_status(&manager))
 }
@@ -88,10 +106,10 @@ pub fn install_shell_integration(
 pub fn uninstall_shell_integration(
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<ShellIntegrationStatus, String> {
+) -> Result<ShellIntegrationStatus, TerminalError> {
     let mut settings = manager.get_settings();
-    registry::unregister(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
-    manager.save_settings(settings).map_err(|e| e.to_string())?;
+    registry::unregister(&mut settings.shell_integration).map_err(|e| registration_error(&e))?;
+    manager.save_settings(settings).map_err(persist_error)?;
     fold_settings(&app);
     Ok(current_status(&manager))
 }
@@ -122,13 +140,13 @@ pub fn save_shell_integration_settings(
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
     shell_integration: ShellIntegrationSettings,
-) -> Result<ShellIntegrationStatus, String> {
+) -> Result<ShellIntegrationStatus, TerminalError> {
     let mut settings = manager.get_settings();
     let re_register = stage_shell_integration(&mut settings, shell_integration);
     if re_register {
-        registry::register(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
+        registry::register(&mut settings.shell_integration).map_err(|e| registration_error(&e))?;
     }
-    manager.save_settings(settings).map_err(|e| e.to_string())?;
+    manager.save_settings(settings).map_err(persist_error)?;
     fold_settings(&app);
     Ok(current_status(&manager))
 }
@@ -170,15 +188,15 @@ pub fn remember_spawn_choice(
     manager: State<'_, ConnectionManager>,
     entry_id: String,
     target: PickedTarget,
-) -> Result<ShellIntegrationStatus, String> {
+) -> Result<ShellIntegrationStatus, TerminalError> {
     let mut settings = manager.get_settings();
     if !stage_remembered_choice(&mut settings, &entry_id, target) {
         return Ok(current_status(&manager));
     }
     if settings.shell_integration.registered {
-        registry::register(&mut settings.shell_integration).map_err(|e| format!("{e:#}"))?;
+        registry::register(&mut settings.shell_integration).map_err(|e| registration_error(&e))?;
     }
-    manager.save_settings(settings).map_err(|e| e.to_string())?;
+    manager.save_settings(settings).map_err(persist_error)?;
     fold_settings(&app);
     Ok(current_status(&manager))
 }
@@ -272,5 +290,48 @@ mod tests {
         ));
 
         assert_eq!(settings.shell_integration.entries, vec![entry("a")]);
+    }
+
+    // ── Typed error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ─────────
+    //
+    // These guard the String → TerminalError retype: the human message text the
+    // commands surfaced before must survive verbatim as the error payload (only
+    // the typed variant's classifying prefix is added, matching every other
+    // typed command and the #3168 envelope).
+
+    #[test]
+    fn registration_error_preserves_the_anyhow_chain_text() {
+        let src = anyhow::anyhow!("unsupported on this platform").context("failed to register");
+        let mapped = registration_error(&src);
+        assert!(matches!(mapped, TerminalError::InternalError(_)));
+
+        // The full `{:#}` anyhow chain the command produced before survives verbatim.
+        let expected_chain = format!("{src:#}");
+        assert!(
+            mapped.to_string().contains(&expected_chain),
+            "human message must be preserved, got {mapped}"
+        );
+        assert!(mapped.to_string().contains("unsupported on this platform"));
+        assert_eq!(
+            mapped.to_string(),
+            format!("Internal error: {expected_chain}")
+        );
+    }
+
+    #[test]
+    fn persist_error_preserves_the_message_text() {
+        let src = anyhow::anyhow!("Failed to persist settings");
+        let mapped = persist_error(&src);
+        assert!(matches!(mapped, TerminalError::InternalError(_)));
+
+        // The exact `Display` text the command produced before survives verbatim.
+        assert!(
+            mapped.to_string().contains("Failed to persist settings"),
+            "human message must be preserved, got {mapped}"
+        );
+        assert_eq!(
+            mapped.to_string(),
+            "Internal error: Failed to persist settings"
+        );
     }
 }
