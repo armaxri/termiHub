@@ -37,6 +37,7 @@ vi.mock("@/services/api", () => ({
   sessionSetPermissions: vi.fn(() => Promise.resolve()),
   sessionDownload: vi.fn(() => Promise.resolve(0)),
   sessionUpload: vi.fn(() => Promise.resolve(0)),
+  sessionCopyRemote: vi.fn(() => Promise.resolve(0)),
   sessionVscodeOpenRemote: vi.fn(() => Promise.resolve()),
   localDelete: vi.fn(() => Promise.resolve()),
   // Default: reject → session is byte-based (Docker / FTP / agent). The
@@ -278,10 +279,10 @@ describe("useSessionFileSystem — store integration", () => {
 import {
   sessionDownload,
   sessionUpload,
+  sessionCopyRemote,
   sessionVscodeOpenRemote,
   sessionReadFile,
   sessionHasExecCapability,
-  localDelete,
 } from "@/services/api";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import { toast } from "@/components/ui";
@@ -365,20 +366,17 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
     );
   });
 
-  // #2469: a session→session copy between two SFTP-backed sessions must route
-  // through the dedicated download + upload transfer channel (via a local temp
-  // file), so it registers two tracked Transfer Queue rows instead of a silent
-  // byte round-trip. Both halves seed the region-fed queue with the remote path
-  // (#1531) and the user-facing file name (#1573), never the temp copy.
-  it("routes an SFTP session→session copy through tracked download + upload", async () => {
-    // The start commands seed the queue only once the backend returns the
+  // PROD-0013: a session→session copy between two SFTP-backed sessions streams
+  // directly source→destination through the desktop as ONE tracked transfer —
+  // no local temp file, no byte round-trip. This replaces the pre-PROD-0013
+  // download-to-temp + upload dance (two rows + a local disk copy, #2469). The
+  // single row seeds the region-fed queue keyed on the destination, with the
+  // destination remote path (#1531) and user-facing file name (#1573).
+  it("routes an SFTP session→session copy through a single direct remote copy", async () => {
+    // sessionCopyRemote seeds the queue only once the backend returns the
     // transfer id (onRegistered), so fire it to exercise the seed path.
-    vi.mocked(sessionDownload).mockImplementation(async (_s, _r, _l, onRegistered) => {
-      onRegistered?.("t-dl");
-      return 0;
-    });
-    vi.mocked(sessionUpload).mockImplementation(async (_s, _l, _r, onRegistered) => {
-      onRegistered?.("t-ul");
+    vi.mocked(sessionCopyRemote).mockImplementation(async (_ss, _sp, _ds, _dp, onRegistered) => {
+      onRegistered?.("t-copy");
       return 0;
     });
 
@@ -405,35 +403,24 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
       await api.pasteEntry();
     });
 
-    // Download the source to a local temp copy, then upload the temp copy to the
-    // destination — the two tracked transfers the queue renders.
-    expect(vi.mocked(sessionDownload)).toHaveBeenCalledWith(
+    // ONE direct source→destination copy — no temp download/upload legs.
+    expect(vi.mocked(sessionCopyRemote)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sessionCopyRemote)).toHaveBeenCalledWith(
       "ssh-1",
       "/remote/src/file.bin",
-      expect.stringMatching(/termihub-paste-\d+-file\.bin$/),
-      expect.any(Function)
-    );
-    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
       "ssh-1",
-      expect.stringMatching(/termihub-paste-\d+-file\.bin$/),
       "/remote/dir/file.bin",
       expect.any(Function)
     );
+    expect(vi.mocked(sessionDownload)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionUpload)).not.toHaveBeenCalled();
 
-    // Both halves seed a tracked row: the download names/paths the source, the
-    // upload names/paths the destination — both the user-facing name, not temp.
+    // Exactly one tracked row, keyed on the destination (where the file lands),
+    // named/pathed from the destination remote path — not a temp copy.
+    expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledTimes(1);
     expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledWith("transfer.seed", {
       seed: {
-        id: "t-dl",
-        sessionId: "ssh-1",
-        direction: "download",
-        name: "file.bin",
-        path: "/remote/src/file.bin",
-      },
-    });
-    expect(vi.mocked(dispatchTransferIntentBestEffort)).toHaveBeenCalledWith("transfer.seed", {
-      seed: {
-        id: "t-ul",
+        id: "t-copy",
         sessionId: "ssh-1",
         direction: "upload",
         name: "file.bin",
@@ -441,17 +428,53 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
       },
     });
 
-    // The local temp copy is cleaned up, and the byte round-trip is not used.
-    expect(vi.mocked(localDelete)).toHaveBeenCalledWith(
-      expect.stringMatching(/termihub-paste-\d+-file\.bin$/),
-      false
-    );
+    // No local staging file, and the byte round-trip is not used.
     expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
 
     // #2906: the tracked SFTP path defers its terminal toast to the
     // transfer-progress event path, so the paste helper must NOT raise its own
     // success toast (no double-toast).
     expect(vi.mocked(toast.success)).not.toHaveBeenCalled();
+  });
+
+  // A cross-session SFTP↔SFTP paste routes the direct copy between the two
+  // distinct sessions (source id ≠ destination id) exactly once (PROD-0013).
+  it("routes a cross-session SFTP copy directly between the two sessions", async () => {
+    vi.mocked(sessionCopyRemote).mockResolvedValue(0);
+
+    const api = await mountHook();
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "file.bin",
+          path: "/remote/src/file.bin",
+          isDirectory: false,
+          size: 10,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "ssh-src",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    // Cross-session: read from ssh-src, write to the active ssh-1 destination.
+    expect(vi.mocked(sessionCopyRemote)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sessionCopyRemote)).toHaveBeenCalledWith(
+      "ssh-src",
+      "/remote/src/file.bin",
+      "ssh-1",
+      "/remote/dir/file.bin",
+      expect.any(Function)
+    );
+    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
   });
 });
 
