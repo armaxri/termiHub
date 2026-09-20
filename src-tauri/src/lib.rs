@@ -130,9 +130,6 @@ use std::sync::{Arc, Mutex};
 
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use tracing::{info, warn};
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::Layer;
 
 use connection::manager::ConnectionManager;
 use connection::recovery::RecoveryWarning;
@@ -145,7 +142,6 @@ use session::registry::build_desktop_registry;
 use terminal::agent_manager::{AgentConnectionManager, AgentRpcClient};
 use utils::config_paths::DirOutcome;
 use utils::file_log;
-use utils::log_capture::{create_log_buffer, default_env_filter, LogCaptureLayer};
 
 /// Build the shared X server lifecycle manager (issue #1049).
 ///
@@ -439,55 +435,18 @@ pub fn run() {
         utils::macos_unthrottle::pre_launch_disable_occlusion_detection();
     }
 
-    let log_buffer = create_log_buffer();
-    let capture_layer = LogCaptureLayer::new(log_buffer.clone());
-    let app_handle_slot = capture_layer.app_handle_slot();
-
-    // Durable application log (#1570). A bundled desktop app has nowhere for the
-    // `fmt` layer's stdout to go and the ring buffer dies with the process, so
-    // without this sink the app leaves no evidence of what it was doing. Kept
-    // best-effort: an unwritable log directory must never stop the app booting,
-    // so the failure is recorded and startup continues.
-    // File-log verbosity persisted from the in-app control (OBS-009), read
-    // best-effort before the Tauri app (and its path resolver) exist — the
-    // standalone resolver detects portable mode itself. `TERMIHUB_FILE_LOG` still
-    // wins at startup (handled inside `file_env_filter_with`); an absent or
-    // unreadable settings file simply leaves the level at the INFO default.
-    let persisted_file_log_level: Option<String> = SettingsStorage::new_standalone()
-        .ok()
-        .and_then(|s| s.load_with_recovery().ok())
-        .and_then(|r| r.data.file_log_level);
-
-    let (file_layer, file_reload_handle, file_log_status) =
-        match file_log::RotatingLogFile::with_defaults() {
-            Ok(writer) => {
-                // Reloadable per-layer filter so the Settings control can change
-                // the file verbosity live, without a restart (OBS-009).
-                let (filter, handle) = tracing_subscriber::reload::Layer::new(
-                    file_log::file_env_filter_with(persisted_file_log_level.as_deref()),
-                );
-                let layer = tracing_subscriber::fmt::layer()
-                    // No terminal on the other end of a file: escape codes would
-                    // just make it unreadable.
-                    .with_ansi(false)
-                    .with_writer(writer)
-                    .with_filter(filter);
-                (Some(layer), Some(handle), Ok(()))
-            }
-            Err(e) => (None, None, Err(e)),
-        };
-
-    tracing_subscriber::registry()
-        // The file layer is attached first so its reloadable per-layer filter's
-        // `S` type is `Registry` (see `file_log::FileLogReloadHandle`) — which is
-        // what lets the handle be stored as Tauri state. Attachment order does
-        // not change the global `default_env_filter` envelope, which still caps
-        // every sink, so this is behavior-preserving.
-        .with(file_layer)
-        .with(default_env_filter())
-        .with(tracing_subscriber::fmt::layer())
-        .with(capture_layer)
-        .init();
+    // Build and install the global tracing subscriber (ARCH-002 / TAURI-009,
+    // Slice B). The ring buffer, durable file sink, reloadable per-layer filter,
+    // and the load-bearing subscriber layer-attachment order all live in
+    // `boot::logging::init_tracing` now; it returns the values threaded into the
+    // builder below. The startup log lines and the panic hook stay here so they
+    // still run, in order, right after the subscriber is live.
+    let boot::logging::TracingInit {
+        log_buffer,
+        file_reload_handle,
+        app_handle_slot,
+        file_log_status,
+    } = boot::logging::init_tracing();
 
     // The first lines of every run: they mark the run boundary in an appended
     // file and record the version a later post-mortem will need.
@@ -524,81 +483,16 @@ pub fn run() {
     // connect. Shared between that command and the provisioner.
     let x_server_consent_registry = Arc::new(terminal::xserver::ConnectConsentRegistry::new());
 
-    // `mut` is only needed when the test-bridge plugin is conditionally added
-    // below (feature = "test-bridge"); release builds never reassign `builder`.
-    #[cfg_attr(not(feature = "test-bridge"), allow(unused_mut))]
-    let mut builder = tauri::Builder::default()
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_cli::init())
-        // Owned background-task registry (ARCH-007): app-lifetime spawn sites
-        // register here so teardown can cancel + await them deterministically.
-        .manage(app_tasks::AppTasks::new())
-        .manage(TransferRegistry::new())
-        .manage(files::watcher::FileWatchManager::new())
-        // NetworkManager needs the resolved config dir + AppHandle, neither of
-        // which exists here. It is therefore constructed fully-initialised inside
-        // `setup()` (below) and `manage`d there, like every other late-bound
-        // manager — avoiding a register-then-mutate step (TAURI-001 / ARCH-011).
-        .manage(x_server_manager.clone())
-        .manage(x_server_consent_registry.clone())
-        .manage(spawn::handler::PendingSpawn::default())
-        .manage(window::WindowManager::new())
-        .manage(commands::connection_path::ProbeRegistry::default())
-        .manage(commands::local_process::LocalProcessRegistry::default())
-        // Stateless-UI projection substrate (#2149) + tunnel pilot (#2150): the
-        // projector + intent dispatcher are constructed in `setup` (below), once
-        // the tunnel manager exists to seed the `tunnels` region and serve the
-        // `tunnel.*` intents. Wired beside the existing typed commands (strangler).
-        .manage(crate::terminal::agent_cancel::AgentDeployCancellation::default())
-        .manage(log_buffer)
-        // Live file-log verbosity control (OBS-009): the reload handle captured
-        // when the subscriber was built, or `None` if the log file could not be
-        // opened this run.
-        .manage(file_log::FileLogReload(file_reload_handle))
-        // App-controlled origin for installed plugin files (#2251): serves
-        // `<app-data>/plugins/<id>/<path>` over `plugin://localhost/<id>/<path>`
-        // (macOS/Linux) / `http://plugin.localhost/...` (Windows), plus the wrapped
-        // `/load/<id>/<path>` entry-point mode the sandbox worker `importScripts`.
-        // This is what lets frontend plugin code load without a `blob:` `script-src`
-        // allowance (#2266). Fails closed on any bad request (see `plugin_protocol`).
-        .register_uri_scheme_protocol(plugin_protocol::PLUGIN_URI_SCHEME, plugin_protocol::handle);
-
-    // Single-instance enforcement (per user) — findings PER-005 / SM-025.
-    // A second launch of the app focuses the already-running window and exits,
-    // so two copies can never clobber each other's shared config / last-session
-    // files (neither store takes a cross-process lock; `last_session` is
-    // last-writer-wins). Compiled out of debug builds entirely
-    // (`#[cfg(not(debug_assertions))]`) so the parallel dev-checkout workflow can
-    // keep running many debug copies at once — `scripts/dev.sh` produces a debug
-    // build. Even in a release build it is skipped in portable mode: two portable
-    // copies in different folders use different `data/` dirs and legitimately do
-    // not clobber, so a bundle-id-keyed global lock would wrongly block them.
-    #[cfg(not(debug_assertions))]
-    {
-        let app_mode = utils::portable::detect_app_mode().unwrap_or_else(|e| {
-            tracing::warn!("single-instance: app-mode detection failed, assuming installed: {e}");
-            utils::portable::AppMode::Installed
-        });
-        if utils::single_instance::should_enforce_single_instance(&app_mode, cfg!(debug_assertions))
-        {
-            builder = builder.plugin(tauri_plugin_single_instance::init(
-                utils::single_instance::on_second_instance,
-            ));
-        }
-    }
-
-    // In test mode (TERMIHUB_TEST_BRIDGE_PORT set), inject the bridge globals into
-    // the webview before boot so the in-app WebSocket client connects out to the
-    // runner — the cross-platform test transport (issue #801). Test-bridge-only
-    // (SEC-005): the whole block is compiled out of release builds.
-    #[cfg(feature = "test-bridge")]
-    if let Some(plugin) = utils::test_bridge::test_bridge_plugin() {
-        info!("Test bridge WebSocket transport enabled");
-        builder = builder.plugin(plugin);
-    }
+    // Assemble the Tauri builder prelude — plugins, eagerly-constructed managed
+    // state, the conditional single-instance / test-bridge plugins, and the
+    // plugin URI-scheme protocol (ARCH-002 / TAURI-009, Slice C). The terminal
+    // `.setup(..).invoke_handler(..).build(..).run(..)` chain stays here verbatim.
+    let builder = boot::builder::build(
+        &x_server_manager,
+        &x_server_consent_registry,
+        log_buffer,
+        file_reload_handle,
+    );
 
     builder
         .setup(move |app| {
@@ -1140,94 +1034,4 @@ pub fn run() {
 }
 
 #[cfg(test)]
-mod startup_storage_tests {
-    use super::{config_resolve_failure_warning, resolve_startup_dir, DirOutcome, StartupStorage};
-    use std::io::{Error, ErrorKind};
-    use std::path::PathBuf;
-
-    fn io_err(msg: &str) -> Error {
-        Error::new(ErrorKind::PermissionDenied, msg)
-    }
-
-    #[test]
-    fn preferred_yields_the_real_path_and_no_warning() {
-        let dir = PathBuf::from("/real/config");
-        let (path, warning) = resolve_startup_dir(
-            DirOutcome::Preferred(dir.clone()),
-            StartupStorage::Config,
-            &dir,
-        );
-        assert_eq!(path, Some(dir));
-        assert!(
-            warning.is_none(),
-            "the happy path must not surface a warning"
-        );
-    }
-
-    #[test]
-    fn fallback_yields_the_fallback_path_and_a_warning() {
-        let preferred = PathBuf::from("/read-only/config");
-        let fallback = PathBuf::from("/tmp/termihub-config");
-        let (path, warning) = resolve_startup_dir(
-            DirOutcome::Fallback {
-                dir: fallback.clone(),
-                error: io_err("denied"),
-            },
-            StartupStorage::Config,
-            &preferred,
-        );
-        assert_eq!(path, Some(fallback));
-        let w = warning.expect("a degradation must surface a warning");
-        assert_eq!(w.file_name, "config directory");
-        let details = w.details.expect("warning carries details");
-        assert!(details.contains("read-only/config"));
-        assert!(details.contains("denied"));
-    }
-
-    #[test]
-    fn config_total_failure_keeps_the_preferred_path_best_effort() {
-        let preferred = PathBuf::from("/read-only/config");
-        let (path, warning) = resolve_startup_dir(
-            DirOutcome::Failed {
-                preferred_error: io_err("denied"),
-                fallback_error: io_err("also denied"),
-            },
-            StartupStorage::Config,
-            &preferred,
-        );
-        assert_eq!(
-            path,
-            Some(preferred),
-            "config keeps the preferred dir best-effort on total failure"
-        );
-        assert!(warning.is_some());
-    }
-
-    #[test]
-    fn portable_total_failure_drops_the_override() {
-        let preferred = PathBuf::from("/usb/termiHub/data");
-        let (path, warning) = resolve_startup_dir(
-            DirOutcome::Failed {
-                preferred_error: io_err("read-only medium"),
-                fallback_error: io_err("read-only medium"),
-            },
-            StartupStorage::PortableData,
-            &preferred,
-        );
-        assert_eq!(
-            path, None,
-            "portable total failure drops to the OS default location"
-        );
-        let w = warning.expect("a degradation must surface a warning");
-        assert_eq!(w.file_name, "portable data directory");
-    }
-
-    #[test]
-    fn resolve_failure_produces_a_config_warning() {
-        let fallback = PathBuf::from("/tmp/termihub-config");
-        let w = config_resolve_failure_warning("no config dir available", &fallback);
-        assert_eq!(w.file_name, "config directory");
-        assert!(w.message.contains("termihub-config"));
-        assert_eq!(w.details.as_deref(), Some("no config dir available"));
-    }
-}
+mod startup_storage_tests;

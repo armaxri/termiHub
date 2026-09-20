@@ -13,6 +13,9 @@
 
 use super::*;
 
+pub(crate) mod builder;
+pub(crate) mod logging;
+
 pub(crate) fn init_platform_and_capture(
     app: &tauri::App,
     app_handle_slot: &std::sync::Arc<std::sync::Mutex<Option<tauri::AppHandle>>>,
