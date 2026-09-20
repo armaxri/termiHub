@@ -15,14 +15,18 @@
  * a typed signal rather than on `raw.includes("auth failed")`.
  */
 
+import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
+
 import { errorMessage } from "./errorMessage";
 
 /**
  * Stable code emitted when SSH/agent authentication is genuinely rejected
  * (wrong password/passphrase or a refused key). Mirrors the Rust
- * `AUTH_FAILED_CODE` / `TerminalError::AuthFailed` marker.
+ * `AUTH_FAILED_CODE` / `TerminalError::AuthFailed` marker. Typed against the
+ * ts-rs-generated {@link IpcErrorCode} so a slug rename on the Rust side is a
+ * compile error here.
  */
-export const AUTH_FAILED_CODE = "auth_failed";
+export const AUTH_FAILED_CODE: IpcErrorCode = "auth_failed";
 
 /**
  * Matches the backend error-code marker `[thub-code:<code>] ` anywhere in the
@@ -41,13 +45,38 @@ export interface ParsedBackendError {
 }
 
 /**
+ * A structured backend error envelope `{ code, message, details? }` — the object
+ * shape `TerminalError` now serializes to (ARCH-006 / TAURI-008). Distinguished
+ * from a legacy `Error`/string by carrying both a string `code` and `message`.
+ */
+function isStructuredBackendError(
+  error: unknown
+): error is { code: string; message: string; details?: unknown } {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    !(error instanceof Error) &&
+    typeof (error as { code?: unknown }).code === "string" &&
+    typeof (error as { message?: unknown }).message === "string"
+  );
+}
+
+/**
  * Parse an unknown caught value into its {@link ParsedBackendError}.
  *
- * Accepts a string, an `Error`, or any value; falls back to `String(err)` for
- * the message. When the backend code marker is present the `code` is extracted
- * and the marker removed from `message`.
+ * Dual-read shim (ARCH-006 / TAURI-008): accepts EITHER the new structured
+ * envelope object `{ code, message, details? }` (its `message` already has any
+ * machine marker stripped by the backend) OR the legacy flat string
+ * `[thub-code:<slug>] <message>`. Also accepts a bare string, an `Error`, or any
+ * value, falling back to `String(err)` for the message. When a legacy code
+ * marker is present the `code` is extracted and the marker removed from
+ * `message`. This is the invariant that lets {@link classifyAgentError} and
+ * {@link isAuthFailure} work unchanged across both wire forms.
  */
 export function parseBackendError(error: unknown): ParsedBackendError {
+  if (isStructuredBackendError(error)) {
+    return { code: error.code, message: error.message };
+  }
   const raw = errorMessage(error);
   const match = raw.match(CODE_MARKER_RE);
   if (!match) return { message: raw };

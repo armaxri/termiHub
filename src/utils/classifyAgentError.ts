@@ -2,6 +2,7 @@
  * Classifies a remote agent connection error into a user-friendly category.
  */
 
+import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
 import { AUTH_FAILED_CODE, parseBackendError } from "@/utils/backendErrorCode";
 
 /** The three specific error categories plus a generic fallback. */
@@ -21,14 +22,15 @@ export interface ClassifiedAgentError {
 }
 
 /**
- * Locale-independent backend error-code slugs (the `[thub-code:<code>]` marker
- * emitted by the Rust `codes` module in `src-tauri/src/utils/errors.rs`) mapped
- * to their frontend category. This is the mirror of that Rust single source of
- * truth — keep the two in sync. Classifying by these codes (rather than by
- * matching English message text) is what makes the outcome correct under any
- * locale or rewording (I18N-002 / ERR-003).
+ * Locale-independent backend error-code slugs mapped to their frontend category.
+ * The keys are typed against the ts-rs-generated {@link IpcErrorCode} (the Rust
+ * single source of truth in `src-tauri/src/utils/errors.rs`), so a slug rename
+ * or removal on the backend is a compile error here rather than silent drift.
+ * Classifying by these codes (rather than by matching English message text) is
+ * what makes the outcome correct under any locale or rewording (I18N-002 /
+ * ERR-003).
  */
-const CODE_TO_CATEGORY: Record<string, AgentErrorCategory> = {
+const CODE_TO_CATEGORY: Partial<Record<IpcErrorCode, AgentErrorCategory>> = {
   [AUTH_FAILED_CODE]: "auth-failure",
   unreachable: "unreachable",
   agent_missing: "agent-missing",
@@ -81,7 +83,9 @@ export function classifyAgentError(error: unknown): ClassifiedAgentError {
   // English substring checks below remain only as a fallback for legacy/uncoded
   // errors, so no existing input regresses if a marker is ever missing.
   if (parsed.code) {
-    const category = CODE_TO_CATEGORY[parsed.code];
+    // `parsed.code` is an arbitrary backend slug; only the recognized
+    // IpcErrorCode categories resolve, others fall through to the substring path.
+    const category = CODE_TO_CATEGORY[parsed.code as IpcErrorCode];
     if (category && category !== "unknown") {
       return { category, ...CATEGORY_PRESENTATION[category], rawError: raw };
     }

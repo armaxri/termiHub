@@ -46,4 +46,46 @@ describe("backendErrorCode", () => {
     );
     expect(backendErrorMessage("plain message")).toBe("plain message");
   });
+
+  describe("structured envelope (ARCH-006 / TAURI-008)", () => {
+    it("reads the code and message from the structured object shape", () => {
+      const parsed = parseBackendError({
+        code: "auth_failed",
+        message: "Authentication failed",
+        details: null,
+      });
+      expect(parsed.code).toBe(AUTH_FAILED_CODE);
+      expect(parsed.message).toBe("Authentication failed");
+    });
+
+    it("takes the envelope message verbatim (backend already stripped the marker)", () => {
+      const parsed = parseBackendError({
+        code: "unreachable",
+        message: "Connection failed: Connection refused",
+      });
+      expect(parsed.code).toBe("unreachable");
+      expect(parsed.message).toBe("Connection failed: Connection refused");
+      expect(parsed.message).not.toContain("[thub-code:");
+    });
+
+    it("detects auth failure from the object shape regardless of language", () => {
+      expect(
+        isAuthFailure({ code: "auth_failed", message: "Authentifizierung fehlgeschlagen" })
+      ).toBe(true);
+    });
+
+    it("does not misread a plain Error carrying a message as a structured envelope", () => {
+      // An Error has a string `message` but no string `code`, so it stays on the
+      // legacy path and its marker is parsed from the message text.
+      const parsed = parseBackendError(new Error("[thub-code:auth_failed] boom"));
+      expect(parsed.code).toBe(AUTH_FAILED_CODE);
+      expect(parsed.message).toBe("boom");
+    });
+
+    it("exposes the display message for the object shape via backendErrorMessage", () => {
+      expect(
+        backendErrorMessage({ code: "spawn_failed", message: "Failed to spawn terminal: x" })
+      ).toBe("Failed to spawn terminal: x");
+    });
+  });
 });

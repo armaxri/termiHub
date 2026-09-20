@@ -8,7 +8,8 @@
  * re-inlining the ternary at every call site.
  *
  * @param e the caught/unknown value.
- * @returns `e.message` for an {@link Error}, the string itself for a string,
+ * @returns `e.message` for an {@link Error}, the string itself for a string, the
+ *   `message` of a structured backend error envelope `{ code, message, … }`,
  *   otherwise `String(e)`.
  */
 export function errorMessage(e: unknown): string {
@@ -17,6 +18,15 @@ export function errorMessage(e: unknown): string {
   }
   if (typeof e === "string") {
     return e;
+  }
+  // Structured IPC error envelope `{ code, message, details? }` (ARCH-006 /
+  // TAURI-008): Tauri rejects a command error as a plain object, not an `Error`,
+  // so surface its human `message` instead of the useless "[object Object]".
+  if (typeof e === "object" && e !== null && "message" in e) {
+    const message = (e as { message: unknown }).message;
+    if (typeof message === "string") {
+      return message;
+    }
   }
   return String(e);
 }
