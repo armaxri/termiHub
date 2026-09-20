@@ -731,13 +731,15 @@ pub struct RemoteMonitoringProxy {
     interval_ms: Arc<AtomicU64>,
     /// Desktop-side pause state for an agent-mediated monitor (SM-013).
     ///
-    /// The agent has no pause RPC yet, so a true remote pause is deferred (see
-    /// [`set_paused`](MonitoringProvider::set_paused)). Meanwhile the desktop
-    /// honours pause locally: the status-derivation driver watches this channel
-    /// and, while paused, drops the samples the agent keeps streaming and holds
-    /// the badge at `Paused` — so the UI never desyncs from the "paused" label.
-    /// A `watch` channel so a `set_paused` on the provider steers the running
-    /// driver immediately (each `subscribe` takes a fresh receiver).
+    /// Pause now propagates to the agent's poller too (#3001): `set_paused`
+    /// unsubscribes the agent on pause and re-subscribes on resume (reusing the
+    /// existing verbs), so the remote host stops sampling/streaming while
+    /// paused. This channel keeps the desktop in sync in the meantime: the
+    /// status-derivation driver watches it and, while paused, holds the badge at
+    /// `Paused` and drops any sample still in flight — so the UI never desyncs
+    /// from the "paused" label even before the agent acts on the RPC. A `watch`
+    /// channel so a `set_paused` on the provider steers the running driver
+    /// immediately (each `subscribe` takes a fresh receiver).
     paused_tx: tokio::sync::watch::Sender<bool>,
 }
 
@@ -787,14 +789,15 @@ impl RemoteMonitoringProxy {
 ///   `false`, i.e. the agent-connection layer is reconnecting) the monitor
 ///   reports `Reconnecting`. A later sample recovers it to `Live`.
 ///
-/// **Pause (SM-013).** The agent has no pause RPC, so it keeps collecting and
-/// streaming while the user "pauses" an agent-hosted monitor. To stop that from
-/// desyncing the UI, this driver honours pause on the desktop: while `paused_rx`
-/// reads `true` it emits `Paused`, then **discards** every sample the agent
-/// pushes (no forward to `stats_tx`, no freshness/`Stale` accounting), so the
-/// numbers freeze at the last reading and the badge stays `Paused`. Resuming
-/// emits `Live` and the next fresh sample flows through again. A true remote
-/// pause that also halts the agent's poller is deferred to a follow-up.
+/// **Pause (SM-013, #3001).** Pausing an agent-hosted monitor unsubscribes the
+/// agent's poller (`set_paused` → `connection.monitoring.unsubscribe`), so the
+/// remote host stops sampling/streaming. This driver also honours pause on the
+/// desktop so the UI stays in sync in the gap before the agent acts: while
+/// `paused_rx` reads `true` it emits `Paused`, then **discards** any sample
+/// still in flight (no forward to `stats_tx`, no freshness/`Stale` accounting),
+/// so the numbers freeze at the last reading and the badge stays `Paused`.
+/// Resuming re-subscribes the agent and emits `Live`; the next fresh sample
+/// flows through again.
 ///
 /// The loop ends when the consumer drops `stats_tx` (tab closed), the agent
 /// registration is torn down on `unsubscribe`/`disconnect` (closing `raw_rx`),
@@ -985,19 +988,63 @@ impl MonitoringProvider for RemoteMonitoringProxy {
     }
 
     async fn set_paused(&self, paused: bool) {
-        // Desktop-honoured pause (SM-013): a true remote pause that halts the
-        // agent's own poller still needs a protocol addition (deferred), but the
-        // desktop must not desync in the meantime. Steer the running
-        // status-derivation driver via the watch channel: while paused it holds
-        // the badge at `Paused` and drops the samples the agent keeps streaming,
-        // so the frozen numbers match the "paused" label. `send_replace` updates
-        // the value even with no live subscriber (a later `subscribe` reads it).
-        self.paused_tx.send_replace(paused);
+        // Propagate pause/resume to the agent so its remote poller actually
+        // stops sampling/streaming while paused, instead of only being honoured
+        // on the desktop (#3001). This reuses the existing subscribe/unsubscribe
+        // verbs rather than inventing a parallel pause channel, so it is fully
+        // back-compat: every agent already implements both.
+        //
+        // The desktop-side steering stays too (SM-013): while paused the
+        // status-derivation driver holds the badge at `Paused` and drops any
+        // sample still in flight, so the UI never desyncs from the "paused"
+        // label even in the gap before the agent acts on the RPC (or if the RPC
+        // fails against an unreachable agent). `send_replace` updates the value
+        // even with no live subscriber (a later `subscribe` reads it).
+        if paused {
+            // Steer the desktop driver first so no late sample slips through,
+            // then stop the remote poller. The output channel stays registered,
+            // so a later resume routes fresh samples back to the same driver.
+            self.paused_tx.send_replace(true);
+            if let Err(e) = self
+                .rpc(
+                    termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
+                    serde_json::json!({ "host": self.monitoring_host }),
+                )
+                .await
+            {
+                warn!(
+                    host = %self.monitoring_host,
+                    error = %e,
+                    "Failed to pause agent monitoring poller (desktop pause still honoured)"
+                );
+            }
+        } else {
+            // Restart the remote poller at the current cadence *before* resuming
+            // the desktop driver, so fresh samples are already flowing when it
+            // un-holds. The agent's `subscribe` replaces any existing
+            // subscription, so this restarts the poller in place.
+            if let Err(e) = self
+                .rpc(
+                    termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
+                    serde_json::json!({
+                        "host": self.monitoring_host,
+                        "interval_ms": self.interval_ms.load(Ordering::SeqCst),
+                    }),
+                )
+                .await
+            {
+                warn!(
+                    host = %self.monitoring_host,
+                    error = %e,
+                    "Failed to resume agent monitoring poller"
+                );
+            }
+            self.paused_tx.send_replace(false);
+        }
         debug!(
             host = %self.monitoring_host,
             paused,
-            "Agent-mediated monitor pause honoured on the desktop (remote poller keeps running; \
-             true remote pause is a follow-up)"
+            "Agent-mediated monitor pause propagated to the agent poller (#3001)"
         );
     }
 
