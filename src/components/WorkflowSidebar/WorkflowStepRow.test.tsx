@@ -174,4 +174,85 @@ describe("WorkflowStepRow", () => {
       args: ["b"],
     });
   });
+
+  describe("conditional step", () => {
+    const conditional = (over: Partial<Extract<WorkflowStep, { kind: "conditional" }>> = {}) =>
+      ({
+        kind: "conditional",
+        condition: { left: "${env}", op: "eq", right: "prod" },
+        then: [],
+        ...over,
+      }) satisfies WorkflowStep;
+
+    it("renders the condition builder with the current operands", () => {
+      render({ step: conditional() });
+      expect((query("workflow-editor-cond-left-0") as HTMLInputElement).value).toBe("${env}");
+      expect((query("workflow-editor-cond-right-0") as HTMLInputElement).value).toBe("prod");
+      expect(query("workflow-editor-cond-op-0")).not.toBeNull();
+    });
+
+    it("patches the left operand", () => {
+      const h = render({ step: conditional() });
+      typeInto(query("workflow-editor-cond-left-0"), "${branch}");
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "conditional",
+        condition: { left: "${branch}", op: "eq", right: "prod" },
+        then: [],
+      });
+    });
+
+    it("shows then/else branch containers with their step counts", () => {
+      render({
+        step: conditional({
+          then: [{ kind: "send-command", command: "go" }],
+          else: [{ kind: "wait", delayMs: 5 }],
+        }),
+      });
+      expect(query("workflow-editor-branch-0-then")?.textContent).toContain("Then (1)");
+      expect(query("workflow-editor-branch-0-else")?.textContent).toContain("Else (optional) (1)");
+    });
+
+    it("edits a nested then sub-step's command through its own detail editor", () => {
+      const h = render({
+        step: conditional({ then: [{ kind: "send-command", command: "old" }] }),
+      });
+      const field = query("workflow-editor-step-command-0-then-0") as HTMLInputElement;
+      expect(field.value).toBe("old");
+      typeInto(field, "new");
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "conditional",
+        condition: { left: "${env}", op: "eq", right: "prod" },
+        then: [{ kind: "send-command", command: "new" }],
+      });
+    });
+
+    it("deletes a then sub-step by index", () => {
+      const h = render({
+        step: conditional({
+          then: [
+            { kind: "send-command", command: "one" },
+            { kind: "send-command", command: "two" },
+          ],
+        }),
+      });
+      act(() => query("workflow-editor-substep-delete-0-then-0")?.click());
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "conditional",
+        condition: { left: "${env}", op: "eq", right: "prod" },
+        then: [{ kind: "send-command", command: "two" }],
+      });
+    });
+
+    it("drops the else branch to undefined when its last sub-step is deleted", () => {
+      const h = render({
+        step: conditional({ else: [{ kind: "send-command", command: "only" }] }),
+      });
+      act(() => query("workflow-editor-substep-delete-0-else-0")?.click());
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "conditional",
+        condition: { left: "${env}", op: "eq", right: "prod" },
+        then: [],
+      });
+    });
+  });
 });
