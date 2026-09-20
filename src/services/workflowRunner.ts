@@ -35,6 +35,7 @@
 
 import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
 import type { WorkflowStep } from "@/types/workflow";
+import { frontendWarn } from "@/utils/frontendLog";
 
 /** Terminal outcome of a workflow run (the state machine's end states). */
 export type WorkflowRunStatus = "completed" | "cancelled" | "failed";
@@ -232,6 +233,83 @@ async function resolveScriptBody(
 }
 
 /**
+ * Run-time values for a workflow's declared parameters (PROD-0040), keyed by
+ * parameter name. An empty map means "no parameters" — {@link resolveStepParams}
+ * is then a strict identity pass, so a workflow that declares no parameters
+ * behaves byte-identically to before this feature.
+ */
+export type WorkflowParamValues = Record<string, string | number | boolean>;
+
+/** Matches a `$${` escape (literal `${`) or a `${name}` reference token. */
+const PARAM_TOKEN = /\$\$\{|\$\{([^}]*)\}/g;
+
+/**
+ * Interpolate `${name}` parameter references in `text` (PROD-0040).
+ *
+ * Substitution rules — this is a **pure** transform:
+ *  - `$${` is an escape for a literal `${` (never a reference); it is emitted
+ *    verbatim as `${` and the emitted text is not re-scanned.
+ *  - `${name}` is replaced with `paramValues[name]` (stringified) only when
+ *    `name` is a declared parameter (present as a key in `paramValues`).
+ *  - An **unknown** `${x}` (not a declared parameter) is left VERBATIM and
+ *    reported through `onUnknownParam` so the caller can warn; the run never
+ *    fails over it. This tolerates the collision with shell `${VAR}` syntax.
+ */
+export function interpolateParams(
+  text: string,
+  paramValues: WorkflowParamValues,
+  onUnknownParam?: (name: string) => void
+): string {
+  return text.replace(PARAM_TOKEN, (match, name?: string) => {
+    // `$${` escape → literal `${`. The replaced text is not re-scanned by
+    // String.replace, so the emitted `${` can never start a new reference.
+    if (name === undefined) return "${";
+    if (Object.prototype.hasOwnProperty.call(paramValues, name)) {
+      return String(paramValues[name]);
+    }
+    onUnknownParam?.(name);
+    return match;
+  });
+}
+
+/**
+ * Apply parameter substitution to a step's text fields (PROD-0040), returning a
+ * new step with `${name}` references resolved. A **pure** transform, applied as
+ * a distinct pass ahead of {@link executeStep}'s dispatch switch.
+ *
+ * When `paramValues` is empty this is a strict identity: the exact same step
+ * reference is returned, so a workflow with no declared parameters incurs no
+ * observable interpolation pass. Only the send-based text fields carry
+ * references — `send-command.command`, `run-script.script`, and
+ * `run-local-process.program`/`args`; `run-macro`, `wait`, and the non-text
+ * fields of the others are returned unchanged.
+ */
+export function resolveStepParams(
+  step: WorkflowStep,
+  paramValues: WorkflowParamValues,
+  onUnknownParam?: (name: string) => void
+): WorkflowStep {
+  // Identity fast-path: no declared parameters → no interpolation at all.
+  if (Object.keys(paramValues).length === 0) return step;
+  const sub = (text: string): string => interpolateParams(text, paramValues, onUnknownParam);
+  switch (step.kind) {
+    case "send-command":
+      return { ...step, command: sub(step.command) };
+    case "run-script":
+      return { ...step, script: sub(step.script) };
+    case "run-local-process":
+      return { ...step, program: sub(step.program), args: step.args.map(sub) };
+    case "run-macro":
+    case "wait":
+      return step;
+    default: {
+      const _exhaustive: never = step;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
  * Execute a single workflow step by dispatching on its `kind`. The `switch` is
  * exhaustive over the {@link WorkflowStep} union (the `never` default is a
  * compile-time guard), so adding a step kind to the model forces a matching
@@ -239,22 +317,38 @@ async function resolveScriptBody(
  *
  * `signal` lets a long or multi-part step abort when the run is cancelled; it is
  * optional so a step can be unit-tested in isolation without a run around it.
+ *
+ * `paramValues` (PROD-0040) feeds a distinct parameter-substitution pass applied
+ * before the dispatch switch: `${name}` references in the step's text fields are
+ * resolved against it. It is optional and defaults to empty, which makes the
+ * pass a strict identity so a parameter-free workflow is unaffected.
  */
 export async function executeStep(
   step: WorkflowStep,
   deps: WorkflowRunnerDeps,
-  signal?: WorkflowStepSignal
+  signal?: WorkflowStepSignal,
+  paramValues?: WorkflowParamValues
 ): Promise<StepOutcome> {
   const cancelled = (): boolean => signal?.isCancelled() ?? false;
 
-  switch (step.kind) {
+  // Distinct substitution pass ahead of the dispatch switch. Identity when no
+  // parameter values are supplied, so the switch below is unchanged for a
+  // parameter-free workflow.
+  const resolved = resolveStepParams(step, paramValues ?? {}, (name) =>
+    frontendWarn(
+      "workflow",
+      `parameter "\${${name}}" is not declared by this workflow; leaving it literal`
+    )
+  );
+
+  switch (resolved.kind) {
     case "send-command": {
-      const delivered = await deps.send(step.command + LINE_TERMINATOR);
+      const delivered = await deps.send(resolved.command + LINE_TERMINATOR);
       return delivered ? { ok: true } : { ok: false, error: SESSION_GONE };
     }
     case "run-script": {
-      const lines = splitScriptLines(await resolveScriptBody(step, deps));
-      const perLineDelay = clampDelay(step.perLineDelayMs);
+      const lines = splitScriptLines(await resolveScriptBody(resolved, deps));
+      const perLineDelay = clampDelay(resolved.perLineDelayMs);
       for (let i = 0; i < lines.length; i++) {
         if (cancelled()) return { ok: true, cancelled: true };
         if (i > 0 && perLineDelay > 0) await sleepFor(perLineDelay, deps);
@@ -268,13 +362,13 @@ export async function executeStep(
       if (!deps.runMacro) {
         return { ok: false, error: 'the "run-macro" step requires a macro-playback seam' };
       }
-      const replayed = await deps.runMacro(step.macroId);
+      const replayed = await deps.runMacro(resolved.macroId);
       return replayed
         ? { ok: true }
-        : { ok: false, error: `macro "${step.macroId}" could not be replayed` };
+        : { ok: false, error: `macro "${resolved.macroId}" could not be replayed` };
     }
     case "wait": {
-      await sleepFor(clampDelay(step.delayMs), deps);
+      await sleepFor(clampDelay(resolved.delayMs), deps);
       return { ok: true };
     }
     case "run-local-process": {
@@ -285,31 +379,31 @@ export async function executeStep(
       // GUARDRAIL: never spawn without explicit authorization. Absent seam or a
       // refusal both mean "not authorized" — the process is never spawned.
       const authorized = deps.authorizeLocalProcess
-        ? await deps.authorizeLocalProcess(step.program, step.args)
+        ? await deps.authorizeLocalProcess(resolved.program, resolved.args)
         : false;
       if (!authorized) {
         return {
           ok: false,
-          error: `local process "${step.program}" is not authorized to run`,
+          error: `local process "${resolved.program}" is not authorized to run`,
         };
       }
       // A cancel observed before the spawn aborts the run without spawning.
       if (cancelled()) return { ok: true, cancelled: true };
 
-      const result = await deps.runLocalProcess(step.program, step.args, { signal });
+      const result = await deps.runLocalProcess(resolved.program, resolved.args, { signal });
       if (result.cancelled) return { ok: true, cancelled: true };
       if (result.timedOut) {
-        return { ok: false, error: `local process "${step.program}" timed out` };
+        return { ok: false, error: `local process "${resolved.program}" timed out` };
       }
       if (result.exitCode === 0) return { ok: true };
       return {
         ok: false,
-        error: `local process "${step.program}" exited with code ${result.exitCode ?? "unknown"}`,
+        error: `local process "${resolved.program}" exited with code ${result.exitCode ?? "unknown"}`,
       };
     }
     default: {
       // Exhaustiveness guard: a new step kind must add a case above.
-      const _exhaustive: never = step;
+      const _exhaustive: never = resolved;
       return { ok: false, error: `unknown workflow step kind: ${JSON.stringify(_exhaustive)}` };
     }
   }
@@ -327,11 +421,15 @@ export async function executeStep(
  * sends and is *not* counted as completed. If a step's seam reports failure — or
  * the step kind is not yet executable — the run stops immediately with status
  * `failed` and records the offending step.
+ *
+ * `paramValues` (PROD-0040) is forwarded to each step's substitution pass. Absent
+ * or empty, the run is byte-identical to a parameter-free run.
  */
 export function runWorkflow(
   steps: WorkflowStep[],
   deps: WorkflowRunnerDeps,
-  hooks?: WorkflowRunHooks
+  hooks?: WorkflowRunHooks,
+  paramValues?: WorkflowParamValues
 ): WorkflowRunHandle {
   let cancelled = false;
 
@@ -349,7 +447,7 @@ export function runWorkflow(
     for (let i = 0; i < steps.length; i++) {
       if (cancelled) return { status: "cancelled", stepsCompleted: i };
 
-      const outcome = await executeStep(steps[i], deps, signal);
+      const outcome = await executeStep(steps[i], deps, signal, paramValues);
       if (!outcome.ok) {
         return {
           status: "failed",

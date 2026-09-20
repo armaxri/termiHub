@@ -80,6 +80,37 @@ export type WorkflowTrigger =
 /** The discriminant literal of a {@link WorkflowTrigger}. */
 export type WorkflowTriggerKind = WorkflowTrigger["kind"];
 
+/** The value type of a {@link WorkflowParameter}. */
+export type WorkflowParameterType = "string" | "number" | "boolean" | "enum";
+
+/**
+ * A named parameter a workflow declares (PROD-0040). Parameter references of the
+ * form `${name}` in a step's text fields (`send-command.command`,
+ * `run-script.script`, and `run-local-process.program`/`args`) are substituted
+ * with the value collected at run time. A literal `${` is written `$${`. Only
+ * declared parameter names are substituted; an unknown `${x}` is left verbatim.
+ *
+ * Mirrors the Rust `WorkflowParameter` in
+ * `src-tauri/src/workflows/config.rs` byte-for-byte over the wire (camelCase
+ * fields; `type` is the wire key for {@link WorkflowParameter.type}). The whole
+ * concept is additive and backward-compatible: a workflow with no `parameters`
+ * key behaves and serialises exactly as before.
+ */
+export interface WorkflowParameter {
+  /** The reference name used in `${name}` interpolations. */
+  name: string;
+  /** Optional human-friendly label shown in the run-time prompt (defaults to `name`). */
+  label?: string;
+  /** The value type, which selects the prompt control and coercion. */
+  type: WorkflowParameterType;
+  /** Optional default value, pre-filled in the run-time prompt. */
+  default?: string | number | boolean;
+  /** When `true`, the prompt requires a non-empty value before the run proceeds. */
+  required?: boolean;
+  /** For `type: "enum"`, the selectable string options. */
+  options?: string[];
+}
+
 /**
  * The terminal state a workflow run ended in. Mirrors the runner's
  * {@link "@/services/workflowRunner".WorkflowRunStatus} and the Rust
@@ -142,6 +173,12 @@ export interface Workflow {
   steps: WorkflowStep[];
   /** The triggers that can launch this workflow. */
   triggers: WorkflowTrigger[];
+  /**
+   * Optional declared parameters (PROD-0040) interpolated into step text fields
+   * via `${name}`. Absent/empty on a workflow that uses no parameters, which
+   * then behaves and serialises byte-identically to before this feature.
+   */
+  parameters?: WorkflowParameter[];
   /** RFC 3339 timestamp of when the workflow was first created. */
   createdAt: string;
   /** RFC 3339 timestamp of the workflow's last update. */

@@ -146,6 +146,7 @@ mod tests {
                 command: "echo hi".to_string(),
             }],
             triggers: vec![WorkflowTrigger::Manual],
+            parameters: Vec::new(),
             created_at: String::new(),
             updated_at: String::new(),
         }
