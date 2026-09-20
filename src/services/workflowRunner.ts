@@ -34,8 +34,61 @@
  */
 
 import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
-import type { WorkflowStep } from "@/types/workflow";
+import type { WorkflowCondition, WorkflowStep } from "@/types/workflow";
 import { frontendWarn } from "@/utils/frontendLog";
+
+/**
+ * Maximum nesting depth of `conditional` steps the runner will descend into
+ * (PROD-0044). A conditional whose `then`/`else` reaches this depth fails its
+ * run rather than recursing further, bounding an authoring loop (a conditional
+ * that nests itself) so it can never blow the stack. Top-level steps are depth
+ * 0; each conditional branch entered adds 1.
+ */
+export const MAX_CONDITIONAL_DEPTH = 10;
+
+/**
+ * Evaluate a {@link WorkflowCondition} to the branch it selects (PROD-0044).
+ *
+ * A **pure**, total comparison over the operands *as already resolved* — any
+ * `${param}` references are interpolated by {@link resolveStepParams} before the
+ * step reaches here, so this compares plain strings:
+ *  - `eq`/`ne` — string (in)equality.
+ *  - `gt`/`lt`/`gte`/`lte` — numeric comparison when **both** operands parse as
+ *    finite numbers, lexicographic string comparison otherwise.
+ *  - `contains` — `left` contains `right` as a substring.
+ */
+export function evaluateCondition(condition: WorkflowCondition): boolean {
+  const { left, op, right } = condition;
+  // Ordering used by the relational operators: numeric when both sides are
+  // finite numbers, lexicographic otherwise. Returns -1 | 0 | 1.
+  const order = (): number => {
+    const l = Number(left);
+    const r = Number(right);
+    if (Number.isFinite(l) && Number.isFinite(r)) return l < r ? -1 : l > r ? 1 : 0;
+    return left < right ? -1 : left > right ? 1 : 0;
+  };
+  switch (op) {
+    case "eq":
+      return left === right;
+    case "ne":
+      return left !== right;
+    case "contains":
+      return left.includes(right);
+    case "gt":
+      return order() > 0;
+    case "lt":
+      return order() < 0;
+    case "gte":
+      return order() >= 0;
+    case "lte":
+      return order() <= 0;
+    default: {
+      // Exhaustiveness guard: a new operator must add a case above.
+      const _exhaustive: never = op;
+      return _exhaustive;
+    }
+  }
+}
 
 /** Terminal outcome of a workflow run (the state machine's end states). */
 export type WorkflowRunStatus = "completed" | "cancelled" | "failed";
@@ -299,6 +352,18 @@ export function resolveStepParams(
       return { ...step, script: sub(step.script) };
     case "run-local-process":
       return { ...step, program: sub(step.program), args: step.args.map(sub) };
+    case "conditional":
+      // Resolve only the condition operands here; the `then`/`else` sub-steps
+      // are resolved individually when the conditional arm executes them (each
+      // through its own pass), so they are left untouched by this shallow pass.
+      return {
+        ...step,
+        condition: {
+          ...step.condition,
+          left: sub(step.condition.left),
+          right: sub(step.condition.right),
+        },
+      };
     case "run-macro":
     case "wait":
       return step;
@@ -327,7 +392,8 @@ export async function executeStep(
   step: WorkflowStep,
   deps: WorkflowRunnerDeps,
   signal?: WorkflowStepSignal,
-  paramValues?: WorkflowParamValues
+  paramValues?: WorkflowParamValues,
+  depth = 0
 ): Promise<StepOutcome> {
   const cancelled = (): boolean => signal?.isCancelled() ?? false;
 
@@ -400,6 +466,29 @@ export async function executeStep(
         ok: false,
         error: `local process "${resolved.program}" exited with code ${result.exitCode ?? "unknown"}`,
       };
+    }
+    case "conditional": {
+      // Bound nesting before descending so a conditional that nests itself
+      // (an authoring loop) fails fast instead of blowing the stack.
+      if (depth >= MAX_CONDITIONAL_DEPTH) {
+        return {
+          ok: false,
+          error: `conditional nesting exceeds the maximum depth of ${MAX_CONDITIONAL_DEPTH}`,
+        };
+      }
+      // The operands were interpolated by the substitution pass above, so the
+      // comparison is over resolved values. A false condition with no `else`
+      // selects an empty branch — a no-op that never fails the run.
+      const branch = evaluateCondition(resolved.condition) ? resolved.then : (resolved.else ?? []);
+      for (const child of branch) {
+        if (cancelled()) return { ok: true, cancelled: true };
+        // Sub-steps run through their own substitution pass; forward the raw
+        // (un-substituted) paramValues, not the resolved ones.
+        const outcome = await executeStep(child, deps, signal, paramValues, depth + 1);
+        if (!outcome.ok) return outcome;
+        if (outcome.cancelled) return { ok: true, cancelled: true };
+      }
+      return { ok: true };
     }
     default: {
       // Exhaustiveness guard: a new step kind must add a case above.

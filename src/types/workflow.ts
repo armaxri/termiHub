@@ -53,10 +53,55 @@ export type WorkflowStep =
       program: string;
       /** Arguments passed to the program. */
       args: string[];
+    }
+  | {
+      /**
+       * Branch on a structured condition (PROD-0044, slice 1). When the
+       * {@link WorkflowCondition} holds, the runner recurses into {@link then};
+       * otherwise into {@link else} (a no-op if `else` is absent — a false
+       * condition with no `else` never fails the run). `then`/`else` are
+       * ordinary step lists, so conditionals nest; the runner bounds nesting
+       * depth to prevent authoring loops / stack blowups.
+       */
+      kind: "conditional";
+      /** The structured comparison that selects the branch. */
+      condition: WorkflowCondition;
+      /** Steps run when the condition holds. */
+      then: WorkflowStep[];
+      /** Steps run when the condition is false. Omitted → false is a no-op. */
+      else?: WorkflowStep[];
     };
 
 /** The discriminant literal of a {@link WorkflowStep}. */
 export type WorkflowStepKind = WorkflowStep["kind"];
+
+/**
+ * The comparison operator of a {@link WorkflowCondition} (PROD-0044). `eq`/`ne`
+ * are string (in)equality; `gt`/`lt`/`gte`/`lte` compare numerically when both
+ * operands parse as finite numbers and lexicographically otherwise; `contains`
+ * is substring containment (`left` contains `right`). Serialised lowercase to
+ * match the Rust `WorkflowComparisonOp` enum byte-for-byte over the wire.
+ */
+export type WorkflowComparisonOp = "eq" | "ne" | "gt" | "lt" | "gte" | "lte" | "contains";
+
+/**
+ * A structured comparator evaluated by the workflow runner (PROD-0044, slice 1).
+ *
+ * `left` and `right` are plain strings that may reference declared parameters as
+ * `${name}` — they go through the same interpolation pass as a step's text
+ * fields (PROD-0040) before the comparison, so a condition can branch on a
+ * run-time parameter value. This is a **structured** comparator by design: there
+ * is deliberately no bespoke expression-string parser (a maintainer decision
+ * default for slice 1). Mirrors the Rust `WorkflowCondition` byte-for-byte.
+ */
+export interface WorkflowCondition {
+  /** The left-hand operand (may reference `${param}`). */
+  left: string;
+  /** The comparison operator. */
+  op: WorkflowComparisonOp;
+  /** The right-hand operand (may reference `${param}`). */
+  right: string;
+}
 
 /** A trigger that launches a workflow. Discriminated by {@link WorkflowTrigger.kind}. */
 export type WorkflowTrigger =

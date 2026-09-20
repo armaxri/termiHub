@@ -115,6 +115,70 @@
   font-size: var(--font-size-sm);
 }
 
+/* ── Conditional step (PROD-0044) ───────────────────────────────────── */
+.workflow-step__conditional {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.workflow-step__condition {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.workflow-step__condition > :first-child,
+.workflow-step__condition > :last-child {
+  flex: 1;
+  min-width: 120px;
+}
+
+.workflow-step__branch {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.workflow-step__branch-label {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.workflow-step__substeps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.workflow-step__substep {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--spacing-xs);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.workflow-step__substep-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.workflow-step__substep-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* ── Triggers ───────────────────────────────────────────────────────── */
 .workflow-triggers {
   display: flex;

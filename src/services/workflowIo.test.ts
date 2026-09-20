@@ -191,4 +191,79 @@ describe("summarizeLocalProcessSteps", () => {
       localProcessSteps: 2,
     });
   });
+
+  it("descends into conditional branches so a nested local-process is still counted", () => {
+    const wf = sampleWorkflow({
+      name: "hidden",
+      steps: [
+        {
+          kind: "conditional",
+          condition: { left: "${env}", op: "eq", right: "prod" },
+          then: [{ kind: "run-local-process", program: "deploy", args: [] }],
+          else: [{ kind: "run-local-process", program: "rollback", args: [] }],
+        },
+      ],
+    });
+    expect(summarizeLocalProcessSteps([wf])).toEqual({
+      workflowsWithLocalProcess: 1,
+      localProcessSteps: 2,
+    });
+  });
+});
+
+describe("parseWorkflowEnvelope conditional steps (PROD-0044)", () => {
+  it("round-trips a conditional with a nested branch and an else", () => {
+    const wf = sampleWorkflow({
+      name: "cond",
+      steps: [
+        {
+          kind: "conditional",
+          condition: { left: "${env}", op: "contains", right: "prod" },
+          then: [
+            { kind: "send-command", command: "deploy" },
+            {
+              kind: "conditional",
+              condition: { left: "1", op: "lt", right: "2" },
+              then: [{ kind: "wait", delayMs: 5 }],
+            },
+          ],
+          else: [{ kind: "send-command", command: "skip" }],
+        },
+      ],
+    });
+    const parsed = parseWorkflowEnvelope(serializeWorkflows([wf]));
+    expect(parsed).toEqual([wf]);
+  });
+
+  it("rejects a conditional with an invalid operator", () => {
+    const json = JSON.stringify({
+      version: WORKFLOW_EXPORT_VERSION,
+      workflows: [
+        {
+          name: "bad",
+          steps: [
+            {
+              kind: "conditional",
+              condition: { left: "a", op: "matches", right: "b" },
+              then: [],
+            },
+          ],
+        },
+      ],
+    });
+    expect(() => parseWorkflowEnvelope(json)).toThrow(/invalid condition operator/);
+  });
+
+  it("rejects a conditional missing its then array", () => {
+    const json = JSON.stringify({
+      version: WORKFLOW_EXPORT_VERSION,
+      workflows: [
+        {
+          name: "bad",
+          steps: [{ kind: "conditional", condition: { left: "a", op: "eq", right: "b" } }],
+        },
+      ],
+    });
+    expect(() => parseWorkflowEnvelope(json)).toThrow(/missing "then"/);
+  });
 });

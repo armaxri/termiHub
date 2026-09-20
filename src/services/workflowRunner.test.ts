@@ -18,6 +18,8 @@ import {
   executeStep,
   resolveStepParams,
   interpolateParams,
+  evaluateCondition,
+  MAX_CONDITIONAL_DEPTH,
   type WorkflowRunnerDeps,
   type WorkflowSendSeam,
   type WorkflowRunMacroSeam,
@@ -27,7 +29,7 @@ import {
   type WorkflowParamValues,
 } from "./workflowRunner";
 import { MAX_STEP_DELAY_MS } from "./macroPlayback";
-import type { WorkflowStep } from "@/types/workflow";
+import type { WorkflowComparisonOp, WorkflowCondition, WorkflowStep } from "@/types/workflow";
 
 const sendCommand = (command: string): WorkflowStep => ({ kind: "send-command", command });
 
@@ -592,6 +594,185 @@ describe("parameter interpolation (PROD-0040)", () => {
       const send = vi.fn(async () => true);
       await executeStep(sendCommand("echo ${HOME}"), deps({ send }));
       expect(send).toHaveBeenCalledWith("echo ${HOME}\n");
+    });
+  });
+});
+
+// ── Conditional steps (PROD-0044, slice 1) ──────────────────────────────────
+
+const cond = (left: string, op: WorkflowComparisonOp, right: string): WorkflowCondition => ({
+  left,
+  op,
+  right,
+});
+
+describe("evaluateCondition", () => {
+  it("eq / ne compare as strings", () => {
+    expect(evaluateCondition(cond("prod", "eq", "prod"))).toBe(true);
+    expect(evaluateCondition(cond("prod", "eq", "dev"))).toBe(false);
+    expect(evaluateCondition(cond("prod", "ne", "dev"))).toBe(true);
+    expect(evaluateCondition(cond("prod", "ne", "prod"))).toBe(false);
+  });
+
+  it("contains is substring containment (left contains right)", () => {
+    expect(evaluateCondition(cond("release-2.0", "contains", "2.0"))).toBe(true);
+    expect(evaluateCondition(cond("release", "contains", "2.0"))).toBe(false);
+  });
+
+  it("gt / lt / gte / lte compare numerically when both operands parse", () => {
+    expect(evaluateCondition(cond("10", "gt", "9"))).toBe(true); // not lexicographic ("10" < "9")
+    expect(evaluateCondition(cond("9", "lt", "10"))).toBe(true);
+    expect(evaluateCondition(cond("5", "gte", "5"))).toBe(true);
+    expect(evaluateCondition(cond("5", "lte", "5"))).toBe(true);
+    expect(evaluateCondition(cond("4", "gte", "5"))).toBe(false);
+    expect(evaluateCondition(cond("6", "lte", "5"))).toBe(false);
+  });
+
+  it("gt / lt fall back to lexicographic when an operand is non-numeric", () => {
+    expect(evaluateCondition(cond("beta", "gt", "alpha"))).toBe(true);
+    expect(evaluateCondition(cond("alpha", "lt", "beta"))).toBe(true);
+    expect(evaluateCondition(cond("alpha", "gt", "beta"))).toBe(false);
+  });
+});
+
+describe("executeStep conditional", () => {
+  const conditional = (
+    condition: WorkflowCondition,
+    thenSteps: WorkflowStep[],
+    elseSteps?: WorkflowStep[]
+  ): WorkflowStep => ({
+    kind: "conditional",
+    condition,
+    then: thenSteps,
+    ...(elseSteps ? { else: elseSteps } : {}),
+  });
+
+  it("runs the then branch when the condition holds", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const step = conditional(
+      cond("a", "eq", "a"),
+      [sendCommand("in-then")],
+      [sendCommand("in-else")]
+    );
+    const outcome = await executeStep(step, deps({ send }));
+    expect(outcome).toEqual({ ok: true });
+    expect(send.mock.calls.map((c) => c[0])).toEqual(["in-then\n"]);
+  });
+
+  it("runs the else branch when the condition is false", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const step = conditional(
+      cond("a", "eq", "b"),
+      [sendCommand("in-then")],
+      [sendCommand("in-else")]
+    );
+    const outcome = await executeStep(step, deps({ send }));
+    expect(outcome).toEqual({ ok: true });
+    expect(send.mock.calls.map((c) => c[0])).toEqual(["in-else\n"]);
+  });
+
+  it("is a no-op (never fails) when false and no else branch is present", async () => {
+    const send = vi.fn(async () => true);
+    const step = conditional(cond("a", "eq", "b"), [sendCommand("in-then")]);
+    const outcome = await executeStep(step, deps({ send }));
+    expect(outcome).toEqual({ ok: true });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("resolves ${param} operands before comparing", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const values: WorkflowParamValues = { env: "prod" };
+    const step = conditional(cond("${env}", "eq", "prod"), [sendCommand("deploy")]);
+    await executeStep(step, deps({ send }), undefined, values);
+    expect(send.mock.calls.map((c) => c[0])).toEqual(["deploy\n"]);
+  });
+
+  it("resolves ${param} inside the selected branch's sub-steps", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const values: WorkflowParamValues = { env: "prod", host: "example.com" };
+    const step = conditional(cond("${env}", "eq", "prod"), [sendCommand("ssh ${host}")]);
+    await executeStep(step, deps({ send }), undefined, values);
+    expect(send.mock.calls.map((c) => c[0])).toEqual(["ssh example.com\n"]);
+  });
+
+  it("propagates a sub-step failure as the conditional's failure", async () => {
+    const send = vi.fn(async () => false); // session gone
+    const step = conditional(cond("a", "eq", "a"), [sendCommand("boom")]);
+    const outcome = await executeStep(step, deps({ send }));
+    expect(outcome.ok).toBe(false);
+  });
+
+  it("nested conditionals recurse into the correct branch", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const inner = conditional(cond("1", "lt", "2"), [sendCommand("inner-then")]);
+    const outer = conditional(cond("x", "eq", "x"), [inner]);
+    await executeStep(outer, deps({ send }));
+    expect(send.mock.calls.map((c) => c[0])).toEqual(["inner-then\n"]);
+  });
+
+  it("fails when nesting exceeds the maximum depth", async () => {
+    const send = vi.fn(async () => true);
+    // Build a chain of conditionals nested one-per-branch deeper than the bound.
+    let step: WorkflowStep = sendCommand("leaf");
+    for (let i = 0; i <= MAX_CONDITIONAL_DEPTH; i++) {
+      step = conditional(cond("a", "eq", "a"), [step]);
+    }
+    const outcome = await executeStep(step, deps({ send }));
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain("depth");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("stops the branch when cancelled between sub-steps", async () => {
+    let calls = 0;
+    const send = vi.fn(async () => {
+      calls++;
+      return true;
+    });
+    const signal = { isCancelled: () => calls >= 1 };
+    const step = conditional(cond("a", "eq", "a"), [sendCommand("one"), sendCommand("two")]);
+    const outcome = await executeStep(step, deps({ send }), signal);
+    expect(outcome).toEqual({ ok: true, cancelled: true });
+    expect(calls).toBe(1);
+  });
+});
+
+describe("runWorkflow with conditional steps", () => {
+  it("counts a conditional as one completed top-level step", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const progress: number[] = [];
+    const steps: WorkflowStep[] = [
+      {
+        kind: "conditional",
+        condition: cond("a", "eq", "a"),
+        then: [sendCommand("x"), sendCommand("y")],
+      },
+      sendCommand("after"),
+    ];
+    const handle = runWorkflow(steps, deps({ send }), {
+      onProgress: (completed) => progress.push(completed),
+    });
+    const result = await handle.done;
+    expect(result).toEqual({ status: "completed", stepsCompleted: 2 });
+    // Two top-level steps → two progress ticks (nested sends do not tick).
+    expect(progress).toEqual([1, 2]);
+    expect(send.mock.calls.map((c) => c[0])).toEqual(["x\n", "y\n", "after\n"]);
+  });
+
+  it("resolveStepParams interpolates only the condition operands, not then/else", () => {
+    const values: WorkflowParamValues = { env: "prod", host: "h" };
+    const step: WorkflowStep = {
+      kind: "conditional",
+      condition: cond("${env}", "eq", "prod"),
+      then: [sendCommand("ssh ${host}")],
+      else: [sendCommand("bye ${host}")],
+    };
+    const resolved = resolveStepParams(step, values);
+    expect(resolved).toEqual({
+      kind: "conditional",
+      condition: cond("prod", "eq", "prod"),
+      then: [sendCommand("ssh ${host}")], // sub-steps left for their own pass
+      else: [sendCommand("bye ${host}")],
     });
   });
 });

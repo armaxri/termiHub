@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { Terminal, FileCode, Play, Clock, Cpu } from "lucide-react";
+import { Terminal, FileCode, Play, Clock, Cpu, GitBranch } from "lucide-react";
 import {
   WORKFLOW_STEP_KINDS,
+  WORKFLOW_CONDITION_OPS,
+  conditionOpLabel,
+  conditionOpSymbol,
   stepKindIcon,
   stepKindLabel,
   summariseWorkflowStep,
@@ -25,14 +28,36 @@ function macro(overrides: Partial<Macro> = {}): Macro {
 
 describe("workflowStepMeta", () => {
   describe("WORKFLOW_STEP_KINDS", () => {
-    it("lists the five kinds in menu order", () => {
+    it("lists the kinds in menu order (conditional last)", () => {
       expect([...WORKFLOW_STEP_KINDS]).toEqual([
         "send-command",
         "run-script",
         "run-macro",
         "wait",
         "run-local-process",
+        "conditional",
       ]);
+    });
+  });
+
+  describe("WORKFLOW_CONDITION_OPS", () => {
+    it("lists every comparison operator in picker order", () => {
+      expect([...WORKFLOW_CONDITION_OPS]).toEqual([
+        "eq",
+        "ne",
+        "gt",
+        "lt",
+        "gte",
+        "lte",
+        "contains",
+      ]);
+    });
+
+    it("gives each operator a human label and a compact symbol", () => {
+      expect(conditionOpLabel("eq")).toBe("equals");
+      expect(conditionOpLabel("contains")).toBe("contains");
+      expect(conditionOpSymbol("eq")).toBe("==");
+      expect(conditionOpSymbol("gte")).toBe(">=");
     });
   });
 
@@ -43,6 +68,7 @@ describe("workflowStepMeta", () => {
       expect(stepKindIcon("run-macro")).toBe(Play);
       expect(stepKindIcon("wait")).toBe(Clock);
       expect(stepKindIcon("run-local-process")).toBe(Cpu);
+      expect(stepKindIcon("conditional")).toBe(GitBranch);
     });
   });
 
@@ -122,6 +148,25 @@ describe("workflowStepMeta", () => {
       expect(summary).toHaveLength(60);
       expect(summary.endsWith("…")).toBe(true);
     });
+
+    it("summarises a conditional by its condition and branch counts", () => {
+      const step: WorkflowStep = {
+        kind: "conditional",
+        condition: { left: "${env}", op: "eq", right: "prod" },
+        then: [{ kind: "send-command", command: "a" }],
+        else: [{ kind: "wait", delayMs: 1 }],
+      };
+      expect(summariseWorkflowStep(step)).toBe("if ${env} == prod → 1 then, 1 else");
+    });
+
+    it("omits the else count when a conditional has no else branch", () => {
+      const step: WorkflowStep = {
+        kind: "conditional",
+        condition: { left: "x", op: "contains", right: "y" },
+        then: [],
+      };
+      expect(summariseWorkflowStep(step)).toBe("if x contains y → 0 then");
+    });
   });
 
   describe("newWorkflowStep", () => {
@@ -147,6 +192,17 @@ describe("workflowStepMeta", () => {
         program: "",
         args: [],
       });
+    });
+
+    it("builds a conditional step with an empty eq condition, empty then, and no else", () => {
+      const step = newWorkflowStep("conditional");
+      expect(step).toEqual({
+        kind: "conditional",
+        condition: { left: "", op: "eq", right: "" },
+        then: [],
+      });
+      // `else` is undefined (not `[]`) so it serialises byte-identically.
+      expect(step).not.toHaveProperty("else");
     });
   });
 
