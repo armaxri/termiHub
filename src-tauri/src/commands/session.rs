@@ -264,7 +264,7 @@ fn killed_disconnect_tab_id(intentional: bool, tab_id: Option<String>) -> Option
 #[tauri::command]
 pub async fn list_local_sessions(
     manager: State<'_, SessionManager>,
-) -> Result<Vec<SessionInfo>, String> {
+) -> Result<Vec<SessionInfo>, TerminalError> {
     Ok(manager.list_sessions().await)
 }
 
@@ -355,12 +355,13 @@ pub async fn validate_ssh_key(path: String) -> crate::utils::ssh_key_validate::S
 /// on the key's actual encryption instead of the "Save password" flag. On any
 /// read error the caller should treat the result as "uncertain" and prompt.
 #[tauri::command]
-pub async fn is_ssh_key_encrypted(path: String) -> Result<bool, String> {
+pub async fn is_ssh_key_encrypted(path: String) -> Result<bool, TerminalError> {
     tauri::async_runtime::spawn_blocking(move || {
         crate::utils::ssh_key_validate::is_ssh_key_encrypted(&path)
     })
     .await
-    .map_err(|e| format!("Encryption-detection task failed: {e}"))?
+    .map_err(|e| TerminalError::InternalError(format!("Encryption-detection task failed: {e}")))?
+    .map_err(TerminalError::InternalError)
 }
 
 // --- Session-based file browsing commands ---
@@ -1012,11 +1013,8 @@ pub async fn list_persistent_sessions(
 pub async fn get_agent_session_buffer(
     session_id: String,
     manager: State<'_, SessionManager>,
-) -> Result<String, String> {
-    let bytes = manager
-        .get_remote_session_buffer(&session_id)
-        .await
-        .map_err(|e| e.to_string())?;
+) -> Result<String, TerminalError> {
+    let bytes = manager.get_remote_session_buffer(&session_id).await?;
     Ok(crate::utils::ipc_bytes::encode_bytes_base64(&bytes))
 }
 
@@ -1076,6 +1074,57 @@ mod tests {
         assert_eq!(killed_disconnect_tab_id(true, None), None);
         // Non-intentional close of a tabless session → None.
         assert_eq!(killed_disconnect_tab_id(false, None), None);
+    }
+
+    /// After the ARCH-006/TAURI-008/ERR-008 Phase-2 retype, `is_ssh_key_encrypted`
+    /// funnels the inner detector's `String` errors (and the spawn-blocking
+    /// `JoinError`) into `TerminalError::InternalError`. The command must still
+    /// surface the exact human text it produced before — only gaining the typed
+    /// `Internal error:` prefix and the machine-classifiable `internal_error`
+    /// code that the structured IPC envelope (#3168) carries.
+    #[test]
+    fn is_ssh_key_encrypted_errors_map_to_internal_error_preserving_text() {
+        use super::TerminalError;
+
+        // The inner detector surfaces messages like "Cannot read key file: …".
+        let inner = TerminalError::InternalError("Cannot read key file: no such file".to_string());
+        let value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&inner).expect("serialize"))
+                .expect("valid JSON envelope");
+        assert_eq!(value["code"], "internal_error");
+        assert_eq!(
+            value["message"],
+            "Internal error: Cannot read key file: no such file"
+        );
+
+        // The spawn-blocking JoinError arm keeps its "Encryption-detection task
+        // failed: …" wording under the same typed prefix + code.
+        let join =
+            TerminalError::InternalError("Encryption-detection task failed: panicked".to_string());
+        let value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&join).expect("serialize"))
+                .expect("valid JSON envelope");
+        assert_eq!(value["code"], "internal_error");
+        assert_eq!(
+            value["message"],
+            "Internal error: Encryption-detection task failed: panicked"
+        );
+    }
+
+    /// `get_agent_session_buffer` now propagates the `SessionManager`'s typed
+    /// `TerminalError` directly (dropping the old `.map_err(|e| e.to_string())`),
+    /// so a missing session keeps its "Session not found: …" text while now also
+    /// carrying the stable `session_not_found` code instead of an opaque string.
+    #[test]
+    fn get_agent_session_buffer_missing_session_keeps_text_and_gains_code() {
+        use super::TerminalError;
+
+        let err = TerminalError::SessionNotFound("sess-42".to_string());
+        let value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&err).expect("serialize"))
+                .expect("valid JSON envelope");
+        assert_eq!(value["code"], "session_not_found");
+        assert_eq!(value["message"], "Session not found: sess-42");
     }
 
     #[test]
