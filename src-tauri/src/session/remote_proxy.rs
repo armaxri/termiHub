@@ -1571,6 +1571,41 @@ mod tests {
         proxy.disconnect().await.ok();
     }
 
+    /// #3001: pausing an agent-hosted monitor must propagate to the agent so its
+    /// remote poller stops sampling/streaming — not merely be honoured on the
+    /// desktop. Resuming must re-subscribe the agent to restart the poller. The
+    /// fix reuses the existing subscribe/unsubscribe verbs (every agent already
+    /// implements them), so it needs no protocol addition and stays back-compat.
+    /// Before the fix `set_paused` sent no RPC at all, so the agent kept polling.
+    #[tokio::test]
+    async fn pausing_agent_monitor_stops_remote_poller_and_resume_restarts_it() {
+        let mock = Arc::new(MockAgentRpcClient::new());
+        let proxy = RemoteMonitoringProxy::for_agent_self("agent-1".to_string(), mock.clone());
+
+        // Pause: the agent's poller must be told to stop so it stops wasting
+        // remote CPU/bandwidth while paused.
+        proxy.set_paused(true).await;
+        {
+            let sent = mock.sent_requests.lock().unwrap();
+            assert!(
+                sent.iter().any(|(m, p)| m == "connection.monitoring.unsubscribe"
+                    && p["host"].as_str() == Some("self")),
+                "pausing an agent monitor must send unsubscribe to stop the remote poller, got: {sent:?}"
+            );
+        }
+
+        // Resume: the agent must be re-subscribed so its poller restarts.
+        proxy.set_paused(false).await;
+        {
+            let sent = mock.sent_requests.lock().unwrap();
+            assert!(
+                sent.iter().any(|(m, p)| m == "connection.monitoring.subscribe"
+                    && p["host"].as_str() == Some("self")),
+                "resuming an agent monitor must re-subscribe to restart the remote poller, got: {sent:?}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn monitoring_proxy_uses_session_id_for_ssh_session() {
         let mock = Arc::new(MockAgentRpcClient::with_capabilities(json!({
