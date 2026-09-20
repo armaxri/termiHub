@@ -10,6 +10,8 @@ pub mod http_monitor;
 // enable that feature (PROD-0022).
 #[cfg(feature = "local-shell")]
 pub mod local_collector;
+#[cfg(feature = "local-shell")]
+pub mod local_provider;
 pub mod parser;
 pub mod provider;
 pub mod status;
@@ -17,6 +19,8 @@ pub mod types;
 
 #[cfg(feature = "local-shell")]
 pub use local_collector::LocalCollector;
+#[cfg(feature = "local-shell")]
+pub use local_provider::LocalMonitoringProvider;
 
 pub use parser::{
     cpu_percent_from_delta, net_rate_from_delta, parse_cpu_line, parse_df_output,
