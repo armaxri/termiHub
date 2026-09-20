@@ -836,6 +836,48 @@ describe("isShellReservedKey", () => {
   it("does not match Ctrl+Alt (modifier doubled, used by app focus shortcuts elsewhere)", () => {
     expect(isShellReservedKey(makeKeyEvent("ArrowUp", { ctrl: true, alt: true }))).toBe(false);
   });
+
+  it("matches Ctrl+<physical letter> on a non-US layout (event.code, not event.key)", () => {
+    // Cyrillic layout: the physical "A"/"C" keys emit "ф"/"с", not "a"/"c",
+    // but the terminal control chars are tied to physical key position, so
+    // Ctrl+A / Ctrl+C must still pass through to the terminal.
+    expect(isShellReservedKey(makeCodeKeyEvent("KeyA", "ф", { ctrl: true }))).toBe(true);
+    expect(isShellReservedKey(makeCodeKeyEvent("KeyC", "с", { ctrl: true }))).toBe(true);
+  });
+
+  it("matches Ctrl+letter on a US layout when event.code is present", () => {
+    expect(isShellReservedKey(makeCodeKeyEvent("KeyC", "c", { ctrl: true }))).toBe(true);
+    expect(isShellReservedKey(makeCodeKeyEvent("KeyZ", "z", { ctrl: true }))).toBe(true);
+  });
+
+  it("matches Alt+<physical letter> on a non-US layout (readline word-motion)", () => {
+    // Cyrillic layout: physical "B" key emits "и".
+    expect(isShellReservedKey(makeCodeKeyEvent("KeyB", "и", { alt: true }))).toBe(true);
+  });
+
+  it("matches Ctrl+\\ / Ctrl+[ / Ctrl+] by physical key on a non-US layout", () => {
+    // The physical Backslash/BracketLeft/BracketRight keys stay reserved even
+    // when the layout maps them to different characters.
+    expect(isShellReservedKey(makeCodeKeyEvent("Backslash", "\\", { ctrl: true }))).toBe(true);
+    expect(isShellReservedKey(makeCodeKeyEvent("BracketLeft", "ш", { ctrl: true }))).toBe(true);
+    expect(isShellReservedKey(makeCodeKeyEvent("BracketRight", "щ", { ctrl: true }))).toBe(true);
+  });
+
+  it("does not match non-letter physical keys under Ctrl (digits, other punctuation)", () => {
+    expect(isShellReservedKey(makeCodeKeyEvent("Digit1", "1", { ctrl: true }))).toBe(false);
+    expect(isShellReservedKey(makeCodeKeyEvent("Minus", "-", { ctrl: true }))).toBe(false);
+  });
+
+  it("does not match Cmd/Shift combos even when event.code is a letter key", () => {
+    expect(isShellReservedKey(makeCodeKeyEvent("KeyW", "ц", { meta: true }))).toBe(false);
+    expect(isShellReservedKey(makeCodeKeyEvent("KeyC", "С", { ctrl: true, shift: true }))).toBe(
+      false
+    );
+  });
+
+  it("does not match a plain physical letter (no modifiers) on a non-US layout", () => {
+    expect(isShellReservedKey(makeCodeKeyEvent("KeyA", "ф"))).toBe(false);
+  });
 });
 
 describe("isEventFromTerminal", () => {
