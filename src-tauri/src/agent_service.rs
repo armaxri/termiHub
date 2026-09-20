@@ -545,7 +545,7 @@ mod tests {
         type Sample = u32;
 
         fn interval(&self) -> Duration {
-            Duration::from_millis(10)
+            TICK
         }
 
         fn client(&self) -> Option<Arc<dyn AgentRpcClient>> {
@@ -590,22 +590,56 @@ mod tests {
         (d, ticks, applied)
     }
 
-    async fn settle(ms: u64) {
-        tokio::time::sleep(Duration::from_millis(ms)).await;
+    /// The poll interval the [`TestDelegate`] reports. Kept small so the paused
+    /// clock only ever advances by tiny virtual steps.
+    const TICK: Duration = Duration::from_millis(10);
+
+    /// Deterministically drive the spawned poll loop exactly `n` ticks under
+    /// paused time: advance the virtual clock one interval per tick and yield so
+    /// the loop task is polled once between advances. No wall-clock wait and no
+    /// scheduler race — the resulting tick count is exact regardless of runner
+    /// load. Only valid for delegates whose tick body has no inner `.await`
+    /// (i.e. no client / empty targets), so one yield fully drains each tick.
+    async fn advance_ticks(n: usize) {
+        // Let the freshly-spawned loop task reach its first `sleep` before the
+        // clock moves, so the first advance actually fires a pending timer.
+        tokio::task::yield_now().await;
+        for _ in 0..n {
+            tokio::time::advance(TICK).await;
+            tokio::task::yield_now().await;
+        }
+    }
+
+    /// Advance the paused clock one interval at a time until `cond` holds,
+    /// yielding after each step so the loop task is polled. Deterministic and
+    /// load-independent; used where a tick body awaits (client poll) or self-
+    /// reaps, so an exact tick count is not meaningful. Panics if the condition
+    /// never holds within a generous bound.
+    async fn advance_until(mut cond: impl FnMut() -> bool) {
+        for _ in 0..1_000 {
+            if cond() {
+                return;
+            }
+            tokio::time::advance(TICK).await;
+            tokio::task::yield_now().await;
+        }
+        panic!("condition not met within bound");
     }
 
     /// The happy path: with targets, a client, and instances remaining, the loop
     /// polls and applies samples every tick — and `stop` ends it.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn polls_and_applies_until_stopped() {
         let poller = AgentStatusPoller::new();
         let (d, ticks, applied) = delegate(true);
         poller.ensure(d);
 
-        settle(45).await;
+        // Drive the clock until a sample lands (the tick body awaits a blocking
+        // poll, so wait for the signal rather than a fixed tick count).
+        advance_until(|| !applied.lock().unwrap().is_empty()).await;
         assert!(
-            ticks.load(Ordering::SeqCst) >= 2,
-            "loop should tick repeatedly"
+            ticks.load(Ordering::SeqCst) >= 1,
+            "loop should tick and poll"
         );
         assert!(
             !applied.lock().unwrap().is_empty(),
@@ -619,14 +653,15 @@ mod tests {
 
     /// `any_remaining == false` makes the loop break and self-reap the slot, so a
     /// later `ensure` can spawn a fresh task.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn self_reaps_when_no_instances_remain() {
         let poller = AgentStatusPoller::new();
         let (d, _ticks, applied) = delegate(true);
         d.any_remaining.store(false, Ordering::SeqCst);
         poller.ensure(d);
 
-        settle(30).await;
+        // The first tick observes no instances, breaks, and clears the slot.
+        advance_until(|| !poller.is_running()).await;
         assert!(
             applied.lock().unwrap().is_empty(),
             "no instances remain → nothing polled"
@@ -636,7 +671,7 @@ mod tests {
 
     /// A second `ensure` while the first task is live is a no-op: the second
     /// delegate never runs (proving a single task, not two).
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn ensure_is_idempotent_while_running() {
         let poller = AgentStatusPoller::new();
         // First delegate loops forever without a client (never applies).
@@ -647,26 +682,35 @@ mod tests {
         let (d2, ticks2, applied2) = delegate(true);
         poller.ensure(d2);
 
-        settle(45).await;
+        // Only the first delegate's (client-less) loop runs, so ticks stay
+        // await-free and the drive is exact.
+        advance_ticks(4).await;
         assert_eq!(
             ticks2.load(Ordering::SeqCst),
             0,
             "the second delegate must never run while the first holds the slot"
         );
         assert!(applied2.lock().unwrap().is_empty());
+        assert!(poller.is_running());
 
         poller.stop();
     }
 
     /// With no client resolvable, the loop keeps ticking but never polls/applies.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn skips_ticks_when_no_client() {
         let poller = AgentStatusPoller::new();
         let (d, ticks, applied) = delegate(false);
         poller.ensure(d);
 
-        settle(45).await;
-        assert!(ticks.load(Ordering::SeqCst) >= 2, "loop keeps running");
+        // No client → the tick body has no inner await, so exactly one tick
+        // elapses per advanced interval.
+        advance_ticks(4).await;
+        assert_eq!(
+            ticks.load(Ordering::SeqCst),
+            4,
+            "loop keeps running — one tick per interval"
+        );
         assert!(
             applied.lock().unwrap().is_empty(),
             "no client → poll/apply never reached"
@@ -678,15 +722,21 @@ mod tests {
 
     /// Empty targets with instances still remaining skips only the tick — the
     /// poller stays alive and nothing is applied.
-    #[tokio::test]
+    #[tokio::test(start_paused = true)]
     async fn skips_tick_when_targets_empty_but_instances_remain() {
         let poller = AgentStatusPoller::new();
         let (d, ticks, applied) = delegate(true);
         d.targets_empty.store(true, Ordering::SeqCst);
         poller.ensure(d);
 
-        settle(45).await;
-        assert!(ticks.load(Ordering::SeqCst) >= 2, "loop stays alive");
+        // Empty targets short-circuit before the (awaiting) client poll, so the
+        // tick body has no inner await and the drive is exact.
+        advance_ticks(4).await;
+        assert_eq!(
+            ticks.load(Ordering::SeqCst),
+            4,
+            "loop stays alive — one tick per interval"
+        );
         assert!(
             applied.lock().unwrap().is_empty(),
             "empty targets → poll/apply skipped this tick"
