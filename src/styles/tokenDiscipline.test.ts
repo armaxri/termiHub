@@ -180,6 +180,62 @@ describe("CSS token discipline (#1059)", () => {
   });
 });
 
+/**
+ * Persistent-scrollbar guard (#3144).
+ *
+ * The global scrollbar was originally "subtle, auto-hide" (#1045): the thumb was
+ * `transparent` at rest and only revealed on hover/focus of the scroll host. On
+ * Windows this read as "no scrollbar", making scrolling very hard. The maintainer
+ * decision is a thumb that is persistently visible on ALL platforms (still
+ * brightening on direct thumb hover). These guards pin that behavior so it cannot
+ * silently regress back to auto-hide.
+ */
+describe("persistent scrollbar (#3144)", () => {
+  const globalCss = stripCssComments(readFileSync(join(STYLES_DIR, "global.css"), "utf8"));
+
+  it("shows the webkit thumb at rest via the token, not transparent", () => {
+    // The `::-webkit-scrollbar-thumb` (non-hover) rule must paint the thumb with
+    // the scrollbar-thumb token, never `background: transparent`.
+    const thumbRule = /::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*var\(--scrollbar-thumb\)/;
+    expect(
+      thumbRule.test(globalCss),
+      "the resting ::-webkit-scrollbar-thumb must use var(--scrollbar-thumb)"
+    ).toBe(true);
+    expect(
+      /::-webkit-scrollbar-thumb\s*\{[^}]*background:\s*transparent/.test(globalCss),
+      "the resting ::-webkit-scrollbar-thumb must not be transparent"
+    ).toBe(false);
+  });
+
+  it("shows the Firefox thumb at rest and drops the host-hover reveal", () => {
+    // The `*` rule sets the standard scrollbar-color to the visible thumb token.
+    expect(
+      /\*\s*\{[^}]*scrollbar-color:\s*var\(--scrollbar-thumb\)\s+var\(--scrollbar-bg\)/.test(
+        globalCss
+      ),
+      "the `*` rule must default scrollbar-color to the visible thumb token"
+    ).toBe(true);
+    // The obsolete host-hover reveal selectors must be gone.
+    expect(
+      /:hover::-webkit-scrollbar-thumb\b/.test(globalCss),
+      "the host-hover reveal selector must be removed"
+    ).toBe(false);
+    expect(
+      /:focus-within::-webkit-scrollbar-thumb\b/.test(globalCss),
+      "the host-focus reveal selector must be removed"
+    ).toBe(false);
+  });
+
+  it("keeps a brighten-on-hover affordance on direct thumb hover", () => {
+    expect(
+      /::-webkit-scrollbar-thumb:hover\s*\{[^}]*background:\s*var\(--scrollbar-thumb-hover\)/.test(
+        globalCss
+      ),
+      "direct thumb hover must use var(--scrollbar-thumb-hover)"
+    ).toBe(true);
+  });
+});
+
 describe("Design-system regression guards (#1083)", () => {
   /**
    * (3a) Dialogs must compose from the `Modal` primitive
