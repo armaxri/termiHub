@@ -43,6 +43,8 @@ ALLOWLIST=(
   "scripts/internal/dev-local-env.sh"       # sourced-only shell env resolver
   "scripts/internal/pnpm-audit-prod-gate.sh" # CI-only security gate (Ubuntu runner)
   "scripts/internal/screenshot-mockup.sh"   # headless-Chrome concept renderer
+  "scripts/internal/check-script-parity.sh"   # this parity checker (CI-only bash gate)
+  "scripts/internal/check-script-headless.sh" # headless-exec checker (CI-only bash gate)
 )
 
 in_allowlist() {
