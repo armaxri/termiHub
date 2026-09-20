@@ -13,6 +13,9 @@ import {
   listWorkflows as apiListWorkflows,
   saveWorkflow as apiSaveWorkflow,
   deleteWorkflow as apiDeleteWorkflow,
+  listWorkflowRuns as apiListWorkflowRuns,
+  recordWorkflowRun as apiRecordWorkflowRun,
+  clearWorkflowRunHistory as apiClearWorkflowRunHistory,
 } from "@/services/workflowApi";
 import {
   parseWorkflowEnvelope,
@@ -28,7 +31,7 @@ import {
   type WorkflowAuthorizeLocalProcessSeam,
   type WorkflowRunLocalProcessSeam,
 } from "@/services/workflowRunner";
-import { Workflow } from "@/types/workflow";
+import { Workflow, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
 import { frontendLog } from "@/utils/frontendLog";
 
 import { currentSessionView, regionExited } from "../sessionBridge";
@@ -112,6 +115,12 @@ export interface WorkflowRunOutputState {
 export interface RunWorkflowOptions {
   /** Tab to run against; defaults to the active terminal tab. */
   targetTabId?: string;
+  /**
+   * What launched the run, recorded in the persisted run history (PROD-0046).
+   * Defaults to `"manual"` (palette / sidebar / toolbar); on-connect and hotkey
+   * dispatch pass their own value.
+   */
+  triggeredBy?: WorkflowRunTrigger;
 }
 
 /**
@@ -177,6 +186,16 @@ export interface WorkflowsSlice {
   /** Delete a workflow by ID; only mutates local state after the backend delete resolves. */
   deleteWorkflowFromBackend: (workflowId: string) => Promise<void>;
   /**
+   * Persisted, metadata-only history of recent workflow runs (PROD-0046),
+   * most-recent first. Populated by {@link loadWorkflowRuns} and refreshed as a
+   * side effect of each finished run's fire-and-forget record.
+   */
+  workflowRuns: WorkflowRun[];
+  /** Load the run history from the backend into the store. */
+  loadWorkflowRuns: () => Promise<void>;
+  /** Clear the persisted run history, then refresh the (now empty) list. */
+  clearWorkflowRunHistory: () => Promise<void>;
+  /**
    * Import workflows from an exported-workflow file's JSON, merging them into the
    * library. Malformed/incompatible files reject with a clear error and leave
    * the library untouched; imported workflows get fresh ids and de-duplicated
@@ -234,6 +253,22 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     set((state) => ({
       workflows: state.workflows.filter((w) => w.id !== workflowId),
     }));
+  },
+
+  workflowRuns: [],
+
+  loadWorkflowRuns: async () => {
+    try {
+      const runs = await apiListWorkflowRuns();
+      set({ workflowRuns: Array.isArray(runs) ? runs : [] });
+    } catch (err) {
+      frontendLog("app_store", `Failed to load workflow run history: ${errorMessage(err)}`);
+    }
+  },
+
+  clearWorkflowRunHistory: async () => {
+    const runs = await apiClearWorkflowRunHistory();
+    set({ workflowRuns: Array.isArray(runs) ? runs : [] });
   },
 
   importWorkflows: async (json) => {
@@ -433,6 +468,10 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
 
     const toastId = `workflow-run-${workflowId}-${targetTabId}`;
     const total = workflow.steps.length;
+    // Captured up front so the persisted history record (PROD-0046) carries the
+    // real run duration; `triggeredBy` defaults to a manual launch.
+    const startedAt = new Date().toISOString();
+    const triggeredBy: WorkflowRunTrigger = opts?.triggeredBy ?? "manual";
     toast.loading(`Running workflow "${workflow.name}"…`, {
       id: toastId,
       description: `0 / ${total} steps`,
@@ -478,6 +517,35 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
     activeWorkflowRun = handle;
 
     const result = await handle.done;
+
+    // Persist a metadata-only record of this run (PROD-0046). Fire-and-forget:
+    // a history-write failure must NEVER fail or block the run, so it is logged
+    // (never rethrown) and the returned, capped list is mirrored into the store.
+    const runRecord: WorkflowRun = {
+      id: newId("workflow-run"),
+      workflowId,
+      workflowName: workflow.name,
+      startedAt,
+      endedAt: new Date().toISOString(),
+      status: result.status,
+      stepsCompleted: result.stepsCompleted,
+      total,
+      failedStepIndex: result.status === "failed" ? result.failedStepIndex : undefined,
+      error: result.status === "failed" ? result.error : undefined,
+      tabId: targetTabId,
+      triggeredBy,
+    };
+    try {
+      void apiRecordWorkflowRun(runRecord)
+        .then((runs) => set({ workflowRuns: Array.isArray(runs) ? runs : [] }))
+        .catch((err) => {
+          frontendLog("workflow", `Failed to record workflow run: ${errorMessage(err)}`);
+        });
+    } catch (err) {
+      // Guard even a synchronous throw (e.g. no Tauri bridge): recording must
+      // never fail or block the run.
+      frontendLog("workflow", `Failed to record workflow run: ${errorMessage(err)}`);
+    }
 
     // Only settle the run when it is still the current one — a newer
     // runWorkflow may have replaced it while this one was cancelled. The settle
