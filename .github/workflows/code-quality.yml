@@ -262,15 +262,17 @@ jobs:
       - name: Lint Markdown
         run: pnpm run markdownlint
 
-      # Advisory unused-code report (audit finding TOOL-009). knip statically
-      # finds unused files, exports, and dependencies; knip.json declares the
-      # real entrypoints (src/main.tsx, the vite/vitest configs, test setup +
-      # test files, the dynamically-loaded testbridge) so the report is
+      # Advisory unused-code report (audit findings TOOL-009 + TOOL-008 JS slice).
+      # knip statically finds unused files, exports, and dependencies; knip.json
+      # declares the real entrypoints (src/main.tsx, the vite/vitest configs, test
+      # setup + test files, the dynamically-loaded testbridge) so the report is
       # useful-not-noisy. It is REPORT-ONLY: `continue-on-error` plus `|| true`
       # guarantee it can never fail the build (knip exits non-zero when it finds
-      # anything). The current tree has real findings — cleaning up the flagged
-      # unused code is a separate future effort, not this step's job; the step
-      # only surfaces them in the run log.
+      # anything). The JS unused-*dependency* slice (TOOL-008, the advisory
+      # counterpart of the blocking cargo-machete Rust check) is now clean — the
+      # genuinely-unused deps knip flagged have been removed. The remaining
+      # unused-file/-export findings are a separate future cleanup effort, not
+      # this step's job; the step only surfaces them in the run log.
       - name: Unused-code report (knip, advisory)
         continue-on-error: true
         run: pnpm knip || true
