@@ -285,6 +285,16 @@
   font-weight: var(--font-weight-medium);
 }
 
+.ui-field__hint {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+.ui-field__hint--warning {
+  color: var(--color-warning);
+}
+
 .ui-field__msg {
   font-size: var(--font-size-xs);
   color: var(--color-error);
