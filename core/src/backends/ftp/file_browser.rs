@@ -302,6 +302,26 @@ impl FileBrowser for FtpFileBrowser {
     async fn set_permissions(&self, _path: &str, _mode: u32) -> Result<(), FileError> {
         Err(FileError::NotSupported)
     }
+
+    /// FTP has no portable owner-change command, so chown is unsupported.
+    async fn set_owner(
+        &self,
+        _path: &str,
+        _uid: Option<u32>,
+        _gid: Option<u32>,
+    ) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
+
+    /// FTP has no symlink-create command, so it is unsupported.
+    async fn create_symlink(&self, _target: &str, _link_path: &str) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
+
+    /// FTP has no server-side copy command, so same-backend copy is unsupported.
+    async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
 }
 
 #[cfg(test)]
@@ -344,6 +364,27 @@ mod tests {
         // Never advances past the last entry.
         browser.mode_index.store(99, Ordering::Relaxed);
         assert_eq!(browser.current_mode(), Mode::Passive);
+    }
+
+    #[tokio::test]
+    async fn owner_symlink_copy_are_typed_not_supported() {
+        // FTP is a byte-based backend: chown / symlink-create / same-backend copy
+        // are unsupported and must return the typed `NotSupported` (not a stringy
+        // error and not a silent success), matching how chmod degrades. This needs
+        // no live server — the ops reject unconditionally.
+        let browser = FtpFileBrowser::new(FtpConfig::default());
+        assert!(matches!(
+            browser.set_owner("/f", Some(0), Some(0)).await,
+            Err(FileError::NotSupported)
+        ));
+        assert!(matches!(
+            browser.create_symlink("/real", "/link").await,
+            Err(FileError::NotSupported)
+        ));
+        assert!(matches!(
+            browser.copy("/a", "/b").await,
+            Err(FileError::NotSupported)
+        ));
     }
 
     #[test]

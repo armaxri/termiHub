@@ -61,6 +61,60 @@ pub trait FileBrowser: Send {
     /// `Send`-only `dyn FileBrowser` cannot satisfy.
     async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError>;
 
+    /// Change the owner (`uid`) and/or group (`gid`) of a file or directory (chown).
+    ///
+    /// `uid`/`gid` are optional so a caller can change just one — `None` leaves
+    /// that side unchanged (the `chown(2)` "-1 means keep" semantics). A call with
+    /// both `None` is a no-op that still succeeds.
+    ///
+    /// Backends that can change ownership implement it — the SFTP browser (an SFTP
+    /// `setstat` carrying the uid/gid attribute pair, filling the unspecified side
+    /// from a prior `stat` since the SFTP wire attribute sets both together) and
+    /// the local filesystem on Unix (`libc::chown`). A backend that cannot (FTP,
+    /// Docker, WSL, or a non-Unix local filesystem) returns
+    /// [`FileError::NotSupported`] so the caller fails cleanly rather than
+    /// silently, exactly as [`set_permissions`](Self::set_permissions) does. It is
+    /// a required method (not defaulted) for the same reason `set_permissions` is:
+    /// `#[async_trait]` would otherwise add a `Self: Sync` bound the `Send`-only
+    /// `dyn FileBrowser` cannot satisfy.
+    async fn set_owner(
+        &self,
+        path: &str,
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Result<(), FileError>;
+
+    /// Create a symbolic link at `link_path` pointing at `target`.
+    ///
+    /// `target` is stored verbatim (it may be relative or dangling — the link is
+    /// created regardless, mirroring `ln -s`). The existing `list_dir`/`stat`
+    /// surface already *reads* links (`is_symlink`/`symlink_target`); this is the
+    /// write side.
+    ///
+    /// Backends that can create links implement it — the SFTP browser (an SFTP
+    /// `symlink`) and the local filesystem on Unix (`std::os::unix::fs::symlink`).
+    /// A backend that cannot (FTP, Docker, WSL, or a non-Unix local filesystem —
+    /// Windows local symlink creation needs elevated privileges and a target-kind
+    /// choice this portable op does not carry) returns [`FileError::NotSupported`],
+    /// as [`set_permissions`](Self::set_permissions) does. Required (not defaulted)
+    /// for the same `Send`-only reason.
+    async fn create_symlink(&self, target: &str, link_path: &str) -> Result<(), FileError>;
+
+    /// Copy a file or directory tree from `src` to `dest` **within this backend**.
+    ///
+    /// This is a same-backend copy only — both paths live on the connection this
+    /// browser serves. Cross-backend / remote↔remote copy is a separate transport
+    /// concern handled by the transfer subsystem (PROD-0013), not this method.
+    /// Directories are copied recursively; the entry kind is self-detected via
+    /// `stat`, so callers pass no `is_directory` flag (matching `delete`).
+    ///
+    /// The local filesystem copies natively (recursive, preserving nested
+    /// symlinks); the SFTP browser streams the bytes server-side over its own
+    /// channel. A backend with no copy primitive (FTP, Docker, WSL) returns
+    /// [`FileError::NotSupported`], as [`set_permissions`](Self::set_permissions)
+    /// does. Required (not defaulted) for the same `Send`-only reason.
+    async fn copy(&self, src: &str, dest: &str) -> Result<(), FileError>;
+
     /// Optional downcast hook to the concrete browser type behind this
     /// `&dyn FileBrowser`.
     ///
