@@ -226,6 +226,107 @@ describe("EmbeddedServerDialog", () => {
     ).toBe(false);
   });
 
+  it("HTTP auth is off by default, so the saved config carries no httpAuth (PROD-0035)", async () => {
+    const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
+    render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+
+    // The auth section renders for HTTP, but the credential fields stay hidden
+    // until it is enabled.
+    expect(document.querySelector('[data-testid="server-dialog-http-auth-enable"]')).toBeTruthy();
+    expect(document.querySelector('[data-testid="server-dialog-http-username"]')).toBeNull();
+
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
+      "Firmware"
+    );
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-root"]') as HTMLInputElement,
+      "/srv/fw"
+    );
+    await act(async () => {
+      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSave.mock.calls[0][0].httpAuth).toBeUndefined();
+  });
+
+  it("enabling HTTP auth and entering credentials saves httpAuth (PROD-0035)", async () => {
+    const onSave = vi.fn((_config: EmbeddedServerConfig) => Promise.resolve(true));
+    render(<EmbeddedServerDialog {...baseProps} onSave={onSave} />);
+
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-name"]') as HTMLInputElement,
+      "Firmware"
+    );
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-root"]') as HTMLInputElement,
+      "/srv/fw"
+    );
+
+    // Toggle the auth checkbox on, then fill username + password.
+    act(() => {
+      (
+        document.querySelector('[data-testid="server-dialog-http-auth-enable"]') as HTMLElement
+      ).click();
+    });
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-http-username"]') as HTMLInputElement,
+      "admin"
+    );
+    typeInto(
+      document.querySelector('[data-testid="server-dialog-http-password"]') as HTMLInputElement,
+      "s3cret"
+    );
+
+    await act(async () => {
+      (document.querySelector('[data-testid="server-dialog-save"]') as HTMLButtonElement).click();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(onSave.mock.calls[0][0]).toMatchObject({
+      httpAuth: { username: "admin", password: "s3cret" },
+    });
+  });
+
+  it("populates HTTP auth fields from an existing config (PROD-0035)", () => {
+    const existing: EmbeddedServerConfig = {
+      id: "srv-3",
+      name: "Secured",
+      serverType: "http",
+      rootDirectory: "/srv/secure",
+      bindHost: "127.0.0.1",
+      port: 8080,
+      autoStart: false,
+      readOnly: true,
+      directoryListing: true,
+      httpAuth: { username: "ops", password: "hunter2" },
+    };
+    render(<EmbeddedServerDialog {...baseProps} config={existing} />);
+
+    const user = document.querySelector(
+      '[data-testid="server-dialog-http-username"]'
+    ) as HTMLInputElement;
+    const pass = document.querySelector(
+      '[data-testid="server-dialog-http-password"]'
+    ) as HTMLInputElement;
+    expect(user.value).toBe("ops");
+    expect(pass.value).toBe("hunter2");
+  });
+
+  it("switching protocol away from HTTP hides the auth section (PROD-0035)", () => {
+    render(<EmbeddedServerDialog {...baseProps} />);
+    expect(document.querySelector('[data-testid="server-dialog-http-auth-enable"]')).toBeTruthy();
+
+    act(() => {
+      (document.querySelector('[data-testid="server-dialog-proto-ftp"]') as HTMLElement).click();
+    });
+
+    expect(document.querySelector('[data-testid="server-dialog-http-auth-enable"]')).toBeNull();
+  });
+
   it("a whitespace-only name is treated as empty and blocks Save", () => {
     render(<EmbeddedServerDialog {...baseProps} />);
     typeInto(
