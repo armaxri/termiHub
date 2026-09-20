@@ -6,9 +6,11 @@
 //! The monitoring task adds the `host` field when building protocol-level
 //! [`MonitoringData`](crate::protocol::methods::MonitoringData).
 
+use std::time::Instant;
+
 use anyhow::{Context, Result};
 use russh::ChannelMsg;
-use sysinfo::{Disks, System};
+use sysinfo::{Disks, Networks, System};
 use tracing::debug;
 
 use crate::protocol::methods::SshSessionConfig;
@@ -18,7 +20,9 @@ use termihub_core::backends::ssh::handler::SshSession;
 pub use termihub_core::monitoring::StatsCollector;
 
 use termihub_core::errors::CoreError;
-use termihub_core::monitoring::{parse_stats, CpuDeltaTracker, SystemStats, MONITORING_COMMAND};
+use termihub_core::monitoring::{
+    parse_stats, CpuDeltaTracker, NetCounters, NetDeltaTracker, SystemStats, MONITORING_COMMAND,
+};
 
 // ── Local collector ─────────────────────────────────────────────────
 
@@ -29,6 +33,8 @@ use termihub_core::monitoring::{parse_stats, CpuDeltaTracker, SystemStats, MONIT
 /// so that `global_cpu_usage()` can compute delta-based percentages correctly.
 pub struct LocalCollector {
     sys: System,
+    networks: Networks,
+    net_tracker: NetDeltaTracker,
     cached_hostname: String,
     cached_os_info: String,
 }
@@ -39,6 +45,10 @@ impl LocalCollector {
         // Prime the CPU counters so the first real `collect()` call returns a
         // meaningful delta rather than 0 %.
         sys.refresh_cpu_usage();
+
+        // Prime the network counters; the first `collect()` reports 0 B/s (no
+        // prior delta), matching the SSH collector's first-sample behaviour.
+        let networks = Networks::new_with_refreshed_list();
 
         let hostname = System::host_name().unwrap_or_else(|| "unknown".to_string());
         let os_info = System::long_os_version()
@@ -55,6 +65,8 @@ impl LocalCollector {
 
         Self {
             sys,
+            networks,
+            net_tracker: NetDeltaTracker::new(),
             cached_hostname: hostname,
             cached_os_info: os_info,
         }
@@ -85,7 +97,39 @@ impl StatsCollector for LocalCollector {
             0.0
         };
 
+        // Swap (refreshed by `refresh_memory` above). A host with no swap
+        // reports total 0, yielding 0 used / 0 %.
+        let swap_total_kb = self.sys.total_swap() / 1024;
+        let swap_used_kb = self.sys.used_swap() / 1024;
+        let swap_used_percent = if swap_total_kb > 0 {
+            swap_used_kb as f64 / swap_total_kb as f64 * 100.0
+        } else {
+            0.0
+        };
+
         let (disk_total_kb, disk_used_kb, disk_used_percent) = root_disk_stats(&disks);
+
+        // Network throughput: sum cumulative byte counters over all non-loopback
+        // interfaces, then diff against the previous snapshot for a per-second
+        // rate. `refresh(false)` keeps interfaces that briefly drop out of the
+        // listing so their counters are not lost between polls.
+        self.networks.refresh(false);
+        let mut net_rx_bytes: u64 = 0;
+        let mut net_tx_bytes: u64 = 0;
+        for (name, data) in &self.networks {
+            if name == "lo" {
+                continue;
+            }
+            net_rx_bytes = net_rx_bytes.saturating_add(data.total_received());
+            net_tx_bytes = net_tx_bytes.saturating_add(data.total_transmitted());
+        }
+        let (net_rx_bytes_per_sec, net_tx_bytes_per_sec) = self.net_tracker.update(
+            NetCounters {
+                rx_bytes: net_rx_bytes,
+                tx_bytes: net_tx_bytes,
+            },
+            Instant::now(),
+        );
 
         let uptime_seconds = System::uptime() as f64;
         let load_avg = System::load_average();
@@ -103,6 +147,11 @@ impl StatsCollector for LocalCollector {
             disk_used_kb,
             disk_used_percent,
             os_info: self.cached_os_info.clone(),
+            swap_total_kb,
+            swap_used_kb,
+            swap_used_percent,
+            net_rx_bytes_per_sec,
+            net_tx_bytes_per_sec,
         })
     }
 }
@@ -153,6 +202,7 @@ fn root_disk_stats(disks: &Disks) -> (u64, u64, f64) {
 pub struct SshCollector {
     session: SshSession,
     cpu_tracker: CpuDeltaTracker,
+    net_tracker: NetDeltaTracker,
 }
 
 impl SshCollector {
@@ -170,6 +220,7 @@ impl SshCollector {
         Ok(Self {
             session,
             cpu_tracker: CpuDeltaTracker::new(),
+            net_tracker: NetDeltaTracker::new(),
         })
     }
 
@@ -211,26 +262,17 @@ impl StatsCollector for SshCollector {
         let output = self
             .exec(MONITORING_COMMAND)
             .map_err(|e| CoreError::Other(e.to_string()))?;
-        let (stats, counters) =
+        let (mut stats, counters, net_counters) =
             parse_stats(&output).map_err(|e| CoreError::Other(e.to_string()))?;
 
-        // First sample has no prior snapshot to diff against, so report 0 %;
-        // core's CpuDeltaTracker encapsulates that previous-counters state.
-        let cpu_usage_percent = self.cpu_tracker.update(counters).unwrap_or(0.0);
+        // First sample has no prior snapshot to diff against, so report 0 %/0 B/s;
+        // core's Cpu/NetDeltaTracker encapsulate that previous-snapshot state.
+        stats.cpu_usage_percent = self.cpu_tracker.update(counters).unwrap_or(0.0);
+        let (net_rx, net_tx) = self.net_tracker.update(net_counters, Instant::now());
+        stats.net_rx_bytes_per_sec = net_rx;
+        stats.net_tx_bytes_per_sec = net_tx;
 
-        Ok(SystemStats {
-            hostname: stats.hostname,
-            uptime_seconds: stats.uptime_seconds,
-            load_average: stats.load_average,
-            cpu_usage_percent,
-            memory_total_kb: stats.memory_total_kb,
-            memory_available_kb: stats.memory_available_kb,
-            memory_used_percent: stats.memory_used_percent,
-            disk_total_kb: stats.disk_total_kb,
-            disk_used_kb: stats.disk_used_kb,
-            disk_used_percent: stats.disk_used_percent,
-            os_info: stats.os_info,
-        })
+        Ok(stats)
     }
 }
 
@@ -299,6 +341,39 @@ mod tests {
             stats.memory_used_percent
         );
         assert!(!stats.os_info.is_empty());
+        // Swap may legitimately be 0 (no swap), but the percent must be sane and
+        // used must never exceed total.
+        assert!(
+            (0.0..=100.0).contains(&stats.swap_used_percent),
+            "swap_used_percent out of range: {}",
+            stats.swap_used_percent
+        );
+        assert!(
+            stats.swap_used_kb <= stats.swap_total_kb,
+            "used swap exceeds total"
+        );
+        // First sample has no prior delta, so throughput rates are exactly 0.
+        assert_eq!(stats.net_rx_bytes_per_sec, 0.0);
+        assert_eq!(stats.net_tx_bytes_per_sec, 0.0);
+    }
+
+    #[test]
+    fn local_collector_second_sample_net_rates_non_negative() {
+        // The second sample has a prior snapshot, so rates are computed; they
+        // must be finite and non-negative on any machine.
+        let mut collector = LocalCollector::new();
+        let _first = collector.collect("test").unwrap();
+        let second = collector.collect("test").unwrap();
+        assert!(
+            second.net_rx_bytes_per_sec.is_finite() && second.net_rx_bytes_per_sec >= 0.0,
+            "net_rx_bytes_per_sec invalid: {}",
+            second.net_rx_bytes_per_sec
+        );
+        assert!(
+            second.net_tx_bytes_per_sec.is_finite() && second.net_tx_bytes_per_sec >= 0.0,
+            "net_tx_bytes_per_sec invalid: {}",
+            second.net_tx_bytes_per_sec
+        );
     }
 
     #[test]

@@ -2336,6 +2336,11 @@ mod tests {
                 disk_used_kb: 20_000_000,
                 disk_used_percent: 40.0,
                 os_info: "Linux".to_string(),
+                swap_total_kb: 2_000_000,
+                swap_used_kb: 500_000,
+                swap_used_percent: 25.0,
+                net_rx_bytes_per_sec: 1024.0,
+                net_tx_bytes_per_sec: 512.0,
             }
         }
 

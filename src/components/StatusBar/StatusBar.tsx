@@ -30,7 +30,7 @@ import { useDesktopVersion } from "@/hooks/useDesktopVersion";
 import { useWindowInfo } from "@/hooks/useWindowInfo";
 import { summarizeAgentUpdates } from "@/utils/agentVersion";
 import { jumpHostStatusLabel } from "@/utils/jumpHost";
-import { formatBytes } from "@/utils/formatters";
+import { formatBytes, formatRate } from "@/utils/formatters";
 import type { ConnectionTypeInfo } from "@/services/api";
 import {
   SystemStats,
@@ -890,6 +890,36 @@ function MonitoringStatus() {
             data-testid="monitoring-disk"
           >
             Disk {monitoringStats.diskUsedPercent.toFixed(0)}%
+          </span>
+          {/*
+            Swap is only shown when the host actually has swap configured — a
+            swapless host reports swapTotalKb 0, and a "Swap 0%" token would be
+            noise. Older agents / non-Linux SSH remotes also report 0 here and
+            so render nothing.
+          */}
+          {monitoringStats.swapTotalKb > 0 && (
+            <span
+              className={`status-bar__item monitoring-status__stat monitoring-status__stat--${severityLevel(monitoringStats.swapUsedPercent)}${staleModifier}`}
+              title={`Swap: ${formatKb(monitoringStats.swapUsedKb)} / ${formatKb(monitoringStats.swapTotalKb)}`}
+              data-testid="monitoring-swap"
+            >
+              Swap {monitoringStats.swapUsedPercent.toFixed(0)}%
+            </span>
+          )}
+          {/*
+            Network throughput (rates). formatRate returns "" for a zero/idle
+            rate, so a quiet link falls back to "0 B/s" rather than a blank.
+          */}
+          <span
+            className={`status-bar__item monitoring-status__stat${staleModifier}`}
+            title={`Network: ${formatRate(monitoringStats.netRxBytesPerSec) || "0 B/s"} down / ${
+              formatRate(monitoringStats.netTxBytesPerSec) || "0 B/s"
+            } up`}
+            data-testid="monitoring-net"
+          >
+            {`Net ↓${formatRate(monitoringStats.netRxBytesPerSec) || "0 B/s"} ↑${
+              formatRate(monitoringStats.netTxBytesPerSec) || "0 B/s"
+            }`}
           </span>
         </>
       )}

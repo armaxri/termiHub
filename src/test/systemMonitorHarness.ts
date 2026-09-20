@@ -42,6 +42,11 @@ export function fakeStats(hostname: string, cpu = 10): SystemStats {
     diskUsedKb: 40_000_000,
     diskUsedPercent: 40,
     osInfo: "Linux 6.1",
+    swapTotalKb: 4_000_000,
+    swapUsedKb: 1_000_000,
+    swapUsedPercent: 25,
+    netRxBytesPerSec: 1024,
+    netTxBytesPerSec: 512,
   };
 }
 

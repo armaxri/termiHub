@@ -53,6 +53,11 @@ function makeStats(overrides: Partial<SystemStats> = {}): SystemStats {
     diskUsedKb: 1000,
     diskUsedPercent: 50,
     osInfo: "Linux",
+    swapTotalKb: 2000,
+    swapUsedKb: 500,
+    swapUsedPercent: 25,
+    netRxBytesPerSec: 1024,
+    netTxBytesPerSec: 512,
     ...overrides,
   };
 }

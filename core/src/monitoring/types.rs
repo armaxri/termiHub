@@ -20,6 +20,23 @@ pub struct SystemStats {
     pub disk_used_kb: u64,
     pub disk_used_percent: f64,
     pub os_info: String,
+    /// Total swap space in kB. `0` when the host has no swap or the metric is
+    /// unavailable (older agents / non-Linux SSH remotes) — never an error.
+    #[serde(default)]
+    pub swap_total_kb: u64,
+    /// Used swap space in kB. `0` when unavailable (see [`Self::swap_total_kb`]).
+    #[serde(default)]
+    pub swap_used_kb: u64,
+    /// Percentage of swap in use (0.0–100.0). `0.0` when unavailable.
+    #[serde(default)]
+    pub swap_used_percent: f64,
+    /// Network receive throughput in bytes/sec, averaged over the last collection
+    /// interval. `0.0` on the first sample (no prior delta) or when unavailable.
+    #[serde(default)]
+    pub net_rx_bytes_per_sec: f64,
+    /// Network transmit throughput in bytes/sec (see [`Self::net_rx_bytes_per_sec`]).
+    #[serde(default)]
+    pub net_tx_bytes_per_sec: f64,
 }
 
 /// Cumulative CPU time counters parsed from the aggregate `cpu` line in `/proc/stat`.
@@ -52,6 +69,17 @@ impl CpuCounters {
     pub fn idle_total(&self) -> u64 {
         self.idle + self.iowait
     }
+}
+
+/// Cumulative network byte counters, summed across all non-loopback interfaces.
+///
+/// These are monotonic totals (as reported by `/proc/net/dev` or `sysinfo`), not
+/// rates. Callers diff two snapshots over the elapsed interval to derive the
+/// per-second throughput carried in [`SystemStats`].
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NetCounters {
+    pub rx_bytes: u64,
+    pub tx_bytes: u64,
 }
 
 #[cfg(test)]
@@ -112,6 +140,11 @@ mod tests {
             disk_used_kb: 20000000,
             disk_used_percent: 40.0,
             os_info: "Linux 5.15.0".to_string(),
+            swap_total_kb: 2000000,
+            swap_used_kb: 500000,
+            swap_used_percent: 25.0,
+            net_rx_bytes_per_sec: 1024.0,
+            net_tx_bytes_per_sec: 2048.0,
         };
 
         let json = serde_json::to_string(&stats).unwrap();
@@ -126,6 +159,11 @@ mod tests {
         assert!(json.contains("\"diskUsedKb\""));
         assert!(json.contains("\"diskUsedPercent\""));
         assert!(json.contains("\"osInfo\""));
+        assert!(json.contains("\"swapTotalKb\""));
+        assert!(json.contains("\"swapUsedKb\""));
+        assert!(json.contains("\"swapUsedPercent\""));
+        assert!(json.contains("\"netRxBytesPerSec\""));
+        assert!(json.contains("\"netTxBytesPerSec\""));
 
         let deserialized: SystemStats = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.hostname, "myhost");
@@ -133,5 +171,36 @@ mod tests {
         assert!((deserialized.cpu_usage_percent - 42.5).abs() < 0.01);
         assert_eq!(deserialized.memory_total_kb, 16384000);
         assert_eq!(deserialized.os_info, "Linux 5.15.0");
+        assert_eq!(deserialized.swap_total_kb, 2000000);
+        assert_eq!(deserialized.swap_used_kb, 500000);
+        assert!((deserialized.swap_used_percent - 25.0).abs() < 0.01);
+        assert!((deserialized.net_rx_bytes_per_sec - 1024.0).abs() < 0.01);
+        assert!((deserialized.net_tx_bytes_per_sec - 2048.0).abs() < 0.01);
+    }
+
+    /// New metrics fields default to 0 when absent from the JSON, so stats from
+    /// an older agent (which never sends them) deserialize without error and
+    /// simply read as "no swap / no network data" (graceful degradation).
+    #[test]
+    fn system_stats_deserializes_without_new_fields() {
+        let legacy = r#"{
+            "hostname": "old",
+            "uptimeSeconds": 1.0,
+            "loadAverage": [0.0, 0.0, 0.0],
+            "cpuUsagePercent": 0.0,
+            "memoryTotalKb": 1000,
+            "memoryAvailableKb": 500,
+            "memoryUsedPercent": 50.0,
+            "diskTotalKb": 2000,
+            "diskUsedKb": 1000,
+            "diskUsedPercent": 50.0,
+            "osInfo": "Linux 4.0.0"
+        }"#;
+        let stats: SystemStats = serde_json::from_str(legacy).unwrap();
+        assert_eq!(stats.swap_total_kb, 0);
+        assert_eq!(stats.swap_used_kb, 0);
+        assert_eq!(stats.swap_used_percent, 0.0);
+        assert_eq!(stats.net_rx_bytes_per_sec, 0.0);
+        assert_eq!(stats.net_tx_bytes_per_sec, 0.0);
     }
 }

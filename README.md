@@ -98,7 +98,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **SSH tunneling** — Local, remote, and dynamic (SOCKS5) port forwarding with session pooling
 - **Jump hosts** — Connect through one or more bastion hosts (`ProxyJump`-style chains)
 - **X11 forwarding** — Forward remote GUI applications to your local X server
-- **System monitoring** — Real-time CPU, memory, disk, and network stats for remote hosts
+- **System monitoring** — Real-time CPU, memory, swap, disk, and network throughput stats for remote hosts
 
 ### Power Tools
 
