@@ -1480,6 +1480,7 @@ fn register_network_open_ports(module: &mut RpcModule<Mutex<HandlerState>>) -> a
         check_initialized(&ctx).await?;
 
         network::handle_open_ports()
+            .await
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
             .and_then(|r| to_result_value(&r))
     })?;
@@ -1511,6 +1512,7 @@ fn register_network_wol(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
             .map_err(|e| invalid_params("network.wol", e))?;
 
         network::handle_wol(p)
+            .await
             .map(|()| json!({}))
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))
     })?;

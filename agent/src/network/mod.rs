@@ -1,18 +1,27 @@
 //! Network diagnostic handlers for the agent JSON-RPC protocol.
 //!
-//! These are thin wrappers around `termihub_core::network` that adapt the
-//! core functions to synchronous JSON-RPC responses.  HTTP monitoring is
-//! intentionally excluded — it is a desktop-only feature.
+//! Each `network.*` method is a thin adapter over the shared core
+//! [`ToolRegistry`](termihub_core::tool::ToolRegistry): the handler decodes the
+//! snake_case `Network*Params`, runs the matching core [`Tool`] through a
+//! [`CollectingHost`], then re-shapes the collected `{events, aggregate}` back
+//! into the method's existing response (`{results, stats}` / typed result).
+//! This is the same execution path `tool.run` drives, so the agent keeps a
+//! single tool implementation instead of a hand-rolled accumulator per method
+//! (DUP-027). The wire shape of every `network.*` method is unchanged.
+//!
+//! HTTP monitoring is intentionally excluded — it is a desktop-only feature.
 
-use std::sync::{Arc, Mutex};
+use std::sync::OnceLock;
 
 use anyhow::Result;
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
+use termihub_core::network::defaults;
 use termihub_core::network::types::{
-    DnsRecordType, DnsResult, PingResult, PortScanResult, TracerouteHop,
+    DnsResult, OpenPort, PingResult, PortScanResult, PortScanSummary, TracerouteHop,
 };
-use termihub_core::network::{defaults, dns, open_ports, ping, port_scan, traceroute, wol};
+use termihub_core::tool::{CollectingHost, ToolEvent, ToolRegistry};
 
 use crate::protocol::methods::{
     NetworkDnsLookupParams, NetworkOpenPortsResponse, NetworkPingParams, NetworkPingResponse,
@@ -20,85 +29,92 @@ use crate::protocol::methods::{
     NetworkTracerouteResponse, NetworkWolParams, PingStats,
 };
 
+// `Arc`/`Mutex` are referenced only by the unit tests below (which model the
+// collection path the handlers previously hand-rolled), so gate the import on
+// `cfg(test)` — the adapters themselves no longer accumulate by hand.
+#[cfg(test)]
+use std::sync::{Arc, Mutex};
+
+/// Process-wide registry of the built-in network tools.
+///
+/// The tools are stateless singletons, so one shared registry is built once and
+/// reused for every `network.*` call — the same set `tool.run` dispatches to.
+fn registry() -> &'static ToolRegistry {
+    static REGISTRY: OnceLock<ToolRegistry> = OnceLock::new();
+    REGISTRY.get_or_init(ToolRegistry::with_builtin_network_tools)
+}
+
+/// Run a core tool to completion, collecting its streamed events, and return
+/// `(events, aggregate)`.
+///
+/// This is the single execution path shared by every `network.*` handler: it
+/// mirrors how `tool.run` collects a whole run before responding (the NDJSON
+/// transport is request/response, not streaming).
+async fn run_tool(tool_id: &str, params: Value) -> Result<(Vec<ToolEvent>, Value)> {
+    let host = CollectingHost::new();
+    let aggregate = registry()
+        .run(tool_id, params, host.clone(), CancellationToken::new())
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok((host.take(), aggregate))
+}
+
+/// Deserialize each collected event payload back into its result type.
+fn from_events<T>(events: Vec<ToolEvent>) -> Result<Vec<T>>
+where
+    T: serde::de::DeserializeOwned,
+{
+    events
+        .into_iter()
+        .map(|e| serde_json::from_value(e.payload).map_err(|err| anyhow::anyhow!("{err}")))
+        .collect()
+}
+
 /// Run a port scan synchronously — collects all results before returning.
 pub async fn handle_port_scan(params: NetworkPortScanParams) -> Result<NetworkPortScanResponse> {
-    let port_list = port_scan::parse_port_spec(&params.ports)
-        .map_err(|e| anyhow::anyhow!("Invalid port spec: {e}"))?;
-
-    let timeout_ms = params.timeout_ms.unwrap_or(defaults::PORT_SCAN_TIMEOUT_MS);
-    let concurrency = params
-        .concurrency
-        .unwrap_or(defaults::PORT_SCAN_CONCURRENCY);
-    let cancel = CancellationToken::new();
-
-    let results: Arc<Mutex<Vec<PortScanResult>>> = Arc::new(Mutex::new(Vec::new()));
-    let results_clone = results.clone();
-
-    let on_result = move |r: PortScanResult| {
-        results_clone
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(r);
-    };
-
-    let summary = port_scan::scan_ports(
-        &params.host,
-        &port_list,
-        timeout_ms,
-        concurrency,
-        on_result,
-        cancel,
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    // Drain the shared accumulator instead of reclaiming sole ownership: a
-    // straggler scan task holding an `Arc` clone must never panic the agent
-    // (WA-RS-002 / ERR-005). A poisoned lock degrades to its inner Vec.
-    let results = std::mem::take(&mut *results.lock().unwrap_or_else(|e| e.into_inner()));
+    let tool_params = json!({
+        "host": params.host,
+        "ports": params.ports,
+        "timeoutMs": params.timeout_ms.unwrap_or(defaults::PORT_SCAN_TIMEOUT_MS),
+        "concurrency": params.concurrency.unwrap_or(defaults::PORT_SCAN_CONCURRENCY),
+    });
+    let (events, aggregate) = run_tool("port_scan", tool_params).await?;
+    let results = from_events::<PortScanResult>(events)?;
+    let summary: PortScanSummary =
+        serde_json::from_value(aggregate).map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(NetworkPortScanResponse { results, summary })
 }
 
 /// Run a ping session with a fixed count, collecting all results.
 pub async fn handle_ping(params: NetworkPingParams) -> Result<NetworkPingResponse> {
-    let count = params.count;
-    let interval_ms = params.interval_ms.unwrap_or(defaults::PING_INTERVAL_MS);
-    let cancel = CancellationToken::new();
-
-    let results: Arc<Mutex<Vec<PingResult>>> = Arc::new(Mutex::new(Vec::new()));
-    let results_clone = results.clone();
-
-    let on_result = move |r: PingResult| {
-        results_clone
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .push(r);
-    };
-
-    let stats: PingStats = ping::ping_stream(&params.host, interval_ms, count, on_result, cancel)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    // Drain the shared accumulator; never reclaim sole `Arc` ownership on a
-    // path where a spawned task may still hold a clone (WA-RS-002 / ERR-005).
-    let results = std::mem::take(&mut *results.lock().unwrap_or_else(|e| e.into_inner()));
+    let tool_params = json!({
+        "host": params.host,
+        "intervalMs": params.interval_ms.unwrap_or(defaults::PING_INTERVAL_MS),
+        "count": params.count,
+    });
+    let (events, aggregate) = run_tool("ping", tool_params).await?;
+    let results = from_events::<PingResult>(events)?;
+    let stats: PingStats = serde_json::from_value(aggregate).map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(NetworkPingResponse { results, stats })
 }
 
 /// Perform a DNS lookup.
 pub async fn handle_dns_lookup(params: NetworkDnsLookupParams) -> Result<DnsResult> {
-    let record_type: DnsRecordType = params
-        .record_type
-        .parse()
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-    dns::dns_lookup(&params.hostname, record_type, params.server.as_deref())
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))
+    let tool_params = json!({
+        "hostname": params.hostname,
+        "recordType": params.record_type,
+        "server": params.server,
+    });
+    let (_events, aggregate) = run_tool("dns", tool_params).await?;
+    serde_json::from_value(aggregate).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// List open/listening ports on the agent host.
-pub fn handle_open_ports() -> Result<NetworkOpenPortsResponse> {
-    let ports = open_ports::list_open_ports().map_err(|e| anyhow::anyhow!("{e}"))?;
+pub async fn handle_open_ports() -> Result<NetworkOpenPortsResponse> {
+    let (_events, aggregate) = run_tool("open_ports", json!({})).await?;
+    let ports: Vec<OpenPort> =
+        serde_json::from_value(aggregate.get("ports").cloned().unwrap_or(Value::Null))
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(NetworkOpenPortsResponse { ports })
 }
 
@@ -106,30 +122,24 @@ pub fn handle_open_ports() -> Result<NetworkOpenPortsResponse> {
 pub async fn handle_traceroute(
     params: NetworkTracerouteParams,
 ) -> Result<NetworkTracerouteResponse> {
-    let max_hops = params.max_hops.unwrap_or(defaults::TRACEROUTE_MAX_HOPS);
-    let cancel = CancellationToken::new();
-
-    let hops: Arc<Mutex<Vec<TracerouteHop>>> = Arc::new(Mutex::new(Vec::new()));
-    let hops_clone = hops.clone();
-
-    let on_hop = move |h: TracerouteHop| {
-        hops_clone.lock().unwrap_or_else(|e| e.into_inner()).push(h);
-    };
-
-    traceroute::traceroute(&params.host, max_hops, on_hop, cancel)
-        .await
-        .map_err(|e| anyhow::anyhow!("{e}"))?;
-
-    // Drain the shared accumulator; never reclaim sole `Arc` ownership on a
-    // path where a spawned task may still hold a clone (WA-RS-002 / ERR-005).
-    let hops = std::mem::take(&mut *hops.lock().unwrap_or_else(|e| e.into_inner()));
+    let tool_params = json!({
+        "host": params.host,
+        "maxHops": params.max_hops.unwrap_or(defaults::TRACEROUTE_MAX_HOPS),
+    });
+    let (events, _aggregate) = run_tool("traceroute", tool_params).await?;
+    let hops = from_events::<TracerouteHop>(events)?;
     Ok(NetworkTracerouteResponse { hops })
 }
 
 /// Send a Wake-on-LAN magic packet.
-pub fn handle_wol(params: NetworkWolParams) -> Result<()> {
-    wol::send_magic_packet(&params.mac, &params.broadcast, params.port)
-        .map_err(|e| anyhow::anyhow!("{e}"))
+pub async fn handle_wol(params: NetworkWolParams) -> Result<()> {
+    let tool_params = json!({
+        "mac": params.mac,
+        "broadcast": params.broadcast,
+        "port": params.port,
+    });
+    run_tool("wol", tool_params).await?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -192,5 +202,52 @@ mod tests {
 
         assert_eq!(resp.results.len(), 2, "one result per requested port");
         assert_eq!(resp.summary.total, 2);
+    }
+}
+
+#[cfg(test)]
+mod adapter_tests {
+    use super::*;
+
+    /// A streaming tool routed through the core registry adapter reproduces the
+    /// existing `{results, summary}` wire shape byte-for-byte (DUP-027).
+    #[tokio::test]
+    async fn port_scan_adapter_wire_shape() {
+        let params = NetworkPortScanParams {
+            host: "127.0.0.1".to_string(),
+            ports: "9,13".to_string(),
+            timeout_ms: Some(200),
+            concurrency: Some(4),
+        };
+        let resp = handle_port_scan(params).await.expect("scan should succeed");
+        let wire = serde_json::to_value(&resp).expect("serialize response");
+
+        let results = wire["results"].as_array().expect("results array");
+        assert_eq!(results.len(), 2, "one result per requested port");
+        for r in results {
+            let obj = r.as_object().expect("result object");
+            assert!(obj.contains_key("host"));
+            assert!(obj.contains_key("port"));
+            assert!(obj.contains_key("state"));
+            // camelCase field name preserved on the wire.
+            assert!(obj.contains_key("latencyMs"));
+        }
+
+        let summary = wire["summary"].as_object().expect("summary object");
+        assert_eq!(summary["total"], 2);
+        for key in ["total", "open", "closed", "filtered", "elapsedMs"] {
+            assert!(summary.contains_key(key), "summary missing {key}");
+        }
+    }
+
+    /// A one-shot tool routed through the adapter reproduces the existing
+    /// `{ports}` wire shape.
+    #[tokio::test]
+    async fn open_ports_adapter_wire_shape() {
+        let resp = handle_open_ports()
+            .await
+            .expect("open_ports should succeed");
+        let wire = serde_json::to_value(&resp).expect("serialize response");
+        assert!(wire["ports"].is_array(), "expected ports array: {wire}");
     }
 }
