@@ -13,6 +13,7 @@ import { ConnectionFolder, JumpHostConfig, SavedConnection } from "@/types/conne
 import { ConnectionConfig } from "@/types/terminal";
 import type { SettingsField, SettingsSchema } from "@/types/schema";
 import { compareNames } from "@/utils/locale";
+import { isSshConnectionConfig } from "@/utils/typedConnectionConfig";
 
 /**
  * Extract the jump-host chain from a connection config.
@@ -22,10 +23,9 @@ import { compareNames } from "@/utils/locale";
  * as a serde alias.
  */
 export function getJumpHosts(config: ConnectionConfig | undefined | null): JumpHostConfig[] {
-  if (!config || config.type !== "ssh") return [];
-  const settings = config.config as Record<string, unknown> | undefined;
-  const raw = settings?.proxyJump ?? settings?.jumpHosts;
-  return Array.isArray(raw) ? (raw as JumpHostConfig[]) : [];
+  if (!isSshConnectionConfig(config)) return [];
+  const raw = config.config.proxyJump ?? config.config.jumpHosts;
+  return Array.isArray(raw) ? raw : [];
 }
 
 /** Whether the connection reaches its target through a jump host. */
@@ -57,10 +57,10 @@ export function jumpHostTooltip(hops: JumpHostConfig[], targetName?: string): st
  */
 export function jumpHostStatusLabel(config: ConnectionConfig | undefined | null): string {
   const hops = getJumpHosts(config);
-  if (hops.length === 0) return "";
-  const settings = config!.config as Record<string, unknown>;
-  const username = typeof settings.username === "string" ? settings.username : "";
-  const host = typeof settings.host === "string" ? settings.host : "";
+  // A non-empty hop chain implies an SSH connection (see getJumpHosts).
+  if (hops.length === 0 || !isSshConnectionConfig(config)) return "";
+  const username = config.config.username ?? "";
+  const host = config.config.host ?? "";
   const target = username ? `${username}@${host}` : host;
   const gateways = hops.map(hopLabel).join(" → ");
   return target ? `${target} via ${gateways}` : `via ${gateways}`;

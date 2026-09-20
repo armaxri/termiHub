@@ -15,6 +15,8 @@ import * as labIcons from "@lucide/lab";
 import type { ConnectionConfig, ShellType } from "@/types/terminal";
 import lucideTags from "@/data/lucide-tags.json";
 import { compareNames } from "@/utils/locale";
+import { readConfigString } from "@/utils/connectionConfigFields";
+import { isLocalConnectionConfig } from "@/utils/typedConnectionConfig";
 
 /** Default icon by connection type (non-local or local without special shell) */
 const TYPE_ICONS: Record<string, LucideIcon> = {
@@ -55,18 +57,18 @@ export function getDefaultIconInfo(config: ConnectionConfig): {
   component?: LucideIcon;
   iconNode?: IconNode;
 } {
-  if (config.type === "local") {
-    const shellValue = (config.config?.shell ?? config.config?.shellType) as ShellType | undefined;
+  if (isLocalConnectionConfig(config)) {
+    const shellValue = config.config.shell ?? config.config.shellType;
     return getShellIconInfo(shellValue);
   }
   if (config.type === "wsl") {
     return { iconNode: labIcons.penguin as IconNode };
   }
   if (config.type === "remote-session" || config.type === "remote") {
-    const sessionType = config.config?.sessionType as string | undefined;
+    // Schema-driven agent session: read the untyped bag via runtime-checked accessors.
+    const sessionType = readConfigString(config, "sessionType");
     if (sessionType === "shell" || sessionType === "local") {
-      const shellValue = config.config?.shell as string | undefined;
-      return getShellIconInfo(shellValue);
+      return getShellIconInfo(readConfigString(config, "shell"));
     }
   }
   return { component: TYPE_ICONS[config.type] };

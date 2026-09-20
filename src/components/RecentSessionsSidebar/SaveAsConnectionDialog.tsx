@@ -86,7 +86,7 @@ export function SaveAsConnectionDialog({
   const [savePassword, setSavePassword] = useState(false);
   const [password, setPassword] = useState("");
 
-  const inner = useMemo(() => (entry?.config.config ?? {}) as Record<string, unknown>, [entry]);
+  const inner = useMemo<Record<string, unknown>>(() => entry?.config.config ?? {}, [entry]);
   const connectionType = entry?.connectionType ?? "";
   const hostKey = hostKeyFor(inner);
   const showPort = "port" in inner || connectionType === "ssh" || connectionType === "telnet";

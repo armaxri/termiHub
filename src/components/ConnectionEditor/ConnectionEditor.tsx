@@ -1133,7 +1133,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         config = {
           ...config,
           config: { ...config.config, [promptInfo.passwordKey]: resolvedPassword },
-        } as ConnectionConfig;
+        };
       }
     }
 
