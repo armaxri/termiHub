@@ -23,7 +23,9 @@ use super::dynamic_forward::DynamicForwarder;
 use super::local_forward::LocalForwarder;
 use super::remote_forward::RemoteForwarder;
 use super::storage::TunnelStorage;
-use crate::agent_service::{agent_rpc_client, AgentStatusPollDelegate, AgentStatusPoller};
+use crate::agent_service::{
+    agent_rpc_client, AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
+};
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
 use crate::run_location::{Locality, ResolvedLocation, RunLocationResolver};
@@ -279,7 +281,7 @@ fn snapshot_active_stats(active: &HashMap<String, ActiveTunnel>) -> Vec<TunnelSt
 /// stats are refreshed. `publish_tunnels` runs every polled tick, matching the
 /// prior poller — its diff makes an unchanged tick a no-op.
 struct AgentTunnelPoll {
-    agent_tunnels: Arc<Mutex<HashMap<String, AgentTunnelHandle>>>,
+    agent_tunnels: AgentInstances<AgentTunnelHandle>,
     app: AppHandle,
 }
 
@@ -295,17 +297,7 @@ impl AgentStatusPollDelegate for AgentTunnelPoll {
     }
 
     fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
-        match self.agent_tunnels.lock() {
-            Ok(map) => {
-                let targets = map
-                    .iter()
-                    .map(|(id, handle)| (id.clone(), handle.agent_id.clone()))
-                    .collect();
-                (targets, !map.is_empty())
-            }
-            // A poisoned lock stops the poller, exactly as the old `break` did.
-            Err(_) => (Vec::new(), false),
-        }
+        self.agent_tunnels.snapshot_targets()
     }
 
     fn poll(
@@ -415,6 +407,12 @@ struct AgentTunnelHandle {
     stats: TunnelStats,
 }
 
+impl AgentHosted for AgentTunnelHandle {
+    fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
+}
+
 /// Central manager for SSH tunnels.
 ///
 /// Handles CRUD operations on tunnel configurations, starting/stopping tunnels,
@@ -443,8 +441,9 @@ pub struct TunnelManager {
     /// forwarders): an agent-hosted tunnel's data path runs on the agent, so the
     /// desktop tracks only the control handle here. `Arc`-shared so the periodic
     /// `tunnel.status` poller task can refresh each handle's live stats without a
-    /// `&self` reference (#2199).
-    agent_tunnels: Arc<Mutex<HashMap<String, AgentTunnelHandle>>>,
+    /// `&self` reference (#2199). The shared [`AgentInstances`] tracker folds the
+    /// map boilerplate (DUP-020 follow-up, #2884).
+    agent_tunnels: AgentInstances<AgentTunnelHandle>,
     /// Pool of SSH endpoint sessions shared by local/dynamic forwarders on the
     /// same connection. Jump-host gateway sessions are pooled separately in the
     /// process-wide [`shared_gateway_pool`](termihub_core::backends::ssh::session_pool::shared_gateway_pool).
@@ -481,7 +480,7 @@ impl TunnelManager {
             last_errors: Arc::new(Mutex::new(HashMap::new())),
             reconnecting: Arc::new(Mutex::new(HashMap::new())),
             connecting: ConnectingTracker::new(),
-            agent_tunnels: Arc::new(Mutex::new(HashMap::new())),
+            agent_tunnels: AgentInstances::new(),
             endpoint_pool: RefPool::new(),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
@@ -520,7 +519,7 @@ impl TunnelManager {
     /// companion ordered-lifecycle so a steady pair emits no churn (#2597).
     fn is_tunnel_active(&self, tunnel_id: &str) -> bool {
         map_contains(&self.active_tunnels, tunnel_id)
-            || map_contains(&self.agent_tunnels, tunnel_id)
+            || self.agent_tunnels.contains(tunnel_id)
             || map_contains(&self.reconnecting, tunnel_id)
             || self.connecting.is_connecting(tunnel_id)
     }
@@ -529,8 +528,7 @@ impl TunnelManager {
     /// active maps (as opposed to merely connecting / reconnecting). A chained
     /// companion may only start once its parent is connected (#2597).
     fn is_tunnel_connected(&self, tunnel_id: &str) -> bool {
-        map_contains(&self.active_tunnels, tunnel_id)
-            || map_contains(&self.agent_tunnels, tunnel_id)
+        map_contains(&self.active_tunnels, tunnel_id) || self.agent_tunnels.contains(tunnel_id)
     }
 
     /// Save (add or update) a tunnel configuration.
@@ -938,14 +936,7 @@ impl TunnelManager {
     /// handle was found and a `tunnel.stop` sent to the agent (best-effort — the
     /// desktop drops its handle regardless so the UI reflects the stop).
     fn stop_agent_tunnel(&self, tunnel_id: &str) -> bool {
-        let handle = {
-            let mut agent = match self.agent_tunnels.lock() {
-                Ok(a) => a,
-                Err(_) => return false,
-            };
-            agent.remove(tunnel_id)
-        };
-        let Some(handle) = handle else {
+        let Some(handle) = self.agent_tunnels.remove(tunnel_id) else {
             return false;
         };
         if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
@@ -1033,7 +1024,7 @@ impl TunnelManager {
     /// poll + stats write-back / projection republish (DUP-020).
     fn ensure_status_poller(&self) {
         self.agent_stats_poller.ensure(AgentTunnelPoll {
-            agent_tunnels: Arc::clone(&self.agent_tunnels),
+            agent_tunnels: self.agent_tunnels.clone(),
             app: self.app_handle.clone(),
         });
     }
@@ -1408,11 +1399,7 @@ impl TunnelManager {
 
         // Tear down agent-hosted tunnels too (#2185) — `stop_agent_tunnel` sends
         // `tunnel.stop` to each agent and drops the handle.
-        let agent_tunnels: Vec<String> = match self.agent_tunnels.lock() {
-            Ok(a) => a.keys().cloned().collect(),
-            Err(_) => Vec::new(),
-        };
-        for tunnel_id in agent_tunnels {
+        for tunnel_id in self.agent_tunnels.ids() {
             self.stop_agent_tunnel(&tunnel_id);
         }
 

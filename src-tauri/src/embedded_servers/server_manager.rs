@@ -35,7 +35,9 @@ use super::service::{
     auto_start_error_state, service_id_for, EmbeddedServerService, STATUS_EVENT_KIND,
 };
 use super::storage::EmbeddedServerStorage;
-use crate::agent_service::{agent_rpc_client, AgentStatusPollDelegate, AgentStatusPoller};
+use crate::agent_service::{
+    agent_rpc_client, AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
+};
 use crate::connection::recovery::RecoveryWarning;
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -71,6 +73,12 @@ struct AgentServerHandle {
     last_state: ServerState,
 }
 
+impl AgentHosted for AgentServerHandle {
+    fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
+}
+
 /// Central manager for embedded HTTP/FTP/TFTP servers.
 ///
 /// Follows the same pattern as `NetworkManager` (#2172): holds the services,
@@ -86,8 +94,9 @@ pub struct EmbeddedServerManager {
     /// agent-hosted server's data path runs on the agent, so the desktop tracks
     /// only the control handle here. `Arc`-shared so the periodic
     /// `service.status` poller task can refresh each handle without a `&self`
-    /// reference.
-    agent_servers: Arc<Mutex<HashMap<String, AgentServerHandle>>>,
+    /// reference. The shared [`AgentInstances`] tracker folds the map boilerplate
+    /// (DUP-020 follow-up, #2884).
+    agent_servers: AgentInstances<AgentServerHandle>,
     /// Per-server run-location preference — which machine hosts each server
     /// (#2214). In-memory today; the selector UI that persists a non-default
     /// choice is a later S-phase. An absent entry means
@@ -120,7 +129,7 @@ impl EmbeddedServerManager {
             configs: Mutex::new(result.data),
             storage,
             services: Mutex::new(HashMap::new()),
-            agent_servers: Arc::new(Mutex::new(HashMap::new())),
+            agent_servers: AgentInstances::new(),
             run_locations: Mutex::new(HashMap::new()),
             service_registry: build_service_registry(),
             run_location: RunLocationResolver::new(),
@@ -362,14 +371,7 @@ impl EmbeddedServerManager {
     /// handle was found and a `service.stop` sent to the agent (best-effort — the
     /// desktop drops its handle regardless so the UI reflects the stop).
     fn stop_agent_service(&self, server_id: &str) -> bool {
-        let handle = {
-            let mut agent_servers = match self.agent_servers.lock() {
-                Ok(a) => a,
-                Err(_) => return false,
-            };
-            agent_servers.remove(server_id)
-        };
-        let Some(handle) = handle else {
+        let Some(handle) = self.agent_servers.remove(server_id) else {
             return false;
         };
         if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
@@ -425,12 +427,7 @@ impl EmbeddedServerManager {
 
         // Tear down agent-hosted servers too (#2214): `service.stop` each one and
         // drop its handle, then abort the poller.
-        let agent_ids: Vec<String> = self
-            .agent_servers
-            .lock()
-            .map(|map| map.keys().cloned().collect())
-            .unwrap_or_default();
-        for id in agent_ids {
+        for id in self.agent_servers.ids() {
             self.stop_agent_service(&id);
         }
         self.agent_status_poller.stop();
@@ -468,7 +465,7 @@ impl EmbeddedServerManager {
     /// service-specific poll + write-back/emit (DUP-020).
     fn ensure_status_poller(&self) {
         self.agent_status_poller.ensure(EmbeddedServerPoll {
-            agent_servers: Arc::clone(&self.agent_servers),
+            agent_servers: self.agent_servers.clone(),
             app: self.app_handle.clone(),
         });
     }
@@ -609,7 +606,7 @@ fn synth_state_from_status(server_id: &str, status: &serde_json::Value) -> Serve
 /// [`SERVER_STATUS_EVENT`] only on a status/error transition — matching the
 /// desktop service, which emits on transitions, not every tick.
 struct EmbeddedServerPoll {
-    agent_servers: Arc<Mutex<HashMap<String, AgentServerHandle>>>,
+    agent_servers: AgentInstances<AgentServerHandle>,
     app: AppHandle,
 }
 
@@ -625,17 +622,7 @@ impl AgentStatusPollDelegate for EmbeddedServerPoll {
     }
 
     fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
-        match self.agent_servers.lock() {
-            Ok(map) => {
-                let targets = map
-                    .iter()
-                    .map(|(id, handle)| (id.clone(), handle.agent_id.clone()))
-                    .collect();
-                (targets, !map.is_empty())
-            }
-            // A poisoned lock stops the poller, exactly as the old `break` did.
-            Err(_) => (Vec::new(), false),
-        }
+        self.agent_servers.snapshot_targets()
     }
 
     fn poll(client: Arc<dyn AgentRpcClient>, targets: &[(String, String)]) -> Vec<ServerState> {

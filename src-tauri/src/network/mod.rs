@@ -22,7 +22,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, error};
 use uuid::Uuid;
 
-use crate::agent_service::{AgentStatusPollDelegate, AgentStatusPoller};
+use crate::agent_service::{
+    AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
+};
 use http_monitor::{
     register_http_monitor, HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState,
 };
@@ -65,6 +67,12 @@ struct AgentMonitorHandle {
     paused: bool,
 }
 
+impl AgentHosted for AgentMonitorHandle {
+    fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
+}
+
 impl AgentMonitorHandle {
     /// Project this handle as an [`HttpMonitorState`] for listing.
     fn state(&self) -> HttpMonitorState {
@@ -90,8 +98,9 @@ pub struct NetworkManager {
     /// Disjoint from `http_monitors` (desktop-hosted): an agent-hosted monitor's
     /// poll loop runs on the agent, so the desktop tracks only the control handle
     /// here. `Arc`-shared so the periodic `service.status` poller task can refresh
-    /// each handle without a `&self` reference.
-    agent_monitors: Arc<Mutex<HashMap<String, AgentMonitorHandle>>>,
+    /// each handle without a `&self` reference. The shared [`AgentInstances`]
+    /// tracker folds the map boilerplate (DUP-020 follow-up, #2884).
+    agent_monitors: AgentInstances<AgentMonitorHandle>,
     /// Per-monitor run-location preference — which machine hosts each monitor
     /// (#2592). Keyed by monitor id. In-memory today (like the embedded-server
     /// preference, #2214); an absent entry means [`RunLocation::ThisComputer`],
@@ -129,7 +138,7 @@ impl NetworkManager {
         Self {
             active_tasks: Mutex::new(HashMap::new()),
             http_monitors: Mutex::new(HashMap::new()),
-            agent_monitors: Arc::new(Mutex::new(HashMap::new())),
+            agent_monitors: AgentInstances::new(),
             monitor_run_locations: Mutex::new(HashMap::new()),
             agent_status_poller: AgentStatusPoller::new(),
             service_registry: build_service_registry(),
@@ -538,7 +547,7 @@ impl NetworkManager {
     fn ensure_status_poller(&self) {
         if let Some(app) = self.app_handle() {
             self.agent_status_poller.ensure(AgentMonitorPoll {
-                agent_monitors: Arc::clone(&self.agent_monitors),
+                agent_monitors: self.agent_monitors.clone(),
                 app,
             });
         }
@@ -547,20 +556,13 @@ impl NetworkManager {
     /// The agent hosting `monitor_id`, if it is an agent-hosted monitor (#2607).
     /// A cheap map read used to branch agent-vs-desktop hosting before an RPC.
     fn agent_monitor_agent_id(&self, monitor_id: &str) -> Option<String> {
-        self.agent_monitors
-            .lock()
-            .ok()
-            .and_then(|map| map.get(monitor_id).map(|h| h.agent_id.clone()))
+        self.agent_monitors.agent_id_of(monitor_id)
     }
 
     /// Send `service.stop` for an agent-hosted monitor (best-effort). Returns the
     /// handle's agent id if the monitor was agent-hosted.
     fn stop_agent_monitor_rpc(&self, monitor_id: &str) -> Option<String> {
-        let agent_id = self
-            .agent_monitors
-            .lock()
-            .ok()
-            .and_then(|map| map.get(monitor_id).map(|h| h.agent_id.clone()))?;
+        let agent_id = self.agent_monitors.agent_id_of(monitor_id)?;
         if let Some(client) = self.agent_rpc_client() {
             let params = json!({ "instanceId": monitor_id });
             if let Err(e) = client.send_request(
@@ -840,17 +842,10 @@ impl NetworkManager {
 
         // Tear down agent-hosted monitors too (#2592): `service.stop` each and
         // drop its handle, then abort the poller.
-        let ids: Vec<String> = self
-            .agent_monitors
-            .lock()
-            .map(|map| map.keys().cloned().collect())
-            .unwrap_or_default();
-        for id in ids {
+        for id in self.agent_monitors.ids() {
             self.stop_agent_monitor_rpc(&id);
         }
-        if let Ok(mut map) = self.agent_monitors.lock() {
-            map.clear();
-        }
+        self.agent_monitors.clear();
         self.agent_status_poller.stop();
     }
 
@@ -952,7 +947,7 @@ fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEve
 /// [`HTTP_MONITOR_CHECK_EVENT`] for each fresh check — so an agent-hosted
 /// monitor's checks reach the frontend exactly as a desktop-hosted one's do.
 struct AgentMonitorPoll {
-    agent_monitors: Arc<Mutex<HashMap<String, AgentMonitorHandle>>>,
+    agent_monitors: AgentInstances<AgentMonitorHandle>,
     app: AppHandle,
 }
 
@@ -968,21 +963,11 @@ impl AgentStatusPollDelegate for AgentMonitorPoll {
     }
 
     fn snapshot_targets(&self) -> (Vec<(String, String)>, bool) {
-        match self.agent_monitors.lock() {
-            Ok(map) => {
-                // Poll only running, non-paused monitors; `any_remaining` tracks
-                // whether *any* monitor is still listed, so a paused monitor keeps
-                // the poller alive (skips the tick) rather than stopping it.
-                let targets = map
-                    .iter()
-                    .filter(|(_, h)| h.running && !h.paused)
-                    .map(|(id, h)| (id.clone(), h.agent_id.clone()))
-                    .collect();
-                (targets, !map.is_empty())
-            }
-            // A poisoned lock stops the poller, exactly as the old `break` did.
-            Err(_) => (Vec::new(), false),
-        }
+        // Poll only running, non-paused monitors; `any_remaining` still tracks
+        // whether *any* monitor is listed, so a paused monitor keeps the poller
+        // alive (skips the tick) rather than stopping it.
+        self.agent_monitors
+            .snapshot_targets_where(|h| h.running && !h.paused)
     }
 
     fn poll(
