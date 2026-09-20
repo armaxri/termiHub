@@ -711,6 +711,40 @@ export function isChordPending(): boolean {
 // --- Terminal pass-through ---
 
 /**
+ * Physical `event.code` values for the punctuation keys that carry a shell
+ * control character under Ctrl — matched by physical position so they stay
+ * reserved regardless of the character the active layout maps them to.
+ */
+const RESERVED_CTRL_PUNCT_CODES = new Set(["Backslash", "BracketLeft", "BracketRight"]);
+
+/**
+ * Whether the event's physical key is a Latin letter position (`KeyA`…`KeyZ`).
+ *
+ * Uses the layout-independent `event.code` so a shell control combo fires on the
+ * same physical key on a non-US/non-Latin layout, where the produced
+ * `event.key` is not `[a-zA-Z]` (Cyrillic, Greek, AZERTY, AltGr layers, …). Falls
+ * back to a single-char `[a-zA-Z]` `event.key` only when `event.code` is empty —
+ * e.g. synthetic test events or rare environments that supply no code. That
+ * fallback cannot reintroduce the layout bug: a real non-US layout always
+ * populates `event.code`, so `key` is consulted only when there is no `code` to
+ * trust.
+ */
+function eventIsLetterKey(event: KeyboardEvent): boolean {
+  if (event.code) return /^Key[A-Z]$/.test(event.code);
+  return event.key.length === 1 && /^[a-zA-Z]$/.test(event.key);
+}
+
+/**
+ * Whether the event is one of the Ctrl-reserved punctuation keys (`\`, `[`, `]`),
+ * matched by physical `event.code` with the same `event.key` fallback and
+ * rationale as {@link eventIsLetterKey}.
+ */
+function eventIsReservedCtrlPunct(event: KeyboardEvent): boolean {
+  if (event.code) return RESERVED_CTRL_PUNCT_CODES.has(event.code);
+  return event.key === "\\" || event.key === "[" || event.key === "]";
+}
+
+/**
  * Whether a key event should be passed through to the focused terminal instead
  * of being matched as an application shortcut. This protects shell/readline,
  * tmux, vim, and SSH-to-remote workflows from accidental interception when a
@@ -721,6 +755,12 @@ export function isChordPending(): boolean {
  * - `Ctrl+\` (SIGQUIT), `Ctrl+[` (Esc), `Ctrl+]` (telnet/screen escape)
  * - `Alt+<single letter>` — readline word-motion commands (Alt+b, Alt+f, …)
  *
+ * Combos are detected by *physical* key (`event.code`) rather than the produced
+ * character (`event.key`), because the reserved shell control chars are tied to
+ * physical key position. Matching `event.key` broke these on non-US/non-Latin
+ * layouts, where the physical "A" key produces a non-`[a-zA-Z]` character
+ * (I18N: see #3009).
+ *
  * Not covered: combos that include Shift, Meta/Cmd, or Tab/Arrow keys, since
  * those do not collide with the standard shell key map.
  */
@@ -729,16 +769,11 @@ export function isShellReservedKey(event: KeyboardEvent): boolean {
   if (event.shiftKey) return false;
 
   if (event.ctrlKey && !event.altKey) {
-    if (event.key.length === 1) {
-      if (/^[a-zA-Z]$/.test(event.key)) return true;
-      if (event.key === "\\" || event.key === "[" || event.key === "]") return true;
-    }
-    return false;
+    return eventIsLetterKey(event) || eventIsReservedCtrlPunct(event);
   }
 
   if (event.altKey && !event.ctrlKey) {
-    if (event.key.length === 1 && /^[a-zA-Z]$/.test(event.key)) return true;
-    return false;
+    return eventIsLetterKey(event);
   }
 
   return false;
