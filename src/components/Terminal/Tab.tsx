@@ -87,6 +87,16 @@ interface TabProps {
    */
   isBroadcast?: boolean;
   /**
+   * The window that currently controls this tab's session, when it is a
+   * *different* window than the one rendering the tab (#2872, follow-up to
+   * SM-026). When set, a persistent badge is shown explaining that resize is
+   * disabled here; clicking it focuses the owning window. Null/undefined in
+   * single-window mode or when this window owns the session.
+   */
+  controlledByWindow?: { label: string; name: string } | null;
+  /** Bring the controlling window to the foreground (#2872). */
+  onFocusOwningWindow?: (label: string) => void;
+  /**
    * Title to display, disambiguated when two editor tabs share a basename
    * (#1640). Falls back to `tab.title` when omitted.
    */
@@ -124,6 +134,8 @@ export function Tab({
   onDisconnect,
   status,
   isBroadcast,
+  controlledByWindow,
+  onFocusOwningWindow,
   displayTitle,
   windows = [],
   currentWindowLabel = null,
@@ -226,6 +238,25 @@ export function Tab({
         >
           <Radio size={12} />
         </span>
+      )}
+      {controlledByWindow && (
+        <Tooltip
+          content={`Controlled by ${controlledByWindow.name} — resize is disabled here. Click to focus that window.`}
+          side="bottom"
+        >
+          <button
+            type="button"
+            className="tab__controlled-badge"
+            onClick={(e) => {
+              e.stopPropagation();
+              onFocusOwningWindow?.(controlledByWindow.label);
+            }}
+            aria-label={`Controlled by ${controlledByWindow.name}; resize disabled here. Focus that window.`}
+            data-testid={`tab-controlled-badge-${tab.id}`}
+          >
+            <AppWindow size={12} aria-hidden />
+          </button>
+        </Tooltip>
       )}
       {/* Persistence marker (#2099). The ∞ is shown ONLY on agent persistent
           shells — sessions that live on the remote agent and survive closing
