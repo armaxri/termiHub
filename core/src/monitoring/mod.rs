@@ -5,10 +5,18 @@
 // pull `reqwest`.
 #[cfg(feature = "http-monitor")]
 pub mod http_monitor;
+// The local-host collector + monitoring provider live behind `local-shell`:
+// they pull `sysinfo`, and the desktop/agent that surface local monitoring both
+// enable that feature (PROD-0022).
+#[cfg(feature = "local-shell")]
+pub mod local_collector;
 pub mod parser;
 pub mod provider;
 pub mod status;
 pub mod types;
+
+#[cfg(feature = "local-shell")]
+pub use local_collector::LocalCollector;
 
 pub use parser::{
     cpu_percent_from_delta, net_rate_from_delta, parse_cpu_line, parse_df_output,
