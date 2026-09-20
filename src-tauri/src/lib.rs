@@ -617,6 +617,9 @@ pub fn run() {
             commands::session::session_rename_file,
             commands::session::session_mkdir,
             commands::session::session_set_permissions,
+            commands::session::session_set_owner,
+            commands::session::session_create_symlink,
+            commands::session::session_copy,
             // Session-scoped SFTP advanced ops & transfers (#2312)
             commands::session::session_realpath,
             commands::session::session_check_writable,
@@ -694,6 +697,8 @@ pub fn run() {
             commands::files::local_delete,
             commands::files::local_rename,
             commands::files::local_set_permissions,
+            commands::files::local_set_owner,
+            commands::files::local_create_symlink,
             commands::files::local_read_file,
             commands::files::local_stat,
             commands::files::local_write_file,

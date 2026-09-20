@@ -160,6 +160,54 @@ impl<'a> FileOps<'a> {
             .map_err(|e| TerminalError::RemoteError(e.to_string()))
     }
 
+    /// Change the owner/group (chown) of a file via the session's file browser.
+    /// A `None` id leaves that side unchanged.
+    pub(super) async fn set_owner(
+        &self,
+        session_id: &str,
+        path: &str,
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let browser = Self::browser(&sessions, session_id)?;
+        browser
+            .set_owner(path, uid, gid)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
+    /// Create a symlink at `link_path` pointing at `target` via the session's file
+    /// browser.
+    pub(super) async fn create_symlink(
+        &self,
+        session_id: &str,
+        target: &str,
+        link_path: &str,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let browser = Self::browser(&sessions, session_id)?;
+        browser
+            .create_symlink(target, link_path)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
+    /// Copy `src` → `dest` within the session's backend (same-backend copy).
+    pub(super) async fn copy(
+        &self,
+        session_id: &str,
+        src: &str,
+        dest: &str,
+    ) -> Result<(), TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let browser = Self::browser(&sessions, session_id)?;
+        browser
+            .copy(src, dest)
+            .await
+            .map_err(|e| TerminalError::RemoteError(e.to_string()))
+    }
+
     /// Resolve an **owned** [`Arc<SftpFileBrowser>`] for a session, so a caller
     /// can drop the sessions lock before driving a (potentially slow) SFTP
     /// operation or move the handle into a background transfer task.

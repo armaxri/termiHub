@@ -55,6 +55,43 @@ pub fn set_permissions(_path: &str, _mode: u32) -> Result<(), TerminalError> {
     ))
 }
 
+/// Change the owner (`uid`) and/or group (`gid`) of a local file or directory.
+///
+/// A `None` id leaves that side unchanged. Unix only — other platforms have no
+/// numeric-owner model, so it returns an unsupported error.
+#[cfg(unix)]
+pub fn set_owner(path: &str, uid: Option<u32>, gid: Option<u32>) -> Result<(), TerminalError> {
+    termihub_core::files::local::set_owner_sync(path, uid, gid)?;
+    Ok(())
+}
+
+/// Non-Unix stub: no numeric-owner model to change.
+#[cfg(not(unix))]
+pub fn set_owner(_path: &str, _uid: Option<u32>, _gid: Option<u32>) -> Result<(), TerminalError> {
+    Err(TerminalError::EditorError(
+        "Changing ownership is not supported on this platform".to_string(),
+    ))
+}
+
+/// Create a symbolic link at `link_path` pointing at `target`.
+///
+/// Unix only — local symlink creation on other platforms needs elevated
+/// privileges and a file-vs-dir choice this op does not carry, so it returns an
+/// unsupported error there.
+#[cfg(unix)]
+pub fn create_symlink(target: &str, link_path: &str) -> Result<(), TerminalError> {
+    termihub_core::files::local::create_symlink_sync(target, link_path)?;
+    Ok(())
+}
+
+/// Non-Unix stub: local symlink creation is not supported.
+#[cfg(not(unix))]
+pub fn create_symlink(_target: &str, _link_path: &str) -> Result<(), TerminalError> {
+    Err(TerminalError::EditorError(
+        "Creating symlinks is not supported on this platform".to_string(),
+    ))
+}
+
 /// Copy a file or directory to a new location.
 ///
 /// Delegates to `termihub_core::files::local::copy_sync()`, the single home for
@@ -211,6 +248,37 @@ mod tests {
 
         let mode = std::fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o7777, 0o755);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_owner_to_current_ids_is_a_safe_no_op() {
+        // chown to the file's *current* owner succeeds without privilege, exercising
+        // the desktop wrapper's delegation to the core sync chown without needing
+        // root or a `libc` dependency in this crate.
+        use std::os::unix::fs::MetadataExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("owned.txt");
+        std::fs::write(&file, "x").unwrap();
+        let meta = std::fs::metadata(&file).unwrap();
+
+        set_owner(file.to_str().unwrap(), Some(meta.uid()), Some(meta.gid())).unwrap();
+        // A no-op (both None) still succeeds.
+        set_owner(file.to_str().unwrap(), None, None).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn create_symlink_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.txt");
+        std::fs::write(&target, "hi").unwrap();
+        let link = dir.path().join("link.txt");
+
+        create_symlink(target.to_str().unwrap(), link.to_str().unwrap()).unwrap();
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
     }
 
     #[test]

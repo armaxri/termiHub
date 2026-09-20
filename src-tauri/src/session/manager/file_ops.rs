@@ -101,6 +101,41 @@ impl SessionManager {
             .await
     }
 
+    /// Change the owner/group (chown) of a file via a session's file browser
+    /// capability. A `None` id leaves that side unchanged.
+    pub async fn set_file_owner(
+        &self,
+        session_id: &str,
+        path: &str,
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Result<(), TerminalError> {
+        self.file_ops().set_owner(session_id, path, uid, gid).await
+    }
+
+    /// Create a symlink at `link_path` pointing at `target` via a session's file
+    /// browser capability.
+    pub async fn create_file_symlink(
+        &self,
+        session_id: &str,
+        target: &str,
+        link_path: &str,
+    ) -> Result<(), TerminalError> {
+        self.file_ops()
+            .create_symlink(session_id, target, link_path)
+            .await
+    }
+
+    /// Copy `src` → `dest` within a session's backend (same-backend copy).
+    pub async fn copy_file(
+        &self,
+        session_id: &str,
+        src: &str,
+        dest: &str,
+    ) -> Result<(), TerminalError> {
+        self.file_ops().copy(session_id, src, dest).await
+    }
+
     // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
     //
     // These reach the SSH-specific SFTP capabilities that do not fit on the shared
