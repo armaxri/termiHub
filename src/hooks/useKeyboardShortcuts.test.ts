@@ -161,7 +161,7 @@ describe("useKeyboardShortcuts", () => {
 
       const prevented = fireKey("h", { ctrlKey: true, altKey: true });
 
-      expect(runWorkflow).toHaveBeenCalledWith("wf-1");
+      expect(runWorkflow).toHaveBeenCalledWith("wf-1", { triggeredBy: "hotkey" });
       expect(prevented).toBe(true);
     });
 

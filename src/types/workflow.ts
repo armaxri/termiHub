@@ -81,6 +81,50 @@ export type WorkflowTrigger =
 export type WorkflowTriggerKind = WorkflowTrigger["kind"];
 
 /**
+ * The terminal state a workflow run ended in. Mirrors the runner's
+ * {@link "@/services/workflowRunner".WorkflowRunStatus} and the Rust
+ * `WorkflowRunStatus` enum.
+ */
+export type WorkflowRunHistoryStatus = "completed" | "cancelled" | "failed";
+
+/** What launched a run. Mirrors the Rust `WorkflowRunTrigger` enum. */
+export type WorkflowRunTrigger = "manual" | "on-connect" | "hotkey";
+
+/**
+ * A persisted, **metadata-only** record of a finished workflow run (PROD-0046).
+ * Mirrors the Rust `WorkflowRun` in `src-tauri/src/workflows/history.rs`
+ * byte-for-byte over the wire (camelCase fields, string-valued enums). The run's
+ * terminal output is deliberately **not** stored — only the outcome, timing, and
+ * provenance needed to browse recent runs.
+ */
+export interface WorkflowRun {
+  /** Unique identifier for this run record. */
+  id: string;
+  /** The id of the workflow that was run. */
+  workflowId: string;
+  /** The workflow's name at run time (survives a later rename/deletion). */
+  workflowName: string;
+  /** RFC 3339 timestamp of when the run started. */
+  startedAt: string;
+  /** RFC 3339 timestamp of when the run reached its terminal state. */
+  endedAt: string;
+  /** The terminal state the run ended in. */
+  status: WorkflowRunHistoryStatus;
+  /** Number of steps that completed successfully before the run ended. */
+  stepsCompleted: number;
+  /** Total number of steps in the workflow. */
+  total: number;
+  /** For a failed run: the 0-based index of the step that failed. */
+  failedStepIndex?: number;
+  /** For a failed run: a human-readable failure reason. */
+  error?: string;
+  /** The terminal tab the run targeted, when known. */
+  tabId?: string;
+  /** What launched the run. */
+  triggeredBy: WorkflowRunTrigger;
+}
+
+/**
  * An authored, ordered list of typed steps launched by zero or more triggers.
  * Mirrors the shipped {@link "@/types/macro".Macro} shape but with a
  * discriminated step list and a trigger list.

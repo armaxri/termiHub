@@ -58,6 +58,7 @@ vi.mock("@/themes", () => ({
 }));
 
 const savedWorkflows: Workflow[] = [];
+const recordedRuns: import("@/types/workflow").WorkflowRun[] = [];
 vi.mock("@/services/workflowApi", () => ({
   listWorkflows: vi.fn(() => Promise.resolve([...savedWorkflows])),
   getWorkflow: vi.fn(),
@@ -66,6 +67,15 @@ vi.mock("@/services/workflowApi", () => ({
     return Promise.resolve(w);
   }),
   deleteWorkflow: vi.fn(() => Promise.resolve()),
+  listWorkflowRuns: vi.fn(() => Promise.resolve([...recordedRuns])),
+  recordWorkflowRun: vi.fn((run: import("@/types/workflow").WorkflowRun) => {
+    recordedRuns.unshift(run);
+    return Promise.resolve([...recordedRuns]);
+  }),
+  clearWorkflowRunHistory: vi.fn(() => {
+    recordedRuns.length = 0;
+    return Promise.resolve([]);
+  }),
 }));
 
 // The guarded local-process backend (#1857) is mocked so no Tauri command runs;
@@ -97,6 +107,7 @@ import { useAppStore } from "./appStore";
 import {
   listWorkflows as apiListWorkflows,
   deleteWorkflow as apiDeleteWorkflow,
+  recordWorkflowRun as apiRecordWorkflowRun,
 } from "@/services/workflowApi";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentSettingsView } from "./settingsBridge";
@@ -329,10 +340,12 @@ describe("appStore — workflow run slice (#1852)", () => {
     useAppStore.setState(useAppStore.getInitialState());
     resetOnConnectDispatchState();
     savedWorkflows.length = 0;
+    recordedRuns.length = 0;
     injected = [];
     invokeRunLocalProcess.mockClear();
     cancelLocalProcess.mockClear();
     subscribeLocalProcessOutput.mockClear();
+    vi.mocked(apiRecordWorkflowRun).mockClear();
     localProcessOutputHandler = null;
     transport = new WorkflowStoreTransport();
     setWorkflowTransportForTest(transport);
@@ -715,6 +728,116 @@ describe("appStore — workflow run slice (#1852)", () => {
       kind: "run-local-process",
       program: "echo",
       args: ["hi"],
+    });
+  });
+
+  describe("run history recording (PROD-0046)", () => {
+    it("records a completed run with the outcome, timing and provenance", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("a"), cmd("b")])] });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(apiRecordWorkflowRun).toHaveBeenCalledTimes(1);
+      const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
+      expect(run.workflowId).toBe("w1");
+      expect(run.workflowName).toBe("Workflow w1");
+      expect(run.status).toBe("completed");
+      expect(run.stepsCompleted).toBe(2);
+      expect(run.total).toBe(2);
+      expect(run.tabId).toBe("tab-active");
+      expect(run.triggeredBy).toBe("manual");
+      expect(run.failedStepIndex).toBeUndefined();
+      expect(typeof run.startedAt).toBe("string");
+      expect(typeof run.endedAt).toBe("string");
+      // The returned, capped list is mirrored into the store.
+      expect(useAppStore.getState().workflowRuns.map((r) => r.id)).toEqual([run.id]);
+    });
+
+    it("records a failed run with the failed step index and error", async () => {
+      seedConnectedTerminal();
+      // No injector → the first send-command step fails.
+      registerTerminalInputInjector(null);
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("x"), cmd("y")])] });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(apiRecordWorkflowRun).toHaveBeenCalledTimes(1);
+      const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
+      expect(run.status).toBe("failed");
+      expect(run.failedStepIndex).toBe(0);
+      expect(run.stepsCompleted).toBe(0);
+    });
+
+    it("records a cancelled run", async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      let started!: () => void;
+      const startedP = new Promise<void>((r) => (started = r));
+      let call = 0;
+      registerTerminalInputInjector(async (_tabId, data) => {
+        call += 1;
+        injected.push(data);
+        if (call === 1) {
+          started();
+          await gate;
+        }
+        return true;
+      });
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("a"), cmd("b")])] });
+
+      const done = layoutState().runWorkflow("w1");
+      await startedP;
+      useAppStore.getState().cancelWorkflowRun();
+      release();
+      await done;
+
+      const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
+      expect(run.status).toBe("cancelled");
+    });
+
+    it("stamps triggeredBy from the run options", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("a")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { triggeredBy: "hotkey" });
+
+      const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
+      expect(run.triggeredBy).toBe("hotkey");
+    });
+
+    it("a history-write failure never fails or blocks the run", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("a")])] });
+      vi.mocked(apiRecordWorkflowRun).mockRejectedValueOnce(new Error("disk full"));
+
+      // The run still resolves successfully despite the record rejection.
+      await expect(useAppStore.getState().runWorkflow("w1")).resolves.toBeUndefined();
+
+      expect(injected).toEqual(["a\n"]);
+      expect(toast.success).toHaveBeenCalled();
+      // The failed write left the store's history untouched.
+      expect(useAppStore.getState().workflowRuns).toEqual([]);
+    });
+
+    it("loadWorkflowRuns swallows a rejection and leaves history untouched", async () => {
+      const { listWorkflowRuns } = await import("@/services/workflowApi");
+      useAppStore.setState({ workflowRuns: [] });
+      vi.mocked(listWorkflowRuns).mockRejectedValueOnce(new Error("backend down"));
+
+      await expect(useAppStore.getState().loadWorkflowRuns()).resolves.toBeUndefined();
+      expect(useAppStore.getState().workflowRuns).toEqual([]);
+    });
+
+    it("clearWorkflowRunHistory empties the store list", async () => {
+      seedConnectedTerminal();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("a")])] });
+      await useAppStore.getState().runWorkflow("w1");
+      expect(useAppStore.getState().workflowRuns.length).toBe(1);
+
+      await useAppStore.getState().clearWorkflowRunHistory();
+      expect(useAppStore.getState().workflowRuns).toEqual([]);
     });
   });
 

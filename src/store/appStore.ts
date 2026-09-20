@@ -3605,7 +3605,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
             sessionId,
             workflows: get().workflows,
             run: (workflowId, targetTabId) => {
-              void get().runWorkflow(workflowId, { targetTabId });
+              void get().runWorkflow(workflowId, { targetTabId, triggeredBy: "on-connect" });
             },
           });
         }

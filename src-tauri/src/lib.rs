@@ -796,6 +796,9 @@ pub fn run() {
             commands::workflows::get_workflow,
             commands::workflows::save_workflow,
             commands::workflows::delete_workflow,
+            commands::workflows::list_workflow_runs,
+            commands::workflows::record_workflow_run,
+            commands::workflows::clear_workflow_run_history,
             commands::local_process::run_local_process,
             commands::local_process::cancel_local_process,
             // Network diagnostics
