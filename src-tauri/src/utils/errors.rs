@@ -7,9 +7,11 @@ use thiserror::Error;
 /// matching English message text — which is one localization or rewording away
 /// from silently misclassifying (I18N-002 / ERR-003).
 ///
-/// This is the single Rust-side source of truth for the slugs; the frontend
-/// mirrors them in `src/utils/classifyAgentError.ts` (and `AUTH_FAILED_CODE` in
-/// `src/utils/backendErrorCode.ts`). Keep the two in sync.
+/// This is the single Rust-side source of truth for the slugs. The frontend no
+/// longer hand-mirrors them: `classifyAgentError.ts` keys off the ts-rs-generated
+/// [`IpcErrorCode`] union (and `AUTH_FAILED_CODE` in
+/// `src/utils/backendErrorCode.ts` is typed against it), so a slug rename is a
+/// frontend compile error rather than silent drift.
 pub mod codes {
     /// SSH/agent authentication was genuinely rejected (wrong password /
     /// passphrase or a refused key).
