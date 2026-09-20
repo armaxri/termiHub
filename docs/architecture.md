@@ -1015,6 +1015,11 @@ Per-OS manual verification steps live in [testing.md](testing.md#manual-testing)
 
 ### State Management
 
+> **Authority note.** Frontend state authority has been **inverted onto backend projection regions**
+> (see [ADR-14](#adr-14-backend-projection-regions-as-the-single-source-of-ui-state-strangler-migration)).
+> The Zustand store below is now largely a **render cache** fed from server-authoritative projections
+> with mutations routed back as intents; it is no longer the source of truth for the migrated domains.
+
 The frontend uses a single **Zustand** store (`src/store/appStore.ts`) managing:
 
 - **Panel layout** — Recursive tree of horizontal/vertical splits with customizable layout (activity bar position, sidebar position, visibility, status bar)
@@ -1610,6 +1615,104 @@ single-instance plugin, and registration writes **absolute exe paths** into syst
 than trying to keep the registrations location-independent. Full end-to-end verification (real
 right-click → focus → tab, especially window focus under Wayland) cannot run in CI and stays a
 documented manual step (see [testing.md](testing.md#manual-testing)).
+
+### ADR-14: Backend Projection Regions as the Single Source of UI State (Strangler Migration)
+
+**Context:** The frontend's `appStore.ts` Zustand store (ADR-4) was originally the **authoritative**
+holder of UI state — panel layout, tabs, connections, agents, tunnels, transfers, sessions, and
+more — with reducers mutating that state in the WebView and the Rust backend treated as a set of
+side-effecting commands. This is a **dual-authority** design: the same logical state (e.g. "is this
+session connected?", "which tunnels exist?") lived in two places that had to be kept in step by hand.
+Three problems followed from it:
+
+- **Reconnect / lifecycle correctness.** Session and agent lifecycle is fundamentally backend state
+  (daemons, russh channels, auto-reconnect timers — see [ADR-11](#adr-11-per-process-agent-connection-tracking-multi-host-model)
+  and [Session Reconnection](#session-reconnection)). Mirroring it in a frontend reducer meant the UI
+  ran its own reconnect state machine that could drift from what the backend actually held, especially
+  across a WebView reload or a prolonged connection drop.
+- **Multi-window consistency.** termiHub is deliberately multi-instance/multi-window
+  ([ADR-13](#adr-13-multi-instance-with-a-spawn-ipc-rendezvous)). With each window owning its own
+  authoritative store, shared state (tunnels, sessions, connections) could not be kept consistent
+  across windows without an ad-hoc broadcast for every field.
+- **Stateless-UI goal.** The target end state is a **stateless UI**: the WebView renders from
+  backend-held state and can be torn down and rebuilt (reload, crash, second window) with no loss of
+  truth, because it never _was_ the truth. That is incompatible with reducers owning state.
+
+**Decision:** Invert authority. **Backend per-region projections are the single source of truth**; the
+frontend **renders from projections and routes every mutation back as an intent**. The mechanism
+(#2149, `src-tauri/src/projection/`) is a transport-neutral substrate of server-authoritative,
+per-region **versioned diff channels** with multi-subscriber fan-out:
+
+- A domain implements `ProjectedStore` (`projection/region.rs`) — a pure `snapshot()` returning the
+  render-ready view model for its region. The backend is the **single authoritative writer**: it
+  applies an intent once, bumps the region version once, computes one RFC 6902 diff, and fans that one
+  diff out to every current subscriber. Each region carries its **own** `Mutex<RegionState>`
+  (`projection/mod.rs`), so writes to a region serialize through that region's lock.
+- Regions are either **shared** (`"<domain>"`, e.g. `session-lifecycle`, `tunnels`, `connections`) or
+  **client-scoped** (`"<domain>@<clientId>"`, e.g. `layout@client-7`); the `@client` suffix is the
+  only structural difference. Infrastructure domains are shared so two windows see the same state.
+- The frontend caches `{ version, view }` per region (`src/store/projectionCache.ts`), driven by a
+  `ProjectionClient` (`src/services/transport/ProjectionClient.ts`) that applies ordered diffs, detects
+  gaps (`baseVersion !== version`) and re-baselines via `resync`. An **optimistic overlay** (#2533)
+  lets a dispatching client apply its own intent to its local view synchronously; the fold is
+  version-gated and dropped once the authoritative diff for that version arrives, so there is no
+  double-apply and no drift.
+
+Each domain was migrated behind flags via a **per-domain strangler-fig sequence**, landing beside the
+~206 existing typed commands and ~36 events rather than replacing them wholesale:
+
+1. **Shadow** — stand up the backend store + region and register it. Not authoritative; the UI still
+   renders from `appStore`; zero `src/` behaviour change.
+2. **Render cut** — mirror the appStore slice into the region and render from the projection behind a
+   **deep-equal faithful-mirror gate** with appStore fallback; the render flag ships on by default once
+   parity holds.
+3. **Mutation cut** — route the UI's actions to `<domain>.*` intents, flag on by default, keeping the
+   local reducers as an **instant-revert fallback**. Cuts flip on the strength of cut-vs-local parity
+   tests plus that instant revert — no per-domain manual GUI gate.
+4. **Reducer removal** — delete the now-dead local reducers, after the parity/soak window.
+
+**Status: essentially complete.** Every UI domain has been inverted onto its own region + `<domain>.*`
+intents and drives the live UI. The regions registered in `src-tauri/src/lib.rs` are: `tunnels`
+(the Phase-2 pilot, #2150), `session-lifecycle` (#2152), `connections` and `agents` (#2283),
+`settings` (#2227), `system-monitors` (#2224), `transfers` (#2229), and the client-scoped
+`layout@<clientId>` (#2151), `restore-cohort@<clientId>` (#2206), `file-browser@<clientId>`,
+`broadcast@<clientId>`, and `workflow-run@<clientId>` (#2206/#2152). With the sessions/agents
+inversion complete, the **frontend client-side reconnect engine was deleted** — session and agent
+reconnection is now driven entirely from the backend projection (#2283; automation-proven, #2553).
+The projections are no longer optional shadows: they are the authority the UI reads and writes
+through.
+
+- **One deferred outlier.** `layout@<clientId>` is registered, served, and mutation-cut, but its
+  hot-path panel-tree reducer removal was deferred and is tracked as `TODO(maintainer)` **#2562** — the
+  layout reducers remain as the render source in the deferred slice pending that removal.
+
+**Rationale:**
+
+- **Single authority.** The dual-authority drift class is eliminated: there is exactly one writer per
+  region, and the UI cannot hold a state the backend disagrees with.
+- **Reconnect / multi-window correctness.** Lifecycle truth lives where the daemons and transports
+  already are; a shared region projects one change to every subscribing window, and a WebView reload
+  re-subscribes and re-baselines instead of losing state.
+- **Testable projections.** The substrate is transport-neutral (no Tauri dependency in
+  `projection/`), so the whole loop — subscribe → snapshot, intent → diff fan-out, gap → resync — is
+  exercised in-memory; each domain also carries `*_projection/projection_tests.rs` and frontend
+  `*.projection.test.*` parity tests.
+- **Strangler safety.** Landing beside the existing commands/events, behind faithful-mirror gates with
+  instant-revert fallbacks, kept every cut individually revertible and low-blast-radius rather than a
+  single big-bang rewrite.
+
+**Trade-off:**
+
+- **Per-region write serialization.** Every mutation to a region takes that region's `Mutex` to bump
+  the version and compute the diff; a hot region serializes its writers behind that lock.
+- **Projection latency.** A mutation is a round-trip (intent → apply → diff → fan-out) rather than a
+  synchronous local reducer write. The optimistic overlay (#2533) hides this on the dispatching
+  client's own view, but the authoritative update is still asynchronous.
+- **Region plumbing.** Each domain now carries a backend region module, an intent vocabulary, a
+  frontend cache binding, and parity tests — more moving parts than a single in-WebView reducer, and
+  every new projection domain registers in the shared `lib.rs` `setup()` block.
+- **One deferred reducer removal** (`layout`, #2562) still keeps a local reducer alive in that slice,
+  so that one domain temporarily retains the very dual-state shape this ADR removes.
 
 ---
 
