@@ -36,6 +36,7 @@ use crate::utils::errors::TerminalError;
 pub mod registry;
 pub mod retry;
 pub mod scheduler;
+pub mod sftp;
 pub mod state;
 
 #[cfg(feature = "ftp")]
