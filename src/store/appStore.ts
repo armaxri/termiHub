@@ -141,6 +141,7 @@ export type {
   RunWorkflowOptions,
   LocalProcessAuthDecision,
   LocalProcessPromptState,
+  WorkflowParamPromptState,
 } from "./slices/workflowsSlice";
 import { createWorkspacesSlice, WorkspacesSlice } from "./slices/workspacesSlice";
 

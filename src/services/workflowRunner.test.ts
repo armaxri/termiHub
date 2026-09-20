@@ -16,12 +16,15 @@ import { describe, it, expect, vi } from "vitest";
 import {
   runWorkflow,
   executeStep,
+  resolveStepParams,
+  interpolateParams,
   type WorkflowRunnerDeps,
   type WorkflowSendSeam,
   type WorkflowRunMacroSeam,
   type WorkflowWaitSeam,
   type WorkflowReadFileSeam,
   type WorkflowRunLocalProcessSeam,
+  type WorkflowParamValues,
 } from "./workflowRunner";
 import { MAX_STEP_DELAY_MS } from "./macroPlayback";
 import type { WorkflowStep } from "@/types/workflow";
@@ -476,5 +479,119 @@ describe("runWorkflow", () => {
     expect(result.status).toBe("failed");
     expect(result.failedStepIndex).toBe(1);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("parameter interpolation (PROD-0040)", () => {
+  const values: WorkflowParamValues = { host: "example.com", port: 22, verbose: true };
+
+  describe("interpolateParams", () => {
+    it("substitutes declared ${name} references", () => {
+      expect(interpolateParams("ssh ${host}", values)).toBe("ssh example.com");
+    });
+
+    it("stringifies number and boolean values", () => {
+      expect(interpolateParams("-p ${port} v=${verbose}", values)).toBe("-p 22 v=true");
+    });
+
+    it("treats $${ as an escape for a literal ${ and does not re-scan it", () => {
+      // `$${host}` must stay the literal `${host}` (shell var), never substitute.
+      expect(interpolateParams("echo $${host}", values)).toBe("echo ${host}");
+    });
+
+    it("leaves an unknown ${x} verbatim and reports it", () => {
+      const onUnknown = vi.fn();
+      expect(interpolateParams("echo ${HOME}/${host}", values, onUnknown)).toBe(
+        "echo ${HOME}/example.com"
+      );
+      expect(onUnknown).toHaveBeenCalledWith("HOME");
+      expect(onUnknown).toHaveBeenCalledTimes(1);
+    });
+
+    it("substitutes multiple occurrences of the same reference", () => {
+      expect(interpolateParams("${host}:${host}", values)).toBe("example.com:example.com");
+    });
+  });
+
+  describe("resolveStepParams", () => {
+    it("returns the same step reference when there are no values (identity pass)", () => {
+      const step: WorkflowStep = sendCommand("git status");
+      expect(resolveStepParams(step, {})).toBe(step);
+    });
+
+    it("substitutes send-command.command", () => {
+      const out = resolveStepParams(sendCommand("connect ${host}"), values);
+      expect(out).toEqual({ kind: "send-command", command: "connect example.com" });
+    });
+
+    it("substitutes run-script.script and preserves other fields", () => {
+      const step: WorkflowStep = {
+        kind: "run-script",
+        script: "ping ${host}",
+        perLineDelayMs: 50,
+      };
+      expect(resolveStepParams(step, values)).toEqual({
+        kind: "run-script",
+        script: "ping example.com",
+        perLineDelayMs: 50,
+      });
+    });
+
+    it("substitutes run-local-process program and each arg", () => {
+      const step: WorkflowStep = {
+        kind: "run-local-process",
+        program: "${host}-tool",
+        args: ["--port", "${port}", "static"],
+      };
+      expect(resolveStepParams(step, values)).toEqual({
+        kind: "run-local-process",
+        program: "example.com-tool",
+        args: ["--port", "22", "static"],
+      });
+    });
+
+    it("leaves run-macro and wait untouched", () => {
+      const macro: WorkflowStep = { kind: "run-macro", macroId: "m-1" };
+      const wait: WorkflowStep = { kind: "wait", delayMs: 500 };
+      expect(resolveStepParams(macro, values)).toEqual(macro);
+      expect(resolveStepParams(wait, values)).toEqual(wait);
+    });
+
+    it("does not mutate the input step", () => {
+      const step: WorkflowStep = {
+        kind: "run-local-process",
+        program: "${host}",
+        args: ["${port}"],
+      };
+      resolveStepParams(step, values);
+      expect(step).toEqual({ kind: "run-local-process", program: "${host}", args: ["${port}"] });
+    });
+  });
+
+  describe("threading through executeStep and runWorkflow", () => {
+    it("executeStep interpolates before sending", async () => {
+      const send = vi.fn(async () => true);
+      await executeStep(sendCommand("ssh ${host}"), deps({ send }), undefined, values);
+      expect(send).toHaveBeenCalledWith("ssh example.com\n");
+    });
+
+    it("runWorkflow forwards param values to every step", async () => {
+      const send = vi.fn(async (_data: string) => true);
+      const handle = runWorkflow(
+        [sendCommand("a ${host}"), sendCommand("b ${port}")],
+        deps({ send }),
+        undefined,
+        values
+      );
+      const result = await handle.done;
+      expect(result.status).toBe("completed");
+      expect(send.mock.calls.map((c) => c[0])).toEqual(["a example.com\n", "b 22\n"]);
+    });
+
+    it("leaves ${VAR} verbatim when no values are supplied (byte-identical run)", async () => {
+      const send = vi.fn(async () => true);
+      await executeStep(sendCommand("echo ${HOME}"), deps({ send }));
+      expect(send).toHaveBeenCalledWith("echo ${HOME}\n");
+    });
   });
 });

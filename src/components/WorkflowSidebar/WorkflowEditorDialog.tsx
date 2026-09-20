@@ -7,11 +7,18 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy, arrayMove } from "@dnd-kit/sortable";
 import { Modal, Button, Input, Field, useModalPortalContainer } from "@/components/ui";
-import type { Workflow, WorkflowStep, WorkflowStepKind, WorkflowTrigger } from "@/types/workflow";
+import type {
+  Workflow,
+  WorkflowParameter,
+  WorkflowStep,
+  WorkflowStepKind,
+  WorkflowTrigger,
+} from "@/types/workflow";
 import type { Macro } from "@/types/macro";
 import type { SavedConnection } from "@/types/connection";
 import { WorkflowStepRow, type WorkflowStepEntry } from "./WorkflowStepRow";
 import { WorkflowTriggersEditor } from "./WorkflowTriggersEditor";
+import { WorkflowParametersEditor } from "./WorkflowParametersEditor";
 import {
   WORKFLOW_STEP_KINDS,
   stepKindLabel,
@@ -29,6 +36,8 @@ export interface WorkflowEditorResult {
   tags: string[];
   steps: WorkflowStep[];
   triggers: WorkflowTrigger[];
+  /** Declared parameters (PROD-0040); empty when the workflow uses none. */
+  parameters: WorkflowParameter[];
 }
 
 /**
@@ -120,6 +129,7 @@ export function WorkflowEditorDialog({
   });
   const [entries, setEntries] = useState<WorkflowStepEntry[]>([]);
   const [triggers, setTriggers] = useState<WorkflowTrigger[]>([]);
+  const [parameters, setParameters] = useState<WorkflowParameter[]>([]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -134,6 +144,7 @@ export function WorkflowEditorDialog({
       });
       setEntries(workflow.steps.map((step) => ({ uid: stepUid(), step: { ...step } })));
       setTriggers(workflow.triggers.map((t) => ({ ...t })));
+      setParameters((workflow.parameters ?? []).map((p) => ({ ...p })));
     }
   }, [open, workflow, reset]);
 
@@ -196,6 +207,7 @@ export function WorkflowEditorDialog({
       tags: parseTags(values.tags),
       steps: entries.map((e) => e.step),
       triggers,
+      parameters,
     });
   };
 
@@ -308,6 +320,11 @@ export function WorkflowEditorDialog({
       )}
 
       <AddStepMenu onAdd={addStep} />
+
+      <div className="workflow-editor__section-header">
+        <span className="workflow-editor__section-title">Parameters ({parameters.length})</span>
+      </div>
+      <WorkflowParametersEditor parameters={parameters} onChange={setParameters} />
 
       <div className="workflow-editor__section-header">
         <span className="workflow-editor__section-title">Triggers</span>

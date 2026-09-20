@@ -92,6 +92,53 @@ pub enum WorkflowTrigger {
     },
 }
 
+/// The value type of a [`WorkflowParameter`] (PROD-0040). Serialised lowercase
+/// (`string`, `number`, `boolean`, `enum`) to match the TypeScript
+/// `WorkflowParameterType` union.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkflowParameterType {
+    /// Free-text value.
+    String,
+    /// Numeric value.
+    Number,
+    /// Boolean value.
+    Boolean,
+    /// One of a fixed set of string options.
+    Enum,
+}
+
+/// A named parameter a workflow declares (PROD-0040).
+///
+/// Parameter references of the form `${name}` in a step's text fields
+/// (`send-command.command`, `run-script.script`, and
+/// `run-local-process.program`/`args`) are substituted at run time. This model
+/// is purely persisted here; the substitution itself lives in the frontend
+/// runner. Mirrors the TypeScript `WorkflowParameter` byte-for-byte (camelCase
+/// fields; `type` is the wire key for [`WorkflowParameter::param_type`]).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowParameter {
+    /// The reference name used in `${name}` interpolations.
+    pub name: String,
+    /// Optional human-friendly label for the run-time prompt (defaults to `name`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    /// The value type, which selects the prompt control and coercion.
+    #[serde(rename = "type")]
+    pub param_type: WorkflowParameterType,
+    /// Optional default value, pre-filled in the run-time prompt. Kept as an
+    /// opaque JSON value so `string`/`number`/`boolean` defaults all round-trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<serde_json::Value>,
+    /// When `true`, the prompt requires a non-empty value before the run proceeds.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    /// For `param_type: Enum`, the selectable string options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub options: Option<Vec<String>>,
+}
+
 /// An authored, ordered list of typed steps launched by zero or more triggers.
 ///
 /// Mirrors the shipped [`crate::macros::config::Macro`] shape (id, name,
@@ -117,6 +164,11 @@ pub struct Workflow {
     /// The triggers that can launch this workflow.
     #[serde(default)]
     pub triggers: Vec<WorkflowTrigger>,
+    /// Optional declared parameters (PROD-0040) interpolated into step text
+    /// fields via `${name}`. Empty and omitted from JSON for a workflow that
+    /// uses no parameters, so existing files round-trip byte-identically.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parameters: Vec<WorkflowParameter>,
     /// RFC 3339 timestamp of when the workflow was first created.
     #[serde(default)]
     pub created_at: String,
@@ -274,6 +326,7 @@ mod tests {
                 command: "sudo -v".to_string(),
             }],
             triggers: vec![WorkflowTrigger::Manual],
+            parameters: Vec::new(),
             created_at: "2026-07-24T00:00:00Z".to_string(),
             updated_at: "2026-07-24T00:00:00Z".to_string(),
         };
@@ -291,6 +344,98 @@ mod tests {
         assert!(wf.steps.is_empty());
         assert!(wf.triggers.is_empty());
         assert!(wf.tags.is_empty());
+        assert!(wf.parameters.is_empty());
         assert_eq!(wf.description, None);
+    }
+
+    #[test]
+    fn workflow_without_parameters_omits_the_key() {
+        // Byte-identical persistence (PROD-0040): an empty parameters list is
+        // skipped entirely so existing workflows.json round-trips unchanged.
+        let wf = Workflow {
+            id: "wf-1".to_string(),
+            name: "Bare".to_string(),
+            description: None,
+            tags: vec![],
+            steps: vec![],
+            triggers: vec![],
+            parameters: Vec::new(),
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let json = serde_json::to_string(&wf).unwrap();
+        assert!(!json.contains("parameters"));
+    }
+
+    #[test]
+    fn workflow_parameters_round_trip() {
+        let params = vec![
+            WorkflowParameter {
+                name: "host".to_string(),
+                label: Some("Target host".to_string()),
+                param_type: WorkflowParameterType::String,
+                default: Some(serde_json::json!("localhost")),
+                required: Some(true),
+                options: None,
+            },
+            WorkflowParameter {
+                name: "port".to_string(),
+                label: None,
+                param_type: WorkflowParameterType::Number,
+                default: Some(serde_json::json!(22)),
+                required: None,
+                options: None,
+            },
+            WorkflowParameter {
+                name: "env".to_string(),
+                label: None,
+                param_type: WorkflowParameterType::Enum,
+                default: Some(serde_json::json!("dev")),
+                required: None,
+                options: Some(vec!["dev".to_string(), "prod".to_string()]),
+            },
+        ];
+        let wf = Workflow {
+            id: "wf-1".to_string(),
+            name: "Parameterized".to_string(),
+            description: None,
+            tags: vec![],
+            steps: vec![WorkflowStep::SendCommand {
+                command: "ssh ${host}".to_string(),
+            }],
+            triggers: vec![],
+            parameters: params,
+            created_at: String::new(),
+            updated_at: String::new(),
+        };
+        let json = serde_json::to_string(&wf).unwrap();
+        // `type` is the wire key; the value is lowercase; camelCase fields.
+        assert!(json.contains("\"type\":\"string\""));
+        assert!(json.contains("\"type\":\"number\""));
+        assert!(json.contains("\"type\":\"enum\""));
+        assert!(json.contains("\"label\":\"Target host\""));
+        let parsed: Workflow = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, wf);
+    }
+
+    #[test]
+    fn workflow_parameter_omits_absent_optional_fields() {
+        let param = WorkflowParameter {
+            name: "host".to_string(),
+            label: None,
+            param_type: WorkflowParameterType::String,
+            default: None,
+            required: None,
+            options: None,
+        };
+        let json = serde_json::to_string(&param).unwrap();
+        assert!(!json.contains("label"));
+        assert!(!json.contains("default"));
+        assert!(!json.contains("required"));
+        assert!(!json.contains("options"));
+        // A parameter written by an older app (only name + type) still parses.
+        let parsed: WorkflowParameter =
+            serde_json::from_str(r#"{"name":"host","type":"string"}"#).unwrap();
+        assert_eq!(parsed, param);
     }
 }
