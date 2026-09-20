@@ -458,7 +458,7 @@ nightly integration check — the two are complementary, not a substitute.
 The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs:
 
 - **Build + test** ([`agent.yml`](../.github/workflows/agent.yml)): the `build-windows` job runs on `windows-latest`, builds the agent for `x86_64-pc-windows-msvc` (native MSVC — cross-rs cannot build the MSVC ABI), and runs `cargo test -p termihub-agent -p termihub-core --all-features`. The full workspace test suite also runs on `windows-latest` via the [`code-quality.yml`](../.github/workflows/code-quality.yml) `tests` matrix.
-- **Release artifact** ([`release.yml`](../.github/workflows/release.yml)): the `agent-binaries-windows` job ships `termihub-agent-windows-x64.exe` alongside the Linux and macOS agent binaries on every tagged release.
+- **Release artifact** ([`release.yml`](../.github/workflows/release.yml)): the `agent-binaries-windows` job ships `termihub-agent-windows-x64.exe` and `termihub-agent-windows-arm64.exe` (cross-compiled from the x64 runner) alongside the Linux and macOS agent binaries on every tagged release.
 
 #### Quarantined live-agent-TCP tests + the serial grading lane (#2495)
 
@@ -1816,8 +1816,8 @@ that the desktop rejects a tampered binary before install. See PR #1350.
    jobs in [`release.yml`](../.github/workflows/release.yml) run.
 2. On the GitHub Release page, confirm **each** agent artifact has a sibling
    `.sha256` asset: `termihub-agent-linux-x64`, `-linux-arm64`, `-linux-armv7`,
-   `-macos-arm64`, `-macos-x64`, and `termihub-agent-windows-x64.exe` each with a
-   matching `<name>.sha256`.
+   `-macos-arm64`, `-macos-x64`, `termihub-agent-windows-x64.exe`, and
+   `termihub-agent-windows-arm64.exe` each with a matching `<name>.sha256`.
 3. Download one binary and its sidecar and verify locally:
    `sha256sum -c termihub-agent-linux-x64.sha256` (macOS: `shasum -a 256 -c …`)
    → prints `OK`.
