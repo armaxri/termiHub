@@ -18,7 +18,12 @@ import {
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
-import { runBlockingTransfer, runTransfer, seedTransferQueueRow } from "./transferFeedback";
+import {
+  runBlockingTransfer,
+  runMaybeTrackedTransfer,
+  runTransfer,
+  seedTransferQueueRow,
+} from "./transferFeedback";
 import { errorMessage } from "@/utils/errorMessage";
 
 /**
@@ -187,11 +192,22 @@ export function useSessionFileSystem() {
       if (ok) refreshSession();
       return;
     }
-    // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip.
-    const { readFile } = await import("@tauri-apps/plugin-fs");
-    const data = await readFile(localPath as string);
-    await sessionWriteFile(sessionFileBrowserId, remotePath, data);
-    refreshSession();
+    // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip
+    // with no transfer-progress event, so surface its own feedback (#2906)
+    // rather than resolving silently.
+    const ok = await runBlockingTransfer(
+      async () => {
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const data = await readFile(localPath as string);
+        await sessionWriteFile(sessionFileBrowserId, remotePath, data);
+      },
+      {
+        loading: `Uploading ${fileName}…`,
+        success: `Uploaded ${fileName}`,
+        errorLabel: `Upload "${fileName}"`,
+      }
+    );
+    if (ok) refreshSession();
   }, [sessionFileBrowserId, sessionCurrentPath, refreshSession, sftpCapable, startUpload]);
 
   const uploadFileFromPath = useCallback(
@@ -211,11 +227,22 @@ export function useSessionFileSystem() {
         if (ok) refreshSession();
         return;
       }
-      // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip.
-      const { readFile } = await import("@tauri-apps/plugin-fs");
-      const data = await readFile(localPath);
-      await sessionWriteFile(sessionFileBrowserId, remotePath, data);
-      refreshSession();
+      // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip
+      // with no transfer-progress event, so surface its own feedback (#2906)
+      // rather than resolving silently.
+      const ok = await runBlockingTransfer(
+        async () => {
+          const { readFile } = await import("@tauri-apps/plugin-fs");
+          const data = await readFile(localPath);
+          await sessionWriteFile(sessionFileBrowserId, remotePath, data);
+        },
+        {
+          loading: `Uploading ${fileName}…`,
+          success: `Uploaded ${fileName}`,
+          errorLabel: `Upload "${fileName}"`,
+        }
+      );
+      if (ok) refreshSession();
     },
     [sessionFileBrowserId, sessionCurrentPath, refreshSession, sftpCapable, startUpload]
   );
@@ -311,7 +338,10 @@ export function useSessionFileSystem() {
 
     const destDir = sessionCurrentPath;
 
-    const pasteOne = async (clipEntry: FileEntry): Promise<void> => {
+    // Resolves to whether the leg drove the dedicated (event-emitting) transfer
+    // channel — `true` lets the caller defer the success toast to the event path,
+    // `false` marks a byte-based round-trip that owns its own toast (#2906).
+    const pasteOne = async (clipEntry: FileEntry): Promise<boolean> => {
       const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
 
       if (clipboard.sourceMode === "session") {
@@ -320,7 +350,9 @@ export function useSessionFileSystem() {
         // (#2421), so the retired `sftpSessionId` clipboard field is unused.
         const srcId = clipboard.terminalSessionId;
         if (clipboard.operation === "cut" && srcId === sessionFileBrowserId) {
+          // Same-session move: a metadata rename with no transfer-progress event.
           await sessionRenameFile(sessionFileBrowserId, clipEntry.path, destPath);
+          return false;
         } else {
           // Cross-session or copy. When BOTH endpoints are SFTP-backed, route the
           // copy through the dedicated download + upload transfer channel via a
@@ -337,6 +369,7 @@ export function useSessionFileSystem() {
               : await sessionHasExecCapability(srcSession)
                   .then(() => true)
                   .catch(() => false);
+          let tracked: boolean;
           if (sftpCapable && srcSftp) {
             const { tempDir, join } = await import("@tauri-apps/api/path");
             const tempPath = await join(
@@ -352,35 +385,46 @@ export function useSessionFileSystem() {
               // leaking temp file is auditable rather than silent.
               fireAndForget(localDelete(tempPath, false), `delete paste temp file ${tempPath}`);
             }
+            tracked = true;
           } else {
             // Byte-based fallback (Docker / FTP / remote-agent, or a mixed
             // transport where an endpoint has no SFTP channel): blocking
             // read/write round-trip, which registers no tracked transfer.
             const data = await sessionReadFile(srcSession, clipEntry.path);
             await sessionWriteFile(sessionFileBrowserId, destPath, data);
+            tracked = false;
           }
           if (clipboard.operation === "cut") {
             await sessionDeleteFile(srcSession, clipEntry.path);
           }
+          return tracked;
         }
       } else if (clipboard.sourceMode === "local") {
         // local→session: upload the local file to the remote destination.
         if (sftpCapable) {
           // SFTP-backed: stream over the dedicated transfer channel (#2421).
           await startUpload(sessionFileBrowserId, clipEntry.path, destPath);
-        } else {
-          // Byte-based fallback (Docker / FTP / remote-agent).
-          const { readFile } = await import("@tauri-apps/plugin-fs");
-          const data = await readFile(clipEntry.path);
-          await sessionWriteFile(sessionFileBrowserId, destPath, data);
+          return true;
         }
+        // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip
+        // with no transfer-progress event.
+        const { readFile } = await import("@tauri-apps/plugin-fs");
+        const data = await readFile(clipEntry.path);
+        await sessionWriteFile(sessionFileBrowserId, destPath, data);
+        return false;
       }
       // sftp→session: not supported (no legacy SFTP source pane remains post-#2421)
+      return false;
     };
 
     for (const clipEntry of clipboard.entries) {
-      const ok = await runTransfer("Paste", () => pasteOne(clipEntry), {
+      // A paste leg may drive the dedicated SFTP channel (event path owns the
+      // success toast) or fall back to a byte-based round-trip that emits no
+      // event; runMaybeTrackedTransfer surfaces the byte-based success itself
+      // without double-toasting the SFTP path (#2906).
+      const ok = await runMaybeTrackedTransfer("Paste", () => pasteOne(clipEntry), {
         loading: `Pasting ${clipEntry.name}…`,
+        success: `Pasted ${clipEntry.name}`,
       });
       // Abort on first failure so a cut clipboard is not cleared and the user is
       // not left with a partial, silently-incomplete paste.
