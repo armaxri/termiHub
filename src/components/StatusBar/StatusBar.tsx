@@ -45,6 +45,8 @@ import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator"
 import { TransferQueueIndicator } from "@/components/TransferQueue";
 import { Tooltip, Spinner, EmptyState, SearchInput, toast } from "@/components/ui";
 import { MetricSparkline } from "./MetricSparkline";
+import { PerCoreCpuBars } from "./PerCoreCpuBars";
+import { severityLevel } from "./monitoringSeverity";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
@@ -93,13 +95,6 @@ function typeSupportsMonitoring(
   }
   const typeInfo = connectionTypes.find((ct) => ct.typeId === typeId);
   return typeInfo?.capabilities.monitoring ?? false;
-}
-
-/** Get severity level for a percentage value. */
-function severityLevel(value: number): "normal" | "warning" | "critical" {
-  if (value >= 90) return "critical";
-  if (value >= 70) return "warning";
-  return "normal";
 }
 
 /**
@@ -1073,6 +1068,17 @@ function MonitoringDetailDropdown({
                   ariaLabel="CPU usage history"
                 />
               </div>
+              <DropdownMenu.Separator className="monitoring-menu__separator" />
+            </>
+          )}
+          {/*
+            Per-core CPU mini-bars (#3178). Rendered only when the collector
+            supplies per-core data — empty for a non-Linux SSH remote or an older
+            agent — so hosts without it are unaffected.
+          */}
+          {stats && stats.perCoreCpuPercent.length > 0 && (
+            <>
+              <PerCoreCpuBars values={stats.perCoreCpuPercent} />
               <DropdownMenu.Separator className="monitoring-menu__separator" />
             </>
           )}

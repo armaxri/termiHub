@@ -37,6 +37,12 @@ pub struct SystemStats {
     /// Network transmit throughput in bytes/sec (see [`Self::net_rx_bytes_per_sec`]).
     #[serde(default)]
     pub net_tx_bytes_per_sec: f64,
+    /// Per-logical-core CPU usage percentage (0.0–100.0), one entry per core in
+    /// core order. Empty when the metric is unavailable — a non-Linux SSH remote
+    /// (only `/proc/stat` supplies per-core lines) or an older agent that never
+    /// sends the field. `0.0` for every core on the first sample (no prior delta).
+    #[serde(default)]
+    pub per_core_cpu_percent: Vec<f64>,
 }
 
 /// Cumulative CPU time counters parsed from the aggregate `cpu` line in `/proc/stat`.
@@ -145,6 +151,7 @@ mod tests {
             swap_used_percent: 25.0,
             net_rx_bytes_per_sec: 1024.0,
             net_tx_bytes_per_sec: 2048.0,
+            per_core_cpu_percent: vec![10.0, 90.0],
         };
 
         let json = serde_json::to_string(&stats).unwrap();
@@ -164,6 +171,7 @@ mod tests {
         assert!(json.contains("\"swapUsedPercent\""));
         assert!(json.contains("\"netRxBytesPerSec\""));
         assert!(json.contains("\"netTxBytesPerSec\""));
+        assert!(json.contains("\"perCoreCpuPercent\""));
 
         let deserialized: SystemStats = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.hostname, "myhost");
@@ -176,6 +184,7 @@ mod tests {
         assert!((deserialized.swap_used_percent - 25.0).abs() < 0.01);
         assert!((deserialized.net_rx_bytes_per_sec - 1024.0).abs() < 0.01);
         assert!((deserialized.net_tx_bytes_per_sec - 2048.0).abs() < 0.01);
+        assert_eq!(deserialized.per_core_cpu_percent, vec![10.0, 90.0]);
     }
 
     /// New metrics fields default to 0 when absent from the JSON, so stats from
@@ -202,5 +211,6 @@ mod tests {
         assert_eq!(stats.swap_used_percent, 0.0);
         assert_eq!(stats.net_rx_bytes_per_sec, 0.0);
         assert_eq!(stats.net_tx_bytes_per_sec, 0.0);
+        assert!(stats.per_core_cpu_percent.is_empty());
     }
 }

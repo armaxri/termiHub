@@ -47,6 +47,7 @@ export function fakeStats(hostname: string, cpu = 10): SystemStats {
     swapUsedPercent: 25,
     netRxBytesPerSec: 1024,
     netTxBytesPerSec: 512,
+    perCoreCpuPercent: [cpu, cpu],
   };
 }
 

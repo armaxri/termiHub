@@ -49,6 +49,7 @@ function makeStats(overrides: Partial<SystemStats> = {}): SystemStats {
     swapUsedPercent: 25,
     netRxBytesPerSec: 1024,
     netTxBytesPerSec: 512,
+    perCoreCpuPercent: [10, 90],
     ...overrides,
   };
 }

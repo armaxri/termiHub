@@ -94,4 +94,11 @@ export interface SystemStats {
   netRxBytesPerSec: number;
   /** Network transmit throughput in bytes/sec (see {@link netRxBytesPerSec}). */
   netTxBytesPerSec: number;
+  /**
+   * Per-logical-core CPU usage percentage (0–100), one entry per core in core
+   * order. Empty when unavailable — a non-Linux SSH remote (only `/proc/stat`
+   * supplies per-core lines) or an older agent that never sends the field. `0`
+   * for every core on the first sample (no prior delta).
+   */
+  perCoreCpuPercent: number[];
 }

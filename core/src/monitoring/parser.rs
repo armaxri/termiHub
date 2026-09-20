@@ -24,8 +24,14 @@ use super::types::{CpuCounters, NetCounters, SystemStats};
 /// byte counters (NET throughput). It is appended last so a host that lacks it
 /// still yields every earlier metric; a failure there only drops the network
 /// leg (parsed as `0`), it does not lose the rest of the already-emitted output.
+///
+/// `grep '^cpu' /proc/stat` (replacing the former `head -1 /proc/stat`) emits the
+/// aggregate `cpu` line **and** every per-core `cpuN` line (#3178). The extra
+/// lines sit directly after the aggregate line; [`parse_stats`] consumes the
+/// whole `cpu*` block, so a host that reports only the aggregate line still
+/// parses correctly (empty per-core list).
 pub const MONITORING_COMMAND: &str =
-    "export LC_ALL=C LANG=C; hostname && cat /proc/loadavg && head -1 /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr && cat /proc/net/dev";
+    "export LC_ALL=C LANG=C; hostname && cat /proc/loadavg && grep '^cpu' /proc/stat && cat /proc/meminfo && cat /proc/uptime && df -Pk / && uname -sr && cat /proc/net/dev";
 
 /// Compute CPU usage percentage from the delta between two counter snapshots.
 /// Returns a value between 0.0 and 100.0.
@@ -65,10 +71,17 @@ pub fn parse_cpu_line(line: &str) -> CpuCounters {
 ///     && cat /proc/uptime && df -Pk / && uname -sr
 /// ```
 ///
-/// `cpu_usage_percent` and the `net_*_bytes_per_sec` fields in the returned
-/// `SystemStats` are set to 0.0; the caller is responsible for computing the
-/// actual values from the returned [`CpuCounters`] / [`NetCounters`] deltas.
-pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters, NetCounters), CoreError> {
+/// `cpu_usage_percent`, `per_core_cpu_percent`, and the `net_*_bytes_per_sec`
+/// fields in the returned `SystemStats` are left at their empty/zero defaults;
+/// the caller is responsible for computing the actual values from the returned
+/// aggregate [`CpuCounters`], the per-core `Vec<CpuCounters>`, and the
+/// [`NetCounters`] deltas.
+///
+/// The returned `Vec<CpuCounters>` holds one entry per `cpuN` line (#3178). It is
+/// empty when the host emits only the aggregate `cpu` line.
+pub fn parse_stats(
+    output: &str,
+) -> Result<(SystemStats, CpuCounters, Vec<CpuCounters>, NetCounters), CoreError> {
     let lines: Vec<&str> = output.lines().collect();
     if lines.len() < 6 {
         return Err(CoreError::Other(
@@ -96,10 +109,29 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters, NetCounter
             .unwrap_or(0.0),
     ];
 
-    // Line 2: aggregate cpu line from /proc/stat
+    // Line 2: aggregate cpu line from /proc/stat.
     let cpu_counters = parse_cpu_line(lines[2]);
 
-    // Lines 3+: /proc/meminfo — find MemTotal and MemAvailable.
+    // Lines 3..: optional per-core `cpuN` lines emitted by `grep '^cpu'` (#3178).
+    // Consume the consecutive block of lines whose token is `cpu<digit>` (the
+    // aggregate `cpu` line was already taken above). meminfo/uptime/df/uname
+    // never begin with `cpu`, so the first non-`cpuN` line ends the block; a host
+    // that reports only the aggregate line yields an empty per-core list.
+    let mut per_core_counters: Vec<CpuCounters> = Vec::new();
+    let mut cpu_block_end = 3;
+    while let Some(line) = lines.get(cpu_block_end) {
+        let is_per_core = line
+            .strip_prefix("cpu")
+            .and_then(|rest| rest.chars().next())
+            .is_some_and(|c| c.is_ascii_digit());
+        if !is_per_core {
+            break;
+        }
+        per_core_counters.push(parse_cpu_line(line));
+        cpu_block_end += 1;
+    }
+
+    // Lines after the cpu block: /proc/meminfo — find MemTotal and MemAvailable.
     //
     // `MemAvailable` was only added to /proc/meminfo in Linux 3.14 (2014).
     // Older/embedded kernels and some minimal /proc implementations omit it,
@@ -115,9 +147,9 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters, NetCounter
     let mut mem_sreclaimable_kb: u64 = 0;
     let mut swap_total_kb: u64 = 0;
     let mut swap_free_kb: u64 = 0;
-    let mut meminfo_end = 3;
+    let mut meminfo_end = cpu_block_end;
 
-    for (i, line) in lines.iter().enumerate().skip(3) {
+    for (i, line) in lines.iter().enumerate().skip(cpu_block_end) {
         if line.starts_with("MemTotal:") {
             mem_total_kb = parse_meminfo_value(line);
         } else if line.starts_with("MemAvailable:") {
@@ -251,9 +283,10 @@ pub fn parse_stats(output: &str) -> Result<(SystemStats, CpuCounters, NetCounter
         swap_used_percent,
         net_rx_bytes_per_sec: 0.0,
         net_tx_bytes_per_sec: 0.0,
+        per_core_cpu_percent: Vec::new(),
     };
 
-    Ok((stats, cpu_counters, net_counters))
+    Ok((stats, cpu_counters, per_core_counters, net_counters))
 }
 
 /// Extract the numeric kB value from a `/proc/meminfo` line like
@@ -385,7 +418,7 @@ Inter-|   Receive                                                |  Transmit
     fn parse_stats_basic() {
         let output = sample_output("cpu  10000 500 3000 80000 1000 0 200 0 0 0");
 
-        let (stats, counters, net) = parse_stats(&output).unwrap();
+        let (stats, counters, per_core, net) = parse_stats(&output).unwrap();
         assert_eq!(stats.hostname, "myhost");
         assert!((stats.load_average[0] - 0.15).abs() < 0.001);
         assert!((stats.load_average[1] - 0.10).abs() < 0.001);
@@ -412,6 +445,46 @@ Inter-|   Receive                                                |  Transmit
         assert!((stats.net_tx_bytes_per_sec - 0.0).abs() < 0.001);
         assert_eq!(net.rx_bytes, 5_000_000);
         assert_eq!(net.tx_bytes, 2_000_000);
+        // The shared sample has no per-core `cpuN` lines (it uses the aggregate
+        // `cpu` line only), so per-core parsing yields an empty list.
+        assert!(per_core.is_empty());
+    }
+
+    #[test]
+    fn parse_stats_parses_per_core_cpu_lines() {
+        // `grep '^cpu' /proc/stat` emits the aggregate `cpu` line followed by one
+        // `cpuN` line per logical core (#3178). The whole block sits between the
+        // loadavg and meminfo sections; parsing must pick up every `cpuN` line
+        // without shifting the downstream meminfo/df/uname/net parsing.
+        let output = "\
+myhost
+0.15 0.10 0.05 1/234 5678
+cpu  10000 500 3000 80000 1000 0 200 0 0 0
+cpu0 5000 250 1500 40000 500 0 100 0 0 0
+cpu1 5000 250 1500 40000 500 0 100 0 0 0
+MemTotal:       16384000 kB
+MemAvailable:   12000000 kB
+12345.67 45678.90
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/sda1        50000000  20000000  28000000      42% /
+Linux 5.15.0";
+
+        let (stats, counters, per_core, _net) = parse_stats(output).unwrap();
+        // Aggregate line still parsed correctly.
+        assert_eq!(counters.user, 10000);
+        assert_eq!(counters.idle, 80000);
+        // Two per-core lines → two entries, each with the cpuN fields.
+        assert_eq!(per_core.len(), 2);
+        assert_eq!(per_core[0].user, 5000);
+        assert_eq!(per_core[0].idle, 40000);
+        assert_eq!(per_core[1].system, 1500);
+        // Downstream sections are unaffected by the inserted per-core lines.
+        assert_eq!(stats.memory_total_kb, 16384000);
+        assert!((stats.uptime_seconds - 12345.67).abs() < 0.01);
+        assert_eq!(stats.disk_total_kb, 50000000);
+        assert_eq!(stats.os_info, "Linux 5.15.0");
+        // parse_stats leaves the computed percentages empty for the caller.
+        assert!(stats.per_core_cpu_percent.is_empty());
     }
 
     #[test]
@@ -518,7 +591,7 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        100000000  60000000  38000000      60% /
 Linux 6.1.0";
 
-        let (stats, _, _) = parse_stats(output).unwrap();
+        let (stats, _, _, _) = parse_stats(output).unwrap();
         // used = 8000000 - 2000000 = 6000000, percent = 75%
         assert!((stats.memory_used_percent - 75.0).abs() < 0.1);
         assert!((stats.disk_used_percent - 60.0).abs() < 0.1);
@@ -543,7 +616,7 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        100000000  60000000  38000000      60% /
 Linux 3.10.0";
 
-        let (stats, _, _) = parse_stats(output).unwrap();
+        let (stats, _, _, _) = parse_stats(output).unwrap();
         // available ≈ MemFree + Buffers + Cached + SReclaimable
         //         = 1_000_000 + 200_000 + 2_000_000 + 300_000 = 3_500_000
         // (SwapCached must NOT be counted).
@@ -574,7 +647,7 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        100000000  60000000  38000000      60% /
 Linux 6.1.0";
 
-        let (stats, _, _) = parse_stats(output).unwrap();
+        let (stats, _, _, _) = parse_stats(output).unwrap();
         assert_eq!(stats.memory_available_kb, 6_000_000);
         // used = 8_000_000 - 6_000_000 = 2_000_000 → 25%.
         assert!((stats.memory_used_percent - 25.0).abs() < 0.1);
@@ -655,7 +728,7 @@ SwapFree:              0 kB
 Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        10000000   5000000   5000000      50% /
 Linux 6.1.0";
-        let (stats, _, _) = parse_stats(output).unwrap();
+        let (stats, _, _, _) = parse_stats(output).unwrap();
         assert_eq!(stats.swap_total_kb, 0);
         assert_eq!(stats.swap_used_kb, 0);
         assert!((stats.swap_used_percent - 0.0).abs() < 0.001);
