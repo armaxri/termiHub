@@ -37,21 +37,16 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
-import { useAppStore, getActiveTab } from "@/store/appStore";
+import { useShallow } from "zustand/react/shallow";
+import { useAppStore, getActiveTab, collectLiveTabs } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
+import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
-import {
-  Button,
-  Tooltip,
-  Progress,
-  Input,
-  SearchInput,
-  Spinner,
-  EmptyState,
-  toast,
-} from "@/components/ui";
+import { Button, Tooltip, Input, SearchInput, Spinner, EmptyState, toast } from "@/components/ui";
+import { TransferEntryRow } from "@/components/TransferQueue";
+import { isPausableTransferConnectionType } from "@/types/transfer";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
@@ -986,12 +981,28 @@ export function FileBrowser() {
   // toolbar Refresh button stays as a manual backstop.
   useLocalDirWatch(mode === "local", mode === "local" ? currentPath : null, refresh);
 
-  // In-flight SFTP transfers (#1247); the footer shows those owned by the
-  // active browser session. Cancel routes through the shared transfer-control
-  // handler so the footer offers the same control language as the docked
-  // Transfer Queue panel (UX-020), not a divergent one.
-  const transfers = useAppStore((s) => s.transfers);
-  const { handleCancel } = useTransferControls();
+  // The footer transfer list is fully consolidated with the docked Transfer
+  // Queue panel (UX-020 / #2905): both surfaces render from the one authoritative
+  // `transfers` projection region (#2229) via the shared {@link TransferEntryRow}
+  // (its compact variant here), so there is one data source and one row/control
+  // component — no divergent bespoke list. The footer shows the rows owned by the
+  // session this browser is showing (full lifecycle incl. terminal retention).
+  const { queue: transferQueue } = useProjectedTransfers();
+  const { handlePause, handleResume, handleCancel, handleRetry } = useTransferControls();
+  const removeTransfer = useAppStore((s) => s.removeTransfer);
+  // Map each live tab's session id → connection type so a footer row can tell
+  // whether its executor supports pause/resume/retry (audit PROD-009); only the
+  // FTP rich-queue executor does. `useShallow` keeps this stable across progress
+  // ticks. Mirrors the Transfer Queue panel exactly.
+  const sessionConnectionTypes = useAppStore(
+    useShallow((s) => {
+      const map: Record<string, string> = {};
+      for (const tab of collectLiveTabs(s)) {
+        if (tab.sessionId) map[tab.sessionId] = tab.connectionType;
+      }
+      return map;
+    })
+  );
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   // Render cut (#2228): the copy-cut clipboard is sourced from the projected
   // client-scoped file-browser region (mirror-gated, falls back to appStore).
@@ -1504,16 +1515,16 @@ export function FileBrowser() {
     );
   }
 
-  // In-flight transfers owned by the session this browser is showing (#1247).
-  // Only these belong in the footer; other sessions' transfers live in the Open
-  // Connections panel. The list above stays live regardless. Since the SFTP
-  // convergence (#2421 / #2422) an SFTP-backed session browser (SSH) registers its
-  // transfers on the `transfers` map keyed by its `sessionFileBrowserId`. A
-  // byte-based session backend (Docker / FTP / agent) registers no transfers, so
-  // its footer stays empty as before.
+  // Transfers owned by the session this browser is showing (#1247 / #2905). Only
+  // these belong in the footer; other sessions' transfers live in the docked
+  // Transfer Queue panel. The list above stays live regardless. Sourced from the
+  // authoritative `transfers` region and filtered by session id, so the footer is
+  // the same single source of truth as the panel (full lifecycle incl. terminal
+  // retention). A byte-based session backend that registers no transfers leaves
+  // the footer empty as before.
   const footerSessionId = sessionFileBrowserId;
   const activeTransfers = footerSessionId
-    ? Object.values(transfers).filter((t) => t.sessionId === footerSessionId)
+    ? Object.values(transferQueue).filter((t) => t.sessionId === footerSessionId)
     : [];
 
   return (
@@ -1907,46 +1918,20 @@ export function FileBrowser() {
       />
       {activeTransfers.length > 0 && (
         <div className="file-browser__transfers" data-testid="file-browser-transfers">
-          {activeTransfers.map((t) => {
-            const indeterminate = t.total <= 0;
-            const pct = indeterminate ? 0 : Math.round((t.transferred / t.total) * 100);
-            const verb = t.direction === "download" ? "Downloading" : "Uploading";
-            return (
-              <div
-                key={t.transferId}
-                className="file-browser__transfer"
-                data-testid="file-browser-transfer"
-              >
-                <div className="file-browser__transfer-head">
-                  {t.direction === "download" ? <Download size={12} /> : <Upload size={12} />}
-                  <span className="file-browser__transfer-name" title={t.fileName}>
-                    {t.fileName}
-                  </span>
-                  <span className="file-browser__transfer-pct">
-                    {indeterminate ? formatBytes(t.transferred) : `${pct}%`}
-                  </span>
-                  <Tooltip content="Cancel" side="top">
-                    <Button
-                      iconOnly
-                      variant="ghost"
-                      size="sm"
-                      icon={<X size={14} />}
-                      className="file-browser__transfer-cancel"
-                      data-testid="transfer-cancel"
-                      onClick={() => handleCancel(t.transferId)}
-                      aria-label={`Cancel transfer of ${t.fileName}`}
-                    />
-                  </Tooltip>
-                </div>
-                <Progress
-                  value={t.transferred}
-                  max={t.total}
-                  indeterminate={indeterminate}
-                  label={`${verb} ${t.fileName}`}
-                />
-              </div>
-            );
-          })}
+          {activeTransfers.map((t) => (
+            <div key={t.id} data-testid="file-browser-transfer">
+              <TransferEntryRow
+                entry={t}
+                compact
+                pausable={isPausableTransferConnectionType(sessionConnectionTypes[t.sessionId])}
+                onPause={handlePause}
+                onResume={handleResume}
+                onCancel={handleCancel}
+                onRetry={handleRetry}
+                onRemove={removeTransfer}
+              />
+            </div>
+          ))}
         </div>
       )}
     </div>

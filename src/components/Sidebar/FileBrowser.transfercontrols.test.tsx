@@ -1,9 +1,11 @@
 /**
- * UX-020: the in-browser transfer footer must offer the SAME control language
- * as the docked Transfer Queue panel, not a divergent one. Its Cancel control
- * routes through the shared `useTransferControls` handler (the region
- * `transfer_cancel` command + the same success/no-op/error toasts) rather than
- * the old bespoke danger button wired to a different code path.
+ * UX-020 / #2905: the in-browser transfer footer is fully consolidated with the
+ * docked Transfer Queue panel — it renders from the one authoritative `transfers`
+ * projection region (not a divergent transient map) via the shared
+ * {@link TransferEntryRow} in its compact variant, so both surfaces share one
+ * data source and one row/control component. Its controls route through the
+ * shared `useTransferControls` handlers (region commands + the same
+ * success/no-op/error toasts), it retains terminal rows, and it offers Remove.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -12,10 +14,17 @@ import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
 import { setupFileBrowsersRegion, seedFileBrowsers } from "@/test/fileBrowsersRegionTestHarness";
+import {
+  installTransferHarness,
+  transfersView,
+  fakeTransferEntry,
+  type FakeTransferTransport,
+} from "@/test/transferHarness";
+import { ensureTransfersSubscribed } from "@/store/transfersBridge";
 import { FileBrowser } from "./FileBrowser";
 import { TooltipProvider } from "@/components/ui";
 import type { TerminalTab, LeafPanel } from "@/types/terminal";
-import type { TransferState } from "@/types/connection";
+import type { TransferEntry } from "@/types/transfer";
 import { seedLayoutState } from "@/test/layoutState";
 
 const toastSuccess = vi.fn();
@@ -57,6 +66,8 @@ const mockedInvoke = vi.mocked(invoke);
 
 let container: HTMLDivElement;
 let root: Root;
+let transport: FakeTransferTransport;
+let teardown: () => void;
 
 function makeTab(overrides: Partial<TerminalTab>): TerminalTab {
   return {
@@ -91,24 +102,30 @@ function setFileBrowserCapableType(typeId: string, displayName: string) {
   });
 }
 
-const activeTransfer: TransferState = {
-  transferId: "t1",
-  sessionId: "ssh-sess-1",
-  direction: "download",
-  fileName: "big.iso",
-  transferred: 50,
-  total: 100,
-  phase: "transferring",
-};
+/** An active download owned by the browsed session, seeded into the region. */
+function activeTransfer(overrides: Partial<TransferEntry> = {}): TransferEntry {
+  return fakeTransferEntry("t1", {
+    sessionId: "ssh-sess-1",
+    direction: "download",
+    name: "big.iso",
+    state: "active",
+    transferred: 50,
+    totalBytes: 100,
+    percent: 50,
+    ...overrides,
+  });
+}
 
 setupFileBrowsersRegion();
 
-describe("FileBrowser — in-browser transfer footer uses the shared controls (UX-020)", () => {
-  beforeEach(() => {
+describe("FileBrowser — in-browser transfer footer is region-backed (UX-020 / #2905)", () => {
+  beforeEach(async () => {
+    useAppStore.setState(useAppStore.getInitialState());
+    ({ transport, teardown } = installTransferHarness());
+    await ensureTransfersSubscribed();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    useAppStore.setState(useAppStore.getInitialState());
     toastSuccess.mockClear();
     toastError.mockClear();
     toastInfo.mockClear();
@@ -123,13 +140,15 @@ describe("FileBrowser — in-browser transfer footer uses the shared controls (U
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    teardown();
     vi.clearAllMocks();
   });
 
-  async function renderSessionWithTransfer() {
+  async function renderSessionWithTransfers(entries: TransferEntry[]) {
     setActiveTab(makeTab({}));
     setFileBrowserCapableType("ssh", "SSH");
-    useAppStore.setState({ sidebarView: "files", transfers: { t1: activeTransfer } });
+    useAppStore.setState({ sidebarView: "files" });
+    transport.seed(transfersView(entries));
     seedFileBrowsers({
       mode: "session",
       session: { path: "/remote", entries: [], loading: false, error: null },
@@ -144,15 +163,27 @@ describe("FileBrowser — in-browser transfer footer uses the shared controls (U
     await flushAsync();
   }
 
-  it("renders the footer transfer row for the active session", async () => {
-    await renderSessionWithTransfer();
+  it("renders the shared compact row for the active session's transfer", async () => {
+    await renderSessionWithTransfers([activeTransfer()]);
     const rows = container.querySelectorAll('[data-testid="file-browser-transfer"]');
     expect(rows.length).toBe(1);
+    expect(container.querySelector('[data-testid="transfer-row"]')).toBeTruthy();
     expect(container.textContent).toContain("big.iso");
   });
 
+  it("shows only transfers owned by the browsed session", async () => {
+    await renderSessionWithTransfers([
+      activeTransfer(),
+      fakeTransferEntry("t2", { sessionId: "other-sess", name: "elsewhere.bin" }),
+    ]);
+    const rows = container.querySelectorAll('[data-testid="file-browser-transfer"]');
+    expect(rows.length).toBe(1);
+    expect(container.textContent).toContain("big.iso");
+    expect(container.textContent).not.toContain("elsewhere.bin");
+  });
+
   it("cancels via the shared control (region transfer_cancel + success toast)", async () => {
-    await renderSessionWithTransfer();
+    await renderSessionWithTransfers([activeTransfer()]);
     const cancelBtn = container.querySelector(
       '[data-testid="transfer-cancel"]'
     ) as HTMLButtonElement;
@@ -166,5 +197,34 @@ describe("FileBrowser — in-browser transfer footer uses the shared controls (U
     expect(mockedInvoke).toHaveBeenCalledWith("transfer_cancel", { transferId: "t1" });
     expect(toastSuccess).toHaveBeenCalledWith("Transfer cancelled");
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("retains a terminal (completed) row and offers Remove, dispatching transfer.remove", async () => {
+    await renderSessionWithTransfers([
+      activeTransfer({ state: "completed", percent: 100, transferred: 100 }),
+    ]);
+    // Terminal rows are now retained (single source of truth), unlike the old
+    // transient footer that cleared on completion.
+    expect(container.querySelector('[data-testid="file-browser-transfer"]')).toBeTruthy();
+    expect(container.querySelector('[data-testid="transfer-cancel"]')).toBeNull();
+    const removeBtn = container.querySelector(
+      '[data-testid="transfer-remove"]'
+    ) as HTMLButtonElement;
+    expect(removeBtn).toBeTruthy();
+
+    await act(async () => {
+      removeBtn.click();
+    });
+    await flushAsync();
+
+    expect(transport.kinds()).toContain("transfer.remove");
+    // The region fold drops the row, so the footer empties.
+    expect(container.querySelector('[data-testid="file-browser-transfer"]')).toBeNull();
+  });
+
+  it("hides Pause for a non-pausable (SSH/SFTP) footer transfer while keeping Cancel", async () => {
+    await renderSessionWithTransfers([activeTransfer()]);
+    expect(container.querySelector('[data-testid="transfer-pause"]')).toBeNull();
+    expect(container.querySelector('[data-testid="transfer-cancel"]')).toBeTruthy();
   });
 });

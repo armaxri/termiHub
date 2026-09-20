@@ -183,6 +183,47 @@
   flex: 0 0 auto;
 }
 
+/*
+ * Compact variant (UX-020 / #2905): the file-browser sidebar footer is far
+ * narrower (~250–350px) than the docked panel, so the wide multi-column row is
+ * restacked as a two-line row — a head line (direction, name, percent/status,
+ * controls) over a full-width progress bar — while reusing the same tokens,
+ * status colours, controls, and Progress primitive as the wide row.
+ */
+.transfer-row--compact {
+  flex-direction: column;
+  align-items: stretch;
+  height: auto;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) 0;
+  border-bottom: none;
+}
+
+.transfer-row--compact:hover {
+  background: transparent;
+}
+
+.transfer-row__compact-head {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.transfer-row--compact .transfer-row__name {
+  flex: 1 1 auto;
+  color: var(--text-primary);
+}
+
+.transfer-row--compact .transfer-row__pct {
+  flex: 0 0 auto;
+}
+
+.transfer-row--compact .transfer-row__status {
+  flex: 0 0 auto;
+}
+
 .transfer-queue__footer {
   display: flex;
   gap: var(--spacing-sm);
