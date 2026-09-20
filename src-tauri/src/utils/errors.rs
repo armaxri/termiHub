@@ -17,11 +17,10 @@ pub mod codes {
     /// Unlike the other slugs, auth's marker is emitted through the thiserror
     /// `#[error("[thub-code:auth_failed] {0}")]` attribute on
     /// [`super::TerminalError::AuthFailed`] (a proc-macro attribute cannot
-    /// reference a `const`), so this constant is not read on any production path.
-    /// It is kept here for taxonomy completeness — the single documented set of
-    /// slugs — and is verified to match the hard-coded attribute by the
-    /// `auth_failed_code_matches_the_hardcoded_attribute` test.
-    #[allow(dead_code)]
+    /// reference a `const`). It is consumed by [`super::IpcErrorCode::from_slug`]
+    /// when mapping a marker slug back to its code, and is verified to match the
+    /// hard-coded attribute by the `auth_failed_code_matches_the_hardcoded_attribute`
+    /// test.
     pub const AUTH_FAILED: &str = "auth_failed";
     /// The host could not be reached (TCP/DNS/transport failure).
     pub const UNREACHABLE: &str = "unreachable";
@@ -42,6 +41,101 @@ pub mod codes {
 /// marker before display, so it never leaks into user-visible text.
 pub fn with_code(code: &str, message: impl std::fmt::Display) -> String {
     format!("[thub-code:{code}] {message}")
+}
+
+/// The literal that opens a `[thub-code:<slug>] ` machine marker in a message.
+const MARKER_OPEN: &str = "[thub-code:";
+
+/// Extract the machine-code slug from the first `[thub-code:<slug>]` marker in
+/// `s`, if present. Used to route the constructor-tagged connect/agent codes
+/// (which ride inside the message) to their [`IpcErrorCode`].
+fn marker_slug(s: &str) -> Option<&str> {
+    let start = s.find(MARKER_OPEN)?;
+    let rest = &s[start + MARKER_OPEN.len()..];
+    let end = rest.find(']')?;
+    Some(&rest[..end])
+}
+
+/// Remove the first `[thub-code:<slug>]` marker (and one following whitespace)
+/// from `s` and trim, mirroring the frontend `parseBackendError` marker removal
+/// so the human message in the IPC envelope is what the frontend renders today.
+fn strip_marker(s: &str) -> String {
+    let Some(start) = s.find(MARKER_OPEN) else {
+        return s.to_string();
+    };
+    let Some(close_rel) = s[start..].find(']') else {
+        return s.to_string();
+    };
+    let mut end = start + close_rel + 1;
+    if let Some(c) = s[end..].chars().next() {
+        if c.is_whitespace() {
+            end += c.len_utf8();
+        }
+    }
+    format!("{}{}", &s[..start], &s[end..]).trim().to_string()
+}
+
+/// The stable, locale-independent machine code carried on the structured IPC
+/// error envelope (`{ code, message, details }`) that [`TerminalError`]
+/// serializes to (ARCH-006 / TAURI-008 / ERR-008).
+///
+/// Supersets the five pre-existing `[thub-code:*]` marker slugs (`auth_failed`,
+/// `unreachable`, `agent_missing`, `agent_outdated`, `already_connected` — see
+/// [`codes`]) with one slug per [`TerminalError`] variant category, so every one
+/// of the ~144 `TerminalError`-returning commands now delivers a
+/// machine-classifiable code rather than an opaque string. Exported to the
+/// frontend as `src/types/generated/IpcErrorCode.ts`; the frontend classifier
+/// (`classifyAgentError.ts` / `backendErrorCode.ts`) keys off these slugs, which
+/// keeps the two type-checked against drift.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[serde(rename_all = "snake_case")]
+pub enum IpcErrorCode {
+    // The five pre-existing marker slugs (their category is tagged inside the
+    // message via [`with_code`] / the `AuthFailed` `#[error(...)]` attribute).
+    AuthFailed,
+    Unreachable,
+    AgentMissing,
+    AgentOutdated,
+    AlreadyConnected,
+    // One slug per remaining `TerminalError` variant category.
+    SessionNotFound,
+    SpawnFailed,
+    WriteFailed,
+    ResizeFailed,
+    ConnectionFailed,
+    SshError,
+    SftpError,
+    EditorError,
+    RemoteError,
+    Cancelled,
+    SftpSessionNotFound,
+    TunnelError,
+    WorkspaceError,
+    MacroError,
+    SessionHistoryError,
+    WorkflowError,
+    NetworkError,
+    NotFound,
+    InternalError,
+    EmbeddedServerError,
+    Io,
+}
+
+impl IpcErrorCode {
+    /// Map a `[thub-code:<slug>]` marker slug (the pre-existing wire codes) to its
+    /// enum value, if it names one of the recognized marker categories.
+    fn from_slug(slug: &str) -> Option<Self> {
+        match slug {
+            codes::AUTH_FAILED => Some(Self::AuthFailed),
+            codes::UNREACHABLE => Some(Self::Unreachable),
+            codes::AGENT_MISSING => Some(Self::AgentMissing),
+            codes::AGENT_OUTDATED => Some(Self::AgentOutdated),
+            codes::ALREADY_CONNECTED => Some(Self::AlreadyConnected),
+            _ => None,
+        }
+    }
 }
 
 /// Errors that can occur in terminal operations.
@@ -147,6 +241,51 @@ impl TerminalError {
         TerminalError::RemoteError(with_code(codes::ALREADY_CONNECTED, message))
     }
 
+    /// The stable, locale-independent machine [`IpcErrorCode`] for this error —
+    /// the `code` field of the serialized IPC envelope. The connect/agent
+    /// categories tagged inside the message marker (the pre-existing wire codes)
+    /// are routed through [`marker_slug`]; every other variant maps directly to
+    /// its category.
+    pub fn code(&self) -> IpcErrorCode {
+        use IpcErrorCode as C;
+        match self {
+            TerminalError::SessionNotFound(_) => C::SessionNotFound,
+            TerminalError::SpawnFailed(_) => C::SpawnFailed,
+            TerminalError::AuthFailed(_) => C::AuthFailed,
+            TerminalError::WriteFailed(_) => C::WriteFailed,
+            TerminalError::ResizeFailed(_) => C::ResizeFailed,
+            TerminalError::ConnectionFailed(msg) => marker_slug(msg)
+                .and_then(C::from_slug)
+                .unwrap_or(C::ConnectionFailed),
+            TerminalError::SshError(_) => C::SshError,
+            TerminalError::SftpError(_) => C::SftpError,
+            TerminalError::EditorError(_) => C::EditorError,
+            TerminalError::RemoteError(msg) => marker_slug(msg)
+                .and_then(C::from_slug)
+                .unwrap_or(C::RemoteError),
+            TerminalError::Cancelled => C::Cancelled,
+            TerminalError::SftpSessionNotFound(_) => C::SftpSessionNotFound,
+            TerminalError::TunnelError(_) => C::TunnelError,
+            TerminalError::WorkspaceError(_) => C::WorkspaceError,
+            TerminalError::MacroError(_) => C::MacroError,
+            TerminalError::SessionHistoryError(_) => C::SessionHistoryError,
+            TerminalError::WorkflowError(_) => C::WorkflowError,
+            TerminalError::NetworkError(_) => C::NetworkError,
+            TerminalError::NotFound(_) => C::NotFound,
+            TerminalError::InternalError(_) => C::InternalError,
+            TerminalError::EmbeddedServerError(_) => C::EmbeddedServerError,
+            TerminalError::Io(_) => C::Io,
+        }
+    }
+
+    /// The human-readable message for the IPC envelope: today's `Display` text
+    /// with any `[thub-code:*]` marker removed, so frontend paths reading
+    /// `.message` are byte-for-byte unaffected while the machine signal moves to
+    /// the `code` field.
+    fn display_message(&self) -> String {
+        strip_marker(&self.to_string())
+    }
+
     /// Map a core [`SessionError`] to a [`TerminalError`] for a **direct
     /// terminal connect**, preserving the typed [`SessionError::AuthFailed`] as
     /// [`TerminalError::AuthFailed`] and [`SessionError::ConnectionFailed`] as a
@@ -189,11 +328,26 @@ impl From<termihub_core::embedded_servers::service::EmbeddedServerError> for Ter
 }
 
 impl serde::Serialize for TerminalError {
+    /// Serialize as the structured IPC error envelope `{ code, message, details }`
+    /// (ARCH-006 / TAURI-008 / ERR-008), superseding the legacy flat string.
+    ///
+    /// - `code` is the stable, locale-independent machine slug ([`IpcErrorCode`]).
+    /// - `message` is today's human `Display` text with any `[thub-code:*]` marker
+    ///   stripped, so frontend paths reading `.message` are unaffected.
+    /// - `details` is reserved for future structured payloads (currently `null`).
+    ///
+    /// The frontend `parseBackendError` shim reads both this object shape and the
+    /// legacy string during the migration.
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
     {
-        serializer.serialize_str(&self.to_string())
+        use serde::ser::SerializeStruct;
+        let mut envelope = serializer.serialize_struct("TerminalError", 3)?;
+        envelope.serialize_field("code", &self.code())?;
+        envelope.serialize_field("message", &self.display_message())?;
+        envelope.serialize_field("details", &Option::<()>::None)?;
+        envelope.end()
     }
 }
 
@@ -352,10 +506,108 @@ mod tests {
                 rendered.contains(human),
                 "error must retain the human message, got {rendered:?}"
             );
-            // Same string is what serializes to the IPC boundary.
+            // The serialized envelope now carries the category in its `code`
+            // field, and the machine marker is stripped from the human `message`.
             let json = serde_json::to_string(&err).expect("serialize");
-            assert!(json.contains(&format!("[thub-code:{code}]")));
+            assert!(
+                json.contains(&format!("\"code\":\"{code}\"")),
+                "envelope must carry the {code} code, got {json}"
+            );
+            assert!(
+                !json.contains("[thub-code:"),
+                "the machine marker must be stripped from the serialized message, got {json}"
+            );
         }
+    }
+
+    /// The structured IPC envelope carries the stable machine `code` slug and a
+    /// marker-stripped human `message` for representative `TerminalError`
+    /// variants (ARCH-006 / TAURI-008 / ERR-008), and reserves a null `details`.
+    #[test]
+    fn serializes_structured_envelope_with_code_and_stripped_message() {
+        let cases = [
+            (
+                TerminalError::SessionNotFound("s1".to_string()),
+                "session_not_found",
+                "Session not found: s1",
+            ),
+            (
+                TerminalError::SpawnFailed("boom".to_string()),
+                "spawn_failed",
+                "Failed to spawn terminal: boom",
+            ),
+            (
+                TerminalError::AuthFailed("Authentication failed".to_string()),
+                "auth_failed",
+                "Authentication failed",
+            ),
+            (
+                TerminalError::unreachable("Connection refused"),
+                "unreachable",
+                "Connection failed: Connection refused",
+            ),
+            (
+                TerminalError::agent_missing("Exec failed"),
+                "agent_missing",
+                "Remote agent error: Exec failed",
+            ),
+            (
+                TerminalError::NotFound("x".to_string()),
+                "not_found",
+                "Not found: x",
+            ),
+            (
+                TerminalError::InternalError("oops".to_string()),
+                "internal_error",
+                "Internal error: oops",
+            ),
+        ];
+        for (err, code, message) in cases {
+            let value: serde_json::Value =
+                serde_json::from_str(&serde_json::to_string(&err).expect("serialize"))
+                    .expect("valid JSON object");
+            assert_eq!(value["code"], code, "wrong code for {err:?}: {value}");
+            assert_eq!(
+                value["message"], message,
+                "wrong message for {err:?}: {value}"
+            );
+            assert!(
+                value["details"].is_null(),
+                "details must be null, got {value}"
+            );
+            assert!(
+                !value["message"]
+                    .as_str()
+                    .expect("message is a string")
+                    .contains("[thub-code:"),
+                "message must not contain the machine marker, got {value}"
+            );
+        }
+    }
+
+    /// `TerminalError::code()` routes the constructor-tagged agent markers to
+    /// their [`IpcErrorCode`] and falls back to the generic category when a
+    /// message carries no marker.
+    #[test]
+    fn code_routes_marker_variants_and_falls_back() {
+        assert_eq!(
+            TerminalError::agent_outdated("v").code(),
+            IpcErrorCode::AgentOutdated
+        );
+        assert_eq!(
+            TerminalError::already_connected("a").code(),
+            IpcErrorCode::AlreadyConnected
+        );
+        // A plain (uncoded) RemoteError/ConnectionFailed falls back to its
+        // generic category rather than mis-reading a marker.
+        assert_eq!(
+            TerminalError::RemoteError("plain".to_string()).code(),
+            IpcErrorCode::RemoteError
+        );
+        assert_eq!(
+            TerminalError::ConnectionFailed("plain".to_string()).code(),
+            IpcErrorCode::ConnectionFailed
+        );
     }
 
     /// A core `ConnectionFailed` maps to a coded `unreachable` on both connect
