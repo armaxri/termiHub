@@ -1215,7 +1215,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2px;
+  padding: var(--spacing-xxs);
   border: none;
   border-radius: var(--radius-sm);
   background: transparent;
