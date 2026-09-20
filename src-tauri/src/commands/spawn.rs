@@ -81,6 +81,32 @@ fn saved_entry<'a>(
     entry_id.and_then(|id| settings.entries.iter().find(|e| e.id == id))
 }
 
+/// The connection id a shell spawn should use, honoring a context-menu entry's
+/// saved per-entry connection (#2997).
+///
+/// An explicit `--connection` request value wins; otherwise the saved
+/// `connection_id` of the entry addressed by `--entry-id` is used. Registration
+/// emits `spawn --entry-id <id> [--kind <k>] --location <loc>` and never a
+/// `--connection`, so without this fallback an SSH/WSL entry's saved connection
+/// is never seen at spawn time. Blank values on either side are treated as
+/// absent so a stray empty string never masks the entry fallback.
+fn effective_connection(
+    request_connection: Option<&str>,
+    entry: Option<&ShellEntry>,
+) -> Option<String> {
+    request_connection
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            entry
+                .and_then(|e| e.connection_id.as_deref())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        })
+}
+
 /// Map the frontend's runtime token onto a [`ContainerRuntime`]. Anything else —
 /// including no token at all — means "detect it", which is what every pre-picker
 /// spawn did.
@@ -173,6 +199,10 @@ pub fn resolve_shell_spawn(
             .and_then(ShellEntry::resolved_shell)
             .map(str::to_string)
     });
+    // A context-menu click carries no `--connection`, so fall back to the saved
+    // per-entry connection (#2997) — this is what makes an SSH/WSL entry's saved
+    // connection take effect for a plain context-menu click.
+    let connection = effective_connection(connection.as_deref(), entry);
     let request = SpawnRequest {
         location,
         connection,
