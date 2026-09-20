@@ -9,7 +9,9 @@ import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { useProjectedSessionLifecycleMaps } from "@/store/useSessionLifecycle";
 import { TerminalTab } from "@/types/terminal";
 import type { WindowInfo } from "@/types/window";
-import { listWindows } from "@/services/api";
+import { listWindows, focusWindow } from "@/services/api";
+import { useWindowInfo } from "@/hooks/useWindowInfo";
+import { resolveControllingWindow } from "@/utils/tabOwnership";
 import { frontendLog } from "@/utils/frontendLog";
 import { getAllLeaves } from "@/utils/panelTree";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
@@ -64,6 +66,19 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const broadcast = useProjectedBroadcast();
   const broadcastActive = broadcast.active;
   const broadcastTargetTabIds = broadcast.targetTabIds;
+  // "Controlled by another window" badge (#2872): a session has a single owning
+  // window (backend `session → window` map, mirrored into `sessionOwners` and
+  // kept fresh by `session-ownership-changed`). A tab rendering a session this
+  // window does not own shows a persistent badge (resize disabled here). Only
+  // relevant with more than one window open, so single-window users see no change.
+  const sessionOwners = useAppStore((s) => s.sessionOwners);
+  const { label: windowLabel, count: windowCount } = useWindowInfo();
+  const multiWindow = windowCount > 1;
+  const handleFocusOwningWindow = (label: string) => {
+    focusWindow(label).catch((err) =>
+      frontendLog("multi_window", `Failed to focus owning window ${label}: ${String(err)}`)
+    );
+  };
   const { clearTerminal, saveTerminalToFile, copyTerminalToClipboard, openTerminalInEditor } =
     useTerminalRegistry();
 
@@ -240,6 +255,13 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onMoveToWindow={(label) => handleMoveTabToWindow(tab.id, { kind: "existing", label })}
               displayTitle={getEditorTabDisplayTitle(tab, allTabs)}
               isBroadcast={broadcastActive && broadcastTargetTabIds.has(tab.id)}
+              controlledByWindow={resolveControllingWindow({
+                sessionId: tab.sessionId,
+                sessionOwners,
+                windowLabel,
+                multiWindow,
+              })}
+              onFocusOwningWindow={handleFocusOwningWindow}
               status={
                 tab.contentType === "terminal"
                   ? deriveTabStatus(
