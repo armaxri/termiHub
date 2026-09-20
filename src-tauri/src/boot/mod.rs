@@ -13,6 +13,7 @@
 
 use super::*;
 
+pub(crate) mod builder;
 pub(crate) mod logging;
 
 pub(crate) fn init_platform_and_capture(
