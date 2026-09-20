@@ -63,7 +63,6 @@ async-trait = { workspace = true }
 tokio-util = { version = "0.7", features = ["rt"] }
 jsonrpsee = { version = "0.24", default-features = false, features = ["server"] }
 russh = { workspace = true }
-sysinfo = "0.38"
 dirs = "6"
 # Agent-side GitHub self-update (#1355): outbound HTTP to the Releases API and
 # asset download, semver comparison, and SHA-256 integrity verification of the
