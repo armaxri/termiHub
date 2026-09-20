@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::State;
+use tauri::{Manager, State};
 use tracing::{debug, info};
 
 use termihub_core::connection::ConnectionTypeInfo;
@@ -14,7 +14,9 @@ use termihub_core::files::FileEntry;
 
 use crate::connection::manager::ConnectionManager;
 use crate::files::sftp::{ElevatedWriteResult, Writability};
-use crate::files::transfer::{self, TransferDirection, TransferRegistry};
+use crate::files::transfer::{
+    self, TransferDirection, TransferPersistenceManager, TransferRegistry,
+};
 use crate::session::line_ending::LineEnding;
 use crate::session::manager::{
     PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager,
@@ -657,6 +659,20 @@ pub async fn session_download(
         &remote_path,
         0,
     );
+    // Durable queue (PROD-0011): persist this transfer's metadata (paths and
+    // references only — never credentials) so a restart can rehydrate it as
+    // paused. Best-effort; skipped if persistence is unavailable.
+    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+        pm.record_registration(
+            &transfer_id,
+            &session_id,
+            TransferDirection::Download,
+            &file_name,
+            &remote_path,
+            Some(local_path.clone()),
+            0,
+        );
+    }
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {
@@ -703,6 +719,19 @@ pub async fn session_upload(
         &remote_path,
         0,
     );
+    // Durable queue (PROD-0011): persist metadata only (paths/references, never
+    // credentials) so a restart can rehydrate this upload as paused.
+    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+        pm.record_registration(
+            &transfer_id,
+            &session_id,
+            TransferDirection::Upload,
+            &file_name,
+            &remote_path,
+            Some(local_path.clone()),
+            0,
+        );
+    }
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
     tauri::async_runtime::spawn(async move {

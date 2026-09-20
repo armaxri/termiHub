@@ -300,6 +300,12 @@ pub fn register_transfer_intents(registry: &mut HandlerRegistry, app_handle: App
     registry.route("transfer.remove", move |intent, projector| {
         let store = store_of(&handle)?;
         let id = required_str(intent, "id")?;
+        // Durable queue (PROD-0011): a removed row must not resurrect on the next
+        // launch, so prune it from the persisted queue too. Best-effort; a live
+        // transfer's own terminal transition already prunes it at the source.
+        if let Some(pm) = handle.try_state::<crate::files::transfer::TransferPersistenceManager>() {
+            pm.remove(&id);
+        }
         store.remove(&id);
         Ok(publish_transfers(projector, &store))
     });
