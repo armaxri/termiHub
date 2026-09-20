@@ -23,8 +23,10 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
-use tauri::{AppHandle, Emitter};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter, Manager};
 use termihub_core::backends::ssh::SftpTransferChannel;
 use termihub_core::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -33,6 +35,9 @@ use tracing::{debug, info, warn};
 
 use crate::utils::errors::TerminalError;
 
+pub mod persist;
+pub mod persist_manager;
+pub mod persist_storage;
 pub mod registry;
 pub mod retry;
 pub mod scheduler;
@@ -42,10 +47,25 @@ pub mod state;
 #[cfg(feature = "ftp")]
 pub mod ftp;
 
+pub use persist::{PersistedTransfer, PersistedTransferStatus, PersistedTransferStore};
+pub use persist_manager::TransferPersistenceManager;
 pub use registry::{TransferRegistry, TransferSnapshot};
 pub use retry::{backoff_delay, resume_offset, ThroughputMeter, BASE_BACKOFF};
 pub use scheduler::{Admission, SessionScheduler, DEFAULT_MAX_CONCURRENT};
 pub use state::{InvalidTransition, TransferEvent, TransferState, TransferStateTag, MAX_RETRIES};
+
+/// Set while the app-quit teardown's cancel-all sweep is running (PROD-0011).
+///
+/// [`TransferRegistry::cancel_all`] flips this on entry so the persistence layer
+/// can tell a *teardown-induced* cancellation (which must leave in-flight records
+/// intact, to rehydrate as paused next launch) from a *genuine user cancel*
+/// (which prunes the record). It is only ever set — the process is exiting.
+pub(crate) static QUEUE_TEARDOWN: AtomicBool = AtomicBool::new(false);
+
+/// Whether the app-quit teardown cancel-all sweep has begun.
+pub(crate) fn is_queue_teardown() -> bool {
+    QUEUE_TEARDOWN.load(Ordering::SeqCst)
+}
 
 /// Chunk size for the copy loop. Large enough to keep round-trips amortised,
 /// small enough that cancel latency stays sub-second.
@@ -59,7 +79,7 @@ const PROGRESS_THROTTLE: Duration = Duration::from_millis(100);
 pub const TRANSFER_PROGRESS_EVENT: &str = "transfer-progress";
 
 /// Direction of a transfer, driving the icon / verb in the UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TransferDirection {
     Download,
@@ -194,6 +214,21 @@ pub fn app_progress_sink(app: AppHandle) -> ProgressSink {
         // test) or the event does not serialize.
         if let Ok(value) = serde_json::to_value(progress) {
             crate::transfers_projection::projection::fold_transfer_progress(&app, &value);
+        }
+        // Durable queue (PROD-0011): fold every lifecycle/progress transition
+        // into the persisted queue at the same choke point. Fire-and-forget and
+        // debounced inside the manager (status change / coarse checkpoint only),
+        // so it never slows the copy. Best-effort: skipped when persistence is
+        // unavailable (e.g. a headless test app). The teardown flag lets a quit
+        // cancel-all leave in-flight records intact instead of erasing them.
+        if let Some(pm) = app.try_state::<TransferPersistenceManager>() {
+            pm.note_progress(
+                &progress.transfer_id,
+                PersistedTransferStatus::from(progress.state),
+                progress.transferred,
+                progress.total,
+                is_queue_teardown(),
+            );
         }
         if let Err(e) = app.emit(TRANSFER_PROGRESS_EVENT, progress) {
             warn!(error = %e, "failed to emit transfer-progress");

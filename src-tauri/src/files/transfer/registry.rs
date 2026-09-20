@@ -369,6 +369,10 @@ impl TransferRegistry {
     /// *before* sessions are closed, so no half-written file keeps a channel
     /// open during teardown. Returns the number of transfers signalled.
     pub fn cancel_all(&self) -> usize {
+        // Mark the teardown sweep so the persistence layer (PROD-0011) keeps the
+        // in-flight records it is about to cancel, rather than pruning them — they
+        // rehydrate as paused on the next launch.
+        super::QUEUE_TEARDOWN.store(true, std::sync::atomic::Ordering::SeqCst);
         let state = self.lock();
         for entry in state.legacy.values() {
             entry.token.cancel();
