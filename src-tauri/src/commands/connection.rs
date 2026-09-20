@@ -12,6 +12,20 @@ use crate::connection::recovery::RecoveryWarning;
 use crate::connection::settings::AppSettings;
 use crate::credential::crypto::DecryptError;
 use crate::credential::CredentialManager;
+use crate::utils::errors::TerminalError;
+
+/// Map a connection-config backend failure — persistence, import/export, or
+/// folder/agent CRUD (all `anyhow::Result`) — into a typed [`TerminalError`]
+/// carrying the structured IPC error envelope (ARCH-006 / TAURI-008 / ERR-008
+/// Phase 2). The exact `Display` text the command previously surfaced as a raw
+/// `String` is preserved verbatim as the payload (the same top-level
+/// `e.to_string()` these commands returned before). These are generic
+/// backend-operation failures with no more specific existing variant, so they
+/// map to [`TerminalError::InternalError`]; only the typed variant's classifying
+/// prefix is added, matching every other retyped command and the #3168 envelope.
+fn config_error(e: impl std::fmt::Display) -> TerminalError {
+    TerminalError::InternalError(e.to_string())
+}
 
 /// Response containing all connections (unified), folders, and agents.
 #[derive(Serialize)]
@@ -37,12 +51,12 @@ pub struct ExternalFileError {
 pub fn load_connections_and_folders(
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<ConnectionData, String> {
+) -> Result<ConnectionData, TerminalError> {
     info!("Loading connections and folders");
     // The unified main + external view (the same one reflected into the
     // `ConnectionsStore` server-side, #2394), so the command and the projection
     // region cannot drift.
-    let view = manager.load_unified_view().map_err(|e| e.to_string())?;
+    let view = manager.load_unified_view().map_err(config_error)?;
 
     // Server-authority fold (#2403): reflect the loaded agent list-membership into
     // the `AgentsStore` at the source, so the `agents` region tracks the
@@ -76,11 +90,11 @@ pub fn save_connection(
     connection: SavedConnection,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<String, String> {
+) -> Result<String, TerminalError> {
     debug!(id = %connection.id, name = %connection.name, "Saving connection");
     let persisted_id = manager
         .save_connection_routed(connection)
-        .map_err(|e| e.to_string())?;
+        .map_err(config_error)?;
     // Server-authority fold (#2389/#2394): reflect the persisted tree — main
     // store *and* the external-file overlay — into the `ConnectionsStore`
     // at the source. A save routed to an external file (`sourceFile` set) updates
@@ -96,11 +110,11 @@ pub fn delete_connection(
     source_file: Option<String>,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
+) -> Result<(), TerminalError> {
     info!(id, ?source_file, "Deleting connection");
     manager
         .delete_connection_routed(&id, source_file.as_deref())
-        .map_err(|e| e.to_string())?;
+        .map_err(config_error)?;
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(())
 }
@@ -113,7 +127,7 @@ pub fn move_connection_to_file(
     target_source: Option<String>,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<SavedConnection, String> {
+) -> Result<SavedConnection, TerminalError> {
     info!(
         connection_id,
         ?current_source,
@@ -122,7 +136,7 @@ pub fn move_connection_to_file(
     );
     let moved = manager
         .move_connection_to_file(&connection_id, current_source.as_deref(), target_source)
-        .map_err(|e| e.to_string())?;
+        .map_err(config_error)?;
     // The fold reflects both the main store and the external-file overlay
     // (#2394), so a move into/out of the main store *and* an external↔external
     // move (the `sourceFile` changes) are reflected in the region.
@@ -136,8 +150,8 @@ pub fn save_folder(
     folder: ConnectionFolder,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
-    manager.save_folder(folder).map_err(|e| e.to_string())?;
+) -> Result<(), TerminalError> {
+    manager.save_folder(folder).map_err(config_error)?;
     // Covers `addFolder` and the `toggleFolder`-persist edge (the frontend
     // persists a folder's `isExpanded` flip via `save_folder`).
     crate::connections_projection::projection::fold_connections_from_manager(&app);
@@ -150,16 +164,16 @@ pub fn delete_folder(
     id: String,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
-    manager.delete_folder(&id).map_err(|e| e.to_string())?;
+) -> Result<(), TerminalError> {
+    manager.delete_folder(&id).map_err(config_error)?;
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(())
 }
 
 /// Export all connections as a JSON string.
 #[tauri::command]
-pub fn export_connections(manager: State<'_, ConnectionManager>) -> Result<String, String> {
-    manager.export_json().map_err(|e| e.to_string())
+pub fn export_connections(manager: State<'_, ConnectionManager>) -> Result<String, TerminalError> {
+    manager.export_json().map_err(config_error)
 }
 
 /// Import connections from a JSON string. Returns the number imported.
@@ -168,8 +182,8 @@ pub fn import_connections(
     json: String,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<usize, String> {
-    let count = manager.import_json(&json).map_err(|e| e.to_string())?;
+) -> Result<usize, TerminalError> {
+    let count = manager.import_json(&json).map_err(config_error)?;
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(count)
 }
@@ -180,7 +194,7 @@ pub fn import_connections(
 /// storage. We expand it to the full built-in default list before returning so
 /// the frontend always receives a concrete, editable list.
 #[tauri::command]
-pub fn get_settings(manager: State<'_, ConnectionManager>) -> Result<AppSettings, String> {
+pub fn get_settings(manager: State<'_, ConnectionManager>) -> Result<AppSettings, TerminalError> {
     Ok(manager.get_settings_resolved())
 }
 
@@ -190,8 +204,8 @@ pub fn save_settings(
     settings: AppSettings,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
-    manager.save_settings(settings).map_err(|e| e.to_string())?;
+) -> Result<(), TerminalError> {
+    manager.save_settings(settings).map_err(config_error)?;
     // Server-authority fold (#2386): reflect the persisted `AppSettings`
     // document into the `SettingsStore` at the source. Additive; no
     // user-facing change. (`AppHandle` is Tauri-injected — no JS invoke change.)
@@ -208,9 +222,9 @@ pub fn save_external_file(
     connections: Vec<SavedConnection>,
     app: AppHandle,
     credential_store: State<'_, Arc<CredentialManager>>,
-) -> Result<(), String> {
+) -> Result<(), TerminalError> {
     manager::save_external_file(&file_path, &name, folders, connections, &**credential_store)
-        .map_err(|e| e.to_string())?;
+        .map_err(config_error)?;
     // Server-authority fold (#2394): reflect the external-file overlay (as it is
     // now on disk) into the `ConnectionsStore` when the saved file is a
     // currently-enabled external source. The fold resolves the `ConnectionManager`
@@ -224,7 +238,7 @@ pub fn save_external_file(
 pub fn reload_external_connections(
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<Vec<SavedConnection>, String> {
+) -> Result<Vec<SavedConnection>, TerminalError> {
     let sources = manager.load_external_sources();
     let mut connections = Vec::new();
     for source in sources {
@@ -244,8 +258,8 @@ pub fn save_remote_agent(
     agent: SavedRemoteAgent,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
-    manager.save_agent(agent).map_err(|e| e.to_string())?;
+) -> Result<(), TerminalError> {
+    manager.save_agent(agent).map_err(config_error)?;
     // Server-authority fold (#2403): reflect the persisted agent list-membership
     // into the `AgentsStore` at the source, so a newly-added agent's identity
     // enters the `agents` region without a client `agent.add`. Additive; no
@@ -260,8 +274,8 @@ pub fn delete_remote_agent(
     id: String,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
-    manager.delete_agent(&id).map_err(|e| e.to_string())?;
+) -> Result<(), TerminalError> {
+    manager.delete_agent(&id).map_err(config_error)?;
     crate::agents_projection::projection::fold_agents_from_manager(&app);
     Ok(())
 }
@@ -272,10 +286,8 @@ pub fn reorder_remote_agents(
     agent_ids: Vec<String>,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
-    manager
-        .reorder_agents(&agent_ids)
-        .map_err(|e| e.to_string())?;
+) -> Result<(), TerminalError> {
+    manager.reorder_agents(&agent_ids).map_err(config_error)?;
     crate::agents_projection::projection::fold_agents_from_manager(&app);
     Ok(())
 }
@@ -290,10 +302,10 @@ pub fn reorder_connections(
     connection_ids: Vec<String>,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
+) -> Result<(), TerminalError> {
     manager
         .reorder_connections(&connection_ids)
-        .map_err(|e| e.to_string())?;
+        .map_err(config_error)?;
     crate::connections_projection::projection::fold_connections_from_manager(&app);
     Ok(())
 }
@@ -308,20 +320,20 @@ pub fn export_connections_encrypted(
     export_password: Option<String>,
     connection_ids: Option<Vec<String>>,
     manager: State<'_, ConnectionManager>,
-) -> Result<String, String> {
+) -> Result<String, TerminalError> {
     info!(
         "Exporting connections (encrypted={})",
         export_password.is_some()
     );
     manager
         .export_encrypted_json(export_password.as_deref(), connection_ids.as_deref())
-        .map_err(|e| e.to_string())
+        .map_err(config_error)
 }
 
 /// Preview the contents of an import file without performing the import.
 #[tauri::command]
-pub fn preview_import(json: String) -> Result<ImportPreview, String> {
-    manager::preview_import_json(&json).map_err(|e| e.to_string())
+pub fn preview_import(json: String) -> Result<ImportPreview, TerminalError> {
+    manager::preview_import_json(&json).map_err(config_error)
 }
 
 /// A structured import failure surfaced to the frontend.
@@ -407,6 +419,7 @@ pub fn get_recovery_warnings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::errors::IpcErrorCode;
 
     #[test]
     fn classifies_wrong_password_through_context_wrapping() {
@@ -443,5 +456,58 @@ mod tests {
         let value = serde_json::to_value(&classified).unwrap();
         assert_eq!(value["kind"], "other");
         assert_eq!(value["message"], "Failed to parse import data");
+    }
+
+    // ── Typed error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ─────────
+    //
+    // These guard the String → TerminalError retype of the connection-config
+    // commands (save/delete/move/reorder connections & folders & agents,
+    // import/export, settings). Every one funnels its `anyhow::Result` failure
+    // through `config_error`, so the human message text they surfaced before
+    // (the top-level `e.to_string()`) survives verbatim as the error payload —
+    // only the typed variant's classifying prefix is added, matching the #3168
+    // envelope and every other retyped command.
+
+    #[test]
+    fn config_error_preserves_the_message_text_and_carries_internal_code() {
+        // Representative of the `.map_err(|e| e.to_string())?` these commands
+        // used before: the same top-level `Display` text is the input.
+        let src = anyhow::anyhow!("Failed to save connection 'prod-db'");
+        let mapped = config_error(&src);
+
+        assert!(matches!(mapped, TerminalError::InternalError(_)));
+        // The exact human text the command produced before survives verbatim.
+        assert!(
+            mapped
+                .to_string()
+                .contains("Failed to save connection 'prod-db'"),
+            "human message must be preserved, got {mapped}"
+        );
+        assert_eq!(
+            mapped.to_string(),
+            "Internal error: Failed to save connection 'prod-db'"
+        );
+        assert_eq!(mapped.code(), IpcErrorCode::InternalError);
+    }
+
+    #[test]
+    fn config_error_serializes_the_structured_envelope() {
+        // A folder-delete style failure: the anyhow top-level `to_string()` the
+        // command surfaced as a raw `String` before the retype.
+        let mapped = config_error(anyhow::anyhow!("Folder not found: f-123"));
+        let value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&mapped).expect("serialize"))
+                .expect("valid JSON object");
+
+        // The stable machine code moves to the `code` field …
+        assert_eq!(value["code"], "internal_error");
+        // … and the human `message` carries the preserved text (with only the
+        // typed prefix), free of any `[thub-code:*]` machine marker.
+        assert_eq!(value["message"], "Internal error: Folder not found: f-123");
+        assert!(!value["message"]
+            .as_str()
+            .expect("message is a string")
+            .contains("[thub-code:"));
+        assert!(value["details"].is_null());
     }
 }
