@@ -10,6 +10,7 @@ use tauri::State;
 use tracing::debug;
 
 use crate::files::transfer::{TransferRegistry, TransferSnapshot};
+use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
 #[cfg(feature = "ftp")]
 use crate::utils::fs::file_name_of;
@@ -52,6 +53,77 @@ pub fn transfer_cancel(transfer_id: String, registry: State<'_, TransferRegistry
 pub fn transfer_retry(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
     debug!(transfer_id, "transfer retry");
     registry.retry(&transfer_id)
+}
+
+/// Copy a file directly from one SFTP-backed session to another, streaming the
+/// bytes **through the desktop with no local staging file** (product feature
+/// PROD-0013).
+///
+/// Enqueues ONE rich transfer that reads from `src_session`'s dedicated SFTP
+/// channel and writes to `dst_session`'s channel via the shared chunked-copy
+/// primitive — so a remote→remote paste surfaces as a single Transfer Queue row
+/// instead of the download-to-temp + upload round-trip (two rows + a local disk
+/// copy) it replaces. Rides the same executor as `session_download` /
+/// `session_upload`, so pause/resume, auto-retry and byte-verified offset resume
+/// all work; progress is measured on the write side and cancel removes the
+/// partial destination.
+///
+/// Both endpoints must be SFTP-backed: each browser is resolved (and validated)
+/// up front, so an unsupported / unreachable endpoint errors here rather than
+/// silently on the queue. The row is registered under `dst_session` (where the
+/// file lands); its name/path come from the destination remote path
+/// (#1531/#1573). A server-side host-to-host copy (SCP/rsync) is a deferred
+/// alternative — streaming through the desktop reaches everywhere both hosts are
+/// reachable from the desktop.
+#[tauri::command]
+pub async fn session_copy_remote(
+    src_session: String,
+    src_path: String,
+    dst_session: String,
+    dst_path: String,
+    manager: State<'_, SessionManager>,
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, TerminalError> {
+    use crate::files::transfer::{self, TransferDirection};
+
+    debug!(
+        src_session,
+        src_path, dst_session, dst_path, "Session SFTP remote-to-remote copy"
+    );
+    // Resolve (and validate) both SFTP browsers up front so an unsupported /
+    // unreachable endpoint errors here rather than silently on the queue.
+    let src_browser = manager.sftp_transfer_browser(&src_session).await?;
+    let dst_browser = manager.sftp_transfer_browser(&dst_session).await?;
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    // Named/pathed for the *destination* (where the file lands), mirroring the
+    // upload half of the retired temp-file dance (#1573).
+    let file_name = crate::utils::fs::file_name_of(&dst_path);
+    let handle = registry.enqueue(
+        &transfer_id,
+        &dst_session,
+        TransferDirection::Upload,
+        &file_name,
+        &dst_path,
+        0,
+    );
+    let registry = (*registry).clone();
+    let sink = transfer::app_progress_sink(app_handle);
+    tauri::async_runtime::spawn(async move {
+        transfer::sftp::run_sftp_remote_copy(
+            src_browser,
+            dst_browser,
+            src_path,
+            dst_path,
+            handle,
+            registry,
+            sink,
+            transfer::sftp::DEFAULT_RESUME_MODE,
+        )
+        .await;
+    });
+    Ok(transfer_id)
 }
 
 /// List the rich (queued) transfers, optionally filtered by session.

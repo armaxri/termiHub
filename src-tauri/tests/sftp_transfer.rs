@@ -25,7 +25,7 @@ use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser, SftpTransfe
 use termihub_core::config::SshConfig;
 use termihub_core::files::FileBrowser;
 use termihub_lib::files::sftp::Writability;
-use termihub_lib::files::transfer::sftp::{run_sftp_transfer, ResumeMode};
+use termihub_lib::files::transfer::sftp::{run_sftp_remote_copy, run_sftp_transfer, ResumeMode};
 use termihub_lib::files::transfer::state::TransferStateTag;
 use termihub_lib::files::transfer::{
     run_download, ProgressSink, TransferContext, TransferDirection, TransferPhase,
@@ -625,6 +625,156 @@ async fn download_pause_resume_is_byte_exact() {
     let _ = std::fs::remove_file(&dest);
     let cleanup = open_dedicated(connect().await).await;
     let _ = cleanup.remove_file(&remote).await;
+}
+
+// --- Direct remote→remote copy (PROD-0013) ---
+
+/// End-to-end remote→remote copy: seed a known file on the source session, copy
+/// it directly to a destination path — streamed through the desktop with **no
+/// local staging file** — and assert it lands byte-exact as ONE completed
+/// transfer (PROD-0013).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn remote_to_remote_copy_is_byte_exact() {
+    let port = sftp_stress_port();
+    require_sftp_stress!(port);
+
+    // Two independent browsers, as the command layer resolves (src + dst
+    // sessions); both point at the loopback fixture but at distinct paths.
+    let src_session = connect().await;
+    let dst_session = connect().await;
+
+    let content = known_bytes(4 * 1024 * 1024);
+    let src = format!(
+        "/home/testuser/termihub-prod0013-src-{}.bin",
+        uuid::Uuid::new_v4()
+    );
+    let dst = format!(
+        "/home/testuser/termihub-prod0013-dst-{}.bin",
+        uuid::Uuid::new_v4()
+    );
+
+    // Seed the source file via a dedicated channel.
+    let seed = open_dedicated(src_session.clone()).await;
+    write_remote(&seed, &src, &content).await;
+
+    let registry = TransferRegistry::new();
+    let transfer_id = "prod0013-copy".to_string();
+    let handle = registry.enqueue(
+        &transfer_id,
+        "s",
+        TransferDirection::Upload,
+        "dst.bin",
+        &dst,
+        0,
+    );
+    let sink = RecordingSink::default();
+
+    run_sftp_remote_copy(
+        src_session.clone(),
+        dst_session.clone(),
+        src.clone(),
+        dst.clone(),
+        handle,
+        registry.clone(),
+        sink.as_sink(),
+        ResumeMode::Resume,
+    )
+    .await;
+
+    assert_eq!(
+        sink.terminal_phase(),
+        Some(TransferPhase::Done),
+        "a completed remote→remote copy must end on the `done` phase"
+    );
+    let got = dst_session
+        .read_file(&dst)
+        .await
+        .expect("the destination file should exist");
+    assert_eq!(
+        got.len(),
+        content.len(),
+        "the copied file must be the full size"
+    );
+    assert!(
+        got == content,
+        "the copied file must be byte-exact with the source"
+    );
+    assert!(
+        !registry_contains(&registry, &transfer_id),
+        "the registry entry must be dropped after the copy settles"
+    );
+
+    // Clean up both remote paths (best-effort).
+    let cleanup = open_dedicated(src_session).await;
+    let _ = cleanup.remove_file(&src).await;
+    let cleanup2 = open_dedicated(dst_session).await;
+    let _ = cleanup2.remove_file(&dst).await;
+}
+
+/// Cancel-mid-copy: a large remote→remote copy is cancelled while in flight; the
+/// partial destination file is removed and the terminal `cancelled` event fires
+/// (PROD-0013).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn remote_to_remote_cancel_removes_partial_destination() {
+    let port = sftp_stress_port();
+    require_sftp_stress!(port);
+
+    let src_session = connect().await;
+    let dst_session = connect().await;
+
+    // A large pre-populated source so the copy spans many chunks and the cancel
+    // lands mid-flight, leaving a partial destination to clean up.
+    let src = "/home/testuser/sftp-test/large-files/100mb.bin".to_string();
+    let dst = format!(
+        "/home/testuser/termihub-prod0013-cancel-{}.bin",
+        uuid::Uuid::new_v4()
+    );
+
+    let registry = TransferRegistry::new();
+    let transfer_id = "prod0013-cancel".to_string();
+    let handle = registry.enqueue(
+        &transfer_id,
+        "s",
+        TransferDirection::Upload,
+        "dst.bin",
+        &dst,
+        0,
+    );
+    let sink = RecordingSink::default();
+
+    // Cancel shortly after start.
+    let cancel_reg = registry.clone();
+    let cancel_id = transfer_id.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(40)).await;
+        cancel_reg.cancel(&cancel_id);
+    });
+
+    run_sftp_remote_copy(
+        src_session,
+        dst_session.clone(),
+        src,
+        dst.clone(),
+        handle,
+        registry,
+        sink.as_sink(),
+        ResumeMode::Resume,
+    )
+    .await;
+
+    assert_eq!(
+        sink.terminal_phase(),
+        Some(TransferPhase::Cancelled),
+        "a cancelled remote→remote copy must end on the `cancelled` phase"
+    );
+    // The partial destination must have been removed (best-effort cleanup), so a
+    // size probe finds nothing.
+    let probe = open_dedicated(dst_session).await;
+    assert_eq!(
+        probe.remote_file_size(&dst).await,
+        None,
+        "the partial destination must be removed on cancel"
+    );
 }
 
 // --- require_sftp_stress! gate logic (TBE-006) ---

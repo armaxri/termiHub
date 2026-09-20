@@ -702,6 +702,329 @@ pub async fn run_sftp_transfer(
     }
 }
 
+/// Bytes currently present at the destination remote file, for byte-verifying a
+/// resume offset on a remote→remote copy (PROD-0013). `None` (un-stattable /
+/// absent) is treated as untrustworthy, so the caller restarts from zero.
+async fn remote_destination_present(
+    dst_browser: &Arc<SftpFileBrowser>,
+    dst_path: &str,
+) -> Option<u64> {
+    match dst_browser.open_dedicated_channel().await {
+        Ok(ch) => ch.remote_file_size(dst_path).await,
+        Err(_) => None,
+    }
+}
+
+/// Best-effort removal of a partial destination on cancel/failure of a
+/// remote→remote copy (PROD-0013). Mirrors the Upload arm of [`cleanup_partial`]
+/// but resolves the destination through its own browser.
+async fn cleanup_remote_partial(dst_browser: &Arc<SftpFileBrowser>, dst_path: &str) {
+    match dst_browser.open_dedicated_channel().await {
+        Ok(ch) => {
+            if let Err(e) = ch.remove_file(dst_path).await {
+                debug!(error = %e, "could not remove partial remote-to-remote copy (best-effort)");
+            }
+        }
+        Err(e) => {
+            debug!(error = %e, "could not open channel to clean partial remote-to-remote copy")
+        }
+    }
+}
+
+/// Run one remote→remote copy attempt on fresh dedicated channels, resuming from
+/// `offset`: read the source remote file (seeked to `offset`) and stream it
+/// straight to the destination remote file — no local staging file (PROD-0013).
+///
+/// A non-zero `offset` whose source read or destination append is rejected by
+/// the server yields [`AttemptOutcome::ResumeRejected`] so the caller restarts
+/// from zero, exactly like [`download_attempt`] / [`upload_attempt`].
+async fn remote_copy_attempt<P, S>(
+    src_channel: &SftpTransferChannel,
+    dst_channel: &SftpTransferChannel,
+    src_path: &str,
+    dst_path: &str,
+    offset: u64,
+    on_progress: P,
+    should_stop: S,
+) -> Result<AttemptOutcome, TerminalError>
+where
+    P: FnMut(u64) + Send,
+    S: Fn() -> Option<StopReason> + Send,
+{
+    // Source read (seeked). A rejected non-zero offset → restart from zero.
+    let mut src = match src_channel.open_read_at(src_path, offset).await {
+        Ok(r) => r,
+        Err(e) if offset > 0 => {
+            warn!(offset, error = %e, "SFTP server rejected resume read; restarting from zero");
+            return Ok(AttemptOutcome::ResumeRejected);
+        }
+        Err(e) => return Err(TerminalError::SshError(format!("open source file: {e}"))),
+    };
+
+    // Destination write: append (no truncate) at the byte-verified offset, or a
+    // truncating create for a fresh transfer.
+    let mut dst = if offset > 0 {
+        match dst_channel.open_write_at(dst_path, offset).await {
+            Ok(w) => w,
+            Err(e) => {
+                warn!(offset, error = %e, "SFTP server rejected resume append; restarting from zero");
+                return Ok(AttemptOutcome::ResumeRejected);
+            }
+        }
+    } else {
+        dst_channel
+            .create_write(dst_path)
+            .await
+            .map_err(|e| TerminalError::SshError(format!("create destination file: {e}")))?
+    };
+
+    let outcome = run_chunked_copy(
+        &mut src,
+        &mut dst,
+        CHUNK_SIZE,
+        offset,
+        should_stop,
+        on_progress,
+        copy_error,
+    )
+    .await?;
+    Ok(map_copy_outcome(outcome))
+}
+
+/// Run attempts (with auto-retry/backoff) for one Active stint of a remote→remote
+/// copy. The remote→remote counterpart of [`run_attempts`]: it opens a fresh
+/// dedicated channel on **both** the source and destination browsers per attempt
+/// and byte-verifies the resume offset against the destination remote file.
+#[allow(clippy::too_many_arguments)]
+async fn run_remote_attempts(
+    src_browser: &Arc<SftpFileBrowser>,
+    dst_browser: &Arc<SftpFileBrowser>,
+    src_path: &str,
+    dst_path: &str,
+    offset: &mut u64,
+    total: u64,
+    handle: &Arc<TransferHandle>,
+    sink: &ProgressSink,
+    resume_mode: ResumeMode,
+) -> AttemptsResult {
+    // Byte-verify the resume offset once per Active stint (PROD-0013), against
+    // the destination remote file.
+    if resume_mode == ResumeMode::RestartOnly {
+        *offset = 0;
+    } else if *offset > 0 {
+        let present = remote_destination_present(dst_browser, dst_path).await;
+        let verified = verified_offset(*offset, present, total);
+        if verified != *offset {
+            info!(
+                transfer_id = %handle.transfer_id,
+                requested = *offset, ?present, verified,
+                "SFTP resume offset failed byte-verify; restarting from zero"
+            );
+        } else {
+            info!(transfer_id = %handle.transfer_id, offset = verified, "SFTP resuming from offset");
+        }
+        *offset = verified;
+    }
+
+    let mut attempt = 0u32;
+    loop {
+        if handle.is_cancelled() {
+            handle.transition(TransferEvent::Cancel);
+            return AttemptsResult::Cancelled;
+        }
+        attempt += 1;
+        handle.set_attempt(attempt);
+
+        // Open a fresh dedicated channel per attempt on each end, so a broken
+        // channel is re-established on retry and browsing stays live meanwhile.
+        let src_channel = match src_browser.open_dedicated_channel().await {
+            Ok(c) => c,
+            Err(e) => {
+                let e = TerminalError::SshError(format!("open source SFTP transfer channel: {e}"));
+                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
+                    return outcome;
+                }
+                continue;
+            }
+        };
+        let dst_channel = match dst_browser.open_dedicated_channel().await {
+            Ok(c) => c,
+            Err(e) => {
+                let e =
+                    TerminalError::SshError(format!("open destination SFTP transfer channel: {e}"));
+                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
+                    return outcome;
+                }
+                continue;
+            }
+        };
+
+        let progress = Arc::new(AtomicU64::new(*offset));
+        let mut reporter = ProgressReporter::new(
+            handle.clone(),
+            sink.clone(),
+            total,
+            progress.clone(),
+            *offset,
+        );
+        let stop_handle = handle.clone();
+        let result = remote_copy_attempt(
+            &src_channel,
+            &dst_channel,
+            src_path,
+            dst_path,
+            *offset,
+            |t| reporter.report(t),
+            move || stop_reason(&stop_handle),
+        )
+        .await;
+        *offset = progress.load(Ordering::Relaxed);
+
+        match result {
+            Ok(AttemptOutcome::Completed { transferred }) => {
+                *offset = transferred;
+                handle.set_metrics(transferred, total.max(transferred), 0);
+                handle.transition(TransferEvent::Complete);
+                return AttemptsResult::Completed;
+            }
+            Ok(AttemptOutcome::Stopped {
+                transferred,
+                reason: StopReason::Cancel,
+            }) => {
+                *offset = transferred;
+                handle.transition(TransferEvent::Cancel);
+                return AttemptsResult::Cancelled;
+            }
+            Ok(AttemptOutcome::Stopped {
+                transferred,
+                reason: StopReason::Pause,
+            }) => {
+                *offset = transferred;
+                handle.transition(TransferEvent::Pause);
+                return AttemptsResult::Paused;
+            }
+            Ok(AttemptOutcome::ResumeRejected) => {
+                // The server refused the offset open. Restart this stint from
+                // zero (surfaced above via `warn!`); do not consume a retry.
+                *offset = 0;
+                attempt -= 1;
+                emit(
+                    handle,
+                    sink,
+                    TransferPhase::Transferring,
+                    None,
+                    Some("resume not supported by server; restarting from start".to_string()),
+                );
+                continue;
+            }
+            Err(e) => {
+                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
+                    return outcome;
+                }
+            }
+        }
+    }
+}
+
+/// Drive a queued **remote→remote** SFTP copy to a terminal state on the rich
+/// queue model, emitting `transfer-progress` throughout (product feature
+/// PROD-0013).
+///
+/// Streams the source session's file directly into the destination session's
+/// file **through the desktop** — no local staging file — as ONE tracked
+/// transfer. The counterpart of [`run_sftp_transfer`]: it shares the same slot
+/// orchestration, throttled progress + ETA, pause/resume, auto-retry with
+/// backoff, and byte-verified offset resume, so the generic
+/// `transfer_pause`/`resume`/`retry`/`cancel` commands work for it too. Progress
+/// is measured on the write (destination) side; cancel removes the partial
+/// destination. A server-side host-to-host copy (SCP/rsync) is a deferred
+/// alternative — this default reaches everywhere both hosts are reachable from
+/// the desktop.
+#[allow(clippy::too_many_arguments)]
+pub async fn run_sftp_remote_copy(
+    src_browser: Arc<SftpFileBrowser>,
+    dst_browser: Arc<SftpFileBrowser>,
+    src_path: String,
+    dst_path: String,
+    handle: Arc<TransferHandle>,
+    registry: TransferRegistry,
+    sink: ProgressSink,
+    resume_mode: ResumeMode,
+) {
+    // Establish the total up front (the source size) so progress/ETA are
+    // meaningful.
+    let total = src_browser.remote_size(&src_path).await;
+    handle.set_metrics(0, total, 0);
+    emit(&handle, &sink, TransferPhase::Transferring, None, None);
+
+    let mut offset = 0u64;
+    loop {
+        // Acquire (or re-acquire) a concurrency slot; the handle becomes Active.
+        if !wait_for_active(&handle, &registry).await {
+            handle.transition(TransferEvent::Cancel);
+            cleanup_remote_partial(&dst_browser, &dst_path).await;
+            emit(&handle, &sink, TransferPhase::Cancelled, None, None);
+            registry.drop_entry(&handle.transfer_id);
+            return;
+        }
+        emit(&handle, &sink, TransferPhase::Transferring, None, None);
+
+        match run_remote_attempts(
+            &src_browser,
+            &dst_browser,
+            &src_path,
+            &dst_path,
+            &mut offset,
+            total,
+            &handle,
+            &sink,
+            resume_mode,
+        )
+        .await
+        {
+            AttemptsResult::Completed => {
+                info!(transfer_id = %handle.transfer_id, transferred = offset, "SFTP remote-to-remote copy complete");
+                emit(&handle, &sink, TransferPhase::Done, None, None);
+                registry.drop_entry(&handle.transfer_id);
+                return;
+            }
+            AttemptsResult::Cancelled => {
+                info!(transfer_id = %handle.transfer_id, "SFTP remote-to-remote copy cancelled");
+                cleanup_remote_partial(&dst_browser, &dst_path).await;
+                emit(&handle, &sink, TransferPhase::Cancelled, None, None);
+                registry.drop_entry(&handle.transfer_id);
+                return;
+            }
+            AttemptsResult::Paused => {
+                // Release the slot so a queued peer can run while paused.
+                registry.release_slot(&handle);
+                emit(&handle, &sink, TransferPhase::Transferring, None, None);
+                if !wait_for_resume(&handle).await {
+                    handle.transition(TransferEvent::Cancel);
+                    cleanup_remote_partial(&dst_browser, &dst_path).await;
+                    emit(&handle, &sink, TransferPhase::Cancelled, None, None);
+                    registry.drop_entry(&handle.transfer_id);
+                    return;
+                }
+                handle.transition(TransferEvent::Resume); // Paused → Queued
+            }
+            AttemptsResult::FailedPermanent => {
+                // Release the slot; keep the handle for a manual retry.
+                registry.release_slot(&handle);
+                if !wait_for_resume(&handle).await {
+                    handle.transition(TransferEvent::Cancel);
+                    cleanup_remote_partial(&dst_browser, &dst_path).await;
+                    emit(&handle, &sink, TransferPhase::Cancelled, None, None);
+                    registry.drop_entry(&handle.transfer_id);
+                    return;
+                }
+                handle.set_attempt(0);
+                handle.transition(TransferEvent::Retry); // Failed → Queued
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
