@@ -20,6 +20,36 @@ use crate::terminal::agent_manager::{
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
 use crate::terminal::backend::{RemoteAgentConfig, UpdateStrategy};
+use crate::utils::errors::TerminalError;
+
+// ── Structured IPC error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ────
+//
+// Every agent command below returns [`TerminalError`] so it delivers the
+// structured `{ code, message, details }` envelope (#3168) rather than an opaque
+// string. This slice is largely a *downgrade removal*: the `AgentRpcClient` trait
+// and the deploy/setup helpers already return `TerminalError`, and the commands
+// used to flatten it back to `String` with `.map_err(|e| e.to_string())` — which
+// also discarded the coded connect/agent markers (`auth_failed`, `unreachable`,
+// `agent_missing`, …). Propagating the typed error directly both restores those
+// codes and matches the connection.rs / files.rs / session.rs retypes. The two
+// funnel helpers below cover the only failures that were *not* already typed: the
+// outer `spawn_blocking` `JoinError` and the "agent not connected" lookup miss.
+
+/// Map a `spawn_blocking` `JoinError` (the blocking task panicked or was
+/// cancelled) into a typed [`TerminalError`]. Before the retype this surfaced as
+/// a raw `e.to_string()`; the text is preserved verbatim, gaining only the typed
+/// `Internal error:` prefix and the machine-classifiable `internal_error` code.
+fn blocking_join_error(e: impl std::fmt::Display) -> TerminalError {
+    TerminalError::InternalError(e.to_string())
+}
+
+/// The "agent not connected" lookup miss surfaced by [`get_agent_capabilities`].
+/// Kept as a helper so the exact wire text is asserted by a regression test; it
+/// maps to [`TerminalError::RemoteError`] (the general remote-agent-state bucket),
+/// preserving the "Agent … not connected" message.
+fn agent_not_connected(agent_id: &str) -> TerminalError {
+    TerminalError::RemoteError(format!("Agent {agent_id} not connected"))
+}
 
 // ── Server-authority projection folds (#2388) ────────────────────────────────
 //
@@ -87,27 +117,23 @@ pub async fn connect_agent(
     config: RemoteAgentConfig,
     agent_settings: Option<AgentSettings>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<AgentConnectResult, String> {
+) -> Result<AgentConnectResult, TerminalError> {
     info!(agent_id, host = %config.host, "Connecting to remote agent");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .connect_agent(&agent_id, &config, agent_settings.as_ref())
-            .map_err(|e| e.to_string())
+        manager.connect_agent(&agent_id, &config, agent_settings.as_ref())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 #[tauri::command]
 pub fn disconnect_agent(
     agent_id: String,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<(), String> {
+) -> Result<(), TerminalError> {
     info!(agent_id, "Disconnecting remote agent");
-    agent_manager
-        .disconnect_agent(&agent_id)
-        .map_err(|e| e.to_string())
+    agent_manager.disconnect_agent(&agent_id)
 }
 
 /// TEST-ONLY (#2573): abruptly sever a connected agent's transport in-process to
@@ -132,7 +158,7 @@ pub fn disconnect_agent(
 pub fn test_sever_agent_transport(
     agent_id: String,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<bool, String> {
+) -> Result<bool, TerminalError> {
     let bridge_enabled = crate::utils::test_bridge::is_test_bridge_enabled();
     sever_transport_gated(bridge_enabled, &agent_id, || {
         agent_manager.test_sever_transport(&agent_id)
@@ -150,9 +176,11 @@ fn sever_transport_gated<F: FnOnce() -> bool>(
     bridge_enabled: bool,
     agent_id: &str,
     do_sever: F,
-) -> Result<bool, String> {
+) -> Result<bool, TerminalError> {
     if !bridge_enabled {
-        return Err("test_sever_agent_transport is a test-bridge-only hook".to_string());
+        return Err(TerminalError::InternalError(
+            "test_sever_agent_transport is a test-bridge-only hook".to_string(),
+        ));
     }
     warn!(agent_id, "TEST-ONLY: severing agent transport in-process");
     Ok(do_sever())
@@ -165,7 +193,7 @@ fn sever_transport_gated<F: FnOnce() -> bool>(
 #[tauri::command]
 pub fn prune_dead_agents(
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, TerminalError> {
     let pruned = agent_manager.prune_dead_agents();
     info!(count = pruned.len(), "Pruned dead remote agents");
     Ok(pruned)
@@ -182,7 +210,7 @@ pub fn prune_dead_agents(
 pub fn cancel_connect_agent(
     agent_id: String,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<bool, String> {
+) -> Result<bool, TerminalError> {
     info!(agent_id, "Cancelling in-flight agent connect");
     Ok(agent_manager.cancel_connect(&agent_id))
 }
@@ -196,26 +224,24 @@ pub async fn shutdown_agent(
     agent_id: String,
     reason: Option<String>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<u32, String> {
+) -> Result<u32, TerminalError> {
     info!(agent_id, "Shutting down remote agent");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .shutdown_agent(&agent_id, reason.as_deref())
-            .map_err(|e| e.to_string())
+        manager.shutdown_agent(&agent_id, reason.as_deref())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 #[tauri::command]
 pub fn get_agent_capabilities(
     agent_id: String,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<AgentCapabilities, String> {
+) -> Result<AgentCapabilities, TerminalError> {
     agent_manager
         .get_capabilities(&agent_id)
-        .ok_or_else(|| format!("Agent {} not connected", agent_id))
+        .ok_or_else(|| agent_not_connected(&agent_id))
 }
 
 /// Push updated AgentSettings to a running agent (live reload) and persist locally.
@@ -228,24 +254,22 @@ pub async fn apply_agent_settings(
     settings: AgentSettings,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
     conn_manager: State<'_, ConnectionManager>,
-) -> Result<(), String> {
+) -> Result<(), TerminalError> {
     info!(agent_id, "Applying agent settings live");
 
     // Persist to connections.json first (source of truth)
     conn_manager
         .update_agent_settings(&agent_id, settings.clone())
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| TerminalError::InternalError(e.to_string()))?;
 
     // Push to running agent if connected
     let manager = agent_manager.inner().clone();
     let settings_clone = settings.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .apply_agent_settings(&agent_id, &settings_clone)
-            .map_err(|e| e.to_string())
+        manager.apply_agent_settings(&agent_id, &settings_clone)
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// Response to a deferred-update request (`request_agent_deferred_update`).
@@ -274,7 +298,7 @@ pub async fn request_agent_deferred_update(
     binary_path: Option<String>,
     version: Option<String>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<DeferredUpdateResponse, String> {
+) -> Result<DeferredUpdateResponse, TerminalError> {
     info!(agent_id, "Requesting deferred agent update");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -285,13 +309,11 @@ pub async fn request_agent_deferred_update(
         if let Some(v) = version {
             params.insert("version".to_string(), Value::String(v));
         }
-        let result = manager
-            .send_request(
-                &agent_id,
-                termihub_core::protocol::methods::AGENT_REQUEST_DEFERRED_UPDATE,
-                Value::Object(params),
-            )
-            .map_err(|e| e.to_string())?;
+        let result = manager.send_request(
+            &agent_id,
+            termihub_core::protocol::methods::AGENT_REQUEST_DEFERRED_UPDATE,
+            Value::Object(params),
+        )?;
         Ok(DeferredUpdateResponse {
             applied: result
                 .get("applied")
@@ -304,7 +326,7 @@ pub async fn request_agent_deferred_update(
         })
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// Response to a coordinated-update request (`request_agent_update`, #1602).
@@ -348,7 +370,7 @@ pub async fn request_agent_update(
     binary_path: Option<String>,
     version: Option<String>,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<CoordinatedUpdateResponse, String> {
+) -> Result<CoordinatedUpdateResponse, TerminalError> {
     info!(agent_id, "Requesting coordinated agent update");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -359,13 +381,11 @@ pub async fn request_agent_update(
         if let Some(v) = version {
             params.insert("version".to_string(), Value::String(v));
         }
-        let result = manager
-            .send_request(
-                &agent_id,
-                termihub_core::protocol::methods::AGENT_REQUEST_UPDATE,
-                Value::Object(params),
-            )
-            .map_err(|e| e.to_string())?;
+        let result = manager.send_request(
+            &agent_id,
+            termihub_core::protocol::methods::AGENT_REQUEST_UPDATE,
+            Value::Object(params),
+        )?;
         Ok(CoordinatedUpdateResponse {
             applied: result
                 .get("applied")
@@ -395,7 +415,7 @@ pub async fn request_agent_update(
         })
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// Close a session on a remote agent.
@@ -408,16 +428,14 @@ pub async fn close_agent_session(
     session_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<(), String> {
+) -> Result<(), TerminalError> {
     info!(agent_id, session_id, "Closing session on remote agent");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
     let sid = session_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager.close_session(&aid, &sid).map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result = tauri::async_runtime::spawn_blocking(move || manager.close_session(&aid, &sid))
+        .await
+        .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): drop the closed session from the shared store
     // at the source.
     if result.is_ok() {
@@ -436,15 +454,13 @@ pub async fn list_agent_sessions(
     agent_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<Vec<AgentSessionInfo>, String> {
+) -> Result<Vec<AgentSessionInfo>, TerminalError> {
     debug!(agent_id, "Listing agent sessions");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager.list_sessions(&aid).map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result = tauri::async_runtime::spawn_blocking(move || manager.list_sessions(&aid))
+        .await
+        .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): mirror the live-session snapshot into the
     // shared store at the source.
     if let Ok(sessions) = &result {
@@ -462,15 +478,13 @@ pub async fn list_agent_definitions(
     agent_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<Vec<AgentDefinitionInfo>, String> {
+) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
     debug!(agent_id, "Listing agent definitions");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager.list_definitions(&aid).map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result = tauri::async_runtime::spawn_blocking(move || manager.list_definitions(&aid))
+        .await
+        .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): mirror the saved-definition snapshot into the
     // shared store at the source.
     if let Ok(definitions) = &result {
@@ -491,17 +505,14 @@ pub async fn save_agent_definition(
     definition: Value,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<AgentDefinitionInfo, String> {
+) -> Result<AgentDefinitionInfo, TerminalError> {
     debug!(agent_id, "Saving agent definition");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .save_definition(&aid, definition)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result =
+        tauri::async_runtime::spawn_blocking(move || manager.save_definition(&aid, definition))
+            .await
+            .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): upsert the saved definition into the shared
     // store at the source.
     if let Ok(info) = &result {
@@ -522,18 +533,15 @@ pub async fn delete_agent_definition(
     definition_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<(), String> {
+) -> Result<(), TerminalError> {
     info!(agent_id, definition_id, "Deleting agent definition");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
     let did = definition_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .delete_definition(&aid, &did)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result =
+        tauri::async_runtime::spawn_blocking(move || manager.delete_definition(&aid, &did))
+            .await
+            .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): drop the deleted definition from the shared
     // store at the source.
     if result.is_ok() {
@@ -552,17 +560,14 @@ pub async fn list_agent_connections(
     agent_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<AgentConnectionsData, String> {
+) -> Result<AgentConnectionsData, TerminalError> {
     debug!(agent_id, "Listing agent connections and folders");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .list_connections_and_folders(&aid)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result =
+        tauri::async_runtime::spawn_blocking(move || manager.list_connections_and_folders(&aid))
+            .await
+            .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): mirror the saved connections + folders
     // snapshot into the shared store at the source (definitions and folders slices
     // only; the live-session slice is left to `list_agent_sessions`).
@@ -586,17 +591,14 @@ pub async fn update_agent_definition(
     params: Value,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<AgentDefinitionInfo, String> {
+) -> Result<AgentDefinitionInfo, TerminalError> {
     debug!(agent_id, "Updating agent definition");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .update_definition(&aid, params)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result =
+        tauri::async_runtime::spawn_blocking(move || manager.update_definition(&aid, params))
+            .await
+            .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): replace the updated definition in the shared
     // store at the source.
     if let Ok(info) = &result {
@@ -618,17 +620,15 @@ pub async fn create_agent_folder(
     parent_id: Option<String>,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<AgentFolderInfo, String> {
+) -> Result<AgentFolderInfo, TerminalError> {
     debug!(agent_id, %name, "Creating agent folder");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .create_folder(&aid, &name, parent_id.as_deref())
-            .map_err(|e| e.to_string())
+        manager.create_folder(&aid, &name, parent_id.as_deref())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): add the new folder to the shared store at the
     // source (upsert by id, so the additive client mirror does not duplicate it).
     if let Ok(info) = &result {
@@ -647,17 +647,13 @@ pub async fn update_agent_folder(
     params: Value,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<AgentFolderInfo, String> {
+) -> Result<AgentFolderInfo, TerminalError> {
     debug!(agent_id, "Updating agent folder");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager
-            .update_folder(&aid, params)
-            .map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result = tauri::async_runtime::spawn_blocking(move || manager.update_folder(&aid, params))
+        .await
+        .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): replace the updated folder in the shared store
     // at the source.
     if let Ok(info) = &result {
@@ -676,16 +672,14 @@ pub async fn delete_agent_folder(
     folder_id: String,
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
-) -> Result<(), String> {
+) -> Result<(), TerminalError> {
     info!(agent_id, folder_id, "Deleting agent folder");
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
     let fid = folder_id.clone();
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        manager.delete_folder(&aid, &fid).map_err(|e| e.to_string())
-    })
-    .await
-    .unwrap_or_else(|e| Err(e.to_string()));
+    let result = tauri::async_runtime::spawn_blocking(move || manager.delete_folder(&aid, &fid))
+        .await
+        .unwrap_or_else(|e| Err(blocking_join_error(e)));
     // Server-authority fold (#2388): drop the deleted folder from the shared store
     // at the source (reparenting its child definitions to the root, as the store's
     // `delete_folder` does).
@@ -703,12 +697,12 @@ pub async fn delete_agent_folder(
 /// and returns the architecture information including the pre-computed
 /// GitHub download URL for the running termiHub version.
 #[tauri::command]
-pub async fn detect_agent_arch(config: RemoteAgentConfig) -> Result<RemoteArchInfo, String> {
+pub async fn detect_agent_arch(config: RemoteAgentConfig) -> Result<RemoteArchInfo, TerminalError> {
     tauri::async_runtime::spawn_blocking(move || {
-        crate::terminal::agent_setup::detect_agent_arch_info(&config).map_err(|e| e.to_string())
+        crate::terminal::agent_setup::detect_agent_arch_info(&config)
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// Upload and install the agent binary on a remote host.
@@ -725,7 +719,7 @@ pub async fn setup_remote_agent(
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
     cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<AgentSetupResult, String> {
+) -> Result<AgentSetupResult, TerminalError> {
     info!(agent_id, host = %config.host, "Starting remote agent setup");
     let sm = manager.inner().clone();
     // Register up front so a Cancel that arrives while the background upload runs
@@ -745,10 +739,9 @@ pub async fn setup_remote_agent(
             Some((*token).clone()),
             move || registry.complete(&complete_id, &complete_token),
         )
-        .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// Cancel an in-flight agent deploy/setup.
@@ -761,7 +754,7 @@ pub async fn setup_remote_agent(
 pub fn cancel_agent_setup(
     agent_id: String,
     cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<bool, String> {
+) -> Result<bool, TerminalError> {
     info!(agent_id, "Cancelling in-flight agent deploy/setup");
     Ok(cancellation.cancel(&agent_id))
 }
@@ -774,15 +767,14 @@ pub fn cancel_agent_setup(
 pub async fn probe_remote_agent(
     config: RemoteAgentConfig,
     expected_version: Option<String>,
-) -> Result<AgentProbeResult, String> {
+) -> Result<AgentProbeResult, TerminalError> {
     info!(host = %config.host, "Probing remote host for agent");
     let version = expected_version.unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
     tauri::async_runtime::spawn_blocking(move || {
         crate::terminal::agent_deploy::probe_remote_agent(&config, &version)
-            .map_err(|e| e.to_string())
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// Deploy the agent binary to a remote host via SFTP.
@@ -796,7 +788,7 @@ pub async fn deploy_agent(
     deploy_config: AgentDeployConfig,
     app_handle: tauri::AppHandle,
     cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<AgentDeployResult, String> {
+) -> Result<AgentDeployResult, TerminalError> {
     info!(agent_id, host = %config.host, "Deploying agent to remote host");
     let token = cancellation.register(&agent_id);
     let registry = cancellation.inner().clone();
@@ -809,13 +801,12 @@ pub async fn deploy_agent(
             &deploy_config,
             &app_handle,
             Some(&token),
-        )
-        .map_err(|e| e.to_string());
+        );
         registry.complete(&complete_id, &complete_token);
         result
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// Update the agent: shut down the running instance, then deploy a new binary.
@@ -832,7 +823,7 @@ pub async fn update_agent(
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
     cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<AgentDeployResult, String> {
+) -> Result<AgentDeployResult, TerminalError> {
     run_update_agent(
         false,
         agent_id,
@@ -857,7 +848,7 @@ pub async fn update_agent_force(
     app_handle: tauri::AppHandle,
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
     cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<AgentDeployResult, String> {
+) -> Result<AgentDeployResult, TerminalError> {
     run_update_agent(
         true,
         agent_id,
@@ -887,7 +878,7 @@ async fn run_update_agent(
     app_handle: tauri::AppHandle,
     manager: Arc<dyn AgentRpcClient>,
     cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<AgentDeployResult, String> {
+) -> Result<AgentDeployResult, TerminalError> {
     let requested = config.update_strategy;
     let effective = config.effective_update_strategy();
     if requested != effective {
@@ -932,7 +923,7 @@ async fn run_immediate_update(
     app_handle: tauri::AppHandle,
     manager: Arc<dyn AgentRpcClient>,
     cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<AgentDeployResult, String> {
+) -> Result<AgentDeployResult, TerminalError> {
     info!(
         agent_id,
         host = %config.host,
@@ -956,13 +947,12 @@ async fn run_immediate_update(
             force,
             || list_manager.list_connections(&list_aid),
             || manager.shutdown_agent(&aid, Some("update")),
-        )
-        .map_err(|e| e.to_string());
+        );
         registry.complete(&complete_id, &complete_token);
         result
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// The coordinated desktop-push update (#1616): stage the binary, then hand it
@@ -982,7 +972,7 @@ async fn run_coordinated_update(
     app_handle: tauri::AppHandle,
     manager: Arc<dyn AgentRpcClient>,
     cancellation: State<'_, AgentDeployCancellation>,
-) -> Result<AgentDeployResult, String> {
+) -> Result<AgentDeployResult, TerminalError> {
     info!(
         agent_id,
         host = %config.host,
@@ -1007,13 +997,12 @@ async fn run_coordinated_update(
             &stage_deploy,
             &stage_app,
             Some(&stage_token),
-        )
-        .map_err(|e| e.to_string());
+        );
         registry.complete(&complete_id, &complete_token);
         result
     })
     .await
-    .unwrap_or_else(|e| Err(e.to_string()))?;
+    .unwrap_or_else(|e| Err(blocking_join_error(e)))?;
 
     // 2. Windows: the agent cannot self-swap — fall back to the immediate deploy
     //    (shutdown + redeploy), which keeps the connected-host guard intact.
@@ -1051,7 +1040,7 @@ async fn run_coordinated_update(
         )
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(blocking_join_error)?;
 
     match rpc_result {
         Ok(value) => Ok(coordinated_deploy_result(&value)),
@@ -1073,7 +1062,9 @@ async fn run_coordinated_update(
                     remaining_clients: Vec::new(),
                 })
             } else {
-                Err(msg)
+                // Propagate the manager's typed error so its machine code
+                // survives to the IPC envelope (previously flattened to a String).
+                Err(e)
             }
         }
     }
@@ -1229,26 +1220,79 @@ mod tests {
     #[cfg(feature = "test-bridge")]
     #[test]
     fn sever_transport_is_gated_on_the_test_bridge() {
-        // Gate closed → refuses without ever running the sever closure.
+        // Gate closed → refuses without ever running the sever closure. After the
+        // Phase-2 retype the refusal is a typed `TerminalError::InternalError`
+        // (`internal_error` code) whose message keeps the original wording.
         let closed = sever_transport_gated(false, "agent-x", || {
             panic!("the sever closure must not run when the test bridge is off");
         });
+        let err = closed.expect_err("with the test bridge off the sever must be refused");
+        assert!(matches!(err, TerminalError::InternalError(_)));
         assert_eq!(
-            closed,
-            Err("test_sever_agent_transport is a test-bridge-only hook".to_string()),
-            "with the test bridge off the sever must be refused"
+            err.code(),
+            crate::utils::errors::IpcErrorCode::InternalError
+        );
+        assert_eq!(
+            err.to_string(),
+            "Internal error: test_sever_agent_transport is a test-bridge-only hook"
         );
 
         // Gate open → the closure runs and its result passes through unchanged.
-        assert_eq!(
-            sever_transport_gated(true, "agent-x", || true),
-            Ok(true),
+        assert!(
+            sever_transport_gated(true, "agent-x", || true).expect("gate open"),
             "gate open + a live agent severed reports true"
         );
-        assert_eq!(
-            sever_transport_gated(true, "agent-x", || false),
-            Ok(false),
+        assert!(
+            !sever_transport_gated(true, "agent-x", || false).expect("gate open"),
             "gate open + no such agent reports false"
+        );
+    }
+
+    // ── Typed error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ─────────
+    //
+    // The agent commands now return `TerminalError` (the structured
+    // `{code,message,details}` envelope, #3168) instead of `String`. Most simply
+    // stop flattening the `TerminalError` the `AgentRpcClient` trait / deploy
+    // helpers already return; these guard the two failures that were *not* already
+    // typed — the `spawn_blocking` `JoinError` and the "agent not connected"
+    // lookup miss — locking their message text and machine code.
+
+    /// A blocked `spawn_blocking` join (task panicked/cancelled) funnels into
+    /// `TerminalError::InternalError`, preserving the raw join text under the
+    /// typed `Internal error:` prefix and the `internal_error` machine code.
+    #[test]
+    fn blocking_join_error_maps_to_internal_error_preserving_text() {
+        let err = blocking_join_error("task panicked: boom");
+        assert!(matches!(err, TerminalError::InternalError(_)));
+        assert_eq!(
+            err.code(),
+            crate::utils::errors::IpcErrorCode::InternalError
+        );
+
+        let value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&err).expect("serialize"))
+                .expect("valid JSON envelope");
+        assert_eq!(value["code"], "internal_error");
+        assert_eq!(value["message"], "Internal error: task panicked: boom");
+        assert!(value["details"].is_null());
+    }
+
+    /// `get_agent_capabilities` on an unknown/disconnected agent maps to
+    /// `TerminalError::RemoteError`, keeping the "Agent … not connected" wording
+    /// while now carrying the stable `remote_error` code.
+    #[test]
+    fn agent_not_connected_maps_to_remote_error_keeping_text() {
+        let err = agent_not_connected("agent-42");
+        assert!(matches!(err, TerminalError::RemoteError(_)));
+        assert_eq!(err.code(), crate::utils::errors::IpcErrorCode::RemoteError);
+
+        let value: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&err).expect("serialize"))
+                .expect("valid JSON envelope");
+        assert_eq!(value["code"], "remote_error");
+        assert_eq!(
+            value["message"],
+            "Remote agent error: Agent agent-42 not connected"
         );
     }
 }
