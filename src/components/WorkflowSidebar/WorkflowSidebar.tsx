@@ -15,6 +15,7 @@ import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
 import { serializeWorkflows } from "@/services/workflowIo";
 import type { Workflow } from "@/types/workflow";
 import { WorkflowListItem } from "./WorkflowListItem";
+import { WorkflowHistorySection } from "./WorkflowHistorySection";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
 import { newId } from "@/services/transport/ids";
@@ -340,6 +341,7 @@ export function WorkflowSidebar() {
           })}
         </div>
       )}
+      <WorkflowHistorySection />
       <WorkflowRunOutput />
       <WorkflowEditorDialog
         open={editing !== null}
