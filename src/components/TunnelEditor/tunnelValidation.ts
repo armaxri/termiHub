@@ -32,14 +32,18 @@ const PORT_LABELS: Record<string, string> = {
  */
 export function validateTunnelType(tunnelType: TunnelType): TunnelValidation {
   const errors: TunnelFieldErrors = {};
-  const config = tunnelType.config as unknown as Record<string, string | number>;
 
-  for (const [key, value] of Object.entries(config)) {
+  // `TunnelType` is a discriminated union whose members' fields are all `string`
+  // hosts or `PortValue` (`number | ""`) ports, so the bag is iterated with real
+  // types — no cast — and each value is narrowed by its own `typeof`.
+  for (const [key, value] of Object.entries(tunnelType.config)) {
     if (key.endsWith("Host")) {
-      const err = validateHost(value as string, HOST_LABELS[key] ?? "Host");
+      const host = typeof value === "string" ? value : "";
+      const err = validateHost(host, HOST_LABELS[key] ?? "Host");
       if (err) errors[key] = err;
     } else if (key.endsWith("Port")) {
-      const err = validatePort(value as number, { label: PORT_LABELS[key] ?? "Port" });
+      const port = typeof value === "number" || value === "" ? value : "";
+      const err = validatePort(port, { label: PORT_LABELS[key] ?? "Port" });
       if (err) errors[key] = err;
     }
   }

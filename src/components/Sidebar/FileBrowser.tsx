@@ -57,8 +57,8 @@ import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
 import { getHomeDir, sendInput } from "@/services/api";
 import { FileEntry } from "@/types/connection";
-import type { ShellType } from "@/types/terminal";
 import type { ConnectionTypeInfo } from "@/services/api";
+import { isLocalConnectionConfig, isWslConnectionConfig } from "@/utils/typedConnectionConfig";
 import { getWslDistroName, wslToWindowsPath, windowsToWslPath } from "@/utils/shell-detection";
 import { formatBytes, formatRelativeTime, formatAbsoluteTime } from "@/utils/formatters";
 import {
@@ -687,17 +687,15 @@ function useFileBrowserSync() {
   const activeTabEditorMeta = activeTab?.editorMeta ?? null;
 
   // Extract the WSL distro name (if any) from the active tab's shell type
-  const activeTabShellType =
-    activeTab?.config.type === "local"
-      ? (((activeTab.config.config.shell ?? activeTab.config.config.shellType) as ShellType) ??
-        null)
+  const activeTabConfigForShell = activeTab?.config;
+  const activeTabShellType = isLocalConnectionConfig(activeTabConfigForShell)
+    ? (activeTabConfigForShell.config.shell ?? activeTabConfigForShell.config.shellType ?? null)
+    : null;
+  const wslDistro = isWslConnectionConfig(activeTabConfigForShell)
+    ? (activeTabConfigForShell.config.distribution ?? null)
+    : activeTabShellType
+      ? getWslDistroName(activeTabShellType)
       : null;
-  const wslDistro =
-    activeTab?.config.type === "wsl"
-      ? ((activeTab.config.config.distribution as string) ?? null)
-      : activeTabShellType
-        ? getWslDistroName(activeTabShellType)
-        : null;
 
   useEffect(() => {
     if (!activeTab || activeTabContentType === "settings") {
