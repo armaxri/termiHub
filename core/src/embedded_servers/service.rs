@@ -661,6 +661,7 @@ mod tests {
             read_only: true,
             directory_listing: Some(true),
             ftp_auth: None,
+            http_auth: None,
             max_transfer_bytes: None,
         }
     }

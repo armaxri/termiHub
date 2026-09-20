@@ -50,6 +50,8 @@ const ftpAuthSchema = z.union([
   z.object({ type: z.literal("credentials"), username: z.string(), password: z.string() }),
 ]);
 
+const httpAuthSchema = z.object({ username: z.string(), password: z.string() });
+
 const serverFormSchema = z
   .object({
     id: z.string(),
@@ -62,6 +64,7 @@ const serverFormSchema = z
     readOnly: z.boolean(),
     directoryListing: z.boolean().optional(),
     ftpAuth: ftpAuthSchema.optional(),
+    httpAuth: httpAuthSchema.optional(),
     maxTransferBytes: z.number().optional(),
   })
   .superRefine((form, ctx) => {
@@ -93,6 +96,7 @@ function defaultConfig(): ServerFormState {
     readOnly: false,
     directoryListing: true,
     ftpAuth: undefined,
+    httpAuth: undefined,
   };
 }
 
@@ -156,6 +160,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
     setValue("port", DEFAULT_PORTS[type]);
     setValue("directoryListing", type === "http" ? (cur.directoryListing ?? true) : undefined);
     setValue("ftpAuth", type === "ftp" ? (cur.ftpAuth ?? { type: "anonymous" }) : undefined);
+    setValue("httpAuth", type === "http" ? cur.httpAuth : undefined);
   };
 
   const handleBindHostChange = (addr: string) => {
@@ -189,6 +194,14 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
     form.ftpAuth?.type === "credentials"
       ? { username: form.ftpAuth.username, password: form.ftpAuth.password }
       : { username: "", password: "" };
+
+  // HTTP Basic auth (PROD-0035): presence of `httpAuth` is the enable flag; the
+  // current (possibly empty) credentials feed the fields when enabled.
+  const httpAuthEnabled = !!form.httpAuth;
+  const httpCreds: { username: string; password: string } = form.httpAuth ?? {
+    username: "",
+    password: "",
+  };
 
   return (
     <>
@@ -390,6 +403,60 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
               </label>
             )}
           </fieldset>
+
+          {/* HTTP Basic auth (PROD-0035) */}
+          {form.serverType === "http" && (
+            <fieldset className="server-dialog__fieldset">
+              <legend className="server-dialog__legend">Authentication</legend>
+              <label className="server-dialog__check">
+                <Checkbox
+                  checked={httpAuthEnabled}
+                  onCheckedChange={(checked) =>
+                    setValue(
+                      "httpAuth",
+                      checked === true
+                        ? { username: httpCreds.username, password: httpCreds.password }
+                        : undefined
+                    )
+                  }
+                  aria-label="Require authentication (HTTP Basic Auth)"
+                  data-testid="server-dialog-http-auth-enable"
+                />
+                <span>Require authentication (Basic Auth)</span>
+              </label>
+              {httpAuthEnabled && (
+                <div className="server-dialog__creds">
+                  <label className="server-dialog__label">
+                    Username
+                    <Input
+                      value={httpCreds.username}
+                      onChange={(e) =>
+                        setValue("httpAuth", {
+                          username: e.target.value,
+                          password: httpCreds.password,
+                        })
+                      }
+                      data-testid="server-dialog-http-username"
+                    />
+                  </label>
+                  <label className="server-dialog__label">
+                    Password
+                    <PasswordInput
+                      className="server-dialog__input"
+                      value={httpCreds.password}
+                      onChange={(e) =>
+                        setValue("httpAuth", {
+                          username: httpCreds.username,
+                          password: e.target.value,
+                        })
+                      }
+                      data-testid="server-dialog-http-password"
+                    />
+                  </label>
+                </div>
+              )}
+            </fieldset>
+          )}
 
           {/* FTP auth */}
           {form.serverType === "ftp" && (

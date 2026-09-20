@@ -7,13 +7,16 @@ use anyhow::{Context, Result};
 use axum::body::Body;
 use axum::extract::State;
 use axum::handler::Handler;
-use axum::http::{Request, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{Html, IntoResponse, Response};
 use axum::{middleware, Router};
+use base64::Engine as _;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use tower_http::services::ServeDir;
 
-use super::config::{AtomicServerStats, EmbeddedServerConfig};
+use super::config::{AtomicServerStats, EmbeddedServerConfig, HttpBasicAuth};
 use super::service::BindSignal;
 use super::shutdown::ShutdownSignal;
 
@@ -56,6 +59,97 @@ async fn track_connections(
         .fetch_sub(1, Ordering::Relaxed);
 
     resp
+}
+
+/// State shared with the Basic-auth middleware (PROD-0035).
+#[derive(Clone)]
+struct AuthState {
+    /// The credentials a request must present.
+    auth: Arc<HttpBasicAuth>,
+    /// Pre-rendered `WWW-Authenticate` header value naming the server's realm.
+    challenge: HeaderValue,
+}
+
+/// Tower middleware enforcing optional HTTP Basic authentication (PROD-0035).
+///
+/// A request whose `Authorization: Basic` credentials match is passed through
+/// untouched; any other request (missing, malformed, or wrong credentials) is
+/// answered with `401 Unauthorized` plus a `WWW-Authenticate: Basic` challenge
+/// so a browser re-prompts. This layer is only mounted when a server has
+/// `http_auth` configured — an unauthenticated server never sees it.
+async fn require_basic_auth(
+    State(state): State<AuthState>,
+    req: Request<Body>,
+    next: Next,
+) -> Response {
+    if credentials_match(&state.auth, req.headers()) {
+        next.run(req).await
+    } else {
+        let mut resp = (StatusCode::UNAUTHORIZED, "401 Unauthorized\n").into_response();
+        resp.headers_mut()
+            .insert(header::WWW_AUTHENTICATE, state.challenge.clone());
+        resp
+    }
+}
+
+/// Build the `Basic realm="<name>"` challenge value for a server.
+///
+/// The realm is derived from the (user-controlled) server name, so it is
+/// sanitised — quotes, backslashes and control characters removed — before
+/// interpolation, and the result is validated as a header value; an
+/// unrepresentable value falls back to a fixed `Basic realm="termiHub"` so the
+/// challenge header is always well-formed.
+fn basic_auth_challenge(realm: &str) -> HeaderValue {
+    let sanitised: String = realm
+        .chars()
+        .filter(|c| *c != '"' && *c != '\\' && !c.is_control())
+        .collect();
+    HeaderValue::from_str(&format!("Basic realm=\"{sanitised}\""))
+        .unwrap_or_else(|_| HeaderValue::from_static("Basic realm=\"termiHub\""))
+}
+
+/// True when the request's `Authorization: Basic` header carries credentials
+/// matching `auth`. The comparison is constant-time (see [`secret_eq`]) and the
+/// username/password checks are combined without short-circuiting, so neither a
+/// wrong username nor a wrong password is distinguishable by timing.
+fn credentials_match(auth: &HttpBasicAuth, headers: &HeaderMap) -> bool {
+    let Some((username, password)) = decode_basic_credentials(headers) else {
+        return false;
+    };
+    let user_ok = secret_eq(username.as_bytes(), auth.username.as_bytes());
+    let pass_ok = secret_eq(password.as_bytes(), auth.password.as_bytes());
+    (user_ok & pass_ok).into()
+}
+
+/// Decode `Authorization: Basic <base64(user:pass)>` into its `(username,
+/// password)` pair, or `None` when the header is absent, not the `Basic` scheme,
+/// not valid base64/UTF-8, or missing the `:` separator. The scheme token is
+/// matched case-insensitively per RFC 7617.
+fn decode_basic_credentials(headers: &HeaderMap) -> Option<(String, String)> {
+    let value = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
+    let (scheme, encoded) = value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("Basic") {
+        return None;
+    }
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .ok()?;
+    let decoded = String::from_utf8(decoded).ok()?;
+    let (username, password) = decoded.split_once(':')?;
+    Some((username.to_string(), password.to_string()))
+}
+
+/// Constant-time equality of two secrets.
+///
+/// Each side is first reduced to a fixed-length SHA-256 digest, then the two
+/// digests are compared in constant time. Hashing first makes the comparison
+/// constant-time regardless of input length, so the secret's length cannot leak
+/// through the early-exit on a length mismatch that a direct slice comparison
+/// would expose.
+fn secret_eq(a: &[u8], b: &[u8]) -> subtle::Choice {
+    let da = Sha256::digest(a);
+    let db = Sha256::digest(b);
+    da.as_slice().ct_eq(db.as_slice())
 }
 
 /// Escape a string for safe interpolation into HTML text and double-quoted
@@ -190,8 +284,20 @@ async fn dir_listing_handler(
 /// [`dir_listing_handler`], which renders a directory index for real
 /// directories. Index-file auto-serving is disabled so directories always render
 /// the generated listing. When disabled, only [`ServeDir`] is used.
-fn build_router(root: PathBuf, directory_listing: bool, tracking_state: TrackingState) -> Router {
-    let router = if directory_listing {
+///
+/// When `auth` is `Some`, a Basic-auth gate (PROD-0035) is mounted in front of
+/// the file service, challenging every request with the `realm`-named
+/// `WWW-Authenticate` header until valid credentials are supplied; `None` leaves
+/// the server unauthenticated exactly as before. The auth gate sits *inside* the
+/// connection tracker so challenged (401) requests are still counted.
+fn build_router(
+    root: PathBuf,
+    directory_listing: bool,
+    tracking_state: TrackingState,
+    auth: Option<HttpBasicAuth>,
+    realm: &str,
+) -> Router {
+    let mut router = if directory_listing {
         let serve_dir = ServeDir::new(root.clone())
             .append_index_html_on_directories(false)
             .fallback(dir_listing_handler.with_state(root));
@@ -199,6 +305,16 @@ fn build_router(root: PathBuf, directory_listing: bool, tracking_state: Tracking
     } else {
         Router::new().fallback_service(ServeDir::new(root))
     };
+
+    if let Some(auth) = auth {
+        router = router.layer(middleware::from_fn_with_state(
+            AuthState {
+                auth: Arc::new(auth),
+                challenge: basic_auth_challenge(realm),
+            },
+            require_basic_auth,
+        ));
+    }
 
     router.layer(middleware::from_fn_with_state(
         tracking_state,
@@ -231,6 +347,10 @@ pub fn start_http_server(
 
     let root = PathBuf::from(&config.root_directory);
     let directory_listing = config.directory_listing.unwrap_or(false);
+    // Optional Basic auth (PROD-0035): `None` serves unauthenticated as before.
+    // The realm shown in the browser prompt is the server's display name.
+    let auth = config.http_auth.clone();
+    let realm = config.name.clone();
     let tracking_state = TrackingState {
         stats: stats.clone(),
     };
@@ -263,7 +383,7 @@ pub fn start_http_server(
         // Bind confirmed — tell the manager it is safe to report Running.
         ready.confirm();
 
-        let router = build_router(root, directory_listing, tracking_state);
+        let router = build_router(root, directory_listing, tracking_state, auth, &realm);
 
         tracing::info!(addr = %addr, "HTTP server listening");
 
@@ -291,30 +411,74 @@ mod tests {
 
     /// Build a router over a temp dir containing a single `hello.txt` file.
     fn router_with_hello(directory_listing: bool) -> (tempfile::TempDir, Router) {
+        router_with_hello_auth(directory_listing, None)
+    }
+
+    /// As [`router_with_hello`], but with optional Basic-auth credentials mounted
+    /// (PROD-0035). The realm is a fixed test string.
+    fn router_with_hello_auth(
+        directory_listing: bool,
+        auth: Option<HttpBasicAuth>,
+    ) -> (tempfile::TempDir, Router) {
         let dir = tempfile::tempdir().expect("create temp dir");
         std::fs::write(dir.path().join("hello.txt"), "hello world").expect("write file");
         let tracking_state = TrackingState {
             stats: AtomicServerStats::new(),
         };
-        let router = build_router(dir.path().to_path_buf(), directory_listing, tracking_state);
+        let router = build_router(
+            dir.path().to_path_buf(),
+            directory_listing,
+            tracking_state,
+            auth,
+            "Test Realm",
+        );
         (dir, router)
     }
 
     async fn get(router: Router, uri: &str) -> (StatusCode, String) {
+        let (status, _headers, body) = get_full(router, uri, None).await;
+        (status, body)
+    }
+
+    /// Perform a GET with an optional `Authorization` header, returning the
+    /// status, response headers, and body.
+    async fn get_full(
+        router: Router,
+        uri: &str,
+        authorization: Option<&str>,
+    ) -> (StatusCode, axum::http::HeaderMap, String) {
+        let mut builder = Request::builder().uri(uri);
+        if let Some(value) = authorization {
+            builder = builder.header(axum::http::header::AUTHORIZATION, value);
+        }
         let response = router
-            .oneshot(
-                Request::builder()
-                    .uri(uri)
-                    .body(Body::empty())
-                    .expect("build request"),
-            )
+            .oneshot(builder.body(Body::empty()).expect("build request"))
             .await
             .expect("router response");
         let status = response.status();
+        let headers = response.headers().clone();
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .expect("read body");
-        (status, String::from_utf8_lossy(&bytes).into_owned())
+        (
+            status,
+            headers,
+            String::from_utf8_lossy(&bytes).into_owned(),
+        )
+    }
+
+    /// Encode `user:pass` into the value of an `Authorization: Basic` header.
+    fn basic_header(username: &str, password: &str) -> String {
+        let token =
+            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
+        format!("Basic {token}")
+    }
+
+    fn creds(username: &str, password: &str) -> HttpBasicAuth {
+        HttpBasicAuth {
+            username: username.to_string(),
+            password: password.to_string(),
+        }
     }
 
     /// Regression test for #961: with directory listing enabled, downloading an
@@ -349,6 +513,101 @@ mod tests {
         let (_dir, router) = router_with_hello(true);
         let (status, _) = get(router, "/nope.txt").await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // ─── HTTP Basic auth (PROD-0035) ────────────────────────────────────────
+
+    /// With auth configured, a request carrying no credentials is challenged
+    /// with `401` and a `WWW-Authenticate: Basic realm="…"` header.
+    #[tokio::test]
+    async fn auth_missing_credentials_returns_401_challenge() {
+        let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "s3cret")));
+        let (status, headers, _) = get_full(router, "/hello.txt", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        let challenge = headers
+            .get(axum::http::header::WWW_AUTHENTICATE)
+            .and_then(|v| v.to_str().ok())
+            .expect("challenge header present");
+        assert_eq!(challenge, r#"Basic realm="Test Realm""#);
+    }
+
+    /// With auth configured, wrong credentials are also rejected with `401`.
+    #[tokio::test]
+    async fn auth_wrong_credentials_returns_401() {
+        let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "s3cret")));
+        let (status, _headers, _) =
+            get_full(router, "/hello.txt", Some(&basic_header("admin", "wrong"))).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// A wrong username (right password) is rejected too.
+    #[tokio::test]
+    async fn auth_wrong_username_returns_401() {
+        let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "s3cret")));
+        let (status, _headers, _) =
+            get_full(router, "/hello.txt", Some(&basic_header("root", "s3cret"))).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// With auth configured, correct credentials serve the file normally.
+    #[tokio::test]
+    async fn auth_correct_credentials_serves_file() {
+        let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "s3cret")));
+        let (status, _headers, body) =
+            get_full(router, "/hello.txt", Some(&basic_header("admin", "s3cret"))).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "hello world");
+    }
+
+    /// A malformed (non-Basic) Authorization header is rejected, not mistaken
+    /// for valid credentials.
+    #[tokio::test]
+    async fn auth_non_basic_scheme_returns_401() {
+        let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "s3cret")));
+        let (status, _headers, _) = get_full(router, "/hello.txt", Some("Bearer sometoken")).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    /// With no auth configured (the default, backward-compatible shape), the
+    /// server serves unauthenticated and never emits a challenge.
+    #[tokio::test]
+    async fn auth_disabled_serves_unauthenticated() {
+        let (_dir, router) = router_with_hello_auth(false, None);
+        let (status, headers, body) = get_full(router, "/hello.txt", None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "hello world");
+        assert!(headers.get(axum::http::header::WWW_AUTHENTICATE).is_none());
+    }
+
+    /// The scheme token is matched case-insensitively per RFC 7617.
+    #[tokio::test]
+    async fn auth_scheme_is_case_insensitive() {
+        let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "s3cret")));
+        let token = base64::engine::general_purpose::STANDARD.encode("admin:s3cret");
+        let (status, _headers, _) =
+            get_full(router, "/hello.txt", Some(&format!("basic {token}"))).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    /// A password containing a colon round-trips: only the first `:` splits the
+    /// decoded `user:pass`, so the rest stays in the password.
+    #[tokio::test]
+    async fn auth_password_may_contain_colon() {
+        let (_dir, router) = router_with_hello_auth(false, Some(creds("admin", "a:b:c")));
+        let (status, _headers, _) =
+            get_full(router, "/hello.txt", Some(&basic_header("admin", "a:b:c"))).await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    /// The realm value is sanitised so a hostile server name cannot produce a
+    /// malformed `WWW-Authenticate` header (quotes/backslashes stripped).
+    #[test]
+    fn basic_auth_challenge_sanitises_realm() {
+        let value = basic_auth_challenge(r#"na"me\with"#);
+        assert_eq!(
+            value.to_str().expect("valid header"),
+            r#"Basic realm="namewith""#
+        );
     }
 
     #[test]
@@ -423,6 +682,7 @@ mod tests {
             read_only: false,
             directory_listing: Some(false),
             ftp_auth: None,
+            http_auth: None,
             max_transfer_bytes: None,
         };
 
