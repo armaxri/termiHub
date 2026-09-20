@@ -270,6 +270,23 @@
   font-size: var(--font-size-sm);
 }
 
+/* CPU% sparkline block in the monitoring dropdown (PROD-0030). */
+.monitoring-menu__spark {
+  padding: var(--spacing-xs) var(--spacing-md);
+}
+
+.monitoring-menu__spark-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--spacing-xxs);
+}
+
+.metric-sparkline {
+  width: 100%;
+}
+
 .monitoring-menu__label {
   color: var(--text-muted);
   white-space: nowrap;
