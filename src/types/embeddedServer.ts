@@ -9,6 +9,17 @@ export type FtpAuth =
   | { type: "anonymous" }
   | { type: "credentials"; username: string; password: string };
 
+/**
+ * Optional HTTP Basic authentication credentials for an embedded HTTP server
+ * (PROD-0035). When set, the server challenges every request until matching
+ * credentials are supplied; when absent, the directory is served
+ * unauthenticated.
+ */
+export interface HttpBasicAuth {
+  username: string;
+  password: string;
+}
+
 /** Persistent configuration for a single embedded server. */
 export interface EmbeddedServerConfig {
   id: string;
@@ -21,6 +32,11 @@ export interface EmbeddedServerConfig {
   readOnly: boolean;
   directoryListing?: boolean;
   ftpAuth?: FtpAuth;
+  /**
+   * Optional HTTP Basic authentication (HTTP only, PROD-0035). Absent → the
+   * directory is served unauthenticated, exactly as before this field existed.
+   */
+  httpAuth?: HttpBasicAuth;
   /**
    * Maximum size, in bytes, of a single file transfer. Currently enforced by
    * the (unauthenticated) TFTP server to bound per-transfer resource use.

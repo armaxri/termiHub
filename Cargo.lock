@@ -7761,6 +7761,7 @@ dependencies = [
  "shellexpand",
  "shlex",
  "socket2 0.5.10",
+ "subtle",
  "suppaftp",
  "surge-ping",
  "temp-env",
