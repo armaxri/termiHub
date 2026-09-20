@@ -8,8 +8,8 @@
  * shipped macro UI.
  */
 import type { ComponentType } from "react";
-import { Terminal, FileCode, Play, Clock, Cpu } from "lucide-react";
-import type { WorkflowStep, WorkflowStepKind } from "@/types/workflow";
+import { Terminal, FileCode, Play, Clock, Cpu, GitBranch } from "lucide-react";
+import type { WorkflowComparisonOp, WorkflowStep, WorkflowStepKind } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
 import { truncate } from "@/utils/formatters";
 
@@ -20,7 +20,62 @@ export const WORKFLOW_STEP_KINDS: readonly WorkflowStepKind[] = [
   "run-macro",
   "wait",
   "run-local-process",
+  "conditional",
 ] as const;
+
+/**
+ * The comparison operators of a workflow condition (PROD-0044), in the order
+ * they appear in the operator picker.
+ */
+export const WORKFLOW_CONDITION_OPS: readonly WorkflowComparisonOp[] = [
+  "eq",
+  "ne",
+  "gt",
+  "lt",
+  "gte",
+  "lte",
+  "contains",
+] as const;
+
+/** Human-readable label for a condition operator, shown in the picker. */
+export function conditionOpLabel(op: WorkflowComparisonOp): string {
+  switch (op) {
+    case "eq":
+      return "equals";
+    case "ne":
+      return "not equals";
+    case "gt":
+      return "greater than";
+    case "lt":
+      return "less than";
+    case "gte":
+      return "greater or equal";
+    case "lte":
+      return "less or equal";
+    case "contains":
+      return "contains";
+  }
+}
+
+/** Compact symbol for a condition operator, shown in one-line step summaries. */
+export function conditionOpSymbol(op: WorkflowComparisonOp): string {
+  switch (op) {
+    case "eq":
+      return "==";
+    case "ne":
+      return "!=";
+    case "gt":
+      return ">";
+    case "lt":
+      return "<";
+    case "gte":
+      return ">=";
+    case "lte":
+      return "<=";
+    case "contains":
+      return "contains";
+  }
+}
 
 /** Lucide icon component for each step kind (matches the concept mockup). */
 const STEP_ICONS: Record<WorkflowStepKind, ComponentType<{ size?: number | string }>> = {
@@ -29,6 +84,7 @@ const STEP_ICONS: Record<WorkflowStepKind, ComponentType<{ size?: number | strin
   "run-macro": Play,
   wait: Clock,
   "run-local-process": Cpu,
+  conditional: GitBranch,
 };
 
 /** The icon component for a step kind. */
@@ -68,6 +124,15 @@ export function summariseWorkflowStep(step: WorkflowStep, macros?: Macro[]): str
       if (!step.program.trim()) return "(no program)";
       return truncate([step.program, ...step.args].join(" "));
     }
+    case "conditional": {
+      const { left, op, right } = step.condition;
+      const thenCount = step.then.length;
+      const elseCount = step.else?.length ?? 0;
+      const lhs = left.trim() || "?";
+      const rhs = right.trim() || "?";
+      const branches = `${thenCount} then${elseCount ? `, ${elseCount} else` : ""}`;
+      return truncate(`if ${lhs} ${conditionOpSymbol(op)} ${rhs} → ${branches}`);
+    }
   }
 }
 
@@ -88,6 +153,10 @@ export function newWorkflowStep(kind: WorkflowStepKind): WorkflowStep {
       return { kind, delayMs: 500 };
     case "run-local-process":
       return { kind, program: "", args: [] };
+    case "conditional":
+      // `else` is left undefined (not `[]`) so a conditional authored without an
+      // else branch serialises byte-identically — a false condition is a no-op.
+      return { kind, condition: { left: "", op: "eq", right: "" }, then: [] };
   }
 }
 

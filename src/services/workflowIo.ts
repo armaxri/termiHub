@@ -12,6 +12,8 @@
 
 import type {
   Workflow,
+  WorkflowComparisonOp,
+  WorkflowCondition,
   WorkflowParameter,
   WorkflowParameterType,
   WorkflowStep,
@@ -69,6 +71,18 @@ const STEP_KINDS: readonly WorkflowStepKind[] = [
   "run-macro",
   "wait",
   "run-local-process",
+  "conditional",
+];
+
+/** All valid condition comparison operators (PROD-0044). */
+const CONDITION_OPS: readonly WorkflowComparisonOp[] = [
+  "eq",
+  "ne",
+  "gt",
+  "lt",
+  "gte",
+  "lte",
+  "contains",
 ];
 
 /** All valid trigger-kind discriminants. */
@@ -147,11 +161,42 @@ function validateStep(raw: unknown, where: string, stepIndex: number): WorkflowS
       }
       return { kind, program: raw.program, args: raw.args as string[] };
     }
+    case "conditional": {
+      const condition = validateCondition(raw.condition, at);
+      if (!Array.isArray(raw.then)) {
+        throw new Error(`Invalid workflow file: ${at} (conditional) is missing "then".`);
+      }
+      const thenSteps = raw.then.map((s, j) => validateStep(s, `${at} then`, j));
+      const step: WorkflowStep = { kind, condition, then: thenSteps };
+      if (raw.else !== undefined) {
+        if (!Array.isArray(raw.else)) {
+          throw new Error(`Invalid workflow file: ${at} (conditional) has an invalid "else".`);
+        }
+        step.else = raw.else.map((s, j) => validateStep(s, `${at} else`, j));
+      }
+      return step;
+    }
     default: {
       const _exhaustive: never = kind;
       throw new Error(`Invalid workflow file: ${at} has unknown kind ${String(_exhaustive)}.`);
     }
   }
+}
+
+/** Validate a conditional step's structured condition (PROD-0044). */
+function validateCondition(raw: unknown, at: string): WorkflowCondition {
+  if (!isRecord(raw)) {
+    throw new Error(`Invalid workflow file: ${at} (conditional) is missing "condition".`);
+  }
+  if (typeof raw.left !== "string" || typeof raw.right !== "string") {
+    throw new Error(`Invalid workflow file: ${at} (conditional) has invalid condition operands.`);
+  }
+  if (typeof raw.op !== "string" || !CONDITION_OPS.includes(raw.op as WorkflowComparisonOp)) {
+    throw new Error(
+      `Invalid workflow file: ${at} (conditional) has an invalid condition operator.`
+    );
+  }
+  return { left: raw.left, op: raw.op as WorkflowComparisonOp, right: raw.right };
 }
 
 /** Validate one raw trigger, throwing a clear error when a field is malformed. */
@@ -352,13 +397,32 @@ export function summarizeLocalProcessSteps(workflows: Workflow[]): {
   let workflowsWithLocalProcess = 0;
   let localProcessSteps = 0;
   for (const workflow of workflows) {
-    const count = workflow.steps.filter((step) => step.kind === "run-local-process").length;
+    const count = countLocalProcessSteps(workflow.steps);
     if (count > 0) {
       workflowsWithLocalProcess += 1;
       localProcessSteps += count;
     }
   }
   return { workflowsWithLocalProcess, localProcessSteps };
+}
+
+/**
+ * Count `run-local-process` steps in a step list, **descending into conditional
+ * branches** (PROD-0044) so a guarded step nested in a `then`/`else` is still
+ * counted — otherwise an imported conditional could hide one from the security
+ * warning.
+ */
+function countLocalProcessSteps(steps: WorkflowStep[]): number {
+  let count = 0;
+  for (const step of steps) {
+    if (step.kind === "run-local-process") {
+      count += 1;
+    } else if (step.kind === "conditional") {
+      count += countLocalProcessSteps(step.then);
+      if (step.else) count += countLocalProcessSteps(step.else);
+    }
+  }
+  return count;
 }
 
 /** Default fresh-id generator; mirrors the store's `generateWorkflowId`. */

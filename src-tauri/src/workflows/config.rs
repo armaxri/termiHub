@@ -65,6 +65,66 @@ pub enum WorkflowStep {
         #[serde(default)]
         args: Vec<String>,
     },
+
+    /// Branch on a structured condition (PROD-0044, slice 1). When the
+    /// [`WorkflowCondition`] holds, the runner recurses into `then`; otherwise
+    /// into `else` (a no-op when `else` is empty — a false condition with no
+    /// `else` never fails the run). `then`/`else` are ordinary step lists, so
+    /// conditionals nest (bounded by the runner). This model is purely persisted
+    /// here; evaluation lives in the frontend runner. `else` is omitted from
+    /// JSON when empty so an existing workflows.json round-trips byte-identically.
+    #[serde(rename_all = "camelCase")]
+    Conditional {
+        /// The structured comparison that selects the branch.
+        condition: WorkflowCondition,
+        /// Steps run when the condition holds.
+        #[serde(default)]
+        then: Vec<WorkflowStep>,
+        /// Steps run when the condition is false; empty/omitted → false is a no-op.
+        #[serde(rename = "else", default, skip_serializing_if = "Vec::is_empty")]
+        otherwise: Vec<WorkflowStep>,
+    },
+}
+
+/// The comparison operator of a [`WorkflowCondition`] (PROD-0044). Serialised
+/// lowercase (`eq`, `ne`, `gt`, `lt`, `gte`, `lte`, `contains`) to match the
+/// TypeScript `WorkflowComparisonOp` union byte-for-byte over the wire.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkflowComparisonOp {
+    /// String equality (`left == right`).
+    Eq,
+    /// String inequality (`left != right`).
+    Ne,
+    /// Greater than (numeric when both operands parse, else lexicographic).
+    Gt,
+    /// Less than (numeric when both operands parse, else lexicographic).
+    Lt,
+    /// Greater than or equal.
+    Gte,
+    /// Less than or equal.
+    Lte,
+    /// Substring containment (`left` contains `right`).
+    Contains,
+}
+
+/// A structured comparator evaluated by the workflow runner (PROD-0044, slice 1).
+///
+/// `left` and `right` are plain strings that may reference declared parameters
+/// as `${name}`; they go through the same interpolation pass as a step's text
+/// fields before comparison. A **structured** comparator by design — there is
+/// deliberately no bespoke expression-string parser (maintainer decision default
+/// for slice 1). Mirrors the TypeScript `WorkflowCondition` byte-for-byte
+/// (camelCase fields).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowCondition {
+    /// The left-hand operand (may reference `${param}`).
+    pub left: String,
+    /// The comparison operator.
+    pub op: WorkflowComparisonOp,
+    /// The right-hand operand (may reference `${param}`).
+    pub right: String,
 }
 
 /// A trigger that launches a workflow. The complete v1 union is defined here up
@@ -416,6 +476,110 @@ mod tests {
         assert!(json.contains("\"label\":\"Target host\""));
         let parsed: Workflow = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, wf);
+    }
+
+    #[test]
+    fn conditional_step_round_trips_with_kind_and_camel_case() {
+        let step = WorkflowStep::Conditional {
+            condition: WorkflowCondition {
+                left: "${env}".to_string(),
+                op: WorkflowComparisonOp::Eq,
+                right: "prod".to_string(),
+            },
+            then: vec![WorkflowStep::SendCommand {
+                command: "deploy".to_string(),
+            }],
+            otherwise: vec![WorkflowStep::SendCommand {
+                command: "skip".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"kind\":\"conditional\""));
+        // `op` serialises lowercase; the else field's wire key is `else`.
+        assert!(json.contains("\"op\":\"eq\""));
+        assert!(json.contains("\"else\":["));
+        let parsed: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, step);
+    }
+
+    #[test]
+    fn conditional_step_omits_empty_else_and_defaults_it_on_load() {
+        // An empty else is skipped so a conditional authored without one
+        // round-trips byte-identically (a false condition is a no-op).
+        let step = WorkflowStep::Conditional {
+            condition: WorkflowCondition {
+                left: "a".to_string(),
+                op: WorkflowComparisonOp::Ne,
+                right: "b".to_string(),
+            },
+            then: vec![],
+            otherwise: vec![],
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(!json.contains("else"));
+        // A conditional written without an `else` key parses with an empty one.
+        let parsed: WorkflowStep = serde_json::from_str(
+            r#"{"kind":"conditional","condition":{"left":"a","op":"ne","right":"b"},"then":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed, step);
+    }
+
+    #[test]
+    fn conditional_step_nests_recursively() {
+        // then/else are ordinary step lists, so a conditional can contain a
+        // conditional — the recursive variant must round-trip.
+        let inner = WorkflowStep::Conditional {
+            condition: WorkflowCondition {
+                left: "1".to_string(),
+                op: WorkflowComparisonOp::Lt,
+                right: "2".to_string(),
+            },
+            then: vec![WorkflowStep::Wait { delay_ms: 100 }],
+            otherwise: vec![],
+        };
+        let outer = WorkflowStep::Conditional {
+            condition: WorkflowCondition {
+                left: "x".to_string(),
+                op: WorkflowComparisonOp::Contains,
+                right: "y".to_string(),
+            },
+            then: vec![inner],
+            otherwise: vec![],
+        };
+        let json = serde_json::to_string(&outer).unwrap();
+        let parsed: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, outer);
+    }
+
+    #[test]
+    fn all_comparison_ops_round_trip_lowercase() {
+        let ops = [
+            (WorkflowComparisonOp::Eq, "eq"),
+            (WorkflowComparisonOp::Ne, "ne"),
+            (WorkflowComparisonOp::Gt, "gt"),
+            (WorkflowComparisonOp::Lt, "lt"),
+            (WorkflowComparisonOp::Gte, "gte"),
+            (WorkflowComparisonOp::Lte, "lte"),
+            (WorkflowComparisonOp::Contains, "contains"),
+        ];
+        for (op, wire) in ops {
+            let json = serde_json::to_string(&op).unwrap();
+            assert_eq!(json, format!("\"{wire}\""));
+            let parsed: WorkflowComparisonOp = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed, op);
+        }
+    }
+
+    #[test]
+    fn existing_flat_workflow_json_is_unaffected_by_the_conditional_variant() {
+        // Back-compat: a workflow authored before conditionals existed still
+        // parses and re-serialises without gaining any conditional-only keys.
+        let raw = r#"{"id":"wf-1","name":"Flat","steps":[{"kind":"send-command","command":"ls"}]}"#;
+        let wf: Workflow = serde_json::from_str(raw).unwrap();
+        let json = serde_json::to_string(&wf).unwrap();
+        assert!(!json.contains("conditional"));
+        assert!(!json.contains("\"else\""));
     }
 
     #[test]
