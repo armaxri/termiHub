@@ -21,7 +21,7 @@
      gap between the content edges and the container in that mode (matches the
      8 px text inset used in normal mode). */
   --hscroll-bar: 10px;
-  --terminal-edge-gap: 8px;
+  --terminal-edge-gap: var(--spacing-sm);
 }
 
 /* xterm is opened into this inner viewport (not the container element directly).
@@ -55,7 +55,7 @@
    horizontal scrollbar plus a small gap, so the bar never covers the last row.
    FitAddon reads this padding-bottom and reduces the row count to match. */
 .terminal-horizontal-scroll .xterm {
-  padding: 0 0 calc(var(--hscroll-bar) + 4px) 0;
+  padding: 0 0 calc(var(--hscroll-bar) + var(--spacing-xs)) 0;
 }
 
 .terminal-container .xterm-viewport {
