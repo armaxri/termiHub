@@ -12,12 +12,12 @@ import {
   sessionSetPermissions,
   sessionDownload,
   sessionUpload,
+  sessionCopyRemote,
   sessionVscodeOpenRemote,
   sessionHasExecCapability,
-  localDelete,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
-import { fireAndForget, frontendLog } from "@/utils/frontendLog";
+import { frontendLog } from "@/utils/frontendLog";
 import {
   runBlockingTransfer,
   runMaybeTrackedTransfer,
@@ -117,6 +117,21 @@ export function useSessionFileSystem() {
     (sessionId: string, localPath: string, remotePath: string) =>
       sessionUpload(sessionId, localPath, remotePath, (transferId) =>
         seedTransferQueueRow({ transferId, sessionId, direction: "upload", remotePath })
+      ),
+    []
+  );
+  // Direct remote→remote copy: streams source→destination through the desktop as
+  // ONE tracked transfer, seeding a single Transfer Queue row keyed on the
+  // destination (where the file lands) — no local temp file (PROD-0013).
+  const startRemoteCopy = useCallback(
+    (srcSession: string, srcPath: string, dstSession: string, dstPath: string) =>
+      sessionCopyRemote(srcSession, srcPath, dstSession, dstPath, (transferId) =>
+        seedTransferQueueRow({
+          transferId,
+          sessionId: dstSession,
+          direction: "upload",
+          remotePath: dstPath,
+        })
       ),
     []
   );
@@ -354,14 +369,14 @@ export function useSessionFileSystem() {
           await sessionRenameFile(sessionFileBrowserId, clipEntry.path, destPath);
           return false;
         } else {
-          // Cross-session or copy. When BOTH endpoints are SFTP-backed, route the
-          // copy through the dedicated download + upload transfer channel via a
-          // local temp file (the pre-#2421 mechanism), so it surfaces as two
-          // tracked Transfer Queue rows — a download of the source and an upload
-          // to the destination — instead of the silent byte round-trip that left
-          // the region-fed queue empty (#2469). Each row's name and remote path
-          // come from the remote paths (#1531/#1573), never the temp copy: the
-          // backend derives `file_name` from the remote path in both directions.
+          // Cross-session or copy. When BOTH endpoints are SFTP-backed, stream
+          // the copy directly source→destination through the desktop as ONE
+          // tracked transfer — no local temp file (PROD-0013). This replaces the
+          // pre-#2421 download-to-temp + upload dance (two rows + a local disk
+          // round-trip). The single row's name and remote path come from the
+          // destination remote path (#1531/#1573); the backend derives
+          // `file_name` from it. A byte-based endpoint (Docker/FTP/agent) has no
+          // SFTP channel, so it keeps the read/write fallback below.
           const srcSession = srcId ?? sessionFileBrowserId;
           const srcSftp =
             srcSession === sessionFileBrowserId
@@ -371,20 +386,7 @@ export function useSessionFileSystem() {
                   .catch(() => false);
           let tracked: boolean;
           if (sftpCapable && srcSftp) {
-            const { tempDir, join } = await import("@tauri-apps/api/path");
-            const tempPath = await join(
-              await tempDir(),
-              `termihub-paste-${Date.now()}-${clipEntry.name}`
-            );
-            try {
-              await startDownload(srcSession, clipEntry.path, tempPath);
-              await startUpload(sessionFileBrowserId, tempPath, destPath);
-            } finally {
-              // Best-effort cleanup of the local temp copy; a leftover must never
-              // fail a paste whose bytes already landed — but log it so a
-              // leaking temp file is auditable rather than silent.
-              fireAndForget(localDelete(tempPath, false), `delete paste temp file ${tempPath}`);
-            }
+            await startRemoteCopy(srcSession, clipEntry.path, sessionFileBrowserId, destPath);
             tracked = true;
           } else {
             // Byte-based fallback (Docker / FTP / remote-agent, or a mixed
@@ -441,7 +443,7 @@ export function useSessionFileSystem() {
     sessionCurrentPath,
     refreshSession,
     sftpCapable,
-    startDownload,
+    startRemoteCopy,
     startUpload,
   ]);
 

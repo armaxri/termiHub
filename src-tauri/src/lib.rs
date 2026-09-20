@@ -686,6 +686,7 @@ pub fn run() {
             commands::transfer::transfer_list,
             commands::transfer::ftp_download,
             commands::transfer::ftp_upload,
+            commands::transfer::session_copy_remote,
             commands::files::get_home_dir,
             commands::files::local_list_dir,
             commands::files::local_copy,
