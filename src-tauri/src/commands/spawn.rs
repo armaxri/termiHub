@@ -876,6 +876,141 @@ mod tests {
         assert!(spawn.spawned);
     }
 
+    // ---- Per-entry saved connection honored at spawn (#2997) --------------
+
+    /// The entry addressed by `--entry-id` carries a saved `connection_id`; a
+    /// context-menu click emits no `--connection`, so without folding the entry's
+    /// value in, the resolver never sees the saved connection.
+    #[test]
+    fn effective_connection_falls_back_to_the_entry_saved_connection() {
+        let mut entry = ShellEntry {
+            id: "open".to_string(),
+            name: "Open in termiHub".to_string(),
+            connection_id: Some("Prod/Web".to_string()),
+            visibility: ShellEntryVisibility::Always,
+            show_for: ShowForTargets::default(),
+            container_image: None,
+            container_mount: None,
+            spawn_kind: SpawnKind::Ssh,
+            shell: None,
+            container_runtime: ContainerRuntime::Auto,
+        };
+
+        // No explicit --connection → the entry's saved connection is used.
+        assert_eq!(
+            effective_connection(None, Some(&entry)).as_deref(),
+            Some("Prod/Web")
+        );
+
+        // A blank --connection is treated as absent, so the entry still wins.
+        assert_eq!(
+            effective_connection(Some("  "), Some(&entry)).as_deref(),
+            Some("Prod/Web")
+        );
+
+        // An explicit --connection outranks the entry's saved value.
+        assert_eq!(
+            effective_connection(Some("Other/Box"), Some(&entry)).as_deref(),
+            Some("Other/Box")
+        );
+
+        // An entry with no saved connection contributes no fallback.
+        entry.connection_id = None;
+        assert_eq!(effective_connection(None, Some(&entry)), None);
+
+        // No entry at all (unknown id) contributes no fallback.
+        assert_eq!(effective_connection(None, None), None);
+    }
+
+    /// End-to-end at the pure layer: an SSH entry with a saved `connection_id`
+    /// and `--kind ssh` (what a context-menu click carries) must resolve to the
+    /// saved SSH connection without an explicit `--connection`. Before #2997 the
+    /// entry's `connection_id` was ignored and this errored.
+    #[test]
+    fn an_ssh_entry_saved_connection_is_honored_for_a_context_menu_click() {
+        let ssh_settings = serde_json::json!({
+            "host": "example.com",
+            "port": 22,
+            "username": "me",
+        });
+        let conns = vec![saved_conn("Prod/Web", "Web", "ssh", ssh_settings.clone())];
+
+        let entry = ShellEntry {
+            id: "open".to_string(),
+            name: "Open in termiHub".to_string(),
+            connection_id: Some("Prod/Web".to_string()),
+            visibility: ShellEntryVisibility::Always,
+            show_for: ShowForTargets::default(),
+            container_image: None,
+            container_mount: None,
+            spawn_kind: SpawnKind::Ssh,
+            shell: None,
+            container_runtime: ContainerRuntime::Auto,
+        };
+
+        // Mirror the command's folding: no explicit --connection, kind from entry.
+        let connection = effective_connection(None, Some(&entry));
+        let req = SpawnRequest {
+            location: Some("/srv/app".into()),
+            connection,
+            entry_id: Some("open".into()),
+            kind: entry.spawn_kind,
+            ..SpawnRequest::default()
+        };
+
+        let spawn = resolve_shell_spawn_with(&req, Path::new("/home/u"), &conns, None, None)
+            .expect("resolves from the entry's saved connection");
+        assert_eq!(spawn.session_type, "ssh");
+        assert_eq!(spawn.settings, ssh_settings);
+        assert_eq!(spawn.cd_path.as_deref(), Some("/srv/app"));
+        assert_eq!(spawn.title, "Web (Spawned)");
+    }
+
+    /// A WSL entry's saved `connection_id` selects that connection's distribution
+    /// for a context-menu click carrying no `--connection` (#2997).
+    #[test]
+    fn a_wsl_entry_saved_connection_selects_its_distribution() {
+        let conns = vec![saved_conn(
+            "Work/Debian box",
+            "Debian box",
+            "wsl",
+            serde_json::json!({ "distribution": "Debian" }),
+        )];
+
+        let entry = ShellEntry {
+            id: "open".to_string(),
+            name: "Open in termiHub".to_string(),
+            connection_id: Some("Work/Debian box".to_string()),
+            visibility: ShellEntryVisibility::Always,
+            show_for: ShowForTargets::default(),
+            container_image: None,
+            container_mount: None,
+            spawn_kind: SpawnKind::Wsl,
+            shell: None,
+            container_runtime: ContainerRuntime::Auto,
+        };
+
+        let connection = effective_connection(None, Some(&entry));
+        let req = SpawnRequest {
+            location: None,
+            connection,
+            entry_id: Some("open".into()),
+            kind: entry.spawn_kind,
+            ..SpawnRequest::default()
+        };
+
+        // The saved WSL connection's distribution wins over the default distro.
+        let spawn = resolve_shell_spawn_with(
+            &req,
+            Path::new(r"C:\Users\foo"),
+            &conns,
+            Some("Ubuntu"),
+            None,
+        )
+        .expect("resolves from the entry's saved WSL connection");
+        assert_eq!(spawn.settings["distribution"], "Debian");
+    }
+
     #[test]
     fn ssh_spawn_without_connection_id_is_an_error() {
         let home = Path::new("/home/user");
