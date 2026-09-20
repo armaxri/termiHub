@@ -19,7 +19,7 @@ use crate::connection::{
 };
 use crate::errors::SessionError;
 use crate::files::{FileBrowser, LocalFileBrowser};
-use crate::monitoring::MonitoringProvider;
+use crate::monitoring::{LocalMonitoringProvider, MonitoringProvider};
 use crate::session::shell::{
     build_shell_command, detect_available_shells, detect_default_shell, osc7_setup_command,
 };
@@ -256,6 +256,11 @@ pub struct LocalShell<S: LocalShellSpawner = NativeLocalShellSpawner> {
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     /// Local file browser capability.
     file_backend: LocalFileBrowser,
+    /// Local-machine monitoring provider (PROD-0022). Held in an `Arc` so
+    /// [`monitoring_handle`](ConnectionType::monitoring_handle) can hand out an
+    /// owned clone. Monitoring the local host needs no live session, so this is
+    /// always present rather than created on `connect`.
+    monitor: Arc<LocalMonitoringProvider>,
     /// Injected spawn strategy.
     spawner: S,
 }
@@ -282,6 +287,7 @@ impl<S: LocalShellSpawner> LocalShell<S> {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
             file_backend: LocalFileBrowser::new(),
+            monitor: Arc::new(LocalMonitoringProvider::new()),
             spawner,
         }
     }
@@ -442,7 +448,8 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            monitoring: false,
+            // Local-machine monitoring via the sysinfo-backed provider (PROD-0022).
+            monitoring: true,
             file_browser: true,
             graphical: false,
             resize: true,
@@ -709,7 +716,11 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
-        None
+        Some(self.monitor.as_ref() as &dyn MonitoringProvider)
+    }
+
+    fn monitoring_handle(&self) -> Option<Arc<dyn MonitoringProvider + Send + Sync>> {
+        Some(self.monitor.clone() as Arc<dyn MonitoringProvider + Send + Sync>)
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
@@ -928,7 +939,8 @@ mod tests {
         let shell = LocalShell::new();
         let caps = shell.capabilities();
         assert!(caps.resize);
-        assert!(!caps.monitoring);
+        // Local-machine monitoring is now supported (PROD-0022).
+        assert!(caps.monitoring);
         assert!(caps.file_browser);
         // Persistent so the agent runs local shells inside the daemon
         // subprocess on Unix, giving each session a ring buffer for
@@ -940,6 +952,22 @@ mod tests {
     fn file_browser_returns_some() {
         let shell = LocalShell::new();
         assert!(shell.file_browser().is_some());
+    }
+
+    // Local-machine monitoring provider (PROD-0022). Inverse of docker's
+    // `monitoring_always_none`: the local shell now exposes a provider, and the
+    // owned handle contract (a `Some` from `monitoring` implies a `Some` here)
+    // must hold.
+    #[test]
+    fn monitoring_returns_some() {
+        let shell = LocalShell::new();
+        assert!(shell.monitoring().is_some());
+    }
+
+    #[test]
+    fn monitoring_handle_returns_some() {
+        let shell = LocalShell::new();
+        assert!(shell.monitoring_handle().is_some());
     }
 
     #[test]

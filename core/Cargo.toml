@@ -40,6 +40,10 @@ rand = "0.8"
 serial2 = { workspace = true, optional = true }
 serial2-tokio = { workspace = true, optional = true }
 portable-pty = { version = "0.8", optional = true }
+# Cross-platform local-host stats (CPU/mem/swap/disk/network) for the local
+# monitoring collector + provider (PROD-0022). Same crate/version the agent
+# used before the collector moved into core.
+sysinfo = { version = "0.38", optional = true }
 tracing = { version = "0.1", optional = true }
 russh = { workspace = true, optional = true }
 russh-sftp = { workspace = true, optional = true }
@@ -288,7 +292,7 @@ plugin = [
 # desktop (`src-tauri`) and the agent so both can host the monitor.
 http-monitor = ["dep:reqwest", "dep:uuid", "dep:tracing", "tokio/rt"]
 serial = ["dep:serial2", "dep:serial2-tokio", "dep:tracing"]
-local-shell = ["dep:portable-pty", "dep:tracing"]
+local-shell = ["dep:portable-pty", "dep:tracing", "dep:sysinfo"]
 telnet = ["dep:tracing"]
 ssh = [
     "dep:russh",
