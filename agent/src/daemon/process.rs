@@ -413,7 +413,12 @@ async fn daemon_loop(
 /// stale disconnects from previous connections.
 async fn agent_reader_loop(mut reader: BoxedReader, tx: mpsc::Sender<AgentCommand>, gen: u64) {
     loop {
-        match protocol::read_frame_async(&mut reader).await {
+        // Steady-state reads use the mid-frame timeout (#3015): an agent that
+        // begins a frame and then wedges must be dropped (Disconnected) rather
+        // than pinning this reader task and leaving the daemon holding a stale
+        // writer. The first-byte wait stays unbounded, so an idle agent that
+        // simply is not typing is never disconnected.
+        match protocol::read_session_frame_timeout(&mut reader).await {
             Ok(Some(frame)) => {
                 let cmd = match frame.msg_type {
                     MSG_INPUT => AgentCommand::Input(frame.payload),
@@ -788,6 +793,80 @@ mod tests {
             !agent_writer_is_set,
             "Disconnected(gen=3) must clear agent_writer when connection_gen=3"
         );
+    }
+
+    // ── #3015: mid-frame liveness on the daemon's agent reader ───────────
+    //
+    // The daemon's agent reader mirrors the client reader: a peer (the agent /
+    // worker) that begins a frame and then wedges must be dropped so the daemon
+    // does not keep holding a stale writer, while a merely-idle agent (no bytes
+    // in flight) is never disconnected.
+
+    /// A peer that writes a partial frame and then stalls must be surfaced as a
+    /// `Disconnected` within a bounded time, so the daemon drops the wedged
+    /// connection instead of pinning the reader task forever (#3015).
+    ///
+    /// `start_paused` lets the mid-frame timeout elapse in virtual time.
+    #[tokio::test(start_paused = true)]
+    async fn agent_reader_loop_disconnects_a_peer_that_stalls_mid_frame() {
+        use tokio::io::AsyncWriteExt;
+
+        let (mut client, server) = tokio::io::duplex(64 * 1024);
+        // Begin a frame (one type byte) then stall; keep the connection open.
+        client
+            .write_all(&[MSG_INPUT])
+            .await
+            .expect("write partial frame header");
+
+        let (tx, mut rx) = mpsc::channel::<AgentCommand>(64);
+        let reader: BoxedReader = Box::new(server);
+        let handle = tokio::spawn(async move {
+            agent_reader_loop(reader, tx, 7).await;
+        });
+
+        let cmd = rx
+            .recv()
+            .await
+            .expect("a mid-frame-stalled peer must produce a Disconnected (#3015)");
+        assert!(
+            matches!(cmd, AgentCommand::Disconnected(7)),
+            "the wedged peer must disconnect with its own generation (#3015)"
+        );
+
+        handle.await.expect("reader task joins");
+        drop(client);
+    }
+
+    /// An idle-but-alive agent (no bytes in flight, connection open) must NOT be
+    /// disconnected: the mid-frame timeout only bounds a frame that has already
+    /// begun, so the reader waits unbounded for the first byte (#3015).
+    #[tokio::test(start_paused = true)]
+    async fn agent_reader_loop_keeps_an_idle_but_alive_peer() {
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        // The agent is idle: it sends nothing, but never drops the connection.
+
+        let (tx, mut rx) = mpsc::channel::<AgentCommand>(64);
+        let reader: BoxedReader = Box::new(server);
+        let handle = tokio::spawn(async move {
+            agent_reader_loop(reader, tx, 9).await;
+        });
+
+        // Advance far past any mid-frame timeout; with no first byte there is no
+        // timer, so the reader must stay parked and emit no command.
+        tokio::time::advance(Duration::from_secs(3600)).await;
+        tokio::task::yield_now().await;
+
+        assert!(
+            rx.try_recv().is_err(),
+            "a merely-idle agent must not be disconnected (#3015)"
+        );
+        assert!(
+            !handle.is_finished(),
+            "the daemon reader must still be parked on the idle connection (#3015)"
+        );
+
+        handle.abort();
+        drop(client);
     }
 
     // ── AGT-015: owner-scoped recovery guard ────────────────────────────

@@ -71,6 +71,24 @@ pub const MSG_READY: u8 = 0x85;
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;
 
+/// Mid-frame read timeout for the session-daemon steady-state read loops (#3015).
+///
+/// Bounds only the time to receive the *rest* of a frame once its first byte has
+/// arrived (see [`read_frame_async_capped_timeout`]); the wait for a frame's
+/// first byte stays **unbounded**, so a legitimately idle-but-alive session — a
+/// shell parked at a prompt for hours with no output — is never affected. The
+/// value is deliberately generous so a genuinely busy peer streaming a 16 MiB
+/// buffer replay is never tripped; only a peer that writes a partial frame and
+/// then wedges reaches it, at which point the caller fails the session so the
+/// normal reconnect/redrive path takes over.
+///
+/// This is the contained, protocol-change-free half of #3015 (AGT-023
+/// follow-up): it catches the *mid-frame stall* class of wedged-but-connected
+/// peer. Detecting a peer that goes fully silent (sends no bytes at all) still
+/// requires an application-level heartbeat/ping-pong frame — a protocol change
+/// coupled to version negotiation (AGT-010) — which is tracked as a follow-up.
+pub const SESSION_MID_FRAME_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Header size: 1 byte type + 4 bytes length.
 const HEADER_SIZE: usize = 5;
 
@@ -213,6 +231,21 @@ where
             "Timed out mid-frame waiting for the rest of a frame",
         )),
     }
+}
+
+/// Read a session-daemon frame with the session payload ceiling and the
+/// steady-state [`SESSION_MID_FRAME_TIMEOUT`] (#3015).
+///
+/// The session-daemon steady-state read loops (the [`crate::daemon::client`]
+/// reader and the [`crate::daemon::process`] agent reader) use this instead of
+/// the unbounded [`read_frame_async`]: a peer that begins a frame and then
+/// wedges no longer parks the reader task forever, while an idle-but-alive peer
+/// (no bytes in flight) is untouched because the first-byte wait is unbounded.
+pub async fn read_session_frame_timeout<R>(reader: &mut R) -> io::Result<Option<Frame>>
+where
+    R: AsyncRead + Unpin + ?Sized,
+{
+    read_frame_async_capped_timeout(reader, MAX_PAYLOAD_SIZE, SESSION_MID_FRAME_TIMEOUT).await
 }
 
 /// Validate a frame header against `max_payload` and read its payload.
