@@ -1482,6 +1482,28 @@ export async function localSetPermissions(path: string, mode: number): Promise<v
   await invoke("local_set_permissions", { path, mode });
 }
 
+/**
+ * Change the owner (`uid`) and/or group (`gid`) of a local file or directory.
+ *
+ * A `null`/omitted id leaves that side unchanged. Unix hosts only — other
+ * platforms return a "not supported" error.
+ */
+export async function localSetOwner(
+  path: string,
+  uid: number | null,
+  gid: number | null
+): Promise<void> {
+  await invoke("local_set_owner", { path, uid, gid });
+}
+
+/**
+ * Create a symbolic link at `linkPath` pointing at `target` on the local
+ * filesystem. Unix hosts only — other platforms return a "not supported" error.
+ */
+export async function localCreateSymlink(target: string, linkPath: string): Promise<void> {
+  await invoke("local_create_symlink", { target, linkPath });
+}
+
 /** Read a local file's contents as a UTF-8 string. */
 export async function localReadFile(path: string): Promise<string> {
   return await invoke<string>("local_read_file", { path });
@@ -1628,6 +1650,50 @@ export async function sessionSetPermissions(
   mode: number
 ): Promise<void> {
   await invoke("session_set_permissions", { sessionId, path, mode });
+}
+
+/**
+ * Change the owner (`uid`) and/or group (`gid`) of a file via a session's file
+ * browser capability.
+ *
+ * A `null`/omitted id leaves that side unchanged. Only SFTP-backed (SSH) sessions
+ * support this; byte-based backends (FTP, Docker) reject it with a "not
+ * supported" error.
+ */
+export async function sessionSetOwner(
+  sessionId: string,
+  path: string,
+  uid: number | null,
+  gid: number | null
+): Promise<void> {
+  await invoke("session_set_owner", { sessionId, path, uid, gid });
+}
+
+/**
+ * Create a symbolic link at `linkPath` pointing at `target` via a session's file
+ * browser capability.
+ *
+ * Only SFTP-backed (SSH) sessions support this; byte-based backends (FTP,
+ * Docker) reject it with a "not supported" error.
+ */
+export async function sessionCreateSymlink(
+  sessionId: string,
+  target: string,
+  linkPath: string
+): Promise<void> {
+  await invoke("session_create_symlink", { sessionId, target, linkPath });
+}
+
+/**
+ * Copy `src` → `dest` within a session's backend (same-backend copy) via its
+ * file browser capability.
+ *
+ * Only SFTP-backed (SSH) and local sessions support this; byte-based backends
+ * (FTP, Docker) reject it with a "not supported" error. Cross-backend /
+ * remote↔remote copy is handled by {@link sessionCopyRemote}, not this call.
+ */
+export async function sessionCopy(sessionId: string, src: string, dest: string): Promise<void> {
+  await invoke("session_copy", { sessionId, src, dest });
 }
 
 // --- Session-scoped SFTP advanced operations & transfers (#2312, #2313) ---

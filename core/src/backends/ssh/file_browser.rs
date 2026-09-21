@@ -4,6 +4,8 @@
 //! All operations are fully async — no `spawn_blocking` needed.
 
 use std::any::Any;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use std::io::SeekFrom;
@@ -458,6 +460,72 @@ impl FileBrowser for SftpFileBrowser {
         Ok(())
     }
 
+    async fn set_owner(
+        &self,
+        path: &str,
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Result<(), FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+
+        // The SFTP UIDGID attribute carries uid and gid together, so an
+        // unspecified side is filled from the file's current metadata rather than
+        // reset to 0 — matching `chown`'s "leave unchanged" semantics.
+        let current = state
+            .sftp
+            .metadata(path)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))?;
+
+        let attrs = russh_sftp::protocol::FileAttributes {
+            uid: Some(uid.or(current.uid).unwrap_or(0)),
+            gid: Some(gid.or(current.gid).unwrap_or(0)),
+            ..Default::default()
+        };
+        state
+            .sftp
+            .set_metadata(path, attrs)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("chown failed: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn create_symlink(&self, target: &str, link_path: &str) -> Result<(), FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+
+        // russh-sftp's `symlink(path, target)` maps `path` → SFTP `linkpath` (the
+        // new link) and `target` → `targetpath` (what it points at).
+        state
+            .sftp
+            .symlink(link_path, target)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("symlink failed: {e}")))?;
+
+        Ok(())
+    }
+
+    async fn copy(&self, src: &str, dest: &str) -> Result<(), FileError> {
+        Self::ensure_connected(&self.state, &self.config).await?;
+        let guard = self.state.lock().await;
+        let state = guard
+            .as_ref()
+            .ok_or_else(|| FileError::OperationFailed("SFTP not connected".to_string()))?;
+
+        // Same-backend server-side copy: stream the bytes over this SFTP session.
+        // Cross-backend / remote↔remote copy is the transfer subsystem's job
+        // (PROD-0013) and is deliberately not routed here.
+        sftp_copy_path(&state.sftp, src, dest).await
+    }
+
     /// Expose the concrete browser so a session-scoped caller holding only a
     /// `&dyn FileBrowser` can `downcast_ref::<SftpFileBrowser>()` and reach the
     /// SFTP advanced ops ([`SftpAdvancedOps`]), the exec-capability probe, and the
@@ -466,6 +534,77 @@ impl FileBrowser for SftpFileBrowser {
     fn as_any(&self) -> Option<&dyn Any> {
         Some(self)
     }
+}
+
+/// Join a remote (POSIX) directory path with a child name.
+fn join_remote(dir: &str, name: &str) -> String {
+    if dir.ends_with('/') {
+        format!("{dir}{name}")
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
+/// Recursively copy `src` → `dest` within a single SFTP session (same-backend).
+///
+/// Boxed because it recurses across `.await`. Files are streamed server-side via
+/// [`tokio::io::copy`] over this session; directories are recreated and walked;
+/// nested symlinks are preserved (recreated pointing at their original target
+/// rather than followed), mirroring the local recursive copy in
+/// [`copy_sync`](crate::files::local::copy_sync). A top-level `src` that is itself
+/// a link is followed, matching `std::fs::copy`.
+fn sftp_copy_path<'a>(
+    sftp: &'a SftpSession,
+    src: &'a str,
+    dest: &'a str,
+) -> Pin<Box<dyn Future<Output = Result<(), FileError>> + Send + 'a>> {
+    Box::pin(async move {
+        let meta = sftp
+            .metadata(src)
+            .await
+            .map_err(|e| FileError::OperationFailed(format!("stat failed: {e}")))?;
+
+        if meta.is_dir() {
+            sftp.create_dir(dest)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("mkdir failed: {e}")))?;
+
+            let entries = super::sftp::list_dir(sftp, src)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("readdir failed: {e}")))?;
+
+            for entry in entries {
+                let child_src = join_remote(src, &entry.name);
+                let child_dest = join_remote(dest, &entry.name);
+                if entry.is_symlink {
+                    // Recreate the link verbatim (do not follow it): a link with an
+                    // unreadable target is skipped rather than aborting the copy.
+                    if let Some(target) = entry.symlink_target {
+                        sftp.symlink(child_dest, target).await.map_err(|e| {
+                            FileError::OperationFailed(format!("symlink failed: {e}"))
+                        })?;
+                    }
+                } else {
+                    sftp_copy_path(sftp, &child_src, &child_dest).await?;
+                }
+            }
+        } else {
+            let mut reader = sftp
+                .open(src)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("open failed: {e}")))?;
+            let mut writer = sftp
+                .create(dest)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("create failed: {e}")))?;
+            // `tokio::io::copy` flushes the writer at EOF, so the bytes are
+            // committed before the file handles drop-close.
+            tokio::io::copy(&mut reader, &mut writer)
+                .await
+                .map_err(|e| FileError::OperationFailed(format!("copy failed: {e}")))?;
+        }
+        Ok(())
+    })
 }
 
 /// Advanced SFTP capabilities that complement [`FileBrowser`].

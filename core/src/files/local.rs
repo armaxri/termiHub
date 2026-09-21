@@ -214,6 +214,43 @@ pub fn set_permissions_sync(path: &str, mode: u32) -> std::io::Result<()> {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode & 0o7777))
 }
 
+/// Change the owner (`uid`) and/or group (`gid`) of a path (chown, Unix only).
+///
+/// A `None` id leaves that side unchanged: it maps to `-1` cast to the platform
+/// `uid_t`/`gid_t`, the `chown(2)` sentinel meaning "do not change". Non-Unix
+/// platforms have no numeric-owner model, so this is Unix-only and each caller
+/// supplies its own "unsupported" sentinel there.
+#[cfg(unix)]
+pub fn set_owner_sync(path: &str, uid: Option<u32>, gid: Option<u32>) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let c_path = CString::new(std::ffi::OsStr::new(path).as_bytes())
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidInput, e))?;
+    // `(uid_t)-1` / `(gid_t)-1` (i.e. u32::MAX) tells chown(2) to leave that id
+    // unchanged, so an unspecified side is preserved.
+    let uid_arg = uid.unwrap_or(u32::MAX) as libc::uid_t;
+    let gid_arg = gid.unwrap_or(u32::MAX) as libc::gid_t;
+    // SAFETY: `c_path` is a valid NUL-terminated C string held alive across the
+    // call; `chown` only reads it plus the two numeric ids and returns a status.
+    let rc = unsafe { libc::chown(c_path.as_ptr(), uid_arg, gid_arg) };
+    if rc == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+/// Create a symbolic link at `link_path` pointing at `target` (Unix only).
+///
+/// `target` is stored verbatim (relative or dangling links are created as-is,
+/// mirroring `ln -s`). Non-Unix local symlink creation needs elevated privileges
+/// and a file-vs-dir choice this portable op does not carry, so it is Unix-only.
+#[cfg(unix)]
+pub fn create_symlink_sync(target: &str, link_path: &str) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link_path)
+}
+
 /// Copy a file or directory tree to a new location (DUP-024).
 ///
 /// For a file, uses [`std::fs::copy`], first creating any missing parent
@@ -438,6 +475,35 @@ impl super::browser::FileBrowser for LocalFileBrowser {
     async fn set_permissions(&self, path: &str, mode: u32) -> Result<(), FileError> {
         set_permissions_impl(&expand_tilde_only(path), mode).await
     }
+
+    async fn set_owner(
+        &self,
+        path: &str,
+        uid: Option<u32>,
+        gid: Option<u32>,
+    ) -> Result<(), FileError> {
+        set_owner_impl(&expand_tilde_only(path), uid, gid).await
+    }
+
+    async fn create_symlink(&self, target: &str, link_path: &str) -> Result<(), FileError> {
+        // Only the link's own path is `~`-expanded; the target is stored verbatim
+        // so a relative or `~`-relative target survives exactly as typed.
+        create_symlink_impl(target, &expand_tilde_only(link_path)).await
+    }
+
+    async fn copy(&self, src: &str, dest: &str) -> Result<(), FileError> {
+        let src = expand_tilde_only(src);
+        let dest = expand_tilde_only(dest);
+        // Self-detect the entry kind (mirrors `delete`): a directory triggers the
+        // recursive copy, a file the single-file copy.
+        let entry = super::browser::FileBrowser::stat(self, &src).await?;
+        let is_directory = entry.is_directory;
+        tokio::task::spawn_blocking(move || {
+            copy_sync(&src, &dest, is_directory).map_err(|e| map_io_error(e, &src))
+        })
+        .await
+        .map_err(|e| FileError::OperationFailed(e.to_string()))?
+    }
 }
 
 /// Apply Unix permission bits to a local path (Unix only).
@@ -454,6 +520,45 @@ async fn set_permissions_impl(path: &str, mode: u32) -> Result<(), FileError> {
 /// On non-Unix platforms there is no `rwx` permission model to set.
 #[cfg(not(unix))]
 async fn set_permissions_impl(_path: &str, _mode: u32) -> Result<(), FileError> {
+    Err(FileError::NotSupported)
+}
+
+/// Change the owner/group of a local path (Unix only).
+#[cfg(unix)]
+async fn set_owner_impl(path: &str, uid: Option<u32>, gid: Option<u32>) -> Result<(), FileError> {
+    let path = path.to_string();
+    tokio::task::spawn_blocking(move || {
+        set_owner_sync(&path, uid, gid).map_err(|e| map_io_error(e, &path))
+    })
+    .await
+    .map_err(|e| FileError::OperationFailed(e.to_string()))?
+}
+
+/// On non-Unix platforms there is no numeric-owner model to set.
+#[cfg(not(unix))]
+async fn set_owner_impl(
+    _path: &str,
+    _uid: Option<u32>,
+    _gid: Option<u32>,
+) -> Result<(), FileError> {
+    Err(FileError::NotSupported)
+}
+
+/// Create a symlink on the local filesystem (Unix only).
+#[cfg(unix)]
+async fn create_symlink_impl(target: &str, link_path: &str) -> Result<(), FileError> {
+    let target = target.to_string();
+    let link_path = link_path.to_string();
+    tokio::task::spawn_blocking(move || {
+        create_symlink_sync(&target, &link_path).map_err(|e| map_io_error(e, &link_path))
+    })
+    .await
+    .map_err(|e| FileError::OperationFailed(e.to_string()))?
+}
+
+/// On non-Unix platforms local symlink creation is not supported.
+#[cfg(not(unix))]
+async fn create_symlink_impl(_target: &str, _link_path: &str) -> Result<(), FileError> {
     Err(FileError::NotSupported)
 }
 
@@ -691,6 +796,100 @@ mod tests {
 
         let mode = std::fs::metadata(&file).unwrap().permissions().mode();
         assert_eq!(mode & 0o7777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn set_owner_to_current_ids_is_a_safe_no_op_change() {
+        // chown to the process's own uid/gid always succeeds without privilege,
+        // so it exercises the real `libc::chown` path without needing root.
+        use super::super::browser::FileBrowser;
+
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("owned.txt");
+        std::fs::write(&file, "x").unwrap();
+
+        // SAFETY: getuid/getgid take no arguments and only read process ids.
+        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+
+        let browser = LocalFileBrowser::new();
+        browser
+            .set_owner(file.to_str().unwrap(), Some(uid), Some(gid))
+            .await
+            .unwrap();
+
+        // A `None`/`None` call is a no-op that must still succeed.
+        browser
+            .set_owner(file.to_str().unwrap(), None, None)
+            .await
+            .unwrap();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn create_symlink_round_trips_through_readlink() {
+        use super::super::browser::FileBrowser;
+
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real.txt");
+        std::fs::write(&target, "hi").unwrap();
+        let link = dir.path().join("link.txt");
+
+        let browser = LocalFileBrowser::new();
+        browser
+            .create_symlink(target.to_str().unwrap(), link.to_str().unwrap())
+            .await
+            .unwrap();
+
+        assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+        assert_eq!(std::fs::read_link(&link).unwrap(), target);
+        // The link resolves to the target's content.
+        assert_eq!(std::fs::read_to_string(&link).unwrap(), "hi");
+    }
+
+    #[tokio::test]
+    async fn browser_copy_file_is_content_equal_and_keeps_source() {
+        use super::super::browser::FileBrowser;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src.txt");
+        let dest = dir.path().join("dest.txt");
+        std::fs::write(&src, "copy me").unwrap();
+
+        let browser = LocalFileBrowser::new();
+        browser
+            .copy(src.to_str().unwrap(), dest.to_str().unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "copy me");
+        assert!(src.exists(), "copy must not remove the source");
+    }
+
+    #[tokio::test]
+    async fn browser_copy_directory_recurses_and_self_detects_kind() {
+        // `copy` takes no is_directory flag — it self-detects via `stat`, so a
+        // directory must still be copied recursively.
+        use super::super::browser::FileBrowser;
+
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("tree");
+        std::fs::create_dir_all(src.join("sub")).unwrap();
+        std::fs::write(src.join("a.txt"), "a").unwrap();
+        std::fs::write(src.join("sub/b.txt"), "b").unwrap();
+        let dest = dir.path().join("tree_copy");
+
+        let browser = LocalFileBrowser::new();
+        browser
+            .copy(src.to_str().unwrap(), dest.to_str().unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "a");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("sub/b.txt")).unwrap(),
+            "b"
+        );
     }
 
     #[test]

@@ -2763,6 +2763,24 @@ impl FileBrowser for MockFileBrowser {
     ) -> Result<(), termihub_core::errors::FileError> {
         Ok(())
     }
+    async fn set_owner(
+        &self,
+        _path: &str,
+        _uid: Option<u32>,
+        _gid: Option<u32>,
+    ) -> Result<(), termihub_core::errors::FileError> {
+        Ok(())
+    }
+    async fn create_symlink(
+        &self,
+        _target: &str,
+        _link_path: &str,
+    ) -> Result<(), termihub_core::errors::FileError> {
+        Ok(())
+    }
+    async fn copy(&self, _src: &str, _dest: &str) -> Result<(), termihub_core::errors::FileError> {
+        Ok(())
+    }
 }
 
 /// A connection that advertises a file-browser capability backed by a

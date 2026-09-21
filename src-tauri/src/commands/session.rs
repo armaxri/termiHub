@@ -500,6 +500,58 @@ pub async fn session_set_permissions(
     manager.set_file_permissions(&session_id, &path, mode).await
 }
 
+/// Change the owner/group (chown) of a file via a session's file browser
+/// capability.
+///
+/// A `null` uid/gid leaves that side unchanged. Only SFTP-backed (SSH) sessions
+/// support this; byte-based backends (FTP, Docker) return a "not supported" error.
+#[tauri::command]
+pub async fn session_set_owner(
+    session_id: String,
+    path: String,
+    uid: Option<u32>,
+    gid: Option<u32>,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(session_id, path, uid, gid, "Session set owner");
+    manager.set_file_owner(&session_id, &path, uid, gid).await
+}
+
+/// Create a symbolic link at `link_path` pointing at `target` via a session's
+/// file browser capability.
+///
+/// Only SFTP-backed (SSH) sessions support this; byte-based backends (FTP,
+/// Docker) return a "not supported" error.
+#[tauri::command]
+pub async fn session_create_symlink(
+    session_id: String,
+    target: String,
+    link_path: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(session_id, target, link_path, "Session create symlink");
+    manager
+        .create_file_symlink(&session_id, &target, &link_path)
+        .await
+}
+
+/// Copy `src` → `dest` within a session's backend (same-backend copy) via its
+/// file browser capability.
+///
+/// Only SFTP-backed (SSH) and local sessions support this; byte-based backends
+/// (FTP, Docker) return a "not supported" error. Cross-backend / remote↔remote
+/// copy is handled by the transfer subsystem, not this command.
+#[tauri::command]
+pub async fn session_copy(
+    session_id: String,
+    src: String,
+    dest: String,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    debug!(session_id, src, dest, "Session copy");
+    manager.copy_file(&session_id, &src, &dest).await
+}
+
 // --- Session-scoped SFTP advanced operations & transfers (#2312) ---
 //
 // Session-path mirrors of the standalone `sftp_*` commands, routed through the

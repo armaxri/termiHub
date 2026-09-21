@@ -69,6 +69,26 @@ pub fn local_set_permissions(path: String, mode: u32) -> Result<(), TerminalErro
     crate::files::local::set_permissions(&path, mode)
 }
 
+/// Change the owner (`uid`) and/or group (`gid`) of a local file or directory.
+///
+/// A `null` id leaves that side unchanged. Unix only; other platforms return a
+/// "not supported" error.
+#[tauri::command]
+pub fn local_set_owner(
+    path: String,
+    uid: Option<u32>,
+    gid: Option<u32>,
+) -> Result<(), TerminalError> {
+    crate::files::local::set_owner(&path, uid, gid)
+}
+
+/// Create a symbolic link at `link_path` pointing at `target` on the local
+/// filesystem. Unix only; other platforms return a "not supported" error.
+#[tauri::command]
+pub fn local_create_symlink(target: String, link_path: String) -> Result<(), TerminalError> {
+    crate::files::local::create_symlink(&target, &link_path)
+}
+
 /// Read a local file's contents as a UTF-8 string.
 #[tauri::command]
 pub fn local_read_file(path: String) -> Result<String, TerminalError> {

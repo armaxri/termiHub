@@ -8,6 +8,8 @@ import {
   localDelete,
   localRename,
   localSetPermissions,
+  localSetOwner,
+  localCreateSymlink,
   localWriteFile,
   localCopyFile,
   vscodeOpenLocal,
@@ -106,6 +108,24 @@ export function useLocalFileSystem() {
       refreshLocal();
     },
     [refreshLocal]
+  );
+
+  const setOwner = useCallback(
+    async (path: string, uid: number | null, gid: number | null) => {
+      await localSetOwner(path, uid, gid);
+      refreshLocal();
+    },
+    [refreshLocal]
+  );
+
+  const createSymlink = useCallback(
+    async (target: string, linkName: string) => {
+      const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
+      const linkPath = base ? `${base}/${linkName}` : `/${linkName}`;
+      await localCreateSymlink(target, linkPath);
+      refreshLocal();
+    },
+    [currentPath, refreshLocal]
   );
 
   const openInVscode = useCallback(async (path: string) => {
@@ -214,10 +234,15 @@ export function useLocalFileSystem() {
     deleteEntry,
     renameEntry,
     setPermissions,
-    // A local desktop host is the machine the user runs on; chmod is meaningful
-    // there (the backend still rejects it on non-Unix, and the row only offers
-    // the action when it carries a permission string — i.e. on Unix).
+    setOwner,
+    createSymlink,
+    // A local desktop host is the machine the user runs on; chmod / chown / symlink
+    // are meaningful there (the backend still rejects them on non-Unix, and each
+    // row only offers the permission-dependent actions when it carries a permission
+    // string — i.e. on Unix).
     supportsPermissions: true,
+    supportsOwner: true,
+    supportsSymlink: true,
     openInVscode,
     copyEntry,
     cutEntry,

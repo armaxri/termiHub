@@ -32,19 +32,20 @@ use crate::protocol::methods::{
     AgentRequestDeferredUpdateResult, AgentRequestUpdateParams, AgentRequestUpdateResult,
     AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
     Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
-    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, FilesDeleteParams,
-    FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams, FilesReadResult,
-    FilesRenameParams, FilesSetPermissionsParams, FilesStatParams, FilesWriteParams,
-    FolderCreateParams, FolderDeleteParams, FolderUpdateParams, HealthCheckResult,
-    InitializeParams, InitializeResult, MonitoringSubscribeParams, MonitoringUnsubscribeParams,
-    NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams,
-    NetworkWolParams, ServicePauseParams, ServicePauseResult, ServiceResumeParams,
-    ServiceResumeResult, ServiceStartParams, ServiceStartResult, ServiceStatusParams,
-    ServiceStatusResult, ServiceStopParams, ServiceStopResult, SessionAttachParams,
-    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
-    SessionGetBufferParams, SessionGetBufferResult, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams, TunnelForwardSpec, TunnelStartParams,
-    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
+    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, FilesCopyParams,
+    FilesCreateSymlinkParams, FilesDeleteParams, FilesListParams, FilesListResult,
+    FilesMkdirParams, FilesReadParams, FilesReadResult, FilesRenameParams, FilesSetOwnerParams,
+    FilesSetPermissionsParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
+    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
+    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
+    ServicePauseParams, ServicePauseResult, ServiceResumeParams, ServiceResumeResult,
+    ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
+    ServiceStopParams, ServiceStopResult, SessionAttachParams, SessionCloseParams,
+    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
+    SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
+    SessionResizeParams, TunnelForwardSpec, TunnelStartParams, TunnelStartResult,
+    TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
     UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
@@ -497,6 +498,9 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_files_stat(module)?;
     register_files_mkdir(module)?;
     register_files_set_permissions(module)?;
+    register_files_set_owner(module)?;
+    register_files_create_symlink(module)?;
+    register_files_copy(module)?;
     register_monitoring_subscribe(module)?;
     register_monitoring_unsubscribe(module)?;
     register_network_port_scan(module)?;
@@ -1357,6 +1361,74 @@ fn register_files_set_permissions(
             Ok::<_, ErrorObjectOwned>(json!({}))
         },
     )?;
+    Ok(())
+}
+
+fn register_files_set_owner(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::CONNECTION_FILES_SET_OWNER,
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+            let p: FilesSetOwnerParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.files.set_owner", e))?;
+
+            let browser =
+                resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
+
+            browser
+                .set_owner(&p.path, p.uid, p.gid)
+                .await
+                .map_err(map_file_error)?;
+            Ok::<_, ErrorObjectOwned>(json!({}))
+        },
+    )?;
+    Ok(())
+}
+
+fn register_files_create_symlink(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::CONNECTION_FILES_CREATE_SYMLINK,
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+            let p: FilesCreateSymlinkParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.files.create_symlink", e))?;
+
+            let browser =
+                resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
+
+            browser
+                .create_symlink(&p.target, &p.link_path)
+                .await
+                .map_err(map_file_error)?;
+            Ok::<_, ErrorObjectOwned>(json!({}))
+        },
+    )?;
+    Ok(())
+}
+
+fn register_files_copy(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(pm::CONNECTION_FILES_COPY, |params, ctx, _ext| async move {
+        let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+        let p: FilesCopyParams = params
+            .parse()
+            .map_err(|e| invalid_params("connection.files.copy", e))?;
+
+        let browser =
+            resolve_file_browser(&session_manager, &connection_store, p.connection_id).await?;
+
+        browser
+            .copy(&p.src, &p.dest)
+            .await
+            .map_err(map_file_error)?;
+        Ok::<_, ErrorObjectOwned>(json!({}))
+    })?;
     Ok(())
 }
 

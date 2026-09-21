@@ -349,6 +349,26 @@ impl FileBrowser for DockerFileBrowser {
     async fn set_permissions(&self, _path: &str, _mode: u32) -> Result<(), FileError> {
         Err(FileError::NotSupported)
     }
+
+    /// Byte-based backend: no ownership-change primitive, so chown is unsupported.
+    async fn set_owner(
+        &self,
+        _path: &str,
+        _uid: Option<u32>,
+        _gid: Option<u32>,
+    ) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
+
+    /// Byte-based backend: no symlink-create primitive, so it is unsupported.
+    async fn create_symlink(&self, _target: &str, _link_path: &str) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
+
+    /// Byte-based backend: no same-backend copy primitive, so it is unsupported.
+    async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
 }
 
 // --- Parsing helpers (ported from agent/src/files/docker.rs) ---

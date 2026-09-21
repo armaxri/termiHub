@@ -48,6 +48,9 @@ import {
   sessionRenameFile,
   sessionMkdir,
   sessionSetPermissions,
+  sessionSetOwner,
+  sessionCreateSymlink,
+  sessionCopy,
   ftpDownload,
   ftpUpload,
   // session monitoring
@@ -65,6 +68,8 @@ import {
   // local filesystem
   localCopyFile,
   localSetPermissions,
+  localSetOwner,
+  localCreateSymlink,
   localStat,
   watchLocalFile,
   unwatchLocalFile,
@@ -505,6 +510,43 @@ describe("api pass-through wrappers (#2975)", () => {
       });
     });
 
+    it("sessionSetOwner forwards uid/gid (null leaves a side unchanged)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sessionSetOwner("s-1", "/home/f", 1000, null);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_set_owner", {
+        sessionId: "s-1",
+        path: "/home/f",
+        uid: 1000,
+        gid: null,
+      });
+    });
+
+    it("sessionCreateSymlink forwards target and link path", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sessionCreateSymlink("s-1", "/real", "/link");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_create_symlink", {
+        sessionId: "s-1",
+        target: "/real",
+        linkPath: "/link",
+      });
+    });
+
+    it("sessionCopy forwards src and dest", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await sessionCopy("s-1", "/a", "/b");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_copy", {
+        sessionId: "s-1",
+        src: "/a",
+        dest: "/b",
+      });
+    });
+
     it("ftpDownload forwards config/paths and returns the transfer id", async () => {
       mockedInvoke.mockResolvedValue("transfer-1");
 
@@ -666,6 +708,29 @@ describe("api pass-through wrappers (#2975)", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("local_set_permissions", {
         path: "/a",
         mode: 0o644,
+      });
+    });
+
+    it("localSetOwner forwards uid/gid (null leaves a side unchanged)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await localSetOwner("/a", null, 20);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("local_set_owner", {
+        path: "/a",
+        uid: null,
+        gid: 20,
+      });
+    });
+
+    it("localCreateSymlink forwards target and link path", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await localCreateSymlink("/real", "/link");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("local_create_symlink", {
+        target: "/real",
+        linkPath: "/link",
       });
     });
 

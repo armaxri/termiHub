@@ -336,6 +336,28 @@ impl FileBrowser for WslFileBrowser {
     async fn set_permissions(&self, _path: &str, _mode: u32) -> Result<(), FileError> {
         Err(FileError::NotSupported)
     }
+
+    /// The `\\wsl$` UNC path has no faithful Unix owner setter, so chown is
+    /// unsupported here.
+    async fn set_owner(
+        &self,
+        _path: &str,
+        _uid: Option<u32>,
+        _gid: Option<u32>,
+    ) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
+
+    /// The `\\wsl$` UNC path cannot faithfully create a Unix symlink, so it is
+    /// unsupported here.
+    async fn create_symlink(&self, _target: &str, _link_path: &str) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
+
+    /// Same-backend copy is not exposed for the `\\wsl$` UNC path.
+    async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
+        Err(FileError::NotSupported)
+    }
 }
 
 /// Convert a Windows absolute path to its WSL `/mnt/` equivalent.
