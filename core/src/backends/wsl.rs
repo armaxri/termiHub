@@ -18,9 +18,11 @@ use crate::connection::{
     Capabilities, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
     SelectOption, SettingsField, SettingsGroup, SettingsSchema,
 };
-use crate::errors::{FileError, SessionError};
+use crate::errors::{CoreError, FileError, SessionError};
 use crate::files::{FileBrowser, FileEntry};
-use crate::monitoring::MonitoringProvider;
+use crate::monitoring::{
+    ExecMonitoringProvider, MonitoringProvider, ProcStatsSource, MONITORING_COMMAND,
+};
 use crate::session::shell::{detect_wsl_distros, osc7_setup_command, shell_to_command};
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
@@ -45,6 +47,10 @@ pub struct Wsl {
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     /// File browser provider, created on connect.
     file_browser_provider: Option<WslFileBrowser>,
+    /// System-monitoring provider, created on connect (#3182). Reads `/proc`
+    /// inside the distribution via `wsl.exe -d <distro>` through the shared
+    /// exec-based provider.
+    monitoring_provider: Option<ExecMonitoringProvider>,
 }
 
 /// Internal state of an active WSL connection.
@@ -641,8 +647,49 @@ impl Wsl {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
             file_browser_provider: None,
+            monitoring_provider: None,
         }
     }
+}
+
+/// A [`ProcStatsSource`] that runs the monitoring command inside a WSL
+/// distribution via `wsl.exe -d <distro>` (#3182).
+///
+/// A WSL distribution is Linux with `/proc`, so its stats are gathered with the
+/// exact same [`MONITORING_COMMAND`] + [`parse_stats`](crate::monitoring::parse_stats)
+/// as the SSH backend; only the exec differs. `wsl.exe` is a blocking child
+/// process, so the collect runs on a blocking thread.
+struct WslProcStatsSource {
+    distribution: String,
+}
+
+#[async_trait::async_trait]
+impl ProcStatsSource for WslProcStatsSource {
+    async fn collect_proc(&self) -> Result<String, CoreError> {
+        let distribution = self.distribution.clone();
+        // Run the compound command in one `sh -c` inside the distro. As with the
+        // SSH/Docker exec, the exit status is intentionally ignored: `parse_stats`
+        // tolerates a missing trailing leg, so returning whatever stdout was
+        // produced yields more metrics than failing on a non-zero exit. `wsl.exe`
+        // passes the Linux command's stdout through as raw bytes.
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("wsl.exe")
+                .args(["-d", &distribution, "--", "sh", "-c", MONITORING_COMMAND])
+                .output()
+        })
+        .await
+        .map_err(|e| CoreError::Other(format!("wsl monitoring task failed to join: {e}")))??;
+
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    }
+}
+
+/// Build the WSL monitoring provider for a connected distribution.
+///
+/// Called from [`Wsl::connect`](Wsl) with the distribution name, mirroring how
+/// the file browser is wired.
+fn wsl_monitoring_provider(distribution: String) -> ExecMonitoringProvider {
+    ExecMonitoringProvider::new(Arc::new(WslProcStatsSource { distribution }))
 }
 
 impl Default for Wsl {
@@ -781,7 +828,9 @@ impl ConnectionType for Wsl {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            monitoring: false,
+            // A WSL distribution is Linux with `/proc`, monitored via
+            // `wsl.exe -d <distro>` (#3182).
+            monitoring: true,
             file_browser: true,
             graphical: false,
             resize: true,
@@ -1000,6 +1049,10 @@ impl ConnectionType for Wsl {
             unc_prefix: unc_prefix.clone(),
         });
 
+        // Create the system-monitoring provider (#3182): reads `/proc` inside the
+        // distribution via `wsl.exe -d <distro>`.
+        self.monitoring_provider = Some(wsl_monitoring_provider(distribution.clone()));
+
         // Spawn the setup task when shell integration is enabled.  It watches
         // the tap channel for the first OSC 7 emission from the PROMPT_COMMAND
         // env var (= shell ready, .bashrc has run, systemd startup noise is
@@ -1029,6 +1082,7 @@ impl ConnectionType for Wsl {
                 *guard = None;
             }
             self.file_browser_provider = None;
+            self.monitoring_provider = None;
             debug!("WSL shell disconnected");
         }
         Ok(())
@@ -1081,7 +1135,9 @@ impl ConnectionType for Wsl {
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
-        None
+        self.monitoring_provider
+            .as_ref()
+            .map(|p| p as &dyn MonitoringProvider)
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
@@ -1150,7 +1206,8 @@ mod tests {
         let wsl = Wsl::new();
         let caps = wsl.capabilities();
         assert!(caps.resize);
-        assert!(!caps.monitoring);
+        // A distribution is Linux with `/proc`, monitored via `wsl.exe` (#3182).
+        assert!(caps.monitoring);
         assert!(caps.file_browser);
         assert!(caps.persistent);
     }
