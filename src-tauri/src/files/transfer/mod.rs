@@ -39,6 +39,7 @@ pub mod persist;
 pub mod persist_manager;
 pub mod persist_storage;
 pub mod registry;
+pub(crate) mod relaunch;
 pub mod retry;
 pub mod scheduler;
 pub mod sftp;

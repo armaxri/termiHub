@@ -211,6 +211,19 @@ impl TransferPersistenceManager {
         self.lock().incomplete_as_paused()
     }
 
+    /// The current persisted record for a transfer id, if any (a clone).
+    ///
+    /// Used by the resume-relaunch path (#3199) to recover a rehydrated transfer's
+    /// **metadata** — the session reference, source/destination paths, direction,
+    /// resume offset and totals — so a relaunch can re-attach the session and
+    /// re-spawn the executor from the checkpoint. The record carries **no**
+    /// credential material (PROD-0011 invariant), so credentials are always
+    /// re-sourced from the live session / credential store at resume time, never
+    /// from here.
+    pub fn get_record(&self, transfer_id: &str) -> Option<PersistedTransfer> {
+        self.lock().get(transfer_id).cloned()
+    }
+
     /// Queue the current store snapshot for the background writer (non-blocking,
     /// fire-and-forget). A dropped writer (spawn failed / shutting down) is
     /// silently ignored — persistence degrades, it never blocks a transfer.
@@ -232,7 +245,7 @@ impl TransferPersistenceManager {
 
     /// Create a manager backed by a temp directory (test only).
     #[cfg(test)]
-    fn new_test(dir: &std::path::Path) -> Self {
+    pub(crate) fn new_test(dir: &std::path::Path) -> Self {
         let storage = TransferPersistenceStorage::new_test(dir);
         let data = storage
             .load_with_recovery()
@@ -365,6 +378,27 @@ mod tests {
         let (_d, m) = mgr();
         m.note_progress("ghost", PersistedTransferStatus::Active, 10, 20, false);
         assert!(m.snapshot().transfers.is_empty());
+    }
+
+    #[test]
+    fn get_record_returns_metadata_for_relaunch_and_none_when_absent() {
+        // The relaunch path (#3199) recovers a rehydrated transfer's metadata by
+        // id. It carries the session reference, paths and resume offset — never a
+        // credential.
+        let (_d, m) = mgr();
+        register(&m, "t1");
+        m.note_progress("t1", PersistedTransferStatus::Active, 4096, 2048, false);
+
+        let rec = m.get_record("t1").expect("a registered record is returned");
+        assert_eq!(rec.session_id, "sess-a");
+        assert_eq!(rec.remote_path, "/remote/data.csv");
+        assert_eq!(rec.local_path.as_deref(), Some("/home/user/data.csv"));
+        assert_eq!(
+            rec.resume_offset, 4096,
+            "the checkpoint offset is recovered"
+        );
+
+        assert!(m.get_record("ghost").is_none(), "unknown id yields None");
     }
 
     #[test]
