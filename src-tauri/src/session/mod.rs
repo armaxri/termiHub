@@ -5,6 +5,7 @@ pub mod manager;
 mod monitoring_controller;
 mod output_sink;
 mod persistent_controller;
+pub mod process_ops;
 pub mod rdp_trust_store;
 pub mod registry;
 pub mod remote_proxy;
