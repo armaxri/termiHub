@@ -2141,8 +2141,11 @@ mod tests {
             mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
                 .await
                 .unwrap();
-            // A real file so path validation passes.
-            let bin = tmp.path().join("staged-agent");
+            // A real file inside the trusted staging dir so path confinement
+            // passes (AGT-003).
+            let staging = tmp.path().join("updates");
+            std::fs::create_dir_all(&staging).unwrap();
+            let bin = staging.join("staged-agent");
             std::fs::write(&bin, b"BIN").unwrap();
 
             let outcome = mgr
@@ -2173,7 +2176,10 @@ mod tests {
         #[tokio::test]
         async fn request_when_idle_applies_immediately() {
             let (mgr, applied, tmp) = manager_with_recording_applier();
-            let bin = tmp.path().join("staged-agent");
+            // Stage inside the trusted staging dir so path confinement passes.
+            let staging = tmp.path().join("updates");
+            std::fs::create_dir_all(&staging).unwrap();
+            let bin = staging.join("staged-agent");
             std::fs::write(&bin, b"BIN").unwrap();
 
             let outcome = mgr
@@ -2220,6 +2226,33 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::BinaryNotFound(_)));
+        }
+
+        #[tokio::test]
+        async fn rejects_binary_outside_the_staging_dir() {
+            // AGT-003: an existing file OUTSIDE the trusted staging dir must be
+            // refused — an arbitrary readable path can no longer be swapped in as
+            // the agent binary. Fail closed: nothing staged, nothing applied.
+            let (mgr, applied, tmp) = manager_with_recording_applier();
+            let outside = tmp.path().join("evil-agent");
+            std::fs::write(&outside, b"EVIL").unwrap();
+
+            let err = mgr
+                .request_deferred_update(Some(outside.to_string_lossy().into_owned()), None)
+                .await
+                .expect_err("a binary outside the staging dir must be rejected");
+            assert!(
+                format!("{err}").contains("staging"),
+                "the error must name the staging-confinement reason, got: {err}"
+            );
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "a rejected update must never be applied"
+            );
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "a rejected update must never be staged as pending"
+            );
         }
 
         // ── Natural-exit deferred-apply (issue #2378) ────────────────────
