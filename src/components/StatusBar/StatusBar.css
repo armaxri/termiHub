@@ -270,7 +270,13 @@
   font-size: var(--font-size-sm);
 }
 
-/* CPU% sparkline block in the monitoring dropdown (PROD-0030). */
+/* Stacked metric sparklines in the monitoring dropdown (PROD-0030). */
+.monitoring-menu__sparks {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Metric sparkline block in the monitoring dropdown (PROD-0030). */
 .monitoring-menu__spark {
   padding: var(--spacing-xs) var(--spacing-md);
 }
@@ -285,6 +291,44 @@
 
 .metric-sparkline {
   width: 100%;
+}
+
+/* Monitoring history panel — stacked time-series charts (PROD-0030). */
+.monitoring-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+}
+
+.monitoring-history__block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+}
+
+.monitoring-history__header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  font-size: var(--font-size-sm);
+}
+
+.monitoring-history__label {
+  color: var(--text-secondary);
+}
+
+.monitoring-history__value {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.monitoring-history__pending {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  height: var(--spacing-xl);
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
 }
 
 /* Per-core CPU mini-bars in the monitoring dropdown (#3178). */
