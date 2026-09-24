@@ -9,7 +9,8 @@ subsystem: core/embedded_servers, src/components/EmbeddedServerSidebar
 evidence:
   - src/types/embeddedServer.ts:13
   - src/components/EmbeddedServerSidebar/EmbeddedServerDialog.tsx:269
-status: open
+status: fixed
+resolution: "#3180 — optional HTTP basic auth on the embedded HTTP server (core: desktop+agent): 401+WWW-Authenticate, constant-time compare via subtle, realm sanitized, creds never logged; UI auth section; back-compat (no auth config = unauth)"
 ---
 
 ## What

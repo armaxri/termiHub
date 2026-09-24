@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src-tauri/src/macros, src/services/macroPlayback
 evidence:
   - src-tauri/src/macros/config.rs:11
-status: open
+status: fixed
+resolution: "#3181 — parameterized workflows: WorkflowParameter model + resolveStepParams interpolating ${name} (with $${ escape) in send-command/run-script/run-local-process; editor Parameters section + run-time prompt dialog; no-param workflows byte-identical"
 ---
 
 ## What

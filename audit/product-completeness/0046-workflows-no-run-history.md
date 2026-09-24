@@ -9,7 +9,8 @@ subsystem: src/store/workflowRunBridge
 evidence:
   - src/store/workflowRunBridge.ts:62
   - src/store/workflowRunBridge.ts:275
-status: open
+status: fixed
+resolution: "#3175 — persisted workflow run history: runs.json VersionedStore + WorkflowRunHistoryManager (cap 200, metadata-only) + list/record/clear; runWorkflow records at terminal state fire-and-forget; History panel in WorkflowSidebar"
 ---
 
 ## What

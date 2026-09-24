@@ -9,7 +9,8 @@ subsystem: src-tauri/src/macros
 evidence:
   - src-tauri/src/macros/config.rs:22
   - src-tauri/src/workflows/config.rs:74
-status: open
+status: partial
+resolution: "#3181 — workflow triggers framework DONE (manual/on-connect/hotkey via workflowTriggers.ts, wired to keyboard + session-open). Remaining = taxonomy breadth (on-disconnect/on-output-match/on-schedule) + a maintainer trigger-taxonomy decision"
 ---
 
 ## What
