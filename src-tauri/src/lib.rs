@@ -635,6 +635,9 @@ pub fn run() {
             commands::session::session_monitoring_set_paused,
             commands::session::session_monitoring_set_interval,
             commands::session::session_monitoring_cancel,
+            // Process list + kill (PROD-0028)
+            commands::session::list_processes,
+            commands::session::kill_process,
             // Session output logging (#1960)
             commands::session::session_logging_start,
             commands::session::session_logging_stop,

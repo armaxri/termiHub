@@ -72,6 +72,14 @@ pub const TUNNEL_START_FAILED: i64 = -32017;
 /// port bind failure, or an unknown service type).
 pub const SERVICE_START_FAILED: i64 = -32018;
 
+/// A process operation (list / kill) failed (exec error, non-zero kill, etc.)
+/// (PROD-0028).
+pub const PROCESS_OPERATION_FAILED: i64 = -32019;
+
+/// Process listing / termination is not supported for this connection type
+/// (e.g., serial, telnet) (PROD-0028).
+pub const PROCESS_NOT_SUPPORTED: i64 = -32020;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,6 +110,8 @@ mod tests {
             DEFERRED_UPDATE_FAILED,
             TUNNEL_START_FAILED,
             SERVICE_START_FAILED,
+            PROCESS_OPERATION_FAILED,
+            PROCESS_NOT_SUPPORTED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -145,6 +155,8 @@ mod tests {
             MONITORING_ERROR,
             SHUTDOWN_ERROR,
             DEFERRED_UPDATE_FAILED,
+            PROCESS_OPERATION_FAILED,
+            PROCESS_NOT_SUPPORTED,
         ];
         for code in app_codes {
             assert!(

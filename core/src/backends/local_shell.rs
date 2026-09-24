@@ -726,6 +726,16 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
         Some(&self.file_backend)
     }
+
+    fn process_manager(
+        &self,
+    ) -> Option<std::sync::Arc<dyn crate::monitoring::ProcessManager + Send + Sync>> {
+        // The local process manager is stateless (each call builds a fresh
+        // `sysinfo::System`), so a fresh handle per request is fine (PROD-0028).
+        Some(std::sync::Arc::new(
+            crate::monitoring::LocalProcessManager::new(),
+        ))
+    }
 }
 
 // ── Tests ──────────────────────────────────────────────────────────

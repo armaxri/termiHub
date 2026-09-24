@@ -480,3 +480,93 @@
   color: var(--text-on-accent);
   letter-spacing: 0.03em;
 }
+
+/* Process table (PROD-0028): the process list + kill panel. Grid rows keep the
+   columns aligned; tokens only — no magic values. */
+.process-table {
+  display: flex;
+  flex-direction: column;
+  font-size: var(--font-size-sm);
+}
+
+.process-table__head,
+.process-table__row {
+  display: grid;
+  grid-template-columns: 4rem minmax(0, 1fr) 8rem 4.5rem 4.5rem 2.5rem;
+  gap: var(--spacing-sm);
+  align-items: center;
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.process-table__head {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-base);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-primary);
+  background: var(--bg-secondary);
+  font-weight: var(--font-weight-medium);
+}
+
+.process-table__body {
+  display: flex;
+  flex-direction: column;
+  max-height: 24rem;
+  overflow-y: auto;
+}
+
+.process-table__row {
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.process-table__row:hover {
+  background: var(--bg-hover);
+}
+
+.process-table__col {
+  min-width: 0;
+  color: var(--text-primary);
+}
+
+.process-table__col--pid {
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.process-table__col--name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-table__col--user {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.process-table__col--num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.process-table__col--action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.process-table__sort {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  text-align: right;
+}
+
+.process-table__sort:hover {
+  color: var(--text-primary);
+}

@@ -102,3 +102,32 @@ export interface SystemStats {
    */
   perCoreCpuPercent: number[];
 }
+
+/**
+ * A single process in the process table (PROD-0028). Mirrors the Rust
+ * `ProcessInfo` struct (serde camelCase).
+ */
+export interface ProcessInfo {
+  /** Numeric process id — the exact, only target a kill ever uses. */
+  pid: number;
+  /** Process/command name. */
+  name: string;
+  /** Owning user name; empty string when the source cannot resolve it. */
+  user: string;
+  /** CPU usage percentage; may exceed 100 on multi-core hosts. */
+  cpuPercent: number;
+  /** Resident memory as a percentage of total RAM. */
+  memoryPercent: number;
+  /**
+   * Resident memory in kB when the source reports it (local `sysinfo`), or
+   * `null` for `ps`-sourced remotes (SSH/Docker/WSL) which report only `pmem`.
+   */
+  memoryKb: number | null;
+}
+
+/**
+ * Termination signal offered by the process table (PROD-0028). Deliberately
+ * limited to the two safe, portable signals; a fuller menu is a follow-up.
+ * Mirrors the Rust `KillSignal` enum (serde camelCase).
+ */
+export type KillSignal = "term" | "kill";

@@ -21,7 +21,8 @@ use crate::connection::{
 use crate::errors::{CoreError, FileError, SessionError};
 use crate::files::{FileBrowser, FileEntry};
 use crate::monitoring::{
-    ExecMonitoringProvider, MonitoringProvider, ProcStatsSource, MONITORING_COMMAND,
+    ExecMonitoringProvider, ExecProcessManager, MonitoringProvider, ProcStatsSource,
+    ProcessCommandOutput, ProcessExecSource, ProcessManager, MONITORING_COMMAND,
 };
 use crate::session::shell::{detect_wsl_distros, osc7_setup_command, shell_to_command};
 
@@ -51,6 +52,9 @@ pub struct Wsl {
     /// inside the distribution via `wsl.exe -d <distro>` through the shared
     /// exec-based provider.
     monitoring_provider: Option<ExecMonitoringProvider>,
+    /// Process manager (list / kill via `wsl.exe -d <distro>`), created on
+    /// connect (PROD-0028).
+    process_manager: Option<Arc<ExecProcessManager>>,
 }
 
 /// Internal state of an active WSL connection.
@@ -670,6 +674,7 @@ impl Wsl {
             output_tx: Arc::new(Mutex::new(None)),
             file_browser_provider: None,
             monitoring_provider: None,
+            process_manager: None,
         }
     }
 }
@@ -704,6 +709,42 @@ impl ProcStatsSource for WslProcStatsSource {
 
         Ok(String::from_utf8_lossy(&output.stdout).to_string())
     }
+}
+
+/// A [`ProcessExecSource`] that runs process commands (`ps` / `kill`) inside a
+/// WSL distribution via `wsl.exe -d <distro>` (PROD-0028).
+///
+/// Unlike monitoring (stdout only), a kill needs stderr and the exit status, so
+/// all three are captured. `wsl.exe` is a blocking child, so the exec runs on a
+/// blocking thread.
+struct WslProcessExecSource {
+    distribution: String,
+}
+
+#[async_trait::async_trait]
+impl ProcessExecSource for WslProcessExecSource {
+    async fn exec(&self, command: &str) -> Result<ProcessCommandOutput, CoreError> {
+        let distribution = self.distribution.clone();
+        let command = command.to_string();
+        let output = tokio::task::spawn_blocking(move || {
+            std::process::Command::new("wsl.exe")
+                .args(["-d", &distribution, "--", "sh", "-c", &command])
+                .output()
+        })
+        .await
+        .map_err(|e| CoreError::Other(format!("wsl process task failed to join: {e}")))??;
+
+        Ok(ProcessCommandOutput {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            exit_status: output.status.code(),
+        })
+    }
+}
+
+/// Build the WSL process manager for a connected distribution.
+fn wsl_process_manager(distribution: String) -> ExecProcessManager {
+    ExecProcessManager::new(Arc::new(WslProcessExecSource { distribution }))
 }
 
 /// Build the WSL monitoring provider for a connected distribution.
@@ -1074,6 +1115,7 @@ impl ConnectionType for Wsl {
         // Create the system-monitoring provider (#3182): reads `/proc` inside the
         // distribution via `wsl.exe -d <distro>`.
         self.monitoring_provider = Some(wsl_monitoring_provider(distribution.clone()));
+        self.process_manager = Some(Arc::new(wsl_process_manager(distribution.clone())));
 
         // Spawn the setup task when shell integration is enabled.  It watches
         // the tap channel for the first OSC 7 emission from the PROMPT_COMMAND
@@ -1105,6 +1147,7 @@ impl ConnectionType for Wsl {
             }
             self.file_browser_provider = None;
             self.monitoring_provider = None;
+            self.process_manager = None;
             debug!("WSL shell disconnected");
         }
         Ok(())
@@ -1166,6 +1209,12 @@ impl ConnectionType for Wsl {
         self.file_browser_provider
             .as_ref()
             .map(|p| p as &dyn FileBrowser)
+    }
+
+    fn process_manager(&self) -> Option<Arc<dyn ProcessManager + Send + Sync>> {
+        self.process_manager
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
     }
 }
 

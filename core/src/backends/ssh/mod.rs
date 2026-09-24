@@ -14,6 +14,7 @@ pub mod host_key;
 pub mod jump_host;
 mod legacy_pem;
 mod monitoring;
+mod process;
 pub mod session_pool;
 pub mod sftp;
 pub mod sftp_ops;
@@ -40,7 +41,7 @@ use crate::connection::{
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
-use crate::monitoring::MonitoringProvider;
+use crate::monitoring::{ExecProcessManager, MonitoringProvider, ProcessManager};
 use crate::session::shell::osc7_setup_command;
 use crate::session::ssh::validate_ssh_config;
 
@@ -77,6 +78,11 @@ pub struct Ssh {
     monitoring_provider: Option<Arc<SshMonitoringProvider>>,
     /// File browser provider (SFTP), created on connect.
     file_browser_provider: Option<SftpFileBrowser>,
+    /// Process manager (list / kill via SSH exec), created on connect
+    /// (PROD-0028). Held in an `Arc` so [`process_manager`](ConnectionType::process_manager)
+    /// hands out an owned clone that keeps the cached exec session alive across
+    /// process-table refreshes.
+    process_manager: Option<Arc<ExecProcessManager>>,
 }
 
 type WriteFn = Arc<dyn Fn(&[u8]) -> Result<(), SessionError> + Send + Sync>;
@@ -138,6 +144,7 @@ impl Ssh {
             output_tx: Arc::new(Mutex::new(None)),
             monitoring_provider: None,
             file_browser_provider: None,
+            process_manager: None,
         }
     }
 }
@@ -771,8 +778,9 @@ impl ConnectionType for Ssh {
             }
         });
 
-        // Create monitoring and file browser providers.
+        // Create monitoring, file browser, and process-manager providers.
         self.monitoring_provider = Some(Arc::new(SshMonitoringProvider::new(config.clone())));
+        self.process_manager = Some(Arc::new(process::ssh_process_manager(config.clone())));
         self.file_browser_provider = Some(SftpFileBrowser::new(config));
 
         self.state = Some(ConnectedState {
@@ -795,6 +803,7 @@ impl ConnectionType for Ssh {
         }
         self.monitoring_provider = None;
         self.file_browser_provider = None;
+        self.process_manager = None;
 
         if let Some(mut state) = self.state.take() {
             // Mark the graceful path so the `Drop` guard on `state` (which runs
@@ -857,6 +866,12 @@ impl ConnectionType for Ssh {
         self.file_browser_provider
             .as_ref()
             .map(|p| p as &dyn FileBrowser)
+    }
+
+    fn process_manager(&self) -> Option<Arc<dyn ProcessManager + Send + Sync>> {
+        self.process_manager
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
     }
 }
 
