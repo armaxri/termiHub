@@ -5,6 +5,7 @@
 //! Docker API access instead of shelling out to the Docker CLI.
 
 mod file_browser;
+mod monitoring;
 mod runtime;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,10 +28,11 @@ use crate::connection::{
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
-use crate::monitoring::MonitoringProvider;
+use crate::monitoring::{ExecMonitoringProvider, MonitoringProvider};
 use crate::session::docker::validate_docker_config;
 
 use self::file_browser::DockerFileBrowser;
+use self::monitoring::docker_monitoring_provider;
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
@@ -56,6 +58,10 @@ pub struct Docker {
     output_tx: Arc<Mutex<Option<OutputSender>>>,
     /// File browser provider, created on connect.
     file_browser_provider: Option<DockerFileBrowser>,
+    /// System-monitoring provider, created on connect (#3182). Reads `/proc`
+    /// inside the container via `docker exec` through the shared exec-based
+    /// provider.
+    monitoring_provider: Option<ExecMonitoringProvider>,
 }
 
 /// Internal state of an active Docker connection.
@@ -167,6 +173,7 @@ impl Docker {
             state: None,
             output_tx: Arc::new(Mutex::new(None)),
             file_browser_provider: None,
+            monitoring_provider: None,
         }
     }
 }
@@ -760,7 +767,9 @@ impl ConnectionType for Docker {
 
     fn capabilities(&self) -> Capabilities {
         Capabilities {
-            monitoring: false,
+            // A container is Linux with `/proc`, monitored via `docker exec`
+            // (#3182).
+            monitoring: true,
             file_browser: true,
             graphical: false,
             resize: true,
@@ -1004,6 +1013,13 @@ impl ConnectionType for Docker {
         self.file_browser_provider =
             Some(DockerFileBrowser::new(client.clone(), container_id.clone()));
 
+        // Create the system-monitoring provider (#3182): reads `/proc` inside the
+        // container via `docker exec`.
+        self.monitoring_provider = Some(docker_monitoring_provider(
+            client.clone(),
+            container_id.clone(),
+        ));
+
         self.state = Some(state);
 
         Ok(())
@@ -1011,6 +1027,7 @@ impl ConnectionType for Docker {
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         self.file_browser_provider = None;
+        self.monitoring_provider = None;
 
         if let Some(mut state) = self.state.take() {
             // Mark the graceful path so the `Drop` guard on `state` (which runs
@@ -1086,7 +1103,9 @@ impl ConnectionType for Docker {
     }
 
     fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
-        None
+        self.monitoring_provider
+            .as_ref()
+            .map(|p| p as &dyn MonitoringProvider)
     }
 
     fn file_browser(&self) -> Option<&dyn FileBrowser> {
@@ -1120,7 +1139,8 @@ mod tests {
     fn capabilities() {
         let docker = Docker::new();
         let caps = docker.capabilities();
-        assert!(!caps.monitoring);
+        // A container is Linux with `/proc`, monitored via `docker exec` (#3182).
+        assert!(caps.monitoring);
         assert!(caps.file_browser);
         assert!(caps.resize);
         assert!(caps.persistent);
@@ -1153,7 +1173,9 @@ mod tests {
     }
 
     #[test]
-    fn monitoring_always_none() {
+    fn monitoring_none_when_disconnected() {
+        // The provider is created on connect (#3182); a disconnected backend
+        // exposes no monitor.
         let docker = Docker::new();
         assert!(docker.monitoring().is_none());
     }

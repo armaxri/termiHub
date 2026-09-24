@@ -12,6 +12,12 @@ pub mod http_monitor;
 pub mod local_collector;
 #[cfg(feature = "local-shell")]
 pub mod local_provider;
+// Exec-based monitoring provider for Docker containers + WSL distributions
+// (#3182): both are Linux with `/proc`, so they run `MONITORING_COMMAND` via
+// `docker exec` / `wsl.exe` and reuse the canonical parser + delta trackers.
+// Enabled whenever either of those backends is compiled.
+#[cfg(any(feature = "docker", feature = "wsl"))]
+pub mod exec_provider;
 pub mod parser;
 pub mod provider;
 pub mod status;
@@ -21,6 +27,9 @@ pub mod types;
 pub use local_collector::LocalCollector;
 #[cfg(feature = "local-shell")]
 pub use local_provider::LocalMonitoringProvider;
+
+#[cfg(any(feature = "docker", feature = "wsl"))]
+pub use exec_provider::{ExecMonitoringProvider, ProcStatsSource};
 
 pub use parser::{
     cpu_percent_from_delta, net_rate_from_delta, parse_cpu_line, parse_df_output,
