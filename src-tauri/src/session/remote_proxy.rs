@@ -43,8 +43,9 @@ use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, Se
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::{FileBrowser, FileEntry};
 use termihub_core::monitoring::{
-    CollectLoopState, MonitorStatusSender, MonitoringProvider, MonitoringReceiver,
-    MonitoringSender, MonitoringSubscription, DEFAULT_STALE_THRESHOLD,
+    CollectLoopState, KillSignal, MonitorStatusSender, MonitoringProvider, MonitoringReceiver,
+    MonitoringSender, MonitoringSubscription, ProcessError, ProcessInfo, ProcessManager,
+    DEFAULT_STALE_THRESHOLD,
 };
 
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -72,6 +73,9 @@ pub struct RemoteProxy {
     file_browser_proxy: Option<RemoteFileBrowserProxy>,
     /// Monitoring proxy (set during connect if supported).
     monitoring_proxy: Option<Arc<RemoteMonitoringProxy>>,
+    /// Process manager proxy (list / kill), set up on connect when the remote
+    /// session can be inspected (PROD-0028).
+    process_proxy: Option<Arc<RemoteProcessProxy>>,
 }
 
 impl RemoteProxy {
@@ -98,6 +102,7 @@ impl RemoteProxy {
             connected: AtomicBool::new(false),
             file_browser_proxy: None,
             monitoring_proxy: None,
+            process_proxy: None,
         }
     }
 
@@ -153,6 +158,7 @@ impl RemoteProxy {
             connected: AtomicBool::new(true),
             file_browser_proxy: None,
             monitoring_proxy: None,
+            process_proxy: None,
         })
     }
 }
@@ -283,6 +289,7 @@ impl ConnectionType for RemoteProxy {
         }
         self.file_browser_proxy = None;
         self.monitoring_proxy = None;
+        self.process_proxy = None;
 
         self.connected.store(false, Ordering::SeqCst);
         debug!(agent_id = self.agent_id(), "Remote proxy disconnected");
@@ -346,6 +353,12 @@ impl ConnectionType for RemoteProxy {
         self.file_browser_proxy
             .as_ref()
             .map(|p| p as &dyn FileBrowser)
+    }
+
+    fn process_manager(&self) -> Option<Arc<dyn ProcessManager + Send + Sync>> {
+        self.process_proxy
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
     }
 }
 
@@ -523,6 +536,24 @@ impl RemoteProxy {
                                             DEFAULT_MONITORING_INTERVAL_MS,
                                         )),
                                         paused_tx: tokio::sync::watch::channel(false).0,
+                                    }));
+                                    // A host that can be monitored can also have
+                                    // its processes listed/killed (PROD-0028).
+                                    // For a local agent session the "self"-hosted
+                                    // manager runs on the agent; the agent scopes
+                                    // by the connection id it receives (None for
+                                    // local). Agent-hosted SSH/Docker/WSL process
+                                    // support is a follow-up — the agent returns
+                                    // NotSupported for those today.
+                                    let process_connection_id = if session_type == "local" {
+                                        None
+                                    } else {
+                                        Some(remote_sid.clone())
+                                    };
+                                    self.process_proxy = Some(Arc::new(RemoteProcessProxy {
+                                        agent_id: self.agent_id.clone(),
+                                        connection_id: process_connection_id,
+                                        agent_manager: self.agent_manager.clone(),
                                     }));
                                 }
                             }
@@ -767,6 +798,101 @@ impl FileBrowser for RemoteFileBrowserProxy {
         )
         .await?;
         Ok(())
+    }
+}
+
+/// Process manager proxy that forwards list/kill to a remote agent (PROD-0028).
+///
+/// Returned by `ConnectionType::process_manager()` on `RemoteProxy`. Holds the
+/// scope `connection_id` the agent expects (`None` for a local agent session,
+/// the remote session id otherwise) so the agent resolves the same host the
+/// session runs on.
+pub struct RemoteProcessProxy {
+    agent_id: String,
+    connection_id: Option<String>,
+    agent_manager: Arc<dyn AgentRpcClient>,
+}
+
+/// Builders for the `connection.processes.*` JSON-RPC request params.
+///
+/// Hand-mirrored against the agent's `ProcessesListParams` / `ProcessKillParams`
+/// (the desktop and agent share no DTO crate); the `wire_contract` tests
+/// round-trip each one through the agent structs so a drift fails in per-PR CI.
+/// Both use snake_case defaults; `signal` serializes as the camelCase
+/// `KillSignal` (`"term"` / `"kill"`).
+mod processes_params {
+    use serde_json::{json, Value};
+    use termihub_core::monitoring::KillSignal;
+
+    pub(super) fn list(connection_id: Option<&str>) -> Value {
+        json!({ "connection_id": connection_id })
+    }
+
+    pub(super) fn kill(connection_id: Option<&str>, pid: u32, signal: KillSignal) -> Value {
+        json!({ "connection_id": connection_id, "pid": pid, "signal": signal })
+    }
+}
+
+impl RemoteProcessProxy {
+    /// Run a sync `send_request` on the blocking pool (mirrors
+    /// [`RemoteFileBrowserProxy::rpc`]) and map the outcome to [`ProcessError`].
+    ///
+    /// `is_kill` selects the fallback error variant so a transport/agent failure
+    /// is reported as a kill or a list failure appropriately; the agent's
+    /// "not supported" message is recognised and surfaced as
+    /// [`ProcessError::NotSupported`] so the desktop keeps the typed distinction.
+    async fn rpc(
+        &self,
+        method: &'static str,
+        params: Value,
+        pid: Option<u32>,
+    ) -> Result<Value, ProcessError> {
+        let mgr = self.agent_manager.clone();
+        let agent_id = self.agent_id.clone();
+        let result =
+            tokio::task::spawn_blocking(move || mgr.send_request(&agent_id, method, params))
+                .await
+                .map_err(|e| ProcessError::ListFailed(format!("spawn_blocking join: {e}")))?;
+        result.map_err(|e| {
+            let msg = e.to_string();
+            if msg.to_ascii_lowercase().contains("not supported")
+                || msg.to_ascii_lowercase().contains("not yet supported")
+            {
+                ProcessError::NotSupported
+            } else if let Some(pid) = pid {
+                ProcessError::KillFailed { pid, message: msg }
+            } else {
+                ProcessError::ListFailed(msg)
+            }
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl ProcessManager for RemoteProcessProxy {
+    async fn list_processes(&self) -> Result<Vec<ProcessInfo>, ProcessError> {
+        let result = self
+            .rpc(
+                termihub_core::protocol::methods::CONNECTION_PROCESSES_LIST,
+                processes_params::list(self.connection_id.as_deref()),
+                None,
+            )
+            .await?;
+        let processes = result
+            .get("processes")
+            .cloned()
+            .unwrap_or(Value::Array(vec![]));
+        serde_json::from_value(processes).map_err(|e| ProcessError::ListFailed(e.to_string()))
+    }
+
+    async fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<(), ProcessError> {
+        self.rpc(
+            termihub_core::protocol::methods::CONNECTION_PROCESSES_KILL,
+            processes_params::kill(self.connection_id.as_deref(), pid, signal),
+            Some(pid),
+        )
+        .await
+        .map(|_| ())
     }
 }
 
@@ -2306,11 +2432,39 @@ mod tests {
     // and sent snake `connection_id` where the camelCase-only `FilesDeleteParams`
     // expects `connectionId` (AGT-001, AGT-009).
     mod wire_contract {
-        use super::super::files_params;
+        use super::super::{files_params, processes_params};
         use termihub_agent::protocol::methods as agent;
+        use termihub_core::monitoring::KillSignal;
 
         const CONN: &str = "session-42";
         const PATH: &str = "/home/user/file.txt";
+
+        #[test]
+        fn processes_list_params_deserialize_into_agent_struct() {
+            let parsed: agent::ProcessesListParams = serde_json::from_value(
+                processes_params::list(Some(CONN)),
+            )
+            .expect("desktop processes.list params must match the agent's ProcessesListParams");
+            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
+
+            // The local (`None`) scope must round-trip to `None`, not a string.
+            let parsed_local: agent::ProcessesListParams =
+                serde_json::from_value(processes_params::list(None))
+                    .expect("local-scope processes.list params must match the agent struct");
+            assert_eq!(parsed_local.connection_id, None);
+        }
+
+        #[test]
+        fn process_kill_params_deserialize_into_agent_struct() {
+            let parsed: agent::ProcessKillParams =
+                serde_json::from_value(processes_params::kill(Some(CONN), 4321, KillSignal::Kill))
+                    .expect(
+                        "desktop processes.kill params must match the agent's ProcessKillParams",
+                    );
+            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
+            assert_eq!(parsed.pid, 4321);
+            assert_eq!(parsed.signal, KillSignal::Kill);
+        }
 
         #[test]
         fn rename_params_deserialize_into_agent_struct() {

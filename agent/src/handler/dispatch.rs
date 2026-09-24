@@ -39,14 +39,15 @@ use crate::protocol::methods::{
     FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
     MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
     NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
-    ServicePauseParams, ServicePauseResult, ServiceResumeParams, ServiceResumeResult,
-    ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
-    ServiceStopParams, ServiceStopResult, SessionAttachParams, SessionCloseParams,
-    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionGetBufferParams,
-    SessionGetBufferResult, SessionInputParams, SessionListEntry, SessionListResult,
-    SessionResizeParams, TunnelForwardSpec, TunnelStartParams, TunnelStartResult,
-    TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
-    UpdatePendingNotification, AGENT_UPDATE_PENDING,
+    ProcessKillParams, ProcessesListParams, ProcessesListResult, ServicePauseParams,
+    ServicePauseResult, ServiceResumeParams, ServiceResumeResult, ServiceStartParams,
+    ServiceStartResult, ServiceStatusParams, ServiceStatusResult, ServiceStopParams,
+    ServiceStopResult, SessionAttachParams, SessionCloseParams, SessionCreateParams,
+    SessionCreateResult, SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult,
+    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
+    TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
+    TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdatePendingNotification,
+    AGENT_UPDATE_PENDING,
 };
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
 // in the `register_async_method` calls so agent and desktop cannot drift.
@@ -61,6 +62,7 @@ use crate::session::manager::{
 use crate::tunnel::AgentTunnelRegistry;
 use crate::update::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 use termihub_core::files::{FileBrowser, LocalFileBrowser};
+use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManager};
 
 /// The agent's protocol version.
 ///
@@ -361,6 +363,16 @@ fn map_file_error(e: FileError) -> ErrorObjectOwned {
     }
 }
 
+/// Map a [`ProcessError`] to a JSON-RPC error, preserving the message and
+/// distinguishing "not supported" (a capability gap) from every other failure
+/// (PROD-0028).
+fn map_process_error(e: ProcessError) -> ErrorObjectOwned {
+    match e {
+        ProcessError::NotSupported => rpc_err(errors::PROCESS_NOT_SUPPORTED, e.to_string()),
+        other => rpc_err(errors::PROCESS_OPERATION_FAILED, other.to_string()),
+    }
+}
+
 /// Hard upper bound on the persistent scrollback ring-buffer size: 256 MiB.
 ///
 /// The size (in MB) is wire-controlled — it arrives as
@@ -503,6 +515,8 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_files_copy(module)?;
     register_monitoring_subscribe(module)?;
     register_monitoring_unsubscribe(module)?;
+    register_processes_list(module)?;
+    register_processes_kill(module)?;
     register_network_port_scan(module)?;
     register_network_ping(module)?;
     register_network_dns_lookup(module)?;
@@ -1186,6 +1200,98 @@ async fn resolve_file_browser(
             format!("File browsing is not yet supported for '{other}' connections"),
         )),
     }
+}
+
+/// Resolve the [`ProcessManager`] for a process operation (PROD-0028).
+///
+/// Mirrors [`resolve_file_browser`]'s current limitation: the agent supports
+/// process listing / kill for its own host (local / shell sessions and the
+/// `connection_id == None` self case) via [`LocalProcessManager`]. Agent-hosted
+/// SSH/Docker/WSL sessions are not yet reachable as `ConnectionType` here, so
+/// they return [`errors::PROCESS_NOT_SUPPORTED`] — the same scope the file
+/// browser has. Extending this to remote agent sessions is a follow-up.
+async fn resolve_process_manager(
+    session_manager: &Arc<dyn SessionManagerApi>,
+    connection_store: &Arc<dyn ConnectionStoreApi>,
+    connection_id: Option<String>,
+) -> Result<Arc<dyn ProcessManager + Send + Sync>, ErrorObjectOwned> {
+    let id = match connection_id {
+        None => return Ok(Arc::new(LocalProcessManager::new())),
+        Some(id) => id,
+    };
+
+    if let Some(type_id) = session_manager.get_session_type_id(&id).await {
+        return match normalize_type_id(&type_id) {
+            "local" => Ok(Arc::new(LocalProcessManager::new())),
+            other => Err(rpc_err(
+                errors::PROCESS_NOT_SUPPORTED,
+                format!("Process management is not yet supported for '{other}' sessions"),
+            )),
+        };
+    }
+
+    let connection = connection_store.get(&id).await.ok_or_else(|| {
+        rpc_err(
+            errors::CONNECTION_NOT_FOUND,
+            format!("Connection not found: {id}"),
+        )
+    })?;
+
+    match connection.session_type.as_str() {
+        "local" | "shell" => Ok(Arc::new(LocalProcessManager::new())),
+        other => Err(rpc_err(
+            errors::PROCESS_NOT_SUPPORTED,
+            format!("Process management is not yet supported for '{other}' connections"),
+        )),
+    }
+}
+
+fn register_processes_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::CONNECTION_PROCESSES_LIST,
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+            let p: ProcessesListParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.processes.list", e))?;
+
+            let manager =
+                resolve_process_manager(&session_manager, &connection_store, p.connection_id)
+                    .await?;
+
+            manager
+                .list_processes()
+                .await
+                .map_err(map_process_error)
+                .and_then(|processes| to_result_value(&ProcessesListResult { processes }))
+        },
+    )?;
+    Ok(())
+}
+
+fn register_processes_kill(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::CONNECTION_PROCESSES_KILL,
+        |params, ctx, _ext| async move {
+            let (session_manager, connection_store) = get_file_managers(&ctx).await?;
+
+            let p: ProcessKillParams = params
+                .parse()
+                .map_err(|e| invalid_params("connection.processes.kill", e))?;
+
+            let manager =
+                resolve_process_manager(&session_manager, &connection_store, p.connection_id)
+                    .await?;
+
+            manager
+                .kill_process(p.pid, p.signal)
+                .await
+                .map_err(map_process_error)
+                .map(|()| Value::Null)
+        },
+    )?;
+    Ok(())
 }
 
 fn register_files_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
