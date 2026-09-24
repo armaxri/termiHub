@@ -592,6 +592,7 @@ async fn download_pause_resume_is_byte_exact() {
                 registry,
                 sink.as_sink(),
                 ResumeMode::Resume,
+                0,
             )
             .await;
         }

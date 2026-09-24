@@ -612,6 +612,14 @@ async fn cleanup_partial(
 /// Consumes the handle registered via [`TransferRegistry::enqueue`]; drops the
 /// registry entry on completion. Mirrors [`super::ftp::run_ftp_transfer`], so
 /// the generic `transfer_pause`/`resume`/`retry` commands work for SFTP.
+///
+/// `start_offset` seeds the first Active stint's resume offset. It is `0` for a
+/// fresh transfer; a **rehydrated** transfer relaunched from its persisted
+/// checkpoint (#3199) passes its stored `resume_offset` so the first stint
+/// resumes from where the previous run left off. The offset is still
+/// byte-verified against the destination before any append (via
+/// [`run_attempts`]), so a stale/divergent partial transparently restarts from
+/// zero — the resume path is unchanged, only its starting point differs.
 #[allow(clippy::too_many_arguments)]
 pub async fn run_sftp_transfer(
     browser: Arc<SftpFileBrowser>,
@@ -622,6 +630,7 @@ pub async fn run_sftp_transfer(
     registry: TransferRegistry,
     sink: ProgressSink,
     resume_mode: ResumeMode,
+    start_offset: u64,
 ) {
     // Establish the total up front so progress/ETA are meaningful.
     let total = match direction {
@@ -631,10 +640,10 @@ pub async fn run_sftp_transfer(
             .map(|m| m.len())
             .unwrap_or(0),
     };
-    handle.set_metrics(0, total, 0);
+    handle.set_metrics(start_offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
-    let mut offset = 0u64;
+    let mut offset = start_offset;
     loop {
         // Acquire (or re-acquire) a concurrency slot; the handle becomes Active.
         if !wait_for_active(&handle, &registry).await {
