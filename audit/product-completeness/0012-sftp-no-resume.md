@@ -9,7 +9,8 @@ subsystem: src-tauri/src/files/transfer
 evidence:
   - src-tauri/src/files/transfer/mod.rs:244
   - src-tauri/src/files/transfer/mod.rs:5
-status: open
+status: fixed
+resolution: "#3187 — interrupted-transfer resume no longer FTP-only: SFTP pause/resume with byte-exact offset resume primitives (#3187). SFTP no longer restarts from zero"
 ---
 
 ## What

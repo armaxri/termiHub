@@ -9,7 +9,8 @@ subsystem: src-tauri/src/files/transfer
 evidence:
   - src-tauri/src/lib.rs:371
   - src-tauri/src/files/transfer/registry.rs:279
-status: open
+status: fixed
+resolution: "#3198 — transfer queue persisted across restart: VersionedStore transfers.json, metadata-only (no creds), rehydrate-as-paused (#3198). Resume-relaunch of rehydrated rows added #3207"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/monitoring
 evidence:
   - core/src/monitoring/types.rs:11
-status: open
+status: fixed
+resolution: "#3177 — metric set no longer narrow: swap + network rx/tx (#3177) and per-core CPU (#3196) added to SystemStats; README network-stats claim reconciled"
 ---
 
 ## What

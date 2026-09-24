@@ -11,8 +11,8 @@ evidence:
   - src/hooks/useConnectSavedConnection.ts:168
   - core/src/errors.rs:34
   - src-tauri/src/commands
-status: in-progress
-resolution: "#2742 — auth-failure typed; broader stringly-IPC-error rewrite separate"
+status: fixed
+resolution: "#3195 — RESOLVED by the completed IPC error-envelope migration: TerminalError now serializes {code,message,details} with a ts-rs IpcErrorCode enum across all commands; the frontend classifies on the stable code (parseBackendError), and the English-substring re-derivation fallback was removed (#3195). Error type is no longer erased at the IPC boundary"
 ---
 
 ## What

@@ -11,7 +11,8 @@ evidence:
   - core/src/backends/local_shell.rs:669
   - core/src/backends/docker/mod.rs:927
   - core/src/backends/wsl.rs:992
-status: open
+status: fixed
+resolution: "#3203 — = PROD-0022. monitoring beyond SSH: local-direct + Docker + WSL providers via shared ExecMonitoringProvider (#3203); SSH-only limitation resolved"
 ---
 
 ## What

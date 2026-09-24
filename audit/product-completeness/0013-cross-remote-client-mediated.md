@@ -9,7 +9,8 @@ subsystem: src/hooks/useSessionFileSystem
 evidence:
   - src/hooks/useSessionFileSystem.ts:318
   - src/hooks/useSessionFileSystem.ts:355
-status: open
+status: fixed
+resolution: "#3193 — cross-remote transfer no longer client-mediated: direct remote->remote SFTP stream (session_copy_remote), no local temp round-trip (#3193)"
 ---
 
 ## What

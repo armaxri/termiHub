@@ -12,8 +12,8 @@ evidence:
   - src/utils/classifyAgentError.ts:46
   - src/utils/classifyAgentError.ts:59
   - src/utils/classifyAgentError.ts:69
-status: in-progress
-resolution: "#2742 — auth branch typed; non-auth categories deferred"
+status: fixed
+resolution: "#3195 — RESOLVED: agent connection-error classifier no longer keys off English substrings — it consumes the structured IPC error code from the envelope (#3195, classifyAgentError code-first). Locale-independent"
 ---
 
 ## What

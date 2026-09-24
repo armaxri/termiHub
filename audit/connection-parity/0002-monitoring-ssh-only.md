@@ -11,7 +11,8 @@ evidence:
   - core/src/backends/docker/mod.rs:927
   - core/src/backends/local_shell.rs:413
   - core/src/backends/ssh/monitoring.rs:325
-status: open
+status: fixed
+resolution: "#3203 — monitoring is no longer SSH-only: Docker + WSL + local-direct providers landed (#3203, shared ExecMonitoringProvider reusing the /proc parser); the generic capability flag now backs real cross-backend monitoring"
 ---
 
 ## What

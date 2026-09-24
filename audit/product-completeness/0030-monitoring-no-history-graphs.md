@@ -9,7 +9,8 @@ subsystem: src-tauri/src/system_monitor_projection, src/components/StatusBar
 evidence:
   - src-tauri/src/system_monitor_projection/store.rs:4
   - src/components/StatusBar/StatusBar.tsx:842
-status: open
+status: fixed
+resolution: "#3205 — historical graphs: client-side rolling window (CPU/mem/swap/net) + shared uPlot MetricSparkline + MonitoringHistoryPanel (#3205; slice-1 CPU sparkline earlier). No longer instantaneous-only"
 ---
 
 ## What
