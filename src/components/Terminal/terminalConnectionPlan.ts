@@ -1,4 +1,5 @@
-import type { ProjectedSessionStatus } from "@/store/sessionBridge";
+import type { BackendAgentReconnectOutcome, ProjectedSessionStatus } from "@/store/sessionBridge";
+import type { TerminalExitReason } from "@/types/terminal";
 
 /**
  * The establishment path chosen for a terminal (re)connect. This is the *pure*
@@ -199,4 +200,92 @@ export function resolveAgentSpawnAction(input: AgentSpawnActionInput): AgentSpaw
     return { kind: "retryAfterDelay", attempt: attempt + 1 };
   }
   return { kind: "giveUp" };
+}
+
+/**
+ * The step the caller must take once a backend-driven agent reconnect wait
+ * (`awaitBackendRedrive`) settles. This is the *pure* mapping of the wait's
+ * terminal {@link BackendAgentReconnectOutcome} (plus the effect's cancel state)
+ * onto the concrete action — the caller runs the store side effect for the
+ * chosen kind (abandon the effect, settle gave-up, settle session-lost, or
+ * reattach terminal I/O to the fresh backend session id).
+ *
+ * Mirrors {@link resolveEstablishmentPlan}: a pure function over an explicit
+ * input snapshot, no store reads, no `await`.
+ *
+ * - `abandon`           — the wait resolved `canceled`, or the effect was torn
+ *                         down (`isCanceled`): drive nothing, just return.
+ * - `settleGaveUp`      — the backend park/retry loop exhausted; settle the tab
+ *                         disconnected. `error` carries the backend message, or
+ *                         the `"Reconnect failed."` default when the outcome had
+ *                         none — baked in here so the caller passes it verbatim.
+ * - `settleSessionLost` — the transport came back but the live agent session was
+ *                         unrecoverable (#2512): fold to the explicit
+ *                         session-lost notice, never a silent replacement.
+ * - `reattach`          — the redrive published a fresh backend session id;
+ *                         attach terminal I/O to `sessionId`.
+ */
+export type BackendRedriveAction =
+  | { kind: "abandon" }
+  | { kind: "settleGaveUp"; error: string }
+  | { kind: "settleSessionLost" }
+  | { kind: "reattach"; sessionId: string };
+
+/** Explicit input snapshot for {@link resolveBackendRedriveOutcome}. */
+export interface BackendRedriveOutcomeInput {
+  /** The terminal outcome returned by `waitForBackendAgentReconnectOutcome`. */
+  outcome: BackendAgentReconnectOutcome;
+  /** Whether the connect effect has been torn down (its `AbortSignal` fired). */
+  isCanceled: boolean;
+}
+
+/**
+ * Decide the step after a backend-driven agent reconnect wait settles.
+ *
+ * Derived verbatim from the former inline outcome switch in `Terminal.tsx`
+ * (`setupTerminal`, the `awaitBackendRedrive` branch). The cancel guard comes
+ * first — a torn-down effect (or a `canceled` outcome) drives nothing — matching
+ * the original `if (isCanceled() || outcome.kind === "canceled") return;`.
+ *
+ * @param input explicit snapshot of the state the decision reads
+ * @returns the chosen {@link BackendRedriveAction}
+ */
+export function resolveBackendRedriveOutcome(
+  input: BackendRedriveOutcomeInput
+): BackendRedriveAction {
+  const { outcome, isCanceled } = input;
+
+  if (isCanceled || outcome.kind === "canceled") {
+    return { kind: "abandon" };
+  }
+  if (outcome.kind === "giveup") {
+    return { kind: "settleGaveUp", error: outcome.error ?? "Reconnect failed." };
+  }
+  if (outcome.kind === "sessionLost") {
+    return { kind: "settleSessionLost" };
+  }
+  return { kind: "reattach", sessionId: outcome.sessionId };
+}
+
+/**
+ * Classify why a live terminal session ended, for the disconnect overlay's
+ * wording (#1121). Pure mirror of the former inline expression in the
+ * `subscribeExit` handler in `Terminal.tsx`.
+ *
+ * - `killed`  — the session was tagged user-initiated (e.g. killed from the Open
+ *               Connections panel) before the exit fired.
+ * - `clean`   — a not-killed exit with code `0`.
+ * - `dropped` — any other not-killed exit (non-zero code, or an unknown/`null`
+ *               code, which is not `=== 0` and so classifies as dropped exactly
+ *               as before).
+ *
+ * @param input `wasKilled` (consumed kill tag) and the session's `exitCode`
+ * @returns the {@link TerminalExitReason}
+ */
+export function classifyExitReason(input: {
+  wasKilled: boolean;
+  exitCode: number | null;
+}): TerminalExitReason {
+  const { wasKilled, exitCode } = input;
+  return wasKilled ? "killed" : exitCode === 0 ? "clean" : "dropped";
 }

@@ -59,7 +59,12 @@ import { getRenderedCellWidth } from "./xtermDimensions";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import { currentSessionView, waitForBackendAgentReconnectOutcome } from "@/store/sessionBridge";
-import { resolveEstablishmentPlan, resolveAgentSpawnAction } from "./terminalConnectionPlan";
+import {
+  resolveEstablishmentPlan,
+  resolveAgentSpawnAction,
+  resolveBackendRedriveOutcome,
+  classifyExitReason,
+} from "./terminalConnectionPlan";
 
 const HORIZONTAL_SCROLL_COLS = 500;
 
@@ -537,14 +542,17 @@ export function Terminal({
               sessionIdRef.current,
               signal
             );
-            if (isCanceled() || outcome.kind === "canceled") return;
-            if (outcome.kind === "giveup") {
-              useAppStore
-                .getState()
-                .settleBackendReconnectGaveUp(tabId, outcome.error ?? "Reconnect failed.");
+            // The *decision* — which action the settled outcome warrants — is a
+            // pure function of the outcome and the effect's cancel state (TFE-002).
+            // The concrete store side effects for the chosen action run inline
+            // below, unchanged.
+            const redrive = resolveBackendRedriveOutcome({ outcome, isCanceled: isCanceled() });
+            if (redrive.kind === "abandon") return;
+            if (redrive.kind === "settleGaveUp") {
+              useAppStore.getState().settleBackendReconnectGaveUp(tabId, redrive.error);
               return;
             }
-            if (outcome.kind === "sessionLost") {
+            if (redrive.kind === "settleSessionLost") {
               // The transport came back but the live agent session was
               // unrecoverable (#2512). Never silently mint a replacement: settle
               // the tab into the terminal session-lost state, whose overlay offers
@@ -552,7 +560,7 @@ export function Terminal({
               useAppStore.getState().settleSessionLost(tabId);
               return;
             }
-            reattachSessionId = outcome.sessionId;
+            reattachSessionId = redrive.sessionId;
             break;
           }
           case "reattach":
@@ -1030,7 +1038,7 @@ export function Terminal({
           // session.
           const store = useAppStore.getState();
           const wasKilled = store.consumeSessionKilled(sessionId);
-          const reason = wasKilled ? "killed" : exitCode === 0 ? "clean" : "dropped";
+          const reason = classifyExitReason({ wasKilled, exitCode });
           frontendLog(
             "disconnect",
             `terminal-exit fired session=${sessionId} tab=${tabId} code=${exitCode} reason=${reason}`
