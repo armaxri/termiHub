@@ -6,6 +6,7 @@
 
 mod file_browser;
 mod monitoring;
+mod process;
 mod runtime;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -28,11 +29,14 @@ use crate::connection::{
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
-use crate::monitoring::{ExecMonitoringProvider, MonitoringProvider};
+use crate::monitoring::{
+    ExecMonitoringProvider, ExecProcessManager, MonitoringProvider, ProcessManager,
+};
 use crate::session::docker::validate_docker_config;
 
 use self::file_browser::DockerFileBrowser;
 use self::monitoring::docker_monitoring_provider;
+use self::process::docker_process_manager;
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
 
@@ -62,6 +66,10 @@ pub struct Docker {
     /// inside the container via `docker exec` through the shared exec-based
     /// provider.
     monitoring_provider: Option<ExecMonitoringProvider>,
+    /// Process manager (list / kill via `docker exec`), created on connect
+    /// (PROD-0028). Held in an `Arc` so [`process_manager`](ConnectionType::process_manager)
+    /// hands out an owned clone.
+    process_manager: Option<Arc<ExecProcessManager>>,
 }
 
 /// Internal state of an active Docker connection.
@@ -174,6 +182,7 @@ impl Docker {
             output_tx: Arc::new(Mutex::new(None)),
             file_browser_provider: None,
             monitoring_provider: None,
+            process_manager: None,
         }
     }
 }
@@ -1020,6 +1029,12 @@ impl ConnectionType for Docker {
             container_id.clone(),
         ));
 
+        // Create the process manager (PROD-0028): lists / kills via `docker exec`.
+        self.process_manager = Some(Arc::new(docker_process_manager(
+            client.clone(),
+            container_id.clone(),
+        )));
+
         self.state = Some(state);
 
         Ok(())
@@ -1028,6 +1043,7 @@ impl ConnectionType for Docker {
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         self.file_browser_provider = None;
         self.monitoring_provider = None;
+        self.process_manager = None;
 
         if let Some(mut state) = self.state.take() {
             // Mark the graceful path so the `Drop` guard on `state` (which runs
@@ -1112,6 +1128,12 @@ impl ConnectionType for Docker {
         self.file_browser_provider
             .as_ref()
             .map(|p| p as &dyn FileBrowser)
+    }
+
+    fn process_manager(&self) -> Option<Arc<dyn ProcessManager + Send + Sync>> {
+        self.process_manager
+            .as_ref()
+            .map(|p| p.clone() as Arc<dyn ProcessManager + Send + Sync>)
     }
 }
 
