@@ -69,9 +69,11 @@ use crate::protocol::methods::{UpdateAvailableNotification, AGENT_UPDATE_AVAILAB
 use crate::session::manager::SessionManager;
 use crate::state::persistence::AgentState;
 
+#[cfg(unix)]
+pub use apply::POSIX_COORDINATED_UPLOAD_PATH;
 pub use apply::{
-    cleanup_stale_update_backup, prune_applied_pending_update, should_apply_deferred_update,
-    SystemUpdateApplier, UpdateApplier,
+    cleanup_stale_update_backup, confine_to_staging, prune_applied_pending_update,
+    should_apply_deferred_update, StagingConfinementError, SystemUpdateApplier, UpdateApplier,
 };
 pub use coordinate::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 pub use github::{current_asset_suffix, DEFAULT_REPO};
@@ -776,7 +778,14 @@ mod tests {
             let log = applied.lock().unwrap();
             assert_eq!(log.len(), 1, "staged self-update applied exactly once");
             assert_eq!(log[0].version, "0.3.0");
-            assert_eq!(log[0].binary_path, staged_path.to_string_lossy());
+            // The staged path is confined + canonicalized before being recorded
+            // (AGT-003), so compare against the canonical form of the staging path.
+            assert_eq!(
+                log[0].binary_path,
+                std::fs::canonicalize(&staged_path)
+                    .unwrap()
+                    .to_string_lossy()
+            );
         }
         assert!(
             mgr.pending_update_for_test().await.is_none(),

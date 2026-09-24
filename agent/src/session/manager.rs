@@ -32,8 +32,8 @@ use crate::daemon::client::{
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
-    cleanup_stale_update_backup, prune_applied_pending_update, should_apply_deferred_update,
-    SystemUpdateApplier, UpdateApplier,
+    cleanup_stale_update_backup, confine_to_staging, prune_applied_pending_update,
+    should_apply_deferred_update, StagingConfinementError, SystemUpdateApplier, UpdateApplier,
 };
 
 /// Maximum number of concurrent sessions the agent supports.
@@ -173,6 +173,24 @@ impl fmt::Display for DeferredUpdateError {
             Self::NoPendingUpdate => write!(f, "No pending update to apply"),
             Self::ApplyFailed(e) => write!(f, "Failed to apply update: {e:#}"),
         }
+    }
+}
+
+/// Map a staging-confinement rejection (AGT-003) onto the existing deferred
+/// update error surface, without adding a new dispatch-visible variant.
+///
+/// A missing / non-file path is the same "bad binary path" the previous
+/// `is_file` check reported (`BinaryNotFound`). A real file that resolves
+/// **outside** the trusted staging dir is a refused update whose reason is named
+/// explicitly, so the desktop surfaces an honest failure rather than a silent or
+/// misleading one.
+fn map_confinement_error(e: StagingConfinementError) -> DeferredUpdateError {
+    match e {
+        StagingConfinementError::Unresolvable { path, .. }
+        | StagingConfinementError::NotAFile { path } => DeferredUpdateError::BinaryNotFound(path),
+        StagingConfinementError::OutsideStaging { path } => DeferredUpdateError::ApplyFailed(
+            anyhow::anyhow!("update binary path {path} is outside the trusted staging directory"),
+        ),
     }
 }
 
@@ -1098,6 +1116,24 @@ impl SessionManager {
             .count() as u32
     }
 
+    /// The agent-owned staging locations a caller-supplied update `binaryPath`
+    /// may legitimately live in (AGT-003).
+    ///
+    /// Derived from the agent state dir so it is `<config>/updates` in production
+    /// — matching the self-update download dir — and the per-test temp dir under
+    /// test. On Unix the fixed desktop coordinated-push upload path is trusted
+    /// alongside it (the desktop uploads a staged binary there over its
+    /// authenticated SFTP channel before calling `agent.request_update`).
+    fn trusted_staging_roots(&self) -> Vec<PathBuf> {
+        let mut roots = Vec::new();
+        if let Some(parent) = self.state_path.parent() {
+            roots.push(parent.join("updates"));
+        }
+        #[cfg(unix)]
+        roots.push(PathBuf::from(crate::update::POSIX_COORDINATED_UPLOAD_PATH));
+        roots
+    }
+
     /// Record a deferred agent update and apply it immediately if the agent is
     /// already idle (#1352).
     ///
@@ -1117,12 +1153,15 @@ impl SessionManager {
         // Stage a caller-supplied binary, or fall back to an existing pending
         // update.
         if let Some(path) = binary_path {
-            if !Path::new(&path).is_file() {
-                return Err(DeferredUpdateError::BinaryNotFound(path));
-            }
+            // AGT-003: confine the caller-supplied path to the agent-owned
+            // staging locations before it can ever be staged/applied. An
+            // arbitrary readable path must not become the new agent binary.
+            // Fails closed — a rejection returns before anything is persisted.
+            let confined = confine_to_staging(&self.trusted_staging_roots(), Path::new(&path))
+                .map_err(map_confinement_error)?;
             let pending = PendingUpdate {
                 version: version.unwrap_or_default(),
-                binary_path: path,
+                binary_path: confined.to_string_lossy().into_owned(),
                 staged_at: Utc::now().to_rfc3339(),
             };
             self.persist_state_delta(move |s| {
@@ -2141,8 +2180,11 @@ mod tests {
             mgr.create_stub_session("stub", "A".to_string(), serde_json::json!({}))
                 .await
                 .unwrap();
-            // A real file so path validation passes.
-            let bin = tmp.path().join("staged-agent");
+            // A real file inside the trusted staging dir so path confinement
+            // passes (AGT-003).
+            let staging = tmp.path().join("updates");
+            std::fs::create_dir_all(&staging).unwrap();
+            let bin = staging.join("staged-agent");
             std::fs::write(&bin, b"BIN").unwrap();
 
             let outcome = mgr
@@ -2173,7 +2215,10 @@ mod tests {
         #[tokio::test]
         async fn request_when_idle_applies_immediately() {
             let (mgr, applied, tmp) = manager_with_recording_applier();
-            let bin = tmp.path().join("staged-agent");
+            // Stage inside the trusted staging dir so path confinement passes.
+            let staging = tmp.path().join("updates");
+            std::fs::create_dir_all(&staging).unwrap();
+            let bin = staging.join("staged-agent");
             std::fs::write(&bin, b"BIN").unwrap();
 
             let outcome = mgr
@@ -2220,6 +2265,33 @@ mod tests {
                 .await
                 .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::BinaryNotFound(_)));
+        }
+
+        #[tokio::test]
+        async fn rejects_binary_outside_the_staging_dir() {
+            // AGT-003: an existing file OUTSIDE the trusted staging dir must be
+            // refused — an arbitrary readable path can no longer be swapped in as
+            // the agent binary. Fail closed: nothing staged, nothing applied.
+            let (mgr, applied, tmp) = manager_with_recording_applier();
+            let outside = tmp.path().join("evil-agent");
+            std::fs::write(&outside, b"EVIL").unwrap();
+
+            let err = mgr
+                .request_deferred_update(Some(outside.to_string_lossy().into_owned()), None)
+                .await
+                .expect_err("a binary outside the staging dir must be rejected");
+            assert!(
+                format!("{err}").contains("staging"),
+                "the error must name the staging-confinement reason, got: {err}"
+            );
+            assert!(
+                applied.lock().unwrap().is_empty(),
+                "a rejected update must never be applied"
+            );
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "a rejected update must never be staged as pending"
+            );
         }
 
         // ── Natural-exit deferred-apply (issue #2378) ────────────────────
