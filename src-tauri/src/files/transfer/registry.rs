@@ -490,6 +490,54 @@ impl TransferRegistry {
         handle
     }
 
+    /// Register a rich, queued transfer **only if no transfer with this id is
+    /// already tracked** (rich or legacy), returning its handle. Returns `None`
+    /// when the id is already present.
+    ///
+    /// This closes the resume-relaunch race (#3199): a rehydrated transfer has no
+    /// live handle, so a resume must re-enqueue one and spawn a fresh executor —
+    /// but two concurrent resume clicks must never spawn two executors writing the
+    /// same file. The check-and-insert is atomic under the registry lock, so at
+    /// most one caller receives a handle; a losing caller gets `None` and signals
+    /// the (now-present) handle instead of double-spawning.
+    #[allow(clippy::too_many_arguments)]
+    pub fn enqueue_if_absent(
+        &self,
+        transfer_id: &str,
+        session_id: &str,
+        direction: TransferDirection,
+        file_name: &str,
+        path: &str,
+        total: u64,
+    ) -> Option<Arc<TransferHandle>> {
+        let mut state = self.lock();
+        if state.rich.contains_key(transfer_id) || state.legacy.contains_key(transfer_id) {
+            return None;
+        }
+        let handle = Arc::new(TransferHandle {
+            transfer_id: transfer_id.to_string(),
+            session_id: session_id.to_string(),
+            direction,
+            file_name: file_name.to_string(),
+            path: path.to_string(),
+            token: CancellationToken::new(),
+            control: Mutex::new(HandleControl {
+                state: TransferState::Queued,
+                holds_slot: false,
+                pause_requested: false,
+                resume_requested: false,
+                transferred: 0,
+                total,
+                speed: 0,
+                attempt: 0,
+            }),
+            notify: Notify::new(),
+            max_attempts: super::state::MAX_RETRIES,
+        });
+        state.rich.insert(transfer_id.to_string(), handle.clone());
+        Some(handle)
+    }
+
     /// Request a concurrency slot for a rich transfer. Grants it (transition to
     /// `Active`, returns [`Admission::Run`]) when under the session cap, else
     /// leaves the transfer `Queued` and returns [`Admission::Queue`]; the
@@ -882,6 +930,63 @@ mod tests {
         reg.drop_entry("a"); // finished → promote b
         assert_eq!(b.state(), TransferState::Active);
         assert!(reg.get("a").is_none(), "dropped entry is gone");
+    }
+
+    #[test]
+    fn enqueue_if_absent_registers_when_id_is_new() {
+        let reg = TransferRegistry::new();
+        let handle = reg
+            .enqueue_if_absent(
+                "r1",
+                "s1",
+                TransferDirection::Download,
+                "r1",
+                "/remote/r1",
+                100,
+            )
+            .expect("a new id is enqueued");
+        assert_eq!(handle.state(), TransferState::Queued);
+        assert!(reg.get("r1").is_some(), "the handle is tracked");
+    }
+
+    #[test]
+    fn enqueue_if_absent_is_none_for_an_already_tracked_id() {
+        // The resume-relaunch race guard (#3199): a second concurrent relaunch of
+        // the same id must NOT create a second handle/executor.
+        let reg = TransferRegistry::new();
+        let first = enq(&reg, "r1", "s1");
+        assert!(
+            reg.enqueue_if_absent(
+                "r1",
+                "s1",
+                TransferDirection::Download,
+                "r1",
+                "/remote/r1",
+                100,
+            )
+            .is_none(),
+            "an id already registered (rich) is not re-enqueued"
+        );
+        // The original handle is untouched.
+        assert_eq!(first.state(), TransferState::Queued);
+    }
+
+    #[test]
+    fn enqueue_if_absent_is_none_for_a_live_legacy_id() {
+        let reg = TransferRegistry::new();
+        reg_legacy(&reg, "t1");
+        assert!(
+            reg.enqueue_if_absent(
+                "t1",
+                "s1",
+                TransferDirection::Download,
+                "t1",
+                "/remote/t1",
+                100,
+            )
+            .is_none(),
+            "an id already registered (legacy) is not re-enqueued"
+        );
     }
 
     #[test]

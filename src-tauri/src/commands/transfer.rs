@@ -31,10 +31,33 @@ pub fn transfer_pause(transfer_id: String, registry: State<'_, TransferRegistry>
 
 /// Resume a paused transfer. Returns `true` when the transfer accepted the
 /// resume, `false` on a no-op (see [`transfer_pause`]).
+///
+/// Handles **both** kinds of paused row (#3199):
+///
+/// - A **live** in-memory paused transfer — the registry still holds its handle,
+///   so this just signals it to continue.
+/// - A **rehydrated** paused row persisted by a previous run (PROD-0011) — it has
+///   no live handle, session, or credentials, so this **relaunches** it:
+///   re-attaches the session from the stored reference (re-sourcing credentials
+///   from the live session at resume time — never from the persisted queue),
+///   re-spawns the executor from the stored resume offset, and re-enters the
+///   scheduler. A session that cannot be re-attached moves the row to a clear
+///   Failed state rather than hanging.
 #[tauri::command]
-pub fn transfer_resume(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
+pub async fn transfer_resume(
+    transfer_id: String,
+    registry: State<'_, TransferRegistry>,
+    manager: State<'_, SessionManager>,
+    app_handle: tauri::AppHandle,
+) -> Result<bool, TerminalError> {
     debug!(transfer_id, "transfer resume");
-    registry.resume(&transfer_id)
+    Ok(crate::files::transfer::relaunch::resume_or_relaunch(
+        &transfer_id,
+        registry.inner(),
+        manager.inner(),
+        &app_handle,
+    )
+    .await)
 }
 
 /// Cancel an in-flight transfer (queued, active, or paused). Works for both
@@ -49,10 +72,26 @@ pub fn transfer_cancel(transfer_id: String, registry: State<'_, TransferRegistry
 /// Manually retry a failed transfer (resets its attempt counter). Returns
 /// `true` when the transfer accepted the retry, `false` on a no-op (see
 /// [`transfer_pause`]).
+///
+/// Like [`transfer_resume`], this handles a **rehydrated** row too (#3199): a
+/// failed rehydrated transfer with no live handle is relaunched from its stored
+/// checkpoint (re-attaching the session and re-sourcing credentials at resume
+/// time) rather than being a silent no-op.
 #[tauri::command]
-pub fn transfer_retry(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {
+pub async fn transfer_retry(
+    transfer_id: String,
+    registry: State<'_, TransferRegistry>,
+    manager: State<'_, SessionManager>,
+    app_handle: tauri::AppHandle,
+) -> Result<bool, TerminalError> {
     debug!(transfer_id, "transfer retry");
-    registry.retry(&transfer_id)
+    Ok(crate::files::transfer::relaunch::resume_or_relaunch(
+        &transfer_id,
+        registry.inner(),
+        manager.inner(),
+        &app_handle,
+    )
+    .await)
 }
 
 /// Copy a file directly from one SFTP-backed session to another, streaming the

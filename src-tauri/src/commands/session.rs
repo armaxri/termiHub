@@ -686,6 +686,7 @@ pub async fn session_download(
             registry,
             sink,
             transfer::sftp::DEFAULT_RESUME_MODE,
+            0,
         )
         .await;
     });
@@ -745,6 +746,7 @@ pub async fn session_upload(
             registry,
             sink,
             transfer::sftp::DEFAULT_RESUME_MODE,
+            0,
         )
         .await;
     });
