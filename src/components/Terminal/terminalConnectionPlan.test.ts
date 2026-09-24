@@ -1,12 +1,15 @@
 import { describe, it, expect } from "vitest";
-import type { ProjectedSessionStatus } from "@/store/sessionBridge";
+import type { BackendAgentReconnectOutcome, ProjectedSessionStatus } from "@/store/sessionBridge";
 import {
   resolveEstablishmentPlan,
   resolveAgentSpawnAction,
+  resolveBackendRedriveOutcome,
+  classifyExitReason,
   type EstablishmentPlan,
   type EstablishmentPlanInput,
   type AgentSpawnAction,
   type AgentSpawnActionInput,
+  type BackendRedriveAction,
 } from "./terminalConnectionPlan";
 
 /** Base snapshot: an initial mount with no session — the plain fresh-create case. */
@@ -330,5 +333,132 @@ describe("resolveAgentSpawnAction", () => {
         });
       }
     }
+  });
+});
+
+describe("resolveBackendRedriveOutcome", () => {
+  describe("cancel takes precedence (abandon — drive nothing)", () => {
+    it("outcome=canceled → abandon", () => {
+      expect(
+        resolveBackendRedriveOutcome({ outcome: { kind: "canceled" }, isCanceled: false })
+      ).toEqual<BackendRedriveAction>({ kind: "abandon" });
+    });
+
+    it("isCanceled=true short-circuits even a reattach outcome", () => {
+      expect(
+        resolveBackendRedriveOutcome({
+          outcome: { kind: "reattach", sessionId: "sess-1" },
+          isCanceled: true,
+        })
+      ).toEqual<BackendRedriveAction>({ kind: "abandon" });
+    });
+
+    it("isCanceled=true short-circuits a giveup outcome (no settle)", () => {
+      expect(
+        resolveBackendRedriveOutcome({
+          outcome: { kind: "giveup", error: "boom" },
+          isCanceled: true,
+        })
+      ).toEqual<BackendRedriveAction>({ kind: "abandon" });
+    });
+  });
+
+  describe("giveup → settleGaveUp with the backend message or the default", () => {
+    it("carries the backend error verbatim", () => {
+      expect(
+        resolveBackendRedriveOutcome({
+          outcome: { kind: "giveup", error: "agent exhausted retries" },
+          isCanceled: false,
+        })
+      ).toEqual<BackendRedriveAction>({ kind: "settleGaveUp", error: "agent exhausted retries" });
+    });
+
+    it('falls back to "Reconnect failed." when the outcome has no error', () => {
+      expect(
+        resolveBackendRedriveOutcome({ outcome: { kind: "giveup" }, isCanceled: false })
+      ).toEqual<BackendRedriveAction>({ kind: "settleGaveUp", error: "Reconnect failed." });
+    });
+  });
+
+  describe("sessionLost → settleSessionLost (error dropped, as the caller ignores it)", () => {
+    it("with an error present", () => {
+      expect(
+        resolveBackendRedriveOutcome({
+          outcome: { kind: "sessionLost", error: "unrecoverable" },
+          isCanceled: false,
+        })
+      ).toEqual<BackendRedriveAction>({ kind: "settleSessionLost" });
+    });
+
+    it("without an error", () => {
+      expect(
+        resolveBackendRedriveOutcome({ outcome: { kind: "sessionLost" }, isCanceled: false })
+      ).toEqual<BackendRedriveAction>({ kind: "settleSessionLost" });
+    });
+  });
+
+  describe("reattach → reattach with the fresh backend session id", () => {
+    it("passes the session id through", () => {
+      expect(
+        resolveBackendRedriveOutcome({
+          outcome: { kind: "reattach", sessionId: "sess-42" },
+          isCanceled: false,
+        })
+      ).toEqual<BackendRedriveAction>({ kind: "reattach", sessionId: "sess-42" });
+    });
+  });
+
+  describe("exhaustive outcome-kind × isCanceled table", () => {
+    const outcomes: BackendAgentReconnectOutcome[] = [
+      { kind: "reattach", sessionId: "s" },
+      { kind: "giveup", error: "e" },
+      { kind: "giveup" },
+      { kind: "sessionLost", error: "e" },
+      { kind: "sessionLost" },
+      { kind: "canceled" },
+    ];
+    for (const outcome of outcomes) {
+      for (const isCanceled of [false, true]) {
+        it(`outcome=${outcome.kind}(err=${"error" in outcome ? outcome.error : "-"}), isCanceled=${isCanceled}`, () => {
+          const action = resolveBackendRedriveOutcome({ outcome, isCanceled });
+          if (isCanceled || outcome.kind === "canceled") {
+            expect(action).toEqual<BackendRedriveAction>({ kind: "abandon" });
+          } else if (outcome.kind === "giveup") {
+            expect(action).toEqual<BackendRedriveAction>({
+              kind: "settleGaveUp",
+              error: outcome.error ?? "Reconnect failed.",
+            });
+          } else if (outcome.kind === "sessionLost") {
+            expect(action).toEqual<BackendRedriveAction>({ kind: "settleSessionLost" });
+          } else {
+            expect(action).toEqual<BackendRedriveAction>({
+              kind: "reattach",
+              sessionId: outcome.sessionId,
+            });
+          }
+        });
+      }
+    }
+  });
+});
+
+describe("classifyExitReason", () => {
+  it("a consumed kill tag wins regardless of exit code → killed", () => {
+    expect(classifyExitReason({ wasKilled: true, exitCode: 0 })).toBe("killed");
+    expect(classifyExitReason({ wasKilled: true, exitCode: 1 })).toBe("killed");
+    expect(classifyExitReason({ wasKilled: true, exitCode: null })).toBe("killed");
+  });
+
+  it("not killed, exit code 0 → clean", () => {
+    expect(classifyExitReason({ wasKilled: false, exitCode: 0 })).toBe("clean");
+  });
+
+  it("not killed, non-zero code → dropped", () => {
+    expect(classifyExitReason({ wasKilled: false, exitCode: 1 })).toBe("dropped");
+    expect(classifyExitReason({ wasKilled: false, exitCode: 137 })).toBe("dropped");
+  });
+
+  it("not killed, unknown (null) code → dropped (null is not === 0)", () => {
+    expect(classifyExitReason({ wasKilled: false, exitCode: null })).toBe("dropped");
   });
 });
