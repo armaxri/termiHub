@@ -17,12 +17,13 @@ import {
   AppWindow,
   Infinity as InfinityIcon,
   Puzzle,
+  LineChart,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedMonitors } from "@/store/useProjectedMonitors";
-import { useMonitorHistory } from "@/store/useMonitorHistory";
+import { useMonitorHistory, type MonitorHistories } from "@/store/useMonitorHistory";
 import { useProjectedSessionLifecycle } from "@/store/useSessionLifecycle";
 import { currentMonitorsView } from "@/store/systemMonitorBridge";
 import { resolveHighlightingConfig } from "@/services/syntaxHighlightingConfig";
@@ -45,6 +46,8 @@ import { CredentialStoreIndicator } from "@/components/CredentialStoreIndicator"
 import { TransferQueueIndicator } from "@/components/TransferQueue";
 import { Tooltip, Spinner, EmptyState, SearchInput, toast } from "@/components/ui";
 import { MetricSparkline } from "./MetricSparkline";
+import { MonitoringHistoryPanel } from "./MonitoringHistoryPanel";
+import { buildMetricBlocks, latestValue } from "./monitoringHistoryModel";
 import { PerCoreCpuBars } from "./PerCoreCpuBars";
 import { severityLevel } from "./monitoringSeverity";
 import { PortableBadge } from "./PortableBadge";
@@ -688,17 +691,25 @@ function MonitoringStatus() {
     }
   }, [activeMonitorKey, cancelMonitoring]);
 
-  // Client-side rolling CPU% history for the active monitor (PROD-0030). The
-  // region retains only the latest sample, so the window is reconstructed here
-  // from the `sampleCount`-gated stream. The first (priming) sample reports CPU
-  // 0% with no prior delta (audit gap G10), so it is recorded as a gap (`null`)
-  // to match the "CPU —" placeholder rather than a misleading 0.
-  const cpuForHistory =
-    monitoringSampleCount >= 2 && monitoringStats ? monitoringStats.cpuUsagePercent : null;
-  const cpuHistory = useMonitorHistory({
+  // Client-side rolling history for the active monitor (PROD-0030). The region
+  // retains only the latest sample, so the per-metric windows are reconstructed
+  // here from the `sampleCount`-gated stream. CPU and the network rates report a
+  // priming/zero first sample (no prior delta, audit gap G10), so sample #1 is
+  // recorded as a gap (`null`) for those — matching the "CPU —" placeholder
+  // rather than a misleading 0. Memory is correct from the first sample; swap is
+  // `null` when the host has no swap so its window stays empty (chart omitted).
+  const historyStats = monitoringStats;
+  const primingReady = monitoringSampleCount >= 2 && historyStats != null;
+  const monitorHistories = useMonitorHistory({
     key: activeMonitorKey,
     sampleCount: monitoringSampleCount,
-    value: cpuForHistory,
+    values: {
+      cpu: primingReady && historyStats ? historyStats.cpuUsagePercent : null,
+      memory: historyStats ? historyStats.memoryUsedPercent : null,
+      swap: historyStats && historyStats.swapTotalKb > 0 ? historyStats.swapUsedPercent : null,
+      netRx: primingReady && historyStats ? historyStats.netRxBytesPerSec : null,
+      netTx: primingReady && historyStats ? historyStats.netTxBytesPerSec : null,
+    },
   });
 
   // Hide monitoring UI when disabled or when active tab doesn't support monitoring
@@ -799,7 +810,7 @@ function MonitoringStatus() {
         status={monitoringStatus}
         paused={monitoringPaused}
         intervalMs={monitoringInterval}
-        cpuHistory={cpuHistory}
+        histories={monitorHistories}
         onDisconnect={() => activeMonitorKey && disconnectMonitoring(activeMonitorKey)}
         onSetPaused={handleSetPaused}
         onSetInterval={handleSetInterval}
@@ -951,8 +962,8 @@ interface MonitoringDetailDropdownProps {
   paused: boolean;
   /** Current per-entry refresh interval in ms (#1233). */
   intervalMs: number;
-  /** Rolling CPU% history for the sparkline (oldest first); nulls are gaps (PROD-0030). */
-  cpuHistory: (number | null)[];
+  /** Rolling per-metric history for the sparklines and history panel (PROD-0030). */
+  histories: MonitorHistories;
   onDisconnect: () => void;
   /** Pause/resume collection (#1233). */
   onSetPaused: (paused: boolean) => void | Promise<void>;
@@ -978,13 +989,16 @@ function MonitoringDetailDropdown({
   status,
   paused,
   intervalMs,
-  cpuHistory,
+  histories,
   onDisconnect,
   onSetPaused,
   onSetInterval,
   onCancel,
   onRetry,
 }: MonitoringDetailDropdownProps) {
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const metricBlocks = useMemo(() => buildMetricBlocks(histories), [histories]);
+  const hasAnyHistory = metricBlocks.some((b) => b.hasData);
   const isConnecting = status === "connecting" || (loading && !stats);
   const isOffline = status === "offline";
   // A mid-stream reconnect leaves `loading` false (the entry stays connected)
@@ -994,172 +1008,203 @@ function MonitoringDetailDropdown({
   const isReconnecting = status === "reconnecting";
   const showSpinner = loading || isReconnecting;
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
-        <button
-          className="status-bar__item status-bar__item--interactive monitoring-status__host"
-          // Intentional no-tooltip (#1163): the visible label already shows the
-          // hostname, so a normal-state hover would only duplicate it. Keep a
-          // title only while reconnecting, where it conveys transient state the
-          // collapsed spinner label does not spell out.
-          title={showSpinner ? `Reconnecting to ${host ?? "monitor"}…` : undefined}
-          data-testid="monitoring-host"
-        >
-          {showSpinner ? <Spinner size="xs" label={null} /> : <Activity size={12} />}
-          {host}
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content
-          className="monitoring-menu__content"
-          side="top"
-          align="start"
-          sideOffset={4}
-        >
-          {stats && (
-            <>
-              <div className="monitoring-menu__info">
-                <div className="monitoring-menu__row">
-                  <span className="monitoring-menu__label">Host</span>
-                  <span className="monitoring-menu__value">{stats.hostname}</span>
+    <>
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger asChild>
+          <button
+            className="status-bar__item status-bar__item--interactive monitoring-status__host"
+            // Intentional no-tooltip (#1163): the visible label already shows the
+            // hostname, so a normal-state hover would only duplicate it. Keep a
+            // title only while reconnecting, where it conveys transient state the
+            // collapsed spinner label does not spell out.
+            title={showSpinner ? `Reconnecting to ${host ?? "monitor"}…` : undefined}
+            data-testid="monitoring-host"
+          >
+            {showSpinner ? <Spinner size="xs" label={null} /> : <Activity size={12} />}
+            {host}
+          </button>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content
+            className="monitoring-menu__content"
+            side="top"
+            align="start"
+            sideOffset={4}
+          >
+            {stats && (
+              <>
+                <div className="monitoring-menu__info">
+                  <div className="monitoring-menu__row">
+                    <span className="monitoring-menu__label">Host</span>
+                    <span className="monitoring-menu__value">{stats.hostname}</span>
+                  </div>
+                  <div className="monitoring-menu__row">
+                    <span className="monitoring-menu__label">OS</span>
+                    <span className="monitoring-menu__value">{stats.osInfo}</span>
+                  </div>
+                  <div className="monitoring-menu__row">
+                    <span className="monitoring-menu__label">Uptime</span>
+                    <span className="monitoring-menu__value">
+                      {formatUptime(stats.uptimeSeconds)}
+                    </span>
+                  </div>
+                  <div className="monitoring-menu__row">
+                    <span className="monitoring-menu__label">Load</span>
+                    <span className="monitoring-menu__value">
+                      {stats.loadAverage.map((v) => v.toFixed(2)).join(" ")}
+                    </span>
+                  </div>
                 </div>
-                <div className="monitoring-menu__row">
-                  <span className="monitoring-menu__label">OS</span>
-                  <span className="monitoring-menu__value">{stats.osInfo}</span>
-                </div>
-                <div className="monitoring-menu__row">
-                  <span className="monitoring-menu__label">Uptime</span>
-                  <span className="monitoring-menu__value">
-                    {formatUptime(stats.uptimeSeconds)}
-                  </span>
-                </div>
-                <div className="monitoring-menu__row">
-                  <span className="monitoring-menu__label">Load</span>
-                  <span className="monitoring-menu__value">
-                    {stats.loadAverage.map((v) => v.toFixed(2)).join(" ")}
-                  </span>
-                </div>
-              </div>
-              <DropdownMenu.Separator className="monitoring-menu__separator" />
-            </>
-          )}
-          {/*
-            Client-side CPU% history sparkline (PROD-0030). Rendered only once a
-            real (post-priming) sample exists, so a just-connected monitor shows
-            the numbers without an empty chart. The last-known percentage labels
-            the row so the sparkline has a concrete current value beside it.
+                <DropdownMenu.Separator className="monitoring-menu__separator" />
+              </>
+            )}
+            {/*
+            Client-side metric history sparklines (PROD-0030): CPU, memory, swap
+            (when present) and network rx/tx. Each is rendered only once it has a
+            real (post-priming) sample, so a just-connected monitor shows the
+            numbers without empty charts. The last-known value labels each row.
           */}
-          {cpuHistory.some((v) => v != null) && (
-            <>
-              <div className="monitoring-menu__spark" data-testid="monitoring-cpu-sparkline">
-                <div className="monitoring-menu__spark-header">
-                  <span className="monitoring-menu__label">CPU</span>
-                  <span className="monitoring-menu__value">
-                    {(() => {
-                      const latest = cpuHistory[cpuHistory.length - 1];
-                      return latest == null ? "—" : `${latest.toFixed(0)}%`;
-                    })()}
-                  </span>
+            {hasAnyHistory && (
+              <>
+                <div className="monitoring-menu__sparks" data-testid="monitoring-sparklines">
+                  {metricBlocks
+                    .filter((block) => block.hasData)
+                    .map((block) => {
+                      const latest = latestValue(block.values);
+                      const label =
+                        latest == null
+                          ? "—"
+                          : block.unit === "percent"
+                            ? `${latest.toFixed(0)}%`
+                            : formatRate(latest) || "0 B/s";
+                      return (
+                        <div
+                          key={block.key}
+                          className="monitoring-menu__spark"
+                          data-testid={`monitoring-sparkline-${block.key}`}
+                        >
+                          <div className="monitoring-menu__spark-header">
+                            <span className="monitoring-menu__label">{block.label}</span>
+                            <span className="monitoring-menu__value">{label}</span>
+                          </div>
+                          <MetricSparkline
+                            values={block.values}
+                            min={block.min}
+                            max={block.max}
+                            ariaLabel={`${block.label} history`}
+                          />
+                        </div>
+                      );
+                    })}
                 </div>
-                <MetricSparkline
-                  values={cpuHistory}
-                  min={0}
-                  max={100}
-                  ariaLabel="CPU usage history"
-                />
-              </div>
-              <DropdownMenu.Separator className="monitoring-menu__separator" />
-            </>
-          )}
-          {/*
+                {/* Open the fuller history panel with larger time-series charts. */}
+                <DropdownMenu.Item
+                  className="monitoring-menu__action"
+                  onSelect={() => setHistoryOpen(true)}
+                  data-testid="monitoring-history-open"
+                >
+                  <LineChart size={14} />
+                  View history
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="monitoring-menu__separator" />
+              </>
+            )}
+            {/*
             Per-core CPU mini-bars (#3178). Rendered only when the collector
             supplies per-core data — empty for a non-Linux SSH remote or an older
             agent — so hosts without it are unaffected.
           */}
-          {stats && stats.perCoreCpuPercent.length > 0 && (
-            <>
-              <PerCoreCpuBars values={stats.perCoreCpuPercent} />
-              <DropdownMenu.Separator className="monitoring-menu__separator" />
-            </>
-          )}
-          {/* Pause / Resume — keeps the transport open, toggles collection (#1233). */}
-          <DropdownMenu.Item
-            className="monitoring-menu__action"
-            onSelect={() => onSetPaused(!paused)}
-            disabled={!monitorKey}
-            data-testid={paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}
-          >
-            {paused ? <Play size={14} /> : <Pause size={14} />}
-            {paused ? "Resume monitoring" : "Pause monitoring"}
-          </DropdownMenu.Item>
-
-          {/* Cancel an in-flight connect, or Retry after going offline (#1233). */}
-          {isConnecting && (
+            {stats && stats.perCoreCpuPercent.length > 0 && (
+              <>
+                <PerCoreCpuBars values={stats.perCoreCpuPercent} />
+                <DropdownMenu.Separator className="monitoring-menu__separator" />
+              </>
+            )}
+            {/* Pause / Resume — keeps the transport open, toggles collection (#1233). */}
             <DropdownMenu.Item
               className="monitoring-menu__action"
-              onSelect={() => onCancel()}
+              onSelect={() => onSetPaused(!paused)}
               disabled={!monitorKey}
-              data-testid="monitoring-cancel-btn"
+              data-testid={paused ? "monitoring-resume-btn" : "monitoring-pause-btn"}
             >
-              <X size={14} />
-              Cancel connect
+              {paused ? <Play size={14} /> : <Pause size={14} />}
+              {paused ? "Resume monitoring" : "Pause monitoring"}
             </DropdownMenu.Item>
-          )}
-          {isOffline && (
+
+            {/* Cancel an in-flight connect, or Retry after going offline (#1233). */}
+            {isConnecting && (
+              <DropdownMenu.Item
+                className="monitoring-menu__action"
+                onSelect={() => onCancel()}
+                disabled={!monitorKey}
+                data-testid="monitoring-cancel-btn"
+              >
+                <X size={14} />
+                Cancel connect
+              </DropdownMenu.Item>
+            )}
+            {isOffline && (
+              <DropdownMenu.Item
+                className="monitoring-menu__action"
+                onSelect={onRetry}
+                data-testid="monitoring-retry-btn"
+              >
+                <RotateCw size={14} />
+                Retry
+              </DropdownMenu.Item>
+            )}
+
+            <DropdownMenu.Separator className="monitoring-menu__separator" />
+
+            {/* Refresh-interval selector — radio-style items (#1233). */}
+            <DropdownMenu.Label className="monitoring-menu__label monitoring-menu__interval-label">
+              Refresh interval
+            </DropdownMenu.Label>
+            <DropdownMenu.RadioGroup
+              value={String(intervalMs)}
+              onValueChange={(v) => onSetInterval(Number(v))}
+            >
+              {MONITORING_INTERVAL_OPTIONS.map((opt) => (
+                <DropdownMenu.RadioItem
+                  key={opt}
+                  className="monitoring-menu__action monitoring-menu__radio"
+                  value={String(opt)}
+                  disabled={!monitorKey}
+                  data-testid={`monitoring-interval-${opt}`}
+                >
+                  <DropdownMenu.ItemIndicator className="monitoring-menu__radio-indicator">
+                    <Check size={14} />
+                  </DropdownMenu.ItemIndicator>
+                  <span className="monitoring-menu__radio-label">
+                    Refresh every {formatIntervalLabel(opt)}
+                  </span>
+                  {opt === DEFAULT_MONITORING_INTERVAL_MS && (
+                    <span className="monitoring-menu__radio-default">default</span>
+                  )}
+                </DropdownMenu.RadioItem>
+              ))}
+            </DropdownMenu.RadioGroup>
+
+            <DropdownMenu.Separator className="monitoring-menu__separator" />
+
             <DropdownMenu.Item
               className="monitoring-menu__action"
-              onSelect={onRetry}
-              data-testid="monitoring-retry-btn"
+              onSelect={onDisconnect}
+              data-testid="monitoring-disconnect"
             >
-              <RotateCw size={14} />
-              Retry
+              <Unplug size={14} />
+              Disconnect
             </DropdownMenu.Item>
-          )}
-
-          <DropdownMenu.Separator className="monitoring-menu__separator" />
-
-          {/* Refresh-interval selector — radio-style items (#1233). */}
-          <DropdownMenu.Label className="monitoring-menu__label monitoring-menu__interval-label">
-            Refresh interval
-          </DropdownMenu.Label>
-          <DropdownMenu.RadioGroup
-            value={String(intervalMs)}
-            onValueChange={(v) => onSetInterval(Number(v))}
-          >
-            {MONITORING_INTERVAL_OPTIONS.map((opt) => (
-              <DropdownMenu.RadioItem
-                key={opt}
-                className="monitoring-menu__action monitoring-menu__radio"
-                value={String(opt)}
-                disabled={!monitorKey}
-                data-testid={`monitoring-interval-${opt}`}
-              >
-                <DropdownMenu.ItemIndicator className="monitoring-menu__radio-indicator">
-                  <Check size={14} />
-                </DropdownMenu.ItemIndicator>
-                <span className="monitoring-menu__radio-label">
-                  Refresh every {formatIntervalLabel(opt)}
-                </span>
-                {opt === DEFAULT_MONITORING_INTERVAL_MS && (
-                  <span className="monitoring-menu__radio-default">default</span>
-                )}
-              </DropdownMenu.RadioItem>
-            ))}
-          </DropdownMenu.RadioGroup>
-
-          <DropdownMenu.Separator className="monitoring-menu__separator" />
-
-          <DropdownMenu.Item
-            className="monitoring-menu__action"
-            onSelect={onDisconnect}
-            data-testid="monitoring-disconnect"
-          >
-            <Unplug size={14} />
-            Disconnect
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+      <MonitoringHistoryPanel
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        host={host}
+        histories={histories}
+      />
+    </>
   );
 }
 
