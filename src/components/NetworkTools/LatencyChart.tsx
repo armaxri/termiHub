@@ -1,6 +1,7 @@
-import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { useMemo, useRef } from "react";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
+import { cssVar, useUplot } from "@/components/charts/uplot";
 import { buildLatencyChartData } from "./latencyChartData";
 
 interface LatencyChartProps {
@@ -15,11 +16,6 @@ interface LatencyChartProps {
 const CHART_HEIGHT = 120;
 /** Axis tick-label font size (px). */
 const AXIS_FONT_PX = 13;
-
-/** Resolve a CSS custom property to a concrete colour (canvas can't read CSS vars). */
-function cssVar(styles: CSSStyleDeclaration, name: string, fallback: string): string {
-  return styles.getPropertyValue(name).trim() || fallback;
-}
 
 /**
  * uPlot plugin that draws a dashed vertical marker at every dropped/timed-out
@@ -77,18 +73,12 @@ function latestValuePlugin(): uPlot.Plugin {
  * an elapsed-time x axis, hover read-out, and drop markers for timeouts.
  */
 export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: LatencyChartProps) {
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const plotRef = useRef<uPlot | null>(null);
   // Latest drops, read by the plugin closure without recreating the chart.
   const dropsRef = useRef<number[]>([]);
 
   const chart = useMemo(() => buildLatencyChartData(points, intervalMs), [points, intervalMs]);
 
-  // Create the uPlot instance once, wired to the container width.
-  useLayoutEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
+  const makeOptions = (container: HTMLDivElement): uPlot.Options => {
     const styles = getComputedStyle(container);
     const accent = cssVar(styles, "--accent-color", "#3794ff");
     const axisText = cssVar(styles, "--text-secondary", "#969696");
@@ -104,7 +94,7 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
       ticks: { stroke: grid, width: 1 },
       font: `${AXIS_FONT_PX}px ${fontFamily}`,
     };
-    const opts: uPlot.Options = {
+    return {
       width: container.clientWidth || 300,
       height,
       // [top, right, bottom, left] gap between the canvas edge and the axes so
@@ -138,34 +128,19 @@ export function LatencyChart({ points, intervalMs, height = CHART_HEIGHT }: Late
       ],
       plugins: [dropMarkersPlugin(() => dropsRef.current, dropColor), latestValuePlugin()],
     };
+  };
 
-    const plot = new uPlot(opts, chart.data, container);
-    plotRef.current = plot;
-
-    const resizeObserver = new ResizeObserver(() => {
-      const width = container.clientWidth;
-      if (width > 0) plot.setSize({ width, height });
-    });
-    resizeObserver.observe(container);
-
-    return () => {
-      resizeObserver.disconnect();
-      plot.destroy();
-      plotRef.current = null;
-    };
+  const containerRef = useUplot({
+    data: chart.data,
+    makeOptions,
     // Recreate only when structural options (axis mode / height) change.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, height]);
-
-  // Push new samples / axis range into the existing instance on every update.
-  useEffect(() => {
-    const plot = plotRef.current;
-    if (!plot) return;
-    // Refresh drop positions before setData triggers the plugin's redraw.
-    dropsRef.current = chart.drops;
-    plot.setScale("y", { min: chart.yMin, max: chart.yMax });
-    plot.setData(chart.data);
-  }, [chart]);
+    recreateDeps: [intervalMs, height],
+    onUpdate: (plot) => {
+      // Refresh drop positions before setData triggers the plugin's redraw.
+      dropsRef.current = chart.drops;
+      plot.setScale("y", { min: chart.yMin, max: chart.yMax });
+    },
+  });
 
   return <div ref={containerRef} className="latency-chart" />;
 }
