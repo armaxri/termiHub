@@ -11,8 +11,8 @@ evidence:
   - src-tauri/src/commands/credential.rs:52
   - src-tauri/src/commands/credential.rs:40
   - src-tauri/src/commands/session.rs
-status: partial
-resolution: "#3168 — same as ARCH-006/ERR-008: envelope + IpcErrorCode landed #3168; ~144 TerminalError cmds now structured; retyping remaining raw-String cmds (Phase 2, hotspots session/agent/network/files remain)"
+status: fixed
+resolution: "#3195 — = ARCH-006 cluster COMPLETE: {code,message,details} envelope + IpcErrorCode across all commands; raw-String hotspots retyped; FE structural consumption landed #3195"
 ---
 
 ## What

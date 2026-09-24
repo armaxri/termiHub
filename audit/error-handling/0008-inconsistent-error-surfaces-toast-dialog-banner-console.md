@@ -11,8 +11,8 @@ evidence:
   - src/components/FileEditor/FileEditor.tsx:1020
   - src/utils/classifyAgentError.ts:79
   - src/utils/frontendLog.ts:31
-status: partial
-resolution: "#3168 — same cluster: structured {code,message} envelope + FE dual-read shim landed #3168 (supersedes the old 'no wire envelope' note). Remaining: Phase 2 hotspot retypes + Phase 3 FE consumption"
+status: fixed
+resolution: "#3195 — = cluster COMPLETE: structured envelope + FE dual-read shim then code-first consumption (#3195); classification no longer relies on display strings"
 ---
 
 ## What

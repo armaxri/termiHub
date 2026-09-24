@@ -10,8 +10,8 @@ evidence:
   - src-tauri/src/utils/errors.rs:92
   - core/src/errors.rs:11
   - src/services/api.ts:1262
-status: partial
-resolution: "#3168 — Structured IPC error envelope NOW LANDED (#3168 Phase 0+1): TerminalError serializes {code,message,details} with a ts-rs IpcErrorCode enum + FE dual-read shim (backendErrorCode.ts) + errorMessage() object-aware. Phase 2 retype of raw-String cmds underway (#3169 small files, #3184 connection.rs). REMAINING: session/agent/network/files hotspots + Phase 3 (FE structural consumption / drop substring fallback)"
+status: fixed
+resolution: "#3195 — Structured IPC error envelope COMPLETE: TerminalError serializes {code,message,details} + ts-rs IpcErrorCode enum; ALL raw-String cmd hotspots (session/agent/network/connection/files) retyped to TerminalError (Phase 2); FE consumes code-first via parseBackendError, English-substring classification fallback removed (Phase 3, #3195). i18n substring hazard eliminated"
 ---
 
 ## What
