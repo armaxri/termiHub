@@ -131,4 +131,100 @@ describe("appStore — agent-error tabs tracked in tabContent (#2539)", () => {
     useAppStore.getState().closeTab("ae1", "a");
     expect(useAppStore.getState().tabContent["ae1"]).toBeUndefined();
   });
+
+  // ── resolveAgentErrorTabs guard branches (TFE-005 / #3217) ──────────
+
+  it("keeps the error tab when the agent's definition is still missing (!def)", () => {
+    seedAgentErrorLayout();
+    // The agent reconnected but this definition (def1) is not among its defs, so
+    // the conversion must bail and leave the error tab intact.
+    __emitAgentsViewForTest(
+      {
+        ...EMPTY_AGENTS_VIEW,
+        agentDefinitions: {
+          ag1: [
+            {
+              id: "some-other-def",
+              name: "Other",
+              sessionType: "local",
+              config: { shell: "zsh" },
+              persistent: false,
+              folderId: null,
+            },
+          ],
+        },
+      },
+      1
+    );
+
+    useAppStore.getState().resolveAgentErrorTabs("ag1");
+
+    const tab = getAllLeaves(layoutState().rootPanel)[0].tabs[0];
+    expect(tab.id).toBe("ae1");
+    expect(tab.contentType).toBe("agent-error"); // unchanged — definition still missing
+    expect(tab.agentErrorMeta?.agentId).toBe("ag1");
+  });
+
+  it("recurses through split containers to convert a nested agent-error tab", () => {
+    // A split layout: left leaf holds an unrelated terminal tab, right leaf holds
+    // the agent-error tab — exercising the `panel.type === 'split'` recursion.
+    const errorTab = agentErrorTab("ae1");
+    const otherTab: TerminalTab = {
+      id: "t-left",
+      sessionId: null,
+      title: "Left",
+      connectionType: "local",
+      contentType: "terminal",
+      config: { type: "local", config: {} } as ConnectionConfig,
+      panelId: "left",
+      isActive: true,
+    } as TerminalTab;
+    const root: PanelNode = {
+      type: "split",
+      id: "r",
+      direction: "horizontal",
+      children: [
+        { type: "leaf", id: "left", tabs: [otherTab], activeTabId: "t-left" },
+        { type: "leaf", id: "right", tabs: [errorTab], activeTabId: "ae1" },
+      ],
+      sizes: [50, 50],
+    };
+    useAppStore.setState(useAppStore.getInitialState());
+    seedLayoutState({
+      rootPanel: root,
+      activePanelId: "right",
+      tabGroups: [{ id: "g1", name: "Main", rootPanel: root, activePanelId: "right" }],
+      activeTabGroupId: "g1",
+      tabContent: { "t-left": extractTabContent(otherTab), ae1: extractTabContent(errorTab) },
+    });
+    __emitAgentsViewForTest(
+      {
+        ...EMPTY_AGENTS_VIEW,
+        agentDefinitions: {
+          ag1: [
+            {
+              id: "def1",
+              name: "Def",
+              sessionType: "local",
+              config: { shell: "zsh" },
+              persistent: false,
+              folderId: null,
+            },
+          ],
+        },
+      },
+      1
+    );
+
+    useAppStore.getState().resolveAgentErrorTabs("ag1");
+
+    const leaves = getAllLeaves(layoutState().rootPanel);
+    const converted = leaves.flatMap((l) => l.tabs).find((t) => t.id === "ae1");
+    expect(converted?.contentType).toBe("terminal");
+    expect(converted?.agentErrorMeta).toBeUndefined();
+    // The unrelated tab in the sibling leaf is untouched.
+    expect(leaves.flatMap((l) => l.tabs).find((t) => t.id === "t-left")?.contentType).toBe(
+      "terminal"
+    );
+  });
 });
