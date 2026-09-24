@@ -12,6 +12,13 @@ pub mod http_monitor;
 pub mod local_collector;
 #[cfg(feature = "local-shell")]
 pub mod local_provider;
+// Local-machine process listing + kill via `sysinfo` (PROD-0028), behind
+// `local-shell` alongside the local collector.
+#[cfg(feature = "local-shell")]
+pub mod local_process;
+// Process listing + termination types, `ps` parser, and the cross-backend
+// `ProcessManager` seam (PROD-0028). Pure logic — always compiled.
+pub mod process;
 // Exec-based monitoring provider for Docker containers + WSL distributions
 // (#3182): both are Linux with `/proc`, so they run `MONITORING_COMMAND` via
 // `docker exec` / `wsl.exe` and reuse the canonical parser + delta trackers.
@@ -26,10 +33,18 @@ pub mod types;
 #[cfg(feature = "local-shell")]
 pub use local_collector::LocalCollector;
 #[cfg(feature = "local-shell")]
+pub use local_process::LocalProcessManager;
+#[cfg(feature = "local-shell")]
 pub use local_provider::LocalMonitoringProvider;
 
 #[cfg(any(feature = "docker", feature = "wsl"))]
 pub use exec_provider::{ExecMonitoringProvider, ProcStatsSource};
+
+pub use process::{
+    build_kill_command, parse_ps_output, sort_and_cap, ExecProcessManager, KillSignal,
+    ProcessCommandOutput, ProcessError, ProcessExecSource, ProcessInfo, ProcessManager,
+    MAX_PROCESSES, PROCESS_LIST_COMMAND,
+};
 
 pub use parser::{
     cpu_percent_from_delta, net_rate_from_delta, parse_cpu_line, parse_df_output,

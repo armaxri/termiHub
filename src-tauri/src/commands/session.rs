@@ -11,6 +11,7 @@ use tracing::{debug, info};
 
 use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::files::FileEntry;
+use termihub_core::monitoring::{KillSignal, ProcessError, ProcessInfo};
 
 use crate::connection::manager::ConnectionManager;
 use crate::files::sftp::{ElevatedWriteResult, Writability};
@@ -783,6 +784,9 @@ pub async fn session_vscode_open_remote(
 pub struct SessionCapabilities {
     pub monitoring: bool,
     pub file_browser: bool,
+    /// Whether the session can list / terminate processes (PROD-0028). Gates the
+    /// frontend process table and its kill action.
+    pub processes: bool,
 }
 
 /// Return the capabilities of an active session.
@@ -798,7 +802,42 @@ pub async fn session_get_capabilities(
     Ok(SessionCapabilities {
         monitoring: caps.monitoring,
         file_browser: caps.file_browser,
+        processes: crate::session::process_ops::supports_processes(&manager, &session_id).await,
     })
+}
+
+/// List the top processes for a session (PROD-0028).
+///
+/// Read-only: returns the top processes by CPU (capped by the core
+/// `MAX_PROCESSES`). Runs on whichever backend owns the session — a local shell
+/// via `sysinfo`, or SSH / Docker / WSL via a single `ps` exec — and, for an
+/// agent-hosted session, forwards to the agent. A backend with no process
+/// capability yields [`ProcessError::NotSupported`].
+#[tauri::command]
+pub async fn list_processes(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<Vec<ProcessInfo>, ProcessError> {
+    crate::session::process_ops::list_processes(&manager, &session_id).await
+}
+
+/// Terminate a process in a session (PROD-0028).
+///
+/// Destructive. `signal` is limited to SIGTERM / SIGKILL and is delivered to the
+/// **exact** `pid` — never a name-matched sweep. The frontend gates this behind a
+/// mandatory confirm modal; this command is the backend of that action. Every
+/// failure surfaces as a typed [`ProcessError`] — a missing process, a
+/// permission refusal, or an unsupported backend are all reported honestly,
+/// never silently swallowed.
+#[tauri::command]
+pub async fn kill_process(
+    session_id: String,
+    pid: u32,
+    signal: KillSignal,
+    manager: State<'_, SessionManager>,
+) -> Result<(), ProcessError> {
+    info!(session_id, pid, ?signal, "Killing process");
+    crate::session::process_ops::kill_process(&manager, &session_id, pid, signal).await
 }
 
 /// Start session-based monitoring, folding stats into the system-monitor region.

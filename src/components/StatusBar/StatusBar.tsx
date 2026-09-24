@@ -18,6 +18,7 @@ import {
   Infinity as InfinityIcon,
   Puzzle,
   LineChart,
+  ListTree,
 } from "lucide-react";
 import { useAppStore, getActiveTab, monitorKeyForTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -47,6 +48,7 @@ import { TransferQueueIndicator } from "@/components/TransferQueue";
 import { Tooltip, Spinner, EmptyState, SearchInput, toast } from "@/components/ui";
 import { MetricSparkline } from "./MetricSparkline";
 import { MonitoringHistoryPanel } from "./MonitoringHistoryPanel";
+import { ProcessTablePanel } from "./ProcessTablePanel";
 import { buildMetricBlocks, latestValue } from "./monitoringHistoryModel";
 import { PerCoreCpuBars } from "./PerCoreCpuBars";
 import { severityLevel } from "./monitoringSeverity";
@@ -997,6 +999,7 @@ function MonitoringDetailDropdown({
   onRetry,
 }: MonitoringDetailDropdownProps) {
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [processesOpen, setProcessesOpen] = useState(false);
   const metricBlocks = useMemo(() => buildMetricBlocks(histories), [histories]);
   const hasAnyHistory = metricBlocks.some((b) => b.hasData);
   const isConnecting = status === "connecting" || (loading && !stats);
@@ -1120,6 +1123,20 @@ function MonitoringDetailDropdown({
                 <DropdownMenu.Separator className="monitoring-menu__separator" />
               </>
             )}
+            {/* Process list + kill (PROD-0028) — opens the process table panel. */}
+            {monitorKey && (
+              <>
+                <DropdownMenu.Item
+                  className="monitoring-menu__action"
+                  onSelect={() => setProcessesOpen(true)}
+                  data-testid="monitoring-processes-open"
+                >
+                  <ListTree size={14} />
+                  View processes
+                </DropdownMenu.Item>
+                <DropdownMenu.Separator className="monitoring-menu__separator" />
+              </>
+            )}
             {/* Pause / Resume — keeps the transport open, toggles collection (#1233). */}
             <DropdownMenu.Item
               className="monitoring-menu__action"
@@ -1204,6 +1221,14 @@ function MonitoringDetailDropdown({
         host={host}
         histories={histories}
       />
+      {monitorKey && (
+        <ProcessTablePanel
+          open={processesOpen}
+          onOpenChange={setProcessesOpen}
+          host={host}
+          sessionId={monitorKey}
+        />
+      )}
     </>
   );
 }

@@ -12,9 +12,8 @@
 //! on other platforms it returns an error so the caller can surface it, keeping
 //! the whole crate compiling everywhere.
 
-use std::path::Path;
-#[cfg(unix)]
-use std::path::PathBuf;
+use std::fmt;
+use std::path::{Path, PathBuf};
 
 use tracing::debug;
 #[cfg(unix)]
@@ -22,6 +21,115 @@ use tracing::{info, warn};
 
 use super::version;
 use crate::state::persistence::{AgentState, PendingUpdate};
+
+/// Why a requested update binary path was refused as an apply source (AGT-003).
+///
+/// Every variant is a **fail-closed** rejection: the requested path never
+/// becomes the new agent binary. The typed shape lets callers surface an honest
+/// reason instead of a bare string.
+#[derive(Debug)]
+pub enum StagingConfinementError {
+    /// The path could not be canonicalized — it does not exist, is not
+    /// reachable, or an I/O error occurred. An unresolvable path is never
+    /// trusted.
+    Unresolvable {
+        /// The path as requested (pre-canonicalization).
+        path: String,
+        /// The underlying canonicalization error.
+        source: std::io::Error,
+    },
+    /// The (canonicalized) path is not a regular file, so it cannot be a binary.
+    NotAFile {
+        /// The canonical path.
+        path: String,
+    },
+    /// The canonical path resolves **outside** every trusted staging root — the
+    /// core AGT-003 rejection. Catches absolute paths outside staging, `..`
+    /// traversal, and symlinks that escape the staging dir alike, because the
+    /// check is on the canonicalized path, not a string prefix.
+    OutsideStaging {
+        /// The canonical path that escaped confinement.
+        path: String,
+    },
+}
+
+impl fmt::Display for StagingConfinementError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unresolvable { path, source } => {
+                write!(
+                    f,
+                    "update binary path {path} could not be resolved: {source}"
+                )
+            }
+            Self::NotAFile { path } => {
+                write!(f, "update binary path {path} is not a regular file")
+            }
+            Self::OutsideStaging { path } => write!(
+                f,
+                "update binary path {path} is outside the trusted staging directory"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for StagingConfinementError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Unresolvable { source, .. } => Some(source),
+            _ => None,
+        }
+    }
+}
+
+/// Confine a requested update `binary_path` to the agent-owned staging locations
+/// (AGT-003). Returns the **canonical** path on success, a typed rejection
+/// otherwise.
+///
+/// The security boundary: an arbitrary readable path must not become the new
+/// agent binary. So the requested path and each trusted root are both
+/// canonicalized (resolving symlinks and `..`), and the requested path is
+/// accepted only when its canonical form is **contained within** a canonical
+/// root. Containment uses [`Path::starts_with`], which compares whole path
+/// components — never a raw string prefix — so `/tmp/staging-evil` does not pass
+/// as being under `/tmp/staging`.
+///
+/// Fails **closed** everywhere: a path that cannot be canonicalized, is not a
+/// regular file, or lies outside every root is rejected. A root that does not
+/// exist (cannot be canonicalized) simply contains nothing and is skipped, so a
+/// missing staging dir never widens the check — it only ever narrows it.
+pub fn confine_to_staging(
+    roots: &[PathBuf],
+    requested: &Path,
+) -> Result<PathBuf, StagingConfinementError> {
+    let canonical = std::fs::canonicalize(requested).map_err(|source| {
+        StagingConfinementError::Unresolvable {
+            path: requested.display().to_string(),
+            source,
+        }
+    })?;
+
+    if !canonical.is_file() {
+        return Err(StagingConfinementError::NotAFile {
+            path: canonical.display().to_string(),
+        });
+    }
+
+    for root in roots {
+        // A root that cannot be canonicalized (does not exist yet) can contain
+        // nothing — skip it rather than fail, so a not-yet-created staging dir
+        // never becomes a bypass and never spuriously rejects a valid sibling.
+        if let Ok(canonical_root) = std::fs::canonicalize(root) {
+            if canonical.starts_with(&canonical_root) {
+                return Ok(canonical);
+            }
+        }
+    }
+
+    Err(StagingConfinementError::OutsideStaging {
+        path: canonical.display().to_string(),
+    })
+}
 
 /// Decide whether a pending update should be applied right now.
 ///
@@ -198,7 +306,46 @@ impl UpdateApplier for SystemUpdateApplier {
 /// removes the leftover backup at startup (see [`cleanup_stale_update_backup`]).
 #[cfg(unix)]
 fn apply_update_binary(binary_path: &str) -> anyhow::Result<()> {
+    apply_update_binary_confined(binary_path, &production_staging_roots())
+}
+
+/// The fixed remote path the desktop coordinated-push deploy uploads a staged
+/// agent binary to before calling `agent.request_update` (#1616). Kept in sync
+/// with the desktop's `agent_install::POSIX_UPLOAD_PATH`; a binary staged here
+/// by the desktop's authenticated SFTP channel is trusted the same as a
+/// self-downloaded one (AGT-003).
+#[cfg(unix)]
+pub const POSIX_COORDINATED_UPLOAD_PATH: &str = "/tmp/termihub-agent-upload";
+
+/// The agent-owned staging locations a self-update binary may legitimately live
+/// in (AGT-003): the self-update download dir (`<config>/updates`) and the fixed
+/// desktop coordinated-push upload path. Nonexistent roots are skipped by
+/// [`confine_to_staging`].
+#[cfg(unix)]
+fn production_staging_roots() -> Vec<PathBuf> {
+    vec![
+        AgentState::config_dir().join("updates"),
+        PathBuf::from(POSIX_COORDINATED_UPLOAD_PATH),
+    ]
+}
+
+/// Swap-and-re-exec, but refuse a source outside `staging_roots` first (AGT-003
+/// defense-in-depth).
+///
+/// This is the last gate before the running binary is replaced. Even though
+/// `request_deferred_update` already confined the path when the update was
+/// staged, the apply path re-asserts it here so a source outside the trusted
+/// staging locations is refused **before any copy or re-exec** — it must never
+/// rely solely on the upstream check. Fails closed on any confinement violation.
+#[cfg(unix)]
+fn apply_update_binary_confined(
+    binary_path: &str,
+    staging_roots: &[PathBuf],
+) -> anyhow::Result<()> {
     use anyhow::Context;
+
+    let src = confine_to_staging(staging_roots, Path::new(binary_path))
+        .context("refuse to apply an agent update binary outside the trusted staging directory")?;
 
     let current = std::env::current_exe().context("resolve current agent executable")?;
     let backup = backup_path_for(&current);
@@ -209,7 +356,7 @@ fn apply_update_binary(binary_path: &str) -> anyhow::Result<()> {
     back_up_current_binary(&current, &backup)
         .with_context(|| format!("back up current agent binary at {}", current.display()))?;
 
-    if let Err(e) = replace_binary(Path::new(binary_path), &current)
+    if let Err(e) = replace_binary(&src, &current)
         .with_context(|| format!("replace agent binary at {}", current.display()))
     {
         // The swap failed before any re-exec: `current` still holds the old
@@ -776,5 +923,172 @@ mod tests {
         // A second call with no backup present must be a no-op, never an error.
         cleanup_stale_update_backup(&exe);
         assert!(exe.exists());
+    }
+
+    // ── AGT-003: staging-dir confinement of the update binary path ────────
+
+    #[test]
+    fn confine_accepts_a_file_inside_the_staging_dir() {
+        // (d) The legitimate case: a binary inside the trusted staging dir is
+        // accepted, and the canonical path is returned.
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        std::fs::create_dir_all(&staging).unwrap();
+        let bin = staging.join("termihub-agent-linux-x64");
+        std::fs::write(&bin, b"NEW-AGENT").unwrap();
+
+        let confined = confine_to_staging(std::slice::from_ref(&staging), &bin)
+            .expect("a binary inside the staging dir must be accepted");
+        assert_eq!(confined, std::fs::canonicalize(&bin).unwrap());
+    }
+
+    #[test]
+    fn confine_rejects_a_file_outside_the_staging_dir() {
+        // (a) An absolute path outside staging — the core RCE vector — is refused.
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        std::fs::create_dir_all(&staging).unwrap();
+        let outside = dir.path().join("evil-agent");
+        std::fs::write(&outside, b"EVIL").unwrap();
+
+        let err = confine_to_staging(&[staging], &outside)
+            .expect_err("a path outside the staging dir must be rejected");
+        assert!(matches!(
+            err,
+            StagingConfinementError::OutsideStaging { .. }
+        ));
+    }
+
+    #[test]
+    fn confine_rejects_a_parent_traversal_escape() {
+        // (c) A `..` traversal that climbs out of the staging dir is refused —
+        // canonicalization resolves the `..` before the containment check.
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        std::fs::create_dir_all(&staging).unwrap();
+        let outside = dir.path().join("evil-agent");
+        std::fs::write(&outside, b"EVIL").unwrap();
+
+        let traversal = staging.join("..").join("evil-agent");
+        let err = confine_to_staging(&[staging], &traversal)
+            .expect_err("a `..` traversal out of staging must be rejected");
+        assert!(matches!(
+            err,
+            StagingConfinementError::OutsideStaging { .. }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn confine_rejects_a_symlink_that_escapes_staging() {
+        // (b) A symlink placed *inside* staging that resolves *outside* is
+        // refused — proving the check canonicalizes rather than string-prefixing.
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        std::fs::create_dir_all(&staging).unwrap();
+        let outside = dir.path().join("evil-agent");
+        std::fs::write(&outside, b"EVIL").unwrap();
+
+        let link = staging.join("termihub-agent-linux-x64");
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+
+        let err = confine_to_staging(&[staging], &link)
+            .expect_err("a symlink escaping staging must be rejected");
+        assert!(matches!(
+            err,
+            StagingConfinementError::OutsideStaging { .. }
+        ));
+    }
+
+    #[test]
+    fn confine_rejects_a_sibling_prefix_dir() {
+        // Containment is component-wise, not a raw string prefix: a sibling dir
+        // whose name merely *starts with* the staging dir's name must not pass.
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("stage");
+        std::fs::create_dir_all(&staging).unwrap();
+        let sibling = dir.path().join("stage-evil");
+        std::fs::create_dir_all(&sibling).unwrap();
+        let bin = sibling.join("agent");
+        std::fs::write(&bin, b"EVIL").unwrap();
+
+        let err = confine_to_staging(&[staging], &bin)
+            .expect_err("a sibling dir sharing a name prefix must be rejected");
+        assert!(matches!(
+            err,
+            StagingConfinementError::OutsideStaging { .. }
+        ));
+    }
+
+    #[test]
+    fn confine_rejects_a_missing_path() {
+        // Fail closed: an unresolvable path is never trusted.
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        std::fs::create_dir_all(&staging).unwrap();
+
+        let err = confine_to_staging(
+            std::slice::from_ref(&staging),
+            &staging.join("does-not-exist"),
+        )
+        .expect_err("a missing path must be rejected");
+        assert!(matches!(err, StagingConfinementError::Unresolvable { .. }));
+    }
+
+    #[test]
+    fn confine_rejects_a_directory() {
+        // A directory (even one inside staging) is not a binary.
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        let subdir = staging.join("subdir");
+        std::fs::create_dir_all(&subdir).unwrap();
+
+        let err =
+            confine_to_staging(&[staging], &subdir).expect_err("a directory must be rejected");
+        assert!(matches!(err, StagingConfinementError::NotAFile { .. }));
+    }
+
+    #[test]
+    fn confine_skips_a_nonexistent_root_without_widening() {
+        // A root that does not exist contains nothing: it must neither admit a
+        // path nor cause a spurious error for a path a *real* root would accept.
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("updates");
+        std::fs::create_dir_all(&real).unwrap();
+        let bin = real.join("agent");
+        std::fs::write(&bin, b"NEW").unwrap();
+        let missing = dir.path().join("does-not-exist");
+
+        // Missing root first, real root second → still accepted via the real one.
+        confine_to_staging(&[missing.clone(), real], &bin)
+            .expect("a valid path must be accepted despite a missing sibling root");
+        // Only the missing root → nothing is trusted, so the path is refused.
+        let err = confine_to_staging(&[missing], &bin)
+            .expect_err("a missing-only root set must reject everything");
+        assert!(matches!(
+            err,
+            StagingConfinementError::OutsideStaging { .. }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_refuses_a_source_outside_the_staging_dir() {
+        // (e) Defense-in-depth: the apply path itself refuses an out-of-staging
+        // source, returning *before* any copy or re-exec (the confinement check
+        // is the first thing it does, so no swap of the running binary occurs).
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join("updates");
+        std::fs::create_dir_all(&staging).unwrap();
+        let outside = dir.path().join("evil-agent");
+        std::fs::write(&outside, b"EVIL").unwrap();
+
+        let err = apply_update_binary_confined(outside.to_str().unwrap(), &[staging])
+            .expect_err("apply must refuse a source outside the staging dir");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("outside the trusted staging directory"),
+            "the apply error must name the confinement reason, got: {msg}"
+        );
     }
 }

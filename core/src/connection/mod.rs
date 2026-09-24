@@ -34,7 +34,7 @@ use std::sync::Arc;
 
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
-use crate::monitoring::MonitoringProvider;
+use crate::monitoring::{MonitoringProvider, ProcessManager};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 
@@ -215,6 +215,22 @@ pub trait ConnectionType: Send {
     ///
     /// Returns `None` when [`Capabilities::file_browser`] is `false`.
     fn file_browser(&self) -> Option<&dyn FileBrowser>;
+
+    /// An owned, shareable handle to this connection's process manager
+    /// (PROD-0028), if the type supports listing / terminating processes.
+    ///
+    /// Returned as an [`Arc`] — the analogue of
+    /// [`monitoring_handle`](Self::monitoring_handle) — so the session manager
+    /// can clone it out from under its `sessions` lock and `await` a possibly
+    /// slow `list_processes` / `kill_process` (an exec / SSH round-trip) without
+    /// holding that lock (CONC-007). The default returns `None`, matching a
+    /// backend with no process capability (serial, telnet, graphical); the
+    /// local-shell, SSH, Docker, and WSL backends override it. A backend that
+    /// returns `None` here has no process capability and the desktop surfaces
+    /// [`ProcessError::NotSupported`](crate::monitoring::ProcessError::NotSupported).
+    fn process_manager(&self) -> Option<Arc<dyn ProcessManager + Send + Sync>> {
+        None
+    }
 
     /// Access the graphical (framebuffer) surface, if this is a remote-desktop
     /// connection type.

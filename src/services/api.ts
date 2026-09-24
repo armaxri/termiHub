@@ -14,6 +14,7 @@ import {
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesktop";
 import type { RunLocation } from "@/types/tunnel";
+import type { KillSignal, ProcessInfo } from "@/types/monitoring";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
@@ -2329,10 +2330,39 @@ export async function reorderConnections(connectionIds: string[]): Promise<void>
 /** Return the capabilities of an active session. */
 export async function sessionGetCapabilities(
   sessionId: string
-): Promise<{ monitoring: boolean; fileBrowser: boolean }> {
-  return await invoke<{ monitoring: boolean; fileBrowser: boolean }>("session_get_capabilities", {
-    sessionId,
-  });
+): Promise<{ monitoring: boolean; fileBrowser: boolean; processes: boolean }> {
+  return await invoke<{ monitoring: boolean; fileBrowser: boolean; processes: boolean }>(
+    "session_get_capabilities",
+    {
+      sessionId,
+    }
+  );
+}
+
+/**
+ * List the top processes on the session's host by CPU (PROD-0028).
+ *
+ * Runs on whichever host owns the session (local machine, SSH/Docker/WSL target,
+ * or — for an agent-hosted session — the agent). Rejects with a typed error when
+ * the backend has no process capability.
+ */
+export async function listProcesses(sessionId: string): Promise<ProcessInfo[]> {
+  return await invoke<ProcessInfo[]>("list_processes", { sessionId });
+}
+
+/**
+ * Terminate a process on the session's host (PROD-0028).
+ *
+ * Targets the exact `pid` with `signal` (SIGTERM or SIGKILL only). Rejects with a
+ * typed, human-readable error on failure (no such process, permission denied,
+ * unsupported backend) — never silently.
+ */
+export async function killProcess(
+  sessionId: string,
+  pid: number,
+  signal: KillSignal
+): Promise<void> {
+  await invoke("kill_process", { sessionId, pid, signal });
 }
 
 /**

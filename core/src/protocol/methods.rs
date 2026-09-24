@@ -13,7 +13,7 @@
 
 use crate::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use crate::connection::ConnectionTypeInfo;
-use crate::monitoring::SystemStats;
+use crate::monitoring::{KillSignal, ProcessInfo, SystemStats};
 use crate::service::ServiceStatus;
 #[cfg(feature = "ssh")]
 use crate::tunnel::config::{
@@ -75,6 +75,10 @@ pub const CONNECTION_FILES_COPY: &str = "connection.files.copy";
 // Connection-scoped system monitoring.
 pub const CONNECTION_MONITORING_SUBSCRIBE: &str = "connection.monitoring.subscribe";
 pub const CONNECTION_MONITORING_UNSUBSCRIBE: &str = "connection.monitoring.unsubscribe";
+
+// Connection-scoped process listing + termination (PROD-0028).
+pub const CONNECTION_PROCESSES_LIST: &str = "connection.processes.list";
+pub const CONNECTION_PROCESSES_KILL: &str = "connection.processes.kill";
 
 // Saved connection & folder CRUD (agent-hosted connection store).
 pub const CONNECTIONS_LIST: &str = "connections.list";
@@ -561,6 +565,37 @@ pub struct FilesCopyParams {
 /// Type alias for backward compatibility — stat results use the same shape
 /// as [`FileEntry`] from the core crate.
 pub type FilesStatResult = FileEntry;
+
+// ── connection.processes.* (PROD-0028) ──────────────────────────────
+
+/// Params for `connection.processes.list`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProcessesListParams {
+    /// Connection/session to scope the operation to. `None` = the agent's own
+    /// host (local sessions).
+    pub connection_id: Option<String>,
+}
+
+/// Result of `connection.processes.list`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ProcessesListResult {
+    pub processes: Vec<ProcessInfo>,
+}
+
+/// Params for `connection.processes.kill`.
+///
+/// Targets the exact numeric `pid` — never a name match — with one of the two
+/// supported signals ([`KillSignal`], serialized `"term"` / `"kill"`).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProcessKillParams {
+    /// Connection/session to scope the operation to. `None` = the agent's own
+    /// host (local sessions).
+    pub connection_id: Option<String>,
+    /// Exact process id to terminate.
+    pub pid: u32,
+    /// Signal to deliver (SIGTERM or SIGKILL).
+    pub signal: KillSignal,
+}
 
 // ── agent.shutdown ──────────────────────────────────────────────────
 
@@ -2185,6 +2220,8 @@ mod tests {
             CONNECTION_MONITORING_UNSUBSCRIBE,
             "connection.monitoring.unsubscribe"
         );
+        assert_eq!(CONNECTION_PROCESSES_LIST, "connection.processes.list");
+        assert_eq!(CONNECTION_PROCESSES_KILL, "connection.processes.kill");
         assert_eq!(CONNECTIONS_LIST, "connections.list");
         assert_eq!(CONNECTIONS_CREATE, "connections.create");
         assert_eq!(CONNECTIONS_UPDATE, "connections.update");
