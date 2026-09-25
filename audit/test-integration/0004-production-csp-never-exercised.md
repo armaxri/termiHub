@@ -11,7 +11,7 @@ evidence:
   - .github/workflows/system-integration.yml:250
   - tests/system/tests/test_csp.py
 status: partial
-resolution: "develop — prod connect-src pinned+unit-guarded: test_bridge.rs:247 PROD_CSP + relax_csp_adds_ws_sources_to_connect_src proves no ws:// leaks non-connect-src; remaining: no e2e boot under shipped CSP (integration lane runs relaxed), PROD_CSP hand-mirrors tauri.conf.json:25 (drift risk)"
+resolution: "#3249 — DRIFT RISK CLOSED (#3249): prod_csp_matches_tauri_conf test parses tauri.conf.json app.security.csp and asserts per-directive equivalence with PROD_CSP (connect-src first + full policy, whitespace/order-insensitive), verified to catch a real host injection — so PROD_CSP can no longer silently drift from the shipped policy. REMAINING (infra, out of autonomous scope): the integration lane still builds under a loosened test CSP, so the shipped production CSP is never exercised end-to-end at boot"
 ---
 
 ## What

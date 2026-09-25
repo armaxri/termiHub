@@ -11,8 +11,8 @@ evidence:
   - scripts/check.sh
   - scripts/build.sh
   - scripts/test-system-linux.sh
-status: partial
-resolution: "develop — reclaim-partial: new shellcheck lane (code-quality.yml:285) statically gates shell scripts, closing the shell-bug drift. STILL: no lane functionally EXECUTES release-check.sh/build.sh/test-system-linux.sh (a --dry smoke lane would close it, grindable)"
+status: fixed
+resolution: "#3173 — blocking 'Shell Script Quality' job (code-quality.yml) now RUNS scripts, not just shellcheck: check-script-headless.sh (#3173, Closes #3041, TOOL-012/WA-CI-029) executes 10 scripts' non-destructive --help fast path (real shebang + set -euo pipefail + top-of-file sourcing + arg parse, asserts exit 0 — exactly the verify-agent-reconnect.sh set -u rot class) + check-script-parity.sh enforces .sh/.cmd pairing. Deliberately excludes release-check/check/format/build/dev/test/clean (no hermetic path — would need weakening; covered by ShellCheck static lane). Runtime-rot drift closed"
 ---
 
 ## What

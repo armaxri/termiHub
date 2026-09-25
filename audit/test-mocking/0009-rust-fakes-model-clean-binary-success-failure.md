@@ -10,8 +10,8 @@ evidence:
   - core/src/backends/ssh/monitoring.rs:526
   - core/src/backends/ssh/monitoring.rs:508
   - src-tauri/src/session/remote_proxy.rs:803
-status: partial
-resolution: "develop — ssh monitoring timeout/stall fault-mode added: collect_once bounded by tokio timeout + collect_once_times_out_as_failure (monitoring.rs:728, #1228); remaining: FakeTransport.collect still only clean Ok/Err (:582) — no truncated/malformed/variant sample fed to parser"
+status: fixed
+resolution: "#3251 — degraded-input fault modes added (#3251): FakeTransport::with_output + 5 degraded samples (truncated-below-line-floor, garbage/non-numeric lines, missing /proc/meminfo, truncated /proc/net/dev, BusyBox/Alpine shape) fed through the REAL collect_once+parse_stats loop (not a mock parser); asserts graceful degradation (no panic, no false Live, sensible partial/zeroed stats or typed error). No production bug found. Follow-up #3252 (monitor stuck in Connecting forever on persistently-unparseable output — on_failure only Live->Stale)"
 ---
 
 ## What
