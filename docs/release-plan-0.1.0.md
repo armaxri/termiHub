@@ -630,7 +630,10 @@ laptop and check back later with `gh run list`.
 - `v0.1.0`: Simpler. Mark as "Pre-release" in GitHub Release UI.
 
 **Recommendation**: Use `v0.1.0` as the tag (matches the version in all
-config files) and mark the GitHub Release as a **pre-release** using:
+config files) and mark the GitHub Release as a **pre-release** by setting the
+`TERMIHUB_PRERELEASE` repository variable to `true` before pushing the tag (the release
+workflow then creates it with `--prerelease`; see the release runbook in
+[contributing.md](contributing.md)), or afterwards with:
 
 ```bash
 gh release edit v0.1.0 --prerelease

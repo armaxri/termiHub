@@ -1090,7 +1090,16 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
    CycloneDX SBOMs (see [Verifying release artifacts](#verifying-release-artifacts))
 6. Verify the complete asset set, including SBOMs and a valid attestation on every artifact
    (`verify-release`) — a release missing either fails here
-7. Update the `latest` tag
+7. Mark a stable release as GitHub's **Latest release** (`mark-latest`), only after
+   `verify-release` passes
+
+There is no `latest` git tag. The desktop update check and the agent self-updater
+follow GitHub's own "Latest release" marker through the `releases/latest` API, as do
+`releases/latest/download/…` links. A tag with a semver prerelease suffix
+(`vX.Y.Z-beta.1`, `vX.Y.Z-rc.1`) is published as a GitHub **prerelease**, which is never
+marked latest and is not offered as an update. To publish a plain `vX.Y.Z` tag as a
+prerelease as well, set the `TERMIHUB_PRERELEASE` repository variable to `true` before
+pushing the tag (and clear it afterwards).
 
 ### Post-Release Verification
 
