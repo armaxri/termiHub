@@ -9,7 +9,8 @@ subsystem: src-tauri/src/workflows, src/services/workflowRunner
 evidence:
   - src-tauri/src/workflows/config.rs:18
   - src/services/workflowRunner.ts:349
-status: open
+status: partial
+resolution: "develop — workflows are no longer linear-only: WorkflowStep::Conditional + WorkflowComparisonOp landed (workflows/config.rs, 'PROD-0044 slice 1') — structured comparator branching over params. REMAINING (autonomous): loop steps + wait-for-output steps"
 ---
 
 ## What

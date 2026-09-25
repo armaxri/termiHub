@@ -10,8 +10,8 @@ evidence:
   - agent/src/session/manager.rs:1048
   - agent/src/update/apply.rs:207
   - agent/src/update/download.rs:47
-status: deferred
-resolution: "maintainer-decision — signed-update design"
+status: fixed
+resolution: "#3231 — apply-time integrity verification added on EVERY update route (#3231): expected_sha256 threaded through the shared update params + PendingUpdate; desktop hashes the bytes it uploads (agent_deploy sha256_hex_of_bytes), self-update threads its download digest; apply.rs re-hashes the confined on-disk bytes and compares immediately before replace_binary — missing/mismatch/read-error all fail closed (no copy, no re-exec), closing the stage->apply TOCTOU. Composes with #3214 confinement. Authenticity/signature remainder = AGT-005/#3213 (maintainer signing key)"
 ---
 
 ## What
