@@ -27,9 +27,7 @@ vi.mock("@/utils/frontendLog", () => ({
 vi.mock("@/services/api", () => ({
   getLogFilePath: vi.fn().mockResolvedValue("/home/u/logs/termihub.log"),
   setFileLogLevel: vi.fn().mockResolvedValue(undefined),
-  getCredentialStoreStatus: vi
-    .fn()
-    .mockResolvedValue({ mode: "os_keychain", status: "unlocked" }),
+  getCredentialStoreStatus: vi.fn().mockResolvedValue({ mode: "os_keychain", status: "unlocked" }),
   getAppInfo: vi.fn().mockResolvedValue({
     version: "0.1.0-dev",
     gitHash: "abc1234",

@@ -59,15 +59,11 @@ describe("redactLogText — Authorization / Bearer", () => {
   });
 
   it("redacts a Basic authorization header, keeping the scheme", () => {
-    expect(redactLogText("authorization=Basic dXNlcjpwYXNz")).toBe(
-      `authorization=Basic ${MARK}`
-    );
+    expect(redactLogText("authorization=Basic dXNlcjpwYXNz")).toBe(`authorization=Basic ${MARK}`);
   });
 
   it("redacts a standalone Bearer token", () => {
-    expect(redactLogText("curl -H 'x: Bearer abc123DEF456'")).toBe(
-      `curl -H 'x: Bearer ${MARK}'`
-    );
+    expect(redactLogText("curl -H 'x: Bearer abc123DEF456'")).toBe(`curl -H 'x: Bearer ${MARK}'`);
   });
 });
 
