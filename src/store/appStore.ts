@@ -201,12 +201,12 @@ import {
 import {
   buildLayoutSnapshot,
   type ComposedLayoutState,
-  composeLayoutFromView,
   type LayoutSnapshot,
   type LayoutSplitMarks,
   type LayoutView,
   mirrorLayoutIntent,
   mirrorLayoutMove,
+  reconcileLayoutFromView,
   reseedLayoutRegion,
   splitMarksOfTree,
   subscribeLayoutRegion,
@@ -2079,22 +2079,28 @@ const composedLayoutCache = new WeakMap<
   LayoutView,
   { tabContent: Record<string, TabContent>; marks: LayoutSplitMarks; result: ComposedLayoutState }
 >();
-/** Last successful composition — reused when a transient view/`tabContent` desync
- * makes {@link composeLayoutFromView} return `null` (keep the last-good tree,
- * matching the removed mirror's "leave `appStore` on its current tree" guard). */
+/** Last successful composition — reused **only** when the view has nothing to
+ * derive a tree from (absent, or no groups). A view that references tabs absent
+ * from `tabContent` is reconciled instead (SM-024): the dangling tabs are dropped
+ * and the tree is derived from the view, never frozen on this stale copy. */
 let lastComposedLayout: ComposedLayoutState = EMPTY_COMPOSED;
 
 /** The composed rich layout for `state`, memoized on the identities of
  * `layoutView` / `tabContent` / `layoutSplitMarks` (#2562). Stable ref across
  * unrelated store changes — the render-storm guard the reducer-removal design
- * requires. Every layout read (reducers, selectors, snapshots) flows through here. */
+ * requires. Every layout read (reducers, selectors, snapshots) flows through here.
+ *
+ * A view tab absent from `tabContent` (a view/content desync) is dropped from the
+ * composed tree rather than failing the compose (SM-024, #3336): the result is
+ * always derived from the current inputs, and a tab whose content catches up
+ * reappears on the next read (the cache is keyed on `tabContent` identity). */
 export function getComposedLayout(state: LayoutViewState): ComposedLayoutState {
   const { layoutView, tabContent, layoutSplitMarks } = state;
   const cached = composedLayoutCache.get(layoutView);
   if (cached && cached.tabContent === tabContent && cached.marks === layoutSplitMarks) {
     return cached.result;
   }
-  const composed = composeLayoutFromView(layoutView, tabContent, layoutSplitMarks);
+  const composed = reconcileLayoutFromView(layoutView, tabContent, layoutSplitMarks)?.composed;
   const result = composed ?? lastComposedLayout;
   if (composed) lastComposedLayout = composed;
   composedLayoutCache.set(layoutView, {
@@ -6755,17 +6761,79 @@ useAppStore.subscribe((state, prev) => {
 // emits synchronously) and the non-intent writers reseed the region; this handler
 // copies the resulting view into `layoutView`, from which every read composes.
 //
-// A transient/empty view (the initial backend-default snapshot before the seed
-// below lands, or a view referencing a tab absent from `tabContent`) is one that
-// `composeLayoutFromView` cannot resolve — it is ignored here, leaving `appStore`
-// on its last-good `layoutView`, exactly as the old `null`-return guard did.
+// Reconcile, never freeze (SM-024, #3336). An absent/empty view has nothing to
+// derive a tree from and is ignored (logged). A view referencing tabs absent from
+// `tabContent` is still **applied** — `getComposedLayout` drops the dangling tabs
+// when it composes — so `appStore` always follows the authoritative structure
+// instead of silently skipping the update and freezing on a stale tree. Such a
+// desync is usually transient (e.g. a rejected intent's overlay rollback emits
+// before its coupled `tabContent` rollback runs, #3256): once content catches up
+// the tab reappears on the next compose. If it still dangles after the current
+// turn settles, {@link reconcileDanglingLayout} reseeds the region to the
+// reconciled tree so the region converges too, and logs the dropped tab ids.
 subscribeLayoutRegion((view) => {
   if (!view) return;
   const state = useAppStore.getState();
   if (view === state.layoutView) return;
-  const composed = composeLayoutFromView(view, state.tabContent, state.layoutSplitMarks);
-  if (composed) useAppStore.setState({ layoutView: view });
+  const reconciled = reconcileLayoutFromView(view, state.tabContent, state.layoutSplitMarks);
+  if (!reconciled) {
+    frontendLog("layout_bridge", "region view has no groups; kept last-good layout");
+    return;
+  }
+  useAppStore.setState({ layoutView: view });
+  if (reconciled.droppedTabIds.length > 0) scheduleDanglingLayoutReconcile();
+  else lastDanglingReconcileKey = null; // a clean view re-arms the reconcile
 });
+
+/** Structural key of the last region view {@link reconcileDanglingLayout} reseeded
+ * over — a loop guard so a reseed the backend rejects (whose rollback re-emits the
+ * same dangling view) is not retried forever. Cleared whenever a clean view lands. */
+let lastDanglingReconcileKey: string | null = null;
+let danglingReconcileScheduled = false;
+
+/** Defer {@link reconcileDanglingLayout} past the current turn (a macrotask, so
+ * every microtask-chained coupled rollback has run first). Coalesced. */
+function scheduleDanglingLayoutReconcile(): void {
+  if (danglingReconcileScheduled) return;
+  danglingReconcileScheduled = true;
+  setTimeout(() => {
+    danglingReconcileScheduled = false;
+    reconcileDanglingLayout();
+  }, 0);
+}
+
+/**
+ * Converge the region when `appStore`'s applied view still references tabs this
+ * client has no content for once the turn has settled (SM-024): the rendered tree
+ * already omits them (see {@link getComposedLayout}); reseed the region to that
+ * reconciled tree so the authoritative layout drops the unrenderable refs too, and
+ * log the dropped ids so the recovery is visible in the LogViewer. A no-op when
+ * content caught up in the meantime (a transient desync).
+ */
+function reconcileDanglingLayout(): void {
+  const state = useAppStore.getState();
+  const reconciled = reconcileLayoutFromView(
+    state.layoutView,
+    state.tabContent,
+    state.layoutSplitMarks
+  );
+  if (!reconciled || reconciled.droppedTabIds.length === 0) {
+    lastDanglingReconcileKey = null;
+    return;
+  }
+  const key = JSON.stringify(state.layoutView);
+  const ids = reconciled.droppedTabIds.join(", ");
+  if (key === lastDanglingReconcileKey) {
+    frontendLog("layout_bridge", `region still references tabs without content: ${ids}`);
+    return;
+  }
+  frontendLog("layout_bridge", `reconciled layout: dropped tabs without content: ${ids}`);
+  // The reseed's optimistic overlay emits the clean view synchronously (which
+  // re-arms the guard), so record the key only after it: a rejection's rollback
+  // re-emits this same dangling view and must not trigger another reseed.
+  reseedLayoutRegion(currentLayoutSnapshot(state));
+  lastDanglingReconcileKey = key;
+}
 
 // Seed the region from `appStore`'s initial layout at startup so the region's
 // view matches `layoutView` before the first authoritative diff (rather than a

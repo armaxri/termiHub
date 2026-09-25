@@ -360,7 +360,8 @@ export function collectTabs(node: PanelNode): Map<string, TerminalTab> {
  * straight from the tree.
  *
  * Throws if the projection references a tab absent from **both** sources; the
- * caller ({@link composeLayoutFromView}) catches it and keeps its last-good tree.
+ * caller ({@link composeLayoutFromView}) catches it and returns `null` (the lenient
+ * {@link reconcileLayoutFromView} prunes such tabs first, SM-024).
  */
 export function reconcileNode(
   node: MinimalNode,
@@ -568,10 +569,11 @@ export function logBridgeFallback(kind: string, err: unknown): void {
 // carries the same `tab.id`/`panel.id`s, the live xterm DOM (registered by tab
 // id, adopted by the id-keyed `TerminalSlot`) is reparented, never remounted.
 //
-// A view tab absent from `tabContent` is a transient desync (e.g. the initial
-// backend-default snapshot before the region is seeded from `appStore`);
-// {@link composeLayoutFromView} catches it and returns `null` so the caller keeps
-// its last-good tree until the next reseed catches the region up.
+// A view tab absent from `tabContent` is a view/content desync. The strict
+// {@link composeLayoutFromView} catches it and returns `null`; `appStore` composes
+// through {@link reconcileLayoutFromView} instead, which drops the dangling tabs so
+// the layout follows the authoritative structure rather than freezing on a stale
+// tree (SM-024), and reseeds the region if the desync outlives the current turn.
 
 /** Deep structural equality over two minimal projected trees (order-independent
  * on object keys; array order is significant, as it is user-visible tab/panel
@@ -677,7 +679,8 @@ function applyMarksRecord(node: PanelNode, marks: Record<string, string> | undef
  * It derives **every** group — including the active one — uniformly from the
  * view, and sources directional marks from `marks`. Content is
  * sourced **solely** from `tabContent` (#2566); a view tab absent from it throws
- * (caught → `null`, a transient desync the caller treats as "keep last good").
+ * (caught → `null`). `appStore` reconciles such a view via
+ * {@link reconcileLayoutFromView} rather than keeping a stale tree (SM-024).
  * The active group's `rootPanel`/`activePanelId` are the same objects as its
  * `tabGroups` entry, so structural reads and per-group reads never diverge.
  */
@@ -715,6 +718,87 @@ export function composeLayoutFromView(
     logRenderFallback(err);
     return null;
   }
+}
+
+/** A region view with every tab absent from `tabContent` removed (SM-024). */
+export interface PrunedLayoutView {
+  /** The pruned view — the **same object** as the input when nothing dangled. */
+  view: LayoutView;
+  /** Ids of the dangling tabs dropped, in tree order (empty when none). */
+  droppedTabIds: string[];
+}
+
+/** Drop dangling tabs from one minimal node, repairing each leaf's active tab. */
+function pruneNode(
+  node: MinimalNode,
+  tabContent: Record<string, TabContent>,
+  dropped: string[]
+): MinimalNode {
+  if (node.type === "leaf") {
+    if (node.tabs.every((t) => t.id in tabContent)) return node;
+    const tabs = node.tabs.filter((t) => {
+      if (t.id in tabContent) return true;
+      dropped.push(t.id);
+      return false;
+    });
+    let activeTabId = node.activeTabId;
+    if (activeTabId !== null && !tabs.some((t) => t.id === activeTabId)) {
+      // Positional fallback, matching the backend's tab-removal rule: the tab now
+      // at the dropped active tab's index (or the last one), else none.
+      const idx = node.tabs.findIndex((t) => t.id === activeTabId);
+      activeTabId = tabs.length ? tabs[Math.min(Math.max(idx, 0), tabs.length - 1)].id : null;
+    }
+    return { ...node, tabs, activeTabId };
+  }
+  let changed = false;
+  const children = node.children.map((c) => {
+    const next = pruneNode(c, tabContent, dropped);
+    if (next !== c) changed = true;
+    return next;
+  });
+  return changed ? { ...node, children } : node;
+}
+
+/**
+ * Reconcile a region view against the content this client holds (SM-024): drop
+ * every tab the view references that is absent from `tabContent` — it has no
+ * content to render — and repair a leaf whose active tab was dropped. Panel ids
+ * and tree shape are left untouched (an emptied leaf stays an empty panel), so the
+ * result is a valid tree derived from the authoritative structure. Returns the
+ * input view by identity when nothing dangles, so the common path is unchanged.
+ */
+export function pruneDanglingTabs(
+  view: LayoutView,
+  tabContent: Record<string, TabContent>
+): PrunedLayoutView {
+  const dropped: string[] = [];
+  let changed = false;
+  const groups = view.groups.map((g) => {
+    const root = pruneNode(g.root, tabContent, dropped);
+    if (root === g.root) return g;
+    changed = true;
+    return { ...g, root };
+  });
+  return { view: changed ? { ...view, groups } : view, droppedTabIds: dropped };
+}
+
+/**
+ * Compose a region view **leniently** (SM-024): like {@link composeLayoutFromView},
+ * but a view tab absent from `tabContent` is dropped (see {@link pruneDanglingTabs})
+ * instead of failing the whole compose — so the layout follows the authoritative
+ * structure rather than freezing on a stale tree. Identical to the strict compose
+ * when nothing dangles. Returns `null` only for a view with nothing to derive from
+ * (absent, or no groups).
+ */
+export function reconcileLayoutFromView(
+  view: LayoutView | null | undefined,
+  tabContent: Record<string, TabContent>,
+  marks: LayoutSplitMarks
+): { composed: ComposedLayoutState; droppedTabIds: string[] } | null {
+  if (!view || !Array.isArray(view.groups) || view.groups.length === 0) return null;
+  const pruned = pruneDanglingTabs(view, tabContent);
+  const composed = composeLayoutFromView(pruned.view, tabContent, marks);
+  return composed ? { composed, droppedTabIds: pruned.droppedTabIds } : null;
 }
 
 /** Shared empty content-fallback for {@link composeLayoutFromView}: content comes
