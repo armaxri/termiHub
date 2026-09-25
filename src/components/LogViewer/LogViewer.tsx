@@ -8,6 +8,7 @@ import { Button, SearchInput } from "@/components/ui";
 import { getLogs, clearLogs } from "@/services/api";
 import { onLogEntry } from "@/services/events";
 import { onFrontendLog } from "@/utils/frontendLog";
+import { redactLogText } from "@/utils/redactLogText";
 import "./LogViewer.css";
 
 const MAX_ENTRIES = 2000;
@@ -100,7 +101,9 @@ export function LogViewer({ isVisible }: LogViewerProps) {
 
   const handleSave = useCallback(async (entriesToSave: LogEntry[]) => {
     try {
-      const content = entriesToSave.map(formatEntry).join("\n");
+      // Redact secrets before the logs leave the app — a user saving logs to
+      // attach to a bug report must not leak passwords/tokens/keys (OBS-008).
+      const content = redactLogText(entriesToSave.map(formatEntry).join("\n"));
       const filePath = await save({
         title: "Save logs",
         defaultPath: "termihub-logs.txt",
@@ -115,7 +118,8 @@ export function LogViewer({ isVisible }: LogViewerProps) {
 
   const handleCopyEntry = useCallback(async (entry: LogEntry) => {
     try {
-      await navigator.clipboard.writeText(formatEntry(entry));
+      // Redact secrets before copying to the clipboard (OBS-008).
+      await navigator.clipboard.writeText(redactLogText(formatEntry(entry)));
     } catch {
       // Ignore errors
     }
@@ -123,7 +127,8 @@ export function LogViewer({ isVisible }: LogViewerProps) {
 
   const handleCopyAll = useCallback(async (entriesToCopy: LogEntry[]) => {
     try {
-      const content = entriesToCopy.map(formatEntry).join("\n");
+      // Redact secrets before copying to the clipboard (OBS-008).
+      const content = redactLogText(entriesToCopy.map(formatEntry).join("\n"));
       await navigator.clipboard.writeText(content);
     } catch {
       // Ignore errors
