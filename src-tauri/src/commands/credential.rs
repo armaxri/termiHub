@@ -18,14 +18,60 @@ const EVENT_STORE_UNLOCKED: &str = "credential-store-unlocked";
 /// Event emitted when the credential store status changes (mode switch, setup, etc.).
 const EVENT_STORE_STATUS_CHANGED: &str = "credential-store-status-changed";
 
+/// Structured outcome of the credential migration performed by a store switch.
+///
+/// Computed from the real per-credential results (never by inspecting the
+/// free-text `warnings`), so the frontend and any debug bundle can tell a clean
+/// migration apart from a partial or total failure (#2839).
+#[derive(Serialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MigrationStatus {
+    /// Every credential read from the source store was written to the new one
+    /// (also the case when there was nothing to migrate).
+    Success,
+    /// Some, but not all, credentials were migrated.
+    Partial,
+    /// None of the credentials to migrate could be written to the new store.
+    Failed,
+}
+
+impl MigrationStatus {
+    /// Derive the status from how many credentials were attempted and how many
+    /// were written successfully.
+    fn from_counts(attempted: usize, migrated: u32) -> Self {
+        let migrated = migrated as usize;
+        if migrated >= attempted {
+            Self::Success
+        } else if migrated == 0 {
+            Self::Failed
+        } else {
+            Self::Partial
+        }
+    }
+}
+
 /// Result of switching credential stores, returned to the frontend.
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct SwitchResult {
+    /// Structured migration outcome: `success`, `partial`, or `failed`.
+    pub status: MigrationStatus,
     /// Number of credentials successfully migrated.
     pub migrated_count: u32,
+    /// Number of credentials that failed to migrate. They remain in the
+    /// previous store, which is left intact.
+    pub failed_count: u32,
     /// Warnings for credentials that failed to migrate.
     pub warnings: Vec<String>,
+}
+
+/// Per-credential migration tally produced by [`migrate_credentials`].
+#[derive(Debug)]
+struct MigrationOutcome {
+    migrated_count: u32,
+    failed_count: u32,
+    warnings: Vec<String>,
+    status: MigrationStatus,
 }
 
 /// Build the user-facing error shown when the source store cannot be read in
@@ -88,14 +134,15 @@ fn collect_credentials_for_migration(
 ///   `migrated_count == 0`, the most silent failure mode), so both success and
 ///   any shortfall land in the INFO+ durable file log.
 ///
-/// Returns the count migrated and the human-readable warnings surfaced to the
-/// frontend in [`SwitchResult`]. The source store is left intact on any
-/// failure, so the user can recover.
+/// Returns the migrated/failed counts, the structured [`MigrationStatus`], and
+/// the human-readable warnings surfaced to the frontend in [`SwitchResult`].
+/// The source store is left intact on any failure, so the user can recover.
 fn migrate_credentials(
     manager: &CredentialManager,
     credentials_to_migrate: &[(CredentialKey, String)],
-) -> (u32, Vec<String>) {
+) -> MigrationOutcome {
     let mut migrated_count = 0u32;
+    let mut failed_count = 0u32;
     let mut warnings = Vec::new();
 
     for (key, value) in credentials_to_migrate {
@@ -107,6 +154,7 @@ fn migrate_credentials(
                 // SECRET HYGIENE: log the key (connection_id:type) and error
                 // only — NEVER the credential value.
                 warn!(key = %key, error = %e, "credential migration failed");
+                failed_count += 1;
                 warnings.push(format!("Failed to migrate {}: {}", key, e));
             }
         }
@@ -127,7 +175,12 @@ fn migrate_credentials(
         );
     }
 
-    (migrated_count, warnings)
+    MigrationOutcome {
+        migrated_count,
+        failed_count,
+        warnings,
+        status: MigrationStatus::from_counts(credentials_to_migrate.len(), migrated_count),
+    }
 }
 
 fn emit_status_changed(app_handle: &AppHandle, manager: &CredentialManager) {
@@ -389,7 +442,9 @@ pub async fn switch_credential_store(
 
     if current_mode == target_mode {
         return Ok(SwitchResult {
+            status: MigrationStatus::Success,
             migrated_count: 0,
+            failed_count: 0,
             warnings: vec!["Already using this storage mode".to_string()],
         });
     }
@@ -436,7 +491,12 @@ pub async fn switch_credential_store(
     // (key only, never the secret value) and an INFO summary is emitted
     // unconditionally, so a partial or total migration failure leaves a durable
     // trace instead of failing silently (OBS-007).
-    let (migrated_count, warnings) = migrate_credentials(&manager, &credentials_to_migrate);
+    //
+    // The switch itself is NOT rolled back when migration fails: the new mode
+    // stays active and the source store is left intact, so the failed
+    // credentials can be recovered by switching back. `status` tells the
+    // frontend truthfully which of these cases occurred (#2839).
+    let outcome = migrate_credentials(&manager, &credentials_to_migrate);
 
     // Persist the new mode to settings so it survives app restarts.
     let mut settings = connection_manager.get_settings();
@@ -450,8 +510,10 @@ pub async fn switch_credential_store(
 
     emit_status_changed(&app_handle, &manager);
     Ok(SwitchResult {
-        migrated_count,
-        warnings,
+        status: outcome.status,
+        migrated_count: outcome.migrated_count,
+        failed_count: outcome.failed_count,
+        warnings: outcome.warnings,
     })
 }
 
@@ -588,12 +650,16 @@ mod tests {
         let buffer = create_log_buffer();
         let subscriber = tracing_subscriber::registry().with(LogCaptureLayer::new(buffer.clone()));
 
-        let (migrated, warnings) =
+        let outcome =
             tracing::subscriber::with_default(subscriber, || migrate_credentials(&mgr, &creds));
 
         // Worst case: nothing migrated, one warning surfaced to the frontend.
-        assert_eq!(migrated, 0, "a locked store migrates nothing");
-        assert_eq!(warnings.len(), 1, "the failed credential is surfaced");
+        assert_eq!(outcome.migrated_count, 0, "a locked store migrates nothing");
+        assert_eq!(
+            outcome.warnings.len(),
+            1,
+            "the failed credential is surfaced"
+        );
 
         let entries = buffer.lock().unwrap().get_recent(50);
 
@@ -926,5 +992,86 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
         assert!(reset_store_file(&store).is_ok());
+    }
+
+    // --- #2839: structured migration status. ---
+
+    fn cred(id: &str) -> (CredentialKey, String) {
+        (
+            CredentialKey::new(id, CredentialType::Password),
+            MIGRATION_TEST_SECRET.to_string(),
+        )
+    }
+
+    #[test]
+    fn migration_status_success_when_everything_migrated() {
+        assert_eq!(MigrationStatus::from_counts(3, 3), MigrationStatus::Success);
+    }
+
+    #[test]
+    fn migration_status_success_when_nothing_to_migrate() {
+        assert_eq!(MigrationStatus::from_counts(0, 0), MigrationStatus::Success);
+    }
+
+    #[test]
+    fn migration_status_partial_when_some_failed() {
+        assert_eq!(MigrationStatus::from_counts(3, 1), MigrationStatus::Partial);
+        assert_eq!(MigrationStatus::from_counts(3, 2), MigrationStatus::Partial);
+    }
+
+    #[test]
+    fn migration_status_failed_when_none_migrated() {
+        assert_eq!(MigrationStatus::from_counts(2, 0), MigrationStatus::Failed);
+    }
+
+    #[test]
+    fn migrate_into_writable_store_reports_success() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf());
+        mgr.with_master_password_store(|s| s.setup("test-pw"))
+            .unwrap()
+            .unwrap();
+
+        let outcome = migrate_credentials(&mgr, &[cred("a"), cred("b")]);
+
+        assert_eq!(outcome.status, MigrationStatus::Success);
+        assert_eq!(outcome.migrated_count, 2);
+        assert_eq!(outcome.failed_count, 0);
+        assert!(outcome.warnings.is_empty());
+    }
+
+    #[test]
+    fn migrate_into_locked_store_reports_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = locked_manager(dir.path());
+
+        let outcome = migrate_credentials(&mgr, &[cred("a"), cred("b")]);
+
+        assert_eq!(outcome.status, MigrationStatus::Failed);
+        assert_eq!(outcome.migrated_count, 0);
+        assert_eq!(outcome.failed_count, 2);
+        assert_eq!(outcome.warnings.len(), 2);
+    }
+
+    #[test]
+    fn switch_result_serializes_status_for_the_frontend() {
+        let result = SwitchResult {
+            status: MigrationStatus::Partial,
+            migrated_count: 1,
+            failed_count: 1,
+            warnings: vec!["Failed to migrate x".to_string()],
+        };
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["status"], "partial");
+        assert_eq!(json["migratedCount"], 1);
+        assert_eq!(json["failedCount"], 1);
+        assert_eq!(
+            serde_json::to_value(MigrationStatus::Success).unwrap(),
+            "success"
+        );
+        assert_eq!(
+            serde_json::to_value(MigrationStatus::Failed).unwrap(),
+            "failed"
+        );
     }
 }

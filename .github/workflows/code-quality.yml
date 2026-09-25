@@ -1,5 +1,12 @@
 name: Code Quality
 
+# Per-PR vs post-merge split (#3325). CI runner queueing is the bottleneck, so a
+# PR runs only the fast, high-signal gates for the areas it actually touches
+# (see the `changes` job + scripts/internal/ci-changes.mjs). Every push to
+# develop/main runs EVERY job here on EVERY platform, so anything a PR skipped
+# is still caught post-merge — watch develop's own runs. See
+# docs/contributing.md → "What a green PR proves".
+
 on:
   pull_request:
     branches: [ main, develop ]
@@ -19,10 +26,42 @@ permissions:
   contents: read
 
 jobs:
+  # Changed-area detection (#3325). Classifies the PR's changed files so the jobs
+  # below can skip areas the PR cannot affect. On push (develop/main) every area
+  # is on. Downstream jobs gate on `!= 'false'` so that if THIS job fails, its
+  # outputs are empty and every job runs (fail-open) — never silently skipped.
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.detect.outputs.rust }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+      sidecar: ${{ steps.detect.outputs.sidecar }}
+      scripts: ${{ steps.detect.outputs.scripts }}
+      harness: ${{ steps.detect.outputs.harness }}
+      markdown: ${{ steps.detect.outputs.markdown }}
+      test_matrix: ${{ steps.detect.outputs.test_matrix }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          # The PR merge commit plus its parents, so HEAD^1 (the base tip) exists.
+          fetch-depth: 2
+
+      - name: Classify changed files
+        id: detect
+        uses: ./.github/actions/detect-changes
+
   # Rust Backend Quality Checks
   rust-quality:
     name: Rust Code Quality
     runs-on: ubuntu-latest
+    needs: changes
+    # Also on sidecar-only PRs: cargo-machete below scans rdp-sidecar/ too.
+    if: >-
+      ${{ !cancelled() && (needs.changes.outputs.rust != 'false' ||
+      needs.changes.outputs.sidecar != 'false') }}
 
     steps:
       - name: Checkout code
@@ -137,7 +176,7 @@ jobs:
         run: cargo machete
 
       # NOTE (CI-019): the RUSTSEC `cargo audit` gate is NOT run here — it runs
-      # once per PR in the dedicated `security-audit` job below (which invokes the
+      # in the dedicated `security-audit` job in security-audit.yml (which invokes the
       # identical bare `cargo audit` over the same workspace Cargo.lock, alongside
       # the `cargo deny` supply-chain gate). Running it in both jobs was redundant;
       # the single invocation in `security-audit` covers the same advisories.
@@ -205,9 +244,14 @@ jobs:
   # workspace gets — fmt, clippy (`-D warnings`), tests, and the cargo-deny
   # supply-chain gate (advisories/bans/licenses/sources against rdp-sidecar's own
   # Cargo.lock + rdp-sidecar/deny.toml). All steps run in rdp-sidecar/.
+  #
+  # PR lane: only when rdp-sidecar/** changes (#3325). Post-merge: always, so a
+  # time-based RUSTSEC/yank on the sidecar lockfile still surfaces on develop.
   rdp-sidecar-quality:
     name: RDP Sidecar Quality
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.sidecar != 'false' }}
     defaults:
       run:
         working-directory: rdp-sidecar
@@ -267,9 +311,14 @@ jobs:
         run: cargo deny check advisories bans licenses sources
 
   # Frontend Quality Checks
+  # Also on docs-only PRs: Prettier + markdownlint over docs/**/*.md live here.
   frontend-quality:
     name: Frontend Code Quality
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      ${{ !cancelled() && (needs.changes.outputs.frontend != 'false' ||
+      needs.changes.outputs.markdown != 'false') }}
 
     steps:
       - name: Checkout code
@@ -323,9 +372,13 @@ jobs:
   # it can never red a PR — a red "Bundle Size" check would be misleading. The
   # size script itself always exits 0; a build failure here is caught by the
   # real build/test lanes, not by this advisory job.
+  #
+  # POST-MERGE ONLY (#3325): advisory, so it does not spend a PR runner slot; the
+  # develop/main push run reports the size trend.
   bundle-size:
     name: Bundle Size (advisory)
     runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
     continue-on-error: true
 
     steps:
@@ -381,6 +434,8 @@ jobs:
   shellcheck:
     name: Shell Script Quality
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.scripts != 'false' }}
 
     steps:
       - name: Checkout code
@@ -414,9 +469,19 @@ jobs:
         run: ./scripts/internal/check-script-headless.sh
 
   # Run tests
+  #
+  # Per-PR matrix (#3325, computed by the `changes` job):
+  #   * ubuntu  — when Rust and/or frontend changed; runs only the half that changed.
+  #   * windows — only when Rust changed, Rust tests only (it catches real
+  #               Windows-only Rust bugs; the platform-independent vitest suite is
+  #               ~15 min on Windows and is not repeated there on a PR).
+  #   * macos   — never on a PR: macOS runners are the scarcest in the pool.
+  # On push to develop/main the full 3-OS matrix runs both halves everywhere.
   tests:
     name: Run Tests
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.test_matrix != '[]' }}
     strategy:
       # Don't cancel sibling legs when one platform fails: a single real
       # failure (e.g. Windows) otherwise cancels the others, and downstream
@@ -425,25 +490,36 @@ jobs:
       # so each reports its own true pass/fail. (#1669)
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Fail-open fallback: if `changes` failed, run the full matrix.
+        os: ${{ fromJSON(needs.changes.outputs.test_matrix || '["ubuntu-latest","windows-latest","macos-latest"]') }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Setup Rust
+        if: needs.changes.outputs.rust != 'false'
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
 
       - name: Setup pnpm
+        # Only on a leg that runs vitest (see the frontend steps below); the Rust
+        # tests need no node_modules (debug builds use devUrl, not ../dist).
+        if: >-
+          needs.changes.outputs.frontend != 'false' &&
+          (matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request')
         uses: ./.github/actions/setup-pnpm
 
       - name: Setup Node.js
+        if: >-
+          needs.changes.outputs.frontend != 'false' &&
+          (matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request')
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '22'
           cache: 'pnpm'
 
       - name: Cache Rust dependencies
+        if: needs.changes.outputs.rust != 'false'
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Reader/writer split. Integration happens on develop: merging a PR is a
@@ -455,10 +531,13 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
 
       - name: Install frontend dependencies
+        if: >-
+          needs.changes.outputs.frontend != 'false' &&
+          (matrix.os == 'ubuntu-latest' || github.event_name != 'pull_request')
         run: pnpm install --frozen-lockfile
 
       - name: Install system dependencies (Ubuntu)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && needs.changes.outputs.rust != 'false'
         run: |
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev \
@@ -470,6 +549,7 @@ jobs:
             librsvg2-dev
 
       - name: Run Rust tests
+        if: needs.changes.outputs.rust != 'false'
         run: cargo test --workspace --all-features
 
       # Run coverage-gated tests once (Ubuntu) to enforce the vitest coverage
@@ -478,7 +558,7 @@ jobs:
       # per-platform coverage drift while still failing CI on a real drop. The
       # other legs run the plain suite so every platform still exercises the tests.
       - name: Run frontend tests with coverage
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-latest' && needs.changes.outputs.frontend != 'false'
         run: pnpm test:coverage
 
       # Publish the vitest coverage report (html + lcov + text) as a downloadable
@@ -488,15 +568,17 @@ jobs:
       # coverage step failed a threshold, so a coverage drop can be inspected from
       # the failed run. This is a plain artifact upload — advisory only, no gate.
       - name: Upload coverage report artifact
-        if: always() && matrix.os == 'ubuntu-latest'
+        if: always() && matrix.os == 'ubuntu-latest' && needs.changes.outputs.frontend != 'false'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: frontend-coverage
           path: coverage/
           if-no-files-found: warn
 
+      # Non-Ubuntu vitest legs run post-merge only (#3325): the suite is
+      # platform-independent TS and already gates the PR on the Ubuntu leg.
       - name: Run frontend tests
-        if: matrix.os != 'ubuntu-latest'
+        if: matrix.os != 'ubuntu-latest' && github.event_name != 'pull_request'
         run: pnpm test
 
   # Python system-test harness — fast "machinery" suite (issue #801).
@@ -508,6 +590,8 @@ jobs:
   system-test-machinery:
     name: System-Test Harness (machinery)
     runs-on: ubuntu-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.harness != 'false' }}
 
     steps:
       - name: Checkout code
@@ -549,9 +633,14 @@ jobs:
   # Docker, no uv) fails the PR the moment a harness-referenced testid is absent
   # from src/**. It reuses the testid-catalog source scan, so it can never
   # disagree with the catalog. See scripts/check-testid-drift.py.
+  # Runs when either side of the contract changes: src/** (frontend) or the harness.
   testid-drift-guard:
     name: Test-ID Drift Guard
     runs-on: ubuntu-latest
+    needs: changes
+    if: >-
+      ${{ !cancelled() && (needs.changes.outputs.frontend != 'false' ||
+      needs.changes.outputs.harness != 'false') }}
 
     steps:
       - name: Checkout code
@@ -560,88 +649,10 @@ jobs:
       - name: Check harness testid references against src/**
         run: python3 scripts/check-testid-drift.py
 
-  # Dependency Security Audit
-  security-audit:
-    name: Security Audit
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Setup pnpm
-        uses: ./.github/actions/setup-pnpm
-
-      - name: Setup Node.js
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: '22'
-
-      # Blocking gate on the RUNTIME dependency tree only. A high/critical
-      # advisory that ships to users must fail CI. Scoped to `--prod` so it does
-      # not fire on the dev/build toolchain (see the advisory step below) — that
-      # split is what makes this safe to make blocking (#2074).
-      # Blocks on a real high/critical prod advisory, but tolerates a transient
-      # npm-registry outage (ERR_SOCKET_TIMEOUT etc.). `pnpm audit` exits
-      # non-zero for BOTH cases, so a bare `pnpm audit --prod` reds every PR on a
-      # registry blip even with a clean tree (#2589). The gate parses the --json
-      # payload: it fails only when high+critical > 0, and retries-then-soft-
-      # passes a network error. The gate stays genuinely blocking for advisories.
-      - name: pnpm audit (production deps, blocking)
-        run: ./scripts/internal/pnpm-audit-prod-gate.sh
-
-      # Advisory-only visibility for the FULL tree (incl. devDependencies). These
-      # are dev/build-time highs — eslint/typescript-eslint -> minimatch ->
-      # brace-expansion, commitlint -> ajv -> fast-uri, vite -> postcss — none of
-      # which reach the shipped app. Kept non-blocking so they surface in the log
-      # without gating the release; promote a fix to the blocking step above once
-      # the upstream dev tool patches land.
-      - name: pnpm audit (full tree, advisory)
-        run: pnpm audit --audit-level=moderate
-        continue-on-error: true  # Dev-only advisories: warn, do not fail
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
-
-      # Prebuilt binary download instead of compiling cargo-audit from source.
-      # This job has no rust-cache, so the old `cargo install` recompiled it every
-      # run (~197 s); the prebuilt download takes seconds.
-      - name: Install cargo-audit
-        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
-        with:
-          tool: cargo-audit
-
-      - name: Cargo Audit
-        run: cargo audit
-
-      # cargo-deny supply-chain gate. Config: deny.toml. Four checks run:
-      #   - advisories: fails CI when the workspace lockfile pins a YANKED crate
-      #     (e.g. the crypto-bigint 0.7.x line pulled via russh) — a silently
-      #     withdrawn transitive dep surfaces loudly instead of shipping (#2074).
-      #   - bans: documented release sign-off for the pre-release RustCrypto stack.
-      #   - licenses: every crate must resolve to an allowed license, so an
-      #     unknown/restrictive license cannot slip into the distributed binary
-      #     unnoticed (#2096).
-      #   - sources: every crate must come from crates.io — an unexpected registry
-      #     or git source fails CI (#2096).
-      # cargo-audit above still covers vulnerability RUSTSECs.
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
-        with:
-          tool: cargo-deny
-
-      - name: Cargo Deny (supply-chain gate)
-        run: cargo deny check advisories bans licenses sources
-
-      # Advisory-only visibility for duplicate dependency versions (SUP-010).
-      # deny.toml keeps `multiple-versions = "allow"` — duplicates are common in a
-      # large tree and are not a supply-chain signal on their own, so they must
-      # NOT gate CI. This step just prints the current duplicates so the count is
-      # visible in the log and its trend can be watched over time; it never fails
-      # the build (`continue-on-error`, and `|| true` so an empty tree is fine).
-      - name: Cargo Tree (duplicate versions, advisory)
-        continue-on-error: true
-        run: cargo tree --duplicates --workspace --edges normal || true
+  # Dependency Security Audit moved to its own workflow, security-audit.yml
+  # (#3325): it runs on push to develop/main + daily, and on PRs only when a
+  # dependency manifest/lockfile changes — so a time-based RUSTSEC/yank no longer
+  # reds every unrelated PR at once.
 
   # Check conventional commits (PR only)
   commit-lint:

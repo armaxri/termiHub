@@ -6,6 +6,15 @@ on:
       - main
       - develop
 
+# Only the latest commit's dev build matters (#3325): a newer push to the same
+# branch cancels the in-flight run instead of stacking another ~90 runner-minutes
+# (five of them on scarce macOS) behind it. The newer run republishes the
+# `dev-*-latest` release, so a run cancelled mid-publish self-heals within one
+# build. Tag releases live in release.yml, which is deliberately NOT cancellable.
+concurrency:
+  group: dev-build-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 

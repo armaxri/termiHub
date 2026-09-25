@@ -796,10 +796,13 @@ export function subscribeLayoutRegion(handler: (view: LayoutView | undefined) =>
  * keeping the region a faithful mirror rather than letting it lag (which, with the
  * unconditional mirror, would strand the just-written tab on the next diff).
  *
- * Never throws (resilience): a missing transport or a rejected dispatch is logged;
- * `appStore` keeps its local write, and the next reseed re-syncs the region.
+ * Never throws (resilience): a missing transport or a rejected dispatch is logged.
+ * A missing transport keeps `appStore`'s local write (the next reseed re-syncs the
+ * region). A rejected (or throwing) dispatch rolls the overlay's structure back and
+ * then runs `onReject`, which the caller uses to revert the coupled non-layout
+ * fields it committed alongside the reseed (#3256), so the store is all-or-nothing.
  */
-export function reseedLayoutRegion(snapshot: LayoutSnapshot): void {
+export function reseedLayoutRegion(snapshot: LayoutSnapshot, onReject?: () => void): void {
   const view: LayoutView = {
     groups: snapshot.groups.map(toMinimalGroup),
     activeGroupId: snapshot.activeGroupId,
@@ -817,10 +820,17 @@ export function reseedLayoutRegion(snapshot: LayoutSnapshot): void {
       .dispatchOptimistic(intent, () => view)
       .then((ack) => {
         if (ack.status === "rejected") {
+          // The overlay rolled the structure back; revert the caller's coupled
+          // non-layout fields alongside it so the store is all-or-nothing (#3256).
           logBridgeFallback("reseed", new Error(ack.error?.message ?? "rejected"));
+          onReject?.();
         }
       })
-      .catch((err) => logBridgeFallback("reseed", err));
+      .catch((err) => {
+        // The dispatch threw: the overlay was rolled back — revert to match.
+        logBridgeFallback("reseed", err);
+        onReject?.();
+      });
   } catch (err) {
     // No transport, or an incomplete client (e.g. a partial test stub): the local
     // `appStore` write already landed, and the next reseed re-syncs the region.

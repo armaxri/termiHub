@@ -1,5 +1,13 @@
 name: Agent
 
+# PR lane (#3325): only the three Linux musl cross-builds (Ubuntu runners). The
+# Windows leg (agent/core tests + release build) and the two macOS legs run
+# POST-MERGE on push to develop/main:
+#   * the Windows leg's `cargo test -p termihub-agent -p termihub-core` is a strict
+#     subset of code-quality.yml's "Run Tests (windows-latest)" leg
+#     (`cargo test --workspace`), which still runs on every Rust PR;
+#   * macOS runners are the scarcest in the pool, and dev-build.yml also builds
+#     both macOS agent binaries on every push to develop/main.
 on:
   pull_request:
     branches: [ main, develop ]
@@ -10,6 +18,13 @@ on:
       # Re-run the cross-compile legs when the build workflow itself changes, so
       # edits to the musl build (e.g. the cross-image hardening in #2056) are
       # exercised on their own PR instead of shipping unvalidated.
+      - '.github/workflows/agent.yml'
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'agent/**'
+      - 'core/**'
+      - 'Cargo.toml'
       - '.github/workflows/agent.yml'
 
 # Cancel an in-flight agent build when a newer commit lands on the same PR.
@@ -98,6 +113,8 @@ jobs:
   build-windows:
     name: Build (${{ matrix.target }})
     runs-on: windows-latest
+    # Post-merge only (#3325) — see the header.
+    if: github.event_name != 'pull_request'
 
     strategy:
       fail-fast: false
@@ -139,6 +156,8 @@ jobs:
   build-macos:
     name: Build (${{ matrix.target }})
     runs-on: macos-latest
+    # Post-merge only (#3325) — see the header.
+    if: github.event_name != 'pull_request'
 
     strategy:
       fail-fast: false

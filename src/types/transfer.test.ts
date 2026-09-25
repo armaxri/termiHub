@@ -4,7 +4,6 @@ import {
   transferEntryFromSnapshot,
   stateFromPhase,
   isTerminalTransferState,
-  isPausableTransferConnectionType,
   formatThroughput,
   computeEtaSeconds,
   type TransferEntry,
@@ -378,22 +377,5 @@ describe("formatThroughput", () => {
   it("returns empty string for null or non-positive rates", () => {
     expect(formatThroughput(null)).toBe("");
     expect(formatThroughput(0)).toBe("");
-  });
-});
-
-describe("isPausableTransferConnectionType", () => {
-  it("is true only for the FTP rich-queue executor", () => {
-    expect(isPausableTransferConnectionType("ftp")).toBe(true);
-  });
-
-  it("is false for legacy SFTP and every other executor", () => {
-    expect(isPausableTransferConnectionType("ssh")).toBe(false);
-    expect(isPausableTransferConnectionType("docker")).toBe(false);
-    expect(isPausableTransferConnectionType("remote-session")).toBe(false);
-    expect(isPausableTransferConnectionType("local")).toBe(false);
-  });
-
-  it("treats an unknown/absent connection type as non-pausable", () => {
-    expect(isPausableTransferConnectionType(undefined)).toBe(false);
   });
 });

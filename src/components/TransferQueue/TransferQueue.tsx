@@ -1,17 +1,12 @@
 import { useMemo } from "react";
-import { useShallow } from "zustand/react/shallow";
 import { ArrowDownUp, Minus } from "lucide-react";
 import { Button, Tooltip, toast } from "@/components/ui";
-import { collectLiveTabs, useAppStore } from "@/store/appStore";
+import { useAppStore } from "@/store/appStore";
 import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { useTransferControls } from "@/hooks/useTransferControls";
 import { frontendLog } from "@/utils/frontendLog";
 import { transferCancel } from "@/services/api";
-import {
-  isPausableTransferConnectionType,
-  isTerminalTransferState,
-  type TransferEntry,
-} from "@/types/transfer";
+import { isTerminalTransferState, type TransferEntry } from "@/types/transfer";
 import { TransferEntryRow } from "./TransferEntry";
 import "./TransferQueue.css";
 
@@ -44,21 +39,6 @@ export function TransferQueue() {
   const removeTransfer = useAppStore((s) => s.removeTransfer);
   const clearCompleted = useAppStore((s) => s.clearCompleted);
   const setMinimized = useAppStore((s) => s.setTransferQueueMinimized);
-
-  // Map each live tab's session id → its connection type, so a transfer row can
-  // tell whether its executor supports pause/resume/retry (audit PROD-009). Only
-  // the FTP rich-queue executor does; a legacy SFTP transfer's controls are
-  // inert and are hidden. `useShallow` keeps this stable across progress ticks —
-  // it only re-renders when a tab's session/type actually changes.
-  const sessionConnectionTypes = useAppStore(
-    useShallow((s) => {
-      const map: Record<string, string> = {};
-      for (const tab of collectLiveTabs(s)) {
-        if (tab.sessionId) map[tab.sessionId] = tab.connectionType;
-      }
-      return map;
-    })
-  );
 
   const entries = useMemo(() => Object.values(transferQueue), [transferQueue]);
   const summary = useMemo(() => summarize(entries), [entries]);
@@ -115,7 +95,6 @@ export function TransferQueue() {
           <TransferEntryRow
             key={entry.id}
             entry={entry}
-            pausable={isPausableTransferConnectionType(sessionConnectionTypes[entry.sessionId])}
             onPause={handlePause}
             onResume={handleResume}
             onCancel={handleCancel}

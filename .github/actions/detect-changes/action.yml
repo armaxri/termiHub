@@ -1,0 +1,59 @@
+name: 'Detect changed CI areas'
+description: >-
+  Classify what a PR changes (rust, frontend, sidecar, scripts, harness,
+  markdown, deps) via scripts/internal/ci-changes.mjs, so per-PR jobs can skip
+  work the PR cannot affect (#3325). Non-PR events (push to develop/main,
+  schedule, dispatch) always report every area on. FAIL-OPEN: if the diff
+  cannot be computed, every area is reported on. Requires a prior
+  actions/checkout with `fetch-depth: 2` so the PR merge commit's first parent
+  (the base-branch tip) is present.
+
+outputs:
+  rust:
+    description: 'Workspace Rust crates / manifests / toolchain changed'
+    value: ${{ steps.classify.outputs.rust }}
+  frontend:
+    description: 'Frontend app / vitest-covered scripts / JS toolchain changed'
+    value: ${{ steps.classify.outputs.frontend }}
+  sidecar:
+    description: 'rdp-sidecar/ changed'
+    value: ${{ steps.classify.outputs.sidecar }}
+  scripts:
+    description: 'Shell / cmd scripts changed'
+    value: ${{ steps.classify.outputs.scripts }}
+  harness:
+    description: 'Python system-test harness changed'
+    value: ${{ steps.classify.outputs.harness }}
+  markdown:
+    description: 'docs/** or *.md changed'
+    value: ${{ steps.classify.outputs.markdown }}
+  deps:
+    description: 'Dependency manifests / lockfiles changed'
+    value: ${{ steps.classify.outputs.deps }}
+  test_matrix:
+    description: 'JSON list of OSes for the "Run Tests" matrix'
+    value: ${{ steps.classify.outputs.test_matrix }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: classify
+      shell: bash
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        set -uo pipefail
+        script=scripts/internal/ci-changes.mjs
+        if [ "$EVENT_NAME" != "pull_request" ]; then
+          echo "Event '$EVENT_NAME' is not a pull_request: running every area."
+          node "$script" --all | tee -a "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        # On pull_request the checkout is the PR merge commit: HEAD^1 is the base
+        # branch tip, so this diff is exactly what the PR changes against its base.
+        if ! files=$(git diff --name-only HEAD^1 HEAD); then
+          echo "::warning::Could not diff against the base; failing open (every area on)."
+          node "$script" --all | tee -a "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        printf '%s\n' "$files" | node "$script" | tee -a "$GITHUB_OUTPUT"

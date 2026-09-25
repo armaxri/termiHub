@@ -101,8 +101,10 @@ impl StatsCollector for SshCollector {
         let output = self
             .exec(MONITORING_COMMAND)
             .map_err(|e| CoreError::Other(e.to_string()))?;
+        // A parse failure is typed apart from the exec failure above so the
+        // monitoring loop can bound it separately (#3252/#3300).
         let (mut stats, counters, per_core_counters, net_counters) =
-            parse_stats(&output).map_err(|e| CoreError::Other(e.to_string()))?;
+            parse_stats(&output).map_err(|e| CoreError::Unparseable(e.to_string()))?;
 
         // First sample has no prior snapshot to diff against, so report 0 %/0 B/s;
         // core's Cpu/NetDeltaTracker encapsulate that previous-snapshot state.

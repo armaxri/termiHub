@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::config::SshConfig;
 use crate::errors::CoreError;
@@ -285,6 +285,16 @@ async fn interruptible_sleep(
     true
 }
 
+/// What one collect tick produced, folded into the [`CollectLoopState`].
+enum TickOutcome {
+    /// A parsed sample was pushed.
+    Sample,
+    /// The collect errored or timed out (transport-level failure).
+    Failed,
+    /// The transport answered, but `parse_stats` rejected the output (#3252).
+    Unparseable,
+}
+
 /// Re-dial the transport under a bounded exponential backoff (#1230, gap G2).
 ///
 /// Called once the collect loop has gone `Stale`. Emits `Reconnecting`, then
@@ -386,9 +396,12 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     net_tracker = NetDeltaTracker::new();
                 }
 
-                // A collect error, a parse error, or a stat send failure all
-                // mean "no fresh sample this tick" → count as a failure.
-                let collected = match collect_once(&*transport, &session, collect_timeout).await {
+                // A collect error or a stat send failure means "no fresh sample
+                // this tick" → a failure. A parse error is tracked separately:
+                // the transport answered, but with unusable data, so before
+                // `Live` a sustained run resolves to `Offline` instead of
+                // hanging in `Connecting` (#3252).
+                let outcome = match collect_once(&*transport, &session, collect_timeout).await {
                     Ok(output) => match parse_stats(&output) {
                         Ok((mut stats, counters, per_core_counters, net_counters)) => {
                             if let Some(pct) = cpu_tracker.update(counters) {
@@ -402,26 +415,33 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                             if tx.send(stats).await.is_err() {
                                 break;
                             }
-                            true
+                            TickOutcome::Sample
                         }
                         Err(e) => {
-                            debug!("Failed to parse monitoring output: {e}");
-                            false
+                            warn!("Failed to parse monitoring output: {e}");
+                            TickOutcome::Unparseable
                         }
                     },
                     Err(e) => {
                         debug!("Monitoring collect failed: {e}");
-                        false
+                        TickOutcome::Failed
                     }
                 };
 
-                let transition = if collected {
-                    loop_state.on_success()
-                } else {
-                    loop_state.on_failure()
+                let transition = match outcome {
+                    TickOutcome::Sample => loop_state.on_success(),
+                    TickOutcome::Failed => loop_state.on_failure(),
+                    TickOutcome::Unparseable => loop_state.on_parse_failure(),
                 };
                 if let Some(status) = transition {
                     emit_status(&status_tx, status).await;
+                }
+
+                // Connected but never parseable: `Offline` is terminal — end the
+                // loop (closing the stats channel) exactly like an exhausted
+                // reconnect budget (#3252).
+                if loop_state.is_offline() {
+                    break;
                 }
 
                 // A sustained drop (now `Stale`) triggers a bounded reconnect
@@ -840,6 +860,88 @@ Inter-|   Receive                                                |  Transmit
         provider.unsubscribe().await.expect("unsubscribe");
     }
 
+    /// #3300: a transport that connects but whose every collect fails (timeout /
+    /// exec error) before the first sample must not hang in `Connecting`: after
+    /// `pre_live_failure_limit` consecutive failures the loop resolves to the
+    /// terminal `Offline` and ends, without a reconnect campaign.
+    #[tokio::test(start_paused = true)]
+    async fn collect_loop_resolves_offline_when_no_first_sample_ever_arrives() {
+        let (transport, collect_fail, _connect_fail) =
+            FakeTransport::with_collect_and_connect_flags();
+        collect_fail.store(true, Ordering::SeqCst);
+        let collect_calls = transport.collect_calls.clone();
+        let connect_calls = transport.connect_calls.clone();
+        let mut provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 2;
+        provider.reconnect_backoff = fast_backoff(8);
+        let limit = CollectLoopState::with_threshold(2).pre_live_failure_limit();
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "a pre-Live run of transport failures must resolve Connecting -> Offline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop pushes no sample and closes its stats channel"
+        );
+        assert_eq!(
+            collect_calls.load(Ordering::SeqCst),
+            limit as usize,
+            "exactly `pre_live_failure_limit` collects before giving up"
+        );
+        assert_eq!(
+            connect_calls.load(Ordering::SeqCst),
+            1,
+            "a pre-Live Offline must not start a re-dial campaign"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// #3300: after a mid-stream drop the re-dial succeeds, but every collect
+    /// on the fresh transport still fails. The loop must not sit in
+    /// `Reconnecting` forever: it resolves to `Offline` in bounded time.
+    #[tokio::test(start_paused = true)]
+    async fn collect_loop_resolves_offline_when_re_dialled_transport_never_samples() {
+        let (transport, collect_fail, _connect_fail) =
+            FakeTransport::with_collect_and_connect_flags();
+        let connect_calls = transport.connect_calls.clone();
+        let mut provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 1;
+        provider.reconnect_backoff = fast_backoff(8);
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+
+        // Collects fail from here on; re-dials keep succeeding.
+        collect_fail.store(true, Ordering::SeqCst);
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Stale);
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Reconnecting
+        );
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "a re-dialled transport that never samples must resolve to Offline"
+        );
+        assert_eq!(
+            connect_calls.load(Ordering::SeqCst),
+            2,
+            "the re-dial succeeded once; Offline came from the collect bound"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
     /// G3: a stalled collect must time out and be reported as a failure rather
     /// than hanging forever.
     #[tokio::test]
@@ -992,8 +1094,11 @@ Inter-|   Receive                                                |  Transmit
     }
 
     /// A collect that is truncated below the parser's six-line floor is a clean
-    /// typed error: the loop keeps running but, never having reached `Live`,
-    /// must emit no status transition and push no stats — no false "connected".
+    /// typed error. The transport is up but the remote never answers with a
+    /// parseable sample, so a reconnect cannot help: after `stale_threshold`
+    /// consecutive pre-`Live` parse failures the loop resolves to the terminal
+    /// `Offline` (no false `Live`, no fabricated stats) and ends, instead of
+    /// hanging in `Connecting` forever (#3252).
     #[tokio::test]
     async fn truncated_output_yields_typed_error_and_no_false_live() {
         // The parser rejects the truncated sample with a typed error (contract).
@@ -1005,23 +1110,37 @@ Inter-|   Receive                                                |  Transmit
         let provider = degraded_provider(TRUNCATED_STATS);
         let mut sub = provider.subscribe().await.expect("subscribe");
 
-        // The loop keeps collecting and parse-failing from `Connecting`; it must
-        // never emit a bogus Live/Stale transition on the status channel.
-        assert!(
-            tokio::time::timeout(Duration::from_millis(300), sub.status.recv())
-                .await
-                .is_err(),
-            "a persistently unparseable collect must not emit any status transition"
+        // The first and only transition is straight to Offline — never a bogus
+        // Live, and never a Stale/Reconnecting campaign against a healthy
+        // transport.
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "persistently unparseable output must resolve Connecting -> Offline"
         );
         // …and must never push a stats sample derived from unparseable output.
         assert!(
             sub.stats.try_recv().is_err(),
             "a persistently unparseable collect must never push a stats sample"
         );
-        // The loop survived the parse failures rather than panicking out.
+        // Bounded: exactly `stale_threshold` parse failures, then the loop ends
+        // (the stats channel closes) without re-dialling the transport.
         assert!(
-            provider.transport.collect_calls.load(Ordering::SeqCst) >= 1,
-            "the collect loop must keep running across parse failures"
+            tokio::time::timeout(Duration::from_secs(2), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop ends and closes its stats channel"
+        );
+        assert_eq!(
+            provider.transport.collect_calls.load(Ordering::SeqCst),
+            DEFAULT_STALE_THRESHOLD as usize,
+            "the loop gives up after `stale_threshold` consecutive parse failures"
+        );
+        assert_eq!(
+            provider.transport.connect_calls.load(Ordering::SeqCst),
+            1,
+            "a pre-Live parse failure must not start a reconnect campaign"
         );
 
         provider.unsubscribe().await.expect("unsubscribe");

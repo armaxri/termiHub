@@ -334,6 +334,13 @@ async fn run_collect_loop(
             emit_status(&status_tx, status).await;
         }
 
+        // No sample since (re)opening the collector within the bounded pre-Live
+        // failure run: `Offline` is terminal — end the loop, closing the stats
+        // channel, exactly like an exhausted recovery budget (#3300).
+        if loop_state.is_offline() {
+            break;
+        }
+
         // A sustained drop triggers a bounded recovery campaign that recreates
         // the collector in place.
         if loop_state.should_begin_reconnect() {
@@ -558,6 +565,98 @@ mod tests {
             provider.subscribe().await.is_err(),
             "an open failure must surface as Err"
         );
+    }
+
+    /// #3300: a collector that opens but never yields a first sample must not
+    /// hang in `Connecting`: after `pre_live_failure_limit` consecutive
+    /// failures the loop resolves to the terminal `Offline` and ends, without
+    /// recreating the collector.
+    #[tokio::test]
+    async fn collect_loop_resolves_offline_when_no_first_sample_ever_arrives() {
+        let opens = Arc::new(AtomicUsize::new(0));
+        let factory: CollectorFactory = {
+            let opens = opens.clone();
+            Arc::new(move || {
+                opens.fetch_add(1, Ordering::SeqCst);
+                Ok(Box::new(FakeCollector {
+                    fail: Arc::new(AtomicBool::new(true)),
+                }) as Box<dyn StatsCollector>)
+            })
+        };
+        let mut provider = LocalMonitoringProvider::with_factory(factory);
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 2;
+        provider.reconnect_backoff = fast_backoff(8);
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "a collector that never samples must resolve Connecting -> Offline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop pushes no sample and closes its stats channel"
+        );
+        assert_eq!(
+            opens.load(Ordering::SeqCst),
+            1,
+            "a pre-Live Offline must not start a recovery campaign"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// #3300: after a mid-stream drop the collector is recreated, but the
+    /// fresh collector never samples either. The loop must not sit in
+    /// `Reconnecting` forever: it resolves to `Offline` in bounded time.
+    #[tokio::test]
+    async fn collect_loop_resolves_offline_when_recreated_collector_never_samples() {
+        let fail = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        // The first collector honors `fail`; every recreated one always fails.
+        let factory: CollectorFactory = {
+            let first_fail = fail.clone();
+            let calls = calls.clone();
+            Arc::new(move || {
+                let fail = if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    first_fail.clone()
+                } else {
+                    Arc::new(AtomicBool::new(true))
+                };
+                Ok(Box::new(FakeCollector { fail }) as Box<dyn StatsCollector>)
+            })
+        };
+        let mut provider = LocalMonitoringProvider::with_factory(factory);
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 1;
+        provider.reconnect_backoff = fast_backoff(8);
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+
+        fail.store(true, Ordering::SeqCst);
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Stale);
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Reconnecting
+        );
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "a recreated collector that never samples must resolve to Offline"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "one recreate succeeded; Offline came from the collect bound"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
     }
 
     /// A mid-stream collect drop flips the status channel to `Stale`, the loop

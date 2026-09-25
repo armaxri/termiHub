@@ -36,8 +36,9 @@ pub enum MonitorStatus {
     /// Re-establishing the transport after it died (reserved for the reconnect
     /// stage; not yet driven by the collector loop).
     Reconnecting,
-    /// Reconnect budget exhausted; the loop is idle awaiting a retry (reserved
-    /// for the reconnect stage).
+    /// Terminal: the reconnect budget was exhausted, or the transport is up but
+    /// the remote never answered with parseable output (#3252). The loop has
+    /// ended and awaits a manual retry.
     Offline,
     /// Collection is paused by the user while the transport stays open
     /// (reserved for the pause/resume stage).
@@ -56,6 +57,30 @@ pub type MonitorStatusReceiver = tokio::sync::mpsc::Receiver<MonitorStatus>;
 /// One failure can be a transient hiccup; requiring a small run avoids
 /// flapping the indicator on a single dropped sample.
 pub const DEFAULT_STALE_THRESHOLD: u32 = 2;
+
+/// Multiplier on the stale threshold that bounds consecutive *transport*
+/// failures (collect timeout / exec error) before the loop has produced a
+/// sample since (re)connecting (#3300).
+///
+/// Before `Live` — `Connecting`, or `Reconnecting` after a re-dial that
+/// succeeded — a run of `stale_threshold * PRE_LIVE_FAILURE_LIMIT_FACTOR`
+/// consecutive failures resolves to the terminal [`MonitorStatus::Offline`]
+/// instead of hanging forever. The bound is deliberately more generous than the
+/// parse bound (`stale_threshold`, #3252): an unparseable answer is proof the
+/// remote cannot be monitored, whereas a timeout can be a slow first collect
+/// (cold SSH exec, a loaded host) that a monitor must survive. With the defaults
+/// that is 6 collects, i.e. at least `6 × (interval + collect timeout)` of
+/// wall-clock time before giving up.
+///
+/// A multiple of the stale threshold (rather than the reconnect attempt budget,
+/// [`DEFAULT_MAX_RECONNECT_ATTEMPTS`]) because it counts *collect ticks*, the
+/// same unit as `stale_threshold`, and so scales with a caller's threshold;
+/// the reconnect budget counts backoff re-dials, whose wall-clock span is set by
+/// the backoff schedule rather than the collect cadence.
+pub const PRE_LIVE_FAILURE_LIMIT_FACTOR: u32 = 3;
+
+// The transport bound must stay strictly more generous than the parse bound.
+const _: () = assert!(PRE_LIVE_FAILURE_LIMIT_FACTOR > 1);
 
 /// Default first backoff delay before a reconnect attempt.
 ///
@@ -192,6 +217,14 @@ impl Default for BackoffSchedule {
 /// Transitions owned here:
 /// - `* → Live` on the first success after any non-live state.
 /// - `Live → Stale` once `stale_threshold` consecutive failures accumulate.
+/// - `Connecting`/`Reconnecting → Offline` once `stale_threshold` consecutive
+///   *parse* failures accumulate before a sample was produced
+///   ([`on_parse_failure`](CollectLoopState::on_parse_failure), #3252).
+/// - `Connecting`/`Reconnecting → Offline` once
+///   [`pre_live_failure_limit`](CollectLoopState::pre_live_failure_limit)
+///   consecutive failures of any kind accumulate before a sample was produced
+///   ([`on_failure`](CollectLoopState::on_failure), #3300), so no loop can
+///   stay `Connecting`/`Reconnecting` indefinitely.
 /// - `* → Paused` on [`pause`](CollectLoopState::pause); `Paused → Live` on
 ///   [`resume`](CollectLoopState::resume). Pausing keeps the transport open and
 ///   only stops collection, so a paused monitor shows a neutral badge rather
@@ -205,7 +238,10 @@ impl Default for BackoffSchedule {
 #[derive(Debug)]
 pub struct CollectLoopState {
     status: MonitorStatus,
+    /// Consecutive failed collects of any kind (transport or parse).
     consecutive_failures: u32,
+    /// Consecutive *parse* failures; a transport failure breaks the run.
+    consecutive_parse_failures: u32,
     stale_threshold: u32,
 }
 
@@ -221,8 +257,33 @@ impl CollectLoopState {
         Self {
             status: MonitorStatus::Connecting,
             consecutive_failures: 0,
+            consecutive_parse_failures: 0,
             stale_threshold: stale_threshold.max(1),
         }
+    }
+
+    /// Consecutive failures (of any kind) tolerated before the loop has
+    /// produced a sample since (re)connecting; reaching it resolves `Offline`.
+    ///
+    /// `stale_threshold * PRE_LIVE_FAILURE_LIMIT_FACTOR` — see
+    /// [`PRE_LIVE_FAILURE_LIMIT_FACTOR`] for why it is more generous than the
+    /// parse bound (#3300).
+    pub fn pre_live_failure_limit(&self) -> u32 {
+        self.stale_threshold
+            .saturating_mul(PRE_LIVE_FAILURE_LIMIT_FACTOR)
+    }
+
+    /// Reset both failure runs (a success, pause, resume, or fresh re-dial).
+    fn reset_failures(&mut self) {
+        self.consecutive_failures = 0;
+        self.consecutive_parse_failures = 0;
+    }
+
+    /// Resolve to the terminal [`MonitorStatus::Offline`] and return it.
+    fn resolve_offline(&mut self) -> Option<MonitorStatus> {
+        self.status = MonitorStatus::Offline;
+        self.reset_failures();
+        Some(MonitorStatus::Offline)
     }
 
     /// Current status.
@@ -240,7 +301,7 @@ impl CollectLoopState {
         if self.status == MonitorStatus::Paused {
             return None;
         }
-        self.consecutive_failures = 0;
+        self.reset_failures();
         if self.status != MonitorStatus::Live {
             self.status = MonitorStatus::Live;
             Some(MonitorStatus::Live)
@@ -257,7 +318,7 @@ impl CollectLoopState {
     pub fn pause(&mut self) -> Option<MonitorStatus> {
         if self.status != MonitorStatus::Paused {
             self.status = MonitorStatus::Paused;
-            self.consecutive_failures = 0;
+            self.reset_failures();
             Some(MonitorStatus::Paused)
         } else {
             None
@@ -272,7 +333,7 @@ impl CollectLoopState {
     pub fn resume(&mut self) -> Option<MonitorStatus> {
         if self.status == MonitorStatus::Paused {
             self.status = MonitorStatus::Live;
-            self.consecutive_failures = 0;
+            self.reset_failures();
             Some(MonitorStatus::Live)
         } else {
             None
@@ -284,19 +345,93 @@ impl CollectLoopState {
         self.status == MonitorStatus::Paused
     }
 
-    /// Record a failed collect.
+    /// Record a failed collect (a transport-level failure: timeout, exec error,
+    /// or — for an inferred loop — a missed sample).
     ///
-    /// Increments the failure run. Once `stale_threshold` consecutive failures
-    /// are reached and the loop is currently `Live`, transitions to
-    /// [`MonitorStatus::Stale`] and returns it. Returns `None` otherwise.
+    /// Increments the failure run and breaks any consecutive parse-failure run.
+    ///
+    /// - `Live`: once `stale_threshold` consecutive failures are reached,
+    ///   transitions to [`MonitorStatus::Stale`] and returns it.
+    /// - `Connecting`, or `Reconnecting` after a re-dial that succeeded (no
+    ///   sample yet on this transport): once
+    ///   [`pre_live_failure_limit`](CollectLoopState::pre_live_failure_limit)
+    ///   consecutive failures are reached, resolves to the terminal
+    ///   [`MonitorStatus::Offline`] and returns it (#3300). The caller ends the
+    ///   loop, as for an exhausted reconnect budget.
+    /// - `Paused` / `Offline` / `Stale`: no transition (`Paused` does not count
+    ///   the failure at all).
     pub fn on_failure(&mut self) -> Option<MonitorStatus> {
-        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
-        if self.status == MonitorStatus::Live && self.consecutive_failures >= self.stale_threshold {
-            self.status = MonitorStatus::Stale;
-            Some(MonitorStatus::Stale)
-        } else {
-            None
+        match self.status {
+            MonitorStatus::Paused | MonitorStatus::Offline => None,
+            MonitorStatus::Connecting | MonitorStatus::Reconnecting => {
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                self.consecutive_parse_failures = 0;
+                if self.consecutive_failures >= self.pre_live_failure_limit() {
+                    self.resolve_offline()
+                } else {
+                    None
+                }
+            }
+            MonitorStatus::Live | MonitorStatus::Stale => {
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                self.consecutive_parse_failures = 0;
+                if self.status == MonitorStatus::Live
+                    && self.consecutive_failures >= self.stale_threshold
+                {
+                    self.status = MonitorStatus::Stale;
+                    Some(MonitorStatus::Stale)
+                } else {
+                    None
+                }
+            }
         }
+    }
+
+    /// Record a collect whose transport answered but whose output could not be
+    /// parsed (#3252).
+    ///
+    /// Once the loop is `Live` this is an ordinary failure (see
+    /// [`on_failure`](CollectLoopState::on_failure)): a sustained run goes
+    /// `Stale` and begins the bounded reconnect.
+    ///
+    /// Before the loop has produced a sample since (re)connecting — i.e. while
+    /// `Connecting`, or `Reconnecting` after a re-dial that succeeded — a
+    /// reconnect cannot help: the transport is up and the remote keeps
+    /// answering with unusable data. Without this transition such a loop would
+    /// hang in `Connecting` forever with no error surfaced. So once
+    /// `stale_threshold` consecutive parse failures accumulate pre-`Live`, the
+    /// loop resolves to [`MonitorStatus::Offline`] (terminal; the caller ends
+    /// the loop) and returns it. A successful parse at any point resets the run
+    /// via [`on_success`](CollectLoopState::on_success). A `Paused` loop ignores
+    /// this, like every other collect result.
+    ///
+    /// The parse bound counts *consecutive parse* failures; a transport failure
+    /// in between restarts it. Every parse failure still counts toward the
+    /// generous pre-`Live` bound shared with
+    /// [`on_failure`](CollectLoopState::on_failure) (#3300), so an alternating
+    /// timeout/garbage run also resolves.
+    pub fn on_parse_failure(&mut self) -> Option<MonitorStatus> {
+        match self.status {
+            MonitorStatus::Connecting | MonitorStatus::Reconnecting => {
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                self.consecutive_parse_failures = self.consecutive_parse_failures.saturating_add(1);
+                if self.consecutive_parse_failures >= self.stale_threshold
+                    || self.consecutive_failures >= self.pre_live_failure_limit()
+                {
+                    self.resolve_offline()
+                } else {
+                    None
+                }
+            }
+            MonitorStatus::Paused | MonitorStatus::Offline => None,
+            MonitorStatus::Live | MonitorStatus::Stale => self.on_failure(),
+        }
+    }
+
+    /// Whether the loop has resolved to the terminal
+    /// [`MonitorStatus::Offline`] state and should stop collecting.
+    pub fn is_offline(&self) -> bool {
+        self.status == MonitorStatus::Offline
     }
 
     /// Whether the loop should now begin a bounded reconnect.
@@ -316,6 +451,9 @@ impl CollectLoopState {
     pub fn begin_reconnect(&mut self) -> Option<MonitorStatus> {
         if self.status != MonitorStatus::Reconnecting {
             self.status = MonitorStatus::Reconnecting;
+            // A fresh run: failures counted on the way to `Stale` must not
+            // also count against the re-dialled transport (#3252).
+            self.reset_failures();
             Some(MonitorStatus::Reconnecting)
         } else {
             None
@@ -329,9 +467,7 @@ impl CollectLoopState {
     /// [`BackoffSchedule`] yields no further delay (audit gap G2).
     pub fn exhaust_reconnect(&mut self) -> Option<MonitorStatus> {
         if self.status != MonitorStatus::Offline {
-            self.status = MonitorStatus::Offline;
-            self.consecutive_failures = 0;
-            Some(MonitorStatus::Offline)
+            self.resolve_offline()
         } else {
             None
         }
@@ -519,6 +655,230 @@ mod tests {
             Some(MonitorStatus::Live),
             "a later successful collect recovers from Offline to Live"
         );
+    }
+
+    // ── Pre-Live unparseable output (#3252) ────────────────────────────
+
+    #[test]
+    fn pre_live_parse_failures_below_threshold_stay_connecting() {
+        let mut state = CollectLoopState::with_threshold(3);
+        assert_eq!(state.on_parse_failure(), None);
+        assert_eq!(state.on_parse_failure(), None);
+        assert_eq!(
+            state.status(),
+            MonitorStatus::Connecting,
+            "fewer than `threshold` parse failures keep the loop Connecting"
+        );
+        assert!(!state.is_offline());
+    }
+
+    #[test]
+    fn pre_live_parse_failures_at_threshold_resolve_offline() {
+        let mut state = CollectLoopState::with_threshold(3);
+        state.on_parse_failure();
+        state.on_parse_failure();
+        assert_eq!(
+            state.on_parse_failure(),
+            Some(MonitorStatus::Offline),
+            "a connected-but-never-parseable remote must not hang in Connecting"
+        );
+        assert_eq!(state.status(), MonitorStatus::Offline);
+        assert!(state.is_offline());
+        // Terminal: further parse failures do not re-emit.
+        assert_eq!(state.on_parse_failure(), None);
+        assert!(
+            !state.should_begin_reconnect(),
+            "a pre-Live parse failure must not start a reconnect campaign"
+        );
+    }
+
+    #[test]
+    fn pre_live_parse_failures_use_default_stale_threshold() {
+        let mut state = CollectLoopState::new();
+        for _ in 1..DEFAULT_STALE_THRESHOLD {
+            assert_eq!(state.on_parse_failure(), None);
+        }
+        assert_eq!(state.on_parse_failure(), Some(MonitorStatus::Offline));
+    }
+
+    #[test]
+    fn a_successful_parse_resets_the_pre_live_failure_run() {
+        let mut state = CollectLoopState::with_threshold(2);
+        assert_eq!(state.on_parse_failure(), None); // 1 failure
+        assert_eq!(state.on_success(), Some(MonitorStatus::Live)); // reset
+                                                                   // Back to a clean slate: Live parse failures follow the Stale path.
+        assert_eq!(state.on_parse_failure(), None);
+        assert_eq!(
+            state.on_parse_failure(),
+            Some(MonitorStatus::Stale),
+            "once Live, sustained parse failures go Stale (and reconnect) as before"
+        );
+    }
+
+    // ── Pre-Live / post-re-dial transport failures (#3300) ─────────────
+
+    #[test]
+    fn pre_live_failure_limit_is_a_multiple_of_the_stale_threshold() {
+        assert_eq!(
+            CollectLoopState::with_threshold(2).pre_live_failure_limit(),
+            2 * PRE_LIVE_FAILURE_LIMIT_FACTOR
+        );
+        assert_eq!(
+            CollectLoopState::new().pre_live_failure_limit(),
+            DEFAULT_STALE_THRESHOLD * PRE_LIVE_FAILURE_LIMIT_FACTOR
+        );
+    }
+
+    #[test]
+    fn pre_live_transport_failures_below_the_generous_bound_stay_connecting() {
+        // A slow first collect must not kill a monitor: well past the parse
+        // bound (`stale_threshold`), plain collect failures keep Connecting.
+        let mut state = CollectLoopState::with_threshold(2);
+        for _ in 1..state.pre_live_failure_limit() {
+            assert_eq!(state.on_failure(), None);
+        }
+        assert_eq!(state.status(), MonitorStatus::Connecting);
+        assert!(!state.is_offline());
+    }
+
+    #[test]
+    fn pre_live_transport_failures_at_the_generous_bound_resolve_offline() {
+        let mut state = CollectLoopState::with_threshold(2);
+        for _ in 1..state.pre_live_failure_limit() {
+            state.on_failure();
+        }
+        assert_eq!(
+            state.on_failure(),
+            Some(MonitorStatus::Offline),
+            "a transport that never yields a first sample must not hang in Connecting"
+        );
+        assert!(state.is_offline());
+        assert!(
+            !state.should_begin_reconnect(),
+            "a pre-Live Offline is terminal, not a reconnect campaign"
+        );
+        // Terminal: further failures do not re-emit.
+        assert_eq!(state.on_failure(), None);
+    }
+
+    #[test]
+    fn pre_live_transport_failures_use_the_default_bound() {
+        let mut state = CollectLoopState::new();
+        let limit = DEFAULT_STALE_THRESHOLD * PRE_LIVE_FAILURE_LIMIT_FACTOR;
+        for _ in 1..limit {
+            assert_eq!(state.on_failure(), None);
+        }
+        assert_eq!(state.on_failure(), Some(MonitorStatus::Offline));
+    }
+
+    #[test]
+    fn a_success_resets_the_pre_live_transport_failure_run() {
+        let mut state = CollectLoopState::with_threshold(1);
+        let limit = state.pre_live_failure_limit();
+        for _ in 1..limit {
+            state.on_failure();
+        }
+        assert_eq!(state.on_success(), Some(MonitorStatus::Live));
+        // Once Live the Stale path applies (threshold 1 → Stale on first).
+        assert_eq!(state.on_failure(), Some(MonitorStatus::Stale));
+        assert_eq!(state.begin_reconnect(), Some(MonitorStatus::Reconnecting));
+        // The earlier pre-Live run does not count against the re-dialled one.
+        for _ in 1..limit {
+            assert_eq!(state.on_failure(), None);
+        }
+        assert_eq!(state.status(), MonitorStatus::Reconnecting);
+    }
+
+    #[test]
+    fn transport_failures_after_a_successful_re_dial_resolve_offline() {
+        // Live → Stale → Reconnecting; the re-dial succeeded, but every collect
+        // on the fresh transport still fails: bounded, not Reconnecting forever.
+        let mut state = CollectLoopState::with_threshold(2);
+        state.on_success();
+        state.on_failure();
+        assert_eq!(state.on_failure(), Some(MonitorStatus::Stale));
+        assert_eq!(state.begin_reconnect(), Some(MonitorStatus::Reconnecting));
+        for _ in 1..state.pre_live_failure_limit() {
+            assert_eq!(state.on_failure(), None);
+        }
+        assert_eq!(state.on_failure(), Some(MonitorStatus::Offline));
+        assert!(state.is_offline());
+    }
+
+    #[test]
+    fn transport_failures_while_paused_are_ignored() {
+        let mut state = CollectLoopState::with_threshold(1);
+        state.pause();
+        for _ in 0..(state.pre_live_failure_limit() * 2) {
+            assert_eq!(state.on_failure(), None);
+        }
+        assert_eq!(state.status(), MonitorStatus::Paused);
+        // Resuming starts from a clean slate: one failure does not go Offline.
+        assert_eq!(state.resume(), Some(MonitorStatus::Live));
+        assert_eq!(state.status(), MonitorStatus::Live);
+    }
+
+    #[test]
+    fn a_transport_failure_breaks_a_consecutive_parse_failure_run() {
+        // The strict parse bound counts *consecutive* parse failures: a timeout
+        // in between restarts it (the generous transport bound still applies).
+        let mut state = CollectLoopState::with_threshold(2);
+        assert_eq!(state.on_parse_failure(), None);
+        assert_eq!(state.on_failure(), None);
+        assert_eq!(
+            state.on_parse_failure(),
+            None,
+            "timeout between parse failures restarts the parse run"
+        );
+        assert_eq!(state.status(), MonitorStatus::Connecting);
+        assert_eq!(state.on_parse_failure(), Some(MonitorStatus::Offline));
+    }
+
+    #[test]
+    fn mixed_pre_live_failures_resolve_offline_at_the_generous_bound() {
+        // Alternating timeout / garbage never reaches the parse bound but must
+        // still resolve: every failure counts toward the transport bound.
+        let mut state = CollectLoopState::with_threshold(2);
+        let limit = state.pre_live_failure_limit();
+        let mut last = None;
+        for i in 0..limit {
+            last = if i % 2 == 0 {
+                state.on_failure()
+            } else {
+                state.on_parse_failure()
+            };
+        }
+        assert_eq!(last, Some(MonitorStatus::Offline));
+    }
+
+    #[test]
+    fn parse_failures_after_a_reconnect_resolve_offline() {
+        // Live → Stale → Reconnecting; the re-dial succeeded but the remote
+        // still only answers garbage: that must also resolve in bounded time.
+        let mut state = CollectLoopState::with_threshold(2);
+        state.on_success();
+        state.on_parse_failure();
+        assert_eq!(state.on_parse_failure(), Some(MonitorStatus::Stale));
+        assert_eq!(state.begin_reconnect(), Some(MonitorStatus::Reconnecting));
+        // begin_reconnect starts a fresh run: one failure is not yet terminal.
+        assert_eq!(state.on_parse_failure(), None);
+        assert_eq!(state.status(), MonitorStatus::Reconnecting);
+        assert_eq!(state.on_parse_failure(), Some(MonitorStatus::Offline));
+    }
+
+    #[test]
+    fn parse_failures_while_paused_do_not_change_status() {
+        let mut state = CollectLoopState::with_threshold(1);
+        state.pause();
+        assert_eq!(state.on_parse_failure(), None);
+        assert_eq!(state.status(), MonitorStatus::Paused);
+    }
+
+    #[test]
+    fn offline_from_parse_failure_recovers_on_a_later_success() {
+        let mut state = CollectLoopState::with_threshold(1);
+        assert_eq!(state.on_parse_failure(), Some(MonitorStatus::Offline));
+        assert_eq!(state.on_success(), Some(MonitorStatus::Live));
     }
 
     // ── Pause / Resume (#1233) ─────────────────────────────────────────

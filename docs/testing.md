@@ -355,7 +355,7 @@ Examples:
 The system/E2E suite runs in **two lanes**, split so per-PR CI stays fast while
 the app-launching suites still run on a cadence:
 
-- **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR runs the bridge harness with `-m "not integration"`, so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
+- **Per-PR — collection + non-integration** ([`code-quality.yml`](../.github/workflows/code-quality.yml) → _System-Test Harness_). Every PR that touches the harness (`tests/system/`) runs it with `-m "not integration"` — every push to `develop`/`main` runs it regardless (#3325), so it proves the harness _collects_ all ~360 tests and the non-integration checks pass. It deliberately does **not** launch the built app or bring up Docker, keeping the check quick.
 - **Nightly — integration lane on all three platforms** ([`system-integration.yml`](../.github/workflows/system-integration.yml)). A scheduled + `workflow_dispatch` job builds the app (debug) and runs `-m integration`, which launches the **real per-platform build** and drives it through the bridge. Because the bridge needs no `tauri-driver`/WKWebView driver, this lane carries **Linux, macOS, and Windows** legs (#804/#1649) — macOS app-UI integration testing that used to be manual-only now runs in CI.
 
 > **Reading the coverage-gap report honestly (#2050).** Because the per-PR lane
@@ -443,8 +443,8 @@ cost, the frontend Vitest job runs a lightweight shell-mount smoke
 top-level region (activity bar, terminal view, status bar, sidebar) renders and
 the `ErrorBoundary` did not trip. This catches a **broad boot/wiring break** — a
 bad import, a removed provider, a hook that throws on mount, a store selector
-that crashes on the initial state — on every PR, on all three OSes (it rides the
-existing `pnpm test` matrix). It runs in a fraction of a second: a single
+that crashes on the initial state — on every frontend PR (on the Ubuntu `pnpm test:coverage` leg) and on all three
+OSes post-merge (#3325 — see docs/contributing.md → "CI lanes"). It runs in a fraction of a second: a single
 React-DOM `createRoot` mount, no app build, no Docker, all Tauri IPC stubbed in
 [`src/test/setup.ts`](../src/test/setup.ts). It deliberately asserts only the
 coarse shell (fast, non-flaky); backend hydration and deep behavior stay with
@@ -457,14 +457,14 @@ nightly integration check — the two are complementary, not a substitute.
 
 The remote agent (`agent/`) is built and tested on Windows via dedicated CI jobs:
 
-- **Build + test** ([`agent.yml`](../.github/workflows/agent.yml)): the `build-windows` job runs on `windows-latest`, builds the agent for `x86_64-pc-windows-msvc` (native MSVC — cross-rs cannot build the MSVC ABI), and runs `cargo test -p termihub-agent -p termihub-core --all-features`. The full workspace test suite also runs on `windows-latest` via the [`code-quality.yml`](../.github/workflows/code-quality.yml) `tests` matrix.
+- **Build + test** ([`agent.yml`](../.github/workflows/agent.yml)): the `build-windows` job (post-merge only, on push to `develop`/`main` — #3325) runs on `windows-latest`, builds the agent for `x86_64-pc-windows-msvc` (native MSVC — cross-rs cannot build the MSVC ABI), and runs `cargo test -p termihub-agent -p termihub-core --all-features`. The full workspace test suite (a superset of those tests) also runs on `windows-latest` via the [`code-quality.yml`](../.github/workflows/code-quality.yml) `tests` matrix — on every PR that changes Rust, and post-merge.
 - **Release artifact** ([`release.yml`](../.github/workflows/release.yml)): the `agent-binaries-windows` job ships `termihub-agent-windows-x64.exe` and `termihub-agent-windows-arm64.exe` (cross-compiled from the x64 runner) alongside the Linux and macOS agent binaries on every tagged release.
 
 #### Quarantined live-agent-TCP tests + the serial grading lane (#2495)
 
 16 live-agent-TCP tests — 15 in `agent/tests/local_agent_integration.rs` and 1 (`listening_log_is_a_true_readiness_signal`) in `agent/tests/tcp_listener_readiness.rs` — each spawn a real `termihub-agent --listen` process and drive it over TCP. They flaked **only on the Windows CI leg** with a random `Os { code: 10060, kind: TimedOut }`: the shared `build-windows` leg (`cargo test -p termihub-agent -p termihub-core --all-features`) cold-starts many agents at once **and** runs them alongside the `termihub-core` suite, oversubscribing the runner's few cores until an agent answers past even a generous deadline. Transport fixes (#2492, #2494) and per-process/aggregate concurrency gates (#2501, #2528) reduced but never eliminated it, so those tests are **quarantined on Windows** via `#[cfg_attr(windows, ignore … #2495)]` and the shared leg skips them — keeping unrelated agent PRs unblocked.
 
-The deterministic-by-isolation fix runs them in a **dedicated serial, isolated grading lane** ([`agent-integration-windows-serial-grade.yml`](../.github/workflows/agent-integration-windows-serial-grade.yml)): a `windows-latest` job that runs `cargo test -p termihub-agent --test local_agent_integration --test tcp_listener_readiness --all-features -- --ignored --test-threads=1 --nocapture` (with `TERMIHUB_TEST_TIMING=1`). `--ignored` selects exactly the quarantined 16 (those files carry no other `#[ignore]`); `--test-threads=1` plus running only `-p termihub-agent` means exactly one agent cold-starts at a time on an otherwise-idle runner — removing both the aggregate and the cross-crate contention that gate-tuning could not. It triggers on agent-touching PRs (and `workflow_dispatch`) and is **non-blocking** (`continue-on-error: true`): a red grade cannot fail the workflow or red a PR, and the source quarantine is left in place, so it only _observes_ while a green/red signal accumulates across successive runs.
+The deterministic-by-isolation fix runs them in a **dedicated serial, isolated grading lane** ([`agent-integration-windows-serial-grade.yml`](../.github/workflows/agent-integration-windows-serial-grade.yml)): a `windows-latest` job that runs `cargo test -p termihub-agent --test local_agent_integration --test tcp_listener_readiness --all-features -- --ignored --test-threads=1 --nocapture` (with `TERMIHUB_TEST_TIMING=1`). `--ignored` selects exactly the quarantined 16 (those files carry no other `#[ignore]`); `--test-threads=1` plus running only `-p termihub-agent` means exactly one agent cold-starts at a time on an otherwise-idle runner — removing both the aggregate and the cross-crate contention that gate-tuning could not. It triggers on agent-touching pushes to `develop`/`main` (moved off PRs by #3325) and on `workflow_dispatch`, and is **non-blocking** (`continue-on-error: true`): a red grade cannot fail the workflow or red a PR, and the source quarantine is left in place, so it only _observes_ while a green/red signal accumulates across successive runs.
 
 **Flipping it to the real fix (the remaining #2495 work):** once the lane is green across **many** consecutive runs (per the chronic-flake bar, 3 green is not enough), (1) remove `continue-on-error: true` from the job so it becomes blocking, and (2) delete the `#[cfg_attr(windows, ignore … #2495)]` attributes from the two test files so the tests run per-PR again — now inside this serial+isolated job rather than the shared parallel leg — then close #2495.
 
@@ -498,7 +498,7 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
   `src/**/*.ts`, which silently excluded every React component from the
   percentage; it is now `src/**/*.{ts,tsx}`.
 - CI runs the unified report in the [`coverage.yml`](../.github/workflows/coverage.yml)
-  workflow and uploads the merged lcov + summary as an artifact. It is
+  workflow on every push to `develop`/`main` (post-merge only since #3325) and uploads the merged lcov + summary as an artifact. It is
   **advisory** (`continue-on-error`) for now: it establishes the baseline without
   reddening PRs. The planned follow-up is a fail-on-decrease ratchet against a
   captured baseline (remove `continue-on-error`), plus running the nightly
@@ -3156,6 +3156,20 @@ one to a directory (e.g. `ln -s data linkdir` and `ln -s data/file.bin linkfile`
 3. **WSL** (Windows only) — browse a WSL distribution's directory containing
    symlinks. Each link row shows the link-badge icon and, where the target could
    be read, the `→ target` hint.
+
+### WSL init script created inside the distro with mode 0600 (#2837)
+
+The create program's `0600` / reject-existing / reject-symlink behavior is unit
+tested on every platform (`cargo test -p termihub-core --all-features --lib
+backends::wsl_init_script`); the real `wsl.exe` spawn needs Windows + WSL.
+
+1. In a WSL shell of the target distribution, start a watcher:
+   `while :; do ls -l /tmp/.termihub_init-* 2>/dev/null; done`.
+2. In termiHub, open a new WSL tab for that distribution with shell integration
+   on. The watcher briefly prints a `-rw-------` file owned by your user.
+3. In the new tab, only a `source /tmp/.termihub_init-<uuid> 2>/dev/null` line is
+   visible (not the hook body), and `cd /tmp` updates the tab's CWD.
+4. `ls /tmp/.termihub_init-*` afterwards finds nothing (self-cleaned).
 
 ### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
 

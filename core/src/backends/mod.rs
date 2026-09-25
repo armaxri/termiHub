@@ -22,6 +22,12 @@ pub mod docker;
 #[cfg(all(feature = "wsl", windows))]
 pub mod wsl;
 
+// Pure, platform-independent init-script helpers used by the Windows-only WSL
+// backend (#2837). Compiled on every platform under `test` so the
+// security-relevant logic is exercised by the macOS/Linux CI legs too.
+#[cfg(any(all(feature = "wsl", windows), test))]
+pub(crate) mod wsl_init_script;
+
 #[cfg(feature = "ftp")]
 pub mod ftp;
 

@@ -40,11 +40,11 @@ function handlers() {
   };
 }
 
-function render(e: TransferEntry, pausable = true, h = handlers()) {
+function render(e: TransferEntry, h = handlers()) {
   act(() => {
     root.render(
       <TooltipProvider>
-        <TransferEntryRow entry={e} pausable={pausable} {...h} />
+        <TransferEntryRow entry={e} {...h} />
       </TooltipProvider>
     );
   });
@@ -192,21 +192,22 @@ describe("TransferEntryRow", () => {
     expect(h.onRemove).toHaveBeenCalledWith("t1");
   });
 
-  // PROD-009: a non-pausable (legacy SFTP) transfer hides Pause but keeps Cancel.
-  it("hides Pause for a non-pausable active transfer while keeping Cancel", () => {
-    render(entry({ state: "active" }), false);
-    expect(query("transfer-pause")).toBeNull();
+  // #3304: every queued transfer (SFTP included) supports pause, so an active
+  // row always offers Pause alongside Cancel.
+  it("shows Pause and Cancel for an active transfer", () => {
+    render(entry({ state: "active" }));
+    expect(query("transfer-pause")).not.toBeNull();
     expect(query("transfer-cancel")).not.toBeNull();
   });
 
   // UX-020 / #2905: the compact variant is the file-browser sidebar footer row —
   // one component, one data source, shared with the wide panel row.
   describe("compact variant", () => {
-    function renderCompact(e: TransferEntry, pausable = false, h = handlers()) {
+    function renderCompact(e: TransferEntry, h = handlers()) {
       act(() => {
         root.render(
           <TooltipProvider>
-            <TransferEntryRow entry={e} pausable={pausable} compact {...h} />
+            <TransferEntryRow entry={e} compact {...h} />
           </TooltipProvider>
         );
       });
@@ -239,8 +240,8 @@ describe("TransferEntryRow", () => {
       expect(h.onRemove).toHaveBeenCalledWith("t1");
     });
 
-    it("shows Pause + Cancel for a pausable active transfer", () => {
-      renderCompact(entry({ state: "active" }), true);
+    it("shows Pause + Cancel for an active transfer", () => {
+      renderCompact(entry({ state: "active" }));
       expect(query("transfer-pause")).not.toBeNull();
       expect(query("transfer-cancel")).not.toBeNull();
     });

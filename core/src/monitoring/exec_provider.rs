@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::errors::CoreError;
 use crate::monitoring::{
@@ -199,26 +199,37 @@ impl ExecMonitoringProvider {
     }
 }
 
+/// Why a collect tick produced no sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectMiss {
+    /// The exec errored or timed out.
+    Failed,
+    /// The exec answered, but `parse_stats` rejected the output (#3252).
+    Unparseable,
+}
+
 /// Run one collect bounded by `timeout`, parse it, and fold in the delta
 /// trackers.
 ///
-/// Returns the fresh sample, or `None` when the exec errored, timed out, or its
-/// output could not be parsed (a target with no readable `/proc`) — all counted
-/// as "no fresh sample this tick". Never panics, never fabricates data.
+/// Returns the fresh sample, or why there is none this tick:
+/// [`CollectMiss::Failed`] when the exec errored or timed out, or
+/// [`CollectMiss::Unparseable`] when it answered with output `parse_stats`
+/// rejects (a target with no readable `/proc`). Never panics, never fabricates
+/// data.
 async fn collect_once(
     source: &dyn ProcStatsSource,
     timeout: Duration,
     trackers: &mut Trackers,
-) -> Option<SystemStats> {
+) -> Result<SystemStats, CollectMiss> {
     let output = match tokio::time::timeout(timeout, source.collect_proc()).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
             debug!("Exec monitoring collect failed: {e}");
-            return None;
+            return Err(CollectMiss::Failed);
         }
         Err(_elapsed) => {
             debug!("Exec monitoring collect timed out after {timeout:?}");
-            return None;
+            return Err(CollectMiss::Failed);
         }
     };
 
@@ -231,11 +242,11 @@ async fn collect_once(
             let (rx, tx) = trackers.net.update(net_counters, Instant::now());
             stats.net_rx_bytes_per_sec = rx;
             stats.net_tx_bytes_per_sec = tx;
-            Some(stats)
+            Ok(stats)
         }
         Err(e) => {
-            debug!("Failed to parse exec monitoring output: {e}");
-            None
+            warn!("Failed to parse exec monitoring output: {e}");
+            Err(CollectMiss::Unparseable)
         }
     }
 }
@@ -345,23 +356,24 @@ async fn run_collect_loop(
             trackers = Trackers::new();
         }
 
-        let collected = match collect_once(&*source, collect_timeout, &mut trackers).await {
-            Some(stats) => {
+        let transition = match collect_once(&*source, collect_timeout, &mut trackers).await {
+            Ok(stats) => {
                 if tx.send(stats).await.is_err() {
                     break;
                 }
-                true
+                loop_state.on_success()
             }
-            None => false,
-        };
-
-        let transition = if collected {
-            loop_state.on_success()
-        } else {
-            loop_state.on_failure()
+            Err(CollectMiss::Failed) => loop_state.on_failure(),
+            Err(CollectMiss::Unparseable) => loop_state.on_parse_failure(),
         };
         if let Some(status) = transition {
             emit_status(&status_tx, status).await;
+        }
+
+        // The exec answers but never with parseable output: `Offline` is
+        // terminal before `Live` — end the loop (#3252).
+        if loop_state.is_offline() {
+            break;
         }
 
         // A sustained drop triggers a bounded recovery campaign that re-probes
@@ -553,6 +565,13 @@ Inter-|   Receive                                                |  Transmit
         outputs: Vec<String>,
         calls: Arc<AtomicUsize>,
         fail: Arc<AtomicBool>,
+        /// Every call with index `>= fail_from` fails (default: never), so a
+        /// test can let the subscribe probe pass and fail every loop collect
+        /// deterministically, without racing the loop on the `fail` flag.
+        fail_from: usize,
+        /// Call indexes that succeed even at or after `fail_from` (e.g. a
+        /// reconnect probe that recovers).
+        succeed_at: Vec<usize>,
     }
 
     impl FakeSource {
@@ -561,6 +580,17 @@ Inter-|   Receive                                                |  Transmit
                 outputs: outputs.iter().map(|s| s.to_string()).collect(),
                 calls: Arc::new(AtomicUsize::new(0)),
                 fail: Arc::new(AtomicBool::new(false)),
+                fail_from: usize::MAX,
+                succeed_at: Vec::new(),
+            }
+        }
+
+        /// Calls `>= fail_from` fail, except the indexes in `succeed_at`.
+        fn failing_from(outputs: &[&str], fail_from: usize, succeed_at: &[usize]) -> Self {
+            Self {
+                fail_from,
+                succeed_at: succeed_at.to_vec(),
+                ..Self::with_outputs(outputs)
             }
         }
 
@@ -570,6 +600,8 @@ Inter-|   Receive                                                |  Transmit
                 outputs: Vec::new(),
                 calls: Arc::new(AtomicUsize::new(0)),
                 fail: Arc::new(AtomicBool::new(true)),
+                fail_from: usize::MAX,
+                succeed_at: Vec::new(),
             }
         }
     }
@@ -578,7 +610,8 @@ Inter-|   Receive                                                |  Transmit
     impl ProcStatsSource for FakeSource {
         async fn collect_proc(&self) -> Result<String, CoreError> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
-            if self.fail.load(Ordering::SeqCst) || self.outputs.is_empty() {
+            let scripted_fail = n >= self.fail_from && !self.succeed_at.contains(&n);
+            if scripted_fail || self.fail.load(Ordering::SeqCst) || self.outputs.is_empty() {
                 return Err(CoreError::Other("no /proc".into()));
             }
             let idx = n.min(self.outputs.len() - 1);
@@ -717,10 +750,106 @@ Inter-|   Receive                                                |  Transmit
         let mut trackers = Trackers::new();
         let source = FakeSource::with_outputs(&["not/proc output"]);
         let sample = collect_once(&source, COLLECT_TIMEOUT, &mut trackers).await;
-        assert!(
-            sample.is_none(),
-            "unparseable output must not yield a sample"
+        assert_eq!(
+            sample.err(),
+            Some(CollectMiss::Unparseable),
+            "unparseable output must not yield a sample, and is told apart from a failed exec"
         );
+    }
+
+    /// A target whose probe parsed but whose every later collect is unparseable
+    /// (the exec answers, but with garbage) must not hang in `Connecting`: after
+    /// `stale_threshold` consecutive pre-`Live` parse failures the loop resolves
+    /// to the terminal `Offline` and ends (#3252).
+    #[tokio::test]
+    async fn persistently_unparseable_output_before_live_resolves_offline() {
+        // Index 0 is consumed by the (parseable) subscribe probe; every loop
+        // collect after that returns the unparseable last entry.
+        let provider = fast_provider(&[SAMPLE_1, "not/proc output"]);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "persistently unparseable output must resolve Connecting -> Offline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop pushes no sample and closes its stats channel"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// #3300: the subscribe probe parsed, but every loop collect fails at the
+    /// transport level (exec error). Before the first sample the loop must not
+    /// hang in `Connecting`: after `pre_live_failure_limit` consecutive
+    /// failures it resolves to the terminal `Offline` and ends, with no
+    /// recovery campaign.
+    #[tokio::test(start_paused = true)]
+    async fn persistent_transport_failures_before_live_resolve_offline() {
+        // Call 0 is the (parseable) subscribe probe; every later call fails.
+        let source = FakeSource::failing_from(&[SAMPLE_1], 1, &[]);
+        let calls = source.calls.clone();
+        let mut provider = ExecMonitoringProvider::new(Arc::new(source));
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 2;
+        let limit = CollectLoopState::with_threshold(2).pre_live_failure_limit();
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "persistent pre-Live transport failures must resolve Connecting -> Offline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop pushes no sample and closes its stats channel"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1 + limit as usize,
+            "the probe plus exactly `pre_live_failure_limit` collects, no re-probe"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// #3300: after a mid-stream drop the recovery probe parses (the source
+    /// looks reachable again), but every collect afterwards still fails. The
+    /// loop must not sit in `Reconnecting` forever.
+    #[tokio::test(start_paused = true)]
+    async fn transport_failures_after_a_successful_re_probe_resolve_offline() {
+        // 0: subscribe probe, 1: first loop collect (Live), 2: drop (Stale),
+        // 3: recovery probe succeeds, 4..: every collect fails.
+        let source = FakeSource::failing_from(&[SAMPLE_1, SAMPLE_2], 2, &[3]);
+        let mut provider = ExecMonitoringProvider::new(Arc::new(source));
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 1;
+        provider.reconnect_backoff =
+            BackoffSchedule::new(Duration::from_millis(5), Duration::from_millis(20), 8);
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Stale);
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Reconnecting
+        );
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "a re-probed source that never samples again must resolve to Offline"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
     }
 
     /// A source that goes live and then loses `/proc` mid-stream drives the

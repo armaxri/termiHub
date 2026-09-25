@@ -32,7 +32,8 @@ name: Agent Integration Windows Serial Grade (#2495)
 # attributes, so the shared `build-windows` leg is completely unchanged and keeps
 # skipping them. This lane only *observes*. Per the repo's chronic-flake bar
 # ("3 green proves nothing — require many consecutive green runs before trusting
-# an un-quarantine"), it accumulates a green/red signal across successive PR runs.
+# an un-quarantine"), it accumulates a green/red signal across successive
+# develop/main runs.
 #
 # ── Follow-up (#2495) — flipping this to the real fix ────────────────────────
 # Once this lane is green across many consecutive runs:
@@ -43,9 +44,11 @@ name: Agent Integration Windows Serial Grade (#2495)
 # Until then it stays non-blocking and the quarantine stays in place.
 
 on:
-  # Runs on the same agent-touching PRs as agent.yml so it accumulates a
-  # green/red signal over successive real runs (it is non-blocking, see above).
-  pull_request:
+  # Runs POST-MERGE on the same agent-touching paths as agent.yml so it keeps
+  # accumulating a green/red signal over successive real runs (it is
+  # non-blocking, see above). Moved off PRs (#3325): a non-blocking grade should
+  # not hold a scarce Windows runner in every agent PR's queue.
+  push:
     branches: [ main, develop ]
     paths:
       - 'agent/**'
@@ -55,7 +58,7 @@ on:
   # Also on-demand, e.g. to stress-loop the grade before deciding to un-quarantine.
   workflow_dispatch:
 
-# One grade per ref; cancel a superseded run when a newer commit lands on the PR.
+# One grade per ref; cancel a superseded run when a newer commit lands on the ref.
 concurrency:
   group: agent-integration-windows-serial-grade-${{ github.ref }}
   cancel-in-progress: true
