@@ -23,10 +23,11 @@ use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
 use termihub_core::protocol::methods::{
     AgentForwardCloseParams, AgentForwardDataParams, AgentShutdownParams, AgentShutdownResult,
-    ConnectionDefinition, ConnectionDeleteParams, ConnectionListResult, FolderCreateParams,
-    FolderDefinition, FolderDeleteParams, SessionAttachParams, SessionCloseParams,
-    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionInputParams,
-    SessionListEntry, SessionListResult, SessionResizeParams,
+    ConnectionCreateParams, ConnectionDefinition, ConnectionDeleteParams, ConnectionListResult,
+    ConnectionUpdateParams, FolderCreateParams, FolderDefinition, FolderDeleteParams,
+    FolderUpdateParams, SessionAttachParams, SessionCloseParams, SessionCreateParams,
+    SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
+    SessionListResult, SessionResizeParams,
 };
 use termihub_core::reconnect_backoff::{
     reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
@@ -271,14 +272,14 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     fn save_definition(
         &self,
         agent_id: &str,
-        definition: Value,
+        definition: ConnectionCreateParams,
     ) -> Result<AgentDefinitionInfo, TerminalError>;
 
     /// Update a saved connection definition on the agent.
     fn update_definition(
         &self,
         agent_id: &str,
-        params: Value,
+        params: ConnectionUpdateParams,
     ) -> Result<AgentDefinitionInfo, TerminalError>;
 
     /// Delete a session definition on the agent.
@@ -296,7 +297,7 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     fn update_folder(
         &self,
         agent_id: &str,
-        params: Value,
+        params: FolderUpdateParams,
     ) -> Result<AgentFolderInfo, TerminalError>;
 
     /// Delete a folder on the agent.
@@ -1374,12 +1375,15 @@ impl<R: Runtime> AgentConnectionManager<R> {
     pub fn save_definition(
         &self,
         agent_id: &str,
-        definition: Value,
+        definition: ConnectionCreateParams,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
+        let params = serde_json::to_value(definition).map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build connections.create params: {e}"))
+        })?;
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTIONS_CREATE,
-            definition,
+            params,
         )?;
         serde_json::from_value::<ConnectionDefinition>(result)
             .map(AgentDefinitionInfo::from)
@@ -1390,8 +1394,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
     pub fn update_definition(
         &self,
         agent_id: &str,
-        params: Value,
+        params: ConnectionUpdateParams,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
+        let params = serde_json::to_value(params).map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build connections.update params: {e}"))
+        })?;
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTIONS_UPDATE,
@@ -1448,8 +1455,13 @@ impl<R: Runtime> AgentConnectionManager<R> {
     pub fn update_folder(
         &self,
         agent_id: &str,
-        params: Value,
+        params: FolderUpdateParams,
     ) -> Result<AgentFolderInfo, TerminalError> {
+        let params = serde_json::to_value(params).map_err(|e| {
+            TerminalError::RemoteError(format!(
+                "Failed to build connections.folders.update params: {e}"
+            ))
+        })?;
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTIONS_FOLDERS_UPDATE,
@@ -1747,7 +1759,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
     fn save_definition(
         &self,
         agent_id: &str,
-        definition: Value,
+        definition: ConnectionCreateParams,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
         AgentConnectionManager::save_definition(self, agent_id, definition)
     }
@@ -1755,7 +1767,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
     fn update_definition(
         &self,
         agent_id: &str,
-        params: Value,
+        params: ConnectionUpdateParams,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
         AgentConnectionManager::update_definition(self, agent_id, params)
     }
@@ -1776,7 +1788,7 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
     fn update_folder(
         &self,
         agent_id: &str,
-        params: Value,
+        params: FolderUpdateParams,
     ) -> Result<AgentFolderInfo, TerminalError> {
         AgentConnectionManager::update_folder(self, agent_id, params)
     }

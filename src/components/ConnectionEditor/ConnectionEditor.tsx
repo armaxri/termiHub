@@ -38,6 +38,10 @@ import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { newId } from "@/services/transport/ids";
 import {
+  buildAgentConnectionCreate,
+  buildAgentConnectionUpdate,
+} from "@/services/agentConnectionPayloads";
+import {
   SavedConnection,
   RemoteAgentDefinition,
   AgentSettings,
@@ -825,27 +829,24 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
    */
   const saveAgentDefinition = useCallback(async (): Promise<boolean> => {
     if (!name.trim() || !existingAgent) return false;
-    const opts = hasTerminalOptions(terminalOptions) ? terminalOptions : undefined;
+    const draft = {
+      name: name.trim(),
+      type: selectedType,
+      config: connSettings,
+      persistent,
+      terminalOptions: hasTerminalOptions(terminalOptions) ? terminalOptions : undefined,
+      icon,
+    };
     if (existingAgentDef) {
-      await updateAgentDef(existingAgent.id, {
-        id: existingAgentDef.id,
-        name: name.trim(),
-        session_type: selectedType,
-        config: connSettings,
-        persistent,
-        terminal_options: opts ?? null,
-        icon: icon ?? null,
-      });
+      await updateAgentDef(
+        existingAgent.id,
+        buildAgentConnectionUpdate(existingAgentDef.id, draft)
+      );
     } else {
-      await saveAgentDef(existingAgent.id, {
-        name: name.trim(),
-        type: selectedType,
-        config: connSettings,
-        persistent,
-        folder_id: meta.agentFolderId ?? null,
-        terminal_options: opts,
-        icon,
-      });
+      await saveAgentDef(
+        existingAgent.id,
+        buildAgentConnectionCreate(draft, meta.agentFolderId ?? null)
+      );
     }
     return true;
   }, [

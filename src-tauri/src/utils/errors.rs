@@ -123,6 +123,7 @@ pub enum IpcErrorCode {
     InternalError,
     EmbeddedServerError,
     Io,
+    InvalidParams,
 }
 
 impl IpcErrorCode {
@@ -215,6 +216,12 @@ pub enum TerminalError {
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
+
+    /// A command's params failed to decode into their typed contract at the
+    /// desktop command boundary (e.g. a frontend payload that drifted from the
+    /// shared agent DTO, AGT-028). Raised before anything reaches the agent.
+    #[error("Invalid params: {0}")]
+    InvalidParams(String),
 }
 
 impl TerminalError {
@@ -277,6 +284,7 @@ impl TerminalError {
             TerminalError::InternalError(_) => C::InternalError,
             TerminalError::EmbeddedServerError(_) => C::EmbeddedServerError,
             TerminalError::Io(_) => C::Io,
+            TerminalError::InvalidParams(_) => C::InvalidParams,
         }
     }
 
@@ -562,6 +570,11 @@ mod tests {
                 TerminalError::InternalError("oops".to_string()),
                 "internal_error",
                 "Internal error: oops",
+            ),
+            (
+                TerminalError::InvalidParams("bad".to_string()),
+                "invalid_params",
+                "Invalid params: bad",
             ),
         ];
         for (err, code, message) in cases {

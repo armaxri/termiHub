@@ -543,9 +543,13 @@ describe("ConnectionEditor sub-component fields — agent payloads", () => {
     const payload = updateAgentDef.mock.calls[0][1];
     expect(payload.terminal_options).toEqual({ fontFamily: "Hack" });
     expect(payload.icon).toBeNull();
+    // AGT-028 regression: the connection type goes out under the wire key `type`
+    // (it used to be sent as `session_type`, which the agent silently dropped).
+    expect(payload.type).toBe("shell");
+    expect(payload).not.toHaveProperty("session_type");
   });
 
-  it("sends undefined terminal options and icon for a new agent definition left at defaults", async () => {
+  it("sends null terminal options and icon for a new agent definition left at defaults", async () => {
     const agent = makeAgent({ id: "agent-n" });
     const saveAgentDef = vi.fn((_agentId: string, _def: Record<string, unknown>) =>
       Promise.resolve()
@@ -560,8 +564,10 @@ describe("ConnectionEditor sub-component fields — agent payloads", () => {
     clickSave();
     await flush();
 
+    // The canonical connections.create form carries every key (AGT-028).
     const payload = saveAgentDef.mock.calls[0][1];
-    expect(payload.terminal_options).toBeUndefined();
-    expect(payload.icon).toBeUndefined();
+    expect(payload.terminal_options).toBeNull();
+    expect(payload.icon).toBeNull();
+    expect(payload.folder_id).toBeNull();
   });
 });
