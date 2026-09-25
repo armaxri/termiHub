@@ -6,4 +6,9 @@
  * Every field is always serialized (optional ones as `null`), so the canonical
  * wire form carries every key and a decode → re-encode round trip is exact.
  */
-export type ConnectionCreateParams = { name: string, type: string, config: Record<string, unknown>, persistent: boolean, folder_id: string | null, terminal_options: unknown, icon: string | null, };
+export type ConnectionCreateParams = { name: string, type: string, 
+/**
+ * Settings bag. The legacy `resilientReconnect` key is accepted on read and
+ * rewritten to `autoReconnect` (PARITY-008) so an older desktop interoperates.
+ */
+config: Record<string, unknown>, persistent: boolean, folder_id: string | null, terminal_options: unknown, icon: string | null, };
