@@ -13,6 +13,7 @@
 //! and agent (`agent/`) crates, which register their backends with a
 //! [`ConnectionTypeRegistry`] at startup.
 
+pub mod auto_reconnect;
 pub mod graphical;
 pub mod lifecycle;
 pub mod plugin_type_id;
@@ -21,6 +22,10 @@ pub mod schema;
 pub mod schema_defaults;
 pub mod validation;
 
+pub use auto_reconnect::{
+    auto_reconnect_enabled, normalize_auto_reconnect, AUTO_RECONNECT_DEFAULT, AUTO_RECONNECT_KEY,
+    LEGACY_RESILIENT_RECONNECT_KEY,
+};
 pub use graphical::{
     rgba_len, shared_field_base, AuthKind, CertPrompt, CertPromptReceiver, CursorReceiver,
     CursorShape, CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, FrameViolation,
