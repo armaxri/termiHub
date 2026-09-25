@@ -10,7 +10,8 @@ evidence:
   - src/plugins/frontendPlugins.ts:111
   - src/components/Settings/FrontendPluginGateSettings.tsx:11
   - core/src/plugin/manifest.rs:92
-status: open
+status: fixed
+resolution: "#3338 — plugin-authoring documents default-off JS gate + native trust ack"
 ---
 
 ## What

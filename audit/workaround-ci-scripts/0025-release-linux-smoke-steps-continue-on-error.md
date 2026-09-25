@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/release-linux-smoke.yml:202
   - .github/workflows/release-linux-smoke.yml:218
   - .github/workflows/release-linux-smoke.yml:237
-status: open
+status: fixed
+resolution: "#3338 — stale headless-smoke comments + dead ENFORCE branch removed"
 ---
 
 ## What

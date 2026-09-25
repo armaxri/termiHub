@@ -9,7 +9,8 @@ subsystem: scripts
 evidence:
   - scripts/release-check.sh:148
   - scripts/release-check.sh:155
-status: open
+status: fixed
+resolution: "#3338 — release-check fails on FIXME/HACK comment markers (.sh + .cmd)"
 ---
 
 ## What
