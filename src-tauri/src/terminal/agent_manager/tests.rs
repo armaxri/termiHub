@@ -420,10 +420,10 @@ fn connections_data_serialization() {
 fn handle_notification_routes_monitoring_data() {
     let b64 = base64::engine::general_purpose::STANDARD;
     let session_outputs: HashMap<String, OutputSender> = HashMap::new();
-    let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+    let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
 
     let (tx, mut rx) = tokio::sync::mpsc::channel(4);
-    monitoring_outputs.insert("session-42".to_string(), tx);
+    monitoring_outputs.insert("session-42".to_string(), tx.into());
 
     let params = json!({
         "host": "session-42",
@@ -452,6 +452,86 @@ fn handle_notification_routes_monitoring_data() {
     assert_eq!(stats.hostname, "myhost");
     assert!((stats.cpu_usage_percent - 50.0).abs() < f64::EPSILON);
     assert_eq!(stats.os_info, "Linux 6.1");
+}
+
+/// handle_notification routes `connection.monitoring.status` to the host's
+/// status channel once one is registered (#3321).
+#[test]
+fn handle_notification_routes_monitoring_status() {
+    use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason};
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let session_outputs: HashMap<String, OutputSender> = HashMap::new();
+    let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
+    let (stats_tx, mut stats_rx) = tokio::sync::mpsc::channel(4);
+    let (status_tx, mut status_rx) = tokio::sync::mpsc::channel(4);
+    monitoring_outputs.insert(
+        "self".to_string(),
+        MonitoringRoute {
+            stats: stats_tx,
+            status: Some(status_tx),
+        },
+    );
+
+    handle_notification(
+        "connection.monitoring.status",
+        &json!({"host": "self", "status": "offline", "reason": "parse"}),
+        &session_outputs,
+        &monitoring_outputs,
+        &b64,
+    );
+
+    let report = status_rx.try_recv().expect("status report routed");
+    assert_eq!(report.status, MonitorStatus::Offline);
+    assert_eq!(report.reason, Some(MonitorStatusReason::Parse));
+    assert!(stats_rx.try_recv().is_err(), "a status is not a sample");
+}
+
+/// A status report for a monitor that registered no status channel (an older
+/// consumer), for an unknown host, or with a status this build does not know
+/// is dropped without disturbing the sample route (#3321).
+#[test]
+fn handle_notification_drops_unroutable_monitoring_status() {
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let session_outputs: HashMap<String, OutputSender> = HashMap::new();
+    let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
+    let (stats_tx, mut stats_rx) = tokio::sync::mpsc::channel(4);
+    monitoring_outputs.insert("self".to_string(), stats_tx.into());
+
+    for params in [
+        json!({"host": "self", "status": "stale"}),
+        json!({"host": "other", "status": "stale"}),
+        json!({"host": "self", "status": "warpSpeed"}),
+    ] {
+        handle_notification(
+            "connection.monitoring.status",
+            &params,
+            &session_outputs,
+            &monitoring_outputs,
+            &b64,
+        );
+    }
+    assert!(stats_rx.try_recv().is_err());
+}
+
+/// An unknown notification method (e.g. one a newer agent adds) is ignored —
+/// the property that lets an older desktop ignore `connection.monitoring.status`
+/// (#3321).
+#[test]
+fn handle_notification_ignores_unknown_method() {
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let session_outputs: HashMap<String, OutputSender> = HashMap::new();
+    let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
+    let (stats_tx, mut stats_rx) = tokio::sync::mpsc::channel(4);
+    monitoring_outputs.insert("self".to_string(), stats_tx.into());
+
+    handle_notification(
+        "connection.monitoring.somethingNew",
+        &json!({"host": "self"}),
+        &session_outputs,
+        &monitoring_outputs,
+        &b64,
+    );
+    assert!(stats_rx.try_recv().is_err());
 }
 
 /// Regression test for #1660: a notification the agent emits *before* it
@@ -501,7 +581,7 @@ fn preinit_notification_is_buffered_and_replayed() {
     // session output channel — the same dispatch the live loop performs.
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
-    let monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+    let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
     let (tx, rx) = std::sync::mpsc::sync_channel::<Vec<u8>>(4);
     session_outputs.insert("sess-1".to_string(), tx);
 
@@ -518,7 +598,7 @@ fn preinit_notification_is_buffered_and_replayed() {
 fn handle_notification_ignores_unknown_monitoring_host() {
     let b64 = base64::engine::general_purpose::STANDARD;
     let session_outputs: HashMap<String, OutputSender> = HashMap::new();
-    let monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+    let monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
 
     let params = json!({
         "host": "unknown-host",
@@ -722,7 +802,7 @@ fn prune_dead_agents_removes_only_dead_entries() {
 #[test]
 fn reconcile_output_senders_drops_non_recovered_sessions() {
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
-    let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+    let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
 
     let (out_survivor, _r1) = std::sync::mpsc::sync_channel(1);
     let (out_gone, _r2) = std::sync::mpsc::sync_channel(1);
@@ -731,8 +811,8 @@ fn reconcile_output_senders_drops_non_recovered_sessions() {
 
     let (mon_survivor, _r3) = tokio::sync::mpsc::channel(1);
     let (mon_gone, _r4) = tokio::sync::mpsc::channel(1);
-    monitoring_outputs.insert("survivor".to_string(), mon_survivor);
-    monitoring_outputs.insert("gone".to_string(), mon_gone);
+    monitoring_outputs.insert("survivor".to_string(), mon_survivor.into());
+    monitoring_outputs.insert("gone".to_string(), mon_gone.into());
 
     let mut live_ids = std::collections::HashSet::new();
     live_ids.insert("survivor".to_string());
