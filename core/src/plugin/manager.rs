@@ -857,6 +857,32 @@ fn dir_install_time(dir: &Path) -> u64 {
 
 /// Read and validate `manifest.json` from a plugin directory, or `None` if it
 /// is missing, unreadable, unparseable, or fails semantic validation.
+/// The `(plugin_id, connectionType)` of every installed plugin under
+/// `plugins_root` that declares a terminal backend — enabled or not.
+///
+/// This reads only the manifests (no library is loaded), so persistence layers
+/// can call it at load time to map legacy, load-order-disambiguated plugin type
+/// ids to their stable namespaced form (PLG-007; see
+/// [`LegacyTypeIdResolver`](crate::connection::LegacyTypeIdResolver)). A missing
+/// root or an unreadable entry yields fewer pairs, never an error. The result is
+/// sorted by plugin id.
+pub fn installed_backend_types(plugins_root: &Path) -> Vec<(String, String)> {
+    let Ok(entries) = std::fs::read_dir(plugins_root) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = entries
+        .filter_map(Result::ok)
+        .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
+        .filter_map(|entry| read_manifest(&entry.path()))
+        .filter_map(|manifest| {
+            let backend = manifest.extensions.terminal_backend?;
+            Some((manifest.id, backend.connection_type))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 fn read_manifest(dir: &Path) -> Option<PluginManifest> {
     let json = std::fs::read_to_string(dir.join(MANIFEST_FILE_NAME)).ok()?;
     let manifest = parse_manifest(&json).ok()?;
@@ -2150,6 +2176,36 @@ mod tests {
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].state, PluginState::Active);
         assert_eq!(mgr.get("persisted").unwrap().state, PluginState::Active);
+    }
+
+    #[test]
+    fn installed_backend_types_lists_backend_plugins_sorted_by_id() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path().join("plugins");
+        // Written straight to disk in reverse order: the scan must not depend on
+        // directory order, and includes a plugin regardless of its enabled flag.
+        for id in ["zeta", "alpha"] {
+            let dir = root.join(id);
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(MANIFEST_FILE_NAME), manifest_with_settings(id)).unwrap();
+        }
+        // A theme-only plugin declares no connection type.
+        let theme = root.join("themer");
+        std::fs::create_dir_all(&theme).unwrap();
+        std::fs::write(
+            theme.join(MANIFEST_FILE_NAME),
+            manifest_json("themer", "1.0"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            installed_backend_types(&root),
+            vec![
+                ("alpha".to_string(), "alpha".to_string()),
+                ("zeta".to_string(), "zeta".to_string()),
+            ]
+        );
+        assert!(installed_backend_types(&tmp.path().join("missing")).is_empty());
     }
 
     #[test]

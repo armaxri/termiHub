@@ -81,8 +81,9 @@ pub use host::{
     LoadedPluginInfo, PluginHost,
 };
 pub use manager::{
-    read_stored_settings, resolve_plugin_settings, resolve_plugin_settings_json, InstalledPlugin,
-    NoopLifecycleHook, PluginLifecycleHook, PluginManager, PluginManagerError, PluginState,
+    installed_backend_types, read_stored_settings, resolve_plugin_settings,
+    resolve_plugin_settings_json, InstalledPlugin, NoopLifecycleHook, PluginLifecycleHook,
+    PluginManager, PluginManagerError, PluginState,
 };
 pub use manifest::{
     check_api_compatibility, parse_manifest, ApiCompatibility, ConnectionPolicyManifest,

@@ -15,6 +15,7 @@
 
 pub mod graphical;
 pub mod lifecycle;
+pub mod plugin_type_id;
 pub mod registry;
 pub mod schema;
 pub mod schema_defaults;
@@ -26,6 +27,10 @@ pub use graphical::{
     GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
 };
 pub use lifecycle::SessionStatus;
+pub use plugin_type_id::{
+    is_plugin_type_id, parse_plugin_type_id, plugin_type_id, LegacyResolution,
+    LegacyTypeIdResolver, PLUGIN_TYPE_ID_PREFIX,
+};
 pub use registry::{
     register_core_backends, ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
