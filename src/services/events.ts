@@ -16,22 +16,12 @@ import type {
   RemoteDesktopStatePayload,
   RemoteDesktopCertPromptPayload,
 } from "@/types/remoteDesktop";
-
-interface TerminalOutputPayload {
-  session_id: string;
-  /**
-   * Terminal output bytes as a base64 (standard alphabet, padded) string.
-   *
-   * Terminal output is the app's most important hot path. The backend encodes
-   * the raw `Vec<u8>` as base64 (see `TerminalOutputEvent` in
-   * `src-tauri/src/session/manager.rs`) instead of serde's default JSON
-   * number-array — that was a 3.3–4x byte bloat plus a per-byte copy on every
-   * flush. Decode with {@link base64ToBytes}, which is the exact inverse of the
-   * Rust encoder for all byte values including high bytes and empty input
-   * (#2072).
-   */
-  data: string;
-}
+// Wire event payloads generated from their Rust source of truth
+// (`src-tauri/src/session/manager.rs`) via ts-rs (audit DUP-030 / MOCK-010),
+// replacing the hand-written snake_case mirror interfaces below.
+import type { TerminalOutputEvent } from "@/types/generated/TerminalOutputEvent";
+import type { TerminalExitEvent } from "@/types/generated/TerminalExitEvent";
+import type { PersistentSessionStateEvent } from "@/types/generated/PersistentSessionStateEvent";
 
 /**
  * Decode a base64 (standard alphabet, padded) string into a `Uint8Array`.
@@ -74,16 +64,11 @@ export function bytesToBase64(bytes: Uint8Array | number[]): string {
   return btoa(binary);
 }
 
-interface TerminalExitPayload {
-  session_id: string;
-  exit_code: number | null;
-}
-
 /** Subscribe to terminal output events */
 export async function onTerminalOutput(
   callback: (sessionId: string, data: Uint8Array) => void
 ): Promise<UnlistenFn> {
-  return await listen<TerminalOutputPayload>("terminal-output", (event) => {
+  return await listen<TerminalOutputEvent>("terminal-output", (event) => {
     const { session_id, data } = event.payload;
     callback(session_id, base64ToBytes(data));
   });
@@ -159,7 +144,7 @@ export async function onSshHostKeyPrompt(
 export async function onTerminalExit(
   callback: (sessionId: string, exitCode: number | null) => void
 ): Promise<UnlistenFn> {
-  return await listen<TerminalExitPayload>("terminal-exit", (event) => {
+  return await listen<TerminalExitEvent>("terminal-exit", (event) => {
     const { session_id, exit_code } = event.payload;
     callback(session_id, exit_code);
   });
@@ -248,7 +233,7 @@ export class TerminalOutputDispatcher {
   private async doInit(): Promise<void> {
     const gen = this.initGeneration;
 
-    const unlistenOutput = await listen<TerminalOutputPayload>("terminal-output", (event) => {
+    const unlistenOutput = await listen<TerminalOutputEvent>("terminal-output", (event) => {
       const { session_id, data } = event.payload;
       const cbs = this.outputCallbacks.get(session_id);
       const chunk = base64ToBytes(data);
@@ -273,7 +258,7 @@ export class TerminalOutputDispatcher {
     }
     this.unlistenOutput = unlistenOutput;
 
-    const unlistenExit = await listen<TerminalExitPayload>("terminal-exit", (event) => {
+    const unlistenExit = await listen<TerminalExitEvent>("terminal-exit", (event) => {
       const { session_id, exit_code } = event.payload;
       // The session is gone: drop any pre-subscribe output still buffered for it.
       // A session that exits before (or without) a subscriber ever attaching would
@@ -602,14 +587,6 @@ export async function onEmbeddedServerStatusChanged(
 
 // --- Persistent session events ---
 
-interface PersistentSessionStatePayload {
-  connection_id: string;
-  session_id: string | null;
-  state: string;
-  attached_tab_count: number;
-  error_message: string | null;
-}
-
 /** Parsed persistent session state change notification. */
 export interface PersistentSessionStateChange {
   connectionId: string;
@@ -623,18 +600,15 @@ export interface PersistentSessionStateChange {
 export async function onPersistentSessionStateChanged(
   callback: (change: PersistentSessionStateChange) => void
 ): Promise<UnlistenFn> {
-  return await listen<PersistentSessionStatePayload>(
-    "persistent-session-state-changed",
-    (event) => {
-      callback({
-        connectionId: event.payload.connection_id,
-        sessionId: event.payload.session_id,
-        state: event.payload.state,
-        attachedTabCount: event.payload.attached_tab_count,
-        errorMessage: event.payload.error_message,
-      });
-    }
-  );
+  return await listen<PersistentSessionStateEvent>("persistent-session-state-changed", (event) => {
+    callback({
+      connectionId: event.payload.connection_id,
+      sessionId: event.payload.session_id,
+      state: event.payload.state,
+      attachedTabCount: event.payload.attached_tab_count,
+      errorMessage: event.payload.error_message,
+    });
+  });
 }
 
 /** Live status of a single node during a connection-path probe (#962). */
