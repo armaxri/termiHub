@@ -1,9 +1,9 @@
 //! SFTP transfer executor — drives the queue state machine around a dedicated
 //! [`SftpTransferChannel`] copy (product feature PROD-0012).
 //!
-//! This is the SFTP counterpart to [`super::ftp`]. Where the legacy SFTP path
-//! ([`super::run_download`] / [`super::run_upload`]) was a single-shot,
-//! cancel-only chunked copy, this executor wraps the same core streaming
+//! This is the SFTP counterpart to the FTP executor (`run_ftp_transfer`). Where
+//! the desktop's legacy SFTP path (`run_download` / `run_upload`) was a
+//! single-shot, cancel-only chunked copy, this executor wraps the same core streaming
 //! primitive with the desktop's full **queue orchestration**: acquire a
 //! per-session concurrency slot, stream with throttled progress + ETA,
 //! auto-retry with exponential backoff on error, honour pause/resume and
@@ -24,8 +24,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 
-use termihub_core::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
-use termihub_core::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
+use crate::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
+use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 use tracing::{debug, info, warn};
 
 use super::registry::{TransferHandle, TransferRegistry};
@@ -35,7 +35,19 @@ use super::{
     ProgressSink, ThroughputMeter, TransferDirection, TransferPhase, TransferProgress, CHUNK_SIZE,
     PROGRESS_THROTTLE,
 };
-use crate::utils::errors::TerminalError;
+
+/// Core-internal error type for the SFTP transfer executor (DUP-026 slice 2b).
+///
+/// It never escapes: all three public executors return `()`, and this type only
+/// carries phase/context text into the throttled `transfer-progress` message via
+/// its `Display`. It replaces the desktop `TerminalError::SshError` the executor
+/// used before the move to core, and its `Display` is **byte-identical** to that
+/// variant's (`"SSH error: {0}"`), so progress-message text is unchanged.
+#[derive(Debug, thiserror::Error)]
+enum SftpTransferError {
+    #[error("SSH error: {0}")]
+    Ssh(String),
+}
 
 /// Resume protocol for SFTP transfers (PROD-0012).
 ///
@@ -235,14 +247,14 @@ async fn cancellable_backoff(handle: &Arc<TransferHandle>, delay: std::time::Dur
     }
 }
 
-/// Map a chunked-copy phase error to a [`TerminalError`], preserving the text.
-fn copy_error(phase: CopyPhase, e: std::io::Error) -> TerminalError {
+/// Map a chunked-copy phase error to a [`SftpTransferError`], preserving the text.
+fn copy_error(phase: CopyPhase, e: std::io::Error) -> SftpTransferError {
     let what = match phase {
         CopyPhase::Read => "read",
         CopyPhase::Write => "write",
         CopyPhase::Flush => "flush",
     };
-    TerminalError::SshError(format!("transfer {what} failed: {e}"))
+    SftpTransferError::Ssh(format!("transfer {what} failed: {e}"))
 }
 
 /// Open the local destination for a resumed download: the existing partial is
@@ -279,7 +291,7 @@ async fn download_attempt<P, S>(
     offset: u64,
     on_progress: P,
     should_stop: S,
-) -> Result<AttemptOutcome, TerminalError>
+) -> Result<AttemptOutcome, SftpTransferError>
 where
     P: FnMut(u64) + Send,
     S: Fn() -> Option<StopReason> + Send,
@@ -292,7 +304,7 @@ where
             warn!(offset, error = %e, "SFTP server rejected resume read; restarting from zero");
             return Ok(AttemptOutcome::ResumeRejected);
         }
-        Err(e) => return Err(TerminalError::SshError(format!("open remote file: {e}"))),
+        Err(e) => return Err(SftpTransferError::Ssh(format!("open remote file: {e}"))),
     };
 
     // Local destination: append to the verified partial, or truncate for a
@@ -301,11 +313,11 @@ where
     let mut local = if offset > 0 {
         open_local_append(local_path, offset)
             .await
-            .map_err(|e| TerminalError::SshError(format!("open local file for append: {e}")))?
+            .map_err(|e| SftpTransferError::Ssh(format!("open local file for append: {e}")))?
     } else {
         tokio::fs::File::create(local_path)
             .await
-            .map_err(|e| TerminalError::SshError(format!("create local file: {e}")))?
+            .map_err(|e| SftpTransferError::Ssh(format!("create local file: {e}")))?
     };
 
     let outcome = run_chunked_copy(
@@ -331,7 +343,7 @@ async fn upload_attempt<P, S>(
     offset: u64,
     on_progress: P,
     should_stop: S,
-) -> Result<AttemptOutcome, TerminalError>
+) -> Result<AttemptOutcome, SftpTransferError>
 where
     P: FnMut(u64) + Send,
     S: Fn() -> Option<StopReason> + Send,
@@ -339,7 +351,7 @@ where
     // Local source: seek to the offset already sent (byte-verified by caller).
     let mut local = open_local_read(local_path, offset)
         .await
-        .map_err(|e| TerminalError::SshError(format!("open local file: {e}")))?;
+        .map_err(|e| SftpTransferError::Ssh(format!("open local file: {e}")))?;
 
     // Remote destination (the server op). Append (no truncate) at offset, or a
     // truncating create for a fresh transfer.
@@ -355,7 +367,7 @@ where
         channel
             .create_write(remote_path)
             .await
-            .map_err(|e| TerminalError::SshError(format!("create remote file: {e}")))?
+            .map_err(|e| SftpTransferError::Ssh(format!("create remote file: {e}")))?
     };
 
     let outcome = run_chunked_copy(
@@ -450,7 +462,7 @@ async fn run_attempts(
         let channel = match browser.open_dedicated_channel().await {
             Ok(c) => c,
             Err(e) => {
-                let e = TerminalError::SshError(format!("open SFTP transfer channel: {e}"));
+                let e = SftpTransferError::Ssh(format!("open SFTP transfer channel: {e}"));
                 if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
                     return outcome;
                 }
@@ -546,7 +558,7 @@ async fn handle_attempt_error(
     handle: &Arc<TransferHandle>,
     sink: &ProgressSink,
     attempt: u32,
-    e: &TerminalError,
+    e: &SftpTransferError,
 ) -> Option<AttemptsResult> {
     match super::backoff_delay(attempt) {
         Some(delay) => {
@@ -610,7 +622,7 @@ async fn cleanup_partial(
 /// emitting `transfer-progress` throughout (PROD-0012).
 ///
 /// Consumes the handle registered via [`TransferRegistry::enqueue`]; drops the
-/// registry entry on completion. Mirrors [`super::ftp::run_ftp_transfer`], so
+/// registry entry on completion. Mirrors the FTP executor `run_ftp_transfer`, so
 /// the generic `transfer_pause`/`resume`/`retry` commands work for SFTP.
 ///
 /// `start_offset` seeds the first Active stint's resume offset. It is `0` for a
@@ -755,7 +767,7 @@ async fn remote_copy_attempt<P, S>(
     offset: u64,
     on_progress: P,
     should_stop: S,
-) -> Result<AttemptOutcome, TerminalError>
+) -> Result<AttemptOutcome, SftpTransferError>
 where
     P: FnMut(u64) + Send,
     S: Fn() -> Option<StopReason> + Send,
@@ -767,7 +779,7 @@ where
             warn!(offset, error = %e, "SFTP server rejected resume read; restarting from zero");
             return Ok(AttemptOutcome::ResumeRejected);
         }
-        Err(e) => return Err(TerminalError::SshError(format!("open source file: {e}"))),
+        Err(e) => return Err(SftpTransferError::Ssh(format!("open source file: {e}"))),
     };
 
     // Destination write: append (no truncate) at the byte-verified offset, or a
@@ -784,7 +796,7 @@ where
         dst_channel
             .create_write(dst_path)
             .await
-            .map_err(|e| TerminalError::SshError(format!("create destination file: {e}")))?
+            .map_err(|e| SftpTransferError::Ssh(format!("create destination file: {e}")))?
     };
 
     let outcome = run_chunked_copy(
@@ -849,7 +861,7 @@ async fn run_remote_attempts(
         let src_channel = match src_browser.open_dedicated_channel().await {
             Ok(c) => c,
             Err(e) => {
-                let e = TerminalError::SshError(format!("open source SFTP transfer channel: {e}"));
+                let e = SftpTransferError::Ssh(format!("open source SFTP transfer channel: {e}"));
                 if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
                     return outcome;
                 }
@@ -860,7 +872,7 @@ async fn run_remote_attempts(
             Ok(c) => c,
             Err(e) => {
                 let e =
-                    TerminalError::SshError(format!("open destination SFTP transfer channel: {e}"));
+                    SftpTransferError::Ssh(format!("open destination SFTP transfer channel: {e}"));
                 if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
                     return outcome;
                 }
