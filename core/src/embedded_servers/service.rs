@@ -314,15 +314,11 @@ impl EmbeddedServerService {
         let thread_handle = thread::spawn(move || {
             let ready = BindSignal { tx: ready_tx };
             let result = match cfg.server_type {
-                // HTTP awaits the event-driven signal directly; FTP/TFTP still
-                // poll the raw flag, so they take the bridged `Arc<AtomicBool>`.
+                // Every server awaits the event-driven signal directly — none
+                // polls a flag (WA-RS-001, #2782).
                 ServerType::Http => start_http_server(&cfg, shutdown_clone, stats_clone, ready),
-                ServerType::Ftp => {
-                    start_ftp_server(&cfg, shutdown_clone.flag(), stats_clone, ready)
-                }
-                ServerType::Tftp => {
-                    start_tftp_server(&cfg, shutdown_clone.flag(), stats_clone, ready)
-                }
+                ServerType::Ftp => start_ftp_server(&cfg, shutdown_clone, stats_clone, ready),
+                ServerType::Tftp => start_tftp_server(&cfg, shutdown_clone, stats_clone, ready),
             };
 
             if let Err(e) = result {
@@ -382,8 +378,8 @@ impl EmbeddedServerService {
     /// lifecycle (and the UI) reflects the in-progress stop instead of jumping
     /// straight from `Running` to `Stopped` — mirroring the `Starting` →
     /// `Running` pair on start (SM-016). Triggering the [`ShutdownSignal`] wakes
-    /// the HTTP listener immediately (and stops the FTP/TFTP poll loops on their
-    /// next check); the server thread then exits on its own (we do not join, to
+    /// the HTTP, FTP and TFTP listeners (and any in-flight TFTP transfer)
+    /// immediately; the server thread then exits on its own (we do not join, to
     /// avoid blocking the caller). Synchronous counterpart of the trait's async
     /// [`stop`](Service::stop).
     pub fn shutdown(&mut self) {
