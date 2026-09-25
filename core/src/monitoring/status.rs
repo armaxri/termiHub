@@ -14,6 +14,11 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::reconnect_backoff::{
+    reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, ReconnectState,
+    INITIAL_RECONNECT_STATE,
+};
+
 /// Observable lifecycle state of a monitoring collector loop.
 ///
 /// Serialised in `camelCase` (e.g. `"live"`, `"stale"`) to match the
@@ -72,31 +77,49 @@ pub const DEFAULT_MAX_RECONNECT_ATTEMPTS: u32 = 8;
 
 /// Capped exponential-backoff schedule for reconnect attempts.
 ///
-/// Yields delays `base, base*2, base*4, …` clamped to `cap`, for at most
-/// `max_attempts` attempts. Once the attempt budget is exhausted,
-/// [`next_delay`](BackoffSchedule::next_delay) returns `None` so the caller
-/// stops retrying and transitions to [`MonitorStatus::Offline`].
+/// A thin wrapper over the canonical reconnect engine
+/// ([`crate::reconnect_backoff`], SM-020 slice 1): it drives
+/// [`reconnect_reducer`] with a jitterless [`BackoffConfig`] and reads the armed
+/// backoff delay off each `Waiting` phase, so monitoring shares one reconnect
+/// model with the rest of the workspace instead of hand-rolling the math.
 ///
-/// No maintained backoff crate is currently in the dependency tree; this is a
-/// small, self-contained helper kept unit-testable in isolation.
+/// Yields delays `base, base*2, base*4, …` clamped to `cap`, for at most
+/// `max_attempts` attempts. Once the attempt budget is exhausted (the reducer
+/// reaches [`ReconnectPhase::Gaveup`]), [`next_delay`](BackoffSchedule::next_delay)
+/// returns `None` so the caller stops retrying and transitions to
+/// [`MonitorStatus::Offline`].
+///
+/// Monitoring keeps `jitter_ratio: 0`, so the sequence is deterministic and
+/// byte-identical to the hand-rolled capped-exponential this replaced; the
+/// golden-vector tests pin that equivalence.
 #[derive(Debug, Clone)]
 pub struct BackoffSchedule {
-    base: Duration,
-    cap: Duration,
-    max_attempts: u32,
-    attempt: u32,
+    config: BackoffConfig,
+    state: ReconnectState,
+    /// Whether the first backoff window has been armed. The first `next_delay`
+    /// arms it via a `Drop`; each later call simulates a failed attempt to arm
+    /// the next window.
+    started: bool,
 }
 
 impl BackoffSchedule {
     /// Create a schedule from an explicit base delay, cap, and attempt budget.
     ///
-    /// `max_attempts` is clamped to `>= 1` so at least one reconnect is tried.
+    /// `max_attempts` is clamped to `>= 1` so at least one reconnect is tried —
+    /// the canonical engine reads `0` as its retry-forever sentinel, which the
+    /// monitoring loop never wants.
     pub fn new(base: Duration, cap: Duration, max_attempts: u32) -> Self {
+        let config = BackoffConfig {
+            base_delay_ms: base.as_millis() as f64,
+            factor: 2.0,
+            max_delay_ms: cap.as_millis() as f64,
+            max_attempts: i64::from(max_attempts.max(1)),
+            jitter_ratio: 0.0,
+        };
         Self {
-            base,
-            cap,
-            max_attempts: max_attempts.max(1),
-            attempt: 0,
+            config,
+            state: INITIAL_RECONNECT_STATE,
+            started: false,
         }
     }
 
@@ -105,24 +128,47 @@ impl BackoffSchedule {
     /// The first call returns `base`, then `base*2`, `base*4`, … each clamped
     /// to `cap`. After `max_attempts` calls it returns `None`.
     pub fn next_delay(&mut self) -> Option<Duration> {
-        if self.attempt >= self.max_attempts {
-            return None;
+        let mut no_jitter = || 0.0;
+        if !self.started {
+            // The first drop arms the first backoff window.
+            self.state = reconnect_reducer(
+                &self.state,
+                ReconnectEvent::Drop,
+                &self.config,
+                &mut no_jitter,
+            );
+            self.started = true;
+        } else {
+            // Each subsequent delay follows a failed attempt: the timer fires
+            // (`Attempt`), then the attempt fails (`Failure`), which either arms
+            // the next backoff window or gives up once the budget is spent.
+            self.state = reconnect_reducer(
+                &self.state,
+                ReconnectEvent::Attempt,
+                &self.config,
+                &mut no_jitter,
+            );
+            self.state = reconnect_reducer(
+                &self.state,
+                ReconnectEvent::Failure,
+                &self.config,
+                &mut no_jitter,
+            );
         }
-        // Double `base` `attempt` times, then clamp to `cap` — the shared
-        // capped-exponential MATH (DUP-007). Saturating arithmetic keeps a large
-        // attempt count from overflowing; once the delay exceeds `cap` the exact
-        // pre-clamp value is irrelevant anyway.
-        let delay =
-            crate::util::backoff::capped_exponential_delay(self.base, self.attempt, self.cap);
-        self.attempt = self.attempt.saturating_add(1);
-        Some(delay)
+        match self.state.phase {
+            ReconnectPhase::Waiting => {
+                Some(Duration::from_millis(self.state.delay_ms.max(0) as u64))
+            }
+            _ => None,
+        }
     }
 
     /// Reset the schedule so the next attempt starts again from `base`.
     ///
     /// Called after a successful reconnect so a later drop gets a fresh budget.
     pub fn reset(&mut self) {
-        self.attempt = 0;
+        self.state = INITIAL_RECONNECT_STATE;
+        self.started = false;
     }
 }
 
