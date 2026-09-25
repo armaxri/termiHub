@@ -1,41 +1,66 @@
-# Runbook: a yanked transitive crate reds every PR
+# Runbook: a yanked crate or fresh advisory reds every PR
 
-A **yanked crate** in `Cargo.lock` fails the `Security Audit` CI job on _every_
-open pull request, even PRs that changed no Rust code. The gate is
-`cargo deny check advisories` with `yanked = "deny"` in
-[`deny.toml`](../deny.toml) — the deliberate guard from #2074 against silently
-shipping a withdrawn dependency.
+The `Security Audit` CI job fails on _every_ open pull request — even PRs that
+changed no Rust code — in two related situations:
 
-This has happened repeatedly, always on a **transitive** crate the project does
-not depend on directly, and always fixed by a one-line lockfile bump:
+- A **yanked crate** in `Cargo.lock`. The gate is `cargo deny check advisories`
+  with `yanked = "deny"` in [`deny.toml`](../deny.toml) — the deliberate guard
+  from #2074 against silently shipping a withdrawn dependency.
+- A **freshly-published RUSTSEC advisory** against any dependency. `cargo audit`
+  fetches a live advisory DB, so a real vulnerability disclosed upstream flips
+  the job red across all open PRs the moment it is published.
 
-| Crate       | Bump            | PR    |
-| ----------- | --------------- | ----- |
-| chacha20    | 0.10.0 → 0.10.2 | #2585 |
-| der         | 0.8.0 → 0.8.1   | #2636 |
-| libssh2-sys | 0.3.2 → 0.3.3   | #2642 |
+Both have happened repeatedly, and both are almost always fixed by a one-line
+lockfile bump (or, for a directly-declared crate, a compatible `Cargo.toml`
+minimum bump):
 
-The recurrence is the problem: a yank is published upstream at an arbitrary
-time, so the check flips red across all open PRs at once, with no code change to
-point at. That looks like a broken PR and is not one.
+| Crate       | Bump            | Reason                        | PR    |
+| ----------- | --------------- | ----------------------------- | ----- |
+| chacha20    | 0.10.0 → 0.10.2 | yanked                        | #2585 |
+| der         | 0.8.0 → 0.8.1   | yanked                        | #2636 |
+| libssh2-sys | 0.3.2 → 0.3.3   | yanked                        | #2642 |
+| ringbuf     | 0.5.0 → 0.5.2   | RUSTSEC-2026-0293 (real vuln) | —     |
+
+**Real, fixable advisories are bumped, not suppressed.** A RUSTSEC advisory with
+an upstream fix (like the ringbuf double-free above) is cleared by upgrading to
+the fixed version — never by adding it to the `ignore` list in
+[`.cargo/audit.toml`](../.cargo/audit.toml) / [`deny.toml`](../deny.toml). That
+ignore list is reserved for non-actionable transitive `unmaintained`/`unsound`
+advisories with no fix available (a conscious release sign-off, #3054); putting a
+fixable vulnerability there would silently ship it.
+
+The recurrence is the problem: a yank or advisory is published upstream at an
+arbitrary time, so the check flips red across all open PRs at once, with no code
+change to point at. That looks like a broken PR and is not one.
 
 ## Proactive mitigation (should catch most of these)
 
 The [`Cargo Update Lockfile`](../.github/workflows/cargo-update-lockfile.yml)
-workflow runs `cargo update` weekly (Monday 04:00 UTC) and on demand
+workflow runs `cargo update` **daily** (04:00 UTC) and on demand
 (`workflow_dispatch`). It pulls compatible patch/minor bumps — including
-off-yanked replacements — into `Cargo.lock` and opens a single PR against
-`develop` when the lockfile changed. Merging that PR keeps the lockfile current
-so a freshly-yanked patch is usually already replaced before it can red PRs.
+off-yanked replacements and freshly-published advisory fixes — into `Cargo.lock`
+and opens a single PR against `develop` when the lockfile changed. Keeping the
+lockfile current means a freshly-yanked patch or advisory fix is usually already
+in `develop` before it can red PRs. The cadence is **daily** (previously weekly;
+see #2645): a weekly refresh left every open PR's Security Audit red for up to a
+week when an advisory landed mid-week, so daily shrinks that window to ~a day.
 
-Run it on demand the moment a yank is spotted:
+Run it on demand the moment a yank or advisory is spotted:
 
 ```bash
 gh workflow run cargo-update-lockfile.yml --repo armaxri/termiHub
 ```
 
-Two operational notes for that PR:
+Operational notes for that PR:
 
+- **It best-effort enables auto-merge.** After opening the PR the job runs
+  `gh pr merge --auto --merge`, so the refresh lands by itself once CI is green —
+  **if the repo has auto-merge enabled** (Settings → General → "Allow
+  auto-merge"). If that setting is off the command no-ops (swallowed so the chore
+  still succeeds) and the PR waits for a human. **Maintainer:** enabling repo
+  auto-merge makes this chore fully hands-off.
+- **The PR carries the `automation` label** so the coordinator/maintainer can
+  spot and merge it fast when auto-merge is unavailable.
 - **CI may not start automatically.** A PR opened by the built-in `GITHUB_TOKEN`
   does not trigger other workflows (a GitHub safeguard). If the checks are
   missing, close and reopen the PR (or push an empty commit) to kick CI. The
@@ -47,36 +72,43 @@ Two operational notes for that PR:
   piling up new ones. That force-update touches only this bot-owned branch —
   never a human branch, `develop`, or `main`.
 
-## Fast manual fix (when a yank slips through between runs)
+## Fast manual fix (when a yank or advisory slips through between runs)
 
-When a yank reds the PRs before the weekly chore catches it, do this — it is
-fast once you know the shape. **Do not** try to debug the failing PR; the PR is
-fine.
+When a yank or a fresh advisory reds the PRs before the daily chore catches it,
+do this — it is fast once you know the shape. **Do not** try to debug the failing
+PR; the PR is fine.
 
-1. **Confirm it is a yank, not a real advisory, and find the crate.** Run the
-   **full** `cargo deny check` locally — _not_ advisories-only. The local yank
-   cache lags, so `cargo deny check advisories` alone can under-report; the full
-   check refreshes the index:
+1. **Identify the crate and whether it is a yank or an advisory.** Run both
+   locally — the **full** `cargo deny check` (_not_ advisories-only; the local
+   yank cache lags, so the full check refreshes the index) and `cargo audit`
+   (which fetches a fresh advisory DB):
 
    ```bash
    cargo deny check
+   cargo audit
    ```
 
-   Look for `error[yanked]` / "detected yanked crate" lines — they name the
-   crate and version (e.g. `libssh2-sys 0.3.2`).
+   `cargo deny` prints `error[yanked]` / "detected yanked crate" for a yank;
+   `cargo audit` names the advisory ID, the crate/version, and the fixed version
+   (e.g. `RUSTSEC-2026-0293  ringbuf 0.5.0  Upgrade to >=0.5.2`).
 
-2. **Bump just that crate in the lockfile.** `cargo update` respects the
+2. **Bump just that crate.** For most cases `cargo update` respects the
    `Cargo.toml` constraints, so this is a lockfile-only change — no dependency
    version in `Cargo.toml` moves:
 
    ```bash
    cargo update -p <crate>
    # e.g. cargo update -p libssh2-sys
+   # advisory with a known fixed version:
+   cargo update -p ringbuf --precise 0.5.2
    ```
 
-   If the crate has no non-yanked release inside the allowed range, widen it
-   with `--precise <version>` only if a compatible non-yanked version exists;
-   otherwise it is a genuine upstream problem — file a tracker and raise it.
+   If the fixed/non-yanked version is outside the allowed range, widen the
+   constraint in the owning `Cargo.toml` (for a directly-declared crate, bump its
+   minimum to the fixed version). If no compatible non-yanked/fixed version
+   exists at all, it is a genuine upstream problem — file a tracker and raise it.
+   **A real, fixable advisory is bumped, never added to the `ignore` list** — see
+   the top of this runbook.
 
 3. **Verify green locally, then land that fix first.** Re-run `cargo deny check`
    to confirm it passes, open a small PR with a lowercase conventional subject

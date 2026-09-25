@@ -9,18 +9,26 @@ name: Cargo Update Lockfile
 # `cargo update -p <crate>` that someone had to notice, land first, then
 # reconcile against every other open PR.
 #
-# This job runs `cargo update` weekly (and on demand) to pull compatible
-# patch/minor bumps — including off-yanked replacements — into Cargo.lock
+# This job runs `cargo update` daily (and on demand) to pull compatible
+# patch/minor bumps — including off-yanked replacements and freshly-published
+# advisory fixes (e.g. ringbuf 0.5.2 for RUSTSEC-2026-0293) — into Cargo.lock
 # *proactively*, opening a single PR against develop so the bump lands once
 # instead of during a multi-PR scramble. It only opens a PR when the lockfile
-# actually changed. The fast manual fix path for a yank that still slips
-# through is documented in docs/ci-yanked-crate-runbook.md.
+# actually changed, and best-effort enables auto-merge on that PR so it lands
+# hands-off once CI is green (needs repo auto-merge enabled — see below). The
+# fast manual fix path for anything that still slips through is documented in
+# docs/ci-yanked-crate-runbook.md.
+#
+# Daily (not weekly) because an advisory or yank is published upstream at an
+# arbitrary time: a weekly cadence left every open PR's Security Audit red for
+# up to a week before the refresh landed. Daily shrinks that window to ~a day.
 
 on:
   schedule:
-    # Weekly, Monday 04:00 UTC — before the weekday PR traffic so a fresh
-    # lockfile is usually already merged when contributors branch.
-    - cron: '0 4 * * 1'
+    # Daily, 04:00 UTC — before the weekday PR traffic so a fresh lockfile is
+    # usually already merged when contributors branch, and so an advisory
+    # published mid-week is proposed within ~a day rather than up to a week.
+    - cron: '0 4 * * *'
   workflow_dispatch:
 
 # Cancel a superseded manual run; a scheduled run and a manual run should not
@@ -41,7 +49,7 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # Fixed automation branch: reused every run so repeated runs update the
-      # same PR instead of opening a new one each week.
+      # same PR instead of opening a new one each day.
       UPDATE_BRANCH: chore/cargo-update-lockfile
 
     steps:
@@ -113,19 +121,25 @@ jobs:
           # lines wrapped to <=100 chars. Deliberately no "Closes #" keyword —
           # this recurring chore closes nothing.
           BODY=$(cat <<'EOF'
-          Automated lockfile refresh from the weekly `cargo update` chore
+          Automated lockfile refresh from the daily `cargo update` chore
           (see `.github/workflows/cargo-update-lockfile.yml`, issue #2645).
 
           Pulls compatible patch/minor bumps into `Cargo.lock` proactively so a
-          yanked transitive crate does not red every open PR's Security Audit
-          before anyone notices. Compatible updates only — no `Cargo.toml`
-          constraint is changed.
+          yanked transitive crate — or a freshly-published RUSTSEC advisory fix
+          — does not red every open PR's Security Audit before anyone notices.
+          Compatible updates only — no `Cargo.toml` constraint is changed.
 
-          Review the diff, let CI run, and merge if green. If CI did not start
-          automatically, close and reopen this PR (PRs opened by `GITHUB_TOKEN`
-          do not trigger other workflows). See
-          `docs/ci-yanked-crate-runbook.md` for the manual fix path when a yank
-          slips through between runs.
+          This PR best-effort enables auto-merge, so it lands on its own once
+          CI is green **if the repo has auto-merge enabled**
+          (Settings -> General -> "Allow auto-merge"). If auto-merge is off the
+          enable step no-ops and this PR waits for a human — the `automation`
+          label flags it for pickup. Maintainer: enabling repo auto-merge makes
+          this fully hands-off.
+
+          If CI did not start automatically, close and reopen this PR (PRs
+          opened by `GITHUB_TOKEN` do not trigger other workflows). See
+          `docs/ci-yanked-crate-runbook.md` for the manual fix path when
+          something slips through between runs.
           EOF
           )
 
@@ -136,5 +150,23 @@ jobs:
               --base develop \
               --head "$UPDATE_BRANCH" \
               --title "chore(deps): update cargo lockfile" \
+              --label automation \
               --body "$BODY"
+          fi
+
+          # Best-effort hands-off merge: enable auto-merge so the PR lands by
+          # itself once CI passes. This is a no-op unless the repo has auto-merge
+          # enabled (Settings -> General -> "Allow auto-merge"); if it is off,
+          # the command fails and we swallow it so the chore still succeeds — the
+          # `automation` label leaves the PR for a human to merge. Merge commit
+          # only, per the repo git workflow (never squash/rebase).
+          if gh pr merge "$UPDATE_BRANCH" --auto --merge; then
+            echo "Auto-merge enabled for $UPDATE_BRANCH; it will merge once CI is green." \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "::notice::Could not enable auto-merge (repo auto-merge likely disabled)." \
+              "PR left for manual merge — see the 'automation' label."
+            echo "Auto-merge not enabled — repo auto-merge is likely off." \
+              "The PR is labelled \`automation\` and waits for a human merge." \
+              >> "$GITHUB_STEP_SUMMARY"
           fi
