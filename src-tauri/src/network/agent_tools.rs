@@ -22,12 +22,18 @@
 
 use std::sync::Arc;
 
+use serde::Deserialize;
+use serde_json::{json, Value};
 use tauri::AppHandle;
+use tokio_util::sync::CancellationToken;
 
+use termihub_core::network::defaults;
+use termihub_core::network::types::{OpenPort, PingSweepResult, PingSweepSummary};
 use termihub_core::protocol::methods::{
     NetworkDnsLookupParams, NetworkPingParams, NetworkPingResponse, NetworkPortScanParams,
     NetworkPortScanResponse, NetworkTracerouteParams, NetworkTracerouteResponse, NetworkWolParams,
 };
+use termihub_core::tool::ToolEvent;
 
 use crate::network::events;
 use crate::run_location::Locality;
@@ -48,6 +54,13 @@ pub mod tool {
     pub const DNS: &str = "dns";
     /// Wake-on-LAN — agent-routable (`network.wol`).
     pub const WOL: &str = "wol";
+    /// Open (listening) ports — agent-routable (`network.open_ports`, PROD-033).
+    /// Routed to an agent it lists the **agent host's** listening ports.
+    pub const OPEN_PORTS: &str = "open_ports";
+    /// Ping sweep — agent-routable through the generic `tool.run` substrate
+    /// (core `ToolRegistry` id `ping_sweep`, PROD-033); there is no dedicated
+    /// `network.*` method for it.
+    pub const PING_SWEEP: &str = "ping_sweep";
     /// HTTP monitor — **not** a `network.*` tool: it has no batched
     /// collect-and-return agent method. As of #2592 a monitor *can* run on an
     /// agent, but through the per-monitor `service.*` hosting path
@@ -59,9 +72,11 @@ pub mod tool {
 
 /// The [`Locality`] of a network tool (#2190).
 ///
-/// Everything the agent exposes over `network.*` is [`Locality::LocalOrAgent`];
-/// the HTTP monitor is [`Locality::DesktopOnly`] because the agent has no
-/// HTTP-monitor method, so the resolver must never offer it an agent.
+/// Everything the agent runs — over `network.*` or `tool.run` — is
+/// [`Locality::LocalOrAgent`]; the HTTP monitor is [`Locality::DesktopOnly`]
+/// on this per-tool-type path because it has no batched agent method (a monitor
+/// is agent-hosted per monitor via `service.*` instead), so the resolver must
+/// never offer it an agent here.
 pub fn locality_for(tool: &str) -> Locality {
     match tool {
         tool::HTTP_MONITOR => Locality::DesktopOnly,
@@ -255,6 +270,121 @@ pub fn dispatch_traceroute(
             }
         },
         Err(e) => events::emit_error(app, events::name::TRACEROUTE_ERROR, task_id, &e.to_string()),
+    }
+}
+
+// ── Open ports (`network.open_ports`, PROD-033) ───────────────────────────────
+
+/// The `network.open_ports` reply: `{ ports: [OpenPort] }`.
+///
+/// Parsed with a desktop-local mirror of the agent's `NetworkOpenPortsResponse`
+/// (that shared DTO is serialize-only); both sides use the same
+/// `termihub_core::network::types::OpenPort`, so the element shape is shared.
+#[derive(Debug, Deserialize)]
+struct OpenPortsReply {
+    ports: Vec<OpenPort>,
+}
+
+/// Parse a `network.open_ports` reply into the port list the local path
+/// returns (a bare array — the frontend cannot tell where it ran).
+pub fn parse_open_ports_reply(reply: Value) -> Result<Vec<OpenPort>, serde_json::Error> {
+    serde_json::from_value::<OpenPortsReply>(reply).map(|r| r.ports)
+}
+
+/// Proxy an open-ports listing to the agent (blocking; run on a blocking
+/// thread). Lists the **agent host's** listening ports.
+pub fn dispatch_open_ports(
+    client: &Arc<dyn AgentRpcClient>,
+    agent_id: &str,
+) -> Result<Vec<OpenPort>, String> {
+    let reply = client
+        .send_request(
+            agent_id,
+            termihub_core::protocol::methods::NETWORK_OPEN_PORTS,
+            json!({}),
+        )
+        .map_err(|e| e.to_string())?;
+    parse_open_ports_reply(reply).map_err(|e| e.to_string())
+}
+
+// ── Ping sweep (`tool.run` → `ping_sweep`, PROD-033) ──────────────────────────
+
+/// The core `ToolRegistry` id the agent runs a ping sweep under.
+pub const PING_SWEEP_TOOL_ID: &str = "ping_sweep";
+
+/// Build the `tool.run` params for an agent ping sweep.
+///
+/// The sweep has no dedicated `network.*` method; it runs through the agent's
+/// generic `tool.run`, whose params are `{ toolId, params }` and whose tool
+/// params are camelCase (`targets`, `timeoutMs`, `concurrency`,
+/// `resolveHostnames`). The desktop expands the target spec itself, so the
+/// agent receives the concrete address list, and fills absent optionals with the
+/// same defaults the local path uses so both vantages probe identically.
+pub fn ping_sweep_tool_run_params(
+    targets: &[String],
+    timeout_ms: Option<u64>,
+    concurrency: Option<usize>,
+    resolve_hostnames: Option<bool>,
+) -> Value {
+    json!({
+        "toolId": PING_SWEEP_TOOL_ID,
+        "params": {
+            "targets": targets,
+            "timeoutMs": timeout_ms.unwrap_or(defaults::PING_SWEEP_TIMEOUT_MS),
+            "concurrency": concurrency.unwrap_or(defaults::PING_SWEEP_CONCURRENCY),
+            "resolveHostnames":
+                resolve_hostnames.unwrap_or(defaults::PING_SWEEP_RESOLVE_HOSTNAMES),
+        }
+    })
+}
+
+/// The collected `tool.run` reply: `{ events: [{kind, payload}], result }`.
+#[derive(Debug, Deserialize)]
+struct ToolRunReply {
+    events: Vec<ToolEvent>,
+    result: Value,
+}
+
+/// Parse a `tool.run` ping-sweep reply into the per-host results (the `result`
+/// events) and the run summary (the aggregate).
+pub fn parse_ping_sweep_reply(
+    reply: Value,
+) -> Result<(Vec<PingSweepResult>, PingSweepSummary), serde_json::Error> {
+    let reply: ToolRunReply = serde_json::from_value(reply)?;
+    let results = reply
+        .events
+        .into_iter()
+        .filter(|e| e.kind == "result")
+        .map(|e| serde_json::from_value::<PingSweepResult>(e.payload))
+        .collect::<Result<Vec<_>, _>>()?;
+    let summary: PingSweepSummary = serde_json::from_value(reply.result)?;
+    Ok((results, summary))
+}
+
+/// Proxy a ping sweep to the agent's `tool.run` and fan its batched reply out
+/// as the same `network-sweep-*` events the local path emits.
+///
+/// The agent run is collect-and-return, so it cannot be stopped mid-flight; a
+/// Stop issued meanwhile is honoured by reporting the completion as canceled.
+pub fn dispatch_ping_sweep(
+    client: &Arc<dyn AgentRpcClient>,
+    agent_id: &str,
+    app: &AppHandle,
+    task_id: &str,
+    params: Value,
+    cancel: &CancellationToken,
+) {
+    match client.send_request(agent_id, termihub_core::protocol::methods::TOOL_RUN, params) {
+        Ok(reply) => match parse_ping_sweep_reply(reply) {
+            Ok((results, summary)) => {
+                for r in results {
+                    events::emit_sweep_result(app, task_id, r.host, r.latency_ms, r.hostname);
+                }
+                events::emit_sweep_complete(app, task_id, summary, cancel.is_cancelled());
+            }
+            Err(e) => events::emit_error(app, events::name::SWEEP_ERROR, task_id, &e.to_string()),
+        },
+        Err(e) => events::emit_error(app, events::name::SWEEP_ERROR, task_id, &e.to_string()),
     }
 }
 
@@ -505,6 +635,8 @@ mod tests {
             tool::PORT_SCAN,
             tool::DNS,
             tool::WOL,
+            tool::OPEN_PORTS,
+            tool::PING_SWEEP,
         ] {
             assert_eq!(
                 locality_for(t),
@@ -557,5 +689,103 @@ mod tests {
         assert_eq!(w.mac, "aa:bb:cc:dd:ee:ff");
         assert_eq!(w.broadcast, "255.255.255.255");
         assert_eq!(w.port, 9);
+    }
+
+    // ── PROD-033: open ports + ping sweep via the agent ─────────────────
+
+    #[test]
+    fn open_ports_reply_parses_agent_shape_into_bare_list() {
+        // The exact `{ports}` shape `handle_open_ports` sends; the desktop
+        // returns the bare array, matching the local `network_open_ports`.
+        let reply = json!({
+            "ports": [
+                { "protocol": "TCP", "localAddr": "0.0.0.0:22", "pid": 1, "process": "sshd" },
+                { "protocol": "UDP", "localAddr": "[::]:53", "pid": null, "process": null }
+            ]
+        });
+        let ports = parse_open_ports_reply(reply).unwrap();
+        assert_eq!(ports.len(), 2);
+        assert_eq!(ports[0].local_addr, "0.0.0.0:22");
+        assert_eq!(ports[0].pid, Some(1));
+        assert_eq!(ports[1].process, None);
+
+        // Re-serialized, it is exactly what the local path hands the frontend.
+        let wire = serde_json::to_value(&ports).unwrap();
+        assert!(wire.is_array());
+        assert_eq!(wire[0]["localAddr"], "0.0.0.0:22");
+    }
+
+    #[test]
+    fn open_ports_reply_rejects_a_bare_array() {
+        // The agent wraps the list under `ports`; a bare array is a contract
+        // break and must surface as an error, not an empty list.
+        assert!(parse_open_ports_reply(json!([])).is_err());
+    }
+
+    #[test]
+    fn ping_sweep_tool_run_params_wire_shape() {
+        let targets = vec!["10.0.0.1".to_string(), "10.0.0.2".to_string()];
+        let p = ping_sweep_tool_run_params(&targets, Some(250), Some(8), Some(false));
+        assert_eq!(
+            p,
+            json!({
+                "toolId": "ping_sweep",
+                "params": {
+                    "targets": ["10.0.0.1", "10.0.0.2"],
+                    "timeoutMs": 250,
+                    "concurrency": 8,
+                    "resolveHostnames": false,
+                }
+            })
+        );
+
+        // Absent optionals fall back to the local path's defaults.
+        let d = ping_sweep_tool_run_params(&targets, None, None, None);
+        assert_eq!(d["params"]["timeoutMs"], defaults::PING_SWEEP_TIMEOUT_MS);
+        assert_eq!(d["params"]["concurrency"], defaults::PING_SWEEP_CONCURRENCY);
+        assert_eq!(
+            d["params"]["resolveHostnames"],
+            defaults::PING_SWEEP_RESOLVE_HOSTNAMES
+        );
+    }
+
+    #[test]
+    fn ping_sweep_reply_parses_tool_run_shape() {
+        // The exact `{events, result}` shape the agent's `tool.run` sends.
+        let reply = json!({
+            "events": [
+                { "kind": "result",
+                  "payload": { "host": "10.0.0.1", "latencyMs": 2, "hostname": "gw.lan" } },
+                { "kind": "result",
+                  "payload": { "host": "10.0.0.7", "latencyMs": null, "hostname": null } }
+            ],
+            "result": { "total": 254, "up": 2, "down": 252, "elapsedMs": 1234 }
+        });
+        let (results, summary) = parse_ping_sweep_reply(reply).unwrap();
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].host, "10.0.0.1");
+        assert_eq!(results[0].latency_ms, Some(2));
+        assert_eq!(results[0].hostname.as_deref(), Some("gw.lan"));
+        assert_eq!(summary.total, 254);
+        assert_eq!(summary.up, 2);
+        assert_eq!(summary.down, 252);
+        assert_eq!(summary.elapsed_ms, 1234);
+    }
+
+    #[test]
+    fn ping_sweep_reply_ignores_non_result_events() {
+        let reply = json!({
+            "events": [ { "kind": "progress", "payload": { "done": 1 } } ],
+            "result": { "total": 1, "up": 0, "down": 1, "elapsedMs": 5 }
+        });
+        let (results, summary) = parse_ping_sweep_reply(reply).unwrap();
+        assert!(results.is_empty());
+        assert_eq!(summary.down, 1);
+    }
+
+    #[test]
+    fn ping_sweep_reply_rejects_malformed_summary() {
+        let reply = json!({ "events": [], "result": { "ports": [] } });
+        assert!(parse_ping_sweep_reply(reply).is_err());
     }
 }
