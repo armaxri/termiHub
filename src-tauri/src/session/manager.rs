@@ -61,9 +61,19 @@ const CLEAR_WAIT_TIMEOUT: Duration = Duration::from_secs(5);
 /// producer (the output reader loop) and tests are unchanged; only the wire form
 /// differs (#2072).
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct TerminalOutputEvent {
     pub session_id: String,
+    /// Terminal output bytes as a base64 (standard alphabet, padded) string.
+    ///
+    /// The field is `Vec<u8>` in Rust but serialized as a base64 string on the
+    /// wire (see the type-level docs and `serialize_bytes_base64`); the TS side
+    /// receives a `string` and decodes it with `base64ToBytes`
+    /// (`src/services/events.ts`), so the generated type is overridden to
+    /// `string` to match the wire form rather than serde's default byte array.
     #[serde(serialize_with = "serialize_bytes_base64")]
+    #[cfg_attr(test, ts(type = "string"))]
     pub data: Vec<u8>,
 }
 
@@ -83,6 +93,8 @@ where
 
 /// Exit event emitted when a terminal process exits.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct TerminalExitEvent {
     pub session_id: String,
     pub exit_code: Option<i32>,
@@ -90,6 +102,8 @@ pub struct TerminalExitEvent {
 
 /// State change event emitted when a persistent session transitions state.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct PersistentSessionStateEvent {
     pub connection_id: String,
     pub session_id: Option<String>,
