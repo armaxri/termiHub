@@ -9,7 +9,7 @@ subsystem: core/embedded_servers
 evidence:
   - core/src/embedded_servers/http_server.rs:236
 status: fixed
-resolution: "#2781 — http-event shutdown"
+resolution: "#2781,#3307 — HTTP, FTP and TFTP embedded servers all event-driven shutdown"
 ---
 
 ## What

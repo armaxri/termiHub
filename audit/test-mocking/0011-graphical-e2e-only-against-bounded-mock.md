@@ -10,7 +10,8 @@ evidence:
   - core/src/backends/mock_remote_desktop.rs:122
   - core/src/backends/mock_remote_desktop.rs:37
   - src-tauri/src/session/graphical_manager.rs:752
-status: open
+status: fixed
+resolution: "#3335 — shared MAX_FRAMEBUFFER_DIMENSION + FrameUpdate::sanitize at the frame pump for all backends; rdp sidecar desktop-size cap; hostile-frame tests"
 ---
 
 ## What

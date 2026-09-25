@@ -10,7 +10,8 @@ evidence:
   - agent/src/update/github.rs:39
   - agent/src/update/download.rs:60
   - src-tauri/src/terminal/agent_binary.rs:269
-status: open
+status: partial
+resolution: "#3331 — ed25519 signature verification on both update paths; real key pending maintainer setup; per-RPC update auth remains (#3213)"
 ---
 
 ## What

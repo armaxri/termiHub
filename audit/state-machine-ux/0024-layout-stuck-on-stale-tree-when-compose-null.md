@@ -10,7 +10,8 @@ evidence:
   - src/store/appStore.ts:8099
   - src/store/layoutBridge.ts:730
   - src/store/appStore.ts:2452
-status: open
+status: fixed
+resolution: "#3337 — compose-null reconciles (prune dangling tabs + region reseed) instead of freezing on last-good tree"
 ---
 
 ## What
