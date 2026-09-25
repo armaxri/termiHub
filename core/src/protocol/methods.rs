@@ -673,19 +673,19 @@ pub struct AgentShutdownResult {
 
 // ── agent.request_deferred_update ───────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestDeferredUpdateParams {
     /// Absolute path (on the agent host) to the new agent binary to stage.
     /// Omit to apply an update the agent already staged itself (self-update).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary_path: Option<String>,
     /// Optional target version label (bookkeeping only).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestDeferredUpdateResult {
     /// `true` if the update was applied immediately (agent was idle); `false`
@@ -703,21 +703,21 @@ pub struct AgentRequestDeferredUpdateResult {
 /// binary swap itself *is* the deferred path: coordination decides when it is
 /// polite to apply, not how. What this adds is the courtesy window — every other
 /// host is told first and given a chance to leave cleanly.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestUpdateParams {
     /// Absolute path (on the agent host) to the new agent binary to stage.
     /// Omit to apply an update the agent already staged itself (self-update).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary_path: Option<String>,
     /// Optional target version label (bookkeeping only).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     /// How long other hosts get to disconnect before the update proceeds
     /// anyway. Omit for the default 10 s
     /// (`ACK_TIMEOUT` in the agent's `update` module); tests use a short window
     /// so they need not sit through it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ack_timeout_secs: Option<u64>,
 }
 
@@ -727,7 +727,7 @@ pub struct AgentRequestUpdateParams {
 /// initiating desktop can say *"3 hosts were notified, 1 was still connected"*
 /// rather than only "done". `allAcked: false` is not an error — the update
 /// proceeded — it means someone got the hard cut.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestUpdateResult {
     /// `true` if the update was applied immediately (agent was idle); `false`
@@ -2628,5 +2628,92 @@ mod tests {
             parsed.connections[0].connected_since,
             "2026-02-14T10:30:00Z"
         );
+    }
+
+    // ── agent-update request/response wire (DUP-001) ────────────────────
+    //
+    // The desktop commands (request_agent_update / request_agent_deferred_update /
+    // the coordinated-deploy path) build these requests and parse these replies.
+    // The old builders inserted `binaryPath`/`version` only when present, so the
+    // params must omit the absent keys (skip_serializing_if) to stay byte-identical.
+
+    #[test]
+    fn request_deferred_update_params_serialize_matches_hand_built_json() {
+        assert_eq!(
+            serde_json::to_value(AgentRequestDeferredUpdateParams {
+                binary_path: Some("/tmp/agent".to_string()),
+                version: Some("0.4.0".to_string()),
+            })
+            .unwrap(),
+            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0" }),
+        );
+        // Self-update "Apply Now": no staging inputs → `{}`.
+        assert_eq!(
+            serde_json::to_value(AgentRequestDeferredUpdateParams {
+                binary_path: None,
+                version: None,
+            })
+            .unwrap(),
+            json!({}),
+        );
+    }
+
+    #[test]
+    fn request_update_params_serialize_matches_hand_built_json() {
+        // The desktop only ever sends `binaryPath`/`version`; `ackTimeoutSecs`
+        // stays absent, so it must not appear on the wire.
+        assert_eq!(
+            serde_json::to_value(AgentRequestUpdateParams {
+                binary_path: Some("/tmp/agent".to_string()),
+                version: Some("0.4.0".to_string()),
+                ack_timeout_secs: None,
+            })
+            .unwrap(),
+            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0" }),
+        );
+        assert_eq!(
+            serde_json::to_value(AgentRequestUpdateParams {
+                binary_path: None,
+                version: None,
+                ack_timeout_secs: None,
+            })
+            .unwrap(),
+            json!({}),
+        );
+    }
+
+    #[test]
+    fn request_deferred_update_result_parses_agent_reply() {
+        let reply = json!({ "applied": false, "activeSessions": 2 });
+        let parsed: AgentRequestDeferredUpdateResult = serde_json::from_value(reply).unwrap();
+        assert!(!parsed.applied);
+        assert_eq!(parsed.active_sessions, 2);
+    }
+
+    #[test]
+    fn request_update_result_parses_agent_reply() {
+        let reply = json!({
+            "applied": false,
+            "activeSessions": 1,
+            "notifiedClients": 3,
+            "allAcked": false,
+            "remainingClients": ["host-b"],
+        });
+        let parsed: AgentRequestUpdateResult = serde_json::from_value(reply).unwrap();
+        assert!(!parsed.applied);
+        assert_eq!(parsed.active_sessions, 1);
+        assert_eq!(parsed.notified_clients, 3);
+        assert!(!parsed.all_acked);
+        assert_eq!(parsed.remaining_clients, vec!["host-b".to_string()]);
+
+        // The happy path omits `remainingClients`; `#[serde(default)]` fills it.
+        let happy = json!({
+            "applied": true,
+            "activeSessions": 0,
+            "notifiedClients": 0,
+            "allAcked": true,
+        });
+        let parsed: AgentRequestUpdateResult = serde_json::from_value(happy).unwrap();
+        assert!(parsed.remaining_clients.is_empty());
     }
 }
