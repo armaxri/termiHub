@@ -50,6 +50,50 @@ pub enum AgentConnectionState {
     Reconnecting,
 }
 
+/// Map an [`AgentConnectionState`] onto the canonical
+/// [`SessionStatus`](termihub_core::connection::lifecycle::SessionStatus) (SM-020
+/// slice 0, additive — not yet wired into any runtime path). Total and lossless:
+/// every agent connection state has an exact canonical twin. Defined here rather
+/// than in `core` because `core` cannot name the desktop-defined
+/// [`AgentConnectionState`] (dependency direction + orphan rules).
+impl From<AgentConnectionState> for termihub_core::connection::lifecycle::SessionStatus {
+    fn from(state: AgentConnectionState) -> Self {
+        use termihub_core::connection::lifecycle::SessionStatus;
+        match state {
+            AgentConnectionState::Disconnected => SessionStatus::Disconnected,
+            AgentConnectionState::Connecting => SessionStatus::Connecting,
+            AgentConnectionState::Connected => SessionStatus::Connected,
+            AgentConnectionState::Reconnecting => SessionStatus::Reconnecting,
+        }
+    }
+}
+
+#[cfg(test)]
+mod agent_connection_state_map_tests {
+    use super::AgentConnectionState;
+    use termihub_core::connection::lifecycle::SessionStatus;
+
+    #[test]
+    fn maps_every_agent_state_to_canonical() {
+        // Total: every AgentConnectionState variant has a canonical target.
+        let cases = [
+            (
+                AgentConnectionState::Disconnected,
+                SessionStatus::Disconnected,
+            ),
+            (AgentConnectionState::Connecting, SessionStatus::Connecting),
+            (AgentConnectionState::Connected, SessionStatus::Connected),
+            (
+                AgentConnectionState::Reconnecting,
+                SessionStatus::Reconnecting,
+            ),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(SessionStatus::from(input), expected);
+        }
+    }
+}
+
 /// The authoritative record for one configured agent — the render-ready
 /// projection of the frontend `RemoteAgentDefinition`. Held in an ordered list so
 /// the sidebar order (`reorderRemoteAgents`) is preserved.

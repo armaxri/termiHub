@@ -81,6 +81,48 @@ pub enum TunnelStatus {
     Error,
 }
 
+/// Map a [`TunnelStatus`] onto the canonical
+/// [`SessionStatus`](termihub_core::connection::lifecycle::SessionStatus) (SM-020
+/// slice 0, additive — not yet wired into any runtime path). Total: `Error` maps
+/// to the canonical terminal [`Failed`](termihub_core::connection::lifecycle::SessionStatus::Failed)
+/// (the tunnel carries the message in its own `error` field); every other variant
+/// has an exact canonical twin. Defined here rather than in `core` because `core`
+/// cannot name the desktop-defined [`TunnelStatus`] (dependency direction + orphan
+/// rules).
+impl From<TunnelStatus> for termihub_core::connection::lifecycle::SessionStatus {
+    fn from(status: TunnelStatus) -> Self {
+        use termihub_core::connection::lifecycle::SessionStatus;
+        match status {
+            TunnelStatus::Disconnected => SessionStatus::Disconnected,
+            TunnelStatus::Connecting => SessionStatus::Connecting,
+            TunnelStatus::Connected => SessionStatus::Connected,
+            TunnelStatus::Reconnecting => SessionStatus::Reconnecting,
+            TunnelStatus::Error => SessionStatus::Failed,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tunnel_status_map_tests {
+    use super::TunnelStatus;
+    use termihub_core::connection::lifecycle::SessionStatus;
+
+    #[test]
+    fn maps_every_tunnel_status_to_canonical() {
+        // Total: every TunnelStatus variant has a canonical target.
+        let cases = [
+            (TunnelStatus::Disconnected, SessionStatus::Disconnected),
+            (TunnelStatus::Connecting, SessionStatus::Connecting),
+            (TunnelStatus::Connected, SessionStatus::Connected),
+            (TunnelStatus::Reconnecting, SessionStatus::Reconnecting),
+            (TunnelStatus::Error, SessionStatus::Failed),
+        ];
+        for (input, expected) in cases {
+            assert_eq!(SessionStatus::from(input), expected);
+        }
+    }
+}
+
 /// Combined runtime state for a tunnel.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

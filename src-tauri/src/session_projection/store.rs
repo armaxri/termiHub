@@ -38,49 +38,12 @@ use termihub_core::reconnect_backoff::{
     DEFAULT_BACKOFF, INITIAL_RECONNECT_STATE,
 };
 
-/// Top-level lifecycle status of a single session — the coarse state the UI
-/// renders (overlay / spinner / live). The fine-grained auto-reconnect detail
-/// (attempt count, backoff delay, waiting-vs-connecting) lives in the composed
-/// [`ReconnectState`], authored by the ported #2144 engine.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum SessionStatus {
-    /// An initial connect attempt is in flight (the "Connecting…" overlay).
-    Connecting,
-    /// A live session.
-    Connected,
-    /// The session ended and is idle (no retry loop running). `end_reason`
-    /// says why; a user disconnect and an unexpected drop both land here.
-    Disconnected,
-    /// An auto-reconnect loop is active; see the composed `reconnect` detail.
-    Reconnecting,
-    /// A terminal failure: the initial connect errored, or the reconnect loop
-    /// exhausted its attempts. `error` carries the message; the user may
-    /// manually reconnect.
-    Failed,
-    /// A distinct terminal failure (SM-005): the connect was **rejected by
-    /// authentication** — wrong password/passphrase or a refused key. Unlike
-    /// [`Failed`](Self::Failed) (a transient failure the reconnect loop may have
-    /// exhausted after many attempts), an auth rejection is genuinely
-    /// **non-retryable**: the same credentials can never succeed, so the loop is
-    /// NOT armed and the tab never enters [`Reconnecting`](Self::Reconnecting) or
-    /// burns doomed reconnect attempts. The user must fix the credentials and
-    /// manually reconnect. `error` carries the message. Serialised as `authFailed`
-    /// for the frontend to key on (mirroring how [`SessionLost`](Self::SessionLost)
-    /// serialises as `sessionLost`).
-    #[serde(rename = "authFailed")]
-    AuthFailed,
-    /// A distinct terminal state (#2512): a resilient **agent**-hosted tab
-    /// re-established its transport on reconnect, but the **live agent session**
-    /// it was attached to (its running process, e.g. a compile) could not be
-    /// recovered — the agent hard-restarted, the session aged out, or its daemon
-    /// died. The desktop deliberately does **not** silently mint a new shell in
-    /// its place (maintainer decision); it surfaces this explicit state so the
-    /// frontend can render a clear "session lost" notice plus a manual "start new
-    /// shell" action. Serialised as `sessionLost` for the frontend to key on.
-    #[serde(rename = "sessionLost")]
-    SessionLost,
-}
+/// The canonical session-lifecycle status now lives in `core` (SM-020 slice 0)
+/// so monitoring / graphical consumers can share one vocabulary; it is
+/// re-exported here so every existing session call site is unchanged. See
+/// [`termihub_core::connection::lifecycle`] for the definition and the
+/// (dead-but-tested) mapping functions from other subsystems' status enums.
+pub use termihub_core::connection::lifecycle::SessionStatus;
 
 /// Why a session left the `Connected` state — drives the disconnect-overlay
 /// wording the frontend currently derives from `terminalDisconnectReasons`.
