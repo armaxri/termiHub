@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo } from "react";
 import { Shield, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { CredentialStorageMode } from "@/types/credential";
+import type { CredentialStorageMode, SwitchCredentialStoreResult } from "@/types/credential";
 import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Select, Toggle, toast } from "@/components/ui";
@@ -49,6 +49,44 @@ function modeLabel(mode: CredentialStorageMode): string {
   return STORAGE_MODE_OPTIONS.find((o) => o.value === mode)?.label ?? mode;
 }
 
+/** Pluralize "credential" for a count. */
+function credentials(count: number): string {
+  return `${count} credential${count !== 1 ? "s" : ""}`;
+}
+
+/** A completed switch plus the modes involved, for truthful result messaging. */
+interface MigrationResultView extends SwitchCredentialStoreResult {
+  targetLabel: string;
+  previousLabel: string;
+}
+
+/**
+ * Human-readable summary of a completed store switch, driven by the backend's
+ * structured `status` (#2839) — never inferred from the free-text warnings. A
+ * partial or failed migration must not read as a clean success.
+ */
+function migrationSummary(view: MigrationResultView): string {
+  const { status, migratedCount, failedCount, targetLabel, previousLabel } = view;
+  switch (status) {
+    case "partial":
+      return (
+        `Switched to ${targetLabel}. ${migratedCount} of ${migratedCount + failedCount} ` +
+        `credentials migrated; ${credentials(failedCount)} could not be moved and ` +
+        `${failedCount !== 1 ? "remain" : "remains"} in ${previousLabel}.`
+      );
+    case "failed":
+      return (
+        `Switched to ${targetLabel}, but none of your ${credentials(failedCount)} could be ` +
+        `migrated. They are still in ${previousLabel} — switch back to use them.`
+      );
+    case "success":
+    default:
+      return migratedCount > 0
+        ? `Switched to ${targetLabel} — ${credentials(migratedCount)} migrated.`
+        : `Switched to ${targetLabel}.`;
+  }
+}
+
 interface AutoLockOption {
   value: number;
   label: string;
@@ -84,10 +122,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [passwordError, setPasswordError] = useState("");
-  const [migrationResult, setMigrationResult] = useState<{
-    migratedCount: number;
-    warnings: string[];
-  } | null>(null);
+  const [migrationResult, setMigrationResult] = useState<MigrationResultView | null>(null);
 
   const [changingPassword, setChangingPassword] = useState(false);
   const [currentPasswordInput, setCurrentPasswordInput] = useState("");
@@ -149,6 +184,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
   const handleConfirmSwitch = useCallback(async () => {
     if (!confirmSwitch) return;
     const targetMode = confirmSwitch;
+    const previousMode = currentMode;
 
     if (confirmSwitch === "master_password") {
       // Reject (rather than return) on invalid input so the submit Button's async
@@ -174,19 +210,28 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
         confirmSwitch,
         confirmSwitch === "master_password" ? newPassword : undefined
       );
-      setMigrationResult(result);
+      const view: MigrationResultView = {
+        ...result,
+        targetLabel: modeLabel(targetMode),
+        previousLabel: modeLabel(previousMode),
+      };
+      setMigrationResult(view);
       setConfirmSwitch(null);
       setMasterPasswordSetup(false);
       setNewPassword("");
       setConfirmPassword("");
       await loadCredentialStoreStatus();
-      toast.success(
-        result.migratedCount > 0
-          ? `Switched to ${modeLabel(targetMode)} — ${result.migratedCount} credential${
-              result.migratedCount !== 1 ? "s" : ""
-            } migrated`
-          : `Switched to ${modeLabel(targetMode)}`
-      );
+      // The switch itself happened in every case; only the migration outcome
+      // differs. A partial migration is informational, a total failure is an
+      // error — neither may be reported as a clean success (#2839).
+      const summary = migrationSummary(view);
+      if (result.status === "failed") {
+        toast.error(summary);
+      } else if (result.status === "partial") {
+        toast.info(summary);
+      } else {
+        toast.success(summary);
+      }
     } catch (err) {
       const message = errorMessage(err);
       setPasswordError(message);
@@ -195,7 +240,7 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
     } finally {
       setSwitching(false);
     }
-  }, [confirmSwitch, newPassword, confirmPassword, loadCredentialStoreStatus]);
+  }, [confirmSwitch, currentMode, newPassword, confirmPassword, loadCredentialStoreStatus]);
 
   const handleChangePassword = useCallback(async () => {
     // Reject (rather than return) on invalid input so the submit Button's async
@@ -383,13 +428,15 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           )}
 
           {migrationResult && (
-            <div className="settings-panel__migration-result" data-testid="migration-result">
-              <p>
-                Switched successfully. {migrationResult.migratedCount} credential
-                {migrationResult.migratedCount !== 1 ? "s" : ""} migrated.
-              </p>
+            <div
+              className={`settings-panel__migration-result settings-panel__migration-result--${migrationResult.status}`}
+              data-testid="migration-result"
+              data-status={migrationResult.status}
+              role={migrationResult.status === "success" ? "status" : "alert"}
+            >
+              <p>{migrationSummary(migrationResult)}</p>
               {migrationResult.warnings.length > 0 && (
-                <ul className="settings-panel__migration-warnings">
+                <ul className="settings-panel__migration-warnings" data-testid="migration-warnings">
                   {migrationResult.warnings.map((warning, i) => (
                     <li key={i}>{warning}</li>
                   ))}
