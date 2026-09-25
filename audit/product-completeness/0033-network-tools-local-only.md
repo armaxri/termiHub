@@ -9,7 +9,8 @@ subsystem: core/network, src/components/NetworkTools, agent
 evidence:
   - src/components/NetworkTools/networkToolLocation.ts:32
   - src-tauri/src/commands/network.rs:482
-status: open
+status: fixed
+resolution: "#3354 — all network tools runnable via agent (open ports + ping sweep wired; http monitor via per-monitor Run on); streaming/cancel for huge runs tracked #3353"
 ---
 
 ## What
