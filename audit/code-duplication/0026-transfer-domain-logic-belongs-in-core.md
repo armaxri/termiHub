@@ -11,7 +11,7 @@ evidence:
   - src-tauri/src/files/transfer/scheduler.rs
   - src-tauri/src/files/transfer/retry.rs
 status: partial
-resolution: "#3275 — transfer domain -> core, sliced. Slice 1 #3275 MERGED: pure state machine + scheduler + retry moved to core::files::transfer (behavior-preserving, desktop re-exports, zero import churn). Slice 2 re-scoped (Option A) after finding executors reference registry+progress-model types: 2a (progress model + registry.rs incl. #3199 resume-relaunch logic + QUEUE_TEARDOWN -> core) in flight; 2b (executors, trivial TerminalError seam) follows. REMAINING desktop-only after cluster moves: app_progress_sink, legacy #1245 path, persist*.rs, relaunch.rs, command handlers. Enables agent-hosted transfers (#3242)"
+resolution: "#3275 — transfer domain -> core, sliced. Slice 1 #3275 MERGED: pure state machine + scheduler + retry moved to core::files::transfer (behavior-preserving, desktop re-exports, zero import churn). Slice 2 (Option A): 2a #3282 MERGED (progress model + registry.rs incl. #3199 resume-relaunch logic + QUEUE_TEARDOWN -> core, git mv, +core `tracing` feature); 2b PR #3287 in CI (3 executors run_ftp/sftp_transfer + run_sftp_remote_copy -> core via git mv, core-internal SftpTransferError seam, zero call-site changes). TRANSFER DOMAIN -> CORE ESSENTIALLY COMPLETE — only Tauri/persistence glue + the explicitly-excluded legacy #1245 SFTP path remain desktop-only (app_progress_sink, TransferContext/copy_chunked/run_download/run_upload, persist*.rs, relaunch.rs, command handlers). DUP-026 can close once #3287 merges. Enables agent-hosted transfers (#3242)"
 ---
 
 ## What
