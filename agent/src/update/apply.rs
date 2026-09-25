@@ -19,6 +19,7 @@ use tracing::debug;
 #[cfg(unix)]
 use tracing::{info, warn};
 
+use super::signature::{SignaturePolicy, UpdateSignatureError};
 use super::version;
 use crate::state::persistence::{AgentState, PendingUpdate};
 
@@ -279,6 +280,23 @@ pub trait UpdateApplier: Send + Sync + 'static {
     /// re-exec failed (or the platform is unsupported) and the agent keeps
     /// running with the update unapplied.
     fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()>;
+
+    /// Check an update's signature against this applier's trust policy before
+    /// it is even staged (AGT-005), so a caller gets an immediate, typed refusal
+    /// instead of a deferred update that can never apply. `digest_hex` is the
+    /// initiator's expected SHA-256; the apply path re-binds it to the on-disk
+    /// bytes and re-verifies the signature immediately before the swap.
+    ///
+    /// Defaults to the build's policy ([`SignaturePolicy::for_build`]).
+    fn check_signature(
+        &self,
+        digest_hex: &str,
+        signature: Option<&str>,
+    ) -> Result<(), UpdateSignatureError> {
+        SignaturePolicy::for_build()
+            .verify(digest_hex, signature)
+            .map(|_| ())
+    }
 }
 
 /// Production [`UpdateApplier`] that swaps the on-disk binary and re-execs.
@@ -286,7 +304,11 @@ pub struct SystemUpdateApplier;
 
 impl UpdateApplier for SystemUpdateApplier {
     fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
-        apply_update_binary(&pending.binary_path, pending.expected_sha256.as_deref())
+        apply_update_binary(
+            &pending.binary_path,
+            pending.expected_sha256.as_deref(),
+            pending.signature.as_deref(),
+        )
     }
 }
 
@@ -305,8 +327,18 @@ impl UpdateApplier for SystemUpdateApplier {
 /// replaces this process image and never returns; the freshly-started new agent
 /// removes the leftover backup at startup (see [`cleanup_stale_update_backup`]).
 #[cfg(unix)]
-fn apply_update_binary(binary_path: &str, expected_sha256: Option<&str>) -> anyhow::Result<()> {
-    apply_update_binary_confined(binary_path, expected_sha256, &production_staging_roots())
+fn apply_update_binary(
+    binary_path: &str,
+    expected_sha256: Option<&str>,
+    signature: Option<&str>,
+) -> anyhow::Result<()> {
+    apply_update_binary_confined(
+        binary_path,
+        expected_sha256,
+        signature,
+        &production_staging_roots(),
+        &SignaturePolicy::for_build(),
+    )
 }
 
 /// The fixed remote path the desktop coordinated-push deploy uploads a staged
@@ -330,11 +362,11 @@ fn production_staging_roots() -> Vec<PathBuf> {
 }
 
 /// Swap-and-re-exec, but refuse a source outside `staging_roots` (AGT-003
-/// defense-in-depth) **and** whose bytes do not match `expected_sha256`
-/// (AGT-004) first.
+/// defense-in-depth), whose bytes do not match `expected_sha256` (AGT-004), or
+/// whose `signature` does not verify under `policy` (AGT-005) first.
 ///
-/// This is the last gate before the running binary is replaced. Two guards run,
-/// in order, **before any copy or re-exec**:
+/// This is the last gate before the running binary is replaced. Three guards
+/// run, in order, **before any copy or re-exec**:
 ///
 /// 1. **Confinement (AGT-003, #3214).** Even though `request_deferred_update`
 ///    already confined the path when the update was staged, the apply path
@@ -346,21 +378,34 @@ fn production_staging_roots() -> Vec<PathBuf> {
 ///    closes the stage-then-tamper TOCTOU: a binary verified at download/upload
 ///    can still be swapped on disk before it is applied, so the bytes are
 ///    re-hashed here, immediately before the swap.
+/// 3. **Authenticity (AGT-005, #3213).** The now-verified digest must carry an
+///    Ed25519 signature from a key compiled into this agent. Integrity alone
+///    only proves the bytes are what the *initiator* intended; the signature
+///    proves they are a genuinely published termiHub agent build.
 ///
-/// Fails **closed** on any violation of either guard — the running binary is
+/// Fails **closed** on any violation of any guard — the running binary is
 /// never touched.
 #[cfg(unix)]
 fn apply_update_binary_confined(
     binary_path: &str,
     expected_sha256: Option<&str>,
+    signature: Option<&str>,
     staging_roots: &[PathBuf],
+    policy: &SignaturePolicy,
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    // Both guards run — confinement then digest — before the running binary is
-    // ever touched. Extracted into `confine_and_verify` so the tamper-vector
-    // tests can exercise the gate without driving the (destructive) swap+re-exec.
-    let src = confine_and_verify(binary_path, expected_sha256, staging_roots)?;
+    // All guards run — confinement, digest, signature — before the running
+    // binary is ever touched. Extracted into `confine_and_verify` so the
+    // tamper-vector tests can exercise the gate without driving the
+    // (destructive) swap+re-exec.
+    let src = confine_and_verify(
+        binary_path,
+        expected_sha256,
+        signature,
+        staging_roots,
+        policy,
+    )?;
 
     let current = std::env::current_exe().context("resolve current agent executable")?;
     let backup = backup_path_for(&current);
@@ -414,18 +459,25 @@ fn apply_update_binary_confined(
     }
 }
 
-/// Run both apply-time guards — confinement (AGT-003) then integrity (AGT-004) —
-/// and return the confined, verified source path. Neither touches the running
-/// binary, so this is the non-destructive gate the swap depends on (and the seam
-/// the tamper-vector tests drive without a real swap+re-exec).
+/// Run the apply-time guards — confinement (AGT-003), integrity (AGT-004), then
+/// authenticity (AGT-005) — and return the confined, verified source path. None
+/// touches the running binary, so this is the non-destructive gate the swap
+/// depends on (and the seam the tamper-vector tests drive without a real
+/// swap+re-exec).
 ///
 /// Order matters: confinement is FIRST so an out-of-staging path is rejected
-/// before its bytes are ever read. Fails **closed** on either guard.
+/// before its bytes are ever read, and the signature is checked over the digest
+/// only AFTER that digest has been re-bound to the on-disk bytes. Fails
+/// **closed** on any guard; a signature refusal keeps its typed
+/// [`UpdateSignatureError`] in the error chain so the RPC layer can surface a
+/// dedicated error code.
 #[cfg(unix)]
 fn confine_and_verify(
     binary_path: &str,
     expected_sha256: Option<&str>,
+    signature: Option<&str>,
     staging_roots: &[PathBuf],
+    policy: &SignaturePolicy,
 ) -> anyhow::Result<PathBuf> {
     use anyhow::Context;
 
@@ -434,6 +486,14 @@ fn confine_and_verify(
 
     verify_confined_digest(&src, expected_sha256)
         .context("refuse to apply an agent update binary that failed integrity verification")?;
+
+    // `verify_confined_digest` succeeded, so a digest was supplied and matches
+    // the bytes on disk; the signature is checked over exactly that digest.
+    let digest = expected_sha256.unwrap_or_default();
+    policy
+        .verify(digest, signature)
+        .map_err(anyhow::Error::from)
+        .context("refuse to apply an agent update binary that failed signature verification")?;
 
     Ok(src)
 }
@@ -543,7 +603,11 @@ pub fn cleanup_stale_update_backup(_exe: &Path) {}
 /// running executable can be replaced in place. Returns an error so the caller
 /// surfaces it; keeps Windows/other builds compiling.
 #[cfg(not(unix))]
-fn apply_update_binary(_binary_path: &str, _expected_sha256: Option<&str>) -> anyhow::Result<()> {
+fn apply_update_binary(
+    _binary_path: &str,
+    _expected_sha256: Option<&str>,
+    _signature: Option<&str>,
+) -> anyhow::Result<()> {
     anyhow::bail!("deferred agent update apply is only supported on Unix platforms")
 }
 
@@ -665,6 +729,7 @@ mod tests {
             binary_path: binary_path.to_string_lossy().into_owned(),
             staged_at: "2026-07-17T09:00:00Z".to_string(),
             expected_sha256: None,
+            signature: None,
         }
     }
 
@@ -1151,7 +1216,9 @@ mod tests {
         let err = apply_update_binary_confined(
             outside.to_str().unwrap(),
             Some(&sha256_hex(b"EVIL")),
+            None,
             &[staging],
+            &strict_test_policy(),
         )
         .expect_err("apply must refuse a source outside the staging dir");
         let msg = format!("{err:#}");
@@ -1162,6 +1229,21 @@ mod tests {
     }
 
     // ── AGT-004: apply-time SHA-256 integrity verification ────────────────
+
+    #[cfg(unix)]
+    use crate::update::signature::test_support::{sign_digest, test_signing_key};
+
+    /// Seed of the only key [`strict_test_policy`] trusts.
+    #[cfg(unix)]
+    const TEST_KEY_SEED: u8 = 42;
+
+    /// The release-build signature rule (no unsigned allowance), trusting a
+    /// fixed test key — so these tests exercise production behaviour even
+    /// though the test binary itself is a debug build.
+    #[cfg(unix)]
+    fn strict_test_policy() -> SignaturePolicy {
+        SignaturePolicy::strict(vec![test_signing_key(TEST_KEY_SEED).verifying_key()])
+    }
 
     #[cfg(unix)]
     fn sha256_hex(bytes: &[u8]) -> String {
@@ -1198,7 +1280,9 @@ mod tests {
         let err = confine_and_verify(
             staged.to_str().unwrap(),
             Some(&wrong_digest),
+            None,
             std::slice::from_ref(&staging),
+            &strict_test_policy(),
         )
         .expect_err("a digest mismatch must be rejected");
         let msg = format!("{err:#}");
@@ -1224,7 +1308,9 @@ mod tests {
         let err = confine_and_verify(
             staged.to_str().unwrap(),
             Some(&good_digest),
+            None,
             std::slice::from_ref(&staging),
+            &strict_test_policy(),
         )
         .expect_err("bytes swapped after staging must be rejected at apply time");
         let msg = format!("{err:#}").to_ascii_lowercase();
@@ -1245,7 +1331,9 @@ mod tests {
         let err = confine_and_verify(
             staged.to_str().unwrap(),
             None,
+            None,
             std::slice::from_ref(&staging),
+            &strict_test_policy(),
         )
         .expect_err("a missing expected digest must fail closed");
         let msg = format!("{err:#}");
@@ -1265,12 +1353,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (staging, staged, good_digest) = stage_valid_binary(tmp.path(), b"CORRECT-AGENT-BYTES");
 
+        let signature = sign_digest(&test_signing_key(TEST_KEY_SEED), &good_digest);
+
         let confined = confine_and_verify(
             staged.to_str().unwrap(),
             Some(&good_digest),
+            Some(&signature),
             std::slice::from_ref(&staging),
+            &strict_test_policy(),
         )
-        .expect("a matching, confined binary must pass the gate");
+        .expect("a matching, confined, signed binary must pass the gate");
         assert_eq!(confined, std::fs::canonicalize(&staged).unwrap());
     }
 
@@ -1290,5 +1382,120 @@ mod tests {
         assert!(verify_confined_digest(&tmp.path().join("does-not-exist"), Some(&good)).is_err());
         // Match → OK.
         assert!(verify_confined_digest(&bin, Some(&good)).is_ok());
+    }
+
+    // ── AGT-005: apply-time Ed25519 signature verification (#3213) ──────
+
+    /// Drive the gate with a staged, digest-correct binary and `signature`,
+    /// returning the error (the gate must refuse).
+    #[cfg(unix)]
+    fn gate_rejects_with(signature: Option<&str>, policy: &SignaturePolicy) -> anyhow::Error {
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, good_digest) = stage_valid_binary(tmp.path(), b"STAGED-AGENT");
+        confine_and_verify(
+            staged.to_str().unwrap(),
+            Some(&good_digest),
+            signature,
+            std::slice::from_ref(&staging),
+            policy,
+        )
+        .expect_err("the gate must refuse this signature")
+    }
+
+    #[cfg(unix)]
+    fn signature_error_of(err: &anyhow::Error) -> UpdateSignatureError {
+        err.downcast_ref::<UpdateSignatureError>()
+            .cloned()
+            .unwrap_or_else(|| panic!("typed signature error must be in the chain: {err:#}"))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_refuses_an_unsigned_staged_binary() {
+        // Digest matches, path is confined — but no signature: a release build
+        // refuses before any swap.
+        let err = gate_rejects_with(None, &strict_test_policy());
+        assert_eq!(signature_error_of(&err), UpdateSignatureError::Missing);
+        assert!(format!("{err:#}").contains("signature verification"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_refuses_a_binary_signed_by_a_foreign_key() {
+        let digest = sha256_hex(b"STAGED-AGENT");
+        let foreign = sign_digest(&test_signing_key(7), &digest);
+        let err = gate_rejects_with(Some(&foreign), &strict_test_policy());
+        assert_eq!(signature_error_of(&err), UpdateSignatureError::Invalid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_refuses_a_signature_made_for_different_bytes() {
+        // A genuine release signature, lifted from another binary, does not
+        // transfer to the staged one.
+        let other = sign_digest(
+            &test_signing_key(TEST_KEY_SEED),
+            &sha256_hex(b"SOME-OTHER-RELEASE"),
+        );
+        let err = gate_rejects_with(Some(&other), &strict_test_policy());
+        assert_eq!(signature_error_of(&err), UpdateSignatureError::Invalid);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_refuses_everything_with_the_placeholder_key() {
+        let digest = sha256_hex(b"STAGED-AGENT");
+        let sig = sign_digest(&test_signing_key(TEST_KEY_SEED), &digest);
+        let no_key = SignaturePolicy::strict(Vec::new());
+        let err = gate_rejects_with(Some(&sig), &no_key);
+        assert_eq!(
+            signature_error_of(&err),
+            UpdateSignatureError::KeyNotConfigured
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_checks_the_digest_before_the_signature() {
+        // A validly signed digest is useless if the on-disk bytes were swapped:
+        // the integrity guard fires first and no signature error is reported.
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, good_digest) = stage_valid_binary(tmp.path(), b"GOOD-BYTES");
+        let sig = sign_digest(&test_signing_key(TEST_KEY_SEED), &good_digest);
+        std::fs::write(&staged, b"SWAPPED-BYTES").unwrap();
+        let err = confine_and_verify(
+            staged.to_str().unwrap(),
+            Some(&good_digest),
+            Some(&sig),
+            std::slice::from_ref(&staging),
+            &strict_test_policy(),
+        )
+        .expect_err("swapped bytes must be refused");
+        assert!(err.downcast_ref::<UpdateSignatureError>().is_none());
+        assert!(format!("{err:#}").contains("integrity verification"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_update_binary_confined_refuses_unsigned_before_touching_the_binary() {
+        // The full apply entry point (not just the gate) refuses an unsigned,
+        // otherwise-valid staged binary and returns — it never reaches the
+        // backup/swap/re-exec (which would replace this test process).
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, good_digest) = stage_valid_binary(tmp.path(), b"UNSIGNED-AGENT");
+        let exe = std::env::current_exe().unwrap();
+        let err = apply_update_binary_confined(
+            staged.to_str().unwrap(),
+            Some(&good_digest),
+            None,
+            &[staging],
+            &strict_test_policy(),
+        )
+        .expect_err("an unsigned update must never be applied");
+        assert_eq!(signature_error_of(&err), UpdateSignatureError::Missing);
+        assert!(
+            !backup_path_for(&exe).exists(),
+            "the running binary must not even be backed up"
+        );
     }
 }

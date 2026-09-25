@@ -1000,6 +1000,7 @@ Before creating a release, run the quality scripts and verify:
 ```
 
 - [ ] All scripts pass without errors
+- [ ] The [agent update signing key](#agent-update-signing-key) is configured (the release workflow refuses to run otherwise)
 - [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
 - [ ] No known release-blocking issues remain
 
@@ -1073,10 +1074,12 @@ git push origin vX.Y.Z
 
 Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/release.yml), which will:
 
-1. Create a GitHub Release with notes extracted from `CHANGELOG.md`
-2. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb)
-3. Upload all artifacts to the GitHub Release page
-4. Update the `latest` tag
+1. Refuse to start if the [agent update signing key](#agent-update-signing-key) is not configured
+2. Create a GitHub Release with notes extracted from `CHANGELOG.md`
+3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb)
+4. Upload all artifacts to the GitHub Release page, each agent binary with a `.sha256`
+   checksum and a `.sig` update signature
+5. Update the `latest` tag
 
 ### Post-Release Verification
 
@@ -1086,6 +1089,61 @@ After the workflow completes:
 - [ ] Visit the [Releases page](https://github.com/armaxri/termiHub/releases) — verify the release exists with correct notes
 - [ ] Confirm all platform artifacts are attached (macOS x64, macOS ARM64, Windows x64, Linux x64, Linux ARM64)
 - [ ] Download and smoke-test at least one artifact on your platform
+
+### Agent Update Signing Key
+
+A release-built agent only applies a self-update (GitHub-fetched or desktop-pushed via
+`agent.request_update`) whose binary carries a valid Ed25519 signature from the termiHub
+release key (AGT-005, [#3213](https://github.com/armaxri/termiHub/issues/3213)). The public
+half is compiled into the agent from
+[`agent/keys/update-signing.pub.pem`](../agent/keys/update-signing.pub.pem); the private
+half exists **only** as the `AGENT_UPDATE_SIGNING_KEY` GitHub Actions secret.
+
+```mermaid
+flowchart LR
+    K["setup-agent-signing-key.sh<br/>(maintainer, once)"] -->|public key| P[agent/keys/update-signing.pub.pem]
+    K -->|private key, stdin| S[(secret AGENT_UPDATE_SIGNING_KEY)]
+    P -->|include_str!| A[agent binary]
+    S --> R[release.yml sign-agent-binaries]
+    R -->|"&lt;asset&gt;.sig"| G[GitHub Release]
+    G -->|binary + .sha256 + .sig| A2[running agent verifies before apply]
+```
+
+- **What is signed:** `Ed25519(b"termihub-agent-update-v1\0" || SHA-256(binary))`. The
+  `<asset>.sig` sidecar holds the 64-byte signature, base64, one line. See
+  `agent/src/update/signature.rs` and `scripts/internal/agent-update-signing.sh`.
+- **Placeholder:** until the key is generated, the committed file is a marked
+  **placeholder**. Release-built agents then refuse every update (fail closed), and
+  `release.yml` fails in its first job. `dev-build.yml` publishes unsigned agents with a
+  warning.
+- **Debug builds** (`cargo test`, `scripts/dev.sh`) accept a _missing_ signature with a loud
+  warning so the dev loop can push locally built agents; a present-but-invalid signature is
+  still refused. Release builds, including the `test-hooks` system-test build, never skip.
+
+**One-time setup (maintainer):**
+
+```bash
+./scripts/internal/setup-agent-signing-key.sh --dry-run   # optional trial: uploads nothing
+./scripts/internal/setup-agent-signing-key.sh             # generates + stores the secret
+```
+
+It writes the public key into `agent/keys/update-signing.pub.pem`, stores the private key
+via `gh secret set AGENT_UPDATE_SIGNING_KEY` (stdin, never echoed, shredded locally), and
+self-tests the pair. Then commit the `.pub.pem` through a normal PR into `develop`. There is
+deliberately no backup of the private key.
+
+**Rotation:** agents only trust the keys compiled into them, so a planned rotation needs an
+overlap. The agent already trusts **every** `PUBLIC KEY` block in `update-signing.pub.pem`,
+so the principle is: (1) add the new public key next to the old one and keep signing with
+the old private key; (2) ship at least one release carrying both keys and let agents update
+to it; (3) switch the secret to the new private key and drop the old block. The setup script
+does not yet automate step (1)–(3) (it discards the private key it does not upload) — that
+tooling is tracked in [#3329](https://github.com/armaxri/termiHub/issues/3329). Until then, plan a rotation with the maintainer
+rather than re-running the script.
+
+**Compromise:** replace the secret and the public key immediately (`--force`). Agents that
+still embed only the leaked key can no longer be updated automatically — redeploy them from
+the desktop (the immediate-deploy path installs over SSH, independent of this check).
 
 ### Hotfix Process
 

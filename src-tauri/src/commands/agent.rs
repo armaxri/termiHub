@@ -314,6 +314,8 @@ pub async fn request_agent_deferred_update(
             // the digest it recorded at download). A path pushed here without a
             // digest would fail closed at the agent's apply-time check (AGT-004).
             expected_sha256: None,
+            // Likewise the agent re-verifies the signature it staged (AGT-005).
+            signature: None,
         })
         .map_err(|e| {
             TerminalError::RemoteError(format!(
@@ -393,6 +395,7 @@ pub async fn request_agent_update(
             // "Apply Now" for a coordinated self-staged update: no path, so no
             // digest — the agent verifies against the digest it staged with.
             expected_sha256: None,
+            signature: None,
             ack_timeout_secs: None,
         })
         .map_err(|e| {
@@ -1023,11 +1026,13 @@ async fn run_coordinated_update(
     let rpc_manager = manager.clone();
     let version = env!("CARGO_PKG_VERSION").to_string();
     let expected_sha256 = staged.expected_sha256;
+    let signature = staged.signature;
     let rpc_result = tauri::async_runtime::spawn_blocking(move || {
         let params = serde_json::to_value(AgentRequestUpdateParams {
             binary_path: Some(binary_path),
             version: Some(version),
             expected_sha256: Some(expected_sha256),
+            signature,
             ack_timeout_secs: None,
         })
         .map_err(|e| {

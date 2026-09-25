@@ -37,6 +37,8 @@ cd "$REPO_ROOT"
 # actually implement a help branch (check with: grep -l -- '--help' scripts/*.sh).
 SCRIPTS=(
   "scripts/build-agents.sh"
+  "scripts/internal/agent-update-signing.sh"
+  "scripts/internal/setup-agent-signing-key.sh"
   "scripts/build-rdp-sidecar.sh"
   "scripts/ci-local.sh"
   "scripts/package-plugin.sh"

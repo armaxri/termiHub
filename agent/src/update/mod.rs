@@ -52,6 +52,8 @@ mod checksum;
 mod coordinate;
 mod download;
 mod github;
+mod signature;
+use signature::SignaturePolicy;
 #[cfg(any(feature = "test-hooks", debug_assertions))]
 mod test_hook;
 mod version;
@@ -77,6 +79,7 @@ pub use apply::{
 };
 pub use coordinate::{coordinate_update, CoordinationOutcome, ACK_TIMEOUT};
 pub use github::{current_asset_suffix, DEFAULT_REPO};
+pub use signature::UpdateSignatureError;
 #[cfg(any(feature = "test-hooks", debug_assertions))]
 pub use test_hook::TestPendingUpdate;
 
@@ -221,6 +224,10 @@ pub struct UpdateConfig {
     /// Configured update strategy — gates whether a staged self-update
     /// auto-applies on idle (#1401).
     pub update_strategy: UpdateStrategy,
+    /// Which signing keys a downloaded binary must be signed by (AGT-005).
+    /// Always [`SignaturePolicy::for_build`] in production; tests substitute a
+    /// strict policy trusting a test key.
+    pub signature_policy: SignaturePolicy,
 }
 
 impl UpdateConfig {
@@ -264,6 +271,7 @@ impl UpdateConfig {
             staging_dir: AgentState::config_dir().join("updates"),
             user_agent: format!("termihub-agent/{current_version}"),
             update_strategy,
+            signature_policy: SignaturePolicy::for_build(),
         }
     }
 
@@ -395,16 +403,17 @@ async fn run_check_once(
 
     // When idle and we have a downloadable asset, stage a verified binary.
     let active_sessions = session_manager.active_count().await;
-    // The staged binary path together with the SHA-256 digest the download path
-    // verified it against — threaded to the apply path so the staged bytes are
-    // re-verified before the swap (AGT-004).
-    let mut staged_binary: Option<(String, String)> = None;
+    // The staged binary path together with the SHA-256 digest and signature the
+    // download path verified it against — threaded to the apply path so the
+    // staged bytes are re-verified before the swap (AGT-004 / AGT-005).
+    let mut staged_binary: Option<(String, download::VerifiedDownload)> = None;
     if active_sessions == 0 {
         if let (Some(suffix), Some(urls)) = (config.asset_suffix.as_deref(), asset_urls.as_ref()) {
             let dest = config.staged_binary_path(suffix);
-            match download::download_and_verify(client, urls, &dest).await {
-                Ok(digest) => {
-                    staged_binary = Some((dest.to_string_lossy().into_owned(), digest));
+            match download::download_and_verify(client, urls, &dest, &config.signature_policy).await
+            {
+                Ok(verified) => {
+                    staged_binary = Some((dest.to_string_lossy().into_owned(), verified));
                     info!(
                         "Self-update: staged verified agent {} at {}",
                         available_version,
@@ -447,13 +456,14 @@ async fn run_check_once(
     // apply. Because we are idle, an eligible strategy applies immediately via
     // exec-replace; if a session raced in, `request_deferred_update` re-checks
     // and defers to the last-disconnect hook so active sessions are never cut.
-    if let Some((binary_path, expected_sha256)) = staged_binary {
+    if let Some((binary_path, verified)) = staged_binary {
         if config.update_strategy.auto_applies_when_idle() {
             match session_manager
                 .request_deferred_update(
                     Some(binary_path),
                     Some(available_version.clone()),
-                    Some(expected_sha256),
+                    Some(verified.sha256),
+                    verified.signature,
                 )
                 .await
             {
@@ -475,7 +485,8 @@ async fn run_check_once(
                 .stage_pending_update(
                     binary_path,
                     available_version.clone(),
-                    Some(expected_sha256),
+                    Some(verified.sha256),
+                    verified.signature,
                 )
                 .await;
             info!(
@@ -530,6 +541,7 @@ mod tests {
     use crate::protocol::messages::JsonRpcNotification;
     use crate::session::manager::{SessionManager, SystemDaemonLauncher};
     use crate::state::persistence::PendingUpdate;
+    use crate::update::signature::test_support::{sign_digest, test_signing_key};
     use std::sync::Mutex as StdMutex;
     use tokio::sync::mpsc;
     use wiremock::matchers::{method, path};
@@ -585,6 +597,47 @@ mod tests {
             staging_dir,
             user_agent: "termihub-agent/test".to_string(),
             update_strategy,
+            signature_policy: SignaturePolicy::for_build(),
+        }
+    }
+
+    /// Seed of the test release key [`signing_config`] trusts.
+    const TEST_KEY_SEED: u8 = 11;
+
+    /// A config whose download policy is the strict, release-build rule
+    /// trusting the test release key.
+    fn signing_config(api_url: String, staging_dir: PathBuf) -> UpdateConfig {
+        UpdateConfig {
+            signature_policy: SignaturePolicy::strict(vec![
+                test_signing_key(TEST_KEY_SEED).verifying_key()
+            ]),
+            ..test_config(api_url, staging_dir, UpdateStrategy::Deferred)
+        }
+    }
+
+    /// [`UpdateApplier`] that records applies and enforces the same strict
+    /// test-key policy as [`signing_config`] at staging time.
+    struct StrictRecordingApplier {
+        applied: Arc<StdMutex<Vec<PendingUpdate>>>,
+    }
+
+    impl UpdateApplier for StrictRecordingApplier {
+        fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
+            self.applied
+                .lock()
+                .expect("recording lock")
+                .push(pending.clone());
+            Ok(())
+        }
+
+        fn check_signature(
+            &self,
+            digest_hex: &str,
+            signature: Option<&str>,
+        ) -> Result<(), UpdateSignatureError> {
+            SignaturePolicy::strict(vec![test_signing_key(TEST_KEY_SEED).verifying_key()])
+                .verify(digest_hex, signature)
+                .map(|_| ())
         }
     }
 
@@ -628,13 +681,34 @@ mod tests {
     /// Mount a `releases/latest` response advertising v0.3.0 with a binary +
     /// checksum asset served by the same mock server (SHA-256 of `b"abc"`).
     async fn mount_update_release(server: &MockServer) {
+        mount_update_release_with(server, None).await;
+    }
+
+    /// Like [`mount_update_release`], additionally publishing `signature` as the
+    /// `.sig` sidecar asset when given (AGT-005).
+    async fn mount_update_release_with(server: &MockServer, signature: Option<String>) {
+        let sig_asset = if signature.is_some() {
+            format!(
+                r#",{{"name":"termihub-agent-linux-x64.sig","browser_download_url":"{}/bin.sig"}}"#,
+                server.uri()
+            )
+        } else {
+            String::new()
+        };
         let body = format!(
             r#"{{"tag_name":"v0.3.0","assets":[
                 {{"name":"termihub-agent-linux-x64","browser_download_url":"{base}/bin"}},
-                {{"name":"termihub-agent-linux-x64.sha256","browser_download_url":"{base}/bin.sha256"}}
+                {{"name":"termihub-agent-linux-x64.sha256","browser_download_url":"{base}/bin.sha256"}}{sig_asset}
             ]}}"#,
             base = server.uri()
         );
+        if let Some(sig) = signature {
+            Mock::given(method("GET"))
+                .and(path("/bin.sig"))
+                .respond_with(ResponseTemplate::new(200).set_body_string(sig))
+                .mount(server)
+                .await;
+        }
         Mock::given(method("GET"))
             .and(path("/releases/latest"))
             .respond_with(ResponseTemplate::new(200).set_body_string(body))
@@ -909,5 +983,63 @@ mod tests {
         let registry = std::sync::Arc::new(crate::registry::build_registry());
         let session_manager = std::sync::Arc::new(SessionManager::new(tx.clone(), registry));
         spawn_self_update_task(config, session_manager, tx, CancellationToken::new());
+    }
+
+    // ── AGT-005: signed releases (#3213) ─────────────────────────────────
+
+    #[tokio::test]
+    async fn signed_release_threads_the_signature_to_apply() {
+        let server = MockServer::start().await;
+        let sig = sign_digest(&test_signing_key(TEST_KEY_SEED), SHA256_OF_ABC);
+        mount_update_release_with(&server, Some(sig.clone())).await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = signing_config(
+            format!("{}/releases/latest", server.uri()),
+            tmp.path().join("updates"),
+        );
+        let applied = Arc::new(StdMutex::new(Vec::new()));
+        let mgr = test_session_manager(
+            tmp.path().join("state.json"),
+            Arc::new(StrictRecordingApplier {
+                applied: applied.clone(),
+            }),
+        );
+        let (tx, _rx) = mpsc::unbounded_channel();
+
+        run_check_once(&config, &reqwest::Client::new(), &mgr, &tx)
+            .await
+            .unwrap();
+
+        let log = applied.lock().unwrap();
+        assert_eq!(log.len(), 1, "a validly signed release is applied");
+        assert_eq!(log[0].signature.as_deref(), Some(sig.as_str()));
+        assert_eq!(log[0].expected_sha256.as_deref(), Some(SHA256_OF_ABC));
+    }
+
+    #[tokio::test]
+    async fn unsigned_release_is_never_staged_under_the_release_policy() {
+        let server = MockServer::start().await;
+        mount_update_release(&server).await;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let staging_dir = tmp.path().join("updates");
+        let config = signing_config(
+            format!("{}/releases/latest", server.uri()),
+            staging_dir.clone(),
+        );
+        let (mgr, applied) = recording_manager(tmp.path().join("state.json"));
+        let (tx, mut rx) = mpsc::unbounded_channel();
+
+        run_check_once(&config, &reqwest::Client::new(), &mgr, &tx)
+            .await
+            .unwrap();
+
+        // The update is still announced, but nothing was staged or applied.
+        let notif = try_recv(&mut rx).expect("update notification emitted");
+        assert_eq!(notif.params["staged"], false);
+        assert!(applied.lock().unwrap().is_empty());
+        assert!(mgr.pending_update_for_test().await.is_none());
+        assert!(!staging_dir.join("termihub-agent-linux-x64").exists());
     }
 }

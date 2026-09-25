@@ -80,6 +80,11 @@ pub const PROCESS_OPERATION_FAILED: i64 = -32019;
 /// (e.g., serial, telnet) (PROD-0028).
 pub const PROCESS_NOT_SUPPORTED: i64 = -32020;
 
+/// An agent update was refused because its Ed25519 signature is missing,
+/// malformed, or does not verify against the agent's compiled-in release key
+/// (or the agent was built with the placeholder key) (AGT-005, #3213).
+pub const UPDATE_SIGNATURE_REJECTED: i64 = -32021;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -112,6 +117,7 @@ mod tests {
             SERVICE_START_FAILED,
             PROCESS_OPERATION_FAILED,
             PROCESS_NOT_SUPPORTED,
+            UPDATE_SIGNATURE_REJECTED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -157,6 +163,7 @@ mod tests {
             DEFERRED_UPDATE_FAILED,
             PROCESS_OPERATION_FAILED,
             PROCESS_NOT_SUPPORTED,
+            UPDATE_SIGNATURE_REJECTED,
         ];
         for code in app_codes {
             assert!(

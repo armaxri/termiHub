@@ -21,6 +21,22 @@ jobs:
         with:
           fetch-depth: 0  # Get all history for changelog
 
+      # Fail the release BEFORE anything is built or published when agent update
+      # signing is not configured (AGT-005, #3213): a release-built agent refuses
+      # every self-update that is not signed by the key compiled into it, so a
+      # release built from the committed PLACEHOLDER key file, or without the
+      # signing secret, would ship agents that can never be updated.
+      - name: Require agent update signing key
+        env:
+          AGENT_UPDATE_SIGNING_KEY: ${{ secrets.AGENT_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          scripts/internal/agent-update-signing.sh check-key
+          if [ -z "${AGENT_UPDATE_SIGNING_KEY}" ]; then
+            echo "::error::The AGENT_UPDATE_SIGNING_KEY secret is not set. Run scripts/internal/setup-agent-signing-key.sh (maintainer, one-time) — see docs/contributing.md → 'Agent update signing key'."
+            exit 1
+          fi
+
       - name: Get version from tag
         id: get_version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
@@ -487,6 +503,80 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Verify the full checksummed asset set + release notes are present (folds in
+  # Sign every agent binary with the release key (AGT-005, #3213). One job holds
+  # the private key (never the build jobs): it downloads the just-published
+  # agent assets, checks their .sha256 sidecars, writes a detached <asset>.sig
+  # for each (Ed25519 over "termihub-agent-update-v1\0" || SHA-256), verifies
+  # them against the committed public key, uploads them, and finally re-downloads
+  # the published assets to verify what users will actually fetch.
+  sign-agent-binaries:
+    name: Sign Agent Binaries
+    needs:
+      [
+        create-release,
+        agent-binaries-linux,
+        agent-binaries-macos,
+        agent-binaries-windows,
+      ]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Sign, verify and upload agent signatures
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+          AGENT_UPDATE_SIGNING_KEY: ${{ secrets.AGENT_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          HELPER="$GITHUB_WORKSPACE/scripts/internal/agent-update-signing.sh"
+          agents=(
+            termihub-agent-linux-x64
+            termihub-agent-linux-arm64
+            termihub-agent-linux-armv7
+            termihub-agent-macos-arm64
+            termihub-agent-macos-x64
+            termihub-agent-windows-x64.exe
+            termihub-agent-windows-arm64.exe
+          )
+
+          work="$RUNNER_TEMP/agent-signing"
+          mkdir -p "$work/assets" "$work/published"
+          cd "$work/assets"
+          for a in "${agents[@]}"; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$a" --pattern "${a}.sha256"
+          done
+          # Sign only bytes that match their published checksum.
+          for a in "${agents[@]}"; do
+            sha256sum -c "${a}.sha256"
+          done
+
+          # The private key exists on disk only for the signing call.
+          umask 077
+          key="$RUNNER_TEMP/agent-update-signing-key.pem"
+          printf '%s\n' "$AGENT_UPDATE_SIGNING_KEY" > "$key"
+          trap 'shred -u "$key" 2>/dev/null || rm -f "$key"' EXIT
+          "$HELPER" sign --key "$key" "${agents[@]}"
+          shred -u "$key"
+
+          sigs=()
+          for a in "${agents[@]}"; do
+            sigs+=("${a}.sig")
+          done
+          gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" --clobber "${sigs[@]}"
+
+          # Verify what is actually published, not just the local copies.
+          cd "$work/published"
+          for a in "${agents[@]}"; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --pattern "$a" --pattern "${a}.sig"
+          done
+          "$HELPER" verify "${agents[@]}"
+
   # #480). release.yml is not exercised by per-PR CI, so this turns the old manual
   # "eyeball the Release page" checklist into a hard gate: if any expected asset is
   # missing, the release job fails instead of shipping an incomplete release.
@@ -499,6 +589,7 @@ jobs:
         agent-binaries-linux,
         agent-binaries-macos,
         agent-binaries-windows,
+        sign-agent-binaries,
       ]
     runs-on: ubuntu-latest
 
@@ -525,7 +616,8 @@ jobs:
           )
 
           # Agent binaries — names mirror the agent-binaries-* matrices; each ships
-          # a .sha256 sidecar the desktop verifies before install (#1350).
+          # a .sha256 sidecar the desktop verifies before install (#1350) and a
+          # .sig signature the agent verifies before a self-update (AGT-005).
           agents=(
             termihub-agent-linux-x64
             termihub-agent-linux-arm64
@@ -536,7 +628,7 @@ jobs:
             termihub-agent-windows-arm64.exe
           )
           for a in "${agents[@]}"; do
-            expected+=("$a" "${a}.sha256")
+            expected+=("$a" "${a}.sha256" "${a}.sig")
           done
 
           echo "Fetching asset list for ${TAG}..."

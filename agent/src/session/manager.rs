@@ -34,6 +34,7 @@ use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
 use crate::update::{
     cleanup_stale_update_backup, confine_to_staging, prune_applied_pending_update,
     should_apply_deferred_update, StagingConfinementError, SystemUpdateApplier, UpdateApplier,
+    UpdateSignatureError,
 };
 
 /// Maximum number of concurrent sessions the agent supports.
@@ -93,6 +94,7 @@ pub trait SessionManagerApi: Send + Sync + 'static {
         binary_path: Option<String>,
         version: Option<String>,
         expected_sha256: Option<String>,
+        signature: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError>;
 
     /// Attach a client to an existing session.
@@ -165,6 +167,10 @@ pub enum DeferredUpdateError {
     /// Applying the update failed (binary swap or re-exec error, or an
     /// unsupported platform).
     ApplyFailed(anyhow::Error),
+    /// The update was refused because its Ed25519 signature is missing,
+    /// malformed, or does not verify against the compiled-in release key
+    /// (AGT-005, #3213). Surfaced to the desktop with a dedicated error code.
+    SignatureRejected(UpdateSignatureError),
 }
 
 impl fmt::Display for DeferredUpdateError {
@@ -173,6 +179,7 @@ impl fmt::Display for DeferredUpdateError {
             Self::BinaryNotFound(path) => write!(f, "Update binary not found: {path}"),
             Self::NoPendingUpdate => write!(f, "No pending update to apply"),
             Self::ApplyFailed(e) => write!(f, "Failed to apply update: {e:#}"),
+            Self::SignatureRejected(e) => write!(f, "Update signature rejected: {e}"),
         }
     }
 }
@@ -192,6 +199,16 @@ fn map_confinement_error(e: StagingConfinementError) -> DeferredUpdateError {
         StagingConfinementError::OutsideStaging { path } => DeferredUpdateError::ApplyFailed(
             anyhow::anyhow!("update binary path {path} is outside the trusted staging directory"),
         ),
+    }
+}
+
+/// Map an apply failure onto the deferred-update error surface, lifting a
+/// signature refusal (AGT-005) out of the error chain into its typed variant so
+/// the RPC layer can report it with its own error code.
+fn map_apply_error(e: anyhow::Error) -> DeferredUpdateError {
+    match e.downcast_ref::<UpdateSignatureError>() {
+        Some(sig) => DeferredUpdateError::SignatureRejected(sig.clone()),
+        None => DeferredUpdateError::ApplyFailed(e),
     }
 }
 
@@ -1145,6 +1162,12 @@ impl SessionManager {
     /// staged with — is used; this is the "Apply Now" path for a self-update
     /// binary the agent downloaded earlier (`expected_sha256` is ignored there).
     ///
+    /// `signature` is the detached Ed25519 signature over `expected_sha256`
+    /// (AGT-005, #3213). A caller-supplied binary's signature is checked
+    /// **before** it is staged, so a refused update is reported immediately
+    /// rather than persisted as a deferred update that could never apply; the
+    /// apply path verifies it again immediately before the swap.
+    ///
     /// The update is applied immediately **only** when there are zero active
     /// sessions; otherwise it is deferred until the last session disconnects
     /// (see [`SessionManager::close`]). Active sessions are never interrupted.
@@ -1153,6 +1176,7 @@ impl SessionManager {
         binary_path: Option<String>,
         version: Option<String>,
         expected_sha256: Option<String>,
+        signature: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
         // Stage a caller-supplied binary, or fall back to an existing pending
         // update.
@@ -1163,6 +1187,14 @@ impl SessionManager {
             // Fails closed — a rejection returns before anything is persisted.
             let confined = confine_to_staging(&self.trusted_staging_roots(), Path::new(&path))
                 .map_err(map_confinement_error)?;
+            // AGT-005: refuse an unsigned / badly signed update up front, before
+            // it is persisted. (A missing digest is left to the apply path's
+            // AGT-004 fail-closed check.)
+            if let Some(digest) = expected_sha256.as_deref() {
+                self.update_applier
+                    .check_signature(digest, signature.as_deref())
+                    .map_err(DeferredUpdateError::SignatureRejected)?;
+            }
             let pending = PendingUpdate {
                 version: version.unwrap_or_default(),
                 binary_path: confined.to_string_lossy().into_owned(),
@@ -1171,6 +1203,9 @@ impl SessionManager {
                 // path can re-verify the staged bytes before the swap. A missing
                 // digest here is persisted as `None` and fails closed at apply.
                 expected_sha256,
+                // AGT-005: carried so the apply path re-verifies it before the
+                // swap (a deferred apply may run much later).
+                signature,
             };
             self.persist_state_delta(move |s| {
                 s.update.pending_update = Some(pending);
@@ -1185,9 +1220,7 @@ impl SessionManager {
 
         let active = self.active_count().await;
         if should_apply_deferred_update(active, true) {
-            self.apply_pending_update()
-                .await
-                .map_err(DeferredUpdateError::ApplyFailed)?;
+            self.apply_pending_update().await.map_err(map_apply_error)?;
             Ok(DeferredUpdateOutcome::Applying)
         } else {
             info!(
@@ -1221,18 +1254,21 @@ impl SessionManager {
     ///
     /// `expected_sha256` is the digest the download path verified the binary
     /// against; it is recorded so the eventual apply re-verifies the staged
-    /// bytes before the swap (AGT-004).
+    /// bytes before the swap (AGT-004). `signature` is the downloaded `.sig`
+    /// sidecar, re-verified at apply time (AGT-005).
     pub async fn stage_pending_update(
         &self,
         binary_path: String,
         version: String,
         expected_sha256: Option<String>,
+        signature: Option<String>,
     ) {
         let pending = PendingUpdate {
             version,
             binary_path,
             staged_at: Utc::now().to_rfc3339(),
             expected_sha256,
+            signature,
         };
         self.persist_state_delta(move |s| {
             s.update.pending_update = Some(pending);
@@ -1485,8 +1521,16 @@ impl SessionManagerApi for SessionManager {
         binary_path: Option<String>,
         version: Option<String>,
         expected_sha256: Option<String>,
+        signature: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
-        SessionManager::request_deferred_update(self, binary_path, version, expected_sha256).await
+        SessionManager::request_deferred_update(
+            self,
+            binary_path,
+            version,
+            expected_sha256,
+            signature,
+        )
+        .await
     }
 
     async fn attach(&self, session_id: &str) -> Result<(), String> {
@@ -2017,6 +2061,7 @@ mod tests {
                 binary_path: path.to_string(),
                 staged_at: "2026-07-14T09:00:00Z".to_string(),
                 expected_sha256: None,
+                signature: None,
             }
         }
 
@@ -2093,6 +2138,7 @@ mod tests {
                 binary_path: "/tmp/already-applied-agent".to_string(),
                 staged_at: "2026-07-17T09:00:00Z".to_string(),
                 expected_sha256: None,
+                signature: None,
             });
             seeded.save_to(&state_path);
 
@@ -2150,6 +2196,7 @@ mod tests {
                 binary_path: staged.to_string_lossy().into_owned(),
                 staged_at: "2026-07-17T09:00:00Z".to_string(),
                 expected_sha256: None,
+                signature: None,
             });
             seeded.save_to(&state_path);
 
@@ -2214,6 +2261,7 @@ mod tests {
                     Some(bin.to_string_lossy().into_owned()),
                     Some("1.0.0".to_string()),
                     Some("a".repeat(64)),
+                    None,
                 )
                 .await
                 .unwrap();
@@ -2251,7 +2299,7 @@ mod tests {
             std::fs::write(&bin, b"BIN").unwrap();
 
             let outcome = mgr
-                .request_deferred_update(Some(bin.to_string_lossy().into_owned()), None, None)
+                .request_deferred_update(Some(bin.to_string_lossy().into_owned()), None, None, None)
                 .await
                 .unwrap();
 
@@ -2272,7 +2320,10 @@ mod tests {
             mgr.seed_pending_update_for_test(fake_pending("/tmp/staged-agent"))
                 .await;
 
-            let outcome = mgr.request_deferred_update(None, None, None).await.unwrap();
+            let outcome = mgr
+                .request_deferred_update(None, None, None, None)
+                .await
+                .unwrap();
             assert!(matches!(outcome, DeferredUpdateOutcome::Applying));
             let log = applied.lock().unwrap();
             assert_eq!(log.len(), 1);
@@ -2283,7 +2334,7 @@ mod tests {
         async fn request_without_path_and_no_pending_errors() {
             let (mgr, _applied, _tmp) = manager_with_recording_applier();
             let err = mgr
-                .request_deferred_update(None, None, None)
+                .request_deferred_update(None, None, None, None)
                 .await
                 .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::NoPendingUpdate));
@@ -2293,7 +2344,7 @@ mod tests {
         async fn request_with_missing_binary_errors() {
             let (mgr, _applied, _tmp) = manager_with_recording_applier();
             let err = mgr
-                .request_deferred_update(Some("/no/such/binary".to_string()), None, None)
+                .request_deferred_update(Some("/no/such/binary".to_string()), None, None, None)
                 .await
                 .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::BinaryNotFound(_)));
@@ -2309,7 +2360,12 @@ mod tests {
             std::fs::write(&outside, b"EVIL").unwrap();
 
             let err = mgr
-                .request_deferred_update(Some(outside.to_string_lossy().into_owned()), None, None)
+                .request_deferred_update(
+                    Some(outside.to_string_lossy().into_owned()),
+                    None,
+                    None,
+                    None,
+                )
                 .await
                 .expect_err("a binary outside the staging dir must be rejected");
             assert!(
@@ -2323,6 +2379,117 @@ mod tests {
             assert!(
                 mgr.pending_update_for_test().await.is_none(),
                 "a rejected update must never be staged as pending"
+            );
+        }
+
+        // ── AGT-005: signature refusal surfaces as a typed error (#3213) ──
+
+        /// Applier enforcing the release-build signature rule (no unsigned
+        /// allowance, no trusted key) at staging time, and failing any apply
+        /// with a typed signature error — the shape the real gate produces.
+        struct StrictSignatureApplier {
+            applied: AppliedLog,
+        }
+
+        impl UpdateApplier for StrictSignatureApplier {
+            fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
+                self.applied
+                    .lock()
+                    .expect("applied lock")
+                    .push(pending.clone());
+                Err(anyhow::Error::from(UpdateSignatureError::Missing).context(
+                    "refuse to apply an agent update binary that failed signature verification",
+                ))
+            }
+
+            fn check_signature(
+                &self,
+                _digest_hex: &str,
+                signature: Option<&str>,
+            ) -> Result<(), UpdateSignatureError> {
+                match signature {
+                    None => Err(UpdateSignatureError::Missing),
+                    Some(_) => Err(UpdateSignatureError::Invalid),
+                }
+            }
+        }
+
+        fn manager_with_strict_signature_applier() -> (SessionManager, AppliedLog, tempfile::TempDir)
+        {
+            let tmp = tempfile::tempdir().unwrap();
+            let applied: AppliedLog = Arc::new(StdMutex::new(Vec::new()));
+            let mgr = SessionManager::with_test_deps(
+                test_notification_tx(),
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                tmp.path().join("state.json"),
+                Arc::new(StrictSignatureApplier {
+                    applied: applied.clone(),
+                }),
+            );
+            (mgr, applied, tmp)
+        }
+
+        #[tokio::test]
+        async fn unsigned_pushed_update_is_refused_before_staging() {
+            let (mgr, applied, tmp) = manager_with_strict_signature_applier();
+            let staging = tmp.path().join("updates");
+            std::fs::create_dir_all(&staging).unwrap();
+            let bin = staging.join("staged-agent");
+            std::fs::write(&bin, b"UNSIGNED").unwrap();
+
+            let err = mgr
+                .request_deferred_update(
+                    Some(bin.to_string_lossy().into_owned()),
+                    Some("9.9.9".to_string()),
+                    Some("a".repeat(64)),
+                    None,
+                )
+                .await
+                .expect_err("an unsigned update must be refused");
+            assert!(
+                matches!(
+                    err,
+                    DeferredUpdateError::SignatureRejected(UpdateSignatureError::Missing)
+                ),
+                "got {err}"
+            );
+            assert!(applied.lock().unwrap().is_empty());
+            assert!(
+                mgr.pending_update_for_test().await.is_none(),
+                "a refused update must never be persisted as pending"
+            );
+        }
+
+        #[tokio::test]
+        async fn signature_failure_at_apply_maps_to_the_typed_variant() {
+            // "Apply Now" of an already-staged update: the signature refusal comes
+            // back from the applier inside an anyhow chain and must still surface
+            // as `SignatureRejected`, not a generic apply failure.
+            let (mgr, applied, _tmp) = manager_with_strict_signature_applier();
+            mgr.stage_pending_update(
+                "/tmp/staged".to_string(),
+                "9.9.9".to_string(),
+                Some("a".repeat(64)),
+                None,
+            )
+            .await;
+
+            let err = mgr
+                .request_deferred_update(None, None, None, None)
+                .await
+                .expect_err("the apply must fail");
+            assert!(
+                matches!(
+                    err,
+                    DeferredUpdateError::SignatureRejected(UpdateSignatureError::Missing)
+                ),
+                "got {err}"
+            );
+            assert_eq!(applied.lock().unwrap().len(), 1);
+            assert!(
+                mgr.pending_update_for_test().await.is_some(),
+                "a failed apply keeps the pending update"
             );
         }
 

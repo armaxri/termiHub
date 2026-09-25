@@ -33,12 +33,14 @@ pub struct ReleaseInfo {
 
 impl ReleaseInfo {
     /// Find the download URL for the binary asset matching `arch_suffix`
-    /// (e.g. `"linux-x64"`) and, when present, its `.sha256` sidecar.
+    /// (e.g. `"linux-x64"`) and, when present, its `.sha256` checksum and `.sig`
+    /// signature sidecars.
     ///
     /// Returns `None` when no binary asset for this platform is published.
     pub fn asset_urls_for(&self, arch_suffix: &str) -> Option<AssetUrls> {
         let binary_name = format!("{ASSET_BASE}-{arch_suffix}");
         let checksum_name = format!("{binary_name}.sha256");
+        let signature_name = format!("{binary_name}.sig");
 
         let binary_url = self
             .assets
@@ -50,10 +52,16 @@ impl ReleaseInfo {
             .iter()
             .find(|a| a.name == checksum_name)
             .map(|a| a.browser_download_url.clone());
+        let signature_url = self
+            .assets
+            .iter()
+            .find(|a| a.name == signature_name)
+            .map(|a| a.browser_download_url.clone());
 
         Some(AssetUrls {
             binary_url,
             checksum_url,
+            signature_url,
         })
     }
 }
@@ -64,6 +72,9 @@ pub struct AssetUrls {
     pub binary_url: String,
     /// `None` when the release does not publish a `.sha256` sidecar asset.
     pub checksum_url: Option<String>,
+    /// `None` when the release does not publish a `.sig` signature sidecar
+    /// (AGT-005) — a release-built agent then refuses to stage the binary.
+    pub signature_url: Option<String>,
 }
 
 /// Parse a GitHub `releases/latest` JSON body into a [`ReleaseInfo`].
@@ -130,6 +141,7 @@ mod tests {
         "assets": [
             { "name": "termihub-agent-linux-x64", "browser_download_url": "https://example.test/dl/termihub-agent-linux-x64" },
             { "name": "termihub-agent-linux-x64.sha256", "browser_download_url": "https://example.test/dl/termihub-agent-linux-x64.sha256" },
+            { "name": "termihub-agent-linux-x64.sig", "browser_download_url": "https://example.test/dl/termihub-agent-linux-x64.sig" },
             { "name": "termihub-agent-linux-arm64", "browser_download_url": "https://example.test/dl/termihub-agent-linux-arm64" }
         ]
     }"#;
@@ -138,7 +150,7 @@ mod tests {
     fn parse_release_json_extracts_tag_and_assets() {
         let info = parse_release_json(SAMPLE).unwrap();
         assert_eq!(info.tag_name, "v0.3.0");
-        assert_eq!(info.assets.len(), 3);
+        assert_eq!(info.assets.len(), 4);
         assert_eq!(info.assets[0].name, "termihub-agent-linux-x64");
     }
 
@@ -167,6 +179,10 @@ mod tests {
             urls.checksum_url.as_deref(),
             Some("https://example.test/dl/termihub-agent-linux-x64.sha256")
         );
+        assert_eq!(
+            urls.signature_url.as_deref(),
+            Some("https://example.test/dl/termihub-agent-linux-x64.sig")
+        );
     }
 
     #[test]
@@ -178,6 +194,7 @@ mod tests {
             "https://example.test/dl/termihub-agent-linux-arm64"
         );
         assert_eq!(urls.checksum_url, None);
+        assert_eq!(urls.signature_url, None);
     }
 
     #[test]

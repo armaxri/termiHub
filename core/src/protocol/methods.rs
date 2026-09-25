@@ -690,6 +690,14 @@ pub struct AgentRequestDeferredUpdateParams {
     /// "Apply Now", where the agent uses the digest it recorded at download.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_sha256: Option<String>,
+    /// Detached Ed25519 signature (standard base64 of the 64 raw bytes — the
+    /// contents of the published `<binary>.sig` sidecar) over
+    /// `b"termihub-agent-update-v1\0" || SHA-256(binary)` (AGT-005, #3213). A
+    /// release-built agent refuses to apply a binary without a signature that
+    /// verifies against its compiled-in release key. Omitted for a self-staged
+    /// "Apply Now", where the agent uses the signature it recorded at download.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -727,6 +735,14 @@ pub struct AgentRequestUpdateParams {
     /// "Apply Now", where the agent uses the digest it recorded at download.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_sha256: Option<String>,
+    /// Detached Ed25519 signature (standard base64 of the 64 raw bytes — the
+    /// contents of the published `<binary>.sig` sidecar) over
+    /// `b"termihub-agent-update-v1\0" || SHA-256(binary)` (AGT-005, #3213). A
+    /// release-built agent refuses to apply a binary without a signature that
+    /// verifies against its compiled-in release key. Omitted for a self-staged
+    /// "Apply Now", where the agent uses the signature it recorded at download.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
     /// How long other hosts get to disconnect before the update proceeds
     /// anyway. Omit for the default 10 s
     /// (`ACK_TIMEOUT` in the agent's `update` module); tests use a short window
@@ -2659,9 +2675,15 @@ mod tests {
                 binary_path: Some("/tmp/agent".to_string()),
                 version: Some("0.4.0".to_string()),
                 expected_sha256: Some("a".repeat(64)),
+                signature: Some("c2ln".to_string()),
             })
             .unwrap(),
-            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0", "expectedSha256": "a".repeat(64) }),
+            json!({
+                "binaryPath": "/tmp/agent",
+                "version": "0.4.0",
+                "expectedSha256": "a".repeat(64),
+                "signature": "c2ln",
+            }),
         );
         // Self-update "Apply Now": no staging inputs → `{}`.
         assert_eq!(
@@ -2669,6 +2691,7 @@ mod tests {
                 binary_path: None,
                 version: None,
                 expected_sha256: None,
+                signature: None,
             })
             .unwrap(),
             json!({}),
@@ -2684,6 +2707,7 @@ mod tests {
                 binary_path: Some("/tmp/agent".to_string()),
                 version: Some("0.4.0".to_string()),
                 expected_sha256: Some("b".repeat(64)),
+                signature: None,
                 ack_timeout_secs: None,
             })
             .unwrap(),
@@ -2694,6 +2718,7 @@ mod tests {
                 binary_path: None,
                 version: None,
                 expected_sha256: None,
+                signature: None,
                 ack_timeout_secs: None,
             })
             .unwrap(),

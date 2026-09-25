@@ -24,6 +24,13 @@ const GITHUB_REPO: &str = "armaxri/termiHub";
 /// agent binary release asset (e.g. `termihub-agent-linux-x64.sha256`).
 const CHECKSUM_EXT: &str = "sha256";
 
+/// File-name suffix for the detached Ed25519 signature sidecar published next
+/// to every release agent binary (e.g. `termihub-agent-linux-x64.sig`). The
+/// desktop does not verify it — the agent does, against its compiled-in release
+/// key, before applying a coordinated update (AGT-005, #3213). The desktop only
+/// fetches it alongside the binary and forwards its contents.
+const SIGNATURE_EXT: &str = "sig";
+
 /// Map a remote OS string and architecture string to the artifact suffix we use.
 ///
 /// The OS string may come from `uname -s` (Linux, macOS, or a MinGW/MSYS/Cygwin
@@ -222,6 +229,42 @@ fn checksum_sidecar_path(binary_path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// Return the path of the `.sig` signature sidecar for a binary path.
+fn signature_sidecar_path(binary_path: &Path) -> PathBuf {
+    let mut name = binary_path.as_os_str().to_owned();
+    name.push(".");
+    name.push(SIGNATURE_EXT);
+    PathBuf::from(name)
+}
+
+/// Read the base64 Ed25519 signature from the `.sig` sidecar next to a resolved
+/// agent binary, if one exists (AGT-005, #3213).
+///
+/// Returned verbatim (trimmed) for the `signature` param of
+/// `agent.request_update`; the agent is the verifier. `None` for local dev
+/// builds and dev/branch downloads, which are not signed — a release-built
+/// agent refuses such an update, a debug-built one tolerates it with a warning.
+pub fn read_signature_sidecar(binary_path: &Path) -> Option<String> {
+    fs::read_to_string(signature_sidecar_path(binary_path))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Best-effort fetch of the `.sig` sidecar published next to `url` into
+/// `<dest>.sig`. A missing signature is not an error here — the agent decides
+/// (release agents refuse unsigned updates). Any stale sidecar from a previous
+/// download is removed first so it can never be paired with new bytes.
+fn fetch_signature_sidecar(url: &str, dest: &Path) {
+    let sig_sidecar = signature_sidecar_path(dest);
+    let _ = fs::remove_file(&sig_sidecar);
+    let sig_url = format!("{url}.{SIGNATURE_EXT}");
+    if let Err(e) = download_to_file(&sig_url, &sig_sidecar, |_, _| {}) {
+        let _ = fs::remove_file(&sig_sidecar);
+        debug!("No signature sidecar at {sig_url} ({e}); forwarding the binary unsigned");
+    }
+}
+
 /// Verify a resolved binary against a `.sha256` sidecar sitting next to it.
 ///
 /// - Sidecar present and matching → `Ok(())`.
@@ -322,6 +365,7 @@ where
         let _ = fs::remove_file(&sidecar);
         return Err(e);
     }
+    fetch_signature_sidecar(url, dest);
     Ok(())
 }
 
@@ -509,6 +553,15 @@ where
                 let cache_sidecar = checksum_sidecar_path(&cache_path);
                 if let Err(e) = fs::copy(&bundled_sidecar, &cache_sidecar) {
                     warn!("Failed to cache bundled checksum sidecar: {}", e);
+                }
+            }
+            // Keep the signature with the bytes it covers (AGT-005).
+            let bundled_sig = signature_sidecar_path(&path);
+            let cache_sig = signature_sidecar_path(&cache_path);
+            let _ = fs::remove_file(&cache_sig);
+            if bundled_sig.is_file() {
+                if let Err(e) = fs::copy(&bundled_sig, &cache_sig) {
+                    warn!("Failed to cache bundled signature sidecar: {}", e);
                 }
             }
         }
@@ -1150,5 +1203,36 @@ mod tests {
         server.join().unwrap();
 
         assert_eq!(fs::read(&dest).unwrap(), b"abc");
+    }
+
+    // ── AGT-005: signature sidecar forwarding (#3213) ─────────────────────
+
+    #[test]
+    fn signature_sidecar_path_appends_sig() {
+        assert_eq!(
+            signature_sidecar_path(Path::new("/c/termihub-agent-linux-x64")),
+            PathBuf::from("/c/termihub-agent-linux-x64.sig")
+        );
+    }
+
+    #[test]
+    fn read_signature_sidecar_trims_and_tolerates_absence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("termihub-agent-linux-x64");
+        std::fs::write(&bin, b"abc").unwrap();
+        assert_eq!(read_signature_sidecar(&bin), None);
+
+        std::fs::write(signature_sidecar_path(&bin), "  c2lnbmF0dXJl\n").unwrap();
+        assert_eq!(
+            read_signature_sidecar(&bin).as_deref(),
+            Some("c2lnbmF0dXJl")
+        );
+
+        std::fs::write(signature_sidecar_path(&bin), "\n").unwrap();
+        assert_eq!(
+            read_signature_sidecar(&bin),
+            None,
+            "blank sidecar = unsigned"
+        );
     }
 }

@@ -96,6 +96,15 @@ pub struct PendingUpdate {
     /// files (written before this field existed) loadable as `None`.
     #[serde(default)]
     pub expected_sha256: Option<String>,
+    /// Detached Ed25519 signature (base64) over the domain-separated
+    /// `expected_sha256`, carried from the route that staged the update (the
+    /// downloaded `.sig` sidecar, or the `signature` sent with
+    /// `agent.request_update`). The apply path verifies it against the agent's
+    /// compiled-in release key before the swap (AGT-005, #3213); `None` fails
+    /// closed in a release build. `#[serde(default)]` keeps older `state.json`
+    /// files loadable as `None`.
+    #[serde(default)]
+    pub signature: Option<String>,
 }
 
 /// Minimal session info stored for recovery.
@@ -754,6 +763,7 @@ mod tests {
             binary_path: "/tmp/updates/termihub-agent-linux-x64".to_string(),
             staged_at: "2026-07-10T12:00:01Z".to_string(),
             expected_sha256: Some("a".repeat(64)),
+            signature: Some("c2ln".to_string()),
         });
         state.save_to(&path);
 
@@ -768,6 +778,7 @@ mod tests {
             .expect("pending update present");
         assert_eq!(pending.version, "0.3.0");
         assert_eq!(pending.binary_path, "/tmp/updates/termihub-agent-linux-x64");
+        assert_eq!(pending.signature.as_deref(), Some("c2ln"));
     }
 
     #[test]
@@ -784,6 +795,7 @@ mod tests {
             binary_path: "/opt/updates/termihub-agent".to_string(),
             staged_at: "2026-07-14T09:00:00Z".to_string(),
             expected_sha256: None,
+            signature: None,
         });
         state.save_to(&path);
 
@@ -834,6 +846,7 @@ mod tests {
             .expect("legacy pending update present");
         assert_eq!(pending.binary_path, "/opt/updates/termihub-agent");
         assert_eq!(pending.expected_sha256, None);
+        assert_eq!(pending.signature, None);
     }
 
     #[test]

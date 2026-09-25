@@ -2020,6 +2020,12 @@ fn map_deferred_update_error(e: DeferredUpdateError) -> ErrorObjectOwned {
             errors::DEFERRED_UPDATE_FAILED,
             format!("Failed to apply update: {err:#}"),
         ),
+        // AGT-005 (#3213): a dedicated code so the desktop can tell "this update
+        // is not a genuine signed termiHub build" apart from a swap/exec failure.
+        DeferredUpdateError::SignatureRejected(err) => rpc_err(
+            errors::UPDATE_SIGNATURE_REJECTED,
+            format!("Update signature rejected: {err}"),
+        ),
     }
 }
 
@@ -2100,7 +2106,7 @@ fn register_agent_request_update(
         // Coordination is a courtesy, not a gate: every outcome proceeds. What
         // differs is only what we can report about the hosts we were waiting on.
         let apply = session_manager
-            .request_deferred_update(p.binary_path, p.version, p.expected_sha256)
+            .request_deferred_update(p.binary_path, p.version, p.expected_sha256, p.signature)
             .await
             .map_err(map_deferred_update_error)?;
 
@@ -2146,7 +2152,7 @@ fn register_agent_request_deferred_update(
                 .map_err(|e| invalid_params("agent.request_deferred_update", e))?;
 
             let outcome = session_manager
-                .request_deferred_update(p.binary_path, p.version, p.expected_sha256)
+                .request_deferred_update(p.binary_path, p.version, p.expected_sha256, p.signature)
                 .await
                 .map_err(map_deferred_update_error)?;
 
@@ -4840,6 +4846,7 @@ mod tests {
             _binary_path: Option<String>,
             _version: Option<String>,
             _expected_sha256: Option<String>,
+            _signature: Option<String>,
         ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
             let active = self.sessions.lock().await.len() as u32;
             if active == 0 {
@@ -5047,5 +5054,22 @@ mod tests {
         let conns = store.connections.lock().await;
         assert_eq!(conns.len(), 1);
         assert_eq!(conns[0].name, "My SSH");
+    }
+
+    // ── AGT-005: signature refusal error code (#3213) ────────────────────
+
+    #[test]
+    fn signature_rejection_maps_to_its_own_error_code() {
+        let err = map_deferred_update_error(DeferredUpdateError::SignatureRejected(
+            crate::update::UpdateSignatureError::Invalid,
+        ));
+        assert_eq!(err.code() as i64, errors::UPDATE_SIGNATURE_REJECTED);
+        assert!(err.message().contains("signature"));
+
+        // A plain apply failure keeps the generic deferred-update code.
+        let err = map_deferred_update_error(DeferredUpdateError::ApplyFailed(anyhow::anyhow!(
+            "swap failed"
+        )));
+        assert_eq!(err.code() as i64, errors::DEFERRED_UPDATE_FAILED);
     }
 }
