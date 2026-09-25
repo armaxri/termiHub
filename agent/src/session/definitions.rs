@@ -30,23 +30,17 @@ pub struct Connection {
 }
 
 /// Read-only snapshot returned by list/create/update operations.
-#[derive(Debug, Clone, Serialize)]
-pub struct ConnectionSnapshot {
-    pub id: String,
-    pub name: String,
-    pub session_type: String,
-    pub config: serde_json::Value,
-    pub persistent: bool,
-    pub folder_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub terminal_options: Option<serde_json::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub icon: Option<String>,
-    /// Path of the external file this connection was loaded from.
-    /// `None` means the primary `connections.json` store.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_file: Option<String>,
-}
+///
+/// This IS the shared wire DTO defined once in `termihub-core`
+/// ([`ConnectionDefinition`]); it is re-exported here under the historical
+/// `ConnectionSnapshot` name so the agent emits exactly the type the desktop
+/// deserializes — one definition of the wire shape, no drift (DUP-001). The
+/// serialized bytes are byte-identical to the pre-DUP-001 struct (same fields,
+/// same order, same `skip_serializing_if`); pinned by
+/// `core::protocol::methods` wire tests and the round-trip tests below.
+pub use termihub_core::protocol::methods::{
+    ConnectionDefinition as ConnectionSnapshot, FolderDefinition as FolderSnapshot,
+};
 
 impl Connection {
     fn snapshot(&self) -> ConnectionSnapshot {
@@ -74,15 +68,6 @@ pub struct Folder {
     pub parent_id: Option<String>,
     /// Whether this folder is expanded in the UI.
     #[serde(default)]
-    pub is_expanded: bool,
-}
-
-/// Read-only snapshot returned by folder operations.
-#[derive(Debug, Clone, Serialize)]
-pub struct FolderSnapshot {
-    pub id: String,
-    pub name: String,
-    pub parent_id: Option<String>,
     pub is_expanded: bool,
 }
 
@@ -1119,6 +1104,46 @@ mod tests {
         let folder: Folder = serde_json::from_str(json).unwrap();
         assert_eq!(folder.parent_id, None);
         assert!(!folder.is_expanded);
+    }
+
+    // ── Wire snapshot bytes (DUP-001) ────────────────────────────────
+    //
+    // `ConnectionSnapshot`/`FolderSnapshot` are now the shared core wire DTOs
+    // (`ConnectionDefinition`/`FolderDefinition`) re-exported under their old
+    // names. These pin that `Connection::snapshot()`/`Folder::snapshot()` still
+    // emit byte-identical wire — the desktop parses these exact bytes, so a
+    // change here is a WIRE BREAK.
+
+    #[test]
+    fn connection_snapshot_emits_stable_wire_bytes() {
+        let conn = Connection {
+            id: "conn-1".to_string(),
+            name: "Build Shell".to_string(),
+            session_type: "shell".to_string(),
+            config: json!({ "shell": "/bin/bash" }),
+            persistent: true,
+            folder_id: Some("folder-1".to_string()),
+            terminal_options: None,
+            icon: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&conn.snapshot()).unwrap(),
+            r#"{"id":"conn-1","name":"Build Shell","session_type":"shell","config":{"shell":"/bin/bash"},"persistent":true,"folder_id":"folder-1"}"#
+        );
+    }
+
+    #[test]
+    fn folder_snapshot_emits_stable_wire_bytes() {
+        let folder = Folder {
+            id: "folder-abc".to_string(),
+            name: "Production".to_string(),
+            parent_id: Some("folder-root".to_string()),
+            is_expanded: true,
+        };
+        assert_eq!(
+            serde_json::to_string(&folder.snapshot()).unwrap(),
+            r#"{"id":"folder-abc","name":"Production","parent_id":"folder-root","is_expanded":true}"#
+        );
     }
 
     // ── External files ──────────────────────────────────────────────

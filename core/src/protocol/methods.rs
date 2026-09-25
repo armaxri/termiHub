@@ -450,6 +450,64 @@ pub struct FolderDeleteParams {
     pub id: String,
 }
 
+// ── connections.* result definitions (agent → desktop wire) ──────────
+//
+// The agent returns these from `connections.list` / `connections.create` /
+// `connections.update` (and `connections.folders.*`). They ARE the wire shape:
+// the agent serializes them directly (re-exported as `ConnectionSnapshot` /
+// `FolderSnapshot`) and the desktop deserializes them, so both sides share one
+// definition (DUP-001). The field names are snake_case ON PURPOSE — that is the
+// wire — so do NOT add `#[serde(rename_all = "camelCase")]`: it would change the
+// bytes the agent emits and the desktop parses. The desktop re-serializes these
+// to its camelCase Tauri→frontend DTOs (`AgentDefinitionInfo` / `AgentFolderInfo`)
+// via `From`. Wire bytes are pinned by tests on both sides.
+
+/// A saved connection definition as reported by the agent over the wire.
+///
+/// `#[serde(default)]` on the optional fields lets the desktop parse a minimal
+/// entry (missing `config`/`persistent`/`folder_id`) exactly as the old
+/// hand-parser did; `skip_serializing_if` keeps `terminal_options`/`icon`/
+/// `source_file` off the wire when absent (byte-identical to the pre-DUP-001
+/// `ConnectionSnapshot`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConnectionDefinition {
+    pub id: String,
+    pub name: String,
+    /// Session type: "shell", "serial", "docker", "ssh", "local", etc.
+    pub session_type: String,
+    /// Session-specific configuration (shell path, serial params, etc.).
+    #[serde(default)]
+    pub config: Value,
+    /// Whether sessions created from this definition are persistent.
+    #[serde(default)]
+    pub persistent: bool,
+    /// Parent folder id, or `None` for a root-level definition.
+    #[serde(default)]
+    pub folder_id: Option<String>,
+    /// Terminal appearance/behaviour overrides (font, color, cursor, etc.).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_options: Option<Value>,
+    /// Custom icon name (lucide-react PascalCase or "lab:camelCase").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<String>,
+    /// Source file path on the remote host, or `None` for the primary store.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
+}
+
+/// A folder as reported by the agent over the wire.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FolderDefinition {
+    pub id: String,
+    pub name: String,
+    /// Parent folder id, or `None` for a root-level folder.
+    #[serde(default)]
+    pub parent_id: Option<String>,
+    /// Whether this folder is expanded in the UI.
+    #[serde(default)]
+    pub is_expanded: bool,
+}
+
 // ── Helper: distinguish absent field from explicit null ──────────────
 
 /// Deserializes a field so that absent → `None`, explicit `null` → `Some(Value::Null)`,
@@ -1110,6 +1168,120 @@ mod tests {
         assert_eq!(forward.local_port, 5432);
         assert_eq!(forward.remote_host, "db.internal");
         assert_eq!(forward.remote_port, 5432);
+    }
+
+    // ── connections.* result DTOs (DUP-001) ─────────────────────────────
+
+    /// The `ConnectionDefinition` wire bytes must stay snake_case and in a stable
+    /// field order — the agent serializes this type directly and the desktop
+    /// parses it. Changing any key or the order is a WIRE BREAK.
+    #[test]
+    fn connection_definition_serializes_to_stable_snake_case_wire() {
+        let def = ConnectionDefinition {
+            id: "conn-1".to_string(),
+            name: "Build Shell".to_string(),
+            session_type: "shell".to_string(),
+            config: json!({ "shell": "/bin/bash" }),
+            persistent: true,
+            folder_id: Some("folder-1".to_string()),
+            terminal_options: None,
+            icon: None,
+            source_file: None,
+        };
+        // `serde_json` (no `preserve_order`) emits struct fields in declaration
+        // order; optional None fields are skipped. This is byte-identical to the
+        // pre-DUP-001 `ConnectionSnapshot`.
+        assert_eq!(
+            serde_json::to_string(&def).unwrap(),
+            r#"{"id":"conn-1","name":"Build Shell","session_type":"shell","config":{"shell":"/bin/bash"},"persistent":true,"folder_id":"folder-1"}"#
+        );
+    }
+
+    /// Present optional fields (`terminal_options`, `icon`, `source_file`) appear
+    /// on the wire in declaration order.
+    #[test]
+    fn connection_definition_serializes_present_optionals() {
+        let def = ConnectionDefinition {
+            id: "ext-1".to_string(),
+            name: "Team".to_string(),
+            session_type: "local".to_string(),
+            config: Value::Null,
+            persistent: false,
+            folder_id: None,
+            terminal_options: Some(json!({ "fontSize": 14 })),
+            icon: Some("Terminal".to_string()),
+            source_file: Some("/home/pi/team.json".to_string()),
+        };
+        assert_eq!(
+            serde_json::to_string(&def).unwrap(),
+            r#"{"id":"ext-1","name":"Team","session_type":"local","config":null,"persistent":false,"folder_id":null,"terminal_options":{"fontSize":14},"icon":"Terminal","source_file":"/home/pi/team.json"}"#
+        );
+    }
+
+    /// A full snake_case reply deserializes into `ConnectionDefinition`.
+    #[test]
+    fn connection_definition_parses_full_snake_case_reply() {
+        let wire = json!({
+            "id": "conn-abc",
+            "name": "Build Shell",
+            "session_type": "shell",
+            "config": { "shell": "/bin/bash" },
+            "persistent": true,
+            "folder_id": "folder-1",
+            "source_file": "/home/pi/team.json"
+        });
+        let def: ConnectionDefinition = serde_json::from_value(wire).unwrap();
+        assert_eq!(def.id, "conn-abc");
+        assert_eq!(def.session_type, "shell");
+        assert!(def.persistent);
+        assert_eq!(def.folder_id.as_deref(), Some("folder-1"));
+        assert_eq!(def.source_file.as_deref(), Some("/home/pi/team.json"));
+    }
+
+    /// A minimal reply (only the required fields) parses with defaulted optionals
+    /// — matching the old hand-parser's `unwrap_or`/`Value::Null` behaviour.
+    #[test]
+    fn connection_definition_parses_minimal_reply() {
+        let wire = json!({ "id": "conn-1", "name": "Test", "session_type": "serial" });
+        let def: ConnectionDefinition = serde_json::from_value(wire).unwrap();
+        assert_eq!(def.config, Value::Null);
+        assert!(!def.persistent);
+        assert_eq!(def.folder_id, None);
+        assert_eq!(def.terminal_options, None);
+        assert_eq!(def.source_file, None);
+    }
+
+    /// A missing required field (`session_type`) fails to parse — the typed
+    /// equivalent of the old parser returning `None`, so the desktop drops the
+    /// entry (`filter_map(... .ok())`).
+    #[test]
+    fn connection_definition_rejects_missing_required_field() {
+        let wire = json!({ "id": "conn-1", "name": "Test" });
+        assert!(serde_json::from_value::<ConnectionDefinition>(wire).is_err());
+    }
+
+    /// `FolderDefinition` wire bytes stay snake_case and stably ordered.
+    #[test]
+    fn folder_definition_serializes_to_stable_snake_case_wire() {
+        let folder = FolderDefinition {
+            id: "folder-abc".to_string(),
+            name: "Production".to_string(),
+            parent_id: Some("folder-root".to_string()),
+            is_expanded: true,
+        };
+        assert_eq!(
+            serde_json::to_string(&folder).unwrap(),
+            r#"{"id":"folder-abc","name":"Production","parent_id":"folder-root","is_expanded":true}"#
+        );
+    }
+
+    /// A minimal folder reply parses with defaulted `parent_id`/`is_expanded`.
+    #[test]
+    fn folder_definition_parses_minimal_reply() {
+        let wire = json!({ "id": "folder-1", "name": "Root" });
+        let folder: FolderDefinition = serde_json::from_value(wire).unwrap();
+        assert_eq!(folder.parent_id, None);
+        assert!(!folder.is_expanded);
     }
 
     /// The desktop routes an agent-hosted `-R` tunnel as `forward.mode ==
