@@ -9,12 +9,6 @@ export interface TransferEntryProps {
   /** The transfer to render. */
   entry: TransferEntry;
   /**
-   * Whether this transfer's executor supports pause / resume / retry (audit
-   * PROD-009). Drives whether those controls are shown; see
-   * {@link TransferControls}.
-   */
-  pausable: boolean;
-  /**
    * Render the narrow, two-line **compact variant** for the file-browser sidebar
    * footer (~250–350px) instead of the wide multi-column Transfer Queue row
    * (UX-020 / #2905). The compact variant stacks a head line (direction icon,
@@ -81,7 +75,6 @@ function byteCountLabel(entry: TransferEntry): string {
  */
 export function TransferEntryRow({
   entry,
-  pausable,
   compact = false,
   onPause,
   onResume,
@@ -98,7 +91,6 @@ export function TransferEntryRow({
   const controls = (
     <TransferControls
       state={state}
-      pausable={pausable}
       onPause={() => onPause(entry.id)}
       onResume={() => onResume(entry.id)}
       onCancel={() => onCancel(entry.id)}
