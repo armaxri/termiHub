@@ -9,8 +9,8 @@ subsystem: core/plugin
 evidence:
   - core/src/plugin/host.rs:261
   - core/src/plugin/manager.rs
-status: in-progress
-resolution: "#2797 — deterministic lib pick + re-hash before load; full TOCTOU closure residual → #2796"
+status: fixed
+resolution: "#2797 — plugin-host TOCTOU + nondeterministic lib pick RESOLVED on develop: load_backend_library(path, expected_digest) re-hashes the exact on-disk bytes vs the signed digest immediately before Library::new, fails closed (LibraryDigestMismatch); find_backend_library rejects ambiguous candidates + picks the current-platform extension deterministically (tests _rejects_ambiguous_candidates / _single_match_is_deterministic). Residual dlopen sub-race is irreducible (not the medium)"
 ---
 
 ## What

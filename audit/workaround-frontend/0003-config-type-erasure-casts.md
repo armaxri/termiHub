@@ -18,8 +18,8 @@ evidence:
   - src/store/appStore.ts:5184
   - src/store/appStore.ts:5192
   - src/components/TunnelEditor/tunnelValidation.ts:35
-status: partial
-resolution: "#3084 — duplicate of FEC-008 — same typed-accessor work; remainder needs discriminated union #3083/DUP-030"
+status: fixed
+resolution: "#3084 — = FEC-008: all ~11 production `config.config as unknown as Record` casts eliminated via typed accessors (connectionConfigFields.ts readConfigString/Boolean + connectionConfigHost) adopted across appStore/featureFlags/useConnectSavedConnection/connectionSearch; the only remaining `config as unknown as` grep hit is a doc comment. The finding's own done-signal (zero such casts) is met"
 ---
 
 ## What
