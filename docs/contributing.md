@@ -179,6 +179,7 @@ each job runs only if the PR can affect it:
 | Check                                        | Runs on a PR when…                                        |
 | -------------------------------------------- | --------------------------------------------------------- |
 | Rust Code Quality (fmt, clippy, feature iso) | Rust or `rdp-sidecar/` changed                            |
+| Rust Code Quality (Windows) (clippy)         | Rust changed                                              |
 | Frontend Code Quality (lint, tsc, prettier)  | frontend changed, or docs/Markdown changed                |
 | Run Tests (ubuntu-latest)                    | Rust and/or frontend changed — runs only the changed half |
 | Run Tests (windows-latest)                   | Rust changed — Rust tests only (no vitest)                |
@@ -195,9 +196,9 @@ A skipped check reports as **skipped**, which is a pass. The classifier is
 detection job itself runs every per-PR job. An `audit/**`-only PR runs only
 commit-lint; a docs-only PR runs commit-lint plus the Markdown checks.
 
-**So a green PR proves:** formatting, Clippy and lint are clean; the PR's Rust
-tests pass on Linux and Windows; the vitest suite and its coverage floors pass
-(on Linux); the app release-compiles and Vite-bundles on Linux.
+**So a green PR proves:** formatting, Clippy (Linux and Windows) and lint are
+clean; the PR's Rust tests pass on Linux and Windows; the vitest suite and its
+coverage floors pass (on Linux); the app release-compiles and Vite-bundles on Linux.
 
 **It does NOT prove** (these run only post-merge): Rust tests and vitest on
 **macOS**; vitest on **Windows**; release compiles/installers on macOS, Windows
@@ -265,6 +266,18 @@ pnpm build               # TypeScript check + Vite build
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+```
+
+CI runs the same clippy command a second time on `windows-latest` (the **Rust Code
+Quality (Windows)** job), because `#[cfg(windows)]` code is compiled out on Linux and
+macOS and would otherwise never be linted. To check Windows-gated code from macOS/Linux
+before pushing, lint the library without the C-dependency-heavy features (the crypto and
+compression `-sys` crates need a Windows SDK to cross-compile):
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo clippy -p termihub-core --target x86_64-pc-windows-msvc \
+  --features local-shell,serial,docker,tracing,rdp-sidecar -- -D warnings
 ```
 
 ### Test Environment

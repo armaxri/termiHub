@@ -1327,7 +1327,6 @@ mod imp {
         };
         use crate::spawn::SpawnKind;
         use termihub_core::config::ContainerRuntime;
-        use winreg::enums::*;
         use winreg::RegKey;
 
         const EXE: &str = r"C:\Program Files\termiHub\termiHub.exe";

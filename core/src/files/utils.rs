@@ -107,7 +107,7 @@ fn convert_msys_path(path: &str) -> String {
         && (bytes.len() == 2 || bytes[2] == b'/')
     {
         let drive = (bytes[1] as char).to_ascii_uppercase();
-        format!("{}:/{}", drive, &path[2..].trim_start_matches('/'))
+        format!("{}:/{}", drive, path[2..].trim_start_matches('/'))
     } else {
         path.to_string()
     }

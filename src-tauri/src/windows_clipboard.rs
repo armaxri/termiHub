@@ -429,8 +429,10 @@ mod tests {
         assert_eq!(files_offset, HEADER);
         assert!(wide, "build_cf_hdrop always emits wide paths");
         let units: Vec<u16> = bytes[files_offset..]
-            .chunks_exact(2)
-            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| u16::from_le_bytes(pair))
             .collect();
         let mut paths = Vec::new();
         for segment in units.split(|&u| u == 0) {

@@ -205,9 +205,9 @@ pub async fn execute_local_process(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     // Suppress the console-window flash on Windows. No-op elsewhere.
+    // (`tokio::process::Command::creation_flags` is inherent — no `CommandExt`.)
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt;
         const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
@@ -359,6 +359,7 @@ mod tests {
     use super::*;
 
     /// Drain the output channel into a flat list of `(stream, line)` pairs.
+    #[cfg(unix)] // only the unix-gated argv tests inspect output
     fn collect_output(mut rx: mpsc::Receiver<(&'static str, String)>) -> Vec<(String, String)> {
         let mut out = Vec::new();
         while let Ok((stream, line)) = rx.try_recv() {

@@ -157,14 +157,17 @@ pub use unix_impl::{
     agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, open_daemon_log,
     open_registry_log, registry_endpoint, remove_session_files, session_endpoint,
 };
-// allow(unused_imports): a couple of these names (the agent-forward helpers) have
-// only unix-side consumers, so the windows re-export can be unused there depending
-// on the build; kept to mirror the unix surface. Cannot be verified from a non-windows host.
+// allow(unused_imports): `agent_forward_endpoint` has only unix-side consumers
+// in some builds; kept to mirror the unix surface. There is no windows
+// `ensure_agent_forward_dir`: a named pipe lives in the machine-global
+// `\\.\pipe\` namespace and needs no directory, and its only caller (the
+// unix-socket relay listener) is unix-only — a windows no-op was dead code that
+// the windows clippy gate rejects (#3312).
 #[cfg(windows)]
 #[allow(unused_imports)]
 pub use windows_impl::{
-    agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, registry_endpoint,
-    remove_session_files, session_endpoint,
+    agent_forward_endpoint, endpoint_alive, registry_endpoint, remove_session_files,
+    session_endpoint,
 };
 
 // ── Unix session-path helpers ───────────────────────────────────────
@@ -328,14 +331,6 @@ mod windows_impl {
     /// of the unix `SSH_AUTH_SOCK` relay socket (#1727).
     pub fn agent_forward_endpoint(session_id: &str) -> String {
         format!(r"\\.\pipe\termihub-agent-forward-{session_id}")
-    }
-
-    /// No directory to pre-create for a named-pipe relay on Windows: the pipe
-    /// lives in the machine-global `\\.\pipe\` namespace, so binding it needs no
-    /// filesystem setup. The unix analog makes the `0o700` socket dir the relay
-    /// socket binds into; here it is a no-op that keeps the call site uniform.
-    pub fn ensure_agent_forward_dir() -> std::io::Result<()> {
-        Ok(())
     }
 
     /// Compute the pipe name for the host-wide registry daemon (ADR-11).
