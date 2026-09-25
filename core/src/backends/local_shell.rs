@@ -462,6 +462,8 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
             // windows — see `agent::daemon::transport`).
             persistent: true,
             terminal: true,
+            // Local shell has no port-forwarding mechanism.
+            tunneling: false,
         }
     }
 

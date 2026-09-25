@@ -427,6 +427,8 @@ impl ConnectionType for Serial {
             resize: false,
             persistent: true,
             terminal: true,
+            // Serial has no port-forwarding mechanism.
+            tunneling: false,
         }
     }
 

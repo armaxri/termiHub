@@ -865,6 +865,8 @@ impl ConnectionType for Docker {
             resize: true,
             persistent: true,
             terminal: true,
+            // Docker exec has no port-forwarding mechanism.
+            tunneling: false,
         }
     }
 

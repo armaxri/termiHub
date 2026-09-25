@@ -676,6 +676,7 @@ impl ConnectionType for Ssh {
             resize: true,
             persistent: true,
             terminal: true,
+            tunneling: true,
         }
     }
 

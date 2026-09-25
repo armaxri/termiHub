@@ -83,6 +83,7 @@ impl ConnectionType for MockConnection {
             resize: true,
             persistent: false,
             terminal: true,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
@@ -143,6 +144,7 @@ impl ConnectionType for LocalBrowserConnection {
             resize: false,
             persistent: false,
             terminal: false,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
@@ -970,6 +972,7 @@ impl ConnectionType for DisconnectSpy {
             resize: false,
             persistent: false,
             terminal: true,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
@@ -1843,6 +1846,7 @@ impl ConnectionType for ImmediateFailConnect {
             resize: true,
             persistent: false,
             terminal: true,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
@@ -1905,6 +1909,7 @@ impl ConnectionType for AuthFailConnect {
             resize: true,
             persistent: false,
             terminal: true,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
@@ -2129,6 +2134,7 @@ impl ConnectionType for BlockingConnect {
             resize: true,
             persistent: false,
             terminal: true,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
@@ -2928,6 +2934,7 @@ impl ConnectionType for FileConnection {
             resize: false,
             persistent: false,
             terminal: true,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
@@ -3153,6 +3160,7 @@ impl ConnectionType for MonitoringConnection {
             resize: false,
             persistent: false,
             terminal: true,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {
@@ -3342,6 +3350,7 @@ impl ConnectionType for BlockingMonitoringConnection {
             resize: false,
             persistent: false,
             terminal: true,
+            tunneling: false,
         }
     }
     async fn connect(&mut self, _: serde_json::Value) -> Result<(), SessionError> {

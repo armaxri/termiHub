@@ -1633,6 +1633,7 @@ mod tests {
                         resize: true,
                         persistent: false,
                         terminal: true,
+                        tunneling: false,
                     },
                 }],
                 max_sessions: 20,

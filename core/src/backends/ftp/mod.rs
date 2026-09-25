@@ -502,6 +502,8 @@ impl ConnectionType for Ftp {
             // FTP has no interactive shell: the desktop opens it straight into a
             // browser-only tab with no terminal session (#1335).
             terminal: false,
+            // FTP has no port-forwarding mechanism.
+            tunneling: false,
         }
     }
 

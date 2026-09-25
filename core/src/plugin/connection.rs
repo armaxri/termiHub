@@ -350,6 +350,8 @@ impl ConnectionType for PluginConnectionType {
             resize: true,
             persistent: false,
             terminal: true,
+            // Plugin connections have no built-in port-forwarding mechanism.
+            tunneling: false,
         }
     }
 

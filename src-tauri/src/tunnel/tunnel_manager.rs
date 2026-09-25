@@ -9,6 +9,7 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_wit
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
 use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool, SshGateway};
+use termihub_core::connection::ConnectionTypeInfo;
 use termihub_core::protocol::methods::{
     TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
     TunnelStatusResult, TunnelStopParams,
@@ -32,6 +33,7 @@ use crate::agent_service::{
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
 use crate::run_location::{Locality, ResolvedLocation, RunLocationResolver};
+use crate::session::manager::SessionManager;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 use crate::utils::ssh_auth::connect_with_registry_cancellable;
@@ -1494,10 +1496,22 @@ impl TunnelManager {
                 TerminalError::TunnelError(format!("SSH connection not found: {}", connection_id))
             })?;
 
-        if conn.config.type_id != "ssh" {
+        // Gate on the declared tunnel-hosting capability rather than a hardcoded
+        // `type_id == "ssh"` string (PARITY-001): whether a backend can host a
+        // port forward is a capability, not a name. Only SSH advertises it today
+        // (the forward is built on an SSH session, and agent-hosted tunnels still
+        // require an SSH connection), so behaviour is unchanged — but a future
+        // forwarding backend just sets the flag instead of touching this gate.
+        let session_mgr = self
+            .app_handle
+            .try_state::<SessionManager>()
+            .ok_or_else(|| {
+                TerminalError::TunnelError("SessionManager not available".to_string())
+            })?;
+        if !type_supports_tunneling(&session_mgr.available_types(), &conn.config.type_id) {
             return Err(TerminalError::TunnelError(format!(
-                "Connection {} is not an SSH connection",
-                connection_id
+                "Connection {} (type '{}') does not support tunnel hosting / port forwarding",
+                connection_id, conn.config.type_id
             )));
         }
 
@@ -1520,6 +1534,22 @@ impl TunnelManager {
     fn emit_status(&self, tunnel_id: &str, status: TunnelStatus, error: Option<String>) {
         emit_tunnel_status(&self.app_handle, tunnel_id, status, error);
     }
+}
+
+/// Whether the connection type identified by `type_id` advertises the
+/// tunnel-hosting capability.
+///
+/// Replaces the old hardcoded `type_id == "ssh"` gate (PARITY-001): whether a
+/// backend can host a port forward is a declared
+/// [`Capabilities::tunneling`](termihub_core::connection::Capabilities::tunneling)
+/// flag, not a name. An unknown `type_id` (absent from the registry) is treated
+/// as not tunnel-capable. Free function so it can be unit-tested against a
+/// fabricated type list without a live Tauri `AppHandle`.
+fn type_supports_tunneling(types: &[ConnectionTypeInfo], type_id: &str) -> bool {
+    types
+        .iter()
+        .find(|t| t.type_id == type_id)
+        .is_some_and(|t| t.capabilities.tunneling)
 }
 
 /// Why a supervised tunnel died, for the recorded `Error` message.
@@ -1846,13 +1876,15 @@ mod tests {
     use super::{
         backoff_delay, clear_last_error, companion_action, find_companion, last_error_for,
         record_last_error, resolve_managed_arc, resolve_tunnel_host, resting_status,
-        run_reconnect_loop, snapshot_active_stats, stats_from_status_reply, wait_forwarder_death,
-        wait_session_death, ActiveTunnel, CompanionAction, ReconnectOutcome, TunnelStatsUpdate,
+        run_reconnect_loop, snapshot_active_stats, stats_from_status_reply,
+        type_supports_tunneling, wait_forwarder_death, wait_session_death, ActiveTunnel,
+        CompanionAction, ReconnectOutcome, TunnelStatsUpdate,
     };
     use crate::run_location::{ResolvedLocation, RunLocation};
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
+    use termihub_core::connection::{Capabilities, ConnectionTypeInfo, SettingsSchema};
     use termihub_core::tunnel::local_forward::ForwarderStats;
     use tokio_util::sync::CancellationToken;
 
@@ -2893,5 +2925,57 @@ mod tests {
         assert!(!stopped.running);
         assert!(stopped.stats.is_none());
         assert!(stopped.bound_address.is_none());
+    }
+
+    /// Build a `ConnectionTypeInfo` for the tunnel-capability gate tests,
+    /// varying only the `tunneling` flag.
+    fn type_info(type_id: &str, tunneling: bool) -> ConnectionTypeInfo {
+        ConnectionTypeInfo {
+            type_id: type_id.to_string(),
+            display_name: type_id.to_string(),
+            icon: "terminal".to_string(),
+            schema: SettingsSchema { groups: vec![] },
+            capabilities: Capabilities {
+                monitoring: false,
+                file_browser: false,
+                graphical: false,
+                resize: false,
+                persistent: false,
+                terminal: true,
+                tunneling,
+            },
+        }
+    }
+
+    /// PARITY-001: the tunnel-host gate admits a type that advertises the
+    /// `tunneling` capability (SSH) and rejects one that does not (telnet),
+    /// replacing the former hardcoded `type_id == "ssh"` string check.
+    #[test]
+    fn tunnel_gate_admits_tunnel_capable_type_rejects_others() {
+        let types = vec![
+            type_info("ssh", true),
+            type_info("telnet", false),
+            type_info("serial", false),
+        ];
+
+        // SSH advertises the capability → admitted.
+        assert!(type_supports_tunneling(&types, "ssh"));
+        // Non-forwarding backends → rejected, regardless of name.
+        assert!(!type_supports_tunneling(&types, "telnet"));
+        assert!(!type_supports_tunneling(&types, "serial"));
+        // An unknown / unregistered type is never tunnel-capable.
+        assert!(!type_supports_tunneling(&types, "does-not-exist"));
+    }
+
+    /// A registered type is gated purely on its declared capability: the same
+    /// `type_id` flips from rejected to admitted when it advertises `tunneling`,
+    /// proving the gate is capability-driven, not name-driven.
+    #[test]
+    fn tunnel_gate_follows_declared_capability_not_name() {
+        let without = vec![type_info("agent-ssh", false)];
+        assert!(!type_supports_tunneling(&without, "agent-ssh"));
+
+        let with = vec![type_info("agent-ssh", true)];
+        assert!(type_supports_tunneling(&with, "agent-ssh"));
     }
 }

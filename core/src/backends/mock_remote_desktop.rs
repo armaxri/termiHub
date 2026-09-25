@@ -265,6 +265,7 @@ impl ConnectionType for MockRemoteDesktop {
             resize: false,
             persistent: false,
             terminal: false,
+            tunneling: false,
         }
     }
 
