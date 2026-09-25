@@ -268,6 +268,9 @@ class TestSshServerDisconnect(TerminalUi, TabsUi, ConnectionsUi, PasswordPromptU
             host=HOST,
             port=SSH_PASSWORD_PORT,
             username=SSH_USERNAME,
+            # Auto-Reconnect is on by default (PARITY-008); this scenario verifies
+            # the manual disconnect overlay, so opt out of the automatic redrive.
+            auto_reconnect=False,
             connect=True,
         )
         self.handle_password_prompt()
