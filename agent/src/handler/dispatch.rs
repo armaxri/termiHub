@@ -2495,6 +2495,17 @@ mod tests {
         assert!(!docker_probe_skip_from(Some("")));
     }
 
+    /// Unit tests never spawn a real `docker info` / `docker images` child
+    /// (CI-013, #3350): ~100 dispatch tests call `initialize`, and on a runner
+    /// with Docker installed each one spawned two docker CLI processes,
+    /// oversubscribing the cores. The probe itself stays covered by the shim
+    /// tests below, which call `probe_docker_available` directly.
+    #[tokio::test]
+    async fn docker_probe_is_skipped_in_unit_tests() {
+        assert!(docker_probe_skipped());
+        assert!(!detect_docker_available().await);
+    }
+
     /// Write an executable shim script under a unique temp path and return it.
     #[cfg(unix)]
     fn write_shim(body: &str) -> std::path::PathBuf {
