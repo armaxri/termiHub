@@ -166,12 +166,13 @@ fn status_for_error(err: &PluginManagerError) -> StatusCode {
 /// Build a fixed-status empty response — the fail-closed path for every rejected
 /// or failed request.
 fn empty(status: StatusCode) -> Response<Cow<'static, [u8]>> {
-    // `Response::builder().body(..)` only errors on an invalid status/header,
-    // and every status we pass is a constant, so this cannot fail in practice.
-    Response::builder()
-        .status(status)
-        .body(Cow::Borrowed(&[][..]))
-        .expect("static empty response is always valid")
+    // Construct directly rather than via `Response::builder().body(..)?`: the
+    // builder is fallible (invalid status/header) but we only ever set the status
+    // to a constant and no headers, so building it by hand is infallible and keeps
+    // this fail-closed path panic-free (no `.expect()` per the no-`.unwrap()` policy).
+    let mut response = Response::new(Cow::Borrowed(&[][..]));
+    *response.status_mut() = status;
+    response
 }
 
 /// Serve one request for the plugin scheme: resolve `<id>/<relative>` from the

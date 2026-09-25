@@ -14,4 +14,12 @@
 //! Only self-contained protocol types (serde DTOs over `termihub-core` types) are
 //! re-exported here; the rest of the agent remains internal to the binary.
 
+// TOOL-010: enforce the "no `.unwrap()`/`.expect()`/`panic!` in production Rust"
+// policy (see `.claude/CLAUDE.md` → Rust). Denied for non-test builds; test code
+// (`#[cfg(test)]` modules and `tests/` crates) is exempt via `not(test)`.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 pub mod protocol;

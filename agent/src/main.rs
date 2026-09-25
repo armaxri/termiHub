@@ -1,3 +1,11 @@
+// TOOL-010: enforce the "no `.unwrap()`/`.expect()`/`panic!` in production Rust"
+// policy (see `.claude/CLAUDE.md` → Rust). Denied for non-test builds; test code
+// (`#[cfg(test)]` modules and `tests/` crates) is exempt via `not(test)`.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 mod client_registry;
 mod daemon;
 mod file_log;
@@ -90,7 +98,7 @@ fn update_strategy_from_args(args: &[String]) -> update::UpdateStrategy {
 }
 
 fn main() -> anyhow::Result<()> {
-    build_runtime().block_on(run())
+    build_runtime()?.block_on(run())
 }
 
 /// Build the agent's Tokio runtime.
@@ -101,7 +109,7 @@ fn main() -> anyhow::Result<()> {
 /// `#[tokio::main]` entry point. When the env var is set to a positive integer,
 /// the worker-thread count is capped to it (test-harness contention control only;
 /// see [`WORKER_THREADS_ENV`]).
-fn build_runtime() -> tokio::runtime::Runtime {
+fn build_runtime() -> anyhow::Result<tokio::runtime::Runtime> {
     let mut builder = tokio::runtime::Builder::new_multi_thread();
     builder.enable_all();
     if let Some(n) = worker_threads_override(std::env::var(WORKER_THREADS_ENV).ok()) {
@@ -109,7 +117,7 @@ fn build_runtime() -> tokio::runtime::Runtime {
     }
     builder
         .build()
-        .expect("failed to build the agent Tokio runtime")
+        .map_err(|e| anyhow::anyhow!("failed to build the agent Tokio runtime: {e}"))
 }
 
 /// Parse the [`WORKER_THREADS_ENV`] value into a worker-thread cap.
@@ -269,15 +277,24 @@ fn setup_shutdown_signal() -> CancellationToken {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{signal, SignalKind};
-            let mut sigterm =
-                signal(SignalKind::terminate()).expect("Failed to register SIGTERM handler");
-
-            tokio::select! {
-                _ = ctrl_c => {
-                    info!("Received SIGINT (Ctrl+C), initiating shutdown");
+            match signal(SignalKind::terminate()) {
+                Ok(mut sigterm) => {
+                    tokio::select! {
+                        _ = ctrl_c => {
+                            info!("Received SIGINT (Ctrl+C), initiating shutdown");
+                        }
+                        _ = sigterm.recv() => {
+                            info!("Received SIGTERM, initiating shutdown");
+                        }
+                    }
                 }
-                _ = sigterm.recv() => {
-                    info!("Received SIGTERM, initiating shutdown");
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to register SIGTERM handler; listening for SIGINT only"
+                    );
+                    let _ = ctrl_c.await;
+                    info!("Received SIGINT (Ctrl+C), initiating shutdown");
                 }
             }
         }

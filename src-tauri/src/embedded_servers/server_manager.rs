@@ -300,9 +300,11 @@ impl EmbeddedServerManager {
             spawn_event_bridge(self.app_handle.clone(), service.subscribe_events());
             services.insert(server_id.to_string(), service);
         }
-        let service = services
-            .get_mut(server_id)
-            .expect("service was just inserted");
+        let service = services.get_mut(server_id).ok_or_else(|| {
+            TerminalError::EmbeddedServerError(
+                "embedded server service missing immediately after insert".to_string(),
+            )
+        })?;
         service.start_with(config).map_err(Into::into)
     }
 
