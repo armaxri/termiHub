@@ -15,7 +15,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use termihub_core::service::drain_broadcast;
 use tokio_util::sync::CancellationToken;
@@ -29,6 +28,10 @@ use http_monitor::{
     register_http_monitor, HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState,
 };
 use termihub_core::network::WolDevice;
+use termihub_core::protocol::methods::{
+    ServicePauseParams, ServiceResumeParams, ServiceStartParams, ServiceStatusParams,
+    ServiceStatusResult, ServiceStopParams,
+};
 use termihub_core::service::{Service, ServiceInfo, ServiceRegistry};
 
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
@@ -507,12 +510,14 @@ impl NetworkManager {
         let client = self.agent_rpc_client().ok_or_else(|| {
             TerminalError::NetworkError("Agent manager is not available".to_string())
         })?;
-        let params = json!({
-            "instanceId": id,
-            "serviceId": http_monitor::SERVICE_ID,
-            "config": serde_json::to_value(&config)
-                .map_err(|e| TerminalError::NetworkError(format!("serialize monitor config: {e}")))?,
-        });
+        let config_value = serde_json::to_value(&config)
+            .map_err(|e| TerminalError::NetworkError(format!("serialize monitor config: {e}")))?;
+        let params = serde_json::to_value(ServiceStartParams {
+            instance_id: id.clone(),
+            service_id: http_monitor::SERVICE_ID.to_string(),
+            config: config_value,
+        })
+        .map_err(|e| TerminalError::NetworkError(format!("build service.start params: {e}")))?;
 
         client
             .send_request(
@@ -564,13 +569,23 @@ impl NetworkManager {
     fn stop_agent_monitor_rpc(&self, monitor_id: &str) -> Option<String> {
         let agent_id = self.agent_monitors.agent_id_of(monitor_id)?;
         if let Some(client) = self.agent_rpc_client() {
-            let params = json!({ "instanceId": monitor_id });
-            if let Err(e) = client.send_request(
-                &agent_id,
-                termihub_core::protocol::methods::SERVICE_STOP,
-                params,
-            ) {
-                tracing::warn!("Failed to stop agent-hosted HTTP monitor {monitor_id}: {e}");
+            match serde_json::to_value(ServiceStopParams {
+                instance_id: monitor_id.to_string(),
+            }) {
+                Ok(params) => {
+                    if let Err(e) = client.send_request(
+                        &agent_id,
+                        termihub_core::protocol::methods::SERVICE_STOP,
+                        params,
+                    ) {
+                        tracing::warn!(
+                            "Failed to stop agent-hosted HTTP monitor {monitor_id}: {e}"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to build service.stop params for {monitor_id}: {e}")
+                }
             }
         }
         Some(agent_id)
@@ -669,13 +684,23 @@ impl NetworkManager {
         // desktop-hosted pause, which cannot fail.
         if let Some(agent_id) = self.agent_monitor_agent_id(monitor_id) {
             if let Some(client) = self.agent_rpc_client() {
-                let params = json!({ "instanceId": monitor_id });
-                if let Err(e) = client.send_request(
-                    &agent_id,
-                    termihub_core::protocol::methods::SERVICE_PAUSE,
-                    params,
-                ) {
-                    tracing::warn!("Failed to pause agent-hosted HTTP monitor {monitor_id}: {e}");
+                match serde_json::to_value(ServicePauseParams {
+                    instance_id: monitor_id.to_string(),
+                }) {
+                    Ok(params) => {
+                        if let Err(e) = client.send_request(
+                            &agent_id,
+                            termihub_core::protocol::methods::SERVICE_PAUSE,
+                            params,
+                        ) {
+                            tracing::warn!(
+                                "Failed to pause agent-hosted HTTP monitor {monitor_id}: {e}"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to build service.pause params for {monitor_id}: {e}")
+                    }
                 }
             }
             if let Ok(mut map) = self.agent_monitors.lock() {
@@ -723,7 +748,12 @@ impl NetworkManager {
                 TerminalError::NetworkError("Agent manager is not available".to_string())
             })?;
             if running {
-                let params = json!({ "instanceId": monitor_id });
+                let params = serde_json::to_value(ServiceResumeParams {
+                    instance_id: monitor_id.to_string(),
+                })
+                .map_err(|e| {
+                    TerminalError::NetworkError(format!("build service.resume params: {e}"))
+                })?;
                 client
                     .send_request(
                         &agent_id,
@@ -736,13 +766,17 @@ impl NetworkManager {
                         ))
                     })?;
             } else {
-                let params = json!({
-                    "instanceId": monitor_id,
-                    "serviceId": http_monitor::SERVICE_ID,
-                    "config": serde_json::to_value(&config).map_err(|e| {
-                        TerminalError::NetworkError(format!("serialize monitor config: {e}"))
-                    })?,
-                });
+                let config_value = serde_json::to_value(&config).map_err(|e| {
+                    TerminalError::NetworkError(format!("serialize monitor config: {e}"))
+                })?;
+                let params = serde_json::to_value(ServiceStartParams {
+                    instance_id: monitor_id.to_string(),
+                    service_id: http_monitor::SERVICE_ID.to_string(),
+                    config: config_value,
+                })
+                .map_err(|e| {
+                    TerminalError::NetworkError(format!("build service.start params: {e}"))
+                })?;
                 client
                     .send_request(
                         &agent_id,
@@ -1012,7 +1046,15 @@ fn poll_agent_monitor_checks(
 ) -> Vec<(String, HttpCheckResult)> {
     let mut out = Vec::new();
     for (monitor_id, agent_id) in targets {
-        let params = json!({ "instanceId": monitor_id });
+        let params = match serde_json::to_value(ServiceStatusParams {
+            instance_id: monitor_id.clone(),
+        }) {
+            Ok(params) => params,
+            Err(e) => {
+                tracing::warn!("Failed to build service.status params for {monitor_id}: {e}");
+                continue;
+            }
+        };
         match client.send_request(
             agent_id,
             termihub_core::protocol::methods::SERVICE_STATUS,
@@ -1038,10 +1080,13 @@ fn poll_agent_monitor_checks(
 ///
 /// Pure, so the parse is unit-testable without an agent mock.
 fn parse_agent_check(monitor_id: &str, reply: &serde_json::Value) -> Option<HttpCheckResult> {
-    if reply["running"].as_bool() != Some(true) {
+    // Parse the reply into the shared `ServiceStatusResult` DTO (DUP-001); a
+    // not-running instance or an unparseable reply yields no sample.
+    let status = serde_json::from_value::<ServiceStatusResult>(reply.clone()).ok()?;
+    if !status.running {
         return None;
     }
-    let mut result: HttpCheckResult = serde_json::from_value(reply["state"].clone()).ok()?;
+    let mut result: HttpCheckResult = serde_json::from_value(status.state?).ok()?;
     // Defend against a config-id/instance-id mismatch: the desktop keys checks by
     // the monitor id it started, so normalise to it.
     result.monitor_id = monitor_id.to_string();
@@ -1051,6 +1096,7 @@ fn parse_agent_check(monitor_id: &str, reply: &serde_json::Value) -> Option<Http
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     /// Insert a monitor service in the `Running` state (no real poll loop, so no
     /// Tauri app or network needed) so manager bookkeeping can be exercised.
@@ -1228,6 +1274,46 @@ mod tests {
         assert!(parse_agent_check("mon-1", &json!({ "running": false })).is_none());
         // Running but no streamed state yet → no check.
         assert!(parse_agent_check("mon-1", &json!({ "running": true, "state": null })).is_none());
+    }
+
+    /// DUP-001: the agent-hosted HTTP-monitor `service.*` requests serialize
+    /// byte-for-byte to the pre-migration hand-built `json!` — a change is a WIRE
+    /// BREAK, the agent deserializes these into `Service*Params`.
+    #[test]
+    fn agent_service_params_serialize_to_expected_wire() {
+        assert_eq!(
+            serde_json::to_value(ServiceStartParams {
+                instance_id: "mon-1".to_string(),
+                service_id: http_monitor::SERVICE_ID.to_string(),
+                config: json!({ "url": "https://x" }),
+            })
+            .unwrap(),
+            json!({
+                "instanceId": "mon-1",
+                "serviceId": http_monitor::SERVICE_ID,
+                "config": { "url": "https://x" },
+            }),
+        );
+        for value in [
+            serde_json::to_value(ServiceStopParams {
+                instance_id: "mon-1".to_string(),
+            })
+            .unwrap(),
+            serde_json::to_value(ServicePauseParams {
+                instance_id: "mon-1".to_string(),
+            })
+            .unwrap(),
+            serde_json::to_value(ServiceResumeParams {
+                instance_id: "mon-1".to_string(),
+            })
+            .unwrap(),
+            serde_json::to_value(ServiceStatusParams {
+                instance_id: "mon-1".to_string(),
+            })
+            .unwrap(),
+        ] {
+            assert_eq!(value, json!({ "instanceId": "mon-1" }));
+        }
     }
 
     // ── Run-location routing (#2190) ─────────────────────────────────────────

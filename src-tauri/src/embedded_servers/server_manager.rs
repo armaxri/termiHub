@@ -24,7 +24,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
-use serde_json::json;
 use tauri::{AppHandle, Emitter};
 use termihub_core::service::drain_broadcast;
 
@@ -43,6 +42,10 @@ use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationRe
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
+use termihub_core::protocol::methods::{
+    ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
+    ServiceStopParams,
+};
 use termihub_core::service::{Service, ServiceInfo, ServiceRegistry, ServiceStatus};
 
 /// Tauri event forwarded to the frontend for each embedded server status change.
@@ -377,18 +380,24 @@ impl EmbeddedServerManager {
             return false;
         };
         if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
-            let params = json!({ "instanceId": server_id });
-            if let Err(e) = agent_manager.send_request(
-                &handle.agent_id,
-                termihub_core::protocol::methods::SERVICE_STOP,
-                params,
-            ) {
-                tracing::warn!(
-                    "Failed to stop agent-hosted embedded server {} on agent {}: {}",
-                    server_id,
-                    handle.agent_id,
-                    e
-                );
+            match serde_json::to_value(ServiceStopParams {
+                instance_id: server_id.to_string(),
+            }) {
+                Ok(params) => {
+                    if let Err(e) = agent_manager.send_request(
+                        &handle.agent_id,
+                        termihub_core::protocol::methods::SERVICE_STOP,
+                        params,
+                    ) {
+                        tracing::warn!(
+                            "Failed to stop agent-hosted embedded server {} on agent {}: {}",
+                            server_id,
+                            handle.agent_id,
+                            e
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to build service.stop params for {server_id}: {e}"),
             }
         }
         let _ = self
@@ -533,11 +542,14 @@ fn service_start_params(
     let config_value = serde_json::to_value(config).map_err(|e| {
         TerminalError::EmbeddedServerError(format!("Failed to serialize server config: {e}"))
     })?;
-    Ok(json!({
-        "instanceId": server_id,
-        "serviceId": service_id_for(&config.server_type),
-        "config": config_value,
-    }))
+    serde_json::to_value(ServiceStartParams {
+        instance_id: server_id.to_string(),
+        service_id: service_id_for(&config.server_type).to_string(),
+        config: config_value,
+    })
+    .map_err(|e| {
+        TerminalError::EmbeddedServerError(format!("Failed to build service.start params: {e}"))
+    })
 }
 
 /// Parse an agent `service.start` reply into the desktop [`ServerState`] (#2214).
@@ -546,8 +558,17 @@ fn service_start_params(
 /// falls back to synthesizing one from the lifecycle `status` when no event has
 /// been emitted yet. Pure, so it is unit-testable without an agent mock.
 fn server_state_from_start_reply(server_id: &str, reply: &serde_json::Value) -> ServerState {
-    server_state_from_value(server_id, &reply["state"])
-        .unwrap_or_else(|| synth_state_from_status(server_id, &reply["status"]))
+    // Deserialize the reply into the shared `ServiceStartResult` wire DTO
+    // (DUP-001). A reply that doesn't even carry a lifecycle status degrades to
+    // `Stopped`, matching the old parser's null-status fallback.
+    match serde_json::from_value::<ServiceStartResult>(reply.clone()) {
+        Ok(result) => result
+            .state
+            .as_ref()
+            .and_then(|state| server_state_from_value(server_id, state))
+            .unwrap_or_else(|| synth_state_from_service_status(server_id, &result.status)),
+        Err(_) => synth_state_from_service_status(server_id, &ServiceStatus::Stopped),
+    }
 }
 
 /// Parse an agent `service.status` reply into a [`ServerState`], or `None` when
@@ -557,12 +578,24 @@ fn server_state_from_status_reply(
     server_id: &str,
     reply: &serde_json::Value,
 ) -> Option<ServerState> {
-    if reply["running"].as_bool() != Some(true) {
+    // Deserialize into the shared `ServiceStatusResult` wire DTO (DUP-001); an
+    // unparseable reply or a not-running instance yields no sample.
+    let result = serde_json::from_value::<ServiceStatusResult>(reply.clone()).ok()?;
+    if !result.running {
         return None;
     }
+    let fallback = ServiceStatus::Stopped;
     Some(
-        server_state_from_value(server_id, &reply["state"])
-            .unwrap_or_else(|| synth_state_from_status(server_id, &reply["status"])),
+        result
+            .state
+            .as_ref()
+            .and_then(|state| server_state_from_value(server_id, state))
+            .unwrap_or_else(|| {
+                synth_state_from_service_status(
+                    server_id,
+                    result.status.as_ref().unwrap_or(&fallback),
+                )
+            }),
     )
 }
 
@@ -579,18 +612,14 @@ fn server_state_from_value(server_id: &str, state: &serde_json::Value) -> Option
     Some(parsed)
 }
 
-/// Synthesize a [`ServerState`] from the core `ServiceStatus` wire shape
-/// (`{ "state": "running" | "failed", "detail": … }`) when no full state payload
-/// is available.
-fn synth_state_from_status(server_id: &str, status: &serde_json::Value) -> ServerState {
-    // Deserialize the core `ServiceStatus` wire shape, then project it onto the
-    // embedded-server `(ServerStatus, error)` pair via the single shared
-    // conversion (DUP-022) — so the variant relationship between the two enums is
-    // defined in one place, not hand-matched here as well. An absent or
-    // unparseable status degrades to `Stopped`, matching the prior fallback.
-    let (server_status, error) = serde_json::from_value::<ServiceStatus>(status.clone())
-        .map(|s| ServerStatus::from_service_status(&s))
-        .unwrap_or((ServerStatus::Stopped, None));
+/// Synthesize a [`ServerState`] from the typed core [`ServiceStatus`] when no
+/// full state payload is available.
+///
+/// Projects the lifecycle status onto the embedded-server `(ServerStatus, error)`
+/// pair via the single shared conversion (DUP-022) — so the variant relationship
+/// between the two enums is defined in one place, not hand-matched here as well.
+fn synth_state_from_service_status(server_id: &str, status: &ServiceStatus) -> ServerState {
+    let (server_status, error) = ServerStatus::from_service_status(status);
     ServerState {
         server_id: server_id.to_string(),
         status: server_status,
@@ -663,7 +692,15 @@ fn poll_agent_server_states(
 ) -> Vec<ServerState> {
     let mut out = Vec::with_capacity(targets.len());
     for (server_id, agent_id) in targets {
-        let params = json!({ "instanceId": server_id });
+        let params = match serde_json::to_value(ServiceStatusParams {
+            instance_id: server_id.clone(),
+        }) {
+            Ok(params) => params,
+            Err(e) => {
+                tracing::debug!("Failed to build service.status params for {server_id}: {e}");
+                continue;
+            }
+        };
         match client.send_request(
             agent_id,
             termihub_core::protocol::methods::SERVICE_STATUS,
@@ -709,6 +746,7 @@ fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEve
 mod tests {
     use super::*;
     use crate::embedded_servers::config::ServerType;
+    use serde_json::json;
 
     fn sample_config() -> EmbeddedServerConfig {
         EmbeddedServerConfig {
@@ -794,29 +832,69 @@ mod tests {
     /// A `failed` lifecycle status maps to `Error` and carries its detail (#2214).
     #[test]
     fn failed_status_maps_to_error_with_detail() {
-        let status = json!({ "state": "failed", "detail": "port in use" });
-        let state = synth_state_from_status("srv-3", &status);
+        let state = synth_state_from_service_status(
+            "srv-3",
+            &ServiceStatus::Failed("port in use".to_string()),
+        );
         assert_eq!(state.status, ServerStatus::Error);
         assert_eq!(state.error.as_deref(), Some("port in use"));
     }
 
     /// Every non-failed lifecycle state synthesizes its matching `ServerStatus`
-    /// with no error, and an unrecognized/absent status degrades to `Stopped`
-    /// (DUP-022 — the reverse bridge routes through the shared conversion).
+    /// with no error (DUP-022 — the reverse bridge routes through the shared
+    /// conversion).
     #[test]
     fn synth_state_maps_each_lifecycle_state() {
-        for (wire, expected) in [
-            (json!({ "state": "stopped" }), ServerStatus::Stopped),
-            (json!({ "state": "starting" }), ServerStatus::Starting),
-            (json!({ "state": "running" }), ServerStatus::Running),
-            (json!({ "state": "stopping" }), ServerStatus::Stopping),
-            (json!({ "state": "bogus" }), ServerStatus::Stopped),
-            (json!(null), ServerStatus::Stopped),
+        for (status, expected) in [
+            (ServiceStatus::Stopped, ServerStatus::Stopped),
+            (ServiceStatus::Starting, ServerStatus::Starting),
+            (ServiceStatus::Running, ServerStatus::Running),
+            (ServiceStatus::Stopping, ServerStatus::Stopping),
         ] {
-            let state = synth_state_from_status("srv", &wire);
-            assert_eq!(state.status, expected, "wire={wire}");
-            assert!(state.error.is_none(), "wire={wire}");
+            let state = synth_state_from_service_status("srv", &status);
+            assert_eq!(state.status, expected, "status={status:?}");
+            assert!(state.error.is_none(), "status={status:?}");
         }
+    }
+
+    /// A start reply whose lifecycle status is unparseable (or absent) degrades
+    /// to `Stopped` — the typed-DTO equivalent of the old null-status fallback.
+    #[test]
+    fn start_reply_with_unparseable_status_degrades_to_stopped() {
+        let reply = json!({ "status": { "state": "bogus" } });
+        let state = server_state_from_start_reply("srv-9", &reply);
+        assert_eq!(state.status, ServerStatus::Stopped);
+        assert!(state.error.is_none());
+    }
+
+    /// DUP-001: the `service.*` request params serialize byte-for-byte to the
+    /// pre-migration hand-built `json!` — a change is a WIRE BREAK, the agent
+    /// deserializes them into `ServiceStart/Stop/StatusParams`.
+    #[test]
+    fn service_params_serialize_matches_hand_built_json() {
+        let start = service_start_params("srv-1", &sample_config()).expect("params build");
+        assert_eq!(
+            start,
+            json!({
+                "instanceId": "srv-1",
+                "serviceId": "http_server",
+                "config": serde_json::to_value(sample_config()).unwrap(),
+            }),
+        );
+        assert_eq!(
+            serde_json::to_value(ServiceStopParams {
+                instance_id: "srv-1".to_string()
+            })
+            .unwrap(),
+            json!({ "instanceId": "srv-1" }),
+        );
+        assert_eq!(
+            serde_json::to_value(ServiceStatusParams {
+                instance_id: "srv-1".to_string()
+            })
+            .unwrap(),
+            json!({ "instanceId": "srv-1" }),
+        );
     }
 
     /// A `service.status` reply for a not-running instance yields no sample, so
