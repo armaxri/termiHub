@@ -86,7 +86,9 @@ pub(super) fn bind(ctx: FetchContext) -> anyhow::Result<()> {
     if slot.is_none() {
         *slot = Some(Owner::start()?);
     }
-    let owner = slot.as_ref().expect("owner just initialised");
+    let owner = slot
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("clipboard owner missing after initialisation"))?;
 
     // Publish the fetch context, then take ownership of CLIPBOARD so the server
     // routes conversion requests to our window. The order matters: a request could
