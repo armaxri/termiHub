@@ -9,7 +9,8 @@ subsystem: .github/workflows/release.yml
 evidence:
   - .github/workflows/release.yml:463
   - .github/workflows/release.yml:93
-status: open
+status: fixed
+resolution: "#3348 — attest-build-provenance on installers, agent binaries and SBOMs; CycloneDX SBOMs (desktop/agent/sidecar/frontend); verify-release gates on both"
 ---
 
 ## What
