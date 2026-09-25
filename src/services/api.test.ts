@@ -60,6 +60,7 @@ import {
   sessionWriteFile,
   readPluginFile,
   sessionHasExecCapability,
+  sessionSupportsTransferQueue,
   sessionDownload,
   sessionUpload,
   sessionVscodeOpenRemote,
@@ -569,6 +570,17 @@ describe("api service", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("session_has_exec_capability", {
         sessionId: "ssh-1",
+      });
+      expect(result).toBe(true);
+    });
+
+    it("sessionSupportsTransferQueue invokes with session ID", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      const result = await sessionSupportsTransferQueue("ftp-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("session_supports_transfer_queue", {
+        sessionId: "ftp-1",
       });
       expect(result).toBe(true);
     });

@@ -241,6 +241,31 @@ impl<'a> FileOps<'a> {
         Ok(Arc::new(sftp.clone()))
     }
 
+    /// Resolve the [`FtpConfig`](termihub_core::config::FtpConfig) backing an FTP
+    /// session's file browser, cloned so a background transfer can run on its own
+    /// connection without holding the sessions lock — the FTP analogue of
+    /// [`sftp_browser`](Self::sftp_browser) (PROD-010).
+    ///
+    /// The settings are read from the live session server-side (never persisted,
+    /// never sent to the frontend), so launching a queued FTP transfer reuses the
+    /// same credentials the session already holds. Fails with
+    /// [`TerminalError::RemoteError`] when the session has no file browser or its
+    /// browser is not FTP-backed, matching the "not supported" shape of
+    /// [`sftp_browser`](Self::sftp_browser).
+    #[cfg(feature = "ftp")]
+    pub(super) async fn ftp_transfer_config(
+        &self,
+        session_id: &str,
+    ) -> Result<termihub_core::config::FtpConfig, TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let browser = Self::browser(&sessions, session_id)?;
+        termihub_core::backends::ftp::ftp_config_of(browser).ok_or_else(|| {
+            TerminalError::RemoteError(
+                "Session file browser is not FTP-backed; queued transfer unavailable".to_string(),
+            )
+        })
+    }
+
     /// Resolve a remote path to its canonical absolute form via SFTP realpath.
     ///
     /// Session-path mirror of the standalone `sftp_realpath` command; errors are

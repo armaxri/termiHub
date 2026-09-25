@@ -47,6 +47,21 @@ use tokio_util::sync::CancellationToken;
 /// Password sent for anonymous logins (a conventional email-style placeholder).
 const ANONYMOUS_PASSWORD: &str = "anonymous@termihub";
 
+/// Recover the [`FtpConfig`] backing a `&dyn FileBrowser`, if it is an FTP
+/// browser; `None` for any other backend.
+///
+/// Lets a session-scoped caller holding only a `&dyn FileBrowser` resolve the
+/// connection settings needed to launch a queued FTP transfer — server-side, so
+/// credentials are never round-tripped through the frontend — without the
+/// concrete [`FtpFileBrowser`] type leaving this crate (PROD-010). Mirrors how
+/// the SFTP path downcasts a `&dyn FileBrowser` to reach its transfer handle.
+pub fn ftp_config_of(browser: &dyn FileBrowser) -> Option<FtpConfig> {
+    browser
+        .as_any()?
+        .downcast_ref::<FtpFileBrowser>()
+        .map(FtpFileBrowser::config)
+}
+
 /// FTP / FTPS backend, implementing [`ConnectionType`].
 ///
 /// # Lifecycle
@@ -606,6 +621,36 @@ mod tests {
     #[test]
     fn type_id() {
         assert_eq!(Ftp::new().type_id(), "ftp");
+    }
+
+    /// `ftp_config_of` recovers the connection settings backing an FTP browser
+    /// through a `&dyn FileBrowser`, so a session-scoped caller can launch a
+    /// queued FTP transfer server-side without the frontend ever holding the
+    /// credentials (PROD-010).
+    #[test]
+    fn ftp_config_of_recovers_settings_from_dyn_browser() {
+        let config = FtpConfig {
+            host: "ftp.example.test".to_string(),
+            username: "alice".to_string(),
+            password: Some("s3cret".to_string()),
+            ..FtpConfig::default()
+        };
+        let browser = FtpFileBrowser::new(config);
+        let dyn_browser: &dyn FileBrowser = &browser;
+
+        let recovered = ftp_config_of(dyn_browser).expect("FTP browser must expose its config");
+        assert_eq!(recovered.host, "ftp.example.test");
+        assert_eq!(recovered.username, "alice");
+        assert_eq!(recovered.password.as_deref(), Some("s3cret"));
+    }
+
+    /// A non-FTP browser downcasts to `None`, so the resolver never mistakes
+    /// another backend for FTP.
+    #[test]
+    fn ftp_config_of_returns_none_for_non_ftp_browser() {
+        let local = crate::files::local::LocalFileBrowser::new();
+        let dyn_browser: &dyn FileBrowser = &local;
+        assert!(ftp_config_of(dyn_browser).is_none());
     }
 
     #[test]
