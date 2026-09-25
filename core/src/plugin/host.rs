@@ -45,8 +45,8 @@ use termihub_plugin_api::symbols::{
     SYMBOL_PLUGIN_SHUTDOWN,
 };
 use termihub_plugin_api::{
-    LoadedBackend, PluginBackend, PluginError, PluginHostBridge, PluginInfo, PluginOutputSender,
-    PluginSessionConfig, CURRENT_PLUGIN_API_VERSION,
+    AbiIncompatibility, AbiVersion, LoadedBackend, PluginBackend, PluginError, PluginHostBridge,
+    PluginInfo, PluginOutputSender, PluginSessionConfig, CURRENT_PLUGIN_ABI_VERSION,
 };
 
 use crate::connection::{plugin_type_id, ConnectionFactory, ConnectionTypeRegistry};
@@ -114,13 +114,40 @@ pub enum HostError {
     #[error("plugin library is missing the required symbol `{0}`")]
     MissingSymbol(String),
 
-    /// The library reported an ABI version this host cannot load.
-    #[error("plugin ABI version mismatch: host supports {expected}, plugin built against {found}")]
-    IncompatibleAbi {
-        /// ABI version this host supports ([`CURRENT_PLUGIN_API_VERSION`]).
-        expected: u32,
-        /// ABI version the plugin reported.
-        found: u32,
+    /// The library reported an ABI version this host cannot load: a different
+    /// major, or a newer minor than this host's ([`CURRENT_PLUGIN_ABI_VERSION`]).
+    /// The message names both versions and the fix.
+    #[error("{0}")]
+    IncompatibleAbi(AbiIncompatibility),
+
+    /// The plugin's manifest `apiVersion` does not mirror the ABI version its
+    /// backend library actually reports. The library is the authoritative
+    /// number (PLG-002); a package whose two disagree is inconsistent (typically
+    /// a stale manifest or a library rebuilt against another SDK) and is refused
+    /// rather than loaded under a version it does not declare.
+    #[error(
+        "plugin manifest declares apiVersion `{manifest}` but its backend library was built \
+         for ABI {library}; repackage the plugin so the two match"
+    )]
+    ManifestAbiMismatch {
+        /// The manifest's declared `apiVersion`, verbatim.
+        manifest: String,
+        /// The ABI version the library reported.
+        library: AbiVersion,
+    },
+
+    /// The library's `termihub_plugin_abi_version` and the `api_version` in the
+    /// `PluginInfo` it filled in disagree — the plugin was assembled from
+    /// mismatched parts. Refused.
+    #[error(
+        "plugin library reports ABI {symbol} from termihub_plugin_abi_version but ABI {info} \
+         in its plugin info; rebuild the plugin"
+    )]
+    InconsistentAbi {
+        /// The version `termihub_plugin_abi_version` returned.
+        symbol: AbiVersion,
+        /// The version reported in `PluginInfo::api_version`.
+        info: AbiVersion,
     },
 
     /// The plugin's `plugin_init` entry point reported a failure.
@@ -174,7 +201,7 @@ impl HostError {
     /// two to different plugin states.
     #[must_use]
     pub fn is_incompatible(&self) -> bool {
-        matches!(self, HostError::IncompatibleAbi { .. })
+        matches!(self, HostError::IncompatibleAbi(_))
     }
 }
 
@@ -188,8 +215,9 @@ pub struct LoadedPluginInfo {
     pub name: String,
     /// The plugin's own semantic version.
     pub version: String,
-    /// ABI version the plugin was built against.
-    pub api_version: u32,
+    /// ABI version the plugin was built against (already checked compatible
+    /// with this host, and consistent with the library's exported version).
+    pub abi_version: AbiVersion,
 }
 
 impl LoadedPluginInfo {
@@ -198,7 +226,7 @@ impl LoadedPluginInfo {
             id: info.id.as_str().to_owned(),
             name: info.name.as_str().to_owned(),
             version: info.version.as_str().to_owned(),
-            api_version: info.api_version,
+            abi_version: info.abi_version(),
         }
     }
 }
@@ -234,6 +262,15 @@ impl LoadedLibrary {
     #[must_use]
     pub fn info(&self) -> &LoadedPluginInfo {
         &self.info
+    }
+
+    /// Whether this plugin's ABI includes an addition introduced in ABI
+    /// `since`. The host must check this before touching anything a later
+    /// minor added — an optional exported symbol, an appended out-parameter
+    /// field, or a newer enum variant (see `termihub_plugin_api::version`).
+    #[must_use]
+    pub fn supports(&self, since: AbiVersion) -> bool {
+        self.info.abi_version.supports(since)
     }
 
     /// Create a new backend session from this plugin.
@@ -321,7 +358,7 @@ impl LoadedLibrary {
                 id: "drop-order-test".to_owned(),
                 name: "Drop Order Test".to_owned(),
                 version: "0.0.0".to_owned(),
-                api_version: CURRENT_PLUGIN_API_VERSION,
+                abi_version: CURRENT_PLUGIN_ABI_VERSION,
             },
             create_backend: unused_create_backend,
             shutdown,
@@ -381,9 +418,17 @@ pub fn find_backend_library(plugin_dir: &Path) -> Result<PathBuf, HostError> {
 /// the ABI check passes:
 ///
 /// 1. `dlopen` the library.
-/// 2. Resolve and call `termihub_plugin_abi_version`; reject a mismatch.
-/// 3. Resolve and call `termihub_plugin_init` to read [`PluginInfo`].
+/// 2. Resolve and call `termihub_plugin_abi_version`; refuse a version this host
+///    cannot load ([`HostError::IncompatibleAbi`] — different major, or newer
+///    minor than [`CURRENT_PLUGIN_ABI_VERSION`]).
+/// 3. Resolve and call `termihub_plugin_init` to read [`PluginInfo`]; refuse a
+///    plugin whose info reports a different ABI than step 2
+///    ([`HostError::InconsistentAbi`]).
 /// 4. Resolve `create_backend` and `shutdown` for later use.
+///
+/// This variant does not cross-check a manifest; the plugin host uses
+/// [`load_backend_library_for_manifest`], which additionally requires the
+/// manifest's `apiVersion` to mirror the library's ABI.
 ///
 /// On any failure the (partially) opened library is dropped, so a rejected
 /// plugin leaves nothing loaded.
@@ -404,6 +449,52 @@ pub fn find_backend_library(plugin_dir: &Path) -> Result<PathBuf, HostError> {
 pub fn load_backend_library(
     library_path: &Path,
     expected_digest: Option<&str>,
+) -> Result<Arc<LoadedLibrary>, HostError> {
+    load_backend_library_impl(library_path, expected_digest, None)
+}
+
+/// [`load_backend_library`], additionally requiring the plugin manifest's
+/// declared `apiVersion` to equal the ABI version the library reports (PLG-002).
+///
+/// The library's exported version is the single authoritative number; the
+/// manifest is a checked mirror of it. The mirror check runs right after the
+/// ABI gate — before `termihub_plugin_init` is called — and a mismatch is
+/// refused as [`HostError::ManifestAbiMismatch`].
+pub fn load_backend_library_for_manifest(
+    library_path: &Path,
+    expected_digest: Option<&str>,
+    manifest_api_version: &str,
+) -> Result<Arc<LoadedLibrary>, HostError> {
+    load_backend_library_impl(library_path, expected_digest, Some(manifest_api_version))
+}
+
+/// Decide whether a library that exported ABI `found` may be loaded by a host
+/// at ABI `host`, and — when a manifest is being checked — whether the
+/// manifest's `apiVersion` mirrors it. Pure so the compatibility matrix can be
+/// tested against simulated host versions.
+fn check_library_abi(
+    found: AbiVersion,
+    host: AbiVersion,
+    manifest_api_version: Option<&str>,
+) -> Result<(), HostError> {
+    found
+        .check_host_compatibility(host)
+        .map_err(HostError::IncompatibleAbi)?;
+    if let Some(declared) = manifest_api_version {
+        if AbiVersion::parse(declared) != Some(found) {
+            return Err(HostError::ManifestAbiMismatch {
+                manifest: declared.to_owned(),
+                library: found,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn load_backend_library_impl(
+    library_path: &Path,
+    expected_digest: Option<&str>,
+    manifest_api_version: Option<&str>,
 ) -> Result<Arc<LoadedLibrary>, HostError> {
     // Re-check the exact bytes about to be loaded against the digest they were
     // signature-verified with, as late as possible before the open. This is the
@@ -445,15 +536,11 @@ pub fn load_backend_library(
         // SAFETY: the plugin's abi-version entry point takes no arguments and
         // returns a plain `u32`. Contained in `catch_unwind` so a panicking plugin
         // cannot unwind across FFI and abort the host.
-        std::panic::catch_unwind(|| unsafe { abi_version_fn() })
-            .map_err(|_| HostError::Panicked("plugin_abi_version"))?
+        let packed = std::panic::catch_unwind(|| unsafe { abi_version_fn() })
+            .map_err(|_| HostError::Panicked("plugin_abi_version"))?;
+        AbiVersion::from_packed(packed)
     };
-    if found != CURRENT_PLUGIN_API_VERSION {
-        return Err(HostError::IncompatibleAbi {
-            expected: CURRENT_PLUGIN_API_VERSION,
-            found,
-        });
-    }
+    check_library_abi(found, CURRENT_PLUGIN_ABI_VERSION, manifest_api_version)?;
 
     // --- 2. Read plugin metadata. ---
     let info = {
@@ -475,7 +562,15 @@ pub fn load_backend_library(
         status
             .into_result()
             .map_err(|e| HostError::Init(e.to_string()))?;
-        LoadedPluginInfo::from_ffi(&info)
+        let loaded = LoadedPluginInfo::from_ffi(&info);
+        // One authoritative version: the info must repeat the exported one.
+        if loaded.abi_version != found {
+            return Err(HostError::InconsistentAbi {
+                symbol: found,
+                info: loaded.abi_version,
+            });
+        }
+        loaded
     };
 
     // --- 3. Resolve the remaining entry points and detach them from the borrow. ---
@@ -813,7 +908,11 @@ impl PluginHost {
         // signature and re-check the library file immediately before `dlopen`. An
         // unsigned plugin yields `None` — nothing to bind — as before.
         let expected_digest = signed_backend_digest(&plugin_dir, &lib_path)?;
-        let library = load_backend_library(&lib_path, expected_digest.as_deref())?;
+        let library = load_backend_library_for_manifest(
+            &lib_path,
+            expected_digest.as_deref(),
+            &plugin.manifest.api_version,
+        )?;
 
         // Translate the plugin's declared `configSchema` into the form schema the
         // dynamic connection editor renders (#1999). Derived once here and cloned
@@ -1585,13 +1684,84 @@ mod tests {
 
     #[test]
     fn incompatible_abi_error_is_flagged() {
-        let err = HostError::IncompatibleAbi {
-            expected: 1,
-            found: 99,
-        };
+        let err = HostError::IncompatibleAbi(AbiIncompatibility::UnsupportedMajor {
+            plugin: AbiVersion::new(2, 0),
+            host: CURRENT_PLUGIN_ABI_VERSION,
+        });
         assert!(err.is_incompatible());
-        // A load error is not an incompatibility.
+        // A load error is not an incompatibility, and neither is an internally
+        // inconsistent package (its ABI is loadable; the package is broken).
         assert!(!HostError::MissingSymbol("x".into()).is_incompatible());
+        assert!(!HostError::ManifestAbiMismatch {
+            manifest: "1.0".into(),
+            library: AbiVersion::new(1, 1),
+        }
+        .is_incompatible());
+    }
+
+    // --- ABI gate compatibility matrix (#3367, PLG-001/002/003) ---
+
+    /// A simulated newer host, so "older minor" is expressible while the real
+    /// ABI is still 1.0.
+    const HOST_1_2: AbiVersion = AbiVersion::new(1, 2);
+
+    #[test]
+    fn abi_gate_matrix_against_a_newer_host() {
+        // Same version, and every older minor, loads.
+        for minor in 0..=2 {
+            assert!(
+                check_library_abi(AbiVersion::new(1, minor), HOST_1_2, None).is_ok(),
+                "1.{minor} should load on a 1.2 host"
+            );
+        }
+        // A newer minor is refused as incompatible, naming both versions.
+        let err = check_library_abi(AbiVersion::new(1, 3), HOST_1_2, None).unwrap_err();
+        assert!(err.is_incompatible());
+        assert_eq!(
+            err.to_string(),
+            "plugin built for ABI 1.3, this termiHub supports ABI 1.2 — update termiHub"
+        );
+        // A different major is refused either way.
+        let err = check_library_abi(AbiVersion::new(2, 0), HOST_1_2, None).unwrap_err();
+        assert!(err.is_incompatible());
+        assert!(
+            err.to_string().contains("major 2 is not supported"),
+            "{err}"
+        );
+        // A pre-freeze exact-match value (e.g. the old `4`) decodes as 0.4.
+        let err = check_library_abi(AbiVersion::from_packed(4), HOST_1_2, None).unwrap_err();
+        assert!(err.is_incompatible());
+        assert!(err.to_string().contains("ABI 0.4"), "{err}");
+    }
+
+    #[test]
+    fn abi_gate_requires_the_manifest_to_mirror_the_library() {
+        let lib = AbiVersion::new(1, 1);
+        assert!(check_library_abi(lib, HOST_1_2, Some("1.1")).is_ok());
+        for declared in ["1.0", "1.2", "2.1", "1", "garbage"] {
+            match check_library_abi(lib, HOST_1_2, Some(declared)) {
+                Err(HostError::ManifestAbiMismatch { manifest, library }) => {
+                    assert_eq!(manifest, declared);
+                    assert_eq!(library, lib);
+                }
+                other => panic!("{declared:?}: expected ManifestAbiMismatch, got {other:?}"),
+            }
+        }
+        // An incompatible library is reported as incompatible first, whatever
+        // the manifest says.
+        assert!(
+            check_library_abi(AbiVersion::new(1, 3), HOST_1_2, Some("1.3"))
+                .unwrap_err()
+                .is_incompatible()
+        );
+    }
+
+    #[test]
+    fn loaded_library_gates_minor_additions_on_the_plugin_abi() {
+        unsafe extern "C" fn noop_shutdown() {}
+        let lib = LoadedLibrary::for_drop_order_test(noop_shutdown);
+        assert!(lib.supports(AbiVersion::new(1, 0)));
+        assert!(!lib.supports(AbiVersion::new(1, 1)));
     }
 
     // --- FFI teardown / unload soundness (TBE-010) ---

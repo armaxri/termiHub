@@ -20,11 +20,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// The plugin API version this build of termiHub implements.
-///
-/// A plugin's declared `apiVersion` is checked against this constant; see
-/// [`PluginManifest::api_compatibility`] and [`check_api_compatibility`].
-pub const CURRENT_PLUGIN_API_VERSION: &str = "1.0";
+use termihub_plugin_api::{AbiVersion, CURRENT_PLUGIN_ABI_VERSION};
 
 /// Maximum length of a plugin `id`. Ids become on-disk directory names
 /// (`<app-data>/plugins/<id>/`), so they are kept short and slug-like.
@@ -230,7 +226,14 @@ pub struct PluginManifest {
     pub description: String,
     /// SPDX-style license identifier.
     pub license: String,
-    /// Declared plugin-API version, as `"major.minor"`.
+    /// Declared plugin ABI version, as `"major.minor"`.
+    ///
+    /// A **mirror** of the one authoritative version — the native plugin ABI
+    /// ([`CURRENT_PLUGIN_ABI_VERSION`], PLG-002) — never an independent number.
+    /// It gates install/enable for every plugin (so an incompatible plugin is
+    /// shown as incompatible instead of failing at load), and for a native
+    /// backend the loader additionally requires it to equal the ABI the library
+    /// itself reports.
     pub api_version: String,
     /// Desktop platforms the plugin supports.
     pub platforms: Vec<Platform>,
@@ -267,7 +270,7 @@ impl PluginManifest {
         require_non_empty("name", &self.name)?;
         require_non_empty("version", &self.version)?;
         require_non_empty("author", &self.author)?;
-        if parse_api_version(&self.api_version).is_none() {
+        if AbiVersion::parse(&self.api_version).is_none() {
             return Err(ManifestValidationError::InvalidApiVersion(
                 self.api_version.clone(),
             ));
@@ -281,10 +284,17 @@ impl PluginManifest {
         Ok(())
     }
 
-    /// Compatibility of this manifest's `apiVersion` with the host
-    /// ([`CURRENT_PLUGIN_API_VERSION`]).
+    /// Compatibility of this manifest's `apiVersion` with the host's plugin ABI
+    /// ([`CURRENT_PLUGIN_ABI_VERSION`]).
     pub fn api_compatibility(&self) -> ApiCompatibility {
         check_api_compatibility(&self.api_version)
+    }
+
+    /// The declared `apiVersion` as an [`AbiVersion`], or `None` when it is not
+    /// canonical `major.minor` (which [`validate`](Self::validate) rejects).
+    #[must_use]
+    pub fn abi_version(&self) -> Option<AbiVersion> {
+        AbiVersion::parse(&self.api_version)
     }
 }
 
@@ -300,18 +310,17 @@ pub enum ApiCompatibility {
 
 /// Whether a declared `apiVersion` string is compatible with the host.
 ///
-/// Compatibility rule: the **major** versions must match and the plugin's
-/// **minor** must not exceed the host's. An unparseable version is treated as
-/// incompatible. (Callers that want an actionable "malformed version" error
-/// should run [`PluginManifest::validate`] first, which reports it distinctly.)
+/// Compatibility rule (the plugin ABI's, see
+/// [`AbiVersion::check_host_compatibility`]): the **major** versions must match
+/// and the plugin's **minor** must not exceed the host's. An unparseable
+/// version is treated as incompatible. (Callers that want an actionable
+/// "malformed version" error should run [`PluginManifest::validate`] first,
+/// which reports it distinctly.)
 pub fn check_api_compatibility(declared: &str) -> ApiCompatibility {
-    match (
-        parse_api_version(declared),
-        parse_api_version(CURRENT_PLUGIN_API_VERSION),
-    ) {
-        (Some((dmaj, dmin)), Some((hmaj, hmin))) if dmaj == hmaj && dmin <= hmin => {
-            ApiCompatibility::Compatible
-        }
+    match AbiVersion::parse(declared)
+        .map(|v| v.check_host_compatibility(CURRENT_PLUGIN_ABI_VERSION))
+    {
+        Some(Ok(())) => ApiCompatibility::Compatible,
         _ => ApiCompatibility::Incompatible,
     }
 }
@@ -344,7 +353,7 @@ pub enum ManifestValidationError {
          digits and hyphens (got `{0}`)"
     )]
     InvalidId(String),
-    /// The `apiVersion` string is not of the form `major` or `major.minor`.
+    /// The `apiVersion` string is not of the canonical form `major.minor`.
     #[error("plugin manifest `apiVersion` is not a valid `major.minor` version (got `{0}`)")]
     InvalidApiVersion(String),
     /// The manifest declares no extension points.
@@ -358,25 +367,6 @@ pub enum ManifestValidationError {
          characters of letters, digits, `.`, `_` or `-` (got `{0}`)"
     )]
     InvalidConnectionType(String),
-}
-
-/// Parse a `"major"` or `"major.minor"` version into its numeric components.
-/// Returns `None` for anything else (extra components, empty, non-numeric).
-fn parse_api_version(s: &str) -> Option<(u32, u32)> {
-    let mut parts = s.split('.');
-    let major = parts.next()?;
-    if major.is_empty() {
-        return None;
-    }
-    let major: u32 = major.parse().ok()?;
-    let minor = match parts.next() {
-        Some(m) => m.parse().ok()?,
-        None => 0,
-    };
-    if parts.next().is_some() {
-        return None;
-    }
-    Some((major, minor))
 }
 
 fn require_non_empty(field: &'static str, value: &str) -> Result<(), ManifestValidationError> {
@@ -680,7 +670,9 @@ mod tests {
 
     #[test]
     fn validate_rejects_bad_api_version() {
-        for bad in ["", "x", "1.y", "1.2.3", "1."] {
+        // Only canonical `major.minor` mirrors the ABI version; a bare major
+        // is no longer accepted.
+        for bad in ["", "x", "1", "1.y", "1.2.3", "1.", "+1.0"] {
             let json = valid_manifest_json().replace(
                 "\"apiVersion\": \"1.0\"",
                 &format!("\"apiVersion\": \"{bad}\""),
@@ -700,8 +692,8 @@ mod tests {
     fn api_compatibility_rules() {
         // Same version is compatible.
         assert_eq!(check_api_compatibility("1.0"), ApiCompatibility::Compatible);
-        // Bare major matches minor 0.
-        assert_eq!(check_api_compatibility("1"), ApiCompatibility::Compatible);
+        // A bare major is not a valid mirror of the ABI version.
+        assert_eq!(check_api_compatibility("1"), ApiCompatibility::Incompatible);
         // Lower minor within the same major is compatible.
         // (host is 1.0, so only minor 0 qualifies here.)
         // Higher minor is not.

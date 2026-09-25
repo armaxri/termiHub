@@ -26,11 +26,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use termihub_plugin_api::capabilities::{
-    PluginBridgeDestroyFn, PluginFileMetadata, PluginListDirFn, PluginOpenConnectionFn,
-    PluginReadFileFn, PluginStatPathFn, PluginWriteFileFn, PluginWriteMode,
+    PluginBridgeDestroyFn, PluginFileMetadata, PluginWriteMode,
 };
 use termihub_plugin_api::{
-    FfiByteSlice, FfiOwnedBytes, FfiStr, PluginHostBridge, PluginStatus, PluginTcpStream,
+    FfiByteSlice, FfiOwnedBytes, FfiStr, PluginHostBridge, PluginHostBridgeVTable, PluginStatus,
+    PluginTcpStream,
 };
 
 use super::manifest::ConnectionPolicyManifest;
@@ -210,28 +210,23 @@ pub fn build_host_bridge_with_policy(
         active_connections: Arc::new(AtomicUsize::new(0)),
     }))
     .cast::<core::ffi::c_void>();
-    let open_connection: PluginOpenConnectionFn = bridge_open_connection;
-    let read_file: PluginReadFileFn = bridge_read_file;
-    let write_file: PluginWriteFileFn = bridge_write_file;
-    let stat_path: PluginStatPathFn = bridge_stat_path;
-    let list_dir: PluginListDirFn = bridge_list_dir;
     let destroy: PluginBridgeDestroyFn = bridge_destroy;
-    // SAFETY: `ctx` is a leaked `Box<BridgeContext>`; every callback below only
-    // ever interprets it as exactly that, and `destroy` reclaims it exactly once.
-    // `BridgeContext` is `Send + Sync` (its fields are), matching the bridge's
-    // bounds.
-    unsafe {
-        PluginHostBridge::from_raw(
-            ctx,
-            open_connection,
-            read_file,
-            write_file,
-            stat_path,
-            list_dir,
-            Some(destroy),
-        )
-    }
+    // SAFETY: `ctx` is a leaked `Box<BridgeContext>`; every callback in
+    // `BRIDGE_VTABLE` only ever interprets it as exactly that, and `destroy`
+    // reclaims it exactly once. `BridgeContext` is `Send + Sync` (its fields
+    // are), matching the bridge's bounds.
+    unsafe { PluginHostBridge::from_raw(ctx, &BRIDGE_VTABLE, Some(destroy)) }
 }
+
+/// The host's capability-bridge callbacks, shared by every session's bridge.
+/// Append-only within ABI 1.x (see `termihub_plugin_api::version`).
+static BRIDGE_VTABLE: PluginHostBridgeVTable = PluginHostBridgeVTable {
+    open_connection: bridge_open_connection,
+    read_file: bridge_read_file,
+    write_file: bridge_write_file,
+    stat_path: bridge_stat_path,
+    list_dir: bridge_list_dir,
+};
 
 /// Resolve `host:port` and connect, bounding each attempt by `timeout`.
 ///
