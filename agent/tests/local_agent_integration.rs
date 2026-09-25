@@ -70,7 +70,9 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream, ToSocketAddrs};
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Condvar, Mutex, OnceLock};
@@ -1436,6 +1438,7 @@ impl AgentClient {
     /// Decoded output is appended to a single accumulator and re-parsed each round
     /// so a counter split across two output notifications (PTY chunking, or a big
     /// buffer replay arriving in pieces) is still recognised once both halves land.
+    #[cfg(unix)] // only the unix-gated daemon-recovery tests track counters
     fn track_counter(
         &mut self,
         prefix: &str,
@@ -1494,6 +1497,7 @@ impl AgentClient {
     /// buffer replay is delivered) or `overall` elapses. Occurrences are counted
     /// over one accumulator so a needle split across notifications still counts
     /// once, and only non-overlapping matches are counted.
+    #[cfg(unix)] // only the unix-gated replay tests count occurrences
     fn count_output_occurrences(
         &mut self,
         needle: &str,
@@ -1550,6 +1554,7 @@ impl AgentClient {
 /// in order of appearance. `counters_in("a TICK=1 b TICK=42", "TICK=")` →
 /// `[1, 42]`. A `prefix` occurrence not followed by a digit (e.g. the shell's
 /// echo of the literal loop command `echo TICK=$i`) contributes nothing.
+#[cfg(unix)] // helper of the unix-only `track_counter`
 fn counters_in(text: &str, prefix: &str) -> Vec<u64> {
     // `match_indices` yields each non-overlapping match start (a valid char
     // boundary), and `idx + prefix.len()` is also a boundary because `prefix` is

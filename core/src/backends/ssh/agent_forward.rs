@@ -183,7 +183,9 @@ pub(crate) fn spawn_forwarded_agent_bridge(channel: Channel<Msg>) {
     });
 }
 
-#[cfg(test)]
+// Every test exercises the unix-socket agent path; there is nothing to test on
+// Windows (named-pipe agent), so the whole module is unix-only.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
@@ -191,7 +193,6 @@ mod tests {
     /// connector relies on this to skip the forwarding request and log a no-op
     /// (#1699). Exercised through the injectable seam so the test never mutates
     /// the process-global `SSH_AUTH_SOCK` and cannot race sibling tests (#2122).
-    #[cfg(unix)]
     #[tokio::test]
     async fn local_agent_unavailable_when_sock_unset() {
         assert!(
@@ -202,7 +203,6 @@ mod tests {
 
     /// An empty socket path is treated the same as unset — a stray empty
     /// `SSH_AUTH_SOCK` must not be taken for a live agent.
-    #[cfg(unix)]
     #[tokio::test]
     async fn local_agent_unavailable_when_sock_empty() {
         assert!(
@@ -216,7 +216,6 @@ mod tests {
     /// A pointer to a non-existent socket path is likewise unavailable rather than
     /// an error that could abort a connect. Passed by value through the seam, so
     /// no process env is touched (#2122).
-    #[cfg(unix)]
     #[tokio::test]
     async fn local_agent_unavailable_for_dangling_sock_path() {
         assert!(
