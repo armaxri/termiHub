@@ -6,7 +6,7 @@
 //! ([`crate::backends::docker::Docker`]) talks to the daemon through the
 //! `bollard` API, so there is no CLI-argument building here.
 
-use crate::config::DockerConfig;
+use crate::config::{ContainerMode, DockerConfig};
 use crate::errors::SessionError;
 
 /// Validate a [`DockerConfig`] before session creation.
@@ -34,10 +34,25 @@ use crate::errors::SessionError;
 /// Returns [`SessionError::InvalidConfig`] with a descriptive message if
 /// validation fails.
 pub fn validate_docker_config(config: &DockerConfig) -> Result<(), SessionError> {
-    if config.image.trim().is_empty() {
-        return Err(SessionError::InvalidConfig(
-            "Docker image must not be empty".to_string(),
-        ));
+    match config.container_mode {
+        // Exec-into-existing (PROD-016): the image is irrelevant (no container is
+        // created), but a running container must be named to target.
+        ContainerMode::Existing => {
+            let name = config.existing_container.as_deref().unwrap_or("").trim();
+            if name.is_empty() {
+                return Err(SessionError::InvalidConfig(
+                    "An existing container name or ID must be provided".to_string(),
+                ));
+            }
+        }
+        // Create-and-run a new container: the image is required, as before.
+        ContainerMode::New => {
+            if config.image.trim().is_empty() {
+                return Err(SessionError::InvalidConfig(
+                    "Docker image must not be empty".to_string(),
+                ));
+            }
+        }
     }
 
     for env_var in &config.env_vars {
@@ -73,7 +88,61 @@ pub fn validate_docker_config(config: &DockerConfig) -> Result<(), SessionError>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{EnvVar, VolumeMount};
+    use crate::config::{ContainerMode, EnvVar, VolumeMount};
+
+    #[test]
+    fn validate_docker_config_existing_mode_requires_container_name() {
+        // PROD-016: existing mode with no container name is rejected up front.
+        let config = DockerConfig {
+            container_mode: ContainerMode::Existing,
+            existing_container: None,
+            image: String::new(),
+            ..Default::default()
+        };
+        let err = validate_docker_config(&config).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("existing container name or ID must be provided"),
+            "unexpected error: {err}"
+        );
+
+        // Whitespace-only is treated as empty.
+        let config = DockerConfig {
+            container_mode: ContainerMode::Existing,
+            existing_container: Some("   ".to_string()),
+            image: String::new(),
+            ..Default::default()
+        };
+        assert!(validate_docker_config(&config).is_err());
+    }
+
+    #[test]
+    fn validate_docker_config_existing_mode_ignores_empty_image() {
+        // PROD-016: image is not required when exec-ing into an existing
+        // container — only the container name matters.
+        let config = DockerConfig {
+            container_mode: ContainerMode::Existing,
+            existing_container: Some("my-running-app".to_string()),
+            image: String::new(),
+            ..Default::default()
+        };
+        assert!(validate_docker_config(&config).is_ok());
+    }
+
+    #[test]
+    fn validate_docker_config_new_mode_still_requires_image() {
+        // Back-compat: default (new) mode keeps requiring an image.
+        let config = DockerConfig {
+            container_mode: ContainerMode::New,
+            image: String::new(),
+            ..Default::default()
+        };
+        let err = validate_docker_config(&config).unwrap_err();
+        assert!(
+            err.to_string().contains("Docker image must not be empty"),
+            "unexpected error: {err}"
+        );
+    }
 
     #[test]
     fn validate_docker_config_valid() {
