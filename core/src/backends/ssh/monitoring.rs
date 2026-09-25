@@ -992,8 +992,11 @@ Inter-|   Receive                                                |  Transmit
     }
 
     /// A collect that is truncated below the parser's six-line floor is a clean
-    /// typed error: the loop keeps running but, never having reached `Live`,
-    /// must emit no status transition and push no stats — no false "connected".
+    /// typed error. The transport is up but the remote never answers with a
+    /// parseable sample, so a reconnect cannot help: after `stale_threshold`
+    /// consecutive pre-`Live` parse failures the loop resolves to the terminal
+    /// `Offline` (no false `Live`, no fabricated stats) and ends, instead of
+    /// hanging in `Connecting` forever (#3252).
     #[tokio::test]
     async fn truncated_output_yields_typed_error_and_no_false_live() {
         // The parser rejects the truncated sample with a typed error (contract).
@@ -1005,23 +1008,37 @@ Inter-|   Receive                                                |  Transmit
         let provider = degraded_provider(TRUNCATED_STATS);
         let mut sub = provider.subscribe().await.expect("subscribe");
 
-        // The loop keeps collecting and parse-failing from `Connecting`; it must
-        // never emit a bogus Live/Stale transition on the status channel.
-        assert!(
-            tokio::time::timeout(Duration::from_millis(300), sub.status.recv())
-                .await
-                .is_err(),
-            "a persistently unparseable collect must not emit any status transition"
+        // The first and only transition is straight to Offline — never a bogus
+        // Live, and never a Stale/Reconnecting campaign against a healthy
+        // transport.
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "persistently unparseable output must resolve Connecting -> Offline"
         );
         // …and must never push a stats sample derived from unparseable output.
         assert!(
             sub.stats.try_recv().is_err(),
             "a persistently unparseable collect must never push a stats sample"
         );
-        // The loop survived the parse failures rather than panicking out.
+        // Bounded: exactly `stale_threshold` parse failures, then the loop ends
+        // (the stats channel closes) without re-dialling the transport.
         assert!(
-            provider.transport.collect_calls.load(Ordering::SeqCst) >= 1,
-            "the collect loop must keep running across parse failures"
+            tokio::time::timeout(Duration::from_secs(2), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop ends and closes its stats channel"
+        );
+        assert_eq!(
+            provider.transport.collect_calls.load(Ordering::SeqCst),
+            DEFAULT_STALE_THRESHOLD as usize,
+            "the loop gives up after `stale_threshold` consecutive parse failures"
+        );
+        assert_eq!(
+            provider.transport.connect_calls.load(Ordering::SeqCst),
+            1,
+            "a pre-Live parse failure must not start a reconnect campaign"
         );
 
         provider.unsubscribe().await.expect("unsubscribe");

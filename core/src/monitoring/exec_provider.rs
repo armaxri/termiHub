@@ -723,6 +723,33 @@ Inter-|   Receive                                                |  Transmit
         );
     }
 
+    /// A target whose probe parsed but whose every later collect is unparseable
+    /// (the exec answers, but with garbage) must not hang in `Connecting`: after
+    /// `stale_threshold` consecutive pre-`Live` parse failures the loop resolves
+    /// to the terminal `Offline` and ends (#3252).
+    #[tokio::test]
+    async fn persistently_unparseable_output_before_live_resolves_offline() {
+        // Index 0 is consumed by the (parseable) subscribe probe; every loop
+        // collect after that returns the unparseable last entry.
+        let provider = fast_provider(&[SAMPLE_1, "not/proc output"]);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "persistently unparseable output must resolve Connecting -> Offline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop pushes no sample and closes its stats channel"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
     /// A source that goes live and then loses `/proc` mid-stream drives the
     /// observable lifecycle `Live` → `Stale` → `Reconnecting` → `Offline` when
     /// the target stays down, without ever fabricating a sample.
