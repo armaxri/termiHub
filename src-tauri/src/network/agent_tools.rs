@@ -218,6 +218,244 @@ fn field(reply: &Value, key: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use termihub_core::protocol::methods::{
+        NetworkDnsLookupParams, NetworkPingParams, NetworkPingResponse, NetworkPortScanParams,
+        NetworkPortScanResponse, NetworkTracerouteParams, NetworkTracerouteResponse,
+        NetworkWolParams,
+    };
+
+    // ── DUP-001: shared network.* request/response DTOs ──────────────────
+    //
+    // The desktop builds every `network.{port_scan,ping,traceroute,dns_lookup,
+    // wol}` request from the shared `Network*Params` DTOs and parses the batched
+    // reply into the shared `Network*Response` DTOs, instead of hand-building
+    // `serde_json::json!` params and reading `Value["key"]`. These tests pin the
+    // request wire bytes byte-for-byte against the pre-migration hand-built JSON
+    // (a change here is a WIRE BREAK — the agent deserializes them) and prove the
+    // reply parse against the exact shape the agent sends.
+    //
+    // The params are snake_case (`timeout_ms`, `interval_ms`, `record_type`,
+    // `max_hops`), which the `Network*Params` field names reproduce with no serde
+    // rename; absent optionals keep the key with a `null` value on both sides, so
+    // the key set is identical. `serde_json::to_value` and `json!` both back an
+    // object with a `BTreeMap` (no `preserve_order`), so key ordering matches too.
+
+    #[test]
+    fn port_scan_request_wire_matches_hand_built_json() {
+        // Explicit optional values.
+        let legacy = json!({
+            "host": "host.example",
+            "ports": "1-1024",
+            "timeout_ms": 2000u64,
+            "concurrency": 100usize,
+        });
+        let typed = serde_json::to_value(NetworkPortScanParams {
+            host: "host.example".to_string(),
+            ports: "1-1024".to_string(),
+            timeout_ms: Some(2000),
+            concurrency: Some(100),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&legacy).unwrap(),
+            "port_scan params wire diverged from the hand-built json!"
+        );
+
+        // Absent optionals → the key stays with a null value on both sides.
+        let legacy_none = json!({
+            "host": "h",
+            "ports": "22",
+            "timeout_ms": Option::<u64>::None,
+            "concurrency": Option::<usize>::None,
+        });
+        let typed_none = serde_json::to_value(NetworkPortScanParams {
+            host: "h".to_string(),
+            ports: "22".to_string(),
+            timeout_ms: None,
+            concurrency: None,
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed_none).unwrap(),
+            serde_json::to_string(&legacy_none).unwrap(),
+        );
+    }
+
+    #[test]
+    fn ping_request_wire_matches_hand_built_json() {
+        // The desktop always sends a bounded (present) count and an optional
+        // interval; `count` is a bare number, `interval_ms` is null when absent.
+        let legacy = json!({
+            "host": "h",
+            "interval_ms": 1000u64,
+            "count": 4u32,
+        });
+        let typed = serde_json::to_value(NetworkPingParams {
+            host: "h".to_string(),
+            count: Some(4),
+            interval_ms: Some(1000),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&legacy).unwrap(),
+            "ping params wire diverged from the hand-built json!"
+        );
+
+        let legacy_no_interval = json!({
+            "host": "h",
+            "interval_ms": Option::<u64>::None,
+            "count": 10u32,
+        });
+        let typed_no_interval = serde_json::to_value(NetworkPingParams {
+            host: "h".to_string(),
+            count: Some(10),
+            interval_ms: None,
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed_no_interval).unwrap(),
+            serde_json::to_string(&legacy_no_interval).unwrap(),
+        );
+    }
+
+    #[test]
+    fn traceroute_request_wire_matches_hand_built_json() {
+        let legacy = json!({ "host": "h", "max_hops": 20u8 });
+        let typed = serde_json::to_value(NetworkTracerouteParams {
+            host: "h".to_string(),
+            max_hops: Some(20),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&legacy).unwrap(),
+            "traceroute params wire diverged from the hand-built json!"
+        );
+
+        let legacy_none = json!({ "host": "h", "max_hops": Option::<u8>::None });
+        let typed_none = serde_json::to_value(NetworkTracerouteParams {
+            host: "h".to_string(),
+            max_hops: None,
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed_none).unwrap(),
+            serde_json::to_string(&legacy_none).unwrap(),
+        );
+    }
+
+    #[test]
+    fn dns_request_wire_matches_hand_built_json() {
+        let legacy = json!({
+            "hostname": "example.com",
+            "record_type": "A",
+            "server": "1.1.1.1",
+        });
+        let typed = serde_json::to_value(NetworkDnsLookupParams {
+            hostname: "example.com".to_string(),
+            record_type: "A".to_string(),
+            server: Some("1.1.1.1".to_string()),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&legacy).unwrap(),
+            "dns params wire diverged from the hand-built json!"
+        );
+
+        let legacy_none = json!({
+            "hostname": "example.com",
+            "record_type": "AAAA",
+            "server": Option::<String>::None,
+        });
+        let typed_none = serde_json::to_value(NetworkDnsLookupParams {
+            hostname: "example.com".to_string(),
+            record_type: "AAAA".to_string(),
+            server: None,
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed_none).unwrap(),
+            serde_json::to_string(&legacy_none).unwrap(),
+        );
+    }
+
+    #[test]
+    fn wol_request_wire_matches_hand_built_json() {
+        let legacy = json!({
+            "mac": "aa:bb:cc:dd:ee:ff",
+            "broadcast": "255.255.255.255",
+            "port": 9u16,
+        });
+        let typed = serde_json::to_value(NetworkWolParams {
+            mac: "aa:bb:cc:dd:ee:ff".to_string(),
+            broadcast: "255.255.255.255".to_string(),
+            port: 9,
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&legacy).unwrap(),
+            "wol params wire diverged from the hand-built json!"
+        );
+    }
+
+    #[test]
+    fn port_scan_response_parses_agent_reply() {
+        // The exact `{results, summary}` shape `handle_port_scan` sends.
+        let reply = json!({
+            "results": [
+                { "host": "10.0.0.1", "port": 22, "state": "open", "latencyMs": 3 }
+            ],
+            "summary": { "total": 1, "open": 1, "closed": 0, "filtered": 0, "elapsedMs": 5 }
+        });
+        let parsed: NetworkPortScanResponse = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.results.len(), 1);
+        assert_eq!(parsed.results[0].host, "10.0.0.1");
+        assert_eq!(parsed.results[0].port, 22);
+        assert_eq!(parsed.results[0].latency_ms, Some(3));
+        assert_eq!(parsed.summary.total, 1);
+        assert_eq!(parsed.summary.open, 1);
+        assert_eq!(parsed.summary.elapsed_ms, 5);
+    }
+
+    #[test]
+    fn ping_response_parses_agent_reply() {
+        // The exact `{results, stats}` shape `handle_ping` sends.
+        let reply = json!({
+            "results": [
+                { "seq": 0, "latencyMs": 12, "ttl": 56, "timedOut": false, "tcpFallback": false }
+            ],
+            "stats": {
+                "sent": 1, "received": 1, "lossPercent": 0.0,
+                "minMs": 12.0, "avgMs": 12.0, "maxMs": 12.0, "jitterMs": 0.0
+            }
+        });
+        let parsed: NetworkPingResponse = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.results.len(), 1);
+        assert_eq!(parsed.results[0].seq, 0);
+        assert_eq!(parsed.results[0].latency_ms, Some(12));
+        assert_eq!(parsed.stats.sent, 1);
+        assert_eq!(parsed.stats.received, 1);
+    }
+
+    #[test]
+    fn traceroute_response_parses_agent_reply() {
+        // The exact `{hops}` shape `handle_traceroute` sends.
+        let reply = json!({
+            "hops": [
+                { "hop": 1, "host": "gw.local", "ip": "10.0.0.1", "rttMs": [1.0, 1.1, 1.2] }
+            ]
+        });
+        let parsed: NetworkTracerouteResponse = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.hops.len(), 1);
+        assert_eq!(parsed.hops[0].hop, 1);
+        assert_eq!(parsed.hops[0].host.as_deref(), Some("gw.local"));
+        assert_eq!(parsed.hops[0].ip.as_deref(), Some("10.0.0.1"));
+        assert_eq!(parsed.hops[0].rtt_ms[0], Some(1.0));
+    }
 
     #[test]
     fn http_monitor_is_desktop_only_every_other_tool_is_routable() {
