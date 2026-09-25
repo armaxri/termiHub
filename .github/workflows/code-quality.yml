@@ -209,6 +209,9 @@ jobs:
   rust-quality-windows:
     name: Rust Code Quality (Windows)
     runs-on: windows-latest
+    needs: changes
+    # PR lane: only when Rust changed (#3325). Post-merge: always.
+    if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
 
     steps:
       - name: Checkout code
