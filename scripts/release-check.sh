@@ -1,7 +1,50 @@
 #!/usr/bin/env bash
 # Release readiness checklist — validates that the repo is ready for a release.
 # Run from anywhere: ./scripts/release-check.sh
+#
+# Usage: ./scripts/release-check.sh [--versions-only] [--expect-version <ver>] [--help]
+#
+#   --versions-only          Run only the version checks (5-file consistency, the
+#                            optional expected version, Tauri npm/crate drift) and
+#                            exit. No tests, no git/branch checks. This is the mode
+#                            the tag-triggered release workflow runs as its
+#                            verify-version gate (PKG-007).
+#   --expect-version <ver>   Also require every version source to equal <ver>
+#                            (e.g. the release tag without its leading "v").
+#   --help                   Show this help and exit.
 set -euo pipefail
+
+usage() {
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+VERSIONS_ONLY=false
+EXPECT_VERSION=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --versions-only)
+            VERSIONS_ONLY=true
+            shift
+            ;;
+        --expect-version)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "error: --expect-version needs a value" >&2
+                exit 2
+            fi
+            EXPECT_VERSION="${2#v}"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "error: unknown argument '$1'" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -34,8 +77,21 @@ for name_ver in "src-tauri/tauri.conf.json:$TAURI_VER" \
     fi
 done
 
+if [ -z "$PKG_VER" ]; then
+    fail "Could not read a version from package.json"
+    ALL_MATCH=false
+fi
+
 if [ "$ALL_MATCH" = true ]; then
     pass "All 5 files agree on version $PKG_VER"
+fi
+
+if [ -n "$EXPECT_VERSION" ]; then
+    if [ "$PKG_VER" = "$EXPECT_VERSION" ]; then
+        pass "Repository version $PKG_VER matches the expected version $EXPECT_VERSION"
+    else
+        fail "Repository version '$PKG_VER' (package.json) does not match the expected version '$EXPECT_VERSION'"
+    fi
 fi
 
 VERSION="$PKG_VER"
@@ -52,6 +108,17 @@ if DRIFT_OUTPUT=$(node scripts/internal/check-tauri-version-drift.mjs 2>&1); the
 else
     echo "$DRIFT_OUTPUT" | sed 's/^/  /'
     fail "Tauri npm/crate version drift would block 'pnpm tauri build'"
+fi
+
+# ---------------------------------------------------------------------------
+if [ "$VERSIONS_ONLY" = true ]; then
+    echo ""
+    if [ "$FAILED" -ne 0 ]; then
+        echo "  RESULT: version checks FAILED"
+        exit 1
+    fi
+    echo "  RESULT: version checks passed"
+    exit 0
 fi
 
 # ---------------------------------------------------------------------------
@@ -165,18 +232,38 @@ fi
 echo ""
 echo "=== TODO/FIXME/HACK Scan ==="
 
-MARKERS=$(grep -rn --include='*.ts' --include='*.tsx' --include='*.rs' \
-    -E '\bTODO\b|\bFIXME\b|\bHACK\b' src/ src-tauri/src/ core/src/ agent/src/ 2>/dev/null || true)
+# FIXME and HACK mark known-broken code or workarounds and BLOCK a release
+# (WA-CI-030). TODO marks follow-up work and stays a warning. The blocking scan
+# only matches a marker that opens a comment (`// FIXME`, `/* HACK`, `* FIXME`,
+# `//! HACK`, ...): a bare-word match would also hit string literals and test
+# fixtures that merely mention the words (e.g. highlight-rule patterns such as
+# "\\b(?:TODO|FIXME)\\b"), which are not markers.
+MARKER_DIRS=(src/ src-tauri/src/ core/src/ agent/src/)
+MARKER_GLOBS=(--include='*.ts' --include='*.tsx' --include='*.rs')
 
-if [ -n "$MARKERS" ]; then
-    MARKER_COUNT=$(echo "$MARKERS" | wc -l | tr -d ' ')
-    warn "Found $MARKER_COUNT TODO/FIXME/HACK markers in source code"
-    echo "$MARKERS" | head -20
-    if [ "$MARKER_COUNT" -gt 20 ]; then
-        echo "  ... and $((MARKER_COUNT - 20)) more"
+BLOCKING_MARKERS=$(grep -rnE "${MARKER_GLOBS[@]}" \
+    '(//|/\*|^[[:space:]]*\*)[/!*]*[[:space:]]*(FIXME|HACK)\b' \
+    "${MARKER_DIRS[@]}" 2>/dev/null || true)
+
+if [ -n "$BLOCKING_MARKERS" ]; then
+    BLOCKING_COUNT=$(echo "$BLOCKING_MARKERS" | wc -l | tr -d ' ')
+    fail "Found $BLOCKING_COUNT FIXME/HACK markers in source code"
+    echo "$BLOCKING_MARKERS" | sed 's/^/    /'
+else
+    pass "No FIXME/HACK markers found"
+fi
+
+TODO_MARKERS=$(grep -rnE "${MARKER_GLOBS[@]}" '\bTODO\b' "${MARKER_DIRS[@]}" 2>/dev/null || true)
+
+if [ -n "$TODO_MARKERS" ]; then
+    TODO_COUNT=$(echo "$TODO_MARKERS" | wc -l | tr -d ' ')
+    warn "Found $TODO_COUNT TODO markers in source code"
+    echo "$TODO_MARKERS" | head -20
+    if [ "$TODO_COUNT" -gt 20 ]; then
+        echo "  ... and $((TODO_COUNT - 20)) more"
     fi
 else
-    pass "No TODO/FIXME/HACK markers found"
+    pass "No TODO markers found"
 fi
 
 # ---------------------------------------------------------------------------

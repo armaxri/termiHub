@@ -19,11 +19,13 @@
 /// forces a ~17 GB zeroed allocation, and Rust aborts the whole process on
 /// allocation failure (no catchable error) — a trivial denial of service.
 ///
-/// 8192 comfortably covers 4K/5K panels and multi-monitor spans while bounding a
-/// single framebuffer to `8192 * 8192 * 4` = 256 MiB. Dimensions above the cap
-/// are clamped before any allocation. (The mock backend caps far lower at 1920,
+/// This is the shared, all-backend cap
+/// [`MAX_FRAMEBUFFER_DIMENSION`](crate::connection::MAX_FRAMEBUFFER_DIMENSION)
+/// (8192, bounding one framebuffer to 256 MiB), so the shadow never holds a
+/// framebuffer the shared frame pump would reject. Dimensions above the cap are
+/// clamped before any allocation. (The mock backend caps far lower at 1920,
 /// which is fine for synthetic test frames but would reject real 4K desktops.)
-pub const MAX_DIMENSION: u32 = 8192;
+pub const MAX_DIMENSION: u32 = crate::connection::MAX_FRAMEBUFFER_DIMENSION;
 
 /// A local RGBA copy of the remote framebuffer, kept in lockstep with what the
 /// frontend canvas shows so CopyRect regions can be resolved to real pixels.

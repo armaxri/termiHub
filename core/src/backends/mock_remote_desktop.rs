@@ -34,7 +34,14 @@ const DEFAULT_WIDTH: u16 = 320;
 /// Default mock framebuffer height.
 const DEFAULT_HEIGHT: u16 = 240;
 /// Upper bound on either dimension — mirrors the concept's framebuffer cap.
+///
+/// A mock-local clamp that keeps synthetic test payloads small. It is *not* the
+/// safety bound: the shared, all-backend cap is
+/// [`MAX_FRAMEBUFFER_DIMENSION`](crate::connection::MAX_FRAMEBUFFER_DIMENSION),
+/// enforced on every frame by [`FrameUpdate::sanitize`] (MOCK-011). The mock
+/// must stay within it, which this compile-time check pins.
 const MAX_DIMENSION: u16 = 1920;
+const _: () = assert!(MAX_DIMENSION as u32 <= crate::connection::MAX_FRAMEBUFFER_DIMENSION);
 /// Side length of the moving test-pattern block, in pixels.
 const BLOCK: u32 = 48;
 /// Frame-generation tick interval.

@@ -22,9 +22,11 @@ pub mod schema_defaults;
 pub mod validation;
 
 pub use graphical::{
-    shared_field_base, AuthKind, CertPrompt, CertPromptReceiver, CursorReceiver, CursorShape,
-    CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
-    GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
+    rgba_len, shared_field_base, AuthKind, CertPrompt, CertPromptReceiver, CursorReceiver,
+    CursorShape, CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, FrameViolation,
+    GraphicalBackend, GraphicalCapabilities, GraphicalState, InputEvent, RectViolation,
+    RemoteClipboardFile, SanitizedFrame, SessionStateMachine, MAX_FRAMEBUFFER_DIMENSION,
+    MAX_RECONNECT_ATTEMPTS,
 };
 pub use lifecycle::SessionStatus;
 pub use plugin_type_id::{

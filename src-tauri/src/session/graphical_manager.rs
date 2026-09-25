@@ -26,6 +26,7 @@ use termihub_core::connection::{
     FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine,
 };
 
+use crate::session::frame_guard::{FrameGuard, FrameVerdict, REJECTED_FRAMES_MESSAGE};
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
 use crate::utils::errors::TerminalError;
 
@@ -602,29 +603,46 @@ fn emit_state<S: GraphicalEventSink>(
 
 /// Pump frame updates from the backend to `remote-desktop-frame` events until
 /// the channel closes.
+///
+/// Every frame passes the shared [`FrameGuard`] first (MOCK-011), so no backend
+/// can push an oversize framebuffer or an out-of-bounds / malformed dirty rect
+/// to the frontend. A persistently invalid stream aborts the pump and drops the
+/// session with [`REJECTED_FRAMES_MESSAGE`].
 async fn frame_pump<S: GraphicalEventSink>(
     session_id: String,
     mut frames: termihub_core::connection::FrameReceiver,
     sink: S,
     state: Arc<Mutex<SessionStateMachine>>,
 ) {
+    let mut guard = FrameGuard::new();
+    let mut aborted = false;
     while let Some(frame) = frames.recv().await {
-        sink.emit_frame(&RemoteDesktopFrameEvent {
-            session_id: session_id.clone(),
-            frame,
-        });
+        match guard.admit(&session_id, frame) {
+            FrameVerdict::Emit(frame) => sink.emit_frame(&RemoteDesktopFrameEvent {
+                session_id: session_id.clone(),
+                frame,
+            }),
+            FrameVerdict::Drop => {}
+            FrameVerdict::Abort => {
+                warn!(session_id = %session_id, "graphical backend sent persistently invalid frames; dropping session");
+                aborted = true;
+                break;
+            }
+        }
     }
-    // Channel closed. If the session is still live (not an intentional
-    // disconnect), record the drop so the state reflects it.
+    // Close our end so a still-running backend's next send fails and it winds down.
+    drop(frames);
+    // Channel closed (or aborted). If the session is still live (not an
+    // intentional disconnect), record the drop so the state reflects it.
     let mut sm = state.lock().await;
     if sm.state().is_live() {
         let dropped = sm.connection_dropped();
-        debug!(session_id = %session_id, ?dropped, "graphical frame channel closed");
+        debug!(session_id = %session_id, ?dropped, aborted, "graphical frame channel closed");
         sink.emit_state(&RemoteDesktopStateEvent {
             session_id: session_id.clone(),
             state: dropped,
             reconnect_attempt: sm.reconnect_attempts(),
-            message: None,
+            message: aborted.then(|| REJECTED_FRAMES_MESSAGE.to_string()),
         });
     }
 }
@@ -702,6 +720,153 @@ async fn cert_pump<S: GraphicalEventSink>(
                 // the backend re-prompts (it will not for a single connect).
             }
         }
+    }
+}
+
+/// Hostile-frame tests of the shared frame pump, fed directly (no backend, no
+/// feature gate) so the bound is asserted on every per-PR run (MOCK-011).
+#[cfg(test)]
+mod frame_pump_tests {
+    use super::*;
+    use crate::session::frame_guard::MAX_CONSECUTIVE_REJECTED_FRAMES;
+    use std::sync::Mutex as StdMutex;
+    use termihub_core::connection::{DirtyRect, MAX_FRAMEBUFFER_DIMENSION};
+    use tokio::sync::mpsc;
+
+    #[derive(Clone, Default)]
+    struct Sink {
+        frames: Arc<StdMutex<Vec<FrameUpdate>>>,
+        states: Arc<StdMutex<Vec<RemoteDesktopStateEvent>>>,
+    }
+
+    impl GraphicalEventSink for Sink {
+        fn emit_frame(&self, event: &RemoteDesktopFrameEvent) {
+            self.frames.lock().unwrap().push(event.frame.clone());
+        }
+        fn emit_cursor(&self, _: &RemoteDesktopCursorEvent) {}
+        fn emit_clipboard(&self, _: &RemoteDesktopClipboardEvent) {}
+        fn emit_state(&self, event: &RemoteDesktopStateEvent) {
+            self.states.lock().unwrap().push(event.clone());
+        }
+        fn emit_cert_prompt(&self, _: &RemoteDesktopCertPromptEvent) {}
+    }
+
+    fn active_state() -> Arc<Mutex<SessionStateMachine>> {
+        let mut sm = SessionStateMachine::new();
+        sm.transport_up();
+        sm.activated();
+        Arc::new(Mutex::new(sm))
+    }
+
+    fn rect(x: u32, y: u32, w: u32, h: u32) -> DirtyRect {
+        DirtyRect {
+            x,
+            y,
+            width: w,
+            height: h,
+            data: vec![7u8; (w as usize) * (h as usize) * 4],
+        }
+    }
+
+    fn frame(w: u32, h: u32, rects: Vec<DirtyRect>) -> FrameUpdate {
+        FrameUpdate {
+            width: w,
+            height: h,
+            rects,
+        }
+    }
+
+    /// Feed `stream` through the pump and return what reached the frontend.
+    async fn pump(stream: Vec<FrameUpdate>) -> Sink {
+        let (tx, rx) = mpsc::channel(stream.len().max(1));
+        for f in stream {
+            tx.send(f).await.unwrap();
+        }
+        drop(tx);
+        let sink = Sink::default();
+        frame_pump("s1".into(), rx, sink.clone(), active_state()).await;
+        sink
+    }
+
+    #[tokio::test]
+    async fn hostile_frames_never_reach_the_frontend() {
+        let good = rect(0, 0, 2, 2);
+        let mut short = rect(0, 0, 2, 2);
+        short.data.pop();
+        let sink = pump(vec![
+            // Oversize framebuffer (RFB u16 max) — dropped whole.
+            frame(65_535, 65_535, vec![rect(0, 0, 1, 1)]),
+            frame(MAX_FRAMEBUFFER_DIMENSION + 1, 10, Vec::new()),
+            // Overflow-inducing dimensions.
+            frame(u32::MAX, u32::MAX, Vec::new()),
+            // Dirty rect outside the framebuffer + length mismatch: stripped.
+            frame(10, 10, vec![rect(9, 9, 2, 2), short, good.clone()]),
+        ])
+        .await;
+        let frames = sink.frames.lock().unwrap();
+        assert_eq!(*frames, vec![frame(10, 10, vec![good])]);
+        for f in frames.iter() {
+            assert!(f.width <= MAX_FRAMEBUFFER_DIMENSION);
+            assert!(f.height <= MAX_FRAMEBUFFER_DIMENSION);
+            assert!(f
+                .rects
+                .iter()
+                .all(|r| r.check_within(f.width, f.height).is_ok()));
+        }
+        // A few bad frames are survivable: the drop is the normal channel close.
+        let states = sink.states.lock().unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].message, None);
+    }
+
+    #[tokio::test]
+    async fn persistent_hostile_stream_drops_session_with_typed_error() {
+        let bad = frame(MAX_FRAMEBUFFER_DIMENSION * 2, 1, Vec::new());
+        let (tx, rx) = mpsc::channel(4);
+        let sink = Sink::default();
+        let pump = tokio::spawn(frame_pump("s1".into(), rx, sink.clone(), active_state()));
+        // A hostile backend keeps sending; the pump must cut it off rather than
+        // consume forever, and closing its end makes further sends fail.
+        let mut sent = 0u32;
+        while tx.send(bad.clone()).await.is_ok() {
+            sent += 1;
+            assert!(
+                sent <= MAX_CONSECUTIVE_REJECTED_FRAMES + 8,
+                "pump never aborted"
+            );
+        }
+        pump.await.unwrap();
+        assert!(sink.frames.lock().unwrap().is_empty());
+        let states = sink.states.lock().unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].state, GraphicalState::Disconnected);
+        assert_eq!(
+            states[0].message.as_deref(),
+            Some(crate::session::frame_guard::REJECTED_FRAMES_MESSAGE)
+        );
+    }
+
+    #[tokio::test]
+    async fn slow_consumer_backpressure_keeps_the_channel_bounded() {
+        // The backend-side channel is bounded: while the pump is not draining,
+        // a flooding backend is back-pressured (try_send fails) instead of
+        // queueing unboundedly; once the pump runs, every queued valid frame
+        // is delivered in order.
+        let (tx, rx) = mpsc::channel(2);
+        tx.try_send(frame(4, 4, Vec::new())).unwrap();
+        tx.try_send(frame(5, 5, Vec::new())).unwrap();
+        assert!(tx.try_send(frame(6, 6, Vec::new())).is_err());
+        drop(tx);
+        let sink = Sink::default();
+        frame_pump("s1".into(), rx, sink.clone(), active_state()).await;
+        let sizes: Vec<_> = sink
+            .frames
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|f| f.width)
+            .collect();
+        assert_eq!(sizes, vec![4, 5]);
     }
 }
 

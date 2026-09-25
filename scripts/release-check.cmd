@@ -1,6 +1,50 @@
 @echo off
 REM Release readiness checklist — validates that the repo is ready for a release.
 REM Run from the repo root: scripts\release-check.cmd
+REM
+REM Usage: scripts\release-check.cmd [--versions-only] [--expect-version VER] [--help]
+REM   --versions-only         Run only the version checks (5-file consistency, the
+REM                           optional expected version, Tauri npm/crate drift) and
+REM                           exit. Mirrors release-check.sh --versions-only, the
+REM                           release workflow's verify-version gate (PKG-007).
+REM   --expect-version VER    Also require every version source to equal VER.
+REM   --help                  Show this help and exit.
+
+set VERSIONS_ONLY=0
+set "EXPECT_VERSION="
+
+:parse_args
+if "%~1"=="" goto :args_done
+if /i "%~1"=="--versions-only" (
+    set VERSIONS_ONLY=1
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="--expect-version" (
+    if "%~2"=="" (
+        echo error: --expect-version needs a value 1>&2
+        exit /b 2
+    )
+    set "EXPECT_VERSION=%~2"
+    shift
+    shift
+    goto :parse_args
+)
+if /i "%~1"=="--help" goto :usage
+if /i "%~1"=="-h" goto :usage
+echo error: unknown argument '%~1' 1>&2
+exit /b 2
+
+:usage
+echo Usage: scripts\release-check.cmd [--versions-only] [--expect-version VER] [--help]
+echo   --versions-only         Run only the version checks and exit (no tests, no git checks).
+echo   --expect-version VER    Also require every version source to equal VER (a leading v is ignored).
+echo   --help                  Show this help and exit.
+exit /b 0
+
+:args_done
+REM Accept a tag-style value ("v0.1.0") as well as a bare version.
+if defined EXPECT_VERSION if "%EXPECT_VERSION:~0,1%"=="v" set "EXPECT_VERSION=%EXPECT_VERSION:~1%"
 
 cd /d "%~dp0\.."
 
@@ -61,9 +105,23 @@ if not "%CORE_VER%"=="%PKG_VER%" (
     set FAILED=1
     set ALL_MATCH=0
 )
+if "%PKG_VER%"=="" (
+    echo   FAIL: Could not read a version from package.json
+    set FAILED=1
+    set ALL_MATCH=0
+)
 if %ALL_MATCH%==1 (
     echo   PASS: All 5 files agree on version %PKG_VER%
 )
+
+if not defined EXPECT_VERSION goto :expect_done
+if "%PKG_VER%"=="%EXPECT_VERSION%" (
+    echo   PASS: Repository version %PKG_VER% matches the expected version %EXPECT_VERSION%
+) else (
+    echo   FAIL: Repository version '%PKG_VER%' ^(package.json^) does not match the expected version '%EXPECT_VERSION%'
+    set FAILED=1
+)
+:expect_done
 
 set VERSION=%PKG_VER%
 
@@ -81,6 +139,16 @@ if errorlevel 1 (
     echo   PASS: Tauri npm packages and Rust crates are aligned
 )
 
+if %VERSIONS_ONLY%==0 goto :full_checks
+echo.
+if %FAILED%==1 (
+    echo   RESULT: version checks FAILED
+    exit /b 1
+)
+echo   RESULT: version checks passed
+exit /b 0
+
+:full_checks
 REM === CHANGELOG Dated Section ===
 echo.
 echo === CHANGELOG Dated Section ===
@@ -192,6 +260,35 @@ if "%BRANCH%"=="main" (
         set FAILED=1
     )
 )
+
+REM === TODO/FIXME/HACK Scan ===
+echo.
+echo === TODO/FIXME/HACK Scan ===
+
+REM FIXME and HACK mark known-broken code or workarounds and BLOCK a release
+REM (WA-CI-030); TODO stays a warning. Mirrors release-check.sh: the blocking scan
+REM only matches a marker that opens a comment (// FIXME, /* HACK, * FIXME, ...),
+REM so string literals and test fixtures that merely mention the words do not trip it.
+set "MARKER_FILES=src\*.ts src\*.tsx src-tauri\src\*.rs core\src\*.rs agent\src\*.rs"
+set "MARKER_OUT=%TEMP%\termihub-release-markers.txt"
+
+findstr /s /n /r /c:"//[/!]* *FIXME\>" /c:"//[/!]* *HACK\>" /c:"/\*[*!]* *FIXME\>" /c:"/\*[*!]* *HACK\>" /c:"^ *\* *FIXME\>" /c:"^ *\* *HACK\>" %MARKER_FILES% > "%MARKER_OUT%" 2>nul
+if %errorlevel%==0 (
+    echo   FAIL: Found FIXME/HACK markers in source code
+    type "%MARKER_OUT%"
+    set FAILED=1
+) else (
+    echo   PASS: No FIXME/HACK markers found
+)
+
+findstr /s /n /r /c:"\<TODO\>" %MARKER_FILES% > "%MARKER_OUT%" 2>nul
+if %errorlevel%==0 (
+    echo   WARN: Found TODO markers in source code
+    set /a WARNINGS+=1
+) else (
+    echo   PASS: No TODO markers found
+)
+del "%MARKER_OUT%" >nul 2>&1
 
 REM === Summary ===
 echo.

@@ -833,7 +833,8 @@ graph TB
 
     subgraph "Build Artifacts"
         WIN[Windows: .msi / .exe<br/>x64]
-        LINUX[Linux: .deb / .AppImage<br/>x64, ARM64]
+        LINUX[Linux x64: .AppImage / .deb]
+        LINUXARM[Linux ARM64: .deb / .rpm]
         MAC[macOS: .dmg<br/>x64, ARM64]
     end
 ```
@@ -841,8 +842,12 @@ graph TB
 | Platform | Architectures                      | Installer Formats   | Min OS Version            |
 | -------- | ---------------------------------- | ------------------- | ------------------------- |
 | Windows  | x64                                | `.msi`, `.exe`      | Windows 10 1809+ (ConPTY) |
-| Linux    | x64, ARM64                         | `.deb`, `.AppImage` | WebKitGTK 4.1+            |
+| Linux    | x64                                | `.AppImage`, `.deb` | WebKitGTK 4.1+            |
+| Linux    | ARM64                              | `.deb`, `.rpm`      | WebKitGTK 4.1+            |
 | macOS    | x64 (Intel), ARM64 (Apple Silicon) | `.dmg`              | macOS 10.15+              |
+
+No AppImage is built for Linux ARM64: `linuxdeploy`, the AppImage tool, is
+x86_64-only, so the native ARM64 release runner produces `.deb` and `.rpm` only.
 
 ### CI/CD Pipeline
 
