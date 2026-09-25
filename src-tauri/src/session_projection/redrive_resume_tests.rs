@@ -81,6 +81,8 @@ struct FakeAgent {
     /// live session goes through here (via `reconnect_existing`), so this proves a
     /// single reconnect performs exactly one re-attach and never double-attaches.
     attach_count: AtomicUsize,
+    /// Count of explicit `reclaim_session` (takeover attach) calls (SM-003).
+    reclaim_count: AtomicUsize,
     /// The live agent session ids `create_session` minted, so `list_sessions` can
     /// report them as recoverable on reconnect (#2512).
     created_ids: Mutex<Vec<String>>,
@@ -99,6 +101,7 @@ impl FakeAgent {
             reattach_ok: AtomicBool::new(true),
             create_count: AtomicUsize::new(0),
             attach_count: AtomicUsize::new(0),
+            reclaim_count: AtomicUsize::new(0),
             created_ids: Mutex::new(Vec::new()),
             session_recoverable: AtomicBool::new(true),
             senders: Mutex::new(Vec::new()),
@@ -167,6 +170,14 @@ impl AgentRpcClient for FakeAgent {
         _remote_session_id: &str,
     ) -> Result<(), TerminalError> {
         self.attach_count.fetch_add(1, Ordering::SeqCst);
+        Ok(())
+    }
+    fn reclaim_session(
+        &self,
+        _agent_id: &str,
+        _remote_session_id: &str,
+    ) -> Result<(), TerminalError> {
+        self.reclaim_count.fetch_add(1, Ordering::SeqCst);
         Ok(())
     }
     fn close_session(
@@ -1316,4 +1327,131 @@ fn dropped_exit_is_pure_metadata_and_leaves_the_timer_untouched() {
         !scheduler.armed("tab-1"),
         "a dropped exit's pure-metadata write arms no reconnect timer"
     );
+}
+
+/// SM-003 (single-attach): a `connection.evicted` for a hosted session folds that
+/// tab's region entry to the explicit `Evicted` state; a later transient
+/// agent-transport break and its post-reconnect resolve leave it `Evicted` (never
+/// `Reconnecting` / `SessionLost` / `Connected`), never close the session (it is
+/// alive on the other desktop) and arm no redrive — only the explicit Reclaim
+/// (a takeover attach) flips it back to `Connected`.
+#[test]
+fn evicted_agent_tab_never_auto_reconnects_and_reclaim_flips_ownership() {
+    use crate::session_projection::projection::fold_agent_session_reclaimed;
+    use crate::terminal::agent_manager::{
+        evicted_session_ids, fold_agent_hosted_reconnecting, fold_evicted_hosted_sessions,
+        resolve_agent_hosted_sessions,
+    };
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let agent = Arc::new(FakeAgent::new());
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        agent.clone() as Arc<dyn AgentRpcClient>,
+    );
+    handle.manage(manager);
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let driver = Arc::new(ReconnectTimerDriver::new(
+        store.clone(),
+        scheduler.clone(),
+        Arc::new(move || {
+            publish_sessions(&projector, &store_for_publish);
+        }),
+    ));
+    handle.manage(driver);
+
+    let manager_ref = handle.state::<SessionManager>();
+    let settings = serde_json::json!({ "config": {} });
+    for (tab, connect) in [("tab-1", "tab-1:0"), ("tab-2", "tab-2:0")] {
+        tauri::async_runtime::block_on(manager_ref.create_connection(
+            "shell",
+            settings.clone(),
+            Some("agent-1"),
+            Some(connect),
+            false,
+            true,
+            handle.clone(),
+        ))
+        .expect("initial connect succeeds");
+        store.connect(tab);
+        store.connected(tab);
+    }
+    let hosted = tauri::async_runtime::block_on(manager_ref.agent_hosted_sessions("agent-1"));
+
+    // Another desktop takes over remote-0 (tab-1): the agent reports it.
+    let notifications = vec![(
+        "connection.evicted".to_string(),
+        serde_json::json!({ "session_id": "remote-0", "reason": "takeover" }),
+    )];
+    let evicted = evicted_session_ids(&notifications);
+    fold_evicted_hosted_sessions(&handle, &hosted, &evicted);
+    assert_eq!(store.status("tab-1"), Some(SessionStatus::Evicted));
+    assert_eq!(
+        store.status("tab-2"),
+        Some(SessionStatus::Connected),
+        "only the taken-over tab is evicted"
+    );
+
+    // A transient transport break + resolve: tab-1 stays Evicted, arms nothing and
+    // keeps its desktop session (it is NOT closed — that would kill the other
+    // desktop's process).
+    tauri::async_runtime::block_on(fold_agent_hosted_reconnecting(
+        &handle,
+        "agent-1",
+        Some("connection reset"),
+    ));
+    assert_eq!(store.status("tab-1"), Some(SessionStatus::Evicted));
+    assert!(!scheduler.armed("tab-1"), "no redrive for an evicted tab");
+    let live_ids: std::collections::HashSet<String> =
+        ["remote-0".to_string(), "remote-1".to_string()]
+            .into_iter()
+            .collect();
+    tauri::async_runtime::block_on(resolve_agent_hosted_sessions(&handle, &hosted, &live_ids));
+    assert_eq!(
+        store.status("tab-1"),
+        Some(SessionStatus::Evicted),
+        "the post-reconnect resolve must not silently re-claim an evicted tab"
+    );
+    assert!(!scheduler.armed("tab-1"));
+    assert!(
+        tauri::async_runtime::block_on(manager_ref.agent_session_for_tab("tab-1")).is_some(),
+        "the evicted tab's session must not be torn down"
+    );
+    assert_eq!(store.status("tab-2"), Some(SessionStatus::Connected));
+    // Not recovered here (held elsewhere) must not relabel it lost either.
+    tauri::async_runtime::block_on(resolve_agent_hosted_sessions(
+        &handle,
+        &hosted,
+        &std::collections::HashSet::new(),
+    ));
+    assert_eq!(store.status("tab-1"), Some(SessionStatus::Evicted));
+    assert_eq!(
+        agent.reclaim_count.load(Ordering::SeqCst),
+        0,
+        "nothing reclaims on its own"
+    );
+
+    // The explicit Reclaim: a takeover attach, then Evicted → Connected.
+    tauri::async_runtime::block_on(manager_ref.reclaim_session("tab-1")).expect("reclaim");
+    fold_agent_session_reclaimed(&handle, "tab-1");
+    assert_eq!(agent.reclaim_count.load(Ordering::SeqCst), 1);
+    assert_eq!(store.status("tab-1"), Some(SessionStatus::Connected));
+
+    // Reclaim of a tab with no agent session is a clean error, not a panic.
+    assert!(tauri::async_runtime::block_on(manager_ref.reclaim_session("ghost")).is_err());
 }

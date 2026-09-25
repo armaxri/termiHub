@@ -1003,3 +1003,127 @@ fn cancel_reconnect_after_giveup_lands_the_user_dismissed_idle_state() {
     assert_eq!(s.status, SessionStatus::Disconnected);
     assert_eq!(s.end_reason, Some(EndReason::User));
 }
+
+// ── Single-attach eviction (SM-003) ──────────────────────────────────────────
+//
+// Maintainer decision (2026-09-26): only one desktop controls a daemon session at
+// a time. The desktop that loses control folds the explicit, sticky `Evicted`
+// state — never Disconnected / Reconnecting — and nothing automatic leaves it (an
+// auto-reconnect would re-take control and ping-pong ownership). Only an explicit
+// Reclaim, a fresh user connect, a user disconnect or closing the tab does.
+
+/// A live tab that another desktop has just taken over.
+fn evicted_store() -> SessionLifecycleStore {
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_backend_session_id("tab-1", Some("backend-1".to_string()));
+    store.evicted("tab-1", Some("taken over".to_string()));
+    store
+}
+
+#[test]
+fn eviction_folds_explicit_evicted_state_not_a_disconnect() {
+    let store = evicted_store();
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(s.status, SessionStatus::Evicted);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle, "no loop is armed");
+    assert_eq!(s.end_reason, None);
+    assert_eq!(s.error.as_deref(), Some("taken over"));
+    // The session is alive elsewhere and a Reclaim re-takes the same one.
+    assert_eq!(s.backend_session_id.as_deref(), Some("backend-1"));
+    assert_eq!(
+        store.snapshot()["sessions"]["tab-1"]["status"],
+        serde_json::json!("evicted")
+    );
+}
+
+#[test]
+fn evicted_is_sticky_against_every_automatic_fold() {
+    let store = evicted_store();
+    store.reconnect("tab-1");
+    store.reconnect_attempt("tab-1");
+    store.reconnect_failed("tab-1", Some("x".to_string()));
+    store.agent_transport_reconnecting("tab-1", Some("link down".to_string()));
+    store.dropped("tab-1", Some("eof".to_string()));
+    store.session_lost("tab-1", Some("not recovered here".to_string()));
+    store.connect_failed("tab-1", Some("gave up".to_string()));
+    store.connected("tab-1");
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(
+        s.status,
+        SessionStatus::Evicted,
+        "no automatic fold may leave Evicted (it would ping-pong control)"
+    );
+    assert_eq!(
+        s.reconnect.phase,
+        ReconnectPhase::Idle,
+        "the reconnect engine never arms from Evicted"
+    );
+    assert_eq!(s.error.as_deref(), Some("taken over"));
+}
+
+#[test]
+fn reclaim_resolves_evicted_back_to_connected() {
+    let store = evicted_store();
+    store.reclaimed("tab-1");
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(s.status, SessionStatus::Connected);
+    assert_eq!(s.error, None);
+    assert_eq!(s.backend_session_id.as_deref(), Some("backend-1"));
+}
+
+#[test]
+fn reclaim_is_a_noop_unless_evicted() {
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.reclaimed("tab-1");
+    assert_eq!(store.status("tab-1"), Some(SessionStatus::Connecting));
+    // A stale reclaim result for a tab the user disconnected meanwhile must not
+    // resurrect it.
+    let store = evicted_store();
+    store.disconnect("tab-1");
+    store.reclaimed("tab-1");
+    assert_eq!(store.status("tab-1"), Some(SessionStatus::Disconnected));
+    // Unknown tab: no phantom entry.
+    store.reclaimed("ghost");
+    assert_eq!(store.status("ghost"), None);
+}
+
+#[test]
+fn user_actions_still_leave_evicted() {
+    let store = evicted_store();
+    store.disconnect("tab-1");
+    assert_eq!(store.status("tab-1"), Some(SessionStatus::Disconnected));
+
+    let store = evicted_store();
+    store.connect("tab-1");
+    assert_eq!(store.status("tab-1"), Some(SessionStatus::Connecting));
+
+    let store = evicted_store();
+    store.remove("tab-1");
+    assert_eq!(store.status("tab-1"), None);
+}
+
+#[test]
+fn eviction_of_an_unknown_tab_is_a_noop() {
+    let store = deterministic_store();
+    store.evicted("ghost", None);
+    assert_eq!(store.status("ghost"), None);
+}
+
+#[test]
+fn eviction_mid_reconnect_stops_the_loop() {
+    let store = deterministic_store();
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.reconnect("tab-1");
+    assert_eq!(
+        store.reconnect_state("tab-1").map(|r| r.phase),
+        Some(ReconnectPhase::Waiting)
+    );
+    store.evicted("tab-1", None);
+    let s = store.get("tab-1").unwrap();
+    assert_eq!(s.status, SessionStatus::Evicted);
+    assert_eq!(s.reconnect.phase, ReconnectPhase::Idle);
+}
