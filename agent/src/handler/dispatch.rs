@@ -3223,6 +3223,41 @@ mod tests {
 
     // ── Full protocol flow integration test ────────────────────────
 
+    /// SM-003: `connection.attach` with `takeover: true` is the explicit Reclaim —
+    /// it re-takes a session this worker holds, and a session no worker state
+    /// knows about still fails cleanly with SESSION_NOT_FOUND.
+    #[tokio::test]
+    async fn connection_attach_takeover_routes_to_reclaim() {
+        let (handler, mgr) = make_handler_with_manager();
+        let _ = dispatch(&handler, "initialize", init_params(), 1).await;
+        let snapshot = mgr
+            .create_stub_session("local", "Build".to_string(), json!({}))
+            .await
+            .unwrap();
+
+        let result = dispatch(
+            &handler,
+            "connection.attach",
+            json!({"session_id": snapshot.id, "takeover": true}),
+            2,
+        )
+        .await;
+        assert!(
+            result.get("result").is_some(),
+            "reclaim of a held session: {result}"
+        );
+
+        let unknown = uuid::Uuid::new_v4().to_string();
+        let result = dispatch(
+            &handler,
+            "connection.attach",
+            json!({"session_id": unknown, "takeover": true}),
+            3,
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
+    }
+
     #[tokio::test]
     async fn full_protocol_flow() {
         let (handler, mgr) = make_handler_with_manager();
