@@ -222,7 +222,9 @@ impl DirtyRect {
     /// A malformed rect (wrong-sized buffer) must never be emitted; callers use
     /// this in debug assertions / tests.
     pub fn is_well_formed(&self) -> bool {
-        self.data.len() as u64 == self.width as u64 * self.height as u64 * 4
+        // Checked: `u32::MAX² * 4` overflows `u64`, which would panic in debug
+        // builds on a hostile rect — an overflow can never match any real length.
+        rgba_len(self.width, self.height) == Some(self.data.len() as u64)
     }
 }
 
@@ -239,6 +241,158 @@ pub struct FrameUpdate {
     pub height: u32,
     /// Dirty rectangles to blit. Empty is a valid no-op (e.g. a keep-alive).
     pub rects: Vec<DirtyRect>,
+}
+
+// ── Shared frame bounds (MOCK-011 / TBE-003) ───────────────────────
+
+/// Upper bound on either framebuffer dimension, in pixels, for **every**
+/// graphical backend.
+///
+/// Framebuffer sizes are ultimately **untrusted**: a VNC server advertises its
+/// own resolution, and the RDP sidecar relays whatever the RDP server negotiated.
+/// The frontend sizes an offscreen canvas straight from
+/// [`FrameUpdate::width`]/[`FrameUpdate::height`], and the VNC shadow allocates
+/// `width * height * 4` bytes, so without a shared cap a single hostile update
+/// drives an unbounded allocation.
+///
+/// 8192 covers 4K/5K panels and dual-4K spans while bounding one RGBA
+/// framebuffer to `8192 * 8192 * 4` = 256 MiB. It is enforced once, at the shared
+/// layer every backend's frames flow through ([`FrameUpdate::sanitize`], called
+/// by the desktop's frame pump), so no backend — mock, VNC or RDP — can bypass
+/// it. Backends may additionally clamp lower (the mock caps at 1920).
+pub const MAX_FRAMEBUFFER_DIMENSION: u32 = 8192;
+
+/// Bytes per pixel in the shared RGBA frame contract.
+pub const FRAME_BYTES_PER_PIXEL: u64 = 4;
+
+/// Expected RGBA byte length of a `width × height` region, or `None` if the
+/// product overflows `u64` (only possible for hostile, absurd dimensions).
+pub fn rgba_len(width: u32, height: u32) -> Option<u64> {
+    u64::from(width)
+        .checked_mul(u64::from(height))?
+        .checked_mul(FRAME_BYTES_PER_PIXEL)
+}
+
+/// Why a whole [`FrameUpdate`] was rejected by [`FrameUpdate::sanitize`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum FrameViolation {
+    /// A framebuffer dimension was zero — nothing can be drawn into it.
+    #[error("framebuffer has a zero dimension ({width}x{height})")]
+    ZeroDimension {
+        /// Advertised width.
+        width: u32,
+        /// Advertised height.
+        height: u32,
+    },
+    /// A framebuffer dimension exceeded [`MAX_FRAMEBUFFER_DIMENSION`].
+    #[error(
+        "framebuffer {width}x{height} exceeds the {max}x{max} cap",
+        max = MAX_FRAMEBUFFER_DIMENSION
+    )]
+    Oversize {
+        /// Advertised width.
+        width: u32,
+        /// Advertised height.
+        height: u32,
+    },
+}
+
+/// Why a single [`DirtyRect`] was dropped by [`FrameUpdate::sanitize`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RectViolation {
+    /// Zero-width or zero-height rectangle.
+    #[error("dirty rect has a zero dimension")]
+    Empty,
+    /// The rectangle does not lie fully within the framebuffer (including an
+    /// `x + width` / `y + height` that overflows).
+    #[error("dirty rect lies outside the framebuffer")]
+    OutOfBounds,
+    /// `data.len()` does not equal `width * height * 4`.
+    #[error("dirty rect data length {actual} does not match width*height*4")]
+    LengthMismatch {
+        /// The actual byte length of `data`.
+        actual: usize,
+    },
+}
+
+/// The outcome of [`FrameUpdate::sanitize`] on an acceptable framebuffer size:
+/// the frame with every invalid rectangle removed, plus what was removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SanitizedFrame {
+    /// The frame, now containing only in-bounds, well-formed rectangles.
+    pub frame: FrameUpdate,
+    /// Rectangles that were dropped, with the reason for each.
+    pub dropped: Vec<RectViolation>,
+}
+
+impl SanitizedFrame {
+    /// Whether the frame carried rectangles but **none** survived — i.e. the
+    /// update was entirely garbage (as opposed to a legitimate empty resize /
+    /// keep-alive, or a frame where only some rects were bad).
+    pub fn is_fully_rejected(&self) -> bool {
+        !self.dropped.is_empty() && self.frame.rects.is_empty()
+    }
+}
+
+impl DirtyRect {
+    /// Validate this rectangle against a `fb_width × fb_height` framebuffer
+    /// using overflow-checked arithmetic. Never panics on hostile values.
+    pub fn check_within(&self, fb_width: u32, fb_height: u32) -> Result<(), RectViolation> {
+        if self.width == 0 || self.height == 0 {
+            return Err(RectViolation::Empty);
+        }
+        let fits_x = self
+            .x
+            .checked_add(self.width)
+            .is_some_and(|right| right <= fb_width);
+        let fits_y = self
+            .y
+            .checked_add(self.height)
+            .is_some_and(|bottom| bottom <= fb_height);
+        if !fits_x || !fits_y {
+            return Err(RectViolation::OutOfBounds);
+        }
+        if !self.is_well_formed() {
+            return Err(RectViolation::LengthMismatch {
+                actual: self.data.len(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl FrameUpdate {
+    /// Enforce the shared frame bounds on an (untrusted) backend update.
+    ///
+    /// - A zero or over-[`MAX_FRAMEBUFFER_DIMENSION`] framebuffer rejects the
+    ///   **whole** frame: resizing the canvas to it is never safe.
+    /// - Otherwise each rectangle that is empty, extends past the framebuffer,
+    ///   or whose byte length is not `width * height * 4` is dropped
+    ///   individually; the valid remainder is kept.
+    ///
+    /// This only inspects and filters — it never allocates from the untrusted
+    /// sizes — so it is safe to call on any frame a backend produces.
+    pub fn sanitize(mut self) -> Result<SanitizedFrame, FrameViolation> {
+        let (width, height) = (self.width, self.height);
+        if width == 0 || height == 0 {
+            return Err(FrameViolation::ZeroDimension { width, height });
+        }
+        if width > MAX_FRAMEBUFFER_DIMENSION || height > MAX_FRAMEBUFFER_DIMENSION {
+            return Err(FrameViolation::Oversize { width, height });
+        }
+        let mut dropped = Vec::new();
+        self.rects.retain(|rect| match rect.check_within(width, height) {
+            Ok(()) => true,
+            Err(violation) => {
+                dropped.push(violation);
+                false
+            }
+        });
+        Ok(SanitizedFrame {
+            frame: self,
+            dropped,
+        })
+    }
 }
 
 /// A protocol-agnostic cursor update.
@@ -882,5 +1036,153 @@ mod tests {
         assert_eq!(json["viewOnlyCapable"], true);
         let back: GraphicalCapabilities = serde_json::from_value(json).unwrap();
         assert_eq!(back.auth_kinds.len(), 2);
+    }
+
+    // ── Shared frame bounds: hostile frame streams (MOCK-011) ──────────
+
+    fn rect(x: u32, y: u32, width: u32, height: u32) -> DirtyRect {
+        DirtyRect {
+            x,
+            y,
+            width,
+            height,
+            data: vec![0u8; (width as usize) * (height as usize) * 4],
+        }
+    }
+
+    fn frame(width: u32, height: u32, rects: Vec<DirtyRect>) -> FrameUpdate {
+        FrameUpdate {
+            width,
+            height,
+            rects,
+        }
+    }
+
+    #[test]
+    fn sanitize_accepts_well_formed_frame_unchanged() {
+        let f = frame(640, 480, vec![rect(0, 0, 640, 480), rect(10, 20, 4, 4)]);
+        let out = f.clone().sanitize().expect("valid frame");
+        assert_eq!(out.frame, f);
+        assert!(out.dropped.is_empty());
+        assert!(!out.is_fully_rejected());
+    }
+
+    #[test]
+    fn sanitize_accepts_frame_at_exact_cap() {
+        let max = MAX_FRAMEBUFFER_DIMENSION;
+        let out = frame(max, max, Vec::new()).sanitize().expect("at cap");
+        assert_eq!((out.frame.width, out.frame.height), (max, max));
+        // An empty resize / keep-alive is not "fully rejected".
+        assert!(!out.is_fully_rejected());
+    }
+
+    #[test]
+    fn sanitize_rejects_oversize_framebuffer_before_any_allocation() {
+        // Server-advertised 65535x65535 (RFB u16 max) and u32::MAX: rejected on
+        // the dimensions alone — no rect data is ever sized from them.
+        for (w, h) in [
+            (MAX_FRAMEBUFFER_DIMENSION + 1, 1),
+            (1, MAX_FRAMEBUFFER_DIMENSION + 1),
+            (65_535, 65_535),
+            (u32::MAX, u32::MAX),
+        ] {
+            assert_eq!(
+                frame(w, h, Vec::new()).sanitize(),
+                Err(FrameViolation::Oversize {
+                    width: w,
+                    height: h
+                }),
+                "{w}x{h} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn sanitize_rejects_zero_dimension_framebuffer() {
+        assert_eq!(
+            frame(0, 480, vec![rect(0, 0, 1, 1)]).sanitize(),
+            Err(FrameViolation::ZeroDimension {
+                width: 0,
+                height: 480
+            })
+        );
+    }
+
+    #[test]
+    fn sanitize_drops_rects_outside_the_framebuffer() {
+        let good = rect(0, 0, 8, 8);
+        let f = frame(
+            100,
+            100,
+            vec![
+                rect(96, 0, 8, 8),  // spills past the right edge
+                rect(0, 96, 8, 8),  // spills past the bottom edge
+                rect(100, 0, 1, 1), // starts exactly at the edge
+                good.clone(),
+            ],
+        );
+        let out = f.sanitize().expect("fb size is fine");
+        assert_eq!(out.frame.rects, vec![good]);
+        assert_eq!(out.dropped, vec![RectViolation::OutOfBounds; 3]);
+        assert!(!out.is_fully_rejected());
+    }
+
+    #[test]
+    fn sanitize_drops_rects_whose_offsets_overflow() {
+        // x + width overflows u32: must be OutOfBounds, never a wrap-around
+        // that lands "inside" the framebuffer, and never a panic.
+        let hostile = DirtyRect {
+            x: u32::MAX,
+            y: u32::MAX,
+            width: 2,
+            height: 2,
+            data: vec![0u8; 16],
+        };
+        let out = frame(100, 100, vec![hostile]).sanitize().expect("fb ok");
+        assert!(out.frame.rects.is_empty());
+        assert_eq!(out.dropped, vec![RectViolation::OutOfBounds]);
+        assert!(out.is_fully_rejected());
+    }
+
+    #[test]
+    fn sanitize_drops_rects_with_mismatched_byte_length() {
+        let mut short = rect(0, 0, 4, 4);
+        short.data.pop();
+        let mut long = rect(0, 0, 4, 4);
+        long.data.push(0);
+        let out = frame(10, 10, vec![short, long]).sanitize().expect("fb ok");
+        assert!(out.frame.rects.is_empty());
+        assert_eq!(
+            out.dropped,
+            vec![
+                RectViolation::LengthMismatch { actual: 63 },
+                RectViolation::LengthMismatch { actual: 65 },
+            ]
+        );
+        assert!(out.is_fully_rejected());
+    }
+
+    #[test]
+    fn sanitize_drops_empty_rects() {
+        let out = frame(10, 10, vec![rect(0, 0, 0, 5), rect(0, 0, 5, 0)])
+            .sanitize()
+            .expect("fb ok");
+        assert_eq!(out.dropped, vec![RectViolation::Empty; 2]);
+    }
+
+    #[test]
+    fn is_well_formed_never_overflows_on_hostile_dims() {
+        // u32::MAX² * 4 overflows u64; the old unchecked multiply panicked in
+        // debug builds. It must now simply report "not well formed".
+        let hostile = DirtyRect {
+            x: 0,
+            y: 0,
+            width: u32::MAX,
+            height: u32::MAX,
+            data: Vec::new(),
+        };
+        assert!(!hostile.is_well_formed());
+        assert_eq!(rgba_len(u32::MAX, u32::MAX), None);
+        assert_eq!(rgba_len(2, 3), Some(24));
     }
 }
