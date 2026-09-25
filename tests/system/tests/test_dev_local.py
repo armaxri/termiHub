@@ -17,6 +17,13 @@ def _write(tmp_path, data):
     return tmp_path
 
 
+def _slot(base, name):
+    """Create ``<base>/<name>/termiHub`` (a parallel-checkout layout) and return it."""
+    checkout = base / name / "termiHub"
+    checkout.mkdir(parents=True)
+    return checkout
+
+
 def _committed_dev_agent_port() -> int:
     """`dev_agent_port` from the committed template (`default.dev.local.json`)."""
     text = (dev_local.REPO_ROOT / "default.dev.local.json").read_text(encoding="utf-8")
@@ -40,6 +47,7 @@ def _clear_env(monkeypatch):
     for var in (
         "COMPOSE_PROJECT_NAME",
         "TERMIHUB_TEST_PORT_OFFSET",
+        "TERMIHUB_ALLOW_DEFAULT_DEV_LOCAL",
         *dev_local.BASE_PORTS,
     ):
         monkeypatch.delenv(var, raising=False)
@@ -105,3 +113,142 @@ def test_dev_agent_port_does_not_collide_with_e2e_ssh_port():
     at 2214, just past the SSH cluster (2201-2213).
     """
     assert _committed_dev_agent_port() != _committed_e2e_ssh_base()
+
+
+# --- TIN-016: fail fast on a silently-colliding dev.local.json -----------------
+
+
+def test_missing_file_in_parallel_checkout_raises(tmp_path):
+    """A missing config next to sibling ``dev*/termiHub`` checkouts must fail loud.
+
+    Defaulting to offset 0 there silently steals checkout 0's ports/containers,
+    which surfaces as flaky cross-checkout failures rather than a config error.
+    """
+    me = _slot(tmp_path, "dev1")
+    _slot(tmp_path, "dev0")  # a sibling parallel checkout
+    with pytest.raises(RuntimeError, match="collide"):
+        dev_local.port_offset(me)
+    with pytest.raises(RuntimeError, match="collide"):
+        dev_local.compose_project(me)
+
+
+def test_missing_file_solo_checkout_still_defaults(tmp_path):
+    """A lone checkout (no sibling ``dev*/termiHub``) keeps the historical default."""
+    me = _slot(tmp_path, "dev1")  # no siblings created
+    assert dev_local.port_offset(me) == 0
+    assert dev_local.compose_project(me) == "termihub"
+
+
+def test_missing_file_non_slot_layout_defaults(tmp_path):
+    """A checkout not under a ``dev<N>`` slot dir (CI/dev machine) defaults quietly."""
+    assert dev_local.port_offset(tmp_path) == 0
+    assert dev_local.compose_project(tmp_path) == "termihub"
+
+
+def test_missing_file_parallel_but_env_offset_isolated_defaults(tmp_path, monkeypatch):
+    """An explicit ``TERMIHUB_TEST_PORT_OFFSET`` already isolates ports — do not raise."""
+    me = _slot(tmp_path, "dev1")
+    _slot(tmp_path, "dev0")
+    monkeypatch.setenv("TERMIHUB_TEST_PORT_OFFSET", "1000")
+    assert dev_local.port_offset(me) == 1000
+    # compose_project still reaches the loader; the offset env proves isolation.
+    assert dev_local.compose_project(me) == "termihub"
+
+
+def test_missing_file_parallel_allow_flag_defaults(tmp_path, monkeypatch):
+    """The ``TERMIHUB_ALLOW_DEFAULT_DEV_LOCAL`` escape hatch suppresses the guard."""
+    me = _slot(tmp_path, "dev1")
+    _slot(tmp_path, "dev0")
+    monkeypatch.setenv("TERMIHUB_ALLOW_DEFAULT_DEV_LOCAL", "1")
+    assert dev_local.port_offset(me) == 0
+
+
+def test_malformed_file_in_parallel_checkout_raises(tmp_path):
+    me = _slot(tmp_path, "dev1")
+    _slot(tmp_path, "dev0")
+    (me / "dev.local.json").write_text("{not json", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="collide"):
+        dev_local.port_offset(me)
+
+
+def test_dev_name_offset_mismatch_raises(tmp_path):
+    """``dev_name`` dev3 with the wrong offset would use another slot's ports."""
+    _write(tmp_path, {"dev_name": "dev3", "test_port_offset": 1000})
+    with pytest.raises(RuntimeError, match="test_port_offset"):
+        dev_local.port_offset(tmp_path)
+
+
+def test_dev_name_without_offset_raises(tmp_path):
+    """``dev_name`` dev2 but no offset resolves to 0 — a silent collision with dev0."""
+    _write(tmp_path, {"dev_name": "dev2"})
+    with pytest.raises(RuntimeError, match="test_port_offset"):
+        dev_local.port_offset(tmp_path)
+
+
+def test_compose_project_slot_mismatch_raises(tmp_path):
+    _write(
+        tmp_path,
+        {
+            "dev_name": "dev1",
+            "test_port_offset": 1000,
+            "compose_project": "termihub-test-3",
+        },
+    )
+    with pytest.raises(RuntimeError, match="compose_project"):
+        dev_local.compose_project(tmp_path)
+
+
+def test_custom_compose_project_name_is_allowed(tmp_path):
+    """A non ``termihub-test-<N>`` project name is a valid custom setup, not a clash."""
+    _write(
+        tmp_path,
+        {"dev_name": "dev1", "test_port_offset": 1000, "compose_project": "my-custom"},
+    )
+    assert dev_local.compose_project(tmp_path) == "my-custom"
+    assert dev_local.port_offset(tmp_path) == 1000
+
+
+def test_consistent_named_config_resolves(tmp_path):
+    _write(
+        tmp_path,
+        {
+            "dev_name": "dev2",
+            "test_port_offset": 2000,
+            "compose_project": "termihub-test-2",
+        },
+    )
+    assert dev_local.port_offset(tmp_path) == 2000
+    assert dev_local.compose_project(tmp_path) == "termihub-test-2"
+    assert dev_local.service_port("TERMIHUB_TEST_SSH_PASSWORD_PORT", 2201, tmp_path) == 4201
+
+
+def test_dev0_named_config_offset_zero_is_consistent(tmp_path):
+    _write(
+        tmp_path,
+        {
+            "dev_name": "dev0",
+            "test_port_offset": 0,
+            "compose_project": "termihub-test-0",
+        },
+    )
+    assert dev_local.port_offset(tmp_path) == 0
+    assert dev_local.compose_project(tmp_path) == "termihub-test-0"
+
+
+@pytest.mark.parametrize(
+    "committed",
+    [
+        "default.dev.local.json",
+        "examples/dev0.dev.local.json",
+        "examples/dev1.dev.local.json",
+        "examples/dev2.dev.local.json",
+        "examples/dev3.dev.local.json",
+    ],
+)
+def test_committed_configs_are_self_consistent(tmp_path, committed):
+    """Every shipped config must pass the self-check (guards against over-strictness)."""
+    raw = json.loads((dev_local.REPO_ROOT / committed).read_text(encoding="utf-8"))
+    _write(tmp_path, {k: v for k, v in raw.items() if not k.startswith("_")})
+    # Must not raise.
+    dev_local.port_offset(tmp_path)
+    dev_local.compose_project(tmp_path)
