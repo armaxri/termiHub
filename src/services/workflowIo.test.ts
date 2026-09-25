@@ -209,6 +209,23 @@ describe("summarizeLocalProcessSteps", () => {
       localProcessSteps: 2,
     });
   });
+
+  it("descends into a loop body so a nested local-process is still counted", () => {
+    const wf = sampleWorkflow({
+      name: "looped",
+      steps: [
+        {
+          kind: "loop",
+          loop: { kind: "count", count: 3 },
+          body: [{ kind: "run-local-process", program: "poll", args: [] }],
+        },
+      ],
+    });
+    expect(summarizeLocalProcessSteps([wf])).toEqual({
+      workflowsWithLocalProcess: 1,
+      localProcessSteps: 1,
+    });
+  });
 });
 
 describe("parseWorkflowEnvelope conditional steps (PROD-0044)", () => {
@@ -265,5 +282,63 @@ describe("parseWorkflowEnvelope conditional steps (PROD-0044)", () => {
       ],
     });
     expect(() => parseWorkflowEnvelope(json)).toThrow(/missing "then"/);
+  });
+});
+
+describe("parseWorkflowEnvelope loop and wait-for-output steps (PROD-044)", () => {
+  it("round-trips a count loop and a while loop with bodies", () => {
+    const wf = sampleWorkflow({
+      name: "loops",
+      steps: [
+        {
+          kind: "loop",
+          loop: { kind: "count", count: 3 },
+          body: [{ kind: "send-command", command: "echo ${iteration}" }],
+        },
+        {
+          kind: "loop",
+          loop: { kind: "while", condition: { left: "${iteration}", op: "lt", right: "5" } },
+          body: [{ kind: "wait", delayMs: 10 }],
+        },
+      ],
+    });
+    const parsed = parseWorkflowEnvelope(serializeWorkflows([wf]));
+    expect(parsed).toEqual([wf]);
+  });
+
+  it("round-trips a wait-for-output step with and without optional fields", () => {
+    const wf = sampleWorkflow({
+      name: "waits",
+      steps: [
+        { kind: "wait-for-output", pattern: "login:" },
+        { kind: "wait-for-output", pattern: "\\d+", isRegex: true, timeoutMs: 5000 },
+      ],
+    });
+    const parsed = parseWorkflowEnvelope(serializeWorkflows([wf]));
+    expect(parsed).toEqual([wf]);
+  });
+
+  it("rejects a loop with an invalid mode", () => {
+    const json = JSON.stringify({
+      version: WORKFLOW_EXPORT_VERSION,
+      workflows: [{ name: "bad", steps: [{ kind: "loop", loop: { kind: "forever" } }] }],
+    });
+    expect(() => parseWorkflowEnvelope(json)).toThrow(/invalid "loop" mode/);
+  });
+
+  it("rejects a count loop with a negative count", () => {
+    const json = JSON.stringify({
+      version: WORKFLOW_EXPORT_VERSION,
+      workflows: [{ name: "bad", steps: [{ kind: "loop", loop: { kind: "count", count: -1 } }] }],
+    });
+    expect(() => parseWorkflowEnvelope(json)).toThrow(/invalid "count"/);
+  });
+
+  it("rejects a wait-for-output step missing its pattern", () => {
+    const json = JSON.stringify({
+      version: WORKFLOW_EXPORT_VERSION,
+      workflows: [{ name: "bad", steps: [{ kind: "wait-for-output" }] }],
+    });
+    expect(() => parseWorkflowEnvelope(json)).toThrow(/missing "pattern"/);
   });
 });
