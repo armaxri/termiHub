@@ -47,6 +47,66 @@ import { frontendWarn } from "@/utils/frontendLog";
 export const MAX_CONDITIONAL_DEPTH = 10;
 
 /**
+ * Maximum nesting depth of `loop` steps the runner will descend into (PROD-044),
+ * the loop analogue of {@link MAX_CONDITIONAL_DEPTH}. A loop whose `body` nests
+ * this deep fails its run rather than recursing further, bounding an authoring
+ * loop (a loop that nests itself) so it can never blow the stack. Shares the
+ * same value as the conditional bound — both cap the depth of nested step lists.
+ */
+export const MAX_LOOP_DEPTH = MAX_CONDITIONAL_DEPTH;
+
+/**
+ * Maximum number of iterations a single `loop` step will run (PROD-044). A
+ * `count` loop is clamped to this; a `while` loop that reaches it **fails** the
+ * run rather than spinning forever, so a mis-authored always-true condition can
+ * never hang a run (ventilator-grade). A named constant so the cap is explicit.
+ */
+export const MAX_LOOP_ITERATIONS = 1000;
+
+/**
+ * The reserved parameter name a `loop` step exposes to its `body` and (for a
+ * `while` loop) its condition: the current 0-based iteration index, as a string
+ * (PROD-044). It is interpolated like any `${name}` reference, so a body step
+ * can echo `${iteration}` and a while-condition can compare `${iteration}` — the
+ * dynamic operand a structured while-loop needs, since a run's declared
+ * parameters are otherwise fixed for the whole run.
+ */
+export const LOOP_ITERATION_PARAM = "iteration";
+
+/** Default timeout (ms) for a `wait-for-output` step when it declares none. */
+export const WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Hard cap (ms) a `wait-for-output` timeout is clamped to, so the step can
+ * never wait longer than this even if a larger value is authored. */
+export const WAIT_FOR_OUTPUT_MAX_TIMEOUT_MS = 600_000;
+
+/** A resolved `wait-for-output` matcher: the pattern plus whether it is a regex. */
+export interface WaitForOutputMatcher {
+  /** The pattern to test terminal output against. */
+  pattern: string;
+  /** When `true`, `pattern` is a regular expression; otherwise a literal substring. */
+  isRegex: boolean;
+}
+
+/**
+ * Test whether accumulated terminal `text` satisfies a `wait-for-output` matcher
+ * (PROD-044) — a **pure**, total predicate. A substring matcher uses
+ * `String.includes`; a regex matcher tests a fresh `RegExp` and treats an
+ * invalid pattern as a non-match (the runner rejects an invalid regex up front,
+ * so this is only a defensive fallback).
+ */
+export function matchesOutput(text: string, matcher: WaitForOutputMatcher): boolean {
+  if (matcher.isRegex) {
+    try {
+      return new RegExp(matcher.pattern).test(text);
+    } catch {
+      return false;
+    }
+  }
+  return text.includes(matcher.pattern);
+}
+
+/**
  * Evaluate a {@link WorkflowCondition} to the branch it selects (PROD-0044).
  *
  * A **pure**, total comparison over the operands *as already resolved* — any
@@ -133,6 +193,30 @@ export type WorkflowWaitSeam = (ms: number) => Promise<void> | void;
  */
 export type WorkflowReadFileSeam = (path: string) => Promise<string>;
 
+/** Terminal outcome of a `wait-for-output` step, surfaced to the runner. Exactly
+ * one of `matched` / `timedOut` / `cancelled` is `true`. */
+export interface WaitForOutputResult {
+  /** `true` when the session output matched the pattern before the timeout. */
+  matched: boolean;
+  /** `true` when the timeout elapsed with no match. */
+  timedOut: boolean;
+  /** `true` when the run was cancelled while the step was waiting. */
+  cancelled: boolean;
+}
+
+/**
+ * Waits until the target session's terminal output matches `matcher`, or
+ * `timeoutMs` elapses, or the run is cancelled (PROD-044). Injectable so the
+ * runner stays pure and unit-testable — the real seam (wired in the store)
+ * subscribes to the existing `terminal-output` event for the target session and
+ * tests the accumulated text with {@link matchesOutput}.
+ */
+export type WorkflowWaitForOutputSeam = (
+  matcher: WaitForOutputMatcher,
+  timeoutMs: number,
+  options: { signal?: WorkflowStepSignal }
+) => Promise<WaitForOutputResult>;
+
 /**
  * Terminal outcome of a spawned local process, surfaced to the runner. `exitCode`
  * is `null` when the process was killed before it could report one (cancelled or
@@ -200,6 +284,11 @@ export interface WorkflowRunnerDeps {
   authorizeLocalProcess?: WorkflowAuthorizeLocalProcessSeam;
   /** Spawns an authorized local process (#1857). */
   runLocalProcess?: WorkflowRunLocalProcessSeam;
+  /**
+   * Waits for the target session's terminal output to match a pattern, or a
+   * timeout (PROD-044). Absent → a `wait-for-output` step fails loudly.
+   */
+  waitForOutput?: WorkflowWaitForOutputSeam;
 }
 
 /** A poll the runner threads into a step so long/multi-part steps can abort. */
@@ -244,6 +333,16 @@ const SESSION_GONE = "the target terminal is no longer connected";
 function clampDelay(ms: number | undefined): number {
   if (ms === undefined || !Number.isFinite(ms)) return 0;
   return Math.max(0, Math.min(ms, MAX_STEP_DELAY_MS));
+}
+
+/**
+ * Clamp a caller-authored `wait-for-output` timeout to `[0, WAIT_FOR_OUTPUT_MAX_TIMEOUT_MS]`,
+ * substituting {@link WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS} for an absent or
+ * non-finite value, so the step always has a bounded, sane timeout.
+ */
+function clampWaitTimeout(ms: number | undefined): number {
+  if (ms === undefined || !Number.isFinite(ms)) return WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS;
+  return Math.max(0, Math.min(ms, WAIT_FOR_OUTPUT_MAX_TIMEOUT_MS));
 }
 
 /** Default timer seam: a real `setTimeout` sleep (no-op for non-positive ms). */
@@ -364,6 +463,17 @@ export function resolveStepParams(
           right: sub(step.condition.right),
         },
       };
+    case "wait-for-output":
+      // Only the pattern carries `${param}` references; the flags/timeout are
+      // plain scalars. Resolved once here (the pattern does not reference the
+      // per-iteration `${iteration}`, which is a loop-body concept).
+      return { ...step, pattern: sub(step.pattern) };
+    case "loop":
+      // Leave the loop untouched by this shallow pass: its while-condition and
+      // body steps are resolved during execution against a per-iteration map
+      // that adds the reserved `${iteration}` value (mirroring how a
+      // conditional's sub-steps are resolved when the arm executes them).
+      return step;
     case "run-macro":
     case "wait":
       return step;
@@ -489,6 +599,105 @@ export async function executeStep(
         if (outcome.cancelled) return { ok: true, cancelled: true };
       }
       return { ok: true };
+    }
+    case "loop": {
+      // Bound nesting before descending so a loop that nests itself fails fast
+      // instead of blowing the stack (the loop analogue of the conditional bound).
+      if (depth >= MAX_LOOP_DEPTH) {
+        return { ok: false, error: `loop nesting exceeds the maximum depth of ${MAX_LOOP_DEPTH}` };
+      }
+      const base = paramValues ?? {};
+      // Run the body once for iteration `i`, exposing the reserved
+      // `${iteration}` value to every body step. Returns a terminal outcome to
+      // propagate (failure/cancel), or `null` when the body completed normally.
+      const runBody = async (i: number): Promise<StepOutcome | null> => {
+        const augmented: WorkflowParamValues = { ...base, [LOOP_ITERATION_PARAM]: String(i) };
+        for (const child of resolved.body) {
+          if (cancelled()) return { ok: true, cancelled: true };
+          const outcome = await executeStep(child, deps, signal, augmented, depth + 1);
+          if (!outcome.ok) return outcome;
+          if (outcome.cancelled) return { ok: true, cancelled: true };
+        }
+        return null;
+      };
+
+      if (resolved.loop.kind === "count") {
+        const requested = Number.isFinite(resolved.loop.count)
+          ? Math.max(0, Math.floor(resolved.loop.count))
+          : 0;
+        const iterations = Math.min(requested, MAX_LOOP_ITERATIONS);
+        if (iterations < requested) {
+          frontendWarn(
+            "workflow",
+            `loop count ${requested} exceeds the maximum of ${MAX_LOOP_ITERATIONS}; clamping`
+          );
+        }
+        for (let i = 0; i < iterations; i++) {
+          if (cancelled()) return { ok: true, cancelled: true };
+          const early = await runBody(i);
+          if (early) return early;
+        }
+        return { ok: true };
+      }
+
+      // `while` loop: re-evaluate the condition each iteration against the
+      // per-iteration augmented map, bounded by the safety cap so an always-true
+      // condition can never spin forever.
+      const condition = resolved.loop.condition;
+      for (let i = 0; ; i++) {
+        if (cancelled()) return { ok: true, cancelled: true };
+        const augmented: WorkflowParamValues = { ...base, [LOOP_ITERATION_PARAM]: String(i) };
+        const resolvedCondition: WorkflowCondition = {
+          ...condition,
+          left: interpolateParams(condition.left, augmented),
+          right: interpolateParams(condition.right, augmented),
+        };
+        if (!evaluateCondition(resolvedCondition)) return { ok: true };
+        if (i >= MAX_LOOP_ITERATIONS) {
+          return {
+            ok: false,
+            error: `while-loop exceeded the maximum of ${MAX_LOOP_ITERATIONS} iterations`,
+          };
+        }
+        const early = await runBody(i);
+        if (early) return early;
+      }
+    }
+    case "wait-for-output": {
+      if (!deps.waitForOutput) {
+        return {
+          ok: false,
+          error: 'the "wait-for-output" step requires a terminal-output seam',
+        };
+      }
+      const isRegex = resolved.isRegex ?? false;
+      // Reject an invalid regex up front so the run fails with a clear message
+      // rather than silently never matching.
+      if (isRegex) {
+        try {
+          new RegExp(resolved.pattern);
+        } catch {
+          return {
+            ok: false,
+            error: `wait-for-output has an invalid regular expression: ${resolved.pattern}`,
+          };
+        }
+      }
+      const timeoutMs = clampWaitTimeout(resolved.timeoutMs);
+      const result = await deps.waitForOutput({ pattern: resolved.pattern, isRegex }, timeoutMs, {
+        signal,
+      });
+      if (result.cancelled) return { ok: true, cancelled: true };
+      if (result.matched) return { ok: true };
+      if (result.timedOut) {
+        return {
+          ok: false,
+          error:
+            `wait-for-output timed out after ${timeoutMs} ms waiting for ` +
+            `${isRegex ? "pattern" : "text"} "${resolved.pattern}"`,
+        };
+      }
+      return { ok: false, error: "wait-for-output ended without a match" };
     }
     default: {
       // Exhaustiveness guard: a new step kind must add a case above.
