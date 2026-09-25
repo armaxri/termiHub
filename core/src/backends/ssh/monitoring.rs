@@ -528,6 +528,86 @@ Filesystem     1024-blocks      Used Available Capacity Mounted on
 /dev/sda1        50000000  20000000  28000000      42% /
 Linux 5.15.0";
 
+    // ── Degraded / malformed collect payloads (MOCK-009) ───────────────────
+    //
+    // These model the fault modes a real remote produces that the earlier fakes
+    // never covered: an exec cut short, garbage interleaved with valid lines, a
+    // missing `/proc` section, a truncated network block, and a foreign-distro
+    // (BusyBox/musl) shape. Each is fed through the real `collect_once` +
+    // `parse_stats` collect-loop path so the parser's degraded/error branches are
+    // exercised end-to-end rather than asserted against a mock parser.
+
+    /// The exec was killed after only two-and-a-bit lines, leaving fewer than
+    /// the six lines `parse_stats` requires. The parser rejects it with a typed
+    /// error (its documented contract for a too-short sample).
+    const TRUNCATED_STATS: &str = "\
+testhost
+0.15 0.10 0.05 1/234 5678
+cpu  10000 500 3000";
+
+    /// Garbage / non-numeric lines interleaved with the expected line layout.
+    /// The output still has ≥6 lines, so `parse_stats` returns *partial* stats
+    /// (every unparseable numeric field defaults to 0) rather than erroring — a
+    /// graceful degrade, not a crash and not a false-precise reading.
+    const GARBAGE_LINES_STATS: &str = "\
+weird-host
+not a loadavg at all
+cpu  garbage tokens here nope
+MemTotal:       not-a-number kB
+??? definitely not meminfo ???
+also not an uptime line";
+
+    /// A host that answered loadavg + cpu but whose `/proc/meminfo` leg produced
+    /// nothing (stripped `/proc`, permission error swallowed upstream, …). The
+    /// remaining sections still parse; the memory metrics default to zero.
+    const MISSING_MEMINFO_STATS: &str = "\
+nomeminfo
+0.42 0.30 0.20 1/100 4242
+cpu  20000 0 5000 100000 0 0 0 0 0 0
+9999.50 12345.00
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/sda1        10000000   4000000   6000000      40% /
+Linux 6.1.0";
+
+    /// The trailing `/proc/net/dev` block is truncated mid-row: the interface
+    /// line carries far fewer than the 16 numeric columns the parser needs, so
+    /// the network leg degrades to 0 while every earlier metric survives (the
+    /// documented "a failure there only drops the network leg" contract).
+    const TRUNCATED_NETDEV_STATS: &str = "\
+nettrunc
+0.15 0.10 0.05 1/234 5678
+cpu  10000 500 3000 80000 1000 0 200 0 0 0
+MemTotal:       16384000 kB
+MemAvailable:   12000000 kB
+12345.67 45678.90
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/sda1        50000000  20000000  28000000      42% /
+Linux 5.15.0
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs
+  eth0:  5000000   45678    0    0";
+
+    /// A BusyBox/musl (e.g. Alpine) shaped sample: `/proc/meminfo` omits
+    /// `MemAvailable` (so the classic MemFree+Buffers+Cached+SReclaimable
+    /// fallback must kick in), no swap lines, a BusyBox `df` header, and an
+    /// Alpine-flavoured `uname`. The parser must still yield sensible values.
+    const BUSYBOX_STATS: &str = "\
+alpine-box
+0.05 0.02 0.00 1/40 512
+cpu  1000 0 300 9000 100 0 0 0 0 0
+MemTotal:        512000 kB
+MemFree:         100000 kB
+Buffers:          20000 kB
+Cached:           80000 kB
+900.10 1800.20
+Filesystem           1K-blocks      Used Available Use% Mounted on
+/dev/sda1              2000000    800000   1200000  40% /
+Linux 5.15.0-0-virt
+Inter-|   Receive                                                |  Transmit
+ face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets errs drop fifo colls carrier compressed
+    lo:    5000      50    0    0    0     0          0         0     5000      50    0    0    0     0       0          0
+  eth0:  300000    2000    0    0    0     0          0         0   150000    1000    0    0    0     0       0          0";
+
     /// Fake transport with scripted connect / collect behaviour for tests.
     ///
     /// `collect_should_fail` lets a test flip collects between success and
@@ -555,6 +635,24 @@ Linux 5.15.0";
                 collect_should_fail: Arc::new(AtomicBool::new(false)),
                 connect_should_fail: Arc::new(AtomicBool::new(false)),
                 collect_output: "collected".to_string(),
+            }
+        }
+
+        /// A transport whose every `collect` returns a fixed, caller-supplied
+        /// payload — the hook for driving degraded / malformed parser inputs
+        /// through the real `collect_once` + `parse_stats` path (MOCK-009).
+        ///
+        /// Connect always succeeds and collects never delay, so the only
+        /// variable under test is the shape of the collected output.
+        fn with_output(output: impl Into<String>) -> Self {
+            Self {
+                connect_ok: true,
+                collect_delay: Duration::ZERO,
+                collect_calls: Arc::new(AtomicUsize::new(0)),
+                connect_calls: Arc::new(AtomicUsize::new(0)),
+                collect_should_fail: Arc::new(AtomicBool::new(false)),
+                connect_should_fail: Arc::new(AtomicBool::new(false)),
+                collect_output: output.into(),
             }
         }
 
@@ -614,6 +712,14 @@ Linux 5.15.0";
             .await
             .expect("status should arrive before timeout")
             .expect("status channel should stay open")
+    }
+
+    /// Wait for the next emitted `SystemStats` sample, failing if none arrives.
+    async fn next_stats(rx: &mut MonitoringReceiver) -> crate::monitoring::SystemStats {
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("stats should arrive before timeout")
+            .expect("stats channel should stay open")
     }
 
     /// G4: a connect failure must surface as `Err` from `subscribe`, so the
@@ -861,6 +967,179 @@ Linux 5.15.0";
         );
 
         drop(sub);
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    // ── Degraded-input fault modes through the real parser (MOCK-009) ──────
+    //
+    // Each test drives a degraded collect payload through the real
+    // `collect_once` + `parse_stats` collect-loop path (never a mock parser) and
+    // asserts the parser degrades gracefully: no panic, no false `Live`, and
+    // either a sensible partial `SystemStats` or a clean typed error per the
+    // parser's documented contract.
+
+    /// A short-interval provider whose transport always collects `output`, so a
+    /// degraded payload is driven through the real collect loop quickly.
+    fn degraded_provider(output: &str) -> SshMonitoringProviderImpl<FakeTransport> {
+        let mut provider = SshMonitoringProviderImpl::with_transport(
+            FakeTransport::with_output(output),
+            COLLECT_TIMEOUT,
+        );
+        // Tight interval so several degraded collects happen inside the test
+        // window without waiting on the 2s default.
+        provider.interval = Duration::from_millis(20);
+        provider
+    }
+
+    /// A collect that is truncated below the parser's six-line floor is a clean
+    /// typed error: the loop keeps running but, never having reached `Live`,
+    /// must emit no status transition and push no stats — no false "connected".
+    #[tokio::test]
+    async fn truncated_output_yields_typed_error_and_no_false_live() {
+        // The parser rejects the truncated sample with a typed error (contract).
+        assert!(
+            parse_stats(TRUNCATED_STATS).is_err(),
+            "a sample below the six-line floor must be a parser error"
+        );
+
+        let provider = degraded_provider(TRUNCATED_STATS);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        // The loop keeps collecting and parse-failing from `Connecting`; it must
+        // never emit a bogus Live/Stale transition on the status channel.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), sub.status.recv())
+                .await
+                .is_err(),
+            "a persistently unparseable collect must not emit any status transition"
+        );
+        // …and must never push a stats sample derived from unparseable output.
+        assert!(
+            sub.stats.try_recv().is_err(),
+            "a persistently unparseable collect must never push a stats sample"
+        );
+        // The loop survived the parse failures rather than panicking out.
+        assert!(
+            provider.transport.collect_calls.load(Ordering::SeqCst) >= 1,
+            "the collect loop must keep running across parse failures"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// Garbage / non-numeric lines interleaved with the expected layout still
+    /// parse (≥6 lines) into partial stats: unparseable numeric fields default
+    /// to 0 rather than erroring the whole sample or reading as false-precise.
+    #[tokio::test]
+    async fn garbage_lines_yield_partial_zeroed_stats() {
+        let provider = degraded_provider(GARBAGE_LINES_STATS);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+        let stats = next_stats(&mut sub.stats).await;
+        assert_eq!(
+            stats.hostname, "weird-host",
+            "the first line is still taken as the hostname"
+        );
+        assert_eq!(
+            stats.load_average,
+            [0.0, 0.0, 0.0],
+            "a non-numeric loadavg degrades to zeros, not an error"
+        );
+        assert_eq!(
+            stats.memory_total_kb, 0,
+            "a non-numeric MemTotal degrades to zero"
+        );
+        assert!((stats.memory_used_percent - 0.0).abs() < f64::EPSILON);
+        assert_eq!(
+            stats.disk_total_kb, 0,
+            "unparseable df data leaves disk at zero"
+        );
+        assert!((stats.cpu_usage_percent - 0.0).abs() < f64::EPSILON);
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// A missing `/proc/meminfo` section zeroes the memory metrics while every
+    /// other leg still parses — a partial sample, not a crash or a false
+    /// 100%-used reading.
+    #[tokio::test]
+    async fn missing_meminfo_section_defaults_memory_to_zero() {
+        let provider = degraded_provider(MISSING_MEMINFO_STATS);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+        let stats = next_stats(&mut sub.stats).await;
+        assert_eq!(stats.hostname, "nomeminfo");
+        // Memory leg absent → zeroed, not a false 100%-used.
+        assert_eq!(stats.memory_total_kb, 0);
+        assert_eq!(stats.memory_available_kb, 0);
+        assert!((stats.memory_used_percent - 0.0).abs() < f64::EPSILON);
+        // The sections that WERE present still parse.
+        assert!((stats.load_average[0] - 0.42).abs() < 0.001);
+        assert!((stats.uptime_seconds - 9999.50).abs() < 0.01);
+        assert_eq!(stats.disk_total_kb, 10_000_000);
+        assert!((stats.disk_used_percent - 40.0).abs() < 0.1);
+        assert_eq!(stats.os_info, "Linux 6.1.0");
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// A truncated trailing `/proc/net/dev` block degrades the network leg to 0
+    /// (its row has too few columns) while every metric emitted before it
+    /// survives intact — the documented "a failure there only drops the network
+    /// leg" contract.
+    #[tokio::test]
+    async fn truncated_netdev_block_zeros_network_but_keeps_earlier_metrics() {
+        let provider = degraded_provider(TRUNCATED_NETDEV_STATS);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+        let stats = next_stats(&mut sub.stats).await;
+        // The mangled /proc/net/dev row has too few columns → network → 0.
+        assert!((stats.net_rx_bytes_per_sec - 0.0).abs() < f64::EPSILON);
+        assert!((stats.net_tx_bytes_per_sec - 0.0).abs() < f64::EPSILON);
+        // Every metric emitted before the network block survives intact.
+        assert_eq!(stats.hostname, "nettrunc");
+        assert_eq!(stats.memory_total_kb, 16_384_000);
+        assert_eq!(stats.memory_available_kb, 12_000_000);
+        assert_eq!(stats.disk_total_kb, 50_000_000);
+        assert!((stats.disk_used_percent - 42.0).abs() < 0.1);
+        assert_eq!(stats.os_info, "Linux 5.15.0");
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// A BusyBox/musl-shaped sample (no `MemAvailable`, no swap, BusyBox `df`
+    /// header, Alpine `uname`) parses to sensible values via the classic
+    /// MemFree+Buffers+Cached(+SReclaimable) fallback rather than reading as
+    /// 100%-used.
+    #[tokio::test]
+    async fn busybox_shaped_output_parses_via_memavailable_fallback() {
+        let provider = degraded_provider(BUSYBOX_STATS);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+        let stats = next_stats(&mut sub.stats).await;
+        assert_eq!(stats.hostname, "alpine-box");
+        assert_eq!(stats.memory_total_kb, 512_000);
+        // No MemAvailable → MemFree+Buffers+Cached(+SReclaimable) fallback:
+        // 100000 + 20000 + 80000 = 200000.
+        assert_eq!(stats.memory_available_kb, 200_000);
+        // used = 512000 - 200000 = 312000 → ~60.94%.
+        assert!(
+            (stats.memory_used_percent - 60.9375).abs() < 0.5,
+            "got {}",
+            stats.memory_used_percent
+        );
+        // No swap lines → zeroed swap, not an error.
+        assert_eq!(stats.swap_total_kb, 0);
+        assert!((stats.swap_used_percent - 0.0).abs() < f64::EPSILON);
+        // The BusyBox df header differs but the data row parses by column.
+        assert_eq!(stats.disk_total_kb, 2_000_000);
+        assert!((stats.disk_used_percent - 40.0).abs() < 0.1);
+        assert_eq!(stats.os_info, "Linux 5.15.0-0-virt");
+
         provider.unsubscribe().await.expect("unsubscribe");
     }
 }
