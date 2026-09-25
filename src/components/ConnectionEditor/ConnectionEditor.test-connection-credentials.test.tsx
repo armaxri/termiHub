@@ -147,8 +147,9 @@ const CONN_TYPED_PW: SavedConnection = {
 
 let container: HTMLDivElement;
 let root: Root;
-let requestPassword: ReturnType<typeof vi.fn>;
-let addTab: ReturnType<typeof vi.fn>;
+type AppState = ReturnType<typeof useAppStore.getState>;
+let requestPassword: ReturnType<typeof vi.fn<AppState["requestPassword"]>>;
+let addTab: ReturnType<typeof vi.fn<AppState["addTab"]>>;
 
 function render(connectionId: string) {
   act(() => {
@@ -246,8 +247,8 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
     document.body.appendChild(container);
     root = createRoot(container);
     resetRuntimeCache();
-    requestPassword = vi.fn();
-    addTab = vi.fn();
+    requestPassword = vi.fn<AppState["requestPassword"]>();
+    addTab = vi.fn<AppState["addTab"]>();
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       connectionTypes: [SSH_TYPE],

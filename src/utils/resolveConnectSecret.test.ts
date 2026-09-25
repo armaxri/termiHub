@@ -14,7 +14,7 @@ import { isSshKeyEncrypted } from "@/services/api";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import type { SettingsSchema } from "@/types/schema";
-import { resolveConnectSecret } from "./resolveConnectSecret";
+import { resolveConnectSecret, type ResolveConnectSecretOptions } from "./resolveConnectSecret";
 
 const mockedKeyEncrypted = vi.mocked(isSshKeyEncrypted);
 const mockedUnlock = vi.mocked(ensureCredentialStoreUnlocked);
@@ -51,11 +51,11 @@ const KEY_SETTINGS = {
 };
 
 describe("resolveConnectSecret", () => {
-  let requestPassword: ReturnType<typeof vi.fn>;
+  let requestPassword: ReturnType<typeof vi.fn<ResolveConnectSecretOptions["requestPassword"]>>;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    requestPassword = vi.fn();
+    requestPassword = vi.fn<ResolveConnectSecretOptions["requestPassword"]>();
     mockedUnlock.mockResolvedValue(true);
     mockedResolve.mockResolvedValue({
       password: null,
