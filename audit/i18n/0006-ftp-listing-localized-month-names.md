@@ -9,8 +9,8 @@ subsystem: core/backends/ftp/listing_parser
 evidence:
   - core/src/backends/ftp/listing_parser.rs:143
   - core/src/backends/ftp/listing_parser.rs:199
-status: in-progress
-resolution: "#2731 — FTP LIST is protocol-locale; robust-parse + documented, MLSD preferred"
+status: fixed
+resolution: "#2731 — FTP directory listing locale-robustness resolved: parse_mlsd_line (RFC 3659) implemented and MLSD PREFERRED over LIST (core/src/backends/ftp/listing_parser.rs), and an unparseable locale-specific LIST date degrades to blank gracefully. Residual (server-locale LIST when MLSD unsupported) is inherently outside client control"
 ---
 
 ## What

@@ -10,8 +10,8 @@ evidence:
   - src/store/appStore.ts:1
   - src/store/appStore.ts:469
   - src/store/projectionCache.ts:9
-status: in-progress
-resolution: "#2920/#2923 — appStore split ongoing: workspaces/workflows/credential-store/update-checker (#2920/2923/2938/2952) slices MERGED; prior monitoring/transfers/connectionTree/fileBrowsers/settings done; prior monitoring/transfers/connectionTree/fileBrowsers/settings done; tab/panel-tree+session core deferred (#2881)"
+status: partial
+resolution: "#2881 — appStore split ongoing (~6768 lines, down from 8156): workspaces/workflows/credential-store/update-checker (#2920/2923/2938/2952) + editor-integration (#3260) slices MERGED; prior monitoring/transfers/connectionTree/fileBrowsers/settings done. REMAINING is now mostly the DEFERRED core (tab/panel-tree/session-map, #2881) + layout-entangled state (gated on #2562) — peripheral self-contained slices are essentially exhausted; further reduction needs the core-extraction decision"
 ---
 
 ## What
