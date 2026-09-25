@@ -14,6 +14,7 @@
 //! [`ConnectionTypeRegistry`] at startup.
 
 pub mod graphical;
+pub mod lifecycle;
 pub mod registry;
 pub mod schema;
 pub mod schema_defaults;
@@ -24,6 +25,7 @@ pub use graphical::{
     CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
     GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine, MAX_RECONNECT_ATTEMPTS,
 };
+pub use lifecycle::SessionStatus;
 pub use registry::{
     register_core_backends, ConnectionFactory, ConnectionTypeInfo, ConnectionTypeRegistry,
 };
