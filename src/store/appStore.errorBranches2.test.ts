@@ -25,6 +25,7 @@
  * region harnesses, and the mocked restore boundary.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
 
 const {
   mockApplyAgentSettings,
@@ -236,11 +237,21 @@ describe("appStore — agent CRUD error/guard branches (#2983)", () => {
   });
 
   describe("saveAgentDef", () => {
+    const MINIMAL_CREATE: ConnectionCreateParams = {
+      name: "x",
+      type: "local",
+      config: {},
+      persistent: false,
+      folder_id: null,
+      terminal_options: null,
+      icon: null,
+    };
+
     it("surfaces an error toast when the save API rejects", async () => {
       mockSaveAgentDefinition.mockRejectedValueOnce(new Error("save boom"));
       seedAgentsRegion({ remoteAgents: [knownAgent()] });
 
-      await useAppStore.getState().saveAgentDef(AGENT_ID, { name: "x" });
+      await useAppStore.getState().saveAgentDef(AGENT_ID, MINIMAL_CREATE);
 
       expect(mockToast.error).toHaveBeenCalledTimes(1);
       expect(mockToast.error.mock.calls[0][0]).toMatch(/Failed to save connection: save boom/);
@@ -250,7 +261,7 @@ describe("appStore — agent CRUD error/guard branches (#2983)", () => {
       mockSaveAgentDefinition.mockRejectedValueOnce("raw-save-failure");
       seedAgentsRegion({ remoteAgents: [knownAgent()] });
 
-      await useAppStore.getState().saveAgentDef(AGENT_ID, { name: "x" });
+      await useAppStore.getState().saveAgentDef(AGENT_ID, MINIMAL_CREATE);
 
       expect(mockToast.error.mock.calls[0][0]).toMatch(/raw-save-failure/);
     });
