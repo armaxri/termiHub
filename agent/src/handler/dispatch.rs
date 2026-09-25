@@ -779,7 +779,14 @@ fn register_connection_attach(module: &mut RpcModule<Mutex<HandlerState>>) -> an
             .parse()
             .map_err(|e| invalid_params("connection.attach", e))?;
 
-        session_manager.attach(&p.session_id).await.map_err(|msg| {
+        // SM-003: an explicit Reclaim (`takeover: true`) may adopt a session this
+        // worker does not hold, evicting the worker (desktop) that does.
+        let attached = if p.takeover {
+            session_manager.reclaim(&p.session_id).await
+        } else {
+            session_manager.attach(&p.session_id).await
+        };
+        attached.map_err(|msg| {
             rpc_err_data(
                 errors::SESSION_NOT_FOUND,
                 msg,

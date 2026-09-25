@@ -293,6 +293,11 @@ async fn daemon_loop(
                                     "Takeover connect is evicting the current live writer \
                                      for this session (OBS-012)"
                                 );
+                                // SM-003 (single-attach): tell the incumbent it was
+                                // evicted *before* its connection is dropped below,
+                                // so its desktop folds an explicit "taken over"
+                                // state rather than an ambiguous drop.
+                                notify_evicted(&mut agent_writer).await;
                             }
                             AttachDecision::FreshAttach => {}
                         }
@@ -402,6 +407,24 @@ async fn daemon_loop(
                 }
             }
         }
+    }
+}
+
+/// Upper bound on the best-effort [`MSG_EVICTED`] write to an incumbent writer
+/// (SM-003). The frame is tiny and normally lands in the socket buffer at once;
+/// the bound only guards against a wedged incumbent stalling the takeover.
+const EVICTED_NOTIFY_TIMEOUT: Duration = Duration::from_secs(1);
+
+/// Best-effort: send [`MSG_EVICTED`] to the current writer, if any, just before a
+/// takeover drops it (SM-003, single-attach). Failures are ignored — the incumbent
+/// then observes the plain EOF, which is the historical behaviour.
+async fn notify_evicted(agent_writer: &mut Option<BoxedWriter>) {
+    if let Some(writer) = agent_writer.as_mut() {
+        let _ = tokio::time::timeout(
+            EVICTED_NOTIFY_TIMEOUT,
+            protocol::write_frame_async(writer, MSG_EVICTED, &[]),
+        )
+        .await;
     }
 }
 

@@ -19,7 +19,7 @@ use crate::daemon::protocol::{self, *};
 use crate::daemon::transport::{self, BoxedReader, BoxedWriter};
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::protocol::methods::{CONNECTION_EXIT, CONNECTION_OUTPUT};
+use crate::protocol::methods::{CONNECTION_EVICTED, CONNECTION_EXIT, CONNECTION_OUTPUT};
 
 /// How long to wait for the Ready frame after connecting.
 ///
@@ -120,6 +120,33 @@ async fn run_exit_hook(slot: &ExitHookSlot) {
 /// itself (e.g. across an async boundary while a sessions mutex is locked).
 pub type DaemonWriterHandle = Arc<Mutex<Option<BoxedWriter>>>;
 
+/// `connection.evicted` `reason`: a live takeover — another worker attached with
+/// takeover intent and the daemon evicted this one ([`MSG_EVICTED`], SM-003).
+pub const EVICTED_REASON_TAKEOVER: &str = "takeover";
+/// `connection.evicted` `reason`: found held at worker start-up — session recovery
+/// was refused because another live worker still owns the session (SM-003).
+pub const EVICTED_REASON_HELD_BY_PEER: &str = "heldByPeer";
+
+/// Build the `connection.evicted` notification (SM-003, single-attach).
+pub(crate) fn evicted_notification(session_id: &str, reason: &str) -> JsonRpcNotification {
+    JsonRpcNotification::new(
+        CONNECTION_EVICTED,
+        serde_json::json!({
+            "session_id": session_id,
+            "reason": reason,
+        }),
+    )
+}
+
+/// What the reader needs to act on an eviction (SM-003): the shared writer slot
+/// it clears (so no input is ever written to a session this worker no longer
+/// owns) and the flag it raises (so [`DaemonClient::is_evicted`] reports it).
+#[derive(Clone)]
+struct EvictionSink {
+    writer: DaemonWriterHandle,
+    evicted: Arc<AtomicBool>,
+}
+
 /// A reusable client for communicating with a session daemon process.
 ///
 /// Handles the transport connection lifecycle, background reader task,
@@ -134,6 +161,11 @@ pub struct DaemonClient {
     reader_task: Option<tokio::task::JoinHandle<()>>,
     /// Whether this session is alive (daemon running, not exited).
     alive: Arc<AtomicBool>,
+    /// Whether the daemon evicted this worker's connection because another
+    /// worker took the session over (SM-003). The session itself is still alive
+    /// (so [`alive`](Self::alive) stays `true`); a Reclaim ([`attach`](Self::attach))
+    /// clears it by re-taking control.
+    evicted: Arc<AtomicBool>,
     /// Notification channel to the transport loop.
     notification_tx: NotificationSender,
     /// Pending oneshot channel for a query_buffer response.
@@ -187,23 +219,30 @@ impl DaemonClient {
         let pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>> =
             Arc::new(Mutex::new(None));
         let on_exit: ExitHookSlot = Arc::new(OnceLock::new());
+        let writer: DaemonWriterHandle = Arc::new(Mutex::new(None));
+        let evicted = Arc::new(AtomicBool::new(false));
 
-        let (writer, reader_task, alive) = connect_and_start_reader(
+        let (reader_task, alive) = connect_and_start_reader(
             &endpoint,
             &session_id,
             notification_tx.clone(),
             pending_buffer_reply.clone(),
             on_exit.clone(),
             for_recovery,
+            EvictionSink {
+                writer: writer.clone(),
+                evicted: evicted.clone(),
+            },
         )
         .await?;
 
         Ok(Self {
             session_id,
             endpoint,
-            writer: Arc::new(Mutex::new(Some(writer))),
+            writer,
             reader_task: Some(reader_task),
             alive,
+            evicted,
             notification_tx,
             pending_buffer_reply,
             on_exit,
@@ -292,17 +331,23 @@ impl DaemonClient {
 
         // Reconnect to get a fresh buffer replay. Not the recovery path — the
         // daemon is a live session being re-attached, so keep the long timeout.
-        let (writer, reader_task, alive) = connect_and_start_reader(
+        // A (re)attach is a takeover: it re-takes control from any other worker
+        // (SM-003 Reclaim), so this connection is no longer evicted.
+        self.evicted.store(false, Ordering::SeqCst);
+        let (reader_task, alive) = connect_and_start_reader(
             &self.endpoint,
             &self.session_id,
             self.notification_tx.clone(),
             self.pending_buffer_reply.clone(),
             self.on_exit.clone(),
             false,
+            EvictionSink {
+                writer: self.writer.clone(),
+                evicted: self.evicted.clone(),
+            },
         )
         .await?;
 
-        *self.writer.lock().await = Some(writer);
         self.reader_task = Some(reader_task);
         self.alive = alive;
 
@@ -353,6 +398,13 @@ impl DaemonClient {
     }
 
     /// Whether the daemon is still alive.
+    /// Whether another worker took this session over (SM-003): the daemon sent
+    /// [`MSG_EVICTED`] and dropped this connection. The session is still alive on
+    /// the daemon; [`attach`](Self::attach) takes control back.
+    pub fn is_evicted(&self) -> bool {
+        self.evicted.load(Ordering::SeqCst)
+    }
+
     pub fn is_alive(&self) -> bool {
         self.alive.load(Ordering::SeqCst)
     }
@@ -467,7 +519,10 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
 
 /// Connect to the daemon endpoint, wait for the Ready frame, and start the reader task.
 ///
-/// Returns the writer half, the reader task handle, and the alive flag.
+/// Stores the writer half into `eviction.writer` (before the reader starts, so an
+/// eviction can never race ahead of it) and returns the reader task handle and
+/// the alive flag.
+#[allow(clippy::too_many_arguments)]
 async fn connect_and_start_reader(
     endpoint: &str,
     session_id: &str,
@@ -475,7 +530,8 @@ async fn connect_and_start_reader(
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
     on_exit: ExitHookSlot,
     for_recovery: bool,
-) -> Result<(BoxedWriter, tokio::task::JoinHandle<()>, Arc<AtomicBool>), anyhow::Error> {
+    eviction: EvictionSink,
+) -> Result<(tokio::task::JoinHandle<()>, Arc<AtomicBool>), anyhow::Error> {
     // Recovery targets an already-bound daemon and must fast-fail a dead-but-
     // lingering socket rather than pay the long spawn-path connect timeout (#2476).
     let (mut reader, mut writer) = if for_recovery {
@@ -555,34 +611,65 @@ async fn connect_and_start_reader(
         }
     }
 
+    // Publish the writer before the reader starts so an eviction observed by the
+    // reader always clears *this* connection's writer (SM-003).
+    *eviction.writer.lock().await = Some(writer);
+
     // Start the background reader task
     let alive_clone = alive.clone();
     let session_id_owned = session_id.to_string();
     let tx = notification_tx.clone();
 
     let reader_task = tokio::spawn(async move {
-        reader_loop(
+        reader_loop_inner(
             reader,
             &session_id_owned,
             &tx,
             &alive_clone,
             pending_buffer_reply,
             on_exit,
+            Some(&eviction),
         )
         .await;
     });
 
-    Ok((writer, reader_task, alive))
+    Ok((reader_task, alive))
 }
 
 /// Background task that reads frames from the daemon and sends notifications.
+///
+/// Test entry point without an eviction sink; production uses
+/// [`reader_loop_inner`] with one.
+#[cfg(test)]
 async fn reader_loop(
+    reader: BoxedReader,
+    session_id: &str,
+    notification_tx: &NotificationSender,
+    alive: &AtomicBool,
+    pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
+    on_exit: ExitHookSlot,
+) {
+    reader_loop_inner(
+        reader,
+        session_id,
+        notification_tx,
+        alive,
+        pending_buffer_reply,
+        on_exit,
+        None,
+    )
+    .await;
+}
+
+/// The reader loop proper. `eviction` receives an [`MSG_EVICTED`] frame (SM-003).
+async fn reader_loop_inner(
     mut reader: BoxedReader,
     session_id: &str,
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
     on_exit: ExitHookSlot,
+    eviction: Option<&EvictionSink>,
 ) {
     loop {
         // Steady-state reads use the mid-frame timeout (#3015): a peer that
@@ -643,6 +730,22 @@ async fn reader_loop(
                 MSG_READY => {
                     // Duplicate ready — ignore
                     debug!("Got additional Ready frame for session {session_id}");
+                }
+                MSG_EVICTED => {
+                    // SM-003 (single-attach): another worker (another desktop) took
+                    // this session over. The session is still alive on the daemon,
+                    // so do NOT mark it dead or run the exit hook — surface an
+                    // explicit eviction instead and stop writing to it. The daemon
+                    // drops this connection right after; there is nothing more to
+                    // read. A Reclaim (`attach`) reconnects with a fresh reader.
+                    info!("Session {session_id} was taken over by another connection");
+                    if let Some(sink) = eviction {
+                        sink.evicted.store(true, Ordering::SeqCst);
+                        *sink.writer.lock().await = None;
+                    }
+                    let _ = notification_tx
+                        .send(evicted_notification(session_id, EVICTED_REASON_TAKEOVER));
+                    return;
                 }
                 other => {
                     debug!("Unknown frame type from daemon: 0x{other:02x}");
