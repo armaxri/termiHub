@@ -10,7 +10,8 @@ evidence:
   - src/store/appStore.ts:2761
   - src/store/layoutBridge.ts:540
   - src/store/ProjectionClient.ts:160
-status: open
+status: fixed
+resolution: "#3257 — optimistic layout rollback now transactional over coupled non-layout fields: mirrorLayoutIntent gains an onReject callback (fired on all 3 fallback paths — no transport / rejected ack / failed dispatch) that restores the pre-apply values of the fields setLayoutLocal committed (tabContent, zoomedTabId, tabHorizontalScrolling, tabColors, tabTerminalOptions, persistentSessions + per-tab maps) via layoutCoupledRollback, wired into all 14 call sites. Was: rejection reverted structure but left coupled fields mutated -> divergence. Existing layout tests unchanged (no regression); #2562 reducer machinery untouched. Follow-up #3256 (setAndReseed/openSettingsTab same class)"
 ---
 
 ## What

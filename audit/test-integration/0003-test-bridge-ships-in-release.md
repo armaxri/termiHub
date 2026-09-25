@@ -12,8 +12,8 @@ evidence:
   - src/testbridge/testMode.ts:34
   - src/testbridge/dispatcher.ts:362
   - src-tauri/tauri.test.conf.json:6
-status: partial
-resolution: "develop — runtime-activation hole CLOSED: testMode.ts:44 hard-gates PROD build (import.meta.env.PROD && !VITE_TEST_BRIDGE); remaining is bundle hygiene only (dispatcher still statically imported TerminalView.tsx:33, dead-in-prod not tree-shaken) -> #3043-class"
+status: fixed
+resolution: "#3254 — test-bridge dispatcher no longer compiled into production bundles: TerminalView.tsx now gates the TestBridge import+render on the build-time constant import.meta.env.VITE_TEST_BRIDGE==='1' wrapping a dynamic React.lazy import(), so Vite tree-shakes it entirely from a plain build (verified: zero testbridge symbols in dist/; VITE_TEST_BRIDGE=1 build emits a TestBridge chunk). Harness build path sets the flag so E2E is unaffected. (Runtime-activation hole was already closed by testMode.ts; this closes the bundle-presence half)"
 ---
 
 ## What
