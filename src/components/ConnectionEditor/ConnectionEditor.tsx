@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
+import { Controller, useController, useForm, useWatch } from "react-hook-form";
 import { z } from "zod";
 import * as RadixSelect from "@radix-ui/react-select";
 import {
@@ -205,13 +205,20 @@ interface ConnectionEditorProps {
 
 /**
  * Top-level connection metadata backed by react-hook-form + zod (UISF-011): the
- * scalar fields the editor owns directly, separate from the schema-driven
- * per-type config (which lives on ConnectionSettingsForm / DynamicForm).
+ * fields the editor owns directly, separate from the schema-driven per-type
+ * config (which lives on ConnectionSettingsForm / DynamicForm). `icon`,
+ * `terminalOptions`, and `agentSettings` are rendered by dedicated
+ * sub-components (Appearance / Terminal / Agent tabs) that receive the form
+ * value and write back through the field's `onChange` (#3081).
  */
 interface TopLevelFormValues {
   name: string;
   sourceFile: string | null;
   persistent: boolean;
+  /** Connection icon; `null` = no icon (mapped to `undefined` in payloads). */
+  icon: string | null;
+  terminalOptions: TerminalOptions;
+  agentSettings: AgentSettings;
 }
 
 export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorProps) {
@@ -328,12 +335,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   ]);
 
   // Top-level connection metadata migrated to react-hook-form + zod (UISF-011,
-  // #3073): the scalar fields the editor owns directly — connection name,
-  // storage-file target, and the agent-definition "persistent" flag. The
+  // #3073, #3081): the fields the editor owns directly — connection name,
+  // storage-file target, the agent-definition "persistent" flag, the icon, the
+  // per-connection terminal options, and the remote-agent runtime settings. The
   // schema-driven per-type config below stays on ConnectionSettingsForm /
   // DynamicForm (already react-hook-form + zod), and the connection-type selector
-  // stays on local state because it drives that form's lifecycle. Same pattern as
-  // the migrated CustomRuleEditor / TunnelEditor.
+  // stays on local state (see `selectedType` below). Same pattern as the
+  // migrated CustomRuleEditor / TunnelEditor.
   const initialTopLevel = useMemo<TopLevelFormValues>(
     () => ({
       name:
@@ -342,6 +350,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         (isAgentDefinitionMode ? "" : (existingAgent?.name ?? "")),
       sourceFile: existingConnection?.sourceFile ?? null,
       persistent: existingAgentDef?.persistent ?? false,
+      icon: existingAgentDef?.icon ?? existingConnection?.icon ?? null,
+      terminalOptions:
+        existingAgentDef?.terminalOptions ?? existingConnection?.terminalOptions ?? {},
+      agentSettings: existingAgent?.agentSettings ?? DEFAULT_AGENT_SETTINGS,
     }),
     // Baseline captured once at mount (the editor remounts per tab), mirroring the
     // previous useState initializers; later store churn must not re-seed it.
@@ -361,8 +373,30 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       ? watchedTopLevel.sourceFile
       : initialTopLevel.sourceFile;
   const persistent = watchedTopLevel.persistent ?? initialTopLevel.persistent;
+  // Sub-component-delegated fields: registered via `useController` so the
+  // Terminal / Appearance / Agent tabs can read the form value and write back
+  // through `onChange`, and the values survive those tabs unmounting on a
+  // category switch (RHF keeps unregistered-on-unmount values by default).
+  const { field: iconField } = useController({ name: "icon", control: topLevelControl });
+  const { field: terminalOptionsField } = useController({
+    name: "terminalOptions",
+    control: topLevelControl,
+  });
+  const { field: agentSettingsField } = useController({
+    name: "agentSettings",
+    control: topLevelControl,
+  });
+  const icon: string | undefined = iconField.value ?? undefined;
+  const terminalOptions: TerminalOptions = terminalOptionsField.value;
+  const agentSettings: AgentSettings = agentSettingsField.value;
 
   const folderId = existingConnection?.folderId ?? editingConnectionFolderId ?? null;
+  // `selectedType` intentionally stays on local state, NOT in the RHF form
+  // (#3081): `handleTypeChange` atomically rebuilds the schema-driven
+  // `connSettings` defaults alongside it, `connSettingsSchemaDefaultsRef` reads it
+  // during the first render, and dozens of derived memos/effects key off it —
+  // moving it would disturb the ConnectionSettingsForm/DynamicForm lifecycle for
+  // no validation benefit (the type is picked from a closed list).
   const [selectedType, setSelectedType] = useState(initialTypeAndSettings.typeId);
   const [connSettings, setConnSettings] = useState<Record<string, unknown>>(
     initialTypeAndSettings.settings
@@ -465,17 +499,6 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     [showJumpHostSection, connSettings.proxyJump, connections, editingConnectionId]
   );
 
-  const [agentSettings, setAgentSettings] = useState<AgentSettings>(
-    existingAgent?.agentSettings ?? DEFAULT_AGENT_SETTINGS
-  );
-
-  const [terminalOptions, setTerminalOptions] = useState<TerminalOptions>(
-    existingAgentDef?.terminalOptions ?? existingConnection?.terminalOptions ?? {}
-  );
-  const [icon, setIcon] = useState<string | undefined>(
-    existingAgentDef?.icon ?? existingConnection?.icon
-  );
-
   // Snapshot initial field values so we can compare against them to detect changes.
   // Using refs (not state) means the snapshot never triggers a re-render.
   // This approach is robust against React StrictMode's double-effect invocation: the
@@ -539,11 +562,13 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // is unique among the right peer set. Connections, remote agents, and per-agent
   // definitions occupy independent namespaces — a connection named "Foo" must not
   // collide with an agent named "Foo" — so the uniqueness check runs only against
-  // peers in the entity being edited. `sourceFile` and `persistent` ride along
-  // unvalidated (they had no validation before). The blank-name issue carries a
-  // sentinel message that is filtered out of the rendered error below, so a blank
-  // name disables Save without surfacing inline text — matching the prior behavior
-  // where an empty name showed no error message.
+  // peers in the entity being edited. `sourceFile`, `persistent`, `icon`,
+  // `terminalOptions`, and `agentSettings` ride along unvalidated (they had no
+  // validation before; `z.custom` without a check accepts any value). The
+  // blank-name issue carries a sentinel message that is filtered out of the
+  // rendered error below, so a blank name disables Save without surfacing inline
+  // text — matching the prior behavior where an empty name showed no error
+  // message.
   const BLANK_NAME_ISSUE = "__blank_name__";
   const topLevelSchema = useMemo(
     () =>
@@ -552,6 +577,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           name: z.string(),
           sourceFile: z.string().nullable(),
           persistent: z.boolean(),
+          icon: z.string().nullable(),
+          terminalOptions: z.custom<TerminalOptions>(),
+          agentSettings: z.custom<AgentSettings>(),
         })
         .superRefine((val, ctx) => {
           const trimmed = val.name.trim().toLowerCase();
@@ -619,7 +647,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // gate update on the same render as the edit and stay testable without awaiting.
   const topLevelValidity = useMemo(() => {
     const errors: Record<string, string> = {};
-    const result = topLevelSchema.safeParse({ name, sourceFile, persistent });
+    const result = topLevelSchema.safeParse({
+      name,
+      sourceFile,
+      persistent,
+      icon: icon ?? null,
+      terminalOptions,
+      agentSettings,
+    });
     if (!result.success) {
       for (const issue of result.error.issues) {
         const key = issue.path.join(".");
@@ -627,7 +662,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       }
     }
     return { valid: result.success, errors };
-  }, [topLevelSchema, name, sourceFile, persistent]);
+  }, [topLevelSchema, name, sourceFile, persistent, icon, terminalOptions, agentSettings]);
 
   // The blank-name issue disables Save (validity is false) without surfacing
   // inline text: its sentinel message is filtered out here.
@@ -1566,22 +1601,25 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         return renderConnectionContent();
       case "terminal":
         return (
-          <ConnectionTerminalSettings options={terminalOptions} onChange={setTerminalOptions} />
+          <ConnectionTerminalSettings
+            options={terminalOptions}
+            onChange={terminalOptionsField.onChange}
+          />
         );
       case "appearance":
         return (
           <ConnectionAppearanceSettings
             color={terminalOptions.color}
-            onColorChange={(color) => setTerminalOptions({ ...terminalOptions, color })}
+            onColorChange={(color) => terminalOptionsField.onChange({ ...terminalOptions, color })}
             icon={icon}
-            onIconChange={setIcon}
+            onIconChange={(next) => iconField.onChange(next ?? null)}
           />
         );
       case "agent":
         return (
           <AgentSettingsForm
             settings={agentSettings}
-            onChange={setAgentSettings}
+            onChange={agentSettingsField.onChange}
             capabilities={existingAgent?.capabilities}
           />
         );
