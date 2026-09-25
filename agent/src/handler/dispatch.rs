@@ -2350,9 +2350,15 @@ async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
     }
 }
 
-/// Whether [`DOCKER_PROBE_SKIP_ENV`] opts out of the Docker probe.
+/// Whether the Docker probe is skipped: always in this crate's unit tests, else
+/// when [`DOCKER_PROBE_SKIP_ENV`] opts out.
+///
+/// Unit tests skip unconditionally (CI-013, #3350): ~100 dispatch tests call
+/// `initialize`, and on a host with Docker each spawned `docker info` plus
+/// `docker images`, oversubscribing CI runners. No unit test depends on the
+/// real probe; `probe_docker_available` is tested directly against shims.
 fn docker_probe_skipped() -> bool {
-    docker_probe_skip_from(std::env::var(DOCKER_PROBE_SKIP_ENV).ok().as_deref())
+    cfg!(test) || docker_probe_skip_from(std::env::var(DOCKER_PROBE_SKIP_ENV).ok().as_deref())
 }
 
 /// Whether a [`DOCKER_PROBE_SKIP_ENV`] value opts out of the Docker probe.
