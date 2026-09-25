@@ -196,6 +196,11 @@ impl LiveAgent {
         std::fs::read_to_string(&self.stderr_path).unwrap_or_default()
     }
 
+    /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
+    fn config_home(&self) -> &Path {
+        self.config_home.path()
+    }
+
     /// The agent's persisted `state.json`, or `Null` before it is first written.
     fn state(&self) -> Value {
         match std::fs::read_to_string(self.state_json_path()) {
@@ -251,6 +256,7 @@ impl Client {
     /// time, so no half-finished handshake is reused.
     fn connect(agent: &LiveAgent) -> Client {
         let addr = &agent.addr;
+        let token = common::read_listen_token(agent.config_home());
         let deadline = Instant::now() + CONNECT_TIMEOUT;
         while Instant::now() < deadline {
             if let Ok(stream) = TcpStream::connect(addr) {
@@ -264,6 +270,14 @@ impl Client {
                     next_id: 1,
                     notifications: Vec::new(),
                 };
+                // Auth gate first (AGT-002/SEC-004), before initialize. The gate
+                // answers before any notification is emitted, so the first line
+                // back is the auth response — it never swallows a buffered
+                // `agent.update_available`. A failure retries on a fresh socket.
+                if !client.authenticate(&token) {
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
                 let resp = client.rpc(
                     "initialize",
                     json!({"protocolVersion": "0.3.0", "client": "hook-it", "clientVersion": "0.1.0"}),
@@ -285,6 +299,22 @@ impl Client {
             "agent at {addr} never completed a handshake within {CONNECT_TIMEOUT:?}. stderr:\n{}",
             agent.stderr()
         );
+    }
+
+    /// Complete the `--listen` auth handshake (AGT-002/SEC-004) before any RPC.
+    /// Returns `false` on any failure so `connect` retries on a fresh socket.
+    fn authenticate(&mut self, token: &str) -> bool {
+        let line = common::auth_request_line(token);
+        if writeln!(self.writer, "{line}")
+            .and_then(|()| self.writer.flush())
+            .is_err()
+        {
+            return false;
+        }
+        match self.read_message() {
+            Some(msg) => msg["result"]["authenticated"].as_bool().unwrap_or(false),
+            None => false,
+        }
     }
 
     /// Send an RPC and return its response, buffering any notification seen on

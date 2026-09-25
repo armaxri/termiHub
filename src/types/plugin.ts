@@ -252,3 +252,31 @@ export interface TrustedPublisher {
   /** RFC 3339 timestamp the key was added. */
   addedAt: string;
 }
+
+/**
+ * One recorded native-plugin trust acknowledgment, mirroring Rust `NativeAckInfo`
+ * (SEC-002 / PLG-006 / ARCH-008). The acknowledgment is bound to the exact
+ * backend library hash, so a changed binary is no longer trusted.
+ */
+export interface NativeAckInfo {
+  /** The plugin id this acknowledgment is for. */
+  id: string;
+  /** SHA-256 (hex) of the backend library the acknowledgment is bound to. */
+  librarySha256: string;
+  /** RFC 3339 timestamp the acknowledgment was recorded. */
+  acknowledgedAt: string;
+}
+
+/**
+ * The native-plugin trust state for Settings → Plugins, mirroring Rust
+ * `NativePluginTrust`. Native (in-process) plugins are default-off and load only
+ * after an explicit per-plugin acknowledgment (SEC-002 / PLG-006 / ARCH-008).
+ */
+export interface NativePluginTrust {
+  /** Whether native (in-process) plugins are enabled globally (default false). */
+  enabled: boolean;
+  /** Plain-language disclosure to show before enabling/trusting a native plugin. */
+  disclosure: string;
+  /** Every recorded per-plugin acknowledgment, sorted by plugin id. */
+  acknowledged: NativeAckInfo[];
+}

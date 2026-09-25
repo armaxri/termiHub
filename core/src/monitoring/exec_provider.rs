@@ -35,7 +35,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::errors::CoreError;
 use crate::monitoring::{
@@ -199,26 +199,37 @@ impl ExecMonitoringProvider {
     }
 }
 
+/// Why a collect tick produced no sample.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CollectMiss {
+    /// The exec errored or timed out.
+    Failed,
+    /// The exec answered, but `parse_stats` rejected the output (#3252).
+    Unparseable,
+}
+
 /// Run one collect bounded by `timeout`, parse it, and fold in the delta
 /// trackers.
 ///
-/// Returns the fresh sample, or `None` when the exec errored, timed out, or its
-/// output could not be parsed (a target with no readable `/proc`) — all counted
-/// as "no fresh sample this tick". Never panics, never fabricates data.
+/// Returns the fresh sample, or why there is none this tick:
+/// [`CollectMiss::Failed`] when the exec errored or timed out, or
+/// [`CollectMiss::Unparseable`] when it answered with output `parse_stats`
+/// rejects (a target with no readable `/proc`). Never panics, never fabricates
+/// data.
 async fn collect_once(
     source: &dyn ProcStatsSource,
     timeout: Duration,
     trackers: &mut Trackers,
-) -> Option<SystemStats> {
+) -> Result<SystemStats, CollectMiss> {
     let output = match tokio::time::timeout(timeout, source.collect_proc()).await {
         Ok(Ok(output)) => output,
         Ok(Err(e)) => {
             debug!("Exec monitoring collect failed: {e}");
-            return None;
+            return Err(CollectMiss::Failed);
         }
         Err(_elapsed) => {
             debug!("Exec monitoring collect timed out after {timeout:?}");
-            return None;
+            return Err(CollectMiss::Failed);
         }
     };
 
@@ -231,11 +242,11 @@ async fn collect_once(
             let (rx, tx) = trackers.net.update(net_counters, Instant::now());
             stats.net_rx_bytes_per_sec = rx;
             stats.net_tx_bytes_per_sec = tx;
-            Some(stats)
+            Ok(stats)
         }
         Err(e) => {
-            debug!("Failed to parse exec monitoring output: {e}");
-            None
+            warn!("Failed to parse exec monitoring output: {e}");
+            Err(CollectMiss::Unparseable)
         }
     }
 }
@@ -345,23 +356,24 @@ async fn run_collect_loop(
             trackers = Trackers::new();
         }
 
-        let collected = match collect_once(&*source, collect_timeout, &mut trackers).await {
-            Some(stats) => {
+        let transition = match collect_once(&*source, collect_timeout, &mut trackers).await {
+            Ok(stats) => {
                 if tx.send(stats).await.is_err() {
                     break;
                 }
-                true
+                loop_state.on_success()
             }
-            None => false,
-        };
-
-        let transition = if collected {
-            loop_state.on_success()
-        } else {
-            loop_state.on_failure()
+            Err(CollectMiss::Failed) => loop_state.on_failure(),
+            Err(CollectMiss::Unparseable) => loop_state.on_parse_failure(),
         };
         if let Some(status) = transition {
             emit_status(&status_tx, status).await;
+        }
+
+        // The exec answers but never with parseable output: `Offline` is
+        // terminal before `Live` — end the loop (#3252).
+        if loop_state.is_offline() {
+            break;
         }
 
         // A sustained drop triggers a bounded recovery campaign that re-probes
@@ -717,10 +729,38 @@ Inter-|   Receive                                                |  Transmit
         let mut trackers = Trackers::new();
         let source = FakeSource::with_outputs(&["not/proc output"]);
         let sample = collect_once(&source, COLLECT_TIMEOUT, &mut trackers).await;
-        assert!(
-            sample.is_none(),
-            "unparseable output must not yield a sample"
+        assert_eq!(
+            sample.err(),
+            Some(CollectMiss::Unparseable),
+            "unparseable output must not yield a sample, and is told apart from a failed exec"
         );
+    }
+
+    /// A target whose probe parsed but whose every later collect is unparseable
+    /// (the exec answers, but with garbage) must not hang in `Connecting`: after
+    /// `stale_threshold` consecutive pre-`Live` parse failures the loop resolves
+    /// to the terminal `Offline` and ends (#3252).
+    #[tokio::test]
+    async fn persistently_unparseable_output_before_live_resolves_offline() {
+        // Index 0 is consumed by the (parseable) subscribe probe; every loop
+        // collect after that returns the unparseable last entry.
+        let provider = fast_provider(&[SAMPLE_1, "not/proc output"]);
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "persistently unparseable output must resolve Connecting -> Offline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(2), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop pushes no sample and closes its stats channel"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
     }
 
     /// A source that goes live and then loses `/proc` mid-stream drives the

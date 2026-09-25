@@ -64,6 +64,7 @@ mod connection;
 mod host;
 mod manager;
 mod manifest;
+mod native_trust;
 mod pack;
 mod package;
 mod security;
@@ -89,6 +90,10 @@ pub use manifest::{
     PluginPermission, PluginSettingSchema, ProtocolParserExtension, SettingType,
     StatusBarWidgetExtension, TerminalBackendExtension, ThemeEntry, ThemeExtension, WidgetPosition,
     CURRENT_PLUGIN_API_VERSION,
+};
+pub use native_trust::{
+    native_library_hash, NativeAck, NativeTrustError, NativeTrustStore, NATIVE_TRUST_DISCLOSURE,
+    NATIVE_TRUST_FILE_NAME,
 };
 pub use pack::{pack_plugin, pack_plugin_signed, sign_package, PluginPackError};
 pub use package::{

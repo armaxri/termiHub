@@ -10,12 +10,15 @@
 //! the manager's `PluginLifecycleHook` seam. The [`PluginManager`] itself is
 //! created once at startup and shared as managed state.
 
+use std::sync::Arc;
+
 use tauri::{AppHandle, Emitter, State};
 
 use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
-    InstalledPlugin, PluginManager, PluginManifest, TrustAssessment, TrustLevel, TrustedPublisher,
+    native_library_hash, InstalledPlugin, NativeTrustStore, PluginHost, PluginManager,
+    PluginManifest, TrustAssessment, TrustLevel, TrustedPublisher, NATIVE_TRUST_DISCLOSURE,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -211,6 +214,121 @@ pub fn update_plugin_settings(
     manager
         .update_settings(&id, settings)
         .map_err(|e| e.to_string())
+}
+
+/// One recorded native-plugin trust acknowledgment, flattened for the settings
+/// surface. Mirrors core `NativeAck` plus the plugin id it keys.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativeAckInfo {
+    /// The plugin id this acknowledgment is for.
+    pub id: String,
+    /// SHA-256 (hex) of the backend library the acknowledgment is bound to.
+    pub library_sha256: String,
+    /// RFC 3339-ish timestamp the acknowledgment was recorded.
+    pub acknowledged_at: String,
+}
+
+/// The native-plugin trust state for the Settings surface (SEC-002 / PLG-006 /
+/// ARCH-008): the global default-off switch, the informed-consent disclosure to
+/// show, and the per-plugin acknowledgments recorded so far.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NativePluginTrust {
+    /// Whether native (in-process) plugins are enabled globally. `false` by
+    /// default and whenever the store cannot be read (fail closed).
+    pub enabled: bool,
+    /// The plain-language disclosure the UI must show before enabling/trusting a
+    /// native plugin (in-process, full privileges, no OS sandbox).
+    pub disclosure: String,
+    /// Every recorded per-plugin acknowledgment, sorted by plugin id.
+    pub acknowledged: Vec<NativeAckInfo>,
+}
+
+/// Return the native-plugin trust state: the global switch, the disclosure, and
+/// the recorded per-plugin acknowledgments.
+#[tauri::command]
+pub fn get_native_plugin_trust(manager: State<'_, PluginManager>) -> NativePluginTrust {
+    let store = NativeTrustStore::load(manager.root());
+    let acknowledged = store
+        .acknowledgments()
+        .into_iter()
+        .map(|(id, ack)| NativeAckInfo {
+            id,
+            library_sha256: ack.library_sha256,
+            acknowledged_at: ack.acknowledged_at,
+        })
+        .collect();
+    NativePluginTrust {
+        enabled: store.is_native_enabled(),
+        disclosure: NATIVE_TRUST_DISCLOSURE.to_owned(),
+        acknowledged,
+    }
+}
+
+/// Turn the global native-plugin switch on or off.
+///
+/// Persists the flag, then re-drives the enabled plugins through the load path so
+/// the change takes effect **live**: enabling loads every acknowledged native
+/// plugin; disabling tears every native plugin back down (each is unloaded and
+/// then refused by the gate). Emits [`EVENT_PLUGINS_CHANGED`].
+#[tauri::command]
+pub fn set_native_plugins_enabled(
+    enabled: bool,
+    app: AppHandle,
+    manager: State<'_, PluginManager>,
+) -> Result<(), String> {
+    let mut store = NativeTrustStore::load(manager.root());
+    store
+        .set_native_enabled(enabled)
+        .map_err(|e| e.to_string())?;
+    // Re-evaluate every enabled plugin against the new global state. A native
+    // plugin that is now disabled is unloaded; a newly-permitted one loads.
+    let _ = manager.load_enabled_plugins().map_err(|e| e.to_string())?;
+    emit_changed(&app);
+    Ok(())
+}
+
+/// Acknowledge trust for the native plugin `id`, binding the acknowledgment to the
+/// exact backend library currently on disk, then load it.
+///
+/// Fails when the plugin has no backend library (not a native plugin) or its
+/// library cannot be read. After recording the acknowledgment it re-runs the
+/// enable/load path so the now-trusted plugin activates, and returns the refreshed
+/// [`InstalledPlugin`]. Emits [`EVENT_PLUGINS_CHANGED`].
+#[tauri::command]
+pub fn acknowledge_native_plugin(
+    id: String,
+    app: AppHandle,
+    manager: State<'_, PluginManager>,
+) -> Result<InstalledPlugin, String> {
+    // Bind consent to the exact library bytes on disk.
+    let hash = native_library_hash(manager.root(), &id).map_err(|e| e.to_string())?;
+    let mut store = NativeTrustStore::load(manager.root());
+    store.acknowledge(&id, hash).map_err(|e| e.to_string())?;
+    // Drive the load path now that the plugin is trusted (re-runs on_enable →
+    // host.load, which now passes the gate).
+    let plugin = manager.enable(&id).map_err(|e| e.to_string())?;
+    emit_changed(&app);
+    Ok(plugin)
+}
+
+/// Revoke the trust acknowledgment for the native plugin `id` and unload it
+/// immediately, so its in-process code stops at once. The plugin stays installed;
+/// it will not load again until re-acknowledged. Emits [`EVENT_PLUGINS_CHANGED`].
+#[tauri::command]
+pub fn revoke_native_plugin_trust(
+    id: String,
+    app: AppHandle,
+    manager: State<'_, PluginManager>,
+    host: State<'_, Arc<PluginHost>>,
+) -> Result<(), String> {
+    let mut store = NativeTrustStore::load(manager.root());
+    store.revoke(&id).map_err(|e| e.to_string())?;
+    // Tear down any live instance so revoked trust stops the code immediately.
+    host.unload(&id);
+    emit_changed(&app);
+    Ok(())
 }
 
 /// Read a file from inside an installed plugin's directory (theme JSON, JS

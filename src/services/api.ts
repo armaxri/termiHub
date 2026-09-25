@@ -31,6 +31,7 @@ import type { WorkspaceTabGroupDef } from "@/types/workspace";
 import type {
   InstalledPlugin,
   JsonValue,
+  NativePluginTrust,
   PluginManifest,
   PluginTrustInfo,
   TrustedPublisher,
@@ -2725,6 +2726,38 @@ export async function listTrustedPublishers(): Promise<TrustedPublisher[]> {
 /** Revoke (remove) a user-pinned publisher key by its `keyId`. */
 export async function revokeTrustedPublisher(keyId: string): Promise<void> {
   await invoke("revoke_trusted_publisher", { keyId });
+}
+
+// ─── Native-plugin trust gate (SEC-002 / PLG-006 / ARCH-008) ─────────────────
+//
+// Native (in-process) plugins run with the full privileges of the app and no OS
+// sandbox, so they are default-OFF and load only after an explicit per-plugin
+// trust acknowledgment bound to the exact backend-library hash.
+
+/** Fetch the native-plugin trust state (global switch, disclosure, acknowledgments). */
+export async function getNativePluginTrust(): Promise<NativePluginTrust> {
+  return await invoke<NativePluginTrust>("get_native_plugin_trust");
+}
+
+/**
+ * Turn the global native-plugin switch on or off. Takes effect live: enabling
+ * loads acknowledged native plugins; disabling unloads every native plugin.
+ */
+export async function setNativePluginsEnabled(enabled: boolean): Promise<void> {
+  await invoke("set_native_plugins_enabled", { enabled });
+}
+
+/**
+ * Acknowledge trust for the native plugin `id`, binding consent to its current
+ * backend library, and load it. Returns the refreshed installed-plugin record.
+ */
+export async function acknowledgeNativePlugin(id: string): Promise<InstalledPlugin> {
+  return await invoke<InstalledPlugin>("acknowledge_native_plugin", { id });
+}
+
+/** Revoke trust for the native plugin `id` and unload it immediately. */
+export async function revokeNativePluginTrust(id: string): Promise<void> {
+  await invoke("revoke_native_plugin_trust", { id });
 }
 
 /** Uninstall the plugin with the given id. */

@@ -267,6 +267,11 @@ impl LiveAgent {
     fn stderr(&self) -> String {
         std::fs::read_to_string(&self.stderr_path).unwrap_or_default()
     }
+
+    /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
+    fn config_home(&self) -> &Path {
+        self.config_home.path()
+    }
 }
 
 // ── Waiting helpers ─────────────────────────────────────────────────────────
@@ -294,7 +299,7 @@ struct Client {
 impl Client {
     /// Connect and complete the `initialize` handshake, retrying until the agent
     /// is listening (it may still be mid-restart after a self-apply).
-    fn connect(addr: &str, timeout: Duration) -> Option<Self> {
+    fn connect(addr: &str, config_home: &Path, timeout: Duration) -> Option<Self> {
         let deadline = Instant::now() + timeout;
         // Bound each handshake read to a fraction of the overall budget (#1579).
         // A single stalled `initialize` read must not consume the entire
@@ -313,6 +318,16 @@ impl Client {
                     writer,
                     next_id: 1,
                 };
+                // Auth handshake first (AGT-002/SEC-004). Re-read the token on
+                // every attempt: a self-apply **re-execs** the agent, which
+                // regenerates its per-instance token, so a token captured before
+                // the restart would be stale. Reading the file each attempt lets
+                // the retry loop converge on the re-execed agent's fresh token.
+                let token = common::read_listen_token(config_home);
+                if !client.authenticate(&token) {
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
                 let resp = client.rpc(
                     "initialize",
                     json!({"protocolVersion": "0.3.0", "client": "self-update-it", "clientVersion": "0.1.0"}),
@@ -333,6 +348,29 @@ impl Client {
             std::thread::sleep(Duration::from_millis(100));
         }
         None
+    }
+
+    /// Complete the `--listen` auth handshake (AGT-002/SEC-004) before any RPC.
+    ///
+    /// Returns `false` on any write/read failure or a non-accepting response, so
+    /// the `connect` retry loop tries again on a fresh socket — the same
+    /// tolerance the racing `rpc` path uses during the agent's re-exec window.
+    fn authenticate(&mut self, token: &str) -> bool {
+        let line = common::auth_request_line(token);
+        if writeln!(self.writer, "{line}")
+            .and_then(|()| self.writer.flush())
+            .is_err()
+        {
+            return false;
+        }
+        let mut resp = String::new();
+        match self.reader.read_line(&mut resp) {
+            Ok(n) if n > 0 => serde_json::from_str::<Value>(resp.trim())
+                .ok()
+                .and_then(|v| v["result"]["authenticated"].as_bool())
+                .unwrap_or(false),
+            _ => false,
+        }
     }
 
     /// Send an RPC and return the matching response, skipping notifications.
@@ -519,12 +557,13 @@ async fn deferred_strategy_auto_applies_on_idle_and_comes_back() {
 
     // It re-execed with the same args → same port → reconnect succeeds and the
     // agent is healthy on the swapped-in binary.
-    let mut client = Client::connect(&agent.addr, Duration::from_secs(30)).unwrap_or_else(|| {
-        panic!(
-            "agent did not come back after self-apply.\n{}",
-            agent.stderr()
-        )
-    });
+    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(30))
+        .unwrap_or_else(|| {
+            panic!(
+                "agent did not come back after self-apply.\n{}",
+                agent.stderr()
+            )
+        });
     assert!(
         !client.agent_version().is_empty(),
         "re-execed agent did not report a version"
@@ -574,12 +613,13 @@ async fn applied_update_does_not_re_exec_on_the_next_idle() {
         agent.stderr()
     );
 
-    let mut client = Client::connect(&agent.addr, Duration::from_secs(30)).unwrap_or_else(|| {
-        panic!(
-            "agent did not come back after self-apply.\n{}",
-            agent.stderr()
-        )
-    });
+    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(30))
+        .unwrap_or_else(|| {
+            panic!(
+                "agent did not come back after self-apply.\n{}",
+                agent.stderr()
+            )
+        });
     let inode_after_apply = inode(&agent.bin_path).expect("binary present after apply");
 
     // Drive a session through the idle transition that triggers a deferred apply.
@@ -659,7 +699,7 @@ async fn coordinated_strategy_stages_without_applying() {
     );
 
     // The agent stayed up on its original binary (it never re-execed).
-    let mut client = Client::connect(&agent.addr, Duration::from_secs(15))
+    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(15))
         .expect("agent should still be reachable after a coordinated stage");
     assert!(!client.agent_version().is_empty());
 }
@@ -706,7 +746,7 @@ async fn failed_apply_keeps_pending_update() {
     );
 
     // The agent kept running its old binary and is still reachable (no re-exec).
-    let mut client = Client::connect(&agent.addr, Duration::from_secs(15))
+    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(15))
         .expect("agent should keep running after a failed apply");
     assert!(!client.agent_version().is_empty());
 }
@@ -761,7 +801,7 @@ async fn assert_never_interrupts(
     let agent = LiveAgent::spawn(&server, "deferred", Duration::from_secs(6));
     let bin_inode_before = inode(&agent.bin_path).expect("binary present");
 
-    let mut client = Client::connect(&agent.addr, Duration::from_secs(15))
+    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(15))
         .expect("agent should be reachable before the first poll");
     let session_id = client.create_session(session_type, config);
     // Confirm the session is actually active before the poll can fire.
