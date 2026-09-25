@@ -405,10 +405,7 @@ pub struct ConnectionCreateParams {
     pub session_type: String,
     /// Settings bag. The legacy `resilientReconnect` key is accepted on read and
     /// rewritten to `autoReconnect` (PARITY-008) so an older desktop interoperates.
-    #[serde(
-        default,
-        with = "crate::connection::auto_reconnect::settings_bag"
-    )]
+    #[serde(default, with = "crate::connection::auto_reconnect::settings_bag")]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub config: serde_json::Value,
     #[serde(default)]
@@ -552,10 +549,7 @@ pub struct ConnectionDefinition {
     ///
     /// The legacy `resilientReconnect` key an older agent may still report is
     /// accepted on read and rewritten to `autoReconnect` (PARITY-008).
-    #[serde(
-        default,
-        with = "crate::connection::auto_reconnect::settings_bag"
-    )]
+    #[serde(default, with = "crate::connection::auto_reconnect::settings_bag")]
     pub config: Value,
     /// Whether sessions created from this definition are persistent.
     #[serde(default)]
@@ -1281,8 +1275,7 @@ mod tests {
         assert_eq!(update.config, Some(json!({ "autoReconnect": false })));
 
         // Absent config stays absent / null config stays None.
-        let update: ConnectionUpdateParams =
-            serde_json::from_value(json!({ "id": "c1" })).unwrap();
+        let update: ConnectionUpdateParams = serde_json::from_value(json!({ "id": "c1" })).unwrap();
         assert_eq!(update.config, None);
         let update: ConnectionUpdateParams =
             serde_json::from_value(json!({ "id": "c1", "config": null })).unwrap();

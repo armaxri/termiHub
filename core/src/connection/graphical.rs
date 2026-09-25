@@ -154,7 +154,9 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
                     ..field("clipboardSync", "Clipboard Sync", FieldType::Boolean)
                 },
                 SettingsField {
-                    default: Some(serde_json::json!(super::auto_reconnect::AUTO_RECONNECT_DEFAULT)),
+                    default: Some(serde_json::json!(
+                        super::auto_reconnect::AUTO_RECONNECT_DEFAULT
+                    )),
                     description: Some(
                         "Automatically retry (up to 3 times) after an unexpected drop".to_string(),
                     ),
