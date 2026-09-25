@@ -541,6 +541,18 @@ impl ConnectionType for Ftp {
         Ok(())
     }
 
+    /// Connect, aborting the TCP-connect / TLS / login handshake promptly when
+    /// `cancel` fires instead of waiting out the connect timeout (PARITY-007).
+    /// FTP registers nothing on `self` until [`connect`](Self::connect) fully
+    /// succeeds, so dropping the in-flight connect on cancel leaks nothing.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        super::race_connect(cancel, self.connect(settings)).await
+    }
+
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         // Stop the keep-alive task first so it never touches a closing stream.
         if let Some(handle) = self.keep_alive.take() {

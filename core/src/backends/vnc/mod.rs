@@ -597,6 +597,20 @@ impl ConnectionType for Vnc {
         Ok(())
     }
 
+    /// Connect, aborting transport setup (direct TCP or SSH tunnel), VeNCrypt
+    /// TLS negotiation and RFB handshake promptly when `cancel` fires instead
+    /// of waiting them out (PARITY-007). Nothing is stored on `self` until
+    /// [`connect`](Self::connect) fully succeeds, and the transport/tunnel are
+    /// held in locals whose `Drop` tears them down, so dropping the in-flight
+    /// connect on cancel leaks nothing.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        super::race_connect(cancel, self.connect(settings)).await
+    }
+
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(rt) = self.runtime.take() {
             rt.cancel.cancel();

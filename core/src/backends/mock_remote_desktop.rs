@@ -299,6 +299,18 @@ impl ConnectionType for MockRemoteDesktop {
         Ok(())
     }
 
+    /// Connect, honoring the cancellation token (PARITY-007). The mock connect
+    /// is instant and synchronous; an *already*-cancelled token short-circuits
+    /// before the runtime is created, keeping cancellation uniform across every
+    /// backend.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        super::race_connect(cancel, self.connect(settings)).await
+    }
+
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(rt) = self.runtime.take() {
             rt.cancel.cancel();

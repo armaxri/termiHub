@@ -648,6 +648,22 @@ impl ConnectionType for SidecarRdp {
         Ok(())
     }
 
+    /// Connect, aborting sidecar launch and the connect-request handshake
+    /// promptly when `cancel` fires (PARITY-007). The helper child is spawned
+    /// with `kill_on_drop(true)` and nothing is stored on `self` until
+    /// [`connect`](Self::connect) fully succeeds, so dropping the in-flight
+    /// connect on cancel kills the helper and leaks nothing. (The RDP transport
+    /// / TLS / auth negotiation itself runs inside the sidecar and is surfaced
+    /// asynchronously after `connect` returns, so it is outside this method's
+    /// cancellation window.)
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        super::race_connect(cancel, self.connect(settings)).await
+    }
+
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(rt) = &self.runtime {
             // Best-effort graceful shutdown before the supervisor kills the child.

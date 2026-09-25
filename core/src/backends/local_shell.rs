@@ -664,6 +664,18 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
         Ok(())
     }
 
+    /// Connect, honoring the cancellation token (PARITY-007). Spawning a local
+    /// PTY is fast and synchronous, so there is no long await to interrupt
+    /// mid-connect; an *already*-cancelled token still short-circuits before
+    /// the PTY is spawned, so cancellation is uniform across every backend.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        super::race_connect(cancel, self.connect(settings)).await
+    }
+
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(mut state) = self.state.take() {
             // Mark the graceful path so the `Drop` guard on `state` (which runs

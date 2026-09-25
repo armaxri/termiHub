@@ -244,6 +244,45 @@ impl TelnetFilter {
     }
 }
 
+/// Resolve + TCP-connect, abortable via an optional cancellation token.
+///
+/// With no token this is the plain blocking [`crate::net::connect_timeout_resolved`]
+/// call the backend has always made — run inline on the caller's task, so the
+/// non-cancelled path is unchanged. With a token the blocking connect runs on a
+/// blocking thread and is raced against cancellation (`biased`, so an
+/// already-cancelled token wins immediately), returning the shared
+/// [`connect_cancelled`](super::connect_cancelled) error promptly instead of
+/// blocking until the connect timeout (PARITY-007). A cancelled connect leaves
+/// the orphaned blocking task to finish and drop its socket on its own.
+async fn connect_tcp_cancellable(
+    host: String,
+    port: u16,
+    timeout: Duration,
+    cancel: Option<CancellationToken>,
+) -> Result<TcpStream, SessionError> {
+    let do_connect = move || {
+        crate::net::connect_timeout_resolved(&host, port, timeout)
+            .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))
+    };
+    match cancel {
+        None => do_connect(),
+        Some(token) => {
+            // Already cancelled — don't even start the blocking connect.
+            if token.is_cancelled() {
+                return Err(super::connect_cancelled());
+            }
+            let join = tokio::task::spawn_blocking(do_connect);
+            tokio::select! {
+                biased;
+                _ = token.cancelled() => Err(super::connect_cancelled()),
+                res = join => res.map_err(|e| {
+                    SessionError::SpawnFailed(format!("TCP connect task failed: {e}"))
+                })?,
+            }
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl ConnectionType for Telnet {
     fn type_id(&self) -> &str {
@@ -328,6 +367,18 @@ impl ConnectionType for Telnet {
     }
 
     async fn connect(&mut self, settings: serde_json::Value) -> Result<(), SessionError> {
+        self.connect_cancellable(settings, None).await
+    }
+
+    /// Connect, aborting the (blocking) DNS-resolve + TCP-connect promptly when
+    /// `cancel` fires instead of waiting out the connect timeout (PARITY-007).
+    /// Nothing is stored on `self` until the connect fully succeeds. When
+    /// `cancel` is `None` the connect runs inline exactly as before.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
         if self.state.is_some() {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
@@ -368,12 +419,13 @@ impl ConnectionType for Telnet {
         // an already-resolved `SocketAddr`, so a hostname (`router.local`,
         // `bbs.example.com`) must be resolved first — a bare IP-literal parse
         // would reject every hostname (CORE-015).
-        let stream = crate::net::connect_timeout_resolved(
-            &config.host,
+        let stream = connect_tcp_cancellable(
+            config.host.clone(),
             config.port,
             config.connect_timeout(),
+            cancel,
         )
-        .map_err(|e| SessionError::SpawnFailed(format!("TCP connect failed: {e}")))?;
+        .await?;
 
         // Enable TCP keepalive so a half-open connection (peer vanishes with no
         // FIN/RST — cable pull, NAT timeout, crashed host) is eventually torn
