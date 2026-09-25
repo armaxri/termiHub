@@ -696,7 +696,9 @@ jobs:
           ' package.json)
           if [ -n "$missing" ]; then
             echo "::error::Frontend SBOM is missing direct dependencies:"
-            printf '::error::  %s\n' $missing
+            while IFS= read -r dep; do
+              echo "::error::  ${dep}"
+            done <<< "$missing"
             exit 1
           fi
 
@@ -799,8 +801,14 @@ jobs:
         agent-binaries-macos,
         agent-binaries-windows,
         sign-agent-binaries,
+        sbom,
       ]
     runs-on: ubuntu-latest
+    # Read-only: this job only inspects the published release. attestations:
+    # read lets `gh attestation verify` fetch the provenance bundles.
+    permissions:
+      contents: read
+      attestations: read
 
     steps:
       - name: Verify expected asset set and release notes
@@ -840,6 +848,11 @@ jobs:
             expected+=("$a" "${a}.sha256" "${a}.sig")
           done
 
+          # CycloneDX SBOMs from the sbom job (CI-022).
+          for c in desktop agent rdp-sidecar frontend; do
+            expected+=("termiHub-${VERSION}-sbom-${c}.cdx.json")
+          done
+
           echo "Fetching asset list for ${TAG}..."
           mapfile -t actual < <(gh release view "$TAG" --json assets --jq '.assets[].name')
 
@@ -877,6 +890,41 @@ jobs:
             exit 1
           fi
           echo "Release notes present (${#BODY} chars)."
+
+      # Every published artifact must carry a build-provenance attestation from
+      # THIS workflow at THIS tag (CI-022) — the same check users run. The
+      # .sha256/.sig sidecars are not attested (they derive from the binary's
+      # digest, which the attestation already binds), so they are skipped.
+      - name: Verify build provenance attestations
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          work="$RUNNER_TEMP/attestation-verify"
+          mkdir -p "$work"
+          cd "$work"
+          mapfile -t subjects < <(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name | select(endswith(".sha256") or endswith(".sig") | not)')
+          failed=()
+          for f in "${subjects[@]}"; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$f"
+            if gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+              --source-ref "refs/tags/${TAG}" >/dev/null; then
+              echo "attested: $f"
+            else
+              failed+=("$f")
+            fi
+            rm -f "$f"
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::${#failed[@]} release asset(s) lack a valid provenance attestation:"
+            printf '::error::  %s\n' "${failed[@]}"
+            exit 1
+          fi
+          echo "All ${#subjects[@]} release artifacts carry valid build provenance."
 
   # Update latest release tag
   update-latest:
