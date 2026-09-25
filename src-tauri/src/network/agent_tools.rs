@@ -22,11 +22,12 @@
 
 use std::sync::Arc;
 
-use serde::de::DeserializeOwned;
-use serde_json::{json, Value};
 use tauri::AppHandle;
 
-use termihub_core::network::{PingResult, PortScanResult, TracerouteHop};
+use termihub_core::protocol::methods::{
+    NetworkDnsLookupParams, NetworkPingParams, NetworkPingResponse, NetworkPortScanParams,
+    NetworkPortScanResponse, NetworkTracerouteParams, NetworkTracerouteResponse, NetworkWolParams,
+};
 
 use crate::network::events;
 use crate::run_location::Locality;
@@ -76,7 +77,14 @@ pub fn locality_for(tool: &str) -> Locality {
 /// count; an explicit count is always honoured.
 pub const AGENT_PING_DEFAULT_COUNT: u32 = 4;
 
-// ── Param builders (pure; snake_case, as the agent's serde structs parse) ─────
+// ── Param builders (pure; return the shared `core::protocol::methods` DTOs) ────
+//
+// DUP-001: the desktop and agent share one definition of every `network.*`
+// request shape. The builders return the typed param DTO; callers serialize it
+// (`serde_json::to_value`) into the `Value` the RPC client sends. The wire bytes
+// are pinned byte-for-byte against the old hand-built `json!` in this module's
+// tests — the param field names are snake_case with no serde rename, exactly the
+// shape the agent deserializes.
 
 /// Build `network.port_scan` params.
 pub fn port_scan_params(
@@ -84,38 +92,53 @@ pub fn port_scan_params(
     ports: &str,
     timeout_ms: Option<u64>,
     concurrency: Option<usize>,
-) -> Value {
-    json!({
-        "host": host,
-        "ports": ports,
-        "timeout_ms": timeout_ms,
-        "concurrency": concurrency,
-    })
+) -> NetworkPortScanParams {
+    NetworkPortScanParams {
+        host: host.to_string(),
+        ports: ports.to_string(),
+        timeout_ms,
+        concurrency,
+    }
 }
 
 /// Build `network.ping` params, bounding an absent count (see
 /// [`AGENT_PING_DEFAULT_COUNT`]).
-pub fn ping_params(host: &str, interval_ms: Option<u64>, count: Option<u32>) -> Value {
-    json!({
-        "host": host,
-        "interval_ms": interval_ms,
-        "count": count.unwrap_or(AGENT_PING_DEFAULT_COUNT),
-    })
+pub fn ping_params(host: &str, interval_ms: Option<u64>, count: Option<u32>) -> NetworkPingParams {
+    NetworkPingParams {
+        host: host.to_string(),
+        count: Some(count.unwrap_or(AGENT_PING_DEFAULT_COUNT)),
+        interval_ms,
+    }
 }
 
 /// Build `network.traceroute` params.
-pub fn traceroute_params(host: &str, max_hops: Option<u8>) -> Value {
-    json!({ "host": host, "max_hops": max_hops })
+pub fn traceroute_params(host: &str, max_hops: Option<u8>) -> NetworkTracerouteParams {
+    NetworkTracerouteParams {
+        host: host.to_string(),
+        max_hops,
+    }
 }
 
 /// Build `network.dns_lookup` params.
-pub fn dns_params(hostname: &str, record_type: &str, server: Option<&str>) -> Value {
-    json!({ "hostname": hostname, "record_type": record_type, "server": server })
+pub fn dns_params(
+    hostname: &str,
+    record_type: &str,
+    server: Option<&str>,
+) -> NetworkDnsLookupParams {
+    NetworkDnsLookupParams {
+        hostname: hostname.to_string(),
+        record_type: record_type.to_string(),
+        server: server.map(str::to_string),
+    }
 }
 
 /// Build `network.wol` params.
-pub fn wol_params(mac: &str, broadcast: &str, port: u16) -> Value {
-    json!({ "mac": mac, "broadcast": broadcast, "port": port })
+pub fn wol_params(mac: &str, broadcast: &str, port: u16) -> NetworkWolParams {
+    NetworkWolParams {
+        mac: mac.to_string(),
+        broadcast: broadcast.to_string(),
+        port,
+    }
 }
 
 // ── Dispatchers (blocking RPC + event re-emission) ────────────────────────────
@@ -131,19 +154,32 @@ pub fn dispatch_port_scan(
     agent_id: &str,
     app: &AppHandle,
     task_id: &str,
-    params: Value,
+    params: NetworkPortScanParams,
 ) {
+    let params = match serde_json::to_value(&params) {
+        Ok(params) => params,
+        Err(e) => {
+            events::emit_error(app, events::name::SCAN_ERROR, task_id, &e.to_string());
+            return;
+        }
+    };
     match client.send_request(
         agent_id,
         termihub_core::protocol::methods::NETWORK_PORT_SCAN,
         params,
     ) {
-        Ok(reply) => {
-            for r in parse_list::<PortScanResult>(&reply, "results") {
-                events::emit_scan_result(app, task_id, &r);
+        // Parse the batched reply into the shared `NetworkPortScanResponse` DTO
+        // instead of reading `reply["results"]`/`reply["summary"]` by hand
+        // (DUP-001); a malformed reply surfaces as a scan error.
+        Ok(reply) => match serde_json::from_value::<NetworkPortScanResponse>(reply) {
+            Ok(resp) => {
+                for r in &resp.results {
+                    events::emit_scan_result(app, task_id, r);
+                }
+                events::emit_scan_complete(app, task_id, resp.summary);
             }
-            events::emit_scan_complete(app, task_id, field(&reply, "summary"));
-        }
+            Err(e) => events::emit_error(app, events::name::SCAN_ERROR, task_id, &e.to_string()),
+        },
         Err(e) => events::emit_error(app, events::name::SCAN_ERROR, task_id, &e.to_string()),
     }
 }
@@ -155,21 +191,32 @@ pub fn dispatch_ping(
     agent_id: &str,
     app: &AppHandle,
     task_id: &str,
-    params: Value,
+    params: NetworkPingParams,
 ) {
+    let params = match serde_json::to_value(&params) {
+        Ok(params) => params,
+        Err(e) => {
+            events::emit_error(app, events::name::PING_ERROR, task_id, &e.to_string());
+            return;
+        }
+    };
     match client.send_request(
         agent_id,
         termihub_core::protocol::methods::NETWORK_PING,
         params,
     ) {
-        Ok(reply) => {
-            for r in parse_list::<PingResult>(&reply, "results") {
-                events::emit_ping_result(app, task_id, r);
+        // Parse into the shared `NetworkPingResponse` DTO (DUP-001).
+        Ok(reply) => match serde_json::from_value::<NetworkPingResponse>(reply) {
+            Ok(resp) => {
+                for r in resp.results {
+                    events::emit_ping_result(app, task_id, r);
+                }
+                // An agent ping is a fixed-count batch, so it always runs to
+                // completion (never "canceled").
+                events::emit_ping_complete(app, task_id, resp.stats, false);
             }
-            // An agent ping is a fixed-count batch, so it always runs to
-            // completion (never "canceled").
-            events::emit_ping_complete(app, task_id, field(&reply, "stats"), false);
-        }
+            Err(e) => events::emit_error(app, events::name::PING_ERROR, task_id, &e.to_string()),
+        },
         Err(e) => events::emit_error(app, events::name::PING_ERROR, task_id, &e.to_string()),
     }
 }
@@ -181,48 +228,40 @@ pub fn dispatch_traceroute(
     agent_id: &str,
     app: &AppHandle,
     task_id: &str,
-    params: Value,
+    params: NetworkTracerouteParams,
 ) {
+    let params = match serde_json::to_value(&params) {
+        Ok(params) => params,
+        Err(e) => {
+            events::emit_error(app, events::name::TRACEROUTE_ERROR, task_id, &e.to_string());
+            return;
+        }
+    };
     match client.send_request(
         agent_id,
         termihub_core::protocol::methods::NETWORK_TRACEROUTE,
         params,
     ) {
-        Ok(reply) => {
-            for hop in parse_list::<TracerouteHop>(&reply, "hops") {
-                events::emit_traceroute_hop(app, task_id, hop);
+        // Parse into the shared `NetworkTracerouteResponse` DTO (DUP-001).
+        Ok(reply) => match serde_json::from_value::<NetworkTracerouteResponse>(reply) {
+            Ok(resp) => {
+                for hop in resp.hops {
+                    events::emit_traceroute_hop(app, task_id, hop);
+                }
+                events::emit_traceroute_complete(app, task_id);
             }
-            events::emit_traceroute_complete(app, task_id);
-        }
+            Err(e) => {
+                events::emit_error(app, events::name::TRACEROUTE_ERROR, task_id, &e.to_string())
+            }
+        },
         Err(e) => events::emit_error(app, events::name::TRACEROUTE_ERROR, task_id, &e.to_string()),
     }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Deserialize `reply[key]` into a `Vec<T>`, defaulting to empty on any
-/// missing/unparseable field so a malformed reply degrades to "no results"
-/// rather than a panic.
-fn parse_list<T: DeserializeOwned>(reply: &Value, key: &str) -> Vec<T> {
-    reply
-        .get(key)
-        .and_then(|v| serde_json::from_value::<Vec<T>>(v.clone()).ok())
-        .unwrap_or_default()
-}
-
-/// Extract `reply[key]` as an owned [`Value`], or `null` when absent.
-fn field(reply: &Value, key: &str) -> Value {
-    reply.get(key).cloned().unwrap_or(Value::Null)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use termihub_core::protocol::methods::{
-        NetworkDnsLookupParams, NetworkPingParams, NetworkPingResponse, NetworkPortScanParams,
-        NetworkPortScanResponse, NetworkTracerouteParams, NetworkTracerouteResponse,
-        NetworkWolParams,
-    };
+    use serde_json::json;
 
     // ── DUP-001: shared network.* request/response DTOs ──────────────────
     //
@@ -477,7 +516,14 @@ mod tests {
 
     #[test]
     fn port_scan_params_are_snake_case() {
-        let p = port_scan_params("host.example", "1-1024", Some(2000), Some(100));
+        // The builder returns the shared DTO; its serialized wire is snake_case.
+        let p = serde_json::to_value(port_scan_params(
+            "host.example",
+            "1-1024",
+            Some(2000),
+            Some(100),
+        ))
+        .unwrap();
         assert_eq!(p["host"], "host.example");
         assert_eq!(p["ports"], "1-1024");
         assert_eq!(p["timeout_ms"], 2000);
@@ -489,51 +535,27 @@ mod tests {
         // No count → the agent gets the bounded default, so its collect-and-return
         // ping cannot run forever.
         let p = ping_params("host.example", Some(1000), None);
-        assert_eq!(p["count"], AGENT_PING_DEFAULT_COUNT);
-        assert_eq!(p["interval_ms"], 1000);
+        assert_eq!(p.count, Some(AGENT_PING_DEFAULT_COUNT));
+        assert_eq!(p.interval_ms, Some(1000));
         // An explicit count is honoured verbatim.
         let p = ping_params("host.example", None, Some(10));
-        assert_eq!(p["count"], 10);
+        assert_eq!(p.count, Some(10));
     }
 
     #[test]
     fn traceroute_and_dns_and_wol_params_shape() {
         let t = traceroute_params("host.example", Some(20));
-        assert_eq!(t["host"], "host.example");
-        assert_eq!(t["max_hops"], 20);
+        assert_eq!(t.host, "host.example");
+        assert_eq!(t.max_hops, Some(20));
 
         let d = dns_params("example.com", "A", Some("1.1.1.1"));
-        assert_eq!(d["hostname"], "example.com");
-        assert_eq!(d["record_type"], "A");
-        assert_eq!(d["server"], "1.1.1.1");
+        assert_eq!(d.hostname, "example.com");
+        assert_eq!(d.record_type, "A");
+        assert_eq!(d.server.as_deref(), Some("1.1.1.1"));
 
         let w = wol_params("aa:bb:cc:dd:ee:ff", "255.255.255.255", 9);
-        assert_eq!(w["mac"], "aa:bb:cc:dd:ee:ff");
-        assert_eq!(w["broadcast"], "255.255.255.255");
-        assert_eq!(w["port"], 9);
-    }
-
-    #[test]
-    fn parse_list_tolerates_missing_and_bad_fields() {
-        // Missing key → empty (no panic).
-        let empty: Vec<PortScanResult> = parse_list(&json!({}), "results");
-        assert!(empty.is_empty());
-
-        // Well-formed agent reply (camelCase, as the shared core type serializes)
-        // → parsed into the typed results the local path also emits.
-        let reply = json!({
-            "results": [
-                { "host": "10.0.0.1", "port": 22, "state": "open", "latencyMs": 3 }
-            ],
-            "summary": { "total": 1, "open": 1, "closed": 0, "filtered": 0, "elapsedMs": 5 }
-        });
-        let parsed: Vec<PortScanResult> = parse_list(&reply, "results");
-        assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].host, "10.0.0.1");
-        assert_eq!(parsed[0].port, 22);
-        assert_eq!(parsed[0].latency_ms, Some(3));
-        // `field` lifts the summary object out for the completion event.
-        assert_eq!(field(&reply, "summary")["open"], 1);
-        assert_eq!(field(&reply, "missing"), Value::Null);
+        assert_eq!(w.mac, "aa:bb:cc:dd:ee:ff");
+        assert_eq!(w.broadcast, "255.255.255.255");
+        assert_eq!(w.port, 9);
     }
 }
