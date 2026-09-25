@@ -16,8 +16,9 @@ interface NetworkToolRunLocationProps {
 /**
  * The "Run on" control for a network-tool panel (#2191): choose whether the
  * tool runs on this computer or a connected agent. Defaults to This computer;
- * a desktop-only tool (the HTTP monitor, ping sweep, open-ports) offers only
- * This computer, per Open Design Decision #4.
+ * a desktop-only tool (the HTTP monitor, whose monitors each pick their own
+ * run location) offers only This computer and shows why, per Open Design
+ * Decision #4.
  *
  * The choice is recorded on the desktop backend (which routes the tool's next
  * invocation) and mirrored in {@link useRunLocationStore} so the selector keeps
@@ -50,8 +51,10 @@ export function NetworkToolRunLocation({ tool }: NetworkToolRunLocationProps) {
 
   if (!info) return null;
 
+  const reason = info.agentAllowed ? undefined : info.agentUnavailableReason;
+
   return (
-    <div className="network-panel__runon">
+    <div className="network-panel__runon" title={reason}>
       <span className="network-panel__runon-label">Run on</span>
       <RunLocationSelect
         value={value}
@@ -61,6 +64,11 @@ export function NetworkToolRunLocation({ tool }: NetworkToolRunLocationProps) {
         aria-label={`Run ${tool} on`}
         data-testid={`network-runloc-${tool}`}
       />
+      {reason && (
+        <span className="network-panel__runon-hint" data-testid={`network-runloc-reason-${tool}`}>
+          {reason}
+        </span>
+      )}
     </div>
   );
 }

@@ -14,15 +14,27 @@ export interface NetworkToolLocationInfo {
    * computer".
    */
   agentAllowed: boolean;
+  /**
+   * Why an agent is not offered, shown next to (and as the tooltip of) the
+   * "Run on" selector when {@link agentAllowed} is `false`. Required for every
+   * desktop-only tool so the disabled control never reads as a silent no-op.
+   */
+  agentUnavailableReason?: string;
 }
+
+/** Reason shown on the HTTP monitor tab's per-tool "Run on" selector. */
+export const HTTP_MONITOR_AGENT_REASON =
+  'Each HTTP monitor chooses its own run location — use the monitor\'s "Run on" field below.';
 
 /**
  * Maps each frontend {@link NetworkTool} to its run-location behaviour (#2191).
  *
- * The five tools the agent exposes over `network.*` — ping, traceroute, port
- * scan, DNS, Wake-on-LAN — are agent-routable. The HTTP monitor is
- * desktop-only (the agent has no HTTP-monitor method). Ping sweep and
- * open-ports have no agent backend today, so they run on this computer only.
+ * Every diagnostic tool can run on an agent (PROD-033): ping, traceroute, port
+ * scan, DNS, Wake-on-LAN and open ports proxy to the agent's `network.*`
+ * methods, and ping sweep runs through the agent's generic `tool.run`. The HTTP
+ * monitor is the one exception on this per-tool selector: a monitor is hosted
+ * on an agent **per monitor** (its own "Run on" field, via `service.*`), so the
+ * tab-level selector stays on This computer and says why.
  */
 export const NETWORK_TOOL_LOCATION: Record<NetworkTool, NetworkToolLocationInfo> = {
   ping: { backendKey: "ping", agentAllowed: true },
@@ -30,7 +42,11 @@ export const NETWORK_TOOL_LOCATION: Record<NetworkTool, NetworkToolLocationInfo>
   "port-scanner": { backendKey: "port_scan", agentAllowed: true },
   "dns-lookup": { backendKey: "dns", agentAllowed: true },
   wol: { backendKey: "wol", agentAllowed: true },
-  "http-monitor": { backendKey: "http_monitor", agentAllowed: false },
-  "ping-sweep": { backendKey: null, agentAllowed: false },
-  "open-ports": { backendKey: null, agentAllowed: false },
+  "http-monitor": {
+    backendKey: "http_monitor",
+    agentAllowed: false,
+    agentUnavailableReason: HTTP_MONITOR_AGENT_REASON,
+  },
+  "ping-sweep": { backendKey: "ping_sweep", agentAllowed: true },
+  "open-ports": { backendKey: "open_ports", agentAllowed: true },
 };

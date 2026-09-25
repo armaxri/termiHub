@@ -6,6 +6,7 @@ import { setNetworkToolRunLocation } from "@/services/networkApi";
 import { useRunLocationStore } from "@/store/runLocationStore";
 import { setupAgentsRegion, seedAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { NetworkToolRunLocation } from "./NetworkToolRunLocation";
+import { HTTP_MONITOR_AGENT_REASON } from "./networkToolLocation";
 
 // Replace the Radix-backed selector with a trivial harness so the wiring
 // (backend call + optimistic store update + desktop-only gating) can be tested
@@ -122,13 +123,51 @@ describe("NetworkToolRunLocation", () => {
     });
   });
 
-  it("gates the agent option for the desktop-only HTTP monitor", () => {
+  it("gates the agent option for the desktop-only HTTP monitor and says why", () => {
     render(<NetworkToolRunLocation tool="http-monitor" />);
     const control = document.querySelector(
       '[data-testid="network-runloc-http-monitor"]'
     ) as HTMLElement;
     expect(control.getAttribute("data-agent-allowed")).toBe("false");
+    // PROD-033: the disabled control carries a visible reason + tooltip that
+    // points at the per-monitor "Run on" field.
+    const reason = document.querySelector(
+      '[data-testid="network-runloc-reason-http-monitor"]'
+    ) as HTMLElement;
+    expect(reason).not.toBeNull();
+    expect(reason.textContent).toBe(HTTP_MONITOR_AGENT_REASON);
+    expect(reason.parentElement?.getAttribute("title")).toBe(HTTP_MONITOR_AGENT_REASON);
   });
+
+  it.each([
+    ["ping-sweep", "ping_sweep"],
+    ["open-ports", "open_ports"],
+  ] as const)(
+    "offers an agent for %s and routes it under backend key %s (PROD-033)",
+    async (tool, backendKey) => {
+      render(<NetworkToolRunLocation tool={tool} />);
+      const control = document.querySelector(
+        `[data-testid="network-runloc-${tool}"]`
+      ) as HTMLElement;
+      expect(control.getAttribute("data-agent-allowed")).toBe("true");
+      // An agent-routable tool shows no "why not" reason.
+      expect(document.querySelector(`[data-testid="network-runloc-reason-${tool}"]`)).toBeNull();
+      expect(control.parentElement?.getAttribute("title")).toBeNull();
+
+      act(() => {
+        (document.querySelector('[data-testid="pick-agent"]') as HTMLButtonElement).click();
+      });
+      await flush();
+      expect(setNetworkToolRunLocation).toHaveBeenCalledWith(backendKey, {
+        kind: "agent",
+        agentId: "a1",
+      });
+      expect(useRunLocationStore.getState().networkToolLocations[tool]).toEqual({
+        kind: "agent",
+        agentId: "a1",
+      });
+    }
+  );
 
   it("rolls back the mirrored choice when the backend rejects it", async () => {
     (setNetworkToolRunLocation as unknown as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
