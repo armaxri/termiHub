@@ -9,8 +9,8 @@ subsystem: src/components/LogViewer, src/components/Settings
 evidence:
   - src/components/LogViewer/LogViewer.tsx:101
   - src/components/Settings/UpdateSettings.tsx:86
-status: partial
-resolution: "develop — log-file path now surfaced Settings→Diagnostics (GeneralSettings.tsx:255); remaining: no consolidated About/copy-debug-info bundle (OS/build/commit/agent-version) + no export-time redaction in LogViewer.tsx"
+status: fixed
+resolution: "#3235 — export-time secret redaction added (redactLogText.ts: masks password/token/api-key kv, Authorization/Bearer, PEM private-key blocks, scheme://user:PASS@host → ***redacted***, 37 tests) wired into all LogViewer copy/save paths; + 'Copy debug info' bundle (buildDebugInfo: app version, build commit/branch, platform, log-file path, credential-store mode, run through redaction) in Settings→Diagnostics (#3235). Per-connection agent versions omitted (no global registry) = minor follow-up candidate"
 ---
 
 ## What
