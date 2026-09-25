@@ -4172,6 +4172,79 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tool_run_ping_sweep_contract_matches_desktop_proxy() {
+        // PROD-033: the desktop runs an agent ping sweep through `tool.run`
+        // (`ping_sweep`) with camelCase tool params and parses
+        // `{events: [{kind: "result", payload}], result: summary}`. Pin that
+        // contract here. Loopback plus an empty sweep keep it deterministic.
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "tool.run",
+            json!({
+                "toolId": "ping_sweep",
+                "params": {
+                    "targets": ["127.0.0.1"],
+                    "timeoutMs": 1000,
+                    "concurrency": 4,
+                    "resolveHostnames": false,
+                }
+            }),
+            2,
+        )
+        .await;
+        let summary = &result["result"]["result"];
+        assert_eq!(summary["total"], 1, "summary: {result}");
+        for key in ["total", "up", "down", "elapsedMs"] {
+            assert!(
+                summary.get(key).is_some(),
+                "summary missing {key}: {result}"
+            );
+        }
+        let events = result["result"]["events"].as_array().expect("events array");
+        assert_eq!(
+            events.len() as u64,
+            summary["up"].as_u64().expect("up count"),
+            "one result event per responding host"
+        );
+        for e in events {
+            assert_eq!(e["kind"], "result");
+            assert!(e["payload"]["host"].is_string());
+            assert!(e["payload"].get("latencyMs").is_some());
+            assert!(e["payload"].get("hostname").is_some());
+        }
+
+        let empty = dispatch(
+            &handler,
+            "tool.run",
+            json!({ "toolId": "ping_sweep", "params": { "targets": [] } }),
+            3,
+        )
+        .await;
+        assert_eq!(empty["result"]["result"]["total"], 0, "empty: {empty}");
+        assert_eq!(empty["result"]["events"].as_array().map(Vec::len), Some(0));
+    }
+
+    #[tokio::test]
+    async fn network_open_ports_reply_is_wrapped_ports_array() {
+        // PROD-033: the desktop proxy parses `network.open_ports` as
+        // `{ports: [{protocol, localAddr, pid, process}]}`.
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(&handler, "network.open_ports", json!({}), 2).await;
+        let ports = result["result"]["ports"].as_array().expect("ports array");
+        for p in ports {
+            assert!(p["protocol"] == "TCP" || p["protocol"] == "UDP", "{p}");
+            assert!(p["localAddr"].is_string(), "{p}");
+            assert!(p.get("pid").is_some(), "{p}");
+            assert!(p.get("process").is_some(), "{p}");
+        }
+    }
+
+    #[tokio::test]
     async fn tool_run_unknown_tool_errors() {
         let handler = make_handler();
         init_handler(&handler).await;

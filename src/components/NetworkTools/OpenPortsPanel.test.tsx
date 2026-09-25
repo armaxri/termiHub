@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { networkOpenPorts } from "@/services/networkApi";
+import { useRunLocationStore } from "@/store/runLocationStore";
 import { OpenPortsPanel } from "./OpenPortsPanel";
 
 vi.mock("@/services/networkApi", () => ({
@@ -76,5 +77,30 @@ describe("OpenPortsPanel — Button migration", () => {
 
     // The auto-load surfaces the failure without needing a manual Refresh.
     expect(container.textContent).toContain("permission denied");
+  });
+
+  it("drops the stale list when Run on switches vantage (PROD-033)", async () => {
+    useRunLocationStore.setState({ networkToolLocations: {}, serverLocations: {} });
+    vi.mocked(networkOpenPorts).mockResolvedValue([
+      { protocol: "TCP", localAddr: "0.0.0.0:22", pid: 100, process: "sshd" },
+    ]);
+    await act(async () => {
+      root.render(<OpenPortsPanel />);
+    });
+    await flush();
+    expect(container.textContent).toContain("sshd");
+
+    // Switching to an agent must not keep showing this computer's ports.
+    act(() => {
+      useRunLocationStore.getState().setNetworkToolLocation("open-ports", {
+        kind: "agent",
+        agentId: "a1",
+      });
+    });
+    await flush();
+    expect(container.textContent).not.toContain("sshd");
+    expect(container.textContent).toContain("Click Refresh to list listening ports");
+    // No automatic re-fetch (it could race the backend recording the choice).
+    expect(networkOpenPorts).toHaveBeenCalledTimes(1);
   });
 });

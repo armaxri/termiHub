@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button, Field, Input, Select } from "@/components/ui";
 import { networkOpenPorts } from "@/services/networkApi";
 import type { OpenPort, PortProtocol } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { frontendLog } from "@/utils/frontendLog";
+import { useRunLocationStore } from "@/store/runLocationStore";
 
 /** Protocol-filter dropdown options. */
 const PROTOCOL_OPTIONS = [
@@ -41,6 +42,20 @@ export function OpenPortsPanel() {
   useEffect(() => {
     void handleRefresh().catch(() => {});
   }, [handleRefresh]);
+
+  // The list belongs to one vantage (this computer or an agent host, PROD-033).
+  // When "Run on" changes, drop the stale list rather than show one host's
+  // ports under another's label; Refresh then lists the new vantage. (An
+  // automatic re-fetch here could race the backend recording the new choice.)
+  const location = useRunLocationStore((s) => s.networkToolLocations["open-ports"]);
+  const previousLocation = useRef(location);
+  useEffect(() => {
+    if (previousLocation.current === location) return;
+    previousLocation.current = location;
+    setPorts([]);
+    setLoaded(false);
+    setError(null);
+  }, [location]);
 
   const filtered = ports.filter((p) => {
     if (protocolFilter !== "All" && p.protocol !== protocolFilter) return false;

@@ -333,6 +333,13 @@ pub async fn network_ping_sweep(
     let targets = port_scan::parse_target_spec(&host)
         .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
 
+    // Route by run-location (PROD-033): an agent preference runs the sweep from
+    // the agent's vantage through its `tool.run` (`ping_sweep`) and re-emits the
+    // same events; no preference keeps the desktop path.
+    let location = manager.resolve_tool_location(agent_tools::tool::PING_SWEEP)?;
+    let agent_client = agent_client_for(&manager, &location)?;
+    ensure_agent_client(&location, &agent_client)?;
+
     let (task_id, cancel) = manager.register_task();
 
     let app_clone = app.clone();
@@ -343,6 +350,35 @@ pub async fn network_ping_sweep(
     tokio::spawn(async move {
         let app = app_clone;
         let tid = task_id_clone.clone();
+
+        if let ResolvedLocation::Agent(agent_id) = location {
+            // Guarded by `ensure_agent_client` before spawning (WA-RS-005).
+            match agent_client {
+                Some(client) => {
+                    let params = agent_tools::ping_sweep_tool_run_params(
+                        &targets,
+                        timeout_ms,
+                        concurrency,
+                        resolve_hostnames,
+                    );
+                    let (app2, tid2) = (app.clone(), tid.clone());
+                    let _ = tokio::task::spawn_blocking(move || {
+                        agent_tools::dispatch_ping_sweep(
+                            &client, &agent_id, &app2, &tid2, params, &cancel,
+                        );
+                    })
+                    .await;
+                }
+                None => events::emit_error(
+                    &app,
+                    events::name::SWEEP_ERROR,
+                    &tid,
+                    "no agent client for agent-located request",
+                ),
+            }
+            manager.complete_task(&tid);
+            return;
+        }
 
         let on_result = {
             let app = app.clone();
@@ -533,11 +569,31 @@ pub async fn network_dns_lookup(
 
 // ── Open Ports ───────────────────────────────────────────────────────────────
 
-/// List local listening ports.
+/// List listening ports.
+///
+/// Routes by run-location (PROD-033): an agent preference proxies to the
+/// agent's `network.open_ports` and lists the **agent host's** listening ports
+/// (the same bare `OpenPort[]` shape); no preference lists this computer's.
 #[tauri::command]
-pub fn network_open_ports() -> Result<serde_json::Value, TerminalError> {
-    let ports =
-        open_ports::list_open_ports().map_err(|e| TerminalError::NetworkError(e.to_string()))?;
+pub async fn network_open_ports(
+    manager: State<'_, Arc<NetworkManager>>,
+) -> Result<serde_json::Value, TerminalError> {
+    let ports = match manager.resolve_tool_location(agent_tools::tool::OPEN_PORTS)? {
+        ResolvedLocation::Agent(agent_id) => {
+            let client = manager.agent_rpc_client().ok_or_else(|| {
+                TerminalError::NetworkError("agent manager is not available".into())
+            })?;
+            tokio::task::spawn_blocking(move || {
+                agent_tools::dispatch_open_ports(&client, &agent_id)
+            })
+            .await
+            .map_err(|e| TerminalError::NetworkError(e.to_string()))?
+            .map_err(TerminalError::NetworkError)?
+        }
+        ResolvedLocation::Local => {
+            open_ports::list_open_ports().map_err(|e| TerminalError::NetworkError(e.to_string()))?
+        }
+    };
     serde_json::to_value(ports).map_err(|e| TerminalError::NetworkError(e.to_string()))
 }
 

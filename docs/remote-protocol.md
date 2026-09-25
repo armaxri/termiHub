@@ -1924,6 +1924,24 @@ Report whether an agent-hosted tunnel is currently forwarding, with live traffic
 
 ---
 
+### Agent-run network tools (`network.*`, `tool.run`)
+
+A network diagnostic whose "Run on" location is an agent runs **from the agent's network vantage**. The desktop proxies it (`src-tauri/src/network/agent_tools.rs`) and re-emits the reply as the same Tauri events or return value as the local path, so the UI cannot tell where it ran. Every method is **collect-and-return**: the agent gathers the whole run before replying, bounded by the desktop's 60 s agent-request timeout.
+
+| Tool        | Agent method                           | Params                                                | Result                                                   |
+| ----------- | -------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------- |
+| Ping        | `network.ping`                         | `{host, count, interval_ms}`                          | `{results, stats}`                                       |
+| Traceroute  | `network.traceroute`                   | `{host, max_hops}`                                    | `{hops}`                                                 |
+| Port scan   | `network.port_scan`                    | `{host, ports, timeout_ms, concurrency}`              | `{results, summary}`                                     |
+| DNS lookup  | `network.dns_lookup`                   | `{hostname, record_type, server}`                     | `DnsResult`                                              |
+| Wake-on-LAN | `network.wol`                          | `{mac, broadcast, port}`                              | `{}`                                                     |
+| Open ports  | `network.open_ports`                   | `{}`                                                  | `{ports: [{protocol, localAddr, pid, process}]}`         |
+| Ping sweep  | `tool.run` with `toolId: "ping_sweep"` | `{targets, timeoutMs, concurrency, resolveHostnames}` | `{events: [{kind: "result", payload}], result: summary}` |
+
+`network.*` params are snake_case. `tool.run` wraps camelCase tool params as `{toolId, params}` and runs the agent's core `ToolRegistry`. Each `result` event payload of a ping sweep is `{host, latencyMs, hostname}`, and `result` is the summary `{total, up, down, elapsedMs}`. The desktop expands the sweep's target spec (CIDR, ranges) itself and sends the concrete address list. An agent without `tool.run` returns [`-32601` Method not found](#standard-json-rpc-errors), which the desktop surfaces as a sweep error.
+
+The HTTP monitor is not on this path: a monitor is agent-hosted per monitor through [`service.*`](#agent-hosted-embedded-servers-service).
+
 ### Agent-hosted embedded servers (`service.*`)
 
 The `service.*` methods run an embedded server (HTTP / FTP / TFTP) **on the agent** instead of on the desktop (#2192). The agent creates the server from its `ServiceRegistry` by `serviceId` and binds the listen socket on the agent host; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. The lifecycle methods are additive in protocol **0.7.0**: a pre-0.7.0 agent lacks them, so a `service.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), and the desktop surfaces the existing "not supported" path (hosting the embedded server locally on the desktop as before).

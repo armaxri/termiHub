@@ -40,6 +40,13 @@
   font-size: var(--font-size-sm);
 }
 
+/* Why an agent is not offered for a desktop-only tool. */
+.network-panel__runon-hint {
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+  font-style: italic;
+}
+
 /* Panel container */
 .network-panel {
   display: flex;
