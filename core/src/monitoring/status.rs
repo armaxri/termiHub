@@ -576,4 +576,100 @@ mod tests {
             "reset restarts the schedule at base"
         );
     }
+
+    // ── Golden vector: canonical-engine migration (SM-020 slice 1) ──────
+    //
+    // These pin the EXACT delay sequence the monitoring backoff produces, so
+    // migrating `BackoffSchedule` onto the canonical `reconnect_backoff` engine
+    // is proven behavior-preserving: with jitter disabled the schedule must stay
+    // byte-identical to the hand-rolled capped-exponential it replaced.
+
+    /// The monitoring reconnect budget's delays, in whole seconds, for its
+    /// production configuration (base 1s, factor 2, cap 30s, 8 attempts).
+    const MONITORING_GOLDEN_DELAYS_SECS: [u64; 8] = [1, 2, 4, 8, 16, 30, 30, 30];
+
+    #[test]
+    fn golden_vector_monitoring_backoff_sequence_then_give_up() {
+        let mut schedule = BackoffSchedule::default();
+        let mut got = Vec::new();
+        while let Some(delay) = schedule.next_delay() {
+            got.push(delay);
+        }
+        let expected: Vec<Duration> = MONITORING_GOLDEN_DELAYS_SECS
+            .iter()
+            .map(|s| Duration::from_secs(*s))
+            .collect();
+        assert_eq!(
+            got, expected,
+            "monitoring backoff must yield exactly 1,2,4,8,16,30,30,30 s then give up"
+        );
+    }
+
+    #[test]
+    fn golden_vector_canonical_reducer_matches_monitoring_sequence() {
+        use crate::reconnect_backoff::{
+            reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase,
+            INITIAL_RECONNECT_STATE,
+        };
+        // Exactly monitoring's numbers, jitter disabled → deterministic.
+        let config = BackoffConfig {
+            base_delay_ms: 1_000.0,
+            factor: 2.0,
+            max_delay_ms: 30_000.0,
+            max_attempts: DEFAULT_MAX_RECONNECT_ATTEMPTS as i64,
+            jitter_ratio: 0.0,
+        };
+        let mut no_jitter = || 0.0;
+        let mut state = INITIAL_RECONNECT_STATE;
+        let mut delays = Vec::new();
+
+        // The first drop arms the first backoff window; each subsequent window is
+        // armed by a failed attempt (the timer fires, the attempt fails).
+        state = reconnect_reducer(&state, ReconnectEvent::Drop, &config, &mut no_jitter);
+        while state.phase == ReconnectPhase::Waiting {
+            delays.push(state.delay_ms);
+            state = reconnect_reducer(&state, ReconnectEvent::Attempt, &config, &mut no_jitter);
+            state = reconnect_reducer(&state, ReconnectEvent::Failure, &config, &mut no_jitter);
+        }
+
+        assert_eq!(
+            state.phase,
+            ReconnectPhase::Gaveup,
+            "the reducer must give up once the 8-attempt budget is spent"
+        );
+        let expected: Vec<i64> = MONITORING_GOLDEN_DELAYS_SECS
+            .iter()
+            .map(|s| (*s as i64) * 1_000)
+            .collect();
+        assert_eq!(
+            delays, expected,
+            "the canonical reducer must reproduce monitoring's delay sequence (jitter:0)"
+        );
+    }
+
+    #[test]
+    fn golden_vector_offline_fires_after_budget_exhausted() {
+        // Drive a loop-state to a reconnect, exhaust the production backoff
+        // budget, and confirm the loop still resolves to Offline exactly as
+        // before (the stale-threshold / MonitorStatus fork is unchanged).
+        let mut state = CollectLoopState::with_threshold(1);
+        state.on_success();
+        state.on_failure(); // → Stale
+        state.begin_reconnect(); // → Reconnecting
+
+        let mut schedule = BackoffSchedule::default();
+        while schedule.next_delay().is_some() {}
+        assert_eq!(
+            schedule.next_delay(),
+            None,
+            "the reconnect budget must be exhausted"
+        );
+
+        assert_eq!(
+            state.exhaust_reconnect(),
+            Some(MonitorStatus::Offline),
+            "an exhausted reconnect budget resolves to Offline"
+        );
+        assert_eq!(state.status(), MonitorStatus::Offline);
+    }
 }
