@@ -14,7 +14,7 @@ evidence:
   - src-tauri/src/session/remote_proxy.rs:542
   - src-tauri/Cargo.toml:87
 status: partial
-resolution: "#2944 — moved JSON-RPC req/resp DTOs to core::protocol::methods (agent re-exports); wire bytes locked by tests. Desktop still parses some responses ad-hoc via Value -> follow-up #2945"
+resolution: "#2944 — foundation done (#2944: DTOs in core::protocol::methods, agent re-exports, wire bytes locked). Desktop call-site families now migrating off hand-built json!/Value onto the shared DTOs, one family per PR under umbrella #2945: tunnel (#3219), network-tools (#3220), agent_manager connection/folder parsers (#3221) DONE — each with byte/shape-equality round-trip tests. REMAINING (#2945/#3222): agent_manager connect-result/list/shutdown parsers + session.* request builders, remote_proxy session ops, embedded servers, agent update"
 ---
 
 ## What

@@ -9,8 +9,8 @@ subsystem: core/src/files/browser.rs
 evidence:
   - core/src/files/browser.rs:27
   - core/src/backends/ssh/file_browser.rs:26
-status: partial
-resolution: "develop — reclaim-partial: chmod DONE — set_permissions(path,mode) now a required FileBrowser trait method (core/src/files/browser.rs:62) w/ FileError::NotSupported for FTP/Docker/WSL + local_set_permissions cmd (commands/files.rs:87). STILL missing: no copy() on the trait + as_any downcast escape hatch remains (browser.rs:76) → grindable remainder"
+status: fixed
+resolution: "#3201 — RESOLVED: chmod already a required FileBrowser trait method (set_permissions), and #3201 added copy() (+ set_owner/create_symlink) as required trait methods mirroring the chmod pattern — local (unix/native), SSH via SFTP, typed NotSupported elsewhere. The trait now covers permission-change AND copy"
 ---
 
 ## What
