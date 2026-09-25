@@ -118,7 +118,7 @@ rmp-serde = { version = "1", optional = true }
 # used windows-only for shell detection) — library-first over hand-rolled PATH
 # scanning. Behind the optional `rdp-sidecar` feature.
 which = { version = "7", optional = true }
-ringbuf = "0.5.0"
+ringbuf = "0.5.2"
 shellexpand = "3.1"
 vte = "0.13"
 # ZIP reader for the `.termihub-plugin` package format (#1989). Used instead of
