@@ -1163,6 +1163,7 @@ impl SessionManager {
                 version: version.unwrap_or_default(),
                 binary_path: confined.to_string_lossy().into_owned(),
                 staged_at: Utc::now().to_rfc3339(),
+                expected_sha256: None,
             };
             self.persist_state_delta(move |s| {
                 s.update.pending_update = Some(pending);
@@ -1215,6 +1216,7 @@ impl SessionManager {
             version,
             binary_path,
             staged_at: Utc::now().to_rfc3339(),
+            expected_sha256: None,
         };
         self.persist_state_delta(move |s| {
             s.update.pending_update = Some(pending);
@@ -1997,6 +1999,7 @@ mod tests {
                 version: "0.9.0".to_string(),
                 binary_path: path.to_string(),
                 staged_at: "2026-07-14T09:00:00Z".to_string(),
+                expected_sha256: None,
             }
         }
 
@@ -2072,6 +2075,7 @@ mod tests {
                 version: "0.0.1".to_string(),
                 binary_path: "/tmp/already-applied-agent".to_string(),
                 staged_at: "2026-07-17T09:00:00Z".to_string(),
+                expected_sha256: None,
             });
             seeded.save_to(&state_path);
 
@@ -2128,6 +2132,7 @@ mod tests {
                 version: "9.9.9".to_string(),
                 binary_path: staged.to_string_lossy().into_owned(),
                 staged_at: "2026-07-17T09:00:00Z".to_string(),
+                expected_sha256: None,
             });
             seeded.save_to(&state_path);
 

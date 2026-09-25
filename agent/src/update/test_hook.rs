@@ -271,6 +271,7 @@ mod tests {
             version: hook.version.clone(),
             binary_path: hook.binary_path.clone(),
             staged_at: "2026-07-17T09:00:00Z".to_string(),
+            expected_sha256: None,
         });
 
         let current_exe = std::env::current_exe().ok();

@@ -86,6 +86,16 @@ pub struct PendingUpdate {
     pub binary_path: String,
     /// RFC 3339 timestamp when the binary was staged.
     pub staged_at: String,
+    /// Expected lowercase-hex SHA-256 digest of the staged binary, carried from
+    /// the route that staged it (self-update download sidecar, or the
+    /// desktop-computed digest sent with `agent.request_update`). The apply path
+    /// **re-verifies** the on-disk bytes against this digest immediately before
+    /// the swap (AGT-004), closing the stage-then-tamper TOCTOU window. `None`
+    /// means no digest was carried — the apply path treats that as a fail-closed
+    /// rejection, never a skip. `#[serde(default)]` keeps older `state.json`
+    /// files (written before this field existed) loadable as `None`.
+    #[serde(default)]
+    pub expected_sha256: Option<String>,
 }
 
 /// Minimal session info stored for recovery.
@@ -743,6 +753,7 @@ mod tests {
             version: "0.3.0".to_string(),
             binary_path: "/tmp/updates/termihub-agent-linux-x64".to_string(),
             staged_at: "2026-07-10T12:00:01Z".to_string(),
+            expected_sha256: Some("a".repeat(64)),
         });
         state.save_to(&path);
 
@@ -772,6 +783,7 @@ mod tests {
             version: String::new(),
             binary_path: "/opt/updates/termihub-agent".to_string(),
             staged_at: "2026-07-14T09:00:00Z".to_string(),
+            expected_sha256: None,
         });
         state.save_to(&path);
 
@@ -791,6 +803,37 @@ mod tests {
         reloaded.save_to(&path);
         let after = AgentState::load_from(&path);
         assert!(after.update.pending_update.is_none());
+    }
+
+    #[test]
+    fn pending_update_without_expected_sha256_loads_as_none() {
+        // A `pending_update` written by an agent that predates the AGT-004
+        // digest field must still load — the missing field defaults to `None`
+        // (which the apply path then treats as a fail-closed rejection).
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("state.json");
+        std::fs::write(
+            &path,
+            r#"{
+              "sessions": {},
+              "update": {
+                "pending_update": {
+                  "version": "0.3.0",
+                  "binary_path": "/opt/updates/termihub-agent",
+                  "staged_at": "2026-07-14T09:00:00Z"
+                }
+              }
+            }"#,
+        )
+        .unwrap();
+
+        let loaded = AgentState::load_from(&path);
+        let pending = loaded
+            .update
+            .pending_update
+            .expect("legacy pending update present");
+        assert_eq!(pending.binary_path, "/opt/updates/termihub-agent");
+        assert_eq!(pending.expected_sha256, None);
     }
 
     #[test]
