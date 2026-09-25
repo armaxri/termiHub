@@ -2409,6 +2409,30 @@ export const useAppStore = create<AppState>((set, get, store) => {
     return next;
   };
 
+  /**
+   * Build the transactional rollback for the coupled **non-layout** fields an
+   * optimistic layout reducer committed via {@link setLayoutLocal}'s `set(rest)`
+   * (SM-027). The `ProjectionClient` overlay reverts only the panel-tree structure
+   * on a rejected `layout.*` intent; these fields (`tabContent`, `zoomedTabId`, the
+   * per-tab maps) live outside the region and would otherwise stay mutated,
+   * diverging the store. Given the pre-apply `prev` state and the reducer `next`
+   * result, this returns a closure that restores exactly the keys the reducer wrote
+   * to their pre-apply values — passed to {@link mirrorLayoutIntent} as `onReject`
+   * so a rejection reverts structure and coupled fields together. Returns
+   * `undefined` when the reducer wrote no coupled field (nothing to revert).
+   */
+  const layoutCoupledRollback = (
+    prev: AppState,
+    next: LayoutReducerResult
+  ): (() => void) | undefined => {
+    const rest = nonLayoutPartial(next);
+    const keys = Object.keys(rest);
+    if (keys.length === 0) return undefined;
+    const before: Record<string, unknown> = {};
+    for (const key of keys) before[key] = (prev as unknown as Record<string, unknown>)[key];
+    return () => set(before as Partial<AppState>);
+  };
+
   /** The current composed layout — the choke point for the `get()`-time guards
    * (`curLayout().tabGroups`, `.activePanelId`, …) that read the live structure
    * outside a reducer body (#2562). Memoized, so repeated reads are cheap. */
@@ -2531,7 +2555,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "layout.addGroup",
         { name: assignedName },
         pre,
-        postLayoutSnapshot(prev, next)
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
       );
       return newGroupId;
     },
@@ -2560,7 +2585,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
         };
       });
       // Dispatch the close to the region; the mirror composes it back (E2).
-      mirrorLayoutIntent("layout.closeGroup", { groupId }, pre, postLayoutSnapshot(prev, next));
+      mirrorLayoutIntent(
+        "layout.closeGroup",
+        { groupId },
+        pre,
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
+      );
     },
 
     renameTabGroup: (groupId, name) => {
@@ -2573,7 +2604,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "layout.renameGroup",
         { groupId, name },
         pre,
-        postLayoutSnapshot(prev, next)
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
       );
     },
 
@@ -2591,7 +2623,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "layout.setGroupColor",
         color != null ? { groupId, color } : { groupId },
         pre,
-        postLayoutSnapshot(prev, next)
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
       );
     },
 
@@ -2626,7 +2659,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
         };
       });
       // Dispatch the group switch to the region; the mirror composes it back (E2).
-      mirrorLayoutIntent("layout.setActiveGroup", { groupId }, pre, postLayoutSnapshot(prev, next));
+      mirrorLayoutIntent(
+        "layout.setActiveGroup",
+        { groupId },
+        pre,
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
+      );
     },
 
     reorderTabGroups: (fromIndex, toIndex) => {
@@ -2642,7 +2681,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "layout.reorderGroups",
         { fromIndex, toIndex },
         pre,
-        postLayoutSnapshot(prev, next)
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
       );
     },
 
@@ -3700,7 +3740,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             tab: { id: createdTabId, sessionId: addedSessionId, contentType: addedContentType },
           },
           pre,
-          postLayoutSnapshot(prev, next)
+          postLayoutSnapshot(prev, next),
+          layoutCoupledRollback(prev, next)
         );
       }
       // Record real terminal connections in the session history (#1883). Only
@@ -4240,7 +4281,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "layout.closeTabStructure",
         { tabId },
         preLayout,
-        postLayoutSnapshot(prevLayout, closeNext)
+        postLayoutSnapshot(prevLayout, closeNext),
+        layoutCoupledRollback(prevLayout, closeNext)
       );
     },
 
@@ -4277,7 +4319,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
       // Dispatch the tab focus to the region via `layout.setActiveTab`; the mirror
       // composes it back (E2). The backend derives the leaf from the tab id.
-      mirrorLayoutIntent("layout.setActiveTab", { tabId }, pre, postLayoutSnapshot(prev, next));
+      mirrorLayoutIntent(
+        "layout.setActiveTab",
+        { tabId },
+        pre,
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
+      );
     },
 
     moveTab: (tabId, fromPanelId, toPanelId, newIndex) => {
@@ -4336,7 +4384,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         "layout.reorderTabs",
         { panelId, oldIndex, newIndex },
         pre,
-        postLayoutSnapshot(prev, next)
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
       );
     },
 
@@ -4383,7 +4432,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
             newSplitId,
           },
           pre,
-          postLayoutSnapshot(prev, next)
+          postLayoutSnapshot(prev, next),
+          layoutCoupledRollback(prev, next)
         );
       }
     },
@@ -4410,7 +4460,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
       });
 
       // Region-authoritative op (#2283 slice E2): the mirror composes it back.
-      mirrorLayoutIntent("layout.removePanel", { panelId }, pre, postLayoutSnapshot(prev, next));
+      mirrorLayoutIntent(
+        "layout.removePanel",
+        { panelId },
+        pre,
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
+      );
     },
 
     setActivePanel: (panelId) => {
@@ -4429,7 +4485,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
         return { activePanelId: panelId, zoomedTabId: newZoomedTabId };
       });
-      mirrorLayoutIntent("layout.setActivePanel", { panelId }, pre, postLayoutSnapshot(prev, next));
+      mirrorLayoutIntent(
+        "layout.setActivePanel",
+        { panelId },
+        pre,
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
+      );
     },
 
     setPanelSizes: (splitId, sizes) => {
@@ -4441,7 +4503,13 @@ export const useAppStore = create<AppState>((set, get, store) => {
       const next = setLayoutLocal((state) => ({
         rootPanel: setSplitSizesInTree(state.rootPanel, splitId, sizes),
       }));
-      mirrorLayoutIntent("layout.resize", { splitId, sizes }, pre, postLayoutSnapshot(prev, next));
+      mirrorLayoutIntent(
+        "layout.resize",
+        { splitId, sizes },
+        pre,
+        postLayoutSnapshot(prev, next),
+        layoutCoupledRollback(prev, next)
+      );
     },
 
     splitPanelWithTab: (tabId, fromPanelId, targetPanelId, edge) => {
