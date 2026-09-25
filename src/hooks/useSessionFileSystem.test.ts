@@ -43,6 +43,10 @@ vi.mock("@/services/api", () => ({
   // Default: reject → session is byte-based (Docker / FTP / agent). The
   // SFTP-backed suite overrides this to resolve.
   sessionHasExecCapability: vi.fn(() => Promise.reject(new Error("not sftp-backed"))),
+  // Default: false → session is NOT queue-capable (Docker / agent), so transfers
+  // use the byte-based fallback. The SFTP and FTP suites override this to true
+  // (PROD-010).
+  sessionSupportsTransferQueue: vi.fn(() => Promise.resolve(false)),
   // The real marker class so `error instanceof TransferTerminalError` in
   // runTransfer resolves correctly (#1286).
   TransferTerminalError: class TransferTerminalError extends Error {
@@ -283,6 +287,7 @@ import {
   sessionVscodeOpenRemote,
   sessionReadFile,
   sessionHasExecCapability,
+  sessionSupportsTransferQueue,
 } from "@/services/api";
 import { dispatchTransferIntentBestEffort } from "@/store/transfersBridge";
 import { toast } from "@/components/ui";
@@ -299,6 +304,8 @@ describe("useSessionFileSystem — SFTP-backed transport (probe resolves)", () =
     vi.clearAllMocks();
     // Resolve → the session is SFTP-backed (the boolean is exec capability).
     vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    // SFTP is queue-capable, so download/upload route through the queue engine.
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -488,8 +495,10 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
-    // Reject → the session is byte-based (Docker / FTP / agent).
+    // Reject → the session is byte-based (Docker / agent).
     vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    // Not queue-capable → transfers use the blocking byte-based fallback.
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(false);
   });
 
   afterEach(() => {
@@ -731,6 +740,7 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
     vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
   });
 
   afterEach(() => {
@@ -899,5 +909,129 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
       await Promise.resolve();
     });
     expect(currentFileBrowsersView().session.path).toBe("/remote/other");
+  });
+});
+
+// PROD-010: an FTP session is a queue-capable byte backend — the exec probe
+// REJECTS (it is not SFTP-backed, so no VS Code / chmod), but the
+// session_supports_transfer_queue probe RESOLVES true, so download/upload route
+// through the rich queue engine (session_download / session_upload) exactly like
+// SFTP rather than the blocking byte-based fallback. Critically, the frontend
+// passes only the session id + paths — never the FTP config/credentials, which
+// the backend resolves server-side.
+describe("useSessionFileSystem — FTP transport (queue-capable, not SFTP)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+    // Not SFTP-backed → no exec channel (no VS Code / chmod)…
+    vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    // …but FTP IS queue-capable → download/upload use the rich queue engine.
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(): Promise<SessionFs> {
+    useAppStore.setState({ sessionFileBrowserId: "ftp-1" });
+    seedFileBrowsers({
+      session: { path: "/remote/dir", entries: [], loading: false, error: null },
+    });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    // Flush both capability probes so transferQueueCapable settles.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return api!;
+  }
+
+  it("routes downloadFile through the queue engine (session_download), not the byte fallback", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.downloadFile("/remote/dir/file.txt", "file.txt");
+    });
+    // Queue path, with only session id + paths — no FTP config/credentials.
+    expect(vi.mocked(sessionDownload)).toHaveBeenCalledWith(
+      "ftp-1",
+      "/remote/dir/file.txt",
+      "/local/save.txt",
+      expect.any(Function)
+    );
+    expect(vi.mocked(sessionDownload).mock.calls[0]).toHaveLength(4);
+    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
+  });
+
+  it("routes uploadFileFromPath through the queue engine (session_upload), not the byte fallback", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.uploadFileFromPath("/local/data.csv");
+    });
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "ftp-1",
+      "/local/data.csv",
+      "/remote/dir/data.csv",
+      expect.any(Function)
+    );
+    // Only session id + paths cross the boundary — never the FTP config.
+    expect(vi.mocked(sessionUpload).mock.calls[0]).toHaveLength(4);
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+  });
+
+  it("routes a local→session paste upload through the queue engine", async () => {
+    const api = await mountHook();
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "a.txt",
+          path: "/local/a.txt",
+          isDirectory: false,
+          size: 1,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "copy",
+      sourceMode: "local",
+      sourcePath: "/local",
+    });
+    await act(async () => {
+      await api.pasteEntry();
+    });
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "ftp-1",
+      "/local/a.txt",
+      "/remote/dir/a.txt",
+      expect.any(Function)
+    );
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+  });
+
+  it("leaves VS Code remote open unavailable (FTP is not SFTP-backed)", async () => {
+    const api = await mountHook();
+    await act(async () => {
+      await api.openInVscode("/remote/dir/file.txt");
+    });
+    expect(vi.mocked(sessionVscodeOpenRemote)).not.toHaveBeenCalled();
+    // chmod/chown/symlink stay SFTP-only.
+    expect(api.supportsPermissions).toBe(false);
   });
 });

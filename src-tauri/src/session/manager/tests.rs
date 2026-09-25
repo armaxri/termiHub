@@ -115,6 +115,63 @@ impl ConnectionType for MockConnection {
     }
 }
 
+/// A mock connection whose file browser is a **local** (byte-capable but NOT
+/// FTP-backed) browser. Used to prove the session-based FTP transfer resolver
+/// excludes non-FTP backends, so the queue path stays reserved for backends that
+/// can actually drive it (PROD-010).
+#[derive(Default)]
+struct LocalBrowserConnection {
+    browser: termihub_core::files::LocalFileBrowser,
+}
+
+#[async_trait::async_trait]
+impl ConnectionType for LocalBrowserConnection {
+    fn type_id(&self) -> &str {
+        "local-browser-mock"
+    }
+    fn display_name(&self) -> &str {
+        "Local Browser Mock"
+    }
+    fn settings_schema(&self) -> SettingsSchema {
+        SettingsSchema { groups: vec![] }
+    }
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            monitoring: false,
+            file_browser: true,
+            graphical: false,
+            resize: false,
+            persistent: false,
+            terminal: false,
+        }
+    }
+    async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+        Ok(())
+    }
+    async fn disconnect(&mut self) -> Result<(), SessionError> {
+        Ok(())
+    }
+    fn is_connected(&self) -> bool {
+        true
+    }
+    fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+        Ok(())
+    }
+    fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> OutputReceiver {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        rx
+    }
+    fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+        None
+    }
+    fn file_browser(&self) -> Option<&dyn FileBrowser> {
+        Some(&self.browser)
+    }
+}
+
 /// Helper to create a sessions map and insert a mock session.
 /// A fresh, empty scrollback capture buffer for `run_output_reader` tests (#1900).
 fn new_capture() -> Arc<StdMutex<RingBuffer>> {
@@ -214,6 +271,69 @@ async fn file_browser_returns_none_for_mock_connection() {
     assert!(
         entry.connection.file_browser().is_none(),
         "MockConnection should not have file browser capability"
+    );
+}
+
+/// Insert a session whose file browser is a local (non-FTP) browser.
+async fn sessions_with_local_browser(
+    session_id: &str,
+) -> Arc<Mutex<HashMap<String, SessionEntry>>> {
+    let sessions = Arc::new(Mutex::new(HashMap::new()));
+    let mut map = sessions.lock().await;
+    map.insert(
+        session_id.to_string(),
+        SessionEntry {
+            connection: Box::new(LocalBrowserConnection::default()),
+            info: SessionInfo {
+                id: session_id.to_string(),
+                title: "Local".to_string(),
+                connection_type: "local-browser-mock".to_string(),
+                alive: true,
+                agent_id: None,
+                spawned: false,
+            },
+            remote_session_id: None,
+            line_ending: LineEnding::default(),
+            reader_cancel: CancellationToken::new(),
+        },
+    );
+    drop(map);
+    sessions
+}
+
+/// A non-FTP (local / byte-based) session must not resolve an FTP transfer
+/// config, so the session-based queue path stays reserved for FTP/SFTP and
+/// Docker/agent/local keep the blocking byte-based fallback (PROD-010).
+#[cfg(feature = "ftp")]
+#[tokio::test]
+async fn ftp_transfer_config_rejects_non_ftp_session() {
+    use crate::session::file_ops::FileOps;
+    let sessions = sessions_with_local_browser("sess-local").await;
+    let ops = FileOps::new(&sessions);
+    let err = ops
+        .ftp_transfer_config("sess-local")
+        .await
+        .expect_err("a local (non-FTP) browser must not yield an FTP config");
+    assert!(
+        matches!(err, crate::utils::errors::TerminalError::RemoteError(_)),
+        "expected RemoteError for a non-FTP session, got {err:?}"
+    );
+}
+
+/// An unknown session surfaces SessionNotFound, not a misleading "not FTP" error.
+#[cfg(feature = "ftp")]
+#[tokio::test]
+async fn ftp_transfer_config_reports_unknown_session() {
+    use crate::session::file_ops::FileOps;
+    let sessions: Arc<Mutex<HashMap<String, SessionEntry>>> = Arc::new(Mutex::new(HashMap::new()));
+    let ops = FileOps::new(&sessions);
+    let err = ops
+        .ftp_transfer_config("ghost")
+        .await
+        .expect_err("unknown session must error");
+    assert!(
+        matches!(err, crate::utils::errors::TerminalError::SessionNotFound(_)),
+        "expected SessionNotFound, got {err:?}"
     );
 }
 

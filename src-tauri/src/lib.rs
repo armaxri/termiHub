@@ -635,6 +635,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::session_has_exec_capability,
             commands::session::session_download,
             commands::session::session_upload,
+            commands::session::session_supports_transfer_queue,
             commands::session::session_vscode_open_remote,
             // Session-based monitoring
             commands::session::session_get_capabilities,

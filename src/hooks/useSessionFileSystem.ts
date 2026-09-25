@@ -17,6 +17,7 @@ import {
   sessionCopyRemote,
   sessionVscodeOpenRemote,
   sessionHasExecCapability,
+  sessionSupportsTransferQueue,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
@@ -37,24 +38,29 @@ import { errorMessage } from "@/utils/errorMessage";
  * browser capability (`session_*` commands) rather than a separate `SftpManager`
  * session.
  *
- * # SFTP-backed vs byte-based transfers (#2421)
+ * # Queued vs byte-based transfers (#2421, PROD-010)
  *
  * Two transport shapes back a session (mirroring the editor split in #2420):
  *
- * - An **SFTP-backed** session (SSH) resolves its ops via the backend's
- *   `SftpFileBrowser`, so it can drive the **dedicated per-transfer channel** —
- *   `session_download` / `session_upload` register a background transfer that
- *   keeps the listing live and feeds the Transfer Queue + progress events, and
- *   `session_vscode_open_remote` supports remote VS Code editing.
- * - A **byte-based** backend (Docker / FTP / remote-agent) has no SFTP channel,
- *   so transfers fall back to a blocking `session_read_file` / `session_write_file`
- *   round-trip and VS Code remote open is unavailable.
+ * - A **queue-capable** session — SFTP-backed (SSH) or FTP-backed — drives the
+ *   rich transfer-queue engine: `session_download` / `session_upload` register a
+ *   background transfer that keeps the listing live and feeds the Transfer Queue
+ *   with progress/ETA/pause/resume/retry. The backend resolves the executor from
+ *   the live session, so FTP credentials never cross into the frontend (PROD-010).
+ * - A **byte-based** backend (Docker / remote-agent) cannot drive the queue, so
+ *   transfers fall back to a blocking `session_read_file` / `session_write_file`
+ *   round-trip.
  *
- * The transport is detected with the same signal #2420 chose for the editor: the
- * `session_has_exec_capability` probe **resolves** (with the exec boolean) only
- * for an SFTP-backed session and **rejects** for a byte-based backend. A resolved
- * probe flips {@link sftpCapable} on, unlocking the dedicated channel + VS Code;
- * a rejection leaves the session on the byte-based path.
+ * Two capability signals gate this:
+ *
+ * - {@link transferQueueCapable} — from the `session_supports_transfer_queue`
+ *   probe (`true` for SFTP or FTP) — routes download/upload/local-paste-upload
+ *   through the queue engine vs the byte-based fallback.
+ * - {@link sftpCapable} — from the `session_has_exec_capability` probe, which
+ *   **resolves** only for an SFTP-backed session — gates the SFTP-only features:
+ *   VS Code remote open, chmod/chown/symlink, and the direct SFTP↔SFTP
+ *   remote-copy stream. FTP has none of these, so it stays queue-capable but not
+ *   `sftpCapable`.
  */
 export function useSessionFileSystem() {
   // The session pane's view (listing, cwd, loading, error) is sourced from the
@@ -98,6 +104,42 @@ export function useSessionFileSystem() {
         frontendLog(
           "session_file_browser",
           `session ${sessionId} is not SFTP-backed; byte-based transfers: ${errorMessage(err)}`
+        );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionFileBrowserId]);
+
+  // Whether the current session can drive the rich transfer-queue engine — SFTP
+  // or FTP (PROD-010). Gates whether download/upload route through the queue
+  // (progress/ETA/pause/resume/retry) or the blocking byte-based fallback that a
+  // Docker/remote-agent session uses. Determined by the
+  // `session_supports_transfer_queue` probe; `false` until it resolves, so the
+  // brief pre-probe window (and a byte-based backend) stays on the fallback.
+  const [transferQueueCapable, setTransferQueueCapable] = useState(false);
+
+  useEffect(() => {
+    setTransferQueueCapable(false);
+    if (!sessionFileBrowserId) return;
+    let cancelled = false;
+    const sessionId = sessionFileBrowserId;
+    sessionSupportsTransferQueue(sessionId)
+      .then((supported) => {
+        if (cancelled) return;
+        setTransferQueueCapable(supported);
+        frontendLog(
+          "session_file_browser",
+          `session ${sessionId} transfer-queue capable: ${supported}`
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        // A probe failure keeps the safe byte-based fallback.
+        setTransferQueueCapable(false);
+        frontendLog(
+          "session_file_browser",
+          `session ${sessionId} transfer-queue probe failed: ${errorMessage(err)}`
         );
       });
     return () => {
@@ -162,8 +204,9 @@ export function useSessionFileSystem() {
       if (!sessionFileBrowserId) return;
       const localPath = await save({ title: "Save file as...", defaultPath: fileName });
       if (!localPath) return;
-      if (sftpCapable) {
-        // SFTP-backed: stream over the dedicated transfer channel (#2421).
+      if (transferQueueCapable) {
+        // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
+        // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
         await runTransfer(
           "Download",
           () => startDownload(sessionFileBrowserId, remotePath, localPath),
@@ -171,7 +214,7 @@ export function useSessionFileSystem() {
         );
         return;
       }
-      // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip
+      // Byte-based fallback (Docker / remote-agent): blocking round-trip
       // with no transfer-progress event, so surface its own feedback (UX-017)
       // rather than resolving silently.
       await runBlockingTransfer(
@@ -187,7 +230,7 @@ export function useSessionFileSystem() {
         }
       );
     },
-    [sessionFileBrowserId, sftpCapable, startDownload]
+    [sessionFileBrowserId, transferQueueCapable, startDownload]
   );
 
   const uploadFile = useCallback(async () => {
@@ -199,8 +242,9 @@ export function useSessionFileSystem() {
       (localPath as string).split("/").pop() ?? (localPath as string).split("\\").pop() ?? "upload";
     const remotePath =
       sessionCurrentPath === "/" ? `/${fileName}` : `${sessionCurrentPath}/${fileName}`;
-    if (sftpCapable) {
-      // SFTP-backed: stream over the dedicated transfer channel (#2421).
+    if (transferQueueCapable) {
+      // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
+      // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
       const ok = await runTransfer(
         "Upload",
         () => startUpload(sessionFileBrowserId, localPath as string, remotePath),
@@ -209,7 +253,7 @@ export function useSessionFileSystem() {
       if (ok) refreshSession();
       return;
     }
-    // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip
+    // Byte-based fallback (Docker / remote-agent): blocking round-trip
     // with no transfer-progress event, so surface its own feedback (#2906)
     // rather than resolving silently.
     const ok = await runBlockingTransfer(
@@ -225,7 +269,7 @@ export function useSessionFileSystem() {
       }
     );
     if (ok) refreshSession();
-  }, [sessionFileBrowserId, sessionCurrentPath, refreshSession, sftpCapable, startUpload]);
+  }, [sessionFileBrowserId, sessionCurrentPath, refreshSession, transferQueueCapable, startUpload]);
 
   const uploadFileFromPath = useCallback(
     async (localPath: string) => {
@@ -234,8 +278,9 @@ export function useSessionFileSystem() {
       const fileName = parts[parts.length - 1] || "upload";
       const remotePath =
         sessionCurrentPath === "/" ? `/${fileName}` : `${sessionCurrentPath}/${fileName}`;
-      if (sftpCapable) {
-        // SFTP-backed: stream over the dedicated transfer channel (#2421).
+      if (transferQueueCapable) {
+        // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
+        // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
         const ok = await runTransfer(
           "Upload",
           () => startUpload(sessionFileBrowserId, localPath, remotePath),
@@ -244,7 +289,7 @@ export function useSessionFileSystem() {
         if (ok) refreshSession();
         return;
       }
-      // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip
+      // Byte-based fallback (Docker / remote-agent): blocking round-trip
       // with no transfer-progress event, so surface its own feedback (#2906)
       // rather than resolving silently.
       const ok = await runBlockingTransfer(
@@ -261,7 +306,7 @@ export function useSessionFileSystem() {
       );
       if (ok) refreshSession();
     },
-    [sessionFileBrowserId, sessionCurrentPath, refreshSession, sftpCapable, startUpload]
+    [sessionFileBrowserId, sessionCurrentPath, refreshSession, transferQueueCapable, startUpload]
   );
 
   const createDirectory = useCallback(
@@ -425,12 +470,13 @@ export function useSessionFileSystem() {
         }
       } else if (clipboard.sourceMode === "local") {
         // local→session: upload the local file to the remote destination.
-        if (sftpCapable) {
-          // SFTP-backed: stream over the dedicated transfer channel (#2421).
+        if (transferQueueCapable) {
+          // Queue-capable (SFTP/FTP): register a tracked transfer on the rich
+          // queue engine (#2421, PROD-010).
           await startUpload(sessionFileBrowserId, clipEntry.path, destPath);
           return true;
         }
-        // Byte-based fallback (Docker / FTP / remote-agent): blocking round-trip
+        // Byte-based fallback (Docker / remote-agent): blocking round-trip
         // with no transfer-progress event.
         const { readFile } = await import("@tauri-apps/plugin-fs");
         const data = await readFile(clipEntry.path);
@@ -465,6 +511,7 @@ export function useSessionFileSystem() {
     sessionCurrentPath,
     refreshSession,
     sftpCapable,
+    transferQueueCapable,
     startRemoteCopy,
     startUpload,
   ]);

@@ -1762,6 +1762,21 @@ export async function sessionHasExecCapability(sessionId: string): Promise<boole
 }
 
 /**
+ * Report whether a session can drive the rich transfer-queue model — i.e.
+ * whether {@link sessionDownload} / {@link sessionUpload} register a tracked,
+ * pausable/resumable transfer for it rather than a blocking byte-based fallback
+ * (PROD-010).
+ *
+ * `true` for an SFTP-backed (SSH) or FTP-backed session, `false` for a byte-based
+ * backend (Docker / remote-agent) or an unknown session. The backend resolves the
+ * transfer executor from the live session, so FTP credentials are never sent to
+ * the frontend.
+ */
+export async function sessionSupportsTransferQueue(sessionId: string): Promise<boolean> {
+  return await invoke<boolean>("session_supports_transfer_queue", { sessionId });
+}
+
+/**
  * Download a remote file to a local path over a session's SFTP connection.
  *
  * Registers a background (#2312, mirroring the retired standalone `sftp_download`):
