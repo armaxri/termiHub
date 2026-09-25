@@ -36,63 +36,26 @@ use serde_json::{json, Value};
 /// `RemoteAgentDefinition["connectionState"]` union. Written only by the
 /// backend-authoritative `agent.status` transition (the single-writer rule the
 /// frontend documents as G4/#1234).
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-#[serde(rename_all = "camelCase")]
-pub enum AgentConnectionState {
-    /// Not connected (the default for a freshly added agent).
-    #[default]
-    Disconnected,
-    /// A connect attempt is in flight.
-    Connecting,
-    /// The transport is up and the agent handshake completed.
-    Connected,
-    /// The transport dropped and auto-reconnect is retrying.
-    Reconnecting,
-}
-
-/// Map an [`AgentConnectionState`] onto the canonical
-/// [`SessionStatus`](termihub_core::connection::lifecycle::SessionStatus) (SM-020
-/// slice 0, additive — not yet wired into any runtime path). Total and lossless:
-/// every agent connection state has an exact canonical twin. Defined here rather
-/// than in `core` because `core` cannot name the desktop-defined
-/// [`AgentConnectionState`] (dependency direction + orphan rules).
-impl From<AgentConnectionState> for termihub_core::connection::lifecycle::SessionStatus {
-    fn from(state: AgentConnectionState) -> Self {
-        use termihub_core::connection::lifecycle::SessionStatus;
-        match state {
-            AgentConnectionState::Disconnected => SessionStatus::Disconnected,
-            AgentConnectionState::Connecting => SessionStatus::Connecting,
-            AgentConnectionState::Connected => SessionStatus::Connected,
-            AgentConnectionState::Reconnecting => SessionStatus::Reconnecting,
-        }
-    }
-}
-
-#[cfg(test)]
-mod agent_connection_state_map_tests {
-    use super::AgentConnectionState;
-    use termihub_core::connection::lifecycle::SessionStatus;
-
-    #[test]
-    fn maps_every_agent_state_to_canonical() {
-        // Total: every AgentConnectionState variant has a canonical target.
-        let cases = [
-            (
-                AgentConnectionState::Disconnected,
-                SessionStatus::Disconnected,
-            ),
-            (AgentConnectionState::Connecting, SessionStatus::Connecting),
-            (AgentConnectionState::Connected, SessionStatus::Connected),
-            (
-                AgentConnectionState::Reconnecting,
-                SessionStatus::Reconnecting,
-            ),
-        ];
-        for (input, expected) in cases {
-            assert_eq!(SessionStatus::from(input), expected);
-        }
-    }
-}
+///
+/// SM-020 slice 4 unified this onto the canonical
+/// [`SessionStatus`](termihub_core::connection::lifecycle::SessionStatus): the
+/// four states the agent uses (`disconnected` / `connecting` / `connected` /
+/// `reconnecting`) are exactly four of the canonical variants, so the two enums
+/// are one. The name is kept as an alias because the agent-manager fold and the
+/// projection read most clearly as "the agent's connection state".
+///
+/// **Behavior-preserving.** Each of the four states serialises byte-for-byte
+/// identically to the former dedicated enum — they are single lowercase words,
+/// so the former `rename_all = "camelCase"` and the canonical
+/// `rename_all = "lowercase"` produce the same wire string — so the IPC /
+/// projection payload and every frontend badge (`connectionStateLabel` /
+/// `agentStateTone`) are unchanged.
+///
+/// The agent never emits the canonical terminal error states (`failed` /
+/// `authFailed` / `sessionLost`); those fold into the session region
+/// ([`crate::session_projection`] via `fold_agent_session_lost`), so only the
+/// four states above ever reach this field.
+pub type AgentConnectionState = termihub_core::connection::lifecycle::SessionStatus;
 
 /// The authoritative record for one configured agent — the render-ready
 /// projection of the frontend `RemoteAgentDefinition`. Held in an ordered list so
@@ -487,9 +450,19 @@ impl AgentsStore {
         let mut inner = self.lock();
         if let Some(agent) = inner.agent_mut(id) {
             let next_error = match state {
+                // Record the error on `disconnected` (falling back to the stored
+                // one), clear it on `connecting`/`connected`, and keep it on
+                // `reconnecting` — the exact `setAgentConnectionState` rules.
                 AgentConnectionState::Disconnected => error.or_else(|| agent.last_error.clone()),
                 AgentConnectionState::Connecting | AgentConnectionState::Connected => None,
                 AgentConnectionState::Reconnecting => agent.last_error.clone(),
+                // The agent never emits the canonical terminal error states (they
+                // fold into the session region), so these arms are unreachable via
+                // the agent path; treat them like `disconnected` (record the error)
+                // for a sensible, non-clobbering fallback should one ever arrive.
+                AgentConnectionState::Failed
+                | AgentConnectionState::AuthFailed
+                | AgentConnectionState::SessionLost => error.or_else(|| agent.last_error.clone()),
             };
             agent.connection_state = state;
             agent.last_error = next_error;

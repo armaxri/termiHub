@@ -16,6 +16,19 @@ describe("statusLabel", () => {
     it("falls back to the raw value for an unknown state", () => {
       expect(connectionStateLabel("mystery")).toBe("mystery");
     });
+
+    // SM-020 slice 4 behavior-preservation lock: the backend unified the agent's
+    // connection-status enum onto the canonical `SessionStatus`, but the four
+    // states the agent emits serialise to these exact wire strings, so the badge
+    // label for every agent state stays byte-identical.
+    it.each([
+      ["disconnected", "Disconnected"],
+      ["connecting", "Connecting"],
+      ["connected", "Connected"],
+      ["reconnecting", "Reconnecting"],
+    ])("renders the unchanged badge label for canonical agent state %s", (state, label) => {
+      expect(connectionStateLabel(state)).toBe(label);
+    });
   });
 
   describe("persistentRunStateLabel", () => {
