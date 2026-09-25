@@ -55,6 +55,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
     terminalReconnectingTabs,
     terminalDisconnectErrors,
     terminalSessionLost,
+    terminalEvicted,
     // #2625: exited tabs sourced purely from the region (the per-client
     // `appStore.terminalExitedTabs` slice was deleted).
     terminalExitedTabs,
@@ -272,6 +273,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
                         terminalDisconnectErrors,
                         terminalExitedTabs,
                         terminalSessionLost,
+                        terminalEvicted,
                       },
                       tab.id
                     )

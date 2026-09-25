@@ -70,6 +70,7 @@ import {
   attachPersistentTab as apiAttachPersistentTab,
   adoptPersistentSession as apiAdoptPersistentSession,
   closeTerminal as apiCloseTerminal,
+  reclaimSession as apiReclaimSession,
   detachPersistentTab as apiDetachPersistentTab,
   saveShellIntegrationSettings,
   listSerialPorts,
@@ -225,6 +226,7 @@ import {
   effectiveConnectingMap,
   effectiveDisconnectErrorMap,
   effectiveExitedMap,
+  effectiveEvictedMap,
   effectiveReconnectingMap,
   ensureSessionSubscribed,
   logSessionBridgeFallback,
@@ -1024,6 +1026,16 @@ export interface AppState
    * does NOT re-mirror any `session.*` intent (the backend already folded it).
    */
   settleSessionLost: (tabId: string) => void;
+
+  /**
+   * Explicitly **reclaim** a tab whose session another desktop/window took over
+   * (SM-003, single-attach): the one user action that leaves the sticky `evicted`
+   * state. Performs a takeover attach (evicting the other side); the backend folds
+   * the region `evicted → connected`. On failure the tab stays evicted and an
+   * error toast explains why — nothing retries automatically. Resolves `true` on
+   * success.
+   */
+  reclaimSession: (tabId: string) => Promise<boolean>;
 
   /**
    * Start a fresh shell for a tab from the session-lost notice (#2512): arm the
@@ -5294,6 +5306,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
     },
 
+    reclaimSession: async (tabId) => {
+      try {
+        await apiReclaimSession(tabId);
+        return true;
+      } catch (err) {
+        frontendLog("app_store", `Failed to reclaim session for ${tabId}: ${errorMessage(err)}`);
+        toast.error(`Could not reclaim the session: ${errorMessage(err)}`);
+        return false;
+      }
+    },
+
     settleSessionLost: (tabId) => {
       // The backend folded `session.sessionLost` into the region (the live agent
       // session was unrecoverable), landing status `SessionLost` — `regionExited`
@@ -6176,6 +6199,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         terminalSpawnErrors: state.terminalSpawnErrors,
         terminalDisconnectErrors: effectiveDisconnectErrorMap(sessionView),
         terminalExitedTabs: effectiveExitedMap(sessionView),
+        // SM-003: a tab another desktop took over must never receive input.
+        terminalEvicted: effectiveEvictedMap(sessionView),
       };
       const tabsById = new Map(collectLiveTabs(state).map((t) => [t.id, t]));
       const result: string[] = [];

@@ -191,6 +191,13 @@
   color: var(--state-disconnected);
 }
 
+/* Taken over by another desktop/window (SM-003): the session is alive but not
+   ours — a calm, non-pulsing neutral tone distinct from connected and from the
+   alert states. */
+.tab__state-dot--evicted {
+  color: var(--text-secondary);
+}
+
 /* A failed connect/reconnect uses the same alert color as a plain disconnect,
    but pulses (and shows a warning-triangle shape) to draw the eye to the
    actionable error state. */

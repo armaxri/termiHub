@@ -211,6 +211,20 @@ export function sessionLost(error?: string): ProjectedSessionLifecycle {
   };
 }
 
+/**
+ * An `evicted` projected lifecycle (SM-003): another desktop/window took the
+ * session over. The session is alive elsewhere, the reconnect loop is idle and the
+ * backend session id is kept (a Reclaim re-takes the same session).
+ */
+export function evicted(error?: string, sessionId = "backend-1"): ProjectedSessionLifecycle {
+  return {
+    status: "evicted",
+    reconnect: idleReconnect(),
+    sessionId,
+    ...(error !== undefined ? { error } : {}),
+  };
+}
+
 /** The idle reconnect detail (no loop active). */
 export function idleReconnect(): ProjectedReconnect {
   return { phase: "idle", attempt: 0, delayMs: 0 };

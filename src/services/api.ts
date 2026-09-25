@@ -635,6 +635,15 @@ export async function closeTerminal(sessionId: SessionId, intentional = false): 
   await invoke("close_terminal", { sessionId, intentional });
 }
 
+/**
+ * Explicitly **reclaim** a tab whose agent session another desktop took over
+ * (SM-003, single-attach): a takeover attach that evicts the other desktop. The
+ * backend folds the tab's region entry `evicted → connected` on success.
+ */
+export async function reclaimSession(tabId: string): Promise<void> {
+  await invoke("reclaim_session", { tabId });
+}
+
 // --- Remote-desktop (graphical) commands (#1680) ---
 
 /**

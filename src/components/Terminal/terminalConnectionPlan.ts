@@ -255,7 +255,9 @@ export function resolveBackendRedriveOutcome(
 ): BackendRedriveAction {
   const { outcome, isCanceled } = input;
 
-  if (isCanceled || outcome.kind === "canceled") {
+  // A torn-down effect, or a tab another desktop took over (SM-003 — it rests in
+  // the explicit `evicted` state until the user reclaims): drive nothing.
+  if (isCanceled || outcome.kind === "canceled" || outcome.kind === "evicted") {
     return { kind: "abandon" };
   }
   if (outcome.kind === "giveup") {

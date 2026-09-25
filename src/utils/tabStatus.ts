@@ -5,7 +5,7 @@
  * for every tab — including background/inactive ones — without needing the tab
  * to be focused.
  */
-export type TabStatus = "connecting" | "connected" | "failed" | "disconnected";
+export type TabStatus = "connecting" | "connected" | "failed" | "disconnected" | "evicted";
 
 /**
  * The subset of the app store's tab-lifecycle maps needed to derive a tab's
@@ -32,6 +32,11 @@ export interface TabStatusMaps {
    * stale-green dot (#2524).
    */
   terminalSessionLost?: Record<string, boolean>;
+  /**
+   * True when another desktop/window took the tab's session over (SM-003,
+   * single-attach). Region-only, so optional like `terminalSessionLost`.
+   */
+  terminalEvicted?: Record<string, boolean>;
 }
 
 /**
@@ -39,6 +44,9 @@ export interface TabStatusMaps {
  * lifecycle maps.
  *
  * Priority order (most severe / most terminal first):
+ *  0. `evicted`      — another desktop/window controls the session (SM-003); it
+ *     is alive but not ours, so it must never read as `connected` (and input,
+ *     e.g. broadcast, must skip it).
  *  1. `disconnected` (session lost) — the live session is unrecoverable (#2512);
  *     this is terminal, so it wins over a lingering in-flight connect flag.
  *  2. `connecting`   — a connect or reconnect attempt is in flight.
@@ -50,6 +58,9 @@ export interface TabStatusMaps {
  * @param tabId The tab whose status to derive.
  */
 export function deriveTabStatus(maps: TabStatusMaps, tabId: string): TabStatus {
+  if (maps.terminalEvicted?.[tabId]) {
+    return "evicted";
+  }
   // Session-lost is a terminal outcome: the transport recovered but the live
   // session is gone (#2512). It takes precedence over the in-flight/error flags
   // so the dot never lingers green (or pulses "connecting") after the loss (#2524).
