@@ -13,7 +13,14 @@ pub struct Connection {
     /// Session type: "shell", "serial", "docker", or "ssh".
     pub session_type: String,
     /// Session-specific configuration (shell path, serial params, etc.).
-    #[serde(default)]
+    ///
+    /// The legacy `resilientReconnect` key (written by older builds) is accepted
+    /// on read and rewritten to the unified `autoReconnect` key (PARITY-008); only
+    /// the new key is persisted.
+    #[serde(
+        default,
+        with = "termihub_core::connection::auto_reconnect::settings_bag"
+    )]
     pub config: serde_json::Value,
     /// Whether sessions created from this connection are persistent.
     #[serde(default)]
@@ -684,6 +691,52 @@ mod tests {
             parent_id: parent_id.map(|s| s.to_string()),
             is_expanded: false,
         }
+    }
+
+    // ── Legacy reconnect key (PARITY-008) ───────────────────────────
+
+    /// A definition persisted by an older agent with the legacy
+    /// `resilientReconnect` key loads under the unified `autoReconnect` key with
+    /// the explicit value preserved, and the next save writes only the new key.
+    #[tokio::test]
+    async fn legacy_resilient_reconnect_key_is_read_and_rewritten() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("connections.json");
+        fs::write(
+            &path,
+            json!({
+                "connections": [{
+                    "id": "c1", "name": "ssh", "session_type": "ssh",
+                    "config": { "host": "h", "resilientReconnect": false }
+                }],
+                "folders": []
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let store = ConnectionStore::new(path.clone());
+        let snap = store.get("c1").await.unwrap();
+        assert_eq!(snap.config, json!({ "host": "h", "autoReconnect": false }));
+
+        store
+            .update(
+                "c1",
+                Some("renamed".into()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(
+            raw.contains("\"autoReconnect\": false") || raw.contains("\"autoReconnect\":false")
+        );
+        assert!(!raw.contains("resilientReconnect"));
     }
 
     // ── Connection CRUD ─────────────────────────────────────────────
