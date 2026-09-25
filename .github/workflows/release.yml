@@ -145,14 +145,32 @@ jobs:
             echo "- Or from a terminal: \`xattr -dr com.apple.quarantine /Applications/termiHub.app\`"
           } >> release_notes.md
 
+      # Release channel (PKG-014): there is no `latest` git tag — clients (the
+      # desktop update check and the agent self-updater) follow GitHub's own
+      # "Latest release" marker via the releases/latest API. A semver prerelease
+      # tag (vX.Y.Z-beta.1, vX.Y.Z-rc.1, …) is published as a GitHub prerelease,
+      # which GitHub never marks latest. The TERMIHUB_PRERELEASE repository
+      # variable ("true") forces a plain vX.Y.Z tag to a prerelease as well.
+      # Every release is created with --latest=false; mark-latest promotes a
+      # stable release to "Latest" only after verify-release has passed, so no
+      # client can pick up a half-uploaded release.
       - name: Create GitHub Release
-        run: |
-          gh release create "v${{ steps.get_version.outputs.version }}" \
-            --title "termiHub v${{ steps.get_version.outputs.version }} — Public Beta" \
-            --prerelease \
-            --notes-file release_notes.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.get_version.outputs.version }}
+          TERMIHUB_PRERELEASE: ${{ vars.TERMIHUB_PRERELEASE }}
+        run: |
+          set -euo pipefail
+          prerelease_flag=()
+          if [[ "$VERSION" == *-* || "${TERMIHUB_PRERELEASE}" == "true" ]]; then
+            echo "Publishing v${VERSION} as a prerelease (never marked latest)."
+            prerelease_flag=(--prerelease)
+          fi
+          gh release create "v${VERSION}" \
+            --title "termiHub v${VERSION} — Public Beta" \
+            "${prerelease_flag[@]}" \
+            --latest=false \
+            --notes-file release_notes.md
 
   build-and-upload:
     name: Build and Upload - ${{ matrix.platform }}
@@ -408,7 +426,7 @@ jobs:
       # published bundle's SHA-256 to this workflow run, commit and tag. The glob
       # covers the primary artifact plus the .deb/.rpm side-uploads renamed
       # above. Users verify with `gh attestation verify <file> --repo <repo>`;
-      # verify-release does the same for every asset before `latest` moves.
+      # verify-release does the same for every asset before the release is marked latest.
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
@@ -930,35 +948,31 @@ jobs:
           fi
           echo "All ${#subjects[@]} release artifacts carry valid build provenance."
 
-  # Update latest release tag
-  update-latest:
-    name: Update Latest Tag
-    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos, agent-binaries-windows, verify-release]
+  # Promote a verified stable release to GitHub's "Latest release" (PKG-014).
+  # Replaces the old force-moved `latest` git tag: the desktop update check and
+  # the agent self-updater poll the releases/latest API, which follows this
+  # marker. Runs only after verify-release, so "Latest" never points at a
+  # release with missing assets or attestations. Prereleases are skipped —
+  # GitHub never marks them latest.
+  mark-latest:
+    name: Mark Latest Release
+    needs: [create-release, verify-release]
     runs-on: ubuntu-latest
+    # No checkout in this job; GH_REPO tells gh which repository to act on.
+    env:
+      GH_REPO: ${{ github.repository }}
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
-
-      - name: Update latest tag
+      - name: Mark stable release as latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
         run: |
-          git config user.name github-actions
-          git config user.email github-actions@github.com
-          git tag -f latest
-          git push origin latest --force
-
-  # Notify on Discord/Slack (optional)
-  notify:
-    name: Notify Release
-    needs: [create-release, build-and-upload, agent-binaries-linux, agent-binaries-macos, agent-binaries-windows, verify-release]
-    runs-on: ubuntu-latest
-    if: success()
-
-    steps:
-      - name: Send notification
-        run: |
-          echo "Release v${{ needs.create-release.outputs.version }} published successfully!"
-          # Add Discord/Slack webhook here if desired
-          # curl -X POST -H 'Content-type: application/json' \
-          #   --data '{"text":"termiHub v${{ needs.create-release.outputs.version }} released!"}' \
-          #   ${{ secrets.SLACK_WEBHOOK_URL }}
+          set -euo pipefail
+          TAG="v${VERSION}"
+          if [ "$(gh release view "$TAG" --json isPrerelease --jq '.isPrerelease')" = "true" ]; then
+            echo "${TAG} is a prerelease; leaving GitHub's latest-release marker unchanged."
+            exit 0
+          fi
+          gh release edit "$TAG" --latest
+          echo "${TAG} is now GitHub's latest release."
