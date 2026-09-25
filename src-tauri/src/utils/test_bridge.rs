@@ -362,4 +362,87 @@ mod tests {
             None => unsafe { std::env::remove_var(key) },
         }
     }
+
+    /// Parse a CSP policy string into a directive → source-token map that is
+    /// insensitive to inter-token whitespace and to the ordering of both
+    /// directives and the sources within a directive, but still distinguishes
+    /// any change of host, scheme, or keyword. This is what lets the drift guard
+    /// be robust against cosmetic churn while catching a real security drift.
+    fn normalize_csp(
+        policy: &str,
+    ) -> std::collections::BTreeMap<String, std::collections::BTreeSet<String>> {
+        policy
+            .split(';')
+            .map(str::trim)
+            .filter(|directive| !directive.is_empty())
+            .filter_map(|directive| {
+                let mut tokens = directive.split_whitespace();
+                let name = tokens.next()?.to_string();
+                let sources = tokens.map(str::to_string).collect();
+                Some((name, sources))
+            })
+            .collect()
+    }
+
+    /// TIN-004 drift guard: `PROD_CSP` (baked into this test module so the
+    /// relaxation tests validate the *current* production policy) must stay
+    /// byte-equivalent to the CSP actually enforced by the shipped bundle
+    /// (`app.security.csp` in `tauri.conf.json`). The two are hand-mirrored, so
+    /// without this test the highest-risk `connect-src` directive could silently
+    /// diverge between them. Hermetic and deterministic: the config is read off
+    /// disk relative to `CARGO_MANIFEST_DIR`, no network.
+    #[test]
+    fn prod_csp_matches_tauri_conf() {
+        let manifest_dir = env!("CARGO_MANIFEST_DIR");
+        let conf_path = std::path::Path::new(manifest_dir).join("tauri.conf.json");
+        let raw = std::fs::read_to_string(&conf_path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", conf_path.display()));
+        let conf: serde_json::Value =
+            serde_json::from_str(&raw).expect("tauri.conf.json is valid JSON");
+
+        let conf_csp = conf
+            .get("app")
+            .and_then(|app| app.get("security"))
+            .and_then(|security| security.get("csp"))
+            .and_then(serde_json::Value::as_str)
+            .expect("tauri.conf.json has app.security.csp as a string");
+
+        let baked = normalize_csp(PROD_CSP);
+        let shipped = normalize_csp(conf_csp);
+
+        // The `connect-src` directive is the highest-risk one — surface it first
+        // and explicitly if it drifts.
+        assert_eq!(
+            baked.get("connect-src"),
+            shipped.get("connect-src"),
+            "TIN-004: `connect-src` drifted between PROD_CSP (test_bridge.rs) and \
+             tauri.conf.json (app.security.csp). PROD_CSP={:?} tauri.conf.json={:?}. \
+             Reconcile PROD_CSP to the shipped value.",
+            baked.get("connect-src"),
+            shipped.get("connect-src"),
+        );
+
+        if baked != shipped {
+            let drifted: Vec<String> = baked
+                .keys()
+                .chain(shipped.keys())
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .filter(|name| baked.get(*name) != shipped.get(*name))
+                .map(|name| {
+                    format!(
+                        "  {name}: PROD_CSP={:?} vs tauri.conf.json={:?}",
+                        baked.get(name),
+                        shipped.get(name)
+                    )
+                })
+                .collect();
+            panic!(
+                "TIN-004: production CSP drifted between PROD_CSP (test_bridge.rs) and \
+                 tauri.conf.json (app.security.csp). Reconcile PROD_CSP to the shipped \
+                 value. Drifted directives:\n{}",
+                drifted.join("\n")
+            );
+        }
+    }
 }
