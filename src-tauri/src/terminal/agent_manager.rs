@@ -21,7 +21,11 @@ use tracing::{debug, error, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
-use termihub_core::protocol::methods::{ConnectionDefinition, FolderDefinition};
+use termihub_core::protocol::methods::{
+    AgentShutdownParams, AgentShutdownResult, ConnectionDefinition, ConnectionListResult,
+    FolderDefinition, SessionAttachParams, SessionCloseParams, SessionCreateParams,
+    SessionCreateResult, SessionDetachParams, SessionListEntry,
+};
 
 use crate::agents_projection::projection::fold_agent_transition;
 use crate::agents_projection::store::AgentConnectionState;
@@ -1045,20 +1049,24 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         reason: Option<&str>,
     ) -> Result<u32, TerminalError> {
-        let mut params = serde_json::json!({});
-        if let Some(r) = reason {
-            params["reason"] = serde_json::Value::String(r.to_string());
-        }
+        let params = serde_json::to_value(AgentShutdownParams {
+            reason: reason.map(str::to_string),
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build agent.shutdown params: {e}"))
+        })?;
 
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::AGENT_SHUTDOWN,
             params,
         )?;
-        let detached = result
-            .get("detached_sessions")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
+        // Tolerate a reply that omits/garbles the count (best-effort shutdown):
+        // an unparseable result means "shut down, count unknown" → 0, matching the
+        // pre-migration `unwrap_or(0)`.
+        let detached = serde_json::from_value::<AgentShutdownResult>(result)
+            .map(|r| r.detached_sessions)
+            .unwrap_or(0);
 
         // Now disconnect the local side
         let _ = self.disconnect_agent(agent_id);
@@ -1086,38 +1094,23 @@ impl<R: Runtime> AgentConnectionManager<R> {
             termihub_core::protocol::methods::AGENT_LIST_CONNECTIONS,
             serde_json::json!({}),
         )?;
-        let connections = result["connections"]
-            .as_array()
-            .cloned()
+        // Deserialize the reply into the shared `ConnectionListResult` wire DTO
+        // (DUP-001); a malformed reply degrades to "no other hosts", matching the
+        // old hand-parser's tolerance (it silently dropped unparseable entries).
+        let connections = serde_json::from_value::<ConnectionListResult>(result)
+            .map(|r| r.connections)
             .unwrap_or_default();
 
         let own_client_id = own_client_id.unwrap_or_default();
         let hosts = connections
             .into_iter()
-            .filter_map(|c| {
-                let client_id = c.get("client_id")?.as_str()?.to_string();
-                // Exclude this desktop's own entry (never warn about ourselves).
-                if !own_client_id.is_empty() && client_id == own_client_id {
-                    return None;
-                }
-                Some(ConnectedHost {
-                    client_id,
-                    client: c
-                        .get("client")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    client_version: c
-                        .get("client_version")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                    connected_since: c
-                        .get("connected_since")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or_default()
-                        .to_string(),
-                })
+            // Exclude this desktop's own entry (never warn about ourselves).
+            .filter(|c| own_client_id.is_empty() || c.client_id != own_client_id)
+            .map(|c| ConnectedHost {
+                client_id: c.client_id,
+                client: c.client,
+                client_version: c.client_version,
+                connected_since: c.connected_since,
             })
             .collect();
 
@@ -1206,30 +1199,26 @@ impl<R: Runtime> AgentConnectionManager<R> {
         title: Option<&str>,
         definition_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError> {
-        let mut params = serde_json::json!({
-            "type": session_type,
-            "config": config,
-        });
-        if let Some(t) = title {
-            params["title"] = Value::String(t.to_string());
-        }
-        if let Some(d) = definition_id {
-            params["definition_id"] = Value::String(d.to_string());
-        }
+        let params = serde_json::to_value(SessionCreateParams {
+            session_type: session_type.to_string(),
+            config,
+            title: title.map(str::to_string),
+            definition_id: definition_id.map(str::to_string),
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build connection.create params: {e}"))
+        })?;
 
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTION_CREATE,
             params,
         )?;
-        Ok(AgentSessionInfo {
-            session_id: result["session_id"].as_str().unwrap_or("").to_string(),
-            title: result["title"].as_str().unwrap_or("").to_string(),
-            session_type: result["type"].as_str().unwrap_or(session_type).to_string(),
-            status: result["status"].as_str().unwrap_or("running").to_string(),
-            attached: false,
-            definition_id: result["definition_id"].as_str().map(String::from),
-        })
+        serde_json::from_value::<SessionCreateResult>(result)
+            .map(AgentSessionInfo::from)
+            .map_err(|_| {
+                TerminalError::RemoteError("Failed to parse connection.create result".into())
+            })
     }
 
     /// Attach to a session on the agent.
@@ -1238,10 +1227,16 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
+        let params = serde_json::to_value(SessionAttachParams {
+            session_id: remote_session_id.to_string(),
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build connection.attach params: {e}"))
+        })?;
         self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTION_ATTACH,
-            serde_json::json!({ "session_id": remote_session_id }),
+            params,
         )?;
         Ok(())
     }
@@ -1255,10 +1250,16 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
+        let params = serde_json::to_value(SessionDetachParams {
+            session_id: remote_session_id.to_string(),
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build connection.detach params: {e}"))
+        })?;
         self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTION_DETACH,
-            serde_json::json!({ "session_id": remote_session_id }),
+            params,
         )?;
         Ok(())
     }
@@ -1272,10 +1273,16 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
+        let params = serde_json::to_value(SessionCloseParams {
+            session_id: remote_session_id.to_string(),
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build connection.close params: {e}"))
+        })?;
         self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTION_CLOSE,
-            serde_json::json!({ "session_id": remote_session_id }),
+            params,
         )?;
         Ok(())
     }
@@ -1287,11 +1294,23 @@ impl<R: Runtime> AgentConnectionManager<R> {
             termihub_core::protocol::methods::CONNECTION_LIST,
             serde_json::json!({}),
         )?;
-        let sessions = result["sessions"].as_array().cloned().unwrap_or_default();
-        Ok(sessions
-            .into_iter()
-            .filter_map(|s| serde_json::from_value(s).ok())
-            .collect())
+        // Deserialize each entry into the shared `SessionListEntry` wire DTO
+        // (DUP-001) and convert to the frontend `AgentSessionInfo`.
+        // `filter_map(... .ok())` keeps the old per-entry tolerance: a malformed
+        // entry is dropped, not fatal to the whole list.
+        let sessions = result["sessions"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        serde_json::from_value::<SessionListEntry>(v.clone())
+                            .ok()
+                            .map(AgentSessionInfo::from)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(sessions)
     }
 
     /// List saved connections and folders on the agent.

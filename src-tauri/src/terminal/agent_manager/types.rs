@@ -7,7 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use termihub_core::protocol::methods::{ConnectionDefinition, FolderDefinition};
+use termihub_core::protocol::methods::{
+    ConnectionDefinition, FolderDefinition, SessionCreateResult, SessionListEntry,
+};
 
 /// Capabilities returned by the agent after initialization.
 ///
@@ -132,6 +134,40 @@ impl From<FolderDefinition> for AgentFolderInfo {
             name: f.name,
             parent_id: f.parent_id,
             is_expanded: f.is_expanded,
+        }
+    }
+}
+
+/// A freshly-created session reply (`connection.create`) becomes an
+/// [`AgentSessionInfo`] (DUP-001). A brand-new session is never already
+/// attached, so `attached` is `false`; the agent's `created_at` is bookkeeping
+/// the desktop DTO does not carry.
+impl From<SessionCreateResult> for AgentSessionInfo {
+    fn from(r: SessionCreateResult) -> Self {
+        AgentSessionInfo {
+            session_id: r.session_id,
+            title: r.title,
+            session_type: r.session_type,
+            status: r.status,
+            attached: false,
+            definition_id: r.definition_id,
+        }
+    }
+}
+
+/// A `connection.list` entry (`SessionListEntry`) becomes an
+/// [`AgentSessionInfo`] (DUP-001), carrying the agent's `attached` flag; the
+/// `created_at`/`last_activity` timestamps are bookkeeping the desktop DTO does
+/// not carry.
+impl From<SessionListEntry> for AgentSessionInfo {
+    fn from(e: SessionListEntry) -> Self {
+        AgentSessionInfo {
+            session_id: e.session_id,
+            title: e.title,
+            session_type: e.session_type,
+            status: e.status,
+            attached: e.attached,
+            definition_id: e.definition_id,
         }
     }
 }
