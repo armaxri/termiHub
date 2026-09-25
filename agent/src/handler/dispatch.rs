@@ -659,23 +659,20 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
         // handing the result back to the transport loop to serialise + flush.
         info!("initialize: responding to client (docker_available={docker_available})");
 
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(InitializeResult {
-                protocol_version: negotiated_version,
-                agent_version: env!("CARGO_PKG_VERSION").to_string(),
-                client_id,
-                capabilities: Capabilities {
-                    connection_types,
-                    max_sessions: MAX_SESSIONS,
-                    available_shells: detect_available_shells(),
-                    available_serial_ports: termihub_core::session::serial::list_serial_ports(),
-                    docker_available,
-                    available_docker_images,
-                    monitoring_supported: detect_monitoring_supported(),
-                },
-            })
-            .unwrap(),
-        )
+        to_result_value(&InitializeResult {
+            protocol_version: negotiated_version,
+            agent_version: env!("CARGO_PKG_VERSION").to_string(),
+            client_id,
+            capabilities: Capabilities {
+                connection_types,
+                max_sessions: MAX_SESSIONS,
+                available_shells: detect_available_shells(),
+                available_serial_ports: termihub_core::session::serial::list_serial_ports(),
+                docker_available,
+                available_docker_images,
+                monitoring_supported: detect_monitoring_supported(),
+            },
+        })
     })?;
     Ok(())
 }
@@ -717,17 +714,14 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
                 }
             })?;
 
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(SessionCreateResult {
-                session_id: snapshot.id,
-                title: snapshot.title,
-                session_type: snapshot.type_id,
-                status: snapshot.status.as_str().to_string(),
-                created_at: snapshot.created_at.to_rfc3339(),
-                definition_id: snapshot.definition_id,
-            })
-            .unwrap(),
-        )
+        to_result_value(&SessionCreateResult {
+            session_id: snapshot.id,
+            title: snapshot.title,
+            session_type: snapshot.type_id,
+            status: snapshot.status.as_str().to_string(),
+            created_at: snapshot.created_at.to_rfc3339(),
+            definition_id: snapshot.definition_id,
+        })
     })?;
     Ok(())
 }
@@ -950,13 +944,10 @@ fn register_session_get_buffer(module: &mut RpcModule<Mutex<HandlerState>>) -> a
             .map_err(|e| rpc_err(errors::SESSION_NOT_FOUND, e))?;
 
         let encoded = base64::engine::general_purpose::STANDARD.encode(&data);
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(SessionGetBufferResult {
-                session_id: p.session_id,
-                data: encoded,
-            })
-            .unwrap(),
-        )
+        to_result_value(&SessionGetBufferResult {
+            session_id: p.session_id,
+            data: encoded,
+        })
     })?;
     Ok(())
 }
@@ -1328,13 +1319,10 @@ fn register_files_read(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
         let data = browser.read_file(&p.path).await.map_err(map_file_error)?;
         let b64 = base64::engine::general_purpose::STANDARD;
         let size = data.len() as u64;
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(FilesReadResult {
-                data: b64.encode(&data),
-                size,
-            })
-            .unwrap(),
-        )
+        to_result_value(&FilesReadResult {
+            data: b64.encode(&data),
+            size,
+        })
     })?;
     Ok(())
 }
@@ -1770,13 +1758,10 @@ fn register_service_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow
             .start(&p.instance_id, &p.service_id, p.config)
             .await
             .map_err(|e| rpc_err(errors::SERVICE_START_FAILED, e.to_string()))?;
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(ServiceStartResult {
-                status: snapshot.status,
-                state: snapshot.state,
-            })
-            .unwrap(),
-        )
+        to_result_value(&ServiceStartResult {
+            status: snapshot.status,
+            state: snapshot.state,
+        })
     })?;
     Ok(())
 }
@@ -1882,13 +1867,10 @@ fn register_tunnel_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
                 .map_err(|e| rpc_err(errors::TUNNEL_START_FAILED, e.to_string()))?,
         };
 
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(TunnelStartResult {
-                bound_address: outcome.bound_address,
-                reachable_from: outcome.reachable_from,
-            })
-            .unwrap(),
-        )
+        to_result_value(&TunnelStartResult {
+            bound_address: outcome.bound_address,
+            reachable_from: outcome.reachable_from,
+        })
     })?;
     Ok(())
 }
@@ -1943,14 +1925,11 @@ fn register_health_check(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow:
         };
 
         let active = session_manager.active_count().await;
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(HealthCheckResult {
-                status: "ok".to_string(),
-                uptime_secs: uptime,
-                active_sessions: active,
-            })
-            .unwrap(),
-        )
+        to_result_value(&HealthCheckResult {
+            status: "ok".to_string(),
+            uptime_secs: uptime,
+            active_sessions: active,
+        })
     })?;
     Ok(())
 }
@@ -1985,12 +1964,9 @@ fn register_agent_shutdown(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
         tunnel_registry.stop_all().await;
         shutdown_flag.store(true, Ordering::Release);
 
-        Ok::<_, ErrorObjectOwned>(
-            serde_json::to_value(AgentShutdownResult {
-                detached_sessions: detached,
-            })
-            .unwrap(),
-        )
+        to_result_value(&AgentShutdownResult {
+            detached_sessions: detached,
+        })
     })?;
     Ok(())
 }

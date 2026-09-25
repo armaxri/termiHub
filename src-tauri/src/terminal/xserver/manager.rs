@@ -198,7 +198,11 @@ impl XServerManager {
 
     /// Current server status.
     pub fn status(&self) -> XServerStatus {
-        self.inner.lock().expect("xserver lock").status.clone()
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .status
+            .clone()
     }
 
     /// Number of live X11 sessions currently depending on the server.
@@ -208,7 +212,10 @@ impl XServerManager {
     /// [`acquire_session`](Self::acquire_session) /
     /// [`release_session`](Self::release_session).
     pub fn session_count(&self) -> usize {
-        self.inner.lock().expect("xserver lock").refcount
+        self.inner
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .refcount
     }
 
     /// Ensure a usable X server exists, spawning or adopting one as needed.
@@ -216,13 +223,13 @@ impl XServerManager {
     /// Order: reuse our live managed process → adopt an external server on `:0`
     /// → (managed platforms only) spawn a new server on the first free display.
     pub fn ensure_running(&self) -> Result<DisplayInfo> {
-        let mut inner = self.inner.lock().expect("xserver lock");
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         self.ensure_running_locked(&mut inner)
     }
 
     /// Ensure a server exists and register a session against it (refcount + 1).
     pub fn acquire_session(&self) -> Result<DisplayInfo> {
-        let mut inner = self.inner.lock().expect("xserver lock");
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let info = self.ensure_running_locked(&mut inner)?;
         inner.refcount += 1;
         Ok(info)
@@ -247,7 +254,7 @@ impl XServerManager {
     /// reaches zero and idle-shutdown is enabled, the managed server is stopped.
     /// Adopted external servers are never terminated.
     pub fn release_session(&self) {
-        let mut inner = self.inner.lock().expect("xserver lock");
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         inner.refcount = inner.refcount.saturating_sub(1);
         if inner.refcount == 0 && inner.stop_when_idle {
             // Only stop a server we manage; an adopted external server (no child
@@ -261,7 +268,7 @@ impl XServerManager {
     /// Stop the managed server (if any) and reset state. Adopted external
     /// servers are left running.
     pub fn stop(&self) {
-        let mut inner = self.inner.lock().expect("xserver lock");
+        let mut inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         self.stop_locked(&mut inner);
     }
 
@@ -388,7 +395,7 @@ impl XServerManager {
     /// The cookie is the MIT-MAGIC-COOKIE-1 the managed server was launched with,
     /// or `None` when it fell back to `-ac` mode.
     pub fn managed_server(&self) -> Option<ManagedXServer> {
-        let inner = self.inner.lock().expect("xserver lock");
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         match inner.status {
             XServerStatus::Running { display } => Some(ManagedXServer {
                 display_number: display,

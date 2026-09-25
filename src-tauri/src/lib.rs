@@ -1,3 +1,11 @@
+// TOOL-010: enforce the "no `.unwrap()`/`.expect()`/`panic!` in production Rust"
+// policy (see `.claude/CLAUDE.md` → Rust). Denied for non-test builds; test code
+// (`#[cfg(test)]` modules and `tests/` crates) is exempt via `not(test)`.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 /// Shared "desktop controls a service hosted on a remote agent" control layer:
 /// the periodic agent `*.status` poller lifecycle reused by the embedded-server,
 /// HTTP-monitor, and tunnel managers (DUP-020).
@@ -399,7 +407,7 @@ fn resolve_startup_dir(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+pub fn run() -> anyhow::Result<()> {
     // Pre-init CLI routing: `spawn` / `(un)install-shell-integration` must be
     // handled from the raw args before the Tauri window is created, since
     // `cli().matches()` is only available inside `setup()` (#1364). A spawn
@@ -899,7 +907,7 @@ pub fn run() {
             );
             context
         })
-        .expect("error while building tauri application")
+        .map_err(|e| anyhow::anyhow!("error while building tauri application: {e}"))?
         .run(|app_handle, event| {
             // Shutdown breadcrumbs (#1570). The 2026-07-17 post-mortem could only
             // establish that termiHub had exited *cleanly* by reading Apple's
@@ -1043,6 +1051,7 @@ pub fn run() {
                 }
             }
         });
+    Ok(())
 }
 
 #[cfg(test)]

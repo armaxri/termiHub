@@ -96,9 +96,11 @@ pub fn expand_config_value(value: &str) -> String {
         Ok(Some(std::env::var(name).unwrap_or_default()))
     };
     // Lookup returns Infallible, so shellexpand cannot raise a LookupError here.
+    // The `Err` arm is therefore dead; fall back to the unexpanded value rather
+    // than panicking, keeping this call panic-free per the no-`.unwrap()` policy.
     shellexpand::full_with_context(value, home_dir, lookup)
-        .expect("shellexpand cannot fail with Infallible lookup")
-        .into_owned()
+        .map(|expanded| expanded.into_owned())
+        .unwrap_or_else(|_| value.to_owned())
 }
 
 /// Expand `${VAR}` placeholders and `~` in an optional SSH key path, stripping

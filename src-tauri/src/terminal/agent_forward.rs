@@ -95,7 +95,10 @@ impl DesktopAgentForward {
         // unbounded by design (contrast the process-output path in local_process.rs,
         // which is genuinely unbounded and uses a bounded, backpressured channel).
         let (tx, rx) = mpsc::unbounded_channel::<Vec<u8>>();
-        self.streams.lock().unwrap().insert(stream_id.clone(), tx);
+        self.streams
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(stream_id.clone(), tx);
 
         let streams = self.streams.clone();
         tokio::spawn(async move {
@@ -106,7 +109,12 @@ impl DesktopAgentForward {
     /// Handle `agent.forward.data` from the agent: feed the bytes to the local
     /// agent. Unknown/closed streams are ignored.
     pub fn on_data(&self, stream_id: &str, data: Vec<u8>) {
-        if let Some(tx) = self.streams.lock().unwrap().get(stream_id) {
+        if let Some(tx) = self
+            .streams
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(stream_id)
+        {
             let _ = tx.send(data);
         }
     }
@@ -114,7 +122,10 @@ impl DesktopAgentForward {
     /// Handle `agent.forward.close` from the agent: drop the stream. Dropping the
     /// sink ends the writer, which shuts the local agent connection.
     pub fn on_close(&self, stream_id: &str) {
-        self.streams.lock().unwrap().remove(stream_id);
+        self.streams
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(stream_id);
     }
 }
 
@@ -136,7 +147,10 @@ async fn pump_local_agent(
             let _ = command_tx.send(AgentIoCommand::AgentForwardClose {
                 stream_id: stream_id.clone(),
             });
-            streams.lock().unwrap().remove(&stream_id);
+            streams
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .remove(&stream_id);
             return;
         }
     };
@@ -179,7 +193,10 @@ async fn pump_local_agent(
     let _ = command_tx.send(AgentIoCommand::AgentForwardClose {
         stream_id: stream_id.clone(),
     });
-    streams.lock().unwrap().remove(&stream_id);
+    streams
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .remove(&stream_id);
     writer.abort();
 }
 
