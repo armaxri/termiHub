@@ -70,6 +70,58 @@ export type WorkflowStep =
       then: WorkflowStep[];
       /** Steps run when the condition is false. Omitted → false is a no-op. */
       else?: WorkflowStep[];
+    }
+  | {
+      /**
+       * Repeat a `body` of steps either a fixed number of times or while a
+       * structured condition holds (PROD-044). {@link WorkflowLoopMode} selects
+       * which; both are bounded by the runner's max-iteration safety cap so a
+       * loop can never run forever. `body` is an ordinary step list, so loops
+       * nest (bounded by the runner). The runner exposes a reserved
+       * `${iteration}` variable (0-based) to the body and the while-condition.
+       */
+      kind: "loop";
+      /** How the loop is bounded: a fixed count, or a while-condition. */
+      loop: WorkflowLoopMode;
+      /** Steps run each iteration. */
+      body: WorkflowStep[];
+    }
+  | {
+      /**
+       * Pause the run until the target session's terminal output matches
+       * {@link pattern}, or {@link timeoutMs} elapses (PROD-044). The match is a
+       * literal substring by default (the safer choice); set {@link isRegex} to
+       * treat the pattern as a regular expression. A named default timeout
+       * applies when `timeoutMs` is absent so the step can never hang forever.
+       */
+      kind: "wait-for-output";
+      /** The pattern matched against the session's terminal output. */
+      pattern: string;
+      /** When `true`, `pattern` is a regular expression; otherwise a substring. */
+      isRegex?: boolean;
+      /** Max time (ms) to wait before the step times out (default applies if absent). */
+      timeoutMs?: number;
+    };
+
+/**
+ * How a `loop` {@link WorkflowStep} is bounded (PROD-044). Either a fixed
+ * iteration `count`, or a structured `while` condition re-evaluated before each
+ * iteration. Both are bounded by the runner's max-iteration safety cap so a
+ * loop can never run forever. Discriminated by `kind`; mirrors the Rust
+ * `WorkflowLoopMode` byte-for-byte over the wire (lowercase variant tags).
+ */
+export type WorkflowLoopMode =
+  | {
+      /** Repeat the body exactly `count` times (clamped to the safety cap). */
+      kind: "count";
+      /** The fixed number of iterations. */
+      count: number;
+    }
+  | {
+      /** Repeat the body while `condition` holds, bounded by the safety cap. */
+      kind: "while";
+      /** The structured comparison re-evaluated before each iteration. */
+      condition: WorkflowCondition;
     };
 
 /** The discriminant literal of a {@link WorkflowStep}. */

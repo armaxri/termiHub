@@ -397,7 +397,9 @@ impl EmbeddedServerManager {
                         );
                     }
                 }
-                Err(e) => tracing::warn!("Failed to build service.stop params for {server_id}: {e}"),
+                Err(e) => {
+                    tracing::warn!("Failed to build service.stop params for {server_id}: {e}")
+                }
             }
         }
         let _ = self

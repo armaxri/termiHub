@@ -28,7 +28,7 @@ function macro(overrides: Partial<Macro> = {}): Macro {
 
 describe("workflowStepMeta", () => {
   describe("WORKFLOW_STEP_KINDS", () => {
-    it("lists the kinds in menu order (conditional last)", () => {
+    it("lists the kinds in menu order (control-flow kinds last)", () => {
       expect([...WORKFLOW_STEP_KINDS]).toEqual([
         "send-command",
         "run-script",
@@ -36,6 +36,8 @@ describe("workflowStepMeta", () => {
         "wait",
         "run-local-process",
         "conditional",
+        "loop",
+        "wait-for-output",
       ]);
     });
   });
@@ -167,6 +169,39 @@ describe("workflowStepMeta", () => {
       };
       expect(summariseWorkflowStep(step)).toBe("if x contains y → 0 then");
     });
+
+    it("summarises a count loop by its iteration count and body size", () => {
+      const step: WorkflowStep = {
+        kind: "loop",
+        loop: { kind: "count", count: 5 },
+        body: [{ kind: "send-command", command: "a" }],
+      };
+      expect(summariseWorkflowStep(step)).toBe("repeat 5× (1 step)");
+    });
+
+    it("summarises a while loop by its condition and body size", () => {
+      const step: WorkflowStep = {
+        kind: "loop",
+        loop: { kind: "while", condition: { left: "${iteration}", op: "lt", right: "3" } },
+        body: [
+          { kind: "send-command", command: "a" },
+          { kind: "wait", delayMs: 1 },
+        ],
+      };
+      expect(summariseWorkflowStep(step)).toBe("while ${iteration} < 3 (2 steps)");
+    });
+
+    it("summarises a wait-for-output step by its pattern and match kind", () => {
+      expect(summariseWorkflowStep({ kind: "wait-for-output", pattern: "login:" })).toBe(
+        'wait for text "login:"'
+      );
+      expect(
+        summariseWorkflowStep({ kind: "wait-for-output", pattern: "\\d+", isRegex: true })
+      ).toBe('wait for regex "\\d+"');
+      expect(summariseWorkflowStep({ kind: "wait-for-output", pattern: "  " })).toBe(
+        "(no pattern)"
+      );
+    });
   });
 
   describe("newWorkflowStep", () => {
@@ -203,6 +238,22 @@ describe("workflowStepMeta", () => {
       });
       // `else` is undefined (not `[]`) so it serialises byte-identically.
       expect(step).not.toHaveProperty("else");
+    });
+
+    it("builds a loop step defaulting to a bounded fixed count with an empty body", () => {
+      expect(newWorkflowStep("loop")).toEqual({
+        kind: "loop",
+        loop: { kind: "count", count: 3 },
+        body: [],
+      });
+    });
+
+    it("builds a wait-for-output step with an empty pattern and no optional fields", () => {
+      const step = newWorkflowStep("wait-for-output");
+      expect(step).toEqual({ kind: "wait-for-output", pattern: "" });
+      // Substring is the default; isRegex/timeoutMs stay absent to round-trip.
+      expect(step).not.toHaveProperty("isRegex");
+      expect(step).not.toHaveProperty("timeoutMs");
     });
   });
 

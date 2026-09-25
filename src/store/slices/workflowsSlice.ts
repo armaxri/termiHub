@@ -8,6 +8,7 @@ import {
   subscribeLocalProcessOutput,
 } from "@/services/localProcessApi";
 import { runMacroPlayback, getTerminalInputInjector } from "@/services/macroPlayback";
+import { onTerminalOutput } from "@/services/events";
 import { newId } from "@/services/transport/ids";
 import {
   listWorkflows as apiListWorkflows,
@@ -25,11 +26,14 @@ import {
 } from "@/services/workflowIo";
 import {
   runWorkflow as runWorkflowSteps,
+  matchesOutput,
   type WorkflowSendSeam,
   type WorkflowRunMacroSeam,
   type WorkflowRunHandle,
   type WorkflowAuthorizeLocalProcessSeam,
   type WorkflowRunLocalProcessSeam,
+  type WorkflowWaitForOutputSeam,
+  type WaitForOutputResult,
   type WorkflowParamValues,
 } from "@/services/workflowRunner";
 import { Workflow, WorkflowParameter, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
@@ -167,6 +171,28 @@ const LOCAL_PROCESS_TIMEOUT_MS = 60_000;
 
 /** How often (ms) a running local process polls the workflow cancel signal. */
 const LOCAL_PROCESS_CANCEL_POLL_MS = 200;
+
+/** How often (ms) a `wait-for-output` step polls the workflow cancel signal. */
+const WAIT_FOR_OUTPUT_CANCEL_POLL_MS = 200;
+
+/**
+ * Max characters of recent terminal output a `wait-for-output` step retains
+ * while matching, so a chatty session cannot grow the match buffer without
+ * bound. A pattern longer than a chunk still matches across chunk boundaries
+ * because the tail is preserved.
+ */
+const WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS = 65_536;
+
+/**
+ * Strips the common ANSI/VT escape sequences (CSI/SGR and friends) from
+ * terminal output so a `wait-for-output` pattern matches the visible text, not
+ * the control codes. Built with `\u001b`/`\u009b` escapes so no literal control
+ * character appears in the source; `no-control-regex` is disabled because
+ * matching the escape introducer is exactly the intent.
+ */
+const ANSI_ESCAPE_RE =
+  // eslint-disable-next-line no-control-regex
+  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
 
 /**
  * Handle for the currently-running workflow, held at module scope so
@@ -343,6 +369,9 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       toast.error("The target terminal is not connected");
       return;
     }
+    // The backend session id backing the target tab — the key a `wait-for-output`
+    // step filters terminal-output events on. Narrowed to a string by the guard.
+    const targetSessionId = tab.sessionId;
 
     if (workflow.steps.length === 0) {
       toast.info(`Workflow "${workflow.name}" has no steps to run`);
@@ -511,6 +540,67 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       }
     };
 
+    // The `wait-for-output` seam (PROD-044): subscribe to the target session's
+    // terminal-output events, accumulate a bounded, ANSI-stripped buffer, and
+    // resolve on the first match, the timeout, or a run cancel. The runner has
+    // already resolved `${param}` in the pattern and clamped the timeout.
+    const waitForOutput: WorkflowWaitForOutputSeam = (matcher, timeoutMs, options) =>
+      new Promise<WaitForOutputResult>((resolve) => {
+        let settled = false;
+        let buffer = "";
+        const decoder = new TextDecoder();
+        let unlisten: (() => void) | null = null;
+
+        // A cancel already requested before we start waiting ends immediately.
+        if (options.signal?.isCancelled()) {
+          resolve({ matched: false, timedOut: false, cancelled: true });
+          return;
+        }
+
+        const finish = (result: WaitForOutputResult): void => {
+          if (settled) return;
+          settled = true;
+          window.clearTimeout(timer);
+          window.clearInterval(poll);
+          unlisten?.();
+          resolve(result);
+        };
+
+        const feed = (text: string): void => {
+          buffer += text.replace(ANSI_ESCAPE_RE, "");
+          if (buffer.length > WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS) {
+            buffer = buffer.slice(buffer.length - WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS);
+          }
+          if (matchesOutput(buffer, matcher)) {
+            finish({ matched: true, timedOut: false, cancelled: false });
+          }
+        };
+
+        const poll = window.setInterval(() => {
+          if (options.signal?.isCancelled()) {
+            finish({ matched: false, timedOut: false, cancelled: true });
+          }
+        }, WAIT_FOR_OUTPUT_CANCEL_POLL_MS);
+        const timer = window.setTimeout(
+          () => finish({ matched: false, timedOut: true, cancelled: false }),
+          timeoutMs
+        );
+
+        void onTerminalOutput((sid, data) => {
+          if (settled || sid !== targetSessionId) return;
+          feed(decoder.decode(data, { stream: true }));
+        })
+          .then((un) => {
+            // If the wait already settled before the listener attached, drop it.
+            if (settled) un();
+            else unlisten = un;
+          })
+          .catch((err) => {
+            frontendLog("workflow", `wait-for-output could not subscribe: ${errorMessage(err)}`);
+            finish({ matched: false, timedOut: true, cancelled: false });
+          });
+      });
+
     const toastId = `workflow-run-${workflowId}-${targetTabId}`;
     const total = workflow.steps.length;
     // Captured up front so the persisted history record (PROD-0046) carries the
@@ -545,7 +635,14 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
 
     const handle = runWorkflowSteps(
       workflow.steps,
-      { send, runMacro, readScriptFile: localReadFile, authorizeLocalProcess, runLocalProcess },
+      {
+        send,
+        runMacro,
+        readScriptFile: localReadFile,
+        authorizeLocalProcess,
+        runLocalProcess,
+        waitForOutput,
+      },
       {
         onProgress: (completed, stepTotal) => {
           // Advance the authoritative run progress (guarded server-side to the

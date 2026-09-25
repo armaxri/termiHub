@@ -14,6 +14,7 @@ import type {
   Workflow,
   WorkflowComparisonOp,
   WorkflowCondition,
+  WorkflowLoopMode,
   WorkflowParameter,
   WorkflowParameterType,
   WorkflowStep,
@@ -72,6 +73,8 @@ const STEP_KINDS: readonly WorkflowStepKind[] = [
   "wait",
   "run-local-process",
   "conditional",
+  "loop",
+  "wait-for-output",
 ];
 
 /** All valid condition comparison operators (PROD-0044). */
@@ -176,6 +179,43 @@ function validateStep(raw: unknown, where: string, stepIndex: number): WorkflowS
       }
       return step;
     }
+    case "loop": {
+      const loop = validateLoopMode(raw.loop, at);
+      if (raw.body !== undefined && !Array.isArray(raw.body)) {
+        throw new Error(`Invalid workflow file: ${at} (loop) has an invalid "body".`);
+      }
+      const body = Array.isArray(raw.body)
+        ? raw.body.map((s, j) => validateStep(s, `${at} body`, j))
+        : [];
+      return { kind, loop, body };
+    }
+    case "wait-for-output": {
+      if (typeof raw.pattern !== "string") {
+        throw new Error(`Invalid workflow file: ${at} (wait-for-output) is missing "pattern".`);
+      }
+      const step: WorkflowStep = { kind, pattern: raw.pattern };
+      if (raw.isRegex !== undefined) {
+        if (typeof raw.isRegex !== "boolean") {
+          throw new Error(
+            `Invalid workflow file: ${at} (wait-for-output) has an invalid "isRegex".`
+          );
+        }
+        step.isRegex = raw.isRegex;
+      }
+      if (raw.timeoutMs !== undefined) {
+        if (
+          typeof raw.timeoutMs !== "number" ||
+          !Number.isFinite(raw.timeoutMs) ||
+          raw.timeoutMs < 0
+        ) {
+          throw new Error(
+            `Invalid workflow file: ${at} (wait-for-output) has an invalid "timeoutMs".`
+          );
+        }
+        step.timeoutMs = raw.timeoutMs;
+      }
+      return step;
+    }
     default: {
       const _exhaustive: never = kind;
       throw new Error(`Invalid workflow file: ${at} has unknown kind ${String(_exhaustive)}.`);
@@ -197,6 +237,20 @@ function validateCondition(raw: unknown, at: string): WorkflowCondition {
     );
   }
   return { left: raw.left, op: raw.op as WorkflowComparisonOp, right: raw.right };
+}
+
+/** Validate a loop step's mode — a fixed `count` or a `while` condition (PROD-044). */
+function validateLoopMode(raw: unknown, at: string): WorkflowLoopMode {
+  if (!isRecord(raw) || (raw.kind !== "count" && raw.kind !== "while")) {
+    throw new Error(`Invalid workflow file: ${at} (loop) has an invalid "loop" mode.`);
+  }
+  if (raw.kind === "count") {
+    if (typeof raw.count !== "number" || !Number.isFinite(raw.count) || raw.count < 0) {
+      throw new Error(`Invalid workflow file: ${at} (loop) has an invalid "count".`);
+    }
+    return { kind: "count", count: raw.count };
+  }
+  return { kind: "while", condition: validateCondition(raw.condition, at) };
 }
 
 /** Validate one raw trigger, throwing a clear error when a field is malformed. */
@@ -407,9 +461,10 @@ export function summarizeLocalProcessSteps(workflows: Workflow[]): {
 }
 
 /**
- * Count `run-local-process` steps in a step list, **descending into conditional
- * branches** (PROD-0044) so a guarded step nested in a `then`/`else` is still
- * counted — otherwise an imported conditional could hide one from the security
+ * Count `run-local-process` steps in a step list, **descending into the
+ * container step kinds** — a conditional's `then`/`else` (PROD-0044) and a
+ * loop's `body` (PROD-044) — so a guarded step nested inside one is still
+ * counted; otherwise an imported container could hide one from the security
  * warning.
  */
 function countLocalProcessSteps(steps: WorkflowStep[]): number {
@@ -420,6 +475,8 @@ function countLocalProcessSteps(steps: WorkflowStep[]): number {
     } else if (step.kind === "conditional") {
       count += countLocalProcessSteps(step.then);
       if (step.else) count += countLocalProcessSteps(step.else);
+    } else if (step.kind === "loop") {
+      count += countLocalProcessSteps(step.body);
     }
   }
   return count;

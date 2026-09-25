@@ -8,7 +8,7 @@
  * shipped macro UI.
  */
 import type { ComponentType } from "react";
-import { Terminal, FileCode, Play, Clock, Cpu, GitBranch } from "lucide-react";
+import { Terminal, FileCode, Play, Clock, Cpu, GitBranch, Repeat, Eye } from "lucide-react";
 import type { WorkflowComparisonOp, WorkflowStep, WorkflowStepKind } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
 import { truncate } from "@/utils/formatters";
@@ -21,6 +21,8 @@ export const WORKFLOW_STEP_KINDS: readonly WorkflowStepKind[] = [
   "wait",
   "run-local-process",
   "conditional",
+  "loop",
+  "wait-for-output",
 ] as const;
 
 /**
@@ -85,6 +87,8 @@ const STEP_ICONS: Record<WorkflowStepKind, ComponentType<{ size?: number | strin
   wait: Clock,
   "run-local-process": Cpu,
   conditional: GitBranch,
+  loop: Repeat,
+  "wait-for-output": Eye,
 };
 
 /** The icon component for a step kind. */
@@ -133,6 +137,22 @@ export function summariseWorkflowStep(step: WorkflowStep, macros?: Macro[]): str
       const branches = `${thenCount} then${elseCount ? `, ${elseCount} else` : ""}`;
       return truncate(`if ${lhs} ${conditionOpSymbol(op)} ${rhs} → ${branches}`);
     }
+    case "loop": {
+      const bodyCount = step.body.length;
+      const suffix = `(${bodyCount} step${bodyCount === 1 ? "" : "s"})`;
+      if (step.loop.kind === "count") {
+        return truncate(`repeat ${step.loop.count}× ${suffix}`);
+      }
+      const { left, op, right } = step.loop.condition;
+      const lhs = left.trim() || "?";
+      const rhs = right.trim() || "?";
+      return truncate(`while ${lhs} ${conditionOpSymbol(op)} ${rhs} ${suffix}`);
+    }
+    case "wait-for-output": {
+      if (!step.pattern.trim()) return "(no pattern)";
+      const kind = step.isRegex ? "regex" : "text";
+      return truncate(`wait for ${kind} "${step.pattern}"`);
+    }
   }
 }
 
@@ -157,6 +177,15 @@ export function newWorkflowStep(kind: WorkflowStepKind): WorkflowStep {
       // `else` is left undefined (not `[]`) so a conditional authored without an
       // else branch serialises byte-identically — a false condition is a no-op.
       return { kind, condition: { left: "", op: "eq", right: "" }, then: [] };
+    case "loop":
+      // Default to a small fixed count so a freshly-added loop is bounded and
+      // safe out of the box; the author can switch to a while-condition.
+      return { kind, loop: { kind: "count", count: 3 }, body: [] };
+    case "wait-for-output":
+      // Literal substring is the safer default; `isRegex`/`timeoutMs` are left
+      // absent so the step round-trips byte-identically and uses the default
+      // timeout until the author sets them.
+      return { kind, pattern: "" };
   }
 }
 

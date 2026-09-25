@@ -9,10 +9,11 @@ import {
   Textarea,
   NumberInput,
   Select,
+  Toggle,
   Field,
   useModalPortalContainer,
 } from "@/components/ui";
-import type { WorkflowStep, WorkflowStepKind } from "@/types/workflow";
+import type { WorkflowCondition, WorkflowStep, WorkflowStepKind } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
 import {
   WORKFLOW_STEP_KINDS,
@@ -251,6 +252,10 @@ export function StepDetailEditor({
       return (
         <ConditionalStepEditor fieldId={fieldId} step={step} macros={macros} onChange={onChange} />
       );
+    case "loop":
+      return <LoopStepEditor fieldId={fieldId} step={step} macros={macros} onChange={onChange} />;
+    case "wait-for-output":
+      return <WaitForOutputStepEditor fieldId={fieldId} step={step} onChange={onChange} />;
   }
 }
 
@@ -321,12 +326,62 @@ function LocalProcessArgsEditor({
   );
 }
 
-/** Step kinds offered in a conditional's then/else "add step" menu. Slice 1
- * keeps sub-branches flat: a nested `conditional` is not offered here (the model
- * and runner support nesting; the authoring UI is bounded to one level). */
+/** Step kinds offered in a conditional branch's or a loop body's "add step" menu.
+ * Sub-branches are kept flat: the container kinds (`conditional`, `loop`) are not
+ * offered here (the model and runner support nesting; the authoring UI is bounded
+ * to one level). `wait-for-output` is a genuine leaf and is offered. */
 const LEAF_STEP_KINDS: readonly WorkflowStepKind[] = WORKFLOW_STEP_KINDS.filter(
-  (k) => k !== "conditional"
+  (k) => k !== "conditional" && k !== "loop"
 );
+
+interface ConditionFieldsProps {
+  fieldId: string;
+  condition: WorkflowCondition;
+  onChange: (condition: WorkflowCondition) => void;
+}
+
+/**
+ * The structured `left` / operator / `right` comparison builder (PROD-0044),
+ * shared by the `conditional` step and the `loop` step's while-condition so both
+ * speak the exact same comparator language. `${param}` (and, inside a loop, the
+ * reserved `${iteration}`) references in the operands are resolved at run time.
+ */
+function ConditionFields({ fieldId, condition, onChange }: ConditionFieldsProps) {
+  return (
+    <div className="workflow-step__condition">
+      <Field label="If (left)" htmlFor={`workflow-step-cond-left-${fieldId}`}>
+        <Input
+          id={`workflow-step-cond-left-${fieldId}`}
+          value={condition.left}
+          placeholder="e.g. ${env}"
+          onChange={(e) => onChange({ ...condition, left: e.target.value })}
+          data-testid={`workflow-editor-cond-left-${fieldId}`}
+        />
+      </Field>
+      <Field label="Operator" htmlFor={`workflow-step-cond-op-${fieldId}`}>
+        <Select
+          value={condition.op}
+          onChange={(value) => onChange({ ...condition, op: value as WorkflowCondition["op"] })}
+          options={WORKFLOW_CONDITION_OPS.map((op) => ({
+            value: op,
+            label: conditionOpLabel(op),
+          }))}
+          aria-label={`Condition operator for step ${fieldId}`}
+          data-testid={`workflow-editor-cond-op-${fieldId}`}
+        />
+      </Field>
+      <Field label="Right" htmlFor={`workflow-step-cond-right-${fieldId}`}>
+        <Input
+          id={`workflow-step-cond-right-${fieldId}`}
+          value={condition.right}
+          placeholder="e.g. prod"
+          onChange={(e) => onChange({ ...condition, right: e.target.value })}
+          data-testid={`workflow-editor-cond-right-${fieldId}`}
+        />
+      </Field>
+    </div>
+  );
+}
 
 interface ConditionalStepEditorProps {
   fieldId: string;
@@ -343,53 +398,16 @@ interface ConditionalStepEditorProps {
  * editable step list — kept flat in slice 1 (no nested conditional in the menu).
  */
 function ConditionalStepEditor({ fieldId, step, macros, onChange }: ConditionalStepEditorProps) {
-  const { condition } = step;
   return (
     <div
       className="workflow-step__conditional"
       data-testid={`workflow-editor-conditional-${fieldId}`}
     >
-      <div className="workflow-step__condition">
-        <Field label="If (left)" htmlFor={`workflow-step-cond-left-${fieldId}`}>
-          <Input
-            id={`workflow-step-cond-left-${fieldId}`}
-            value={condition.left}
-            placeholder="e.g. ${env}"
-            onChange={(e) =>
-              onChange({ ...step, condition: { ...condition, left: e.target.value } })
-            }
-            data-testid={`workflow-editor-cond-left-${fieldId}`}
-          />
-        </Field>
-        <Field label="Operator" htmlFor={`workflow-step-cond-op-${fieldId}`}>
-          <Select
-            value={condition.op}
-            onChange={(value) =>
-              onChange({
-                ...step,
-                condition: { ...condition, op: value as typeof condition.op },
-              })
-            }
-            options={WORKFLOW_CONDITION_OPS.map((op) => ({
-              value: op,
-              label: conditionOpLabel(op),
-            }))}
-            aria-label={`Condition operator for step ${fieldId}`}
-            data-testid={`workflow-editor-cond-op-${fieldId}`}
-          />
-        </Field>
-        <Field label="Right" htmlFor={`workflow-step-cond-right-${fieldId}`}>
-          <Input
-            id={`workflow-step-cond-right-${fieldId}`}
-            value={condition.right}
-            placeholder="e.g. prod"
-            onChange={(e) =>
-              onChange({ ...step, condition: { ...condition, right: e.target.value } })
-            }
-            data-testid={`workflow-editor-cond-right-${fieldId}`}
-          />
-        </Field>
-      </div>
+      <ConditionFields
+        fieldId={fieldId}
+        condition={step.condition}
+        onChange={(condition) => onChange({ ...step, condition })}
+      />
       <SubStepList
         label="Then"
         branch="then"
@@ -412,7 +430,8 @@ function ConditionalStepEditor({ fieldId, step, macros, onChange }: ConditionalS
 
 interface SubStepListProps {
   label: string;
-  branch: "then" | "else";
+  /** Sub-list discriminator used in ids/testids (`then` / `else` / `body`). */
+  branch: string;
   fieldId: string;
   steps: WorkflowStep[];
   macros: Macro[];
@@ -544,5 +563,134 @@ function AddSubStepMenu({ base, onAdd }: AddSubStepMenuProps) {
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
+  );
+}
+
+interface LoopStepEditorProps {
+  fieldId: string;
+  step: Extract<WorkflowStep, { kind: "loop" }>;
+  macros: Macro[];
+  onChange: (step: WorkflowStep) => void;
+}
+
+/**
+ * Detail editor for a `loop` step (PROD-044): a mode selector (fixed count vs.
+ * while-condition), the mode's own control, and the loop `body` — an editable
+ * step list reusing {@link SubStepList}. A `while` loop reuses {@link
+ * ConditionFields}, the same comparator UI the `conditional` step uses. The body
+ * and (for a while loop) the condition can reference the reserved `${iteration}`
+ * variable. Iteration counts are bounded by the runner's safety cap at run time.
+ */
+function LoopStepEditor({ fieldId, step, macros, onChange }: LoopStepEditorProps) {
+  const mode = step.loop;
+  return (
+    <div className="workflow-step__conditional" data-testid={`workflow-editor-loop-${fieldId}`}>
+      <div className="workflow-step__condition">
+        <Field label="Repeat" htmlFor={`workflow-step-loop-mode-${fieldId}`}>
+          <Select
+            value={mode.kind}
+            onChange={(value) =>
+              onChange({
+                ...step,
+                loop:
+                  value === "while"
+                    ? { kind: "while", condition: { left: "${iteration}", op: "lt", right: "3" } }
+                    : { kind: "count", count: 3 },
+              })
+            }
+            options={[
+              { value: "count", label: "a fixed number of times" },
+              { value: "while", label: "while a condition holds" },
+            ]}
+            aria-label={`Loop mode for step ${fieldId}`}
+            data-testid={`workflow-editor-loop-mode-${fieldId}`}
+          />
+        </Field>
+        {mode.kind === "count" && (
+          <Field label="Iterations" htmlFor={`workflow-step-loop-count-${fieldId}`}>
+            <NumberInput
+              value={mode.count}
+              min={0}
+              step={1}
+              onValueChange={(v) =>
+                onChange({
+                  ...step,
+                  loop: { kind: "count", count: v === "" ? 0 : Math.max(0, Math.floor(v)) },
+                })
+              }
+              aria-label={`Loop iteration count for step ${fieldId}`}
+              data-testid={`workflow-editor-loop-count-${fieldId}`}
+            />
+          </Field>
+        )}
+      </div>
+      {mode.kind === "while" && (
+        <ConditionFields
+          fieldId={`${fieldId}-loop`}
+          condition={mode.condition}
+          onChange={(condition) => onChange({ ...step, loop: { kind: "while", condition } })}
+        />
+      )}
+      <SubStepList
+        label="Do"
+        branch="body"
+        fieldId={fieldId}
+        steps={step.body}
+        macros={macros}
+        onChange={(body) => onChange({ ...step, body })}
+      />
+    </div>
+  );
+}
+
+interface WaitForOutputStepEditorProps {
+  fieldId: string;
+  step: Extract<WorkflowStep, { kind: "wait-for-output" }>;
+  onChange: (step: WorkflowStep) => void;
+}
+
+/**
+ * Detail editor for a `wait-for-output` step (PROD-044): the pattern to wait for,
+ * a regex/substring toggle (substring is the default), and an optional timeout
+ * (a named default applies when left blank). `${param}` references in the pattern
+ * are resolved at run time.
+ */
+function WaitForOutputStepEditor({ fieldId, step, onChange }: WaitForOutputStepEditorProps) {
+  return (
+    <>
+      <Field label="Wait until output matches" htmlFor={`workflow-step-wfo-pattern-${fieldId}`}>
+        <Input
+          id={`workflow-step-wfo-pattern-${fieldId}`}
+          value={step.pattern}
+          placeholder={step.isRegex ? "e.g. login:\\s*$" : "e.g. $ "}
+          onChange={(e) => onChange({ ...step, pattern: e.target.value })}
+          data-testid={`workflow-editor-wfo-pattern-${fieldId}`}
+        />
+      </Field>
+      <Field
+        label="Treat pattern as a regular expression"
+        htmlFor={`workflow-step-wfo-regex-${fieldId}`}
+      >
+        <Toggle
+          id={`workflow-step-wfo-regex-${fieldId}`}
+          checked={step.isRegex ?? false}
+          onCheckedChange={(checked) => onChange({ ...step, isRegex: checked ? true : undefined })}
+          aria-label={`Treat the wait-for-output pattern for step ${fieldId} as a regular expression`}
+          data-testid={`workflow-editor-wfo-regex-${fieldId}`}
+        />
+      </Field>
+      <Field label="Timeout (ms, optional)" htmlFor={`workflow-step-wfo-timeout-${fieldId}`}>
+        <NumberInput
+          value={step.timeoutMs ?? ""}
+          min={0}
+          step={1000}
+          onValueChange={(v) =>
+            onChange({ ...step, timeoutMs: v === "" ? undefined : Math.max(0, v) })
+          }
+          aria-label={`Wait-for-output timeout for step ${fieldId} in milliseconds`}
+          data-testid={`workflow-editor-wfo-timeout-${fieldId}`}
+        />
+      </Field>
+    </>
   );
 }

@@ -84,6 +84,67 @@ pub enum WorkflowStep {
         #[serde(rename = "else", default, skip_serializing_if = "Vec::is_empty")]
         otherwise: Vec<WorkflowStep>,
     },
+
+    /// Repeat a `body` of steps either a fixed number of times or while a
+    /// structured condition holds (PROD-044). The [`WorkflowLoopMode`] selects
+    /// which; both are bounded by the runner's max-iteration safety cap so a
+    /// loop can never run forever (ventilator-grade). `body` is an ordinary
+    /// step list, so loops nest (bounded by the runner). Purely persisted here;
+    /// evaluation lives in the frontend runner, which exposes a reserved
+    /// `${iteration}` variable to the body and the while-condition.
+    #[serde(rename_all = "camelCase")]
+    Loop {
+        /// How the loop is bounded: a fixed count, or a while-condition.
+        #[serde(rename = "loop")]
+        mode: WorkflowLoopMode,
+        /// Steps run each iteration.
+        #[serde(default)]
+        body: Vec<WorkflowStep>,
+    },
+
+    /// Pause the run until the target session's terminal output matches
+    /// `pattern`, or `timeout_ms` elapses (PROD-044). `pattern` is a literal
+    /// substring by default (the safer choice); set `is_regex` to treat it as a
+    /// regular expression. A named default timeout applies when `timeout_ms` is
+    /// omitted so the step can never hang forever. Purely persisted here;
+    /// matching + the timeout live in the frontend runner (which reuses the
+    /// existing terminal-output event seam).
+    #[serde(rename_all = "camelCase")]
+    WaitForOutput {
+        /// The pattern matched against the session's terminal output.
+        pattern: String,
+        /// When `true`, `pattern` is a regular expression; otherwise a literal
+        /// substring (the default). Omitted from JSON when absent so a step
+        /// authored without it round-trips byte-identically.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        is_regex: Option<bool>,
+        /// Max time (ms) to wait before the step times out. Omitted → the
+        /// frontend's named default applies.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        timeout_ms: Option<u64>,
+    },
+}
+
+/// How a [`WorkflowStep::Loop`] is bounded (PROD-044). Either a fixed iteration
+/// `count`, or a structured `while` condition re-evaluated before each
+/// iteration. Both are bounded by the runner's max-iteration safety cap so a
+/// loop can never run forever. Tagged by `kind` (`count` / `while`), mirroring
+/// the TypeScript `WorkflowLoopMode` discriminated union byte-for-byte.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum WorkflowLoopMode {
+    /// Repeat the body exactly `count` times (clamped to the safety cap).
+    #[serde(rename_all = "camelCase")]
+    Count {
+        /// The fixed number of iterations.
+        count: u32,
+    },
+    /// Repeat the body while `condition` holds, bounded by the safety cap.
+    #[serde(rename_all = "camelCase")]
+    While {
+        /// The structured comparison re-evaluated before each iteration.
+        condition: WorkflowCondition,
+    },
 }
 
 /// The comparison operator of a [`WorkflowCondition`] (PROD-0044). Serialised
@@ -580,6 +641,124 @@ mod tests {
         let json = serde_json::to_string(&wf).unwrap();
         assert!(!json.contains("conditional"));
         assert!(!json.contains("\"else\""));
+    }
+
+    #[test]
+    fn loop_count_step_round_trips_with_kind_and_camel_case() {
+        let step = WorkflowStep::Loop {
+            mode: WorkflowLoopMode::Count { count: 3 },
+            body: vec![WorkflowStep::SendCommand {
+                command: "echo ${iteration}".to_string(),
+            }],
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"kind\":\"loop\""));
+        // The mode's wire key is `loop`; the nested discriminant is `count`.
+        assert!(json.contains("\"loop\":{\"kind\":\"count\",\"count\":3}"));
+        assert!(json.contains("\"body\":["));
+        let parsed: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, step);
+    }
+
+    #[test]
+    fn loop_while_step_round_trips() {
+        let step = WorkflowStep::Loop {
+            mode: WorkflowLoopMode::While {
+                condition: WorkflowCondition {
+                    left: "${iteration}".to_string(),
+                    op: WorkflowComparisonOp::Lt,
+                    right: "5".to_string(),
+                },
+            },
+            body: vec![WorkflowStep::Wait { delay_ms: 100 }],
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"loop\":{\"kind\":\"while\""));
+        assert!(json.contains("\"condition\""));
+        let parsed: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, step);
+    }
+
+    #[test]
+    fn loop_step_defaults_absent_body() {
+        // A loop authored with only its mode parses with an empty body.
+        let parsed: WorkflowStep =
+            serde_json::from_str(r#"{"kind":"loop","loop":{"kind":"count","count":2}}"#).unwrap();
+        assert_eq!(
+            parsed,
+            WorkflowStep::Loop {
+                mode: WorkflowLoopMode::Count { count: 2 },
+                body: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn loop_step_nests_recursively() {
+        // A loop's body is an ordinary step list, so a loop can contain a loop.
+        let inner = WorkflowStep::Loop {
+            mode: WorkflowLoopMode::Count { count: 2 },
+            body: vec![WorkflowStep::SendCommand {
+                command: "inner".to_string(),
+            }],
+        };
+        let outer = WorkflowStep::Loop {
+            mode: WorkflowLoopMode::While {
+                condition: WorkflowCondition {
+                    left: "a".to_string(),
+                    op: WorkflowComparisonOp::Ne,
+                    right: "b".to_string(),
+                },
+            },
+            body: vec![inner],
+        };
+        let json = serde_json::to_string(&outer).unwrap();
+        let parsed: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, outer);
+    }
+
+    #[test]
+    fn wait_for_output_step_round_trips_with_kind_and_camel_case() {
+        let step = WorkflowStep::WaitForOutput {
+            pattern: "login:".to_string(),
+            is_regex: Some(true),
+            timeout_ms: Some(30_000),
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(json.contains("\"kind\":\"wait-for-output\""));
+        assert!(json.contains("\"pattern\":\"login:\""));
+        assert!(json.contains("\"isRegex\":true"));
+        assert!(json.contains("\"timeoutMs\":30000"));
+        let parsed: WorkflowStep = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, step);
+    }
+
+    #[test]
+    fn wait_for_output_step_omits_absent_optional_fields() {
+        // The default (substring, default timeout) omits the optional keys so a
+        // step authored without them round-trips byte-identically.
+        let step = WorkflowStep::WaitForOutput {
+            pattern: "$ ".to_string(),
+            is_regex: None,
+            timeout_ms: None,
+        };
+        let json = serde_json::to_string(&step).unwrap();
+        assert!(!json.contains("isRegex"));
+        assert!(!json.contains("timeoutMs"));
+        let parsed: WorkflowStep =
+            serde_json::from_str(r#"{"kind":"wait-for-output","pattern":"$ "}"#).unwrap();
+        assert_eq!(parsed, step);
+    }
+
+    #[test]
+    fn existing_flat_workflow_json_is_unaffected_by_the_loop_and_wait_variants() {
+        // Back-compat: a workflow authored before these variants existed still
+        // parses and re-serialises without gaining any new keys.
+        let raw = r#"{"id":"wf-1","name":"Flat","steps":[{"kind":"send-command","command":"ls"}]}"#;
+        let wf: Workflow = serde_json::from_str(raw).unwrap();
+        let json = serde_json::to_string(&wf).unwrap();
+        assert!(!json.contains("\"loop\""));
+        assert!(!json.contains("wait-for-output"));
     }
 
     #[test]
