@@ -13,6 +13,9 @@ use std::time::Duration;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tracing::{debug, info, warn};
 
+use super::wsl_init_script::{
+    choose_delivery, distro_create_args, init_script_contents, source_line, InitDelivery,
+};
 use crate::config::WslConfig;
 use crate::connection::{
     Capabilities, ConnectionType, FieldType, FilePathKind, OutputReceiver, OutputSender,
@@ -567,6 +570,84 @@ fn write_and_flush(w: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
     w.flush()
 }
 
+/// Windows `CREATE_NO_WINDOW` process-creation flag: keeps the short-lived
+/// `wsl.exe` that creates the init script from flashing a console window.
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Upper bound on the distro-side init-script create. On expiry the child is
+/// killed and the setup falls back (see [`choose_delivery`]).
+const DISTRO_CREATE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Create the init script **inside the distribution** with mode `0600` (#2837).
+///
+/// Runs [`CREATE_INIT_SCRIPT_SH`](super::wsl_init_script::CREATE_INIT_SCRIPT_SH)
+/// via `wsl.exe --exec sh -c …` (no login-shell re-parsing) with the script
+/// content on stdin — never on a command line. The program sets `umask 077`,
+/// rejects any pre-existing entry or symlink, and creates the file with
+/// `noclobber` (O_EXCL). All of that logic is pure and unit-tested in
+/// [`super::wsl_init_script`]; this function is only the process I/O.
+fn create_init_script_in_distro(
+    distribution: &str,
+    path: &str,
+    contents: &[u8],
+) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let args = distro_create_args(distribution, path)
+        .ok_or_else(|| "refusing unsafe init-script path or distribution".to_string())?;
+    let mut child = Command::new("wsl.exe")
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map_err(|e| format!("spawn wsl.exe: {e}"))?;
+
+    // Write the content, then drop stdin so `cat` sees EOF. A rejected create
+    // exits without reading, so a write error here is reported via the exit
+    // status below rather than returned early (the child must still be reaped).
+    let write_result = match child.stdin.take() {
+        Some(mut stdin) => stdin.write_all(contents).map_err(|e| e.to_string()),
+        None => Err("wsl.exe stdin unavailable".to_string()),
+    };
+
+    let deadline = std::time::Instant::now() + DISTRO_CREATE_TIMEOUT;
+    let status = loop {
+        match child.try_wait().map_err(|e| e.to_string())? {
+            Some(status) => break status,
+            None if std::time::Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("timed out creating init script in distro".to_string());
+            }
+            None => std::thread::sleep(Duration::from_millis(25)),
+        }
+    };
+    if !status.success() {
+        return Err(format!("distro-side create exited with {status}"));
+    }
+    write_result
+}
+
+/// Legacy Windows-side write over the UNC path (CORE-019), used only when the
+/// distro-side `0600` create fails.
+///
+/// `create_new` (CREATE_NEW / O_EXCL semantics) makes the open fail if the path
+/// already exists, so a pre-created file or symlink is rejected rather than
+/// followed/clobbered. The 9p mount cannot carry a unix mode from Windows, so
+/// the file gets the default mode — hence this is only the fallback.
+fn write_init_script_unc(unc_script_path: &str, contents: &[u8]) -> Result<(), String> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(unc_script_path)
+        .map_err(|e| e.to_string())?;
+    file.write_all(contents).map_err(|e| e.to_string())?;
+    file.flush().map_err(|e| e.to_string())
+}
+
 /// Async task that injects the WSL OSC 7 CWD hook after the shell is ready.
 ///
 /// # Why temp file instead of stdin injection
@@ -592,72 +673,67 @@ fn write_and_flush(w: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
 ///    500 ms of silence after the first output chunk (zsh / other shells).
 ///    Hard deadline: 5 s.
 ///
-/// 2. Write the setup script to a per-session path (see
-///    [`init_script_linux_path`]) via the Windows UNC path for the distribution
-///    (e.g. `\\wsl.localhost\Ubuntu\tmp\.termihub_init-<uuid>`). This avoids
-///    spawning a second `wsl.exe` process, which can trigger
-///    `Wsl/Service/E_UNEXPECTED` on some Windows configurations when a second
-///    WSL process starts while the first is still initializing.
+/// 2. Create the setup script at a per-session path (see
+///    [`init_script_linux_path`]) **inside the distribution** with mode `0600`
+///    (#2837, [`create_init_script_in_distro`]). The shell is already up at
+///    this point, so the short-lived second `wsl.exe` does not race WSL
+///    initialization (the `Wsl/Service/E_UNEXPECTED` case). If that fails,
+///    fall back to the Windows-side UNC `create_new` write
+///    ([`write_init_script_unc`]), which keeps the unpredictable name + O_EXCL
+///    but cannot set a unix mode.
 ///
 /// 3. Inject `source <init-path> 2>/dev/null` into the PTY. The
 ///    `source` line is echoed/displayed (unavoidable), and the script's own
 ///    `echo` message appears on the next line before the prompt returns.
-///    The `2>/dev/null` suppresses any "no such file" error from a rare
-///    UNC-visibility race condition.
+///    The script removes itself with a trailing `rm -f`.
 ///
-/// If the UNC write fails, fall back to direct injection — the setup command
-/// will be visible, but CWD tracking still works.
+/// If neither file can be created, fall back to direct injection — the setup
+/// command will be visible, but CWD tracking still works.
 async fn wsl_setup(
     mut tap_rx: tokio::sync::mpsc::Receiver<Vec<u8>>,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     setup_cmd: &'static str,
+    distribution: String,
     unc_prefix: String,
 ) {
     // Phase 1 — wait for the shell to be ready.
     wait_for_shell_ready(&mut tap_rx, 500, Duration::from_secs(5)).await;
 
-    // Phase 2 — write the setup script via the Windows UNC path.
-    // The path is unpredictable per session (CORE-019); the script self-cleans
-    // the temp file via its trailing `rm -f`, and no erase sequences are emitted.
+    // Phase 2 — create the setup script. The path is unpredictable per session
+    // (CORE-019); the script self-cleans via its trailing `rm -f`.
     let init_path = init_script_linux_path();
-    let script = format!("{setup_cmd}\nrm -f {init_path}\n");
-
-    // Convert the Linux path to a Windows UNC path for writing from the host.
+    let script = init_script_contents(setup_cmd, &init_path);
     // e.g. /tmp/.termihub_init-<uuid> → \\wsl.localhost\Ubuntu\tmp\.termihub_init-<uuid>
     let unc_script_path = format!("{}{}", unc_prefix, init_path.replace('/', "\\"));
 
-    // Create with `create_new` (CREATE_NEW / O_EXCL semantics): the open fails
-    // if the path already exists, so a pre-created file or symlink at the path
-    // is rejected rather than followed/clobbered — defense in depth on top of
-    // the unpredictable name. On failure we fall back to direct injection below.
-    let write_result: Result<(), String> = tokio::task::spawn_blocking(move || {
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&unc_script_path)
-            .map_err(|e| e.to_string())?;
-        file.write_all(script.as_bytes())
-            .map_err(|e| e.to_string())?;
-        file.flush().map_err(|e| e.to_string())
+    let task_path = init_path.clone();
+    let delivery = tokio::task::spawn_blocking(move || {
+        let distro = create_init_script_in_distro(&distribution, &task_path, script.as_bytes());
+        if let Err(e) = &distro {
+            warn!("WSL setup: distro-side 0600 create failed ({e}); trying UNC write");
+        }
+        choose_delivery(distro.is_ok(), || {
+            match write_init_script_unc(&unc_script_path, script.as_bytes()) {
+                Ok(()) => true,
+                Err(e) => {
+                    warn!("WSL setup: could not write init script via UNC ({e})");
+                    false
+                }
+            }
+        })
     })
     .await
-    .map_err(|e| e.to_string())
-    .and_then(|r| r);
+    .unwrap_or(InitDelivery::DirectInjection);
 
-    match write_result {
-        Ok(()) => {
+    match delivery {
+        InitDelivery::SourceDistroFile | InitDelivery::SourceUncFile => {
             // Phase 3 — inject `source`. The line is echoed in the terminal;
             // the script's echo message appears on the next line.
-            // The `2>/dev/null` suppresses any rare UNC-visibility race error.
-            pty_write(
-                &writer,
-                format!("source {init_path} 2>/dev/null\n").as_bytes(),
-            );
-            debug!("WSL setup: init script written via UNC and sourced");
+            pty_write(&writer, source_line(&init_path).as_bytes());
+            debug!("WSL setup: init script created ({delivery:?}) and sourced");
         }
-        Err(e) => {
-            // Fallback: direct injection.
-            warn!("WSL setup: could not write init script via UNC ({e}); falling back to direct injection");
+        InitDelivery::DirectInjection => {
+            warn!("WSL setup: falling back to direct injection");
             pty_write(&writer, setup_cmd.as_bytes());
             pty_write(&writer, b"\n");
         }
@@ -1123,11 +1199,17 @@ impl ConnectionType for Wsl {
         // Spawn the setup task when shell integration is enabled.  It watches
         // the tap channel for the first OSC 7 emission from the PROMPT_COMMAND
         // env var (= shell ready, .bashrc has run, systemd startup noise is
-        // done), then writes the hook via the UNC path and sources it — no
-        // second wsl.exe process is spawned.
+        // done), then creates the hook file inside the distro with mode 0600
+        // (UNC write as fallback) and sources it (#2837).
         if shell_integration {
             if let Some(setup_cmd) = osc7_setup_command(&shell_key) {
-                tokio::spawn(wsl_setup(tap_rx, setup_writer, setup_cmd, unc_prefix));
+                tokio::spawn(wsl_setup(
+                    tap_rx,
+                    setup_writer,
+                    setup_cmd,
+                    distribution.clone(),
+                    unc_prefix,
+                ));
             }
         }
 

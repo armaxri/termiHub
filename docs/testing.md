@@ -3157,6 +3157,20 @@ one to a directory (e.g. `ln -s data linkdir` and `ln -s data/file.bin linkfile`
    symlinks. Each link row shows the link-badge icon and, where the target could
    be read, the `→ target` hint.
 
+### WSL init script created inside the distro with mode 0600 (#2837)
+
+The create program's `0600` / reject-existing / reject-symlink behavior is unit
+tested on every platform (`cargo test -p termihub-core --all-features --lib
+backends::wsl_init_script`); the real `wsl.exe` spawn needs Windows + WSL.
+
+1. In a WSL shell of the target distribution, start a watcher:
+   `while :; do ls -l /tmp/.termihub_init-* 2>/dev/null; done`.
+2. In termiHub, open a new WSL tab for that distribution with shell integration
+   on. The watcher briefly prints a `-rw-------` file owned by your user.
+3. In the new tab, only a `source /tmp/.termihub_init-<uuid> 2>/dev/null` line is
+   visible (not the hook body), and `cd /tmp` updates the tab's CWD.
+4. `ls /tmp/.termihub_init-*` afterwards finds nothing (self-cleaned).
+
 ### FTP transfer queue: concurrency, pause/resume, retry, resume (#1336)
 
 Verifies the shared transfer-queue model (queue / bounded concurrency /
