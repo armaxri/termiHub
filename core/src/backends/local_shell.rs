@@ -1650,12 +1650,9 @@ mod tests {
     /// shell-agnostic). PowerShell-specific coverage lives in the quarantined
     /// `windows_powershell_spawn_echo_resize_teardown`.
     fn integration_test_shell() -> String {
-        #[cfg(windows)]
-        {
+        if cfg!(windows) {
             "cmd".to_string()
-        }
-        #[cfg(not(windows))]
-        {
+        } else {
             detect_available_shells()
                 .into_iter()
                 .next()
