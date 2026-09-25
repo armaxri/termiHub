@@ -45,6 +45,7 @@ import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
 import { PluginSettingsSection } from "./PluginSettingsSection";
 import { FrontendPluginGateSettings } from "./FrontendPluginGateSettings";
+import { NativePluginGateSettings } from "./NativePluginGateSettings";
 import { TrustedPublishersSettings } from "./TrustedPublishersSettings";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import "./SettingsPanel.css";
@@ -404,6 +405,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       }
       if (highlightedCategories?.has("plugins")) {
         sections.push(<FrontendPluginGateSettings key="frontend-plugin-gate" />);
+        sections.push(<NativePluginGateSettings key="native-plugin-gate" />);
         sections.push(<PluginSettingsSection key="plugins" focusPluginId={focusPluginId} />);
         sections.push(<TrustedPublishersSettings key="trusted-publishers" />);
       }
@@ -457,6 +459,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         return (
           <>
             <FrontendPluginGateSettings />
+            <NativePluginGateSettings />
             <PluginSettingsSection focusPluginId={focusPluginId} />
             <TrustedPublishersSettings />
           </>

@@ -26,8 +26,23 @@ use std::time::Duration;
 
 use termihub_core::connection::{ConnectionType, ConnectionTypeRegistry, FieldType};
 use termihub_core::plugin::{
-    parse_manifest, HostLifecycleHook, InstalledPlugin, PluginHost, PluginManager, PluginState,
+    native_library_hash, parse_manifest, HostLifecycleHook, InstalledPlugin, NativeTrustStore,
+    PluginHost, PluginManager, PluginState,
 };
+
+/// Enable native plugins globally and acknowledge trust for `id`, bound to the
+/// exact backend library on disk — the setup a real user performs before a native
+/// plugin will load past the trust gate (SEC-002 / PLG-006 / ARCH-008). Every
+/// `install`/`install_with_manifest` call wires this up so the existing
+/// happy-path assertions hold under the default-off gate.
+fn trust_native(root: &Path, id: &str) {
+    let mut trust = NativeTrustStore::load(root);
+    trust
+        .set_native_enabled(true)
+        .expect("enable native plugins");
+    let hash = native_library_hash(root, id).expect("hash the installed backend library");
+    trust.acknowledge(id, hash).expect("acknowledge the plugin");
+}
 
 /// Path to the fixture plugin's `Cargo.toml` (the same echo `cdylib` the
 /// round-trip test uses).
@@ -116,6 +131,11 @@ fn install(
     let manifest_src = manifest_json(id, name, connection_type);
     std::fs::write(dir.join("manifest.json"), &manifest_src).expect("write manifest");
 
+    // The native-plugin trust gate is default-OFF; a real user would enable native
+    // plugins and acknowledge this one before it loads. Wire that up so the
+    // load-succeeds assertions in these tests hold.
+    trust_native(root, id);
+
     let manifest = parse_manifest(&manifest_src).expect("fixture manifest should parse");
     manifest
         .validate()
@@ -169,6 +189,9 @@ fn install_with_manifest(root: &Path, lib: &Path, id: &str, manifest_src: &str) 
     std::fs::create_dir_all(&backend).expect("create plugin backend dir");
     std::fs::copy(lib, backend.join(artifact_name())).expect("copy backend library");
     std::fs::write(dir.join("manifest.json"), manifest_src).expect("write manifest");
+
+    // Trust the native plugin (default-off gate) so it loads (see `install`).
+    trust_native(root, id);
 
     let manifest = parse_manifest(manifest_src).expect("fixture manifest should parse");
     manifest

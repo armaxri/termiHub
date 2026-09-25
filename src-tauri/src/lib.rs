@@ -591,6 +591,11 @@ pub fn run() -> anyhow::Result<()> {
             commands::plugin::assess_plugin_trust,
             commands::plugin::list_trusted_publishers,
             commands::plugin::revoke_trusted_publisher,
+            // Native-plugin trust gate: default-off + per-plugin ack (SEC-002/PLG-006/ARCH-008)
+            commands::plugin::get_native_plugin_trust,
+            commands::plugin::set_native_plugins_enabled,
+            commands::plugin::acknowledge_native_plugin,
+            commands::plugin::revoke_native_plugin_trust,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::test_connection,

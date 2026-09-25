@@ -54,6 +54,7 @@ use crate::connection::ConnectionTypeRegistry;
 use super::capabilities::ConnectionPolicy;
 use super::connection::PluginConnectionType;
 use super::manager::InstalledPlugin;
+use super::native_trust::NativeTrustStore;
 use super::security::{PermissionError, PermissionSet, RecoveryAction, RestartTracker};
 
 /// Everything that can go wrong while loading a plugin's backend library.
@@ -136,6 +137,34 @@ pub enum HostError {
     /// the process.
     #[error("plugin panicked during `{0}`")]
     Panicked(&'static str),
+
+    /// Native (in-process) plugins are globally disabled, so no native backend is
+    /// loaded regardless of any per-plugin acknowledgment (SEC-002 / PLG-006 /
+    /// ARCH-008). The default state; the user must explicitly enable native
+    /// plugins first. Fail-closed: this is checked before the library is even
+    /// located.
+    #[error("native plugins are disabled; enable native plugins and trust this plugin to load it")]
+    NativePluginsDisabled,
+
+    /// Native plugins are enabled globally, but *this* plugin has no valid trust
+    /// acknowledgment for the exact library on disk — it was never acknowledged,
+    /// or its library changed since it was (a stale acknowledgment / hash
+    /// mismatch). Refused rather than loaded (SEC-002 / PLG-006 / ARCH-008).
+    #[error("native plugin `{id}` is not trusted for its current library; acknowledge it to load")]
+    NativePluginNotTrusted {
+        /// The plugin id that lacks a valid acknowledgment.
+        id: String,
+    },
+
+    /// The backend library could not be hashed to check its trust acknowledgment.
+    /// Fail-closed: an unreadable library is refused rather than loaded.
+    #[error("failed to hash native plugin library `{path}` for the trust check: {detail}")]
+    NativeLibraryUnreadable {
+        /// The library path that could not be hashed.
+        path: PathBuf,
+        /// The underlying I/O error rendered as a string.
+        detail: String,
+    },
 }
 
 impl HostError {
@@ -732,11 +761,40 @@ impl PluginHost {
         };
 
         let id = plugin.manifest.id.clone();
-        // Replace any prior load of the same id.
+        // Replace any prior load of the same id. Done before the trust gate so a
+        // re-evaluation with native plugins now disabled (or trust revoked) tears
+        // a currently-loaded native plugin down rather than leaving it live.
         self.unload(&id);
+
+        // --- Native-plugin trust gate (SEC-002 / PLG-006 / ARCH-008). ---
+        //
+        // A native backend is a dynamic library loaded *in this process* with the
+        // app's full privileges and no OS sandbox, so it loads only when the user
+        // has (a) enabled native plugins globally AND (b) acknowledged trust for
+        // THIS plugin bound to THIS library's content hash. Every branch fails
+        // closed: any uncertainty refuses the load. The store load is infallible
+        // and itself fails closed on a missing/corrupt file.
+        let trust = NativeTrustStore::load(&self.root);
+        if !trust.is_native_enabled() {
+            return Err(HostError::NativePluginsDisabled);
+        }
 
         let plugin_dir = self.root.join(&id);
         let lib_path = find_backend_library(&plugin_dir)?;
+
+        // Bind consent to the exact bytes: hash the library on disk and require an
+        // acknowledgment matching that hash. A missing ack or a changed binary
+        // (stale ack / hash mismatch) refuses the load.
+        let library_sha256 = super::signature::sha256_file(&lib_path).map_err(|source| {
+            HostError::NativeLibraryUnreadable {
+                path: lib_path.clone(),
+                detail: source.to_string(),
+            }
+        })?;
+        if !trust.is_acknowledged(&id, &library_sha256) {
+            return Err(HostError::NativePluginNotTrusted { id });
+        }
+
         // Bind the exact library bytes about to be loaded to the signed digest
         // (CORE-034): re-verify the extracted plugin against its co-located
         // signature and re-check the library file immediately before `dlopen`. An
@@ -1009,6 +1067,131 @@ mod tests {
             ),
             "got {err:?}"
         );
+    }
+
+    // --- Native-plugin trust gate (SEC-002 / PLG-006 / ARCH-008) ---
+
+    use super::super::native_trust::NativeTrustStore;
+    use super::super::signature::sha256_digest;
+
+    /// A frontend-only (theme) plugin manifest — no `terminalBackend`, so it never
+    /// reaches the native-plugin trust gate.
+    fn theme_manifest_json() -> String {
+        r#"{
+            "id": "theme-only",
+            "name": "Theme Only",
+            "version": "1.0.0",
+            "author": "tester",
+            "description": "frontend-only theme plugin",
+            "license": "MIT",
+            "apiVersion": "1.0",
+            "platforms": ["linux", "macos", "windows"],
+            "permissions": [],
+            "extensions": {
+                "theme": {
+                    "themes": [ { "id": "dark", "name": "Dark", "file": "themes/dark.json" } ]
+                }
+            }
+        }"#
+        .to_owned()
+    }
+
+    /// Write a dummy backend library for `id` under the host root and return its
+    /// SHA-256. The bytes are not a real dylib — enough to exercise the trust gate,
+    /// which runs before `dlopen`.
+    fn write_dummy_backend(root: &Path, id: &str) -> String {
+        let backend = root.join(id).join("backend");
+        std::fs::create_dir_all(&backend).unwrap();
+        let lib_name = format!(
+            "{}{id}{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        );
+        let bytes = b"dummy native library bytes";
+        std::fs::write(backend.join(lib_name), bytes).unwrap();
+        sha256_digest(bytes)
+    }
+
+    #[test]
+    fn load_refuses_native_plugin_when_globally_disabled() {
+        let (host, tmp) = test_host();
+        // A valid terminal-backend plugin with a real backend file on disk, but
+        // native plugins are OFF by default (no trust store) → refused before the
+        // library is even opened. Fail closed.
+        write_dummy_backend(tmp.path(), "host-sec");
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        match host.load(&plugin) {
+            Err(HostError::NativePluginsDisabled) => {}
+            other => panic!("expected NativePluginsDisabled, got {other:?}"),
+        }
+        assert!(!host.is_loaded("host-sec"));
+    }
+
+    #[test]
+    fn load_refuses_native_plugin_without_acknowledgment() {
+        let (host, tmp) = test_host();
+        write_dummy_backend(tmp.path(), "host-sec");
+        // Native plugins enabled globally, but this plugin is not acknowledged.
+        NativeTrustStore::load(tmp.path())
+            .set_native_enabled(true)
+            .unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        match host.load(&plugin) {
+            Err(HostError::NativePluginNotTrusted { id }) => assert_eq!(id, "host-sec"),
+            other => panic!("expected NativePluginNotTrusted, got {other:?}"),
+        }
+        assert!(!host.is_loaded("host-sec"));
+    }
+
+    #[test]
+    fn load_refuses_native_plugin_on_stale_acknowledgment() {
+        let (host, tmp) = test_host();
+        write_dummy_backend(tmp.path(), "host-sec");
+        // Acknowledged, but for a DIFFERENT library hash (the binary changed since
+        // it was trusted) → the stale ack does not authorize the current bytes.
+        let mut trust = NativeTrustStore::load(tmp.path());
+        trust.set_native_enabled(true).unwrap();
+        trust.acknowledge("host-sec", "some-other-hash").unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        match host.load(&plugin) {
+            Err(HostError::NativePluginNotTrusted { id }) => assert_eq!(id, "host-sec"),
+            other => panic!("expected NativePluginNotTrusted on hash mismatch, got {other:?}"),
+        }
+        assert!(!host.is_loaded("host-sec"));
+    }
+
+    #[test]
+    fn load_passes_trust_gate_with_a_valid_acknowledgment() {
+        let (host, tmp) = test_host();
+        let hash = write_dummy_backend(tmp.path(), "host-sec");
+        // Enabled globally AND acknowledged for the exact current library hash: the
+        // trust gate passes. The dummy file is not a real dylib, so the load then
+        // fails at `dlopen` (HostError::Open) — proving control reached the loader,
+        // i.e. the gate did NOT refuse.
+        let mut trust = NativeTrustStore::load(tmp.path());
+        trust.set_native_enabled(true).unwrap();
+        trust.acknowledge("host-sec", hash).unwrap();
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        match host.load(&plugin) {
+            Err(HostError::Open { .. }) => {}
+            Err(HostError::NativePluginsDisabled | HostError::NativePluginNotTrusted { .. }) => {
+                panic!("the trust gate must NOT refuse a plugin that is enabled and acknowledged")
+            }
+            other => panic!("expected the load to reach dlopen (Open error), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn frontend_only_plugin_loads_without_native_trust() {
+        let (host, _t) = test_host();
+        // A theme (frontend-only) plugin has no native backend, so the native-plugin
+        // trust gate does not apply: it loads (activates) even with native plugins
+        // globally off. The sandboxed-JS / theme surface is unaffected.
+        let plugin = installed(&theme_manifest_json());
+        host.load(&plugin)
+            .expect("a frontend-only plugin must load");
+        assert!(host.is_active("theme-only"));
+        assert!(!host.is_loaded("theme-only")); // no backend library
     }
 
     #[test]
