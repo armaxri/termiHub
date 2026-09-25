@@ -22,9 +22,11 @@ use tracing::{debug, error, info, warn};
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
 use termihub_core::protocol::methods::{
-    AgentShutdownParams, AgentShutdownResult, ConnectionDefinition, ConnectionListResult,
-    FolderDefinition, SessionAttachParams, SessionCloseParams, SessionCreateParams,
-    SessionCreateResult, SessionDetachParams, SessionListEntry,
+    AgentForwardCloseParams, AgentForwardDataParams, AgentShutdownParams, AgentShutdownResult,
+    ConnectionDefinition, ConnectionDeleteParams, ConnectionListResult, FolderCreateParams,
+    FolderDefinition, FolderDeleteParams, SessionAttachParams, SessionCloseParams,
+    SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionInputParams,
+    SessionListEntry, SessionListResult, SessionResizeParams,
 };
 
 use crate::agents_projection::projection::fold_agent_transition;
@@ -1399,10 +1401,16 @@ impl<R: Runtime> AgentConnectionManager<R> {
 
     /// Delete a session definition on the agent.
     pub fn delete_definition(&self, agent_id: &str, def_id: &str) -> Result<(), TerminalError> {
+        let params = serde_json::to_value(ConnectionDeleteParams {
+            id: def_id.to_string(),
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build connections.delete params: {e}"))
+        })?;
         self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTIONS_DELETE,
-            serde_json::json!({ "id": def_id }),
+            params,
         )?;
         Ok(())
     }
@@ -1414,10 +1422,19 @@ impl<R: Runtime> AgentConnectionManager<R> {
         name: &str,
         parent_id: Option<&str>,
     ) -> Result<AgentFolderInfo, TerminalError> {
+        let params = serde_json::to_value(FolderCreateParams {
+            name: name.to_string(),
+            parent_id: parent_id.map(str::to_string),
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!(
+                "Failed to build connections.folders.create params: {e}"
+            ))
+        })?;
         let result = self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTIONS_FOLDERS_CREATE,
-            serde_json::json!({ "name": name, "parent_id": parent_id }),
+            params,
         )?;
         serde_json::from_value::<FolderDefinition>(result)
             .map(AgentFolderInfo::from)
@@ -1442,10 +1459,18 @@ impl<R: Runtime> AgentConnectionManager<R> {
 
     /// Delete a folder on the agent.
     pub fn delete_folder(&self, agent_id: &str, folder_id: &str) -> Result<(), TerminalError> {
+        let params = serde_json::to_value(FolderDeleteParams {
+            id: folder_id.to_string(),
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!(
+                "Failed to build connections.folders.delete params: {e}"
+            ))
+        })?;
         self.send_request(
             agent_id,
             termihub_core::protocol::methods::CONNECTIONS_FOLDERS_DELETE,
-            serde_json::json!({ "id": folder_id }),
+            params,
         )?;
         Ok(())
     }
@@ -2226,53 +2251,64 @@ async fn agent_io_task<R: Runtime>(
                         AgentIoCommand::SessionInput { session_id, data } => {
                             request_id += 1;
                             let encoded = b64.encode(&data);
-                            if let Ok(line) = serialize_request(
-                                request_id,
-                                "connection.write",
-                                serde_json::json!({
-                                    "session_id": session_id,
-                                    "data": encoded,
-                                }),
-                            ) {
-                                let _ = channel.data(line.as_bytes()).await;
+                            // DUP-001: build the request from the shared param DTO.
+                            if let Ok(params) = serde_json::to_value(SessionInputParams {
+                                session_id,
+                                data: encoded,
+                            }) {
+                                if let Ok(line) = serialize_request(
+                                    request_id,
+                                    termihub_core::protocol::methods::CONNECTION_WRITE,
+                                    params,
+                                ) {
+                                    let _ = channel.data(line.as_bytes()).await;
+                                }
                             }
                         }
                         AgentIoCommand::SessionResize { session_id, cols, rows } => {
                             request_id += 1;
-                            if let Ok(line) = serialize_request(
-                                request_id,
-                                "connection.resize",
-                                serde_json::json!({
-                                    "session_id": session_id,
-                                    "cols": cols,
-                                    "rows": rows,
-                                }),
-                            ) {
-                                let _ = channel.data(line.as_bytes()).await;
+                            if let Ok(params) = serde_json::to_value(SessionResizeParams {
+                                session_id,
+                                cols,
+                                rows,
+                            }) {
+                                if let Ok(line) = serialize_request(
+                                    request_id,
+                                    termihub_core::protocol::methods::CONNECTION_RESIZE,
+                                    params,
+                                ) {
+                                    let _ = channel.data(line.as_bytes()).await;
+                                }
                             }
                         }
                         AgentIoCommand::AgentForwardData { stream_id, data } => {
                             request_id += 1;
                             let encoded = b64.encode(&data);
-                            if let Ok(line) = serialize_request(
-                                request_id,
-                                termihub_core::protocol::methods::AGENT_FORWARD_DATA,
-                                serde_json::json!({
-                                    "stream_id": stream_id,
-                                    "data": encoded,
-                                }),
-                            ) {
-                                let _ = channel.data(line.as_bytes()).await;
+                            if let Ok(params) = serde_json::to_value(AgentForwardDataParams {
+                                stream_id,
+                                data: encoded,
+                            }) {
+                                if let Ok(line) = serialize_request(
+                                    request_id,
+                                    termihub_core::protocol::methods::AGENT_FORWARD_DATA,
+                                    params,
+                                ) {
+                                    let _ = channel.data(line.as_bytes()).await;
+                                }
                             }
                         }
                         AgentIoCommand::AgentForwardClose { stream_id } => {
                             request_id += 1;
-                            if let Ok(line) = serialize_request(
-                                request_id,
-                                termihub_core::protocol::methods::AGENT_FORWARD_CLOSE,
-                                serde_json::json!({ "stream_id": stream_id }),
-                            ) {
-                                let _ = channel.data(line.as_bytes()).await;
+                            if let Ok(params) =
+                                serde_json::to_value(AgentForwardCloseParams { stream_id })
+                            {
+                                if let Ok(line) = serialize_request(
+                                    request_id,
+                                    termihub_core::protocol::methods::AGENT_FORWARD_CLOSE,
+                                    params,
+                                ) {
+                                    let _ = channel.data(line.as_bytes()).await;
+                                }
                             }
                         }
                         AgentIoCommand::RegisterSession { session_id, output_tx } => {
@@ -2813,12 +2849,11 @@ async fn list_recovered_session_ids(
         }
         match jsonrpc::parse_message(&resp) {
             Ok(jsonrpc::JsonRpcMessage::Response { id, result }) if id == req_id => {
-                let ids = result["sessions"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|s| s["session_id"].as_str().map(|s| s.to_string()))
-                    .collect();
+                // Parse the reply into the shared `SessionListResult` DTO (DUP-001);
+                // a malformed reply degrades to an empty id set.
+                let ids = serde_json::from_value::<SessionListResult>(result)
+                    .map(|r| r.sessions.into_iter().map(|e| e.session_id).collect())
+                    .unwrap_or_default();
                 return Some(ids);
             }
             Ok(jsonrpc::JsonRpcMessage::Error { id, .. }) if id == req_id => return None,
