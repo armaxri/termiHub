@@ -531,7 +531,9 @@ fn server_side_status_fold_updates_store_and_region() {
     let mut cache = ClientCache::from_snapshot(&snap);
     app.manage(projection);
 
-    fold_monitor_transition(app.handle(), |s| s.set_status("s1", MonitorStatus::Stale));
+    fold_monitor_transition(app.handle(), |s| {
+        s.set_status("s1", MonitorStatus::Stale, None)
+    });
 
     assert_eq!(
         store.get("s1").and_then(|e| e.status),
@@ -541,6 +543,45 @@ fn server_side_status_fold_updates_store_and_region() {
     assert_eq!(diffs.len(), 1);
     cache.apply(&diffs[0]);
     assert_eq!(cache.view["monitors"]["s1"]["status"], json!("stale"));
+}
+
+/// An `Offline` status folded with its reason reaches subscribers as
+/// `statusReason`, so the UI can say why the monitor went offline (#3301).
+#[test]
+fn server_side_offline_fold_projects_the_reason() {
+    use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason};
+
+    let app = tauri::test::mock_app();
+    let store = Arc::new(SystemMonitorStore::new());
+    store.open("s1", Some("host-a".to_string()), None);
+    store.opened("s1");
+    app.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SYSTEM_MONITORS_REGION, store.snapshot());
+    let sink = Arc::new(VecSink::new());
+    let snap = projection
+        .projector
+        .subscribe(SYSTEM_MONITORS_REGION, "sub", "C", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+    assert_eq!(cache.view["monitors"]["s1"]["statusReason"], json!(null));
+    app.manage(projection);
+
+    fold_monitor_transition(app.handle(), |s| {
+        s.set_status(
+            "s1",
+            MonitorStatus::Offline,
+            Some(MonitorStatusReason::Parse),
+        )
+    });
+
+    let diffs = sink.diffs();
+    assert_eq!(diffs.len(), 1);
+    cache.apply(&diffs[0]);
+    assert_eq!(cache.view["monitors"]["s1"]["status"], json!("offline"));
+    assert_eq!(cache.view["monitors"]["s1"]["statusReason"], json!("parse"));
 }
 
 /// The server-side stats fold reproduces the client `monitor.stats` route's store
