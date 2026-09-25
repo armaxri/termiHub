@@ -43,13 +43,13 @@ use termihub_core::connection::{Capabilities, ConnectionType, OutputReceiver, Se
 use termihub_core::errors::{CoreError, FileError, SessionError};
 use termihub_core::files::{FileBrowser, FileEntry};
 use termihub_core::monitoring::{
-    CollectLoopState, KillSignal, MonitorStatusSender, MonitoringProvider, MonitoringReceiver,
-    MonitoringSender, MonitoringSubscription, ProcessError, ProcessInfo, ProcessManager,
-    DEFAULT_STALE_THRESHOLD,
+    agent_recovery_budget, CollectLoopState, KillSignal, MonitorStatus, MonitorStatusSender,
+    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription, ProcessError,
+    ProcessInfo, ProcessManager, DEFAULT_STALE_THRESHOLD,
 };
 use termihub_core::protocol::methods::{
-    ConnectionTypesResult, FilesListResult, FilesReadResult, MonitoringSubscribeParams,
-    MonitoringUnsubscribeParams, ProcessesListResult,
+    ConnectionTypesResult, FilesListResult, FilesReadResult, MonitoringStatusNotification,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, ProcessesListResult,
 };
 
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -1049,11 +1049,32 @@ impl RemoteMonitoringProxy {
 ///   (3 × the stale threshold, 6 windows by default: ≈18 s at the 2 s default
 ///   interval, comfortably past the agent's 10 s collect timeout so a slow
 ///   first agent sample still lands), the monitor resolves to `Offline`
-///   instead of hanging. The agent keeps its own (typed parse-vs-transport)
-///   loop status local — the protocol has no status notification — so the
-///   desktop infers the bound from the missing samples. Unlike the direct
-///   providers the driver does not end on `Offline`: the subscription stays
-///   registered, so a sample that does arrive later still recovers to `Live`.
+///   instead of hanging. Unlike the direct providers the driver does not end
+///   on `Offline`: the subscription stays registered, so a sample that does
+///   arrive later still recovers to `Live`.
+///
+/// **Agent-reported status (#3321).** A current agent reports every
+/// collect-loop transition as a `connection.monitoring.status` notification,
+/// routed here on `reports_rx`. A report is applied as-is
+/// ([`CollectLoopState::apply_reported`]) — the agent observes its own collects
+/// and re-dials, which the desktop can only guess at. Once an agent has sent a
+/// report, a non-`Live` status it reported (or that the desktop inferred) is no
+/// longer advanced by missed samples while the agent transport is up: the agent
+/// will report `Reconnecting`/`Offline`/`Live` itself, and its reconnect
+/// campaign legitimately outlasts the desktop's short pre-`Live` bound. An older
+/// agent never reports, so the driver keeps inferring exactly as before.
+///
+/// **Bounded `Stale` (#3321).** With the agent transport up, a `Stale` monitor
+/// never escalates to `Reconnecting` (that needs a dead transport), so an agent
+/// whose own loop gave up and stopped streaming would leave the badge `Stale`
+/// forever. The driver therefore accrues the silent time while `Stale` (or, for
+/// a reporting agent, any non-`Live` status) with the transport up, and resolves
+/// `Offline` once it reaches [`agent_recovery_budget`] for the current interval
+/// — the worst case in which the agent's loop either recovers or ends itself
+/// (217 s at the 2 s default: 2 stale collects + 6 pre-`Live` collects at
+/// `interval + 10 s` collect timeout, plus the 121 s reconnect backoff). Any
+/// sample or agent report restarts the count, and a late sample still recovers
+/// `Offline` to `Live`.
 ///
 /// **Pause (SM-013, #3001).** Pausing an agent-hosted monitor unsubscribes the
 /// agent's poller (`set_paused` → `connection.monitoring.unsubscribe`), so the
@@ -1067,7 +1088,9 @@ impl RemoteMonitoringProxy {
 ///
 /// The loop ends when the consumer drops `stats_tx` (tab closed), the agent
 /// registration is torn down on `unsubscribe`/`disconnect` (closing `raw_rx`),
-/// or the provider is dropped (closing `paused_rx`).
+/// or the provider is dropped (closing `paused_rx`). A closed `reports_rx`
+/// only means no reports will arrive (inference continues).
+#[allow(clippy::too_many_arguments)]
 async fn drive_monitor_status<F>(
     mut raw_rx: MonitoringReceiver,
     stats_tx: MonitoringSender,
@@ -1076,10 +1099,16 @@ async fn drive_monitor_status<F>(
     grace: Duration,
     transport_alive: F,
     mut paused_rx: tokio::sync::watch::Receiver<bool>,
+    reports_rx: tokio::sync::mpsc::Receiver<MonitoringStatusNotification>,
 ) where
     F: Fn() -> bool + Send,
 {
     let mut loop_state = CollectLoopState::with_threshold(DEFAULT_STALE_THRESHOLD);
+    let mut reports_rx = Some(reports_rx);
+    // Whether this agent has ever reported its own status (#3321).
+    let mut agent_reports = false;
+    // Silent time accrued toward the `Stale` bound (#3321).
+    let mut silent = Duration::ZERO;
 
     // Honour a monitor that starts paused (the pause state survives a
     // re-subscribe on the provider).
@@ -1112,6 +1141,12 @@ async fn drive_monitor_status<F>(
                     // Raw channel closed: the subscription was torn down.
                     None => break,
                 },
+                // Pause is owned by the desktop: note that the agent reports,
+                // but do not apply a report while paused.
+                report = next_report(&mut reports_rx) => match report {
+                    Some(_) => agent_reports = true,
+                    None => reports_rx = None,
+                },
             }
             continue;
         }
@@ -1119,7 +1154,12 @@ async fn drive_monitor_status<F>(
         let interval = Duration::from_millis(interval_ms.load(Ordering::SeqCst).max(1));
         let freshness = interval.saturating_add(grace);
 
+        // `biased`: pause first, then agent reports, then samples. The agent
+        // sends a status report before the sample it concerns and the I/O task
+        // routes both in wire order, so draining reports first never applies a
+        // report older than a sample already seen.
         tokio::select! {
+            biased;
             changed = paused_rx.changed() => {
                 if changed.is_err() {
                     break; // provider dropped
@@ -1130,12 +1170,31 @@ async fn drive_monitor_status<F>(
                     }
                 }
             }
+            report = next_report(&mut reports_rx) => match report {
+                Some(report) => {
+                    // The agent's own view of its loop wins over inference.
+                    agent_reports = true;
+                    silent = Duration::ZERO;
+                    if let Some(status) = loop_state.apply_reported(report.status, report.reason) {
+                        debug!(
+                            host = %report.host,
+                            ?status,
+                            reason = ?report.reason,
+                            "Agent reported monitoring status"
+                        );
+                        let _ = status_tx.send(status).await;
+                    }
+                }
+                // Reports channel closed: this client routes none; keep inferring.
+                None => reports_rx = None,
+            },
             recv = tokio::time::timeout(freshness, raw_rx.recv()) => match recv {
                 Ok(Some(stats)) => {
                     // Fresh sample: forward it, then mark the loop Live.
                     if stats_tx.send(stats).await.is_err() {
                         break; // consumer gone
                     }
+                    silent = Duration::ZERO;
                     if let Some(status) = loop_state.on_success() {
                         let _ = status_tx.send(status).await;
                     }
@@ -1144,21 +1203,67 @@ async fn drive_monitor_status<F>(
                 // (no status emit — the session is going away).
                 Ok(None) => break,
                 Err(_elapsed) => {
-                    // No fresh sample within the window: count a missed collect.
-                    if let Some(status) = loop_state.on_failure() {
-                        let _ = status_tx.send(status).await;
-                    }
-                    // Sustained drop: if the agent transport itself is down, the
-                    // agent-connection layer is re-establishing it, so surface
-                    // Reconnecting rather than leaving the numbers merely dimmed.
-                    if loop_state.should_begin_reconnect() && !transport_alive() {
-                        if let Some(status) = loop_state.begin_reconnect() {
+                    let alive = transport_alive();
+                    // A reporting agent owns its non-Live transitions while its
+                    // transport is up (#3321); otherwise infer as before.
+                    let agent_owns_status = agent_reports
+                        && alive
+                        && matches!(
+                            loop_state.status(),
+                            MonitorStatus::Connecting
+                                | MonitorStatus::Stale
+                                | MonitorStatus::Reconnecting
+                        );
+                    if !agent_owns_status {
+                        // No fresh sample within the window: count a missed collect.
+                        if let Some(status) = loop_state.on_failure() {
                             let _ = status_tx.send(status).await;
                         }
+                        // Sustained drop: if the agent transport itself is down,
+                        // the agent-connection layer is re-establishing it, so
+                        // surface Reconnecting rather than leaving the numbers
+                        // merely dimmed.
+                        if loop_state.should_begin_reconnect() && !alive {
+                            if let Some(status) = loop_state.begin_reconnect() {
+                                let _ = status_tx.send(status).await;
+                            }
+                        }
+                    }
+                    // Bounded Stale (#3321): with the transport up, an agent that
+                    // stopped streaming has recovered or ended its loop within
+                    // its recovery budget — resolve Offline rather than leave the
+                    // badge Stale forever.
+                    let bounded = alive
+                        && (agent_owns_status || loop_state.status() == MonitorStatus::Stale);
+                    if bounded {
+                        silent = silent.saturating_add(freshness);
+                        if silent >= agent_recovery_budget(interval) {
+                            silent = Duration::ZERO;
+                            if let Some(status) = loop_state.exhaust_reconnect() {
+                                warn!(
+                                    budget_secs = agent_recovery_budget(interval).as_secs(),
+                                    "Agent monitor sent no sample or status within its \
+                                     recovery budget: Offline"
+                                );
+                                let _ = status_tx.send(status).await;
+                            }
+                        }
+                    } else {
+                        silent = Duration::ZERO;
                     }
                 }
             },
         }
+    }
+}
+
+/// Next agent status report, or pending forever once there is no channel.
+async fn next_report(
+    reports_rx: &mut Option<tokio::sync::mpsc::Receiver<MonitoringStatusNotification>>,
+) -> Option<MonitoringStatusNotification> {
+    match reports_rx {
+        Some(rx) => rx.recv().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -1175,6 +1280,22 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         self.agent_manager
             .register_monitoring_output(&self.agent_id, &self.monitoring_host, raw_tx)
             .map_err(|e| CoreError::Other(e.to_string()))?;
+
+        // Route the agent's own status reports (#3321). An older agent never
+        // sends them; the driver then infers status from the sample flow alone.
+        let (reports_tx, reports_rx) =
+            tokio::sync::mpsc::channel(MONITORING_STATUS_CHANNEL_CAPACITY);
+        if let Err(e) = self.agent_manager.register_monitoring_status_output(
+            &self.agent_id,
+            &self.monitoring_host,
+            reports_tx,
+        ) {
+            warn!(
+                host = %self.monitoring_host,
+                error = %e,
+                "Failed to route agent monitoring status reports; inferring status"
+            );
+        }
 
         // Send subscribe request to agent at the currently-configured cadence
         // (#1233); the frontend may later change it via `set_interval`.
@@ -1209,6 +1330,7 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             Duration::from_millis(MONITORING_FRESHNESS_GRACE_MS),
             move || agent_manager.is_connected(&agent_id),
             paused_rx,
+            reports_rx,
         ));
 
         Ok(MonitoringSubscription {
@@ -2650,8 +2772,44 @@ mod tests {
 
         use super::super::drive_monitor_status;
         use termihub_core::monitoring::{
-            CollectLoopState, MonitorStatus, MonitorStatusReceiver, SystemStats,
+            agent_recovery_budget, CollectLoopState, MonitorStatus, MonitorStatusReason,
+            MonitorStatusReceiver, SystemStats,
         };
+        use termihub_core::protocol::methods::MonitoringStatusNotification;
+
+        /// A reports channel whose sender is already gone: an older agent (or
+        /// client) that never reports status (#3321).
+        fn no_reports() -> mpsc::Receiver<MonitoringStatusNotification> {
+            mpsc::channel(1).1
+        }
+
+        fn report(
+            status: MonitorStatus,
+            reason: Option<MonitorStatusReason>,
+        ) -> MonitoringStatusNotification {
+            MonitoringStatusNotification {
+                host: "self".to_string(),
+                status,
+                reason,
+            }
+        }
+
+        /// Await the next status transition within a (paused-clock) deadline
+        /// long enough to cover the agent recovery budget.
+        async fn next_status_within(
+            rx: &mut MonitorStatusReceiver,
+            deadline: Duration,
+        ) -> MonitorStatus {
+            tokio::time::timeout(deadline, rx.recv())
+                .await
+                .expect("a status transition should arrive before the deadline")
+                .expect("status channel should stay open")
+        }
+
+        /// Test cadence: 20 ms interval + 30 ms grace = 50 ms freshness windows.
+        const INTERVAL_MS: u64 = 20;
+        const GRACE: Duration = Duration::from_millis(30);
+        const WINDOW: Duration = Duration::from_millis(50);
 
         /// A syntactically valid stats sample (values are irrelevant to the
         /// status logic — only that a sample *arrived*).
@@ -2707,6 +2865,7 @@ mod tests {
                 Duration::from_millis(30),
                 || true, // transport stays up: a merely-slow agent, not a drop
                 paused_rx,
+                no_reports(),
             ));
 
             // A fresh sample: the monitor reports Live and forwards the sample.
@@ -2753,6 +2912,7 @@ mod tests {
                 Duration::from_millis(30),
                 || false, // transport is down → reconnect underway
                 paused_rx,
+                no_reports(),
             ));
 
             // First sample establishes Live, then the stream stops.
@@ -2792,6 +2952,7 @@ mod tests {
                 Duration::from_millis(30),
                 || true, // agent reachable, it just never streams
                 paused_rx,
+                no_reports(),
             ));
 
             assert_eq!(
@@ -2842,6 +3003,7 @@ mod tests {
                 Duration::from_millis(30),
                 || true,
                 paused_rx,
+                no_reports(),
             ));
 
             // One window short of the bound (50 ms windows).
@@ -2880,6 +3042,7 @@ mod tests {
                 Duration::from_millis(30),
                 || false, // agent transport down → reconnect underway
                 paused_rx,
+                no_reports(),
             ));
 
             raw_tx.send(sample()).await.expect("send sample");
@@ -2919,6 +3082,7 @@ mod tests {
                 Duration::from_millis(30),
                 || true,
                 paused_rx,
+                no_reports(),
             ));
 
             assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Paused);
@@ -2960,6 +3124,7 @@ mod tests {
                 Duration::from_millis(30),
                 || true, // transport stays up throughout
                 paused_rx,
+                no_reports(),
             ));
 
             // Establish Live with a first sample.
@@ -3012,6 +3177,291 @@ mod tests {
             handle
                 .await
                 .expect("driver task should end when raw channel closes");
+        }
+
+        // ── Bounded Stale + agent-reported status (#3321) ────────────────
+
+        /// #3321 regression: an older agent (no status reports) whose loop gave
+        /// up stops streaming while its transport stays up. The monitor goes
+        /// `Stale` and — instead of staying `Stale` forever — resolves `Offline`
+        /// once the agent's full recovery budget has elapsed. A late sample
+        /// still recovers it to `Live`.
+        #[tokio::test(start_paused = true)]
+        async fn old_agent_stale_with_transport_up_resolves_offline_after_budget() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, mut stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(INTERVAL_MS));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                GRACE,
+                || true, // agent transport stays up; its monitor loop ended
+                paused_rx,
+                no_reports(),
+            ));
+
+            raw_tx.send(sample()).await.expect("send sample");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+            assert!(stats_rx.recv().await.is_some());
+            let last_sample = tokio::time::Instant::now();
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Stale);
+
+            let budget = agent_recovery_budget(Duration::from_millis(INTERVAL_MS));
+            assert_eq!(
+                next_status_within(&mut status_rx, budget * 2).await,
+                MonitorStatus::Offline,
+                "a Stale monitor with a live agent transport must not stay Stale forever"
+            );
+            let elapsed = last_sample.elapsed();
+            assert!(
+                elapsed >= budget && elapsed <= budget + WINDOW * 3,
+                "Offline once the agent recovery budget ({budget:?}) is spent, got {elapsed:?}"
+            );
+
+            raw_tx.send(sample()).await.expect("send late sample");
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Live,
+                "a late sample still recovers the monitor (#3322)"
+            );
+
+            drop(raw_tx);
+            handle.await.expect("driver ends when raw channel closes");
+        }
+
+        /// #3321: a sample arriving inside the bound keeps the monitor alive —
+        /// the bound restarts, so a merely-slow recovery never goes Offline.
+        #[tokio::test(start_paused = true)]
+        async fn a_sample_inside_the_stale_bound_recovers_and_restarts_it() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, _stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(INTERVAL_MS));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                GRACE,
+                || true,
+                paused_rx,
+                no_reports(),
+            ));
+
+            raw_tx.send(sample()).await.expect("send sample");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Stale);
+
+            let budget = agent_recovery_budget(Duration::from_millis(INTERVAL_MS));
+            tokio::time::sleep(budget - WINDOW * 4).await;
+            raw_tx.send(sample()).await.expect("send recovering sample");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+            // The next drop starts a fresh bound: Stale again, not Offline.
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Stale);
+
+            drop(raw_tx);
+            handle.await.expect("driver ends when raw channel closes");
+        }
+
+        /// #3321: a reporting agent's status is applied as-is, over inference —
+        /// including a parse-typed `Offline` the desktop could never infer.
+        #[tokio::test(start_paused = true)]
+        async fn agent_reported_status_is_applied_over_inference() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, mut stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let (reports_tx, reports_rx) = mpsc::channel(8);
+            // A long cadence, so no missed-sample inference interferes.
+            let interval = Arc::new(AtomicU64::new(60_000));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                GRACE,
+                || true,
+                paused_rx,
+                reports_rx,
+            ));
+
+            reports_tx
+                .send(report(MonitorStatus::Live, None))
+                .await
+                .expect("report");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+            // A sample after the matching report does not re-emit Live.
+            raw_tx.send(sample()).await.expect("send sample");
+            assert!(stats_rx.recv().await.is_some());
+
+            reports_tx
+                .send(report(
+                    MonitorStatus::Stale,
+                    Some(MonitorStatusReason::Transport),
+                ))
+                .await
+                .expect("report");
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Stale,
+                "the agent's Stale is applied immediately, without waiting two windows"
+            );
+            reports_tx
+                .send(report(
+                    MonitorStatus::Reconnecting,
+                    Some(MonitorStatusReason::Transport),
+                ))
+                .await
+                .expect("report");
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Reconnecting,
+                "Reconnecting is reported even though the agent transport is up"
+            );
+            reports_tx
+                .send(report(
+                    MonitorStatus::Offline,
+                    Some(MonitorStatusReason::Parse),
+                ))
+                .await
+                .expect("report");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Offline);
+
+            // A later sample (e.g. after a re-subscribe) still recovers.
+            raw_tx.send(sample()).await.expect("send sample");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+
+            drop(raw_tx);
+            handle.await.expect("driver ends when raw channel closes");
+        }
+
+        /// #3321: while a reporting agent says it is `Reconnecting` (transport
+        /// up), missed samples must not cut its reconnect campaign short with
+        /// the desktop's 6-window pre-Live bound — only the full recovery budget
+        /// resolves it `Offline`, and every agent report restarts that budget.
+        #[tokio::test(start_paused = true)]
+        async fn reporting_agent_reconnect_is_bounded_by_the_recovery_budget_only() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, _stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let (reports_tx, reports_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(INTERVAL_MS));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                GRACE,
+                || true,
+                paused_rx,
+                reports_rx,
+            ));
+
+            reports_tx
+                .send(report(MonitorStatus::Live, None))
+                .await
+                .expect("report");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+            reports_tx
+                .send(report(
+                    MonitorStatus::Reconnecting,
+                    Some(MonitorStatusReason::Transport),
+                ))
+                .await
+                .expect("report");
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Reconnecting
+            );
+
+            // Far past the pre-Live bound (6 windows): still Reconnecting.
+            let limit = CollectLoopState::new().pre_live_failure_limit();
+            tokio::time::sleep(WINDOW * limit * 10).await;
+            assert!(
+                status_rx.try_recv().is_err(),
+                "the agent's reconnect must not be cut short by the pre-Live bound"
+            );
+
+            // A repeated report (no visible change) restarts the budget.
+            reports_tx
+                .send(report(
+                    MonitorStatus::Reconnecting,
+                    Some(MonitorStatusReason::Transport),
+                ))
+                .await
+                .expect("report");
+            tokio::task::yield_now().await;
+            let restarted = tokio::time::Instant::now();
+
+            let budget = agent_recovery_budget(Duration::from_millis(INTERVAL_MS));
+            assert_eq!(
+                next_status_within(&mut status_rx, budget * 2).await,
+                MonitorStatus::Offline,
+                "an agent that goes silent mid-reconnect is still bounded"
+            );
+            assert!(
+                restarted.elapsed() >= budget,
+                "the report restarted the budget"
+            );
+
+            // The agent finally reports Live again.
+            reports_tx
+                .send(report(MonitorStatus::Live, None))
+                .await
+                .expect("report");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+
+            drop(raw_tx);
+            handle.await.expect("driver ends when raw channel closes");
+        }
+
+        /// #3321: an agent report never overrides a desktop pause.
+        #[tokio::test(start_paused = true)]
+        async fn agent_reports_are_ignored_while_paused() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, _stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let (reports_tx, reports_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(INTERVAL_MS));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(true);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                GRACE,
+                || true,
+                paused_rx,
+                reports_rx,
+            ));
+
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Paused);
+            reports_tx
+                .send(report(
+                    MonitorStatus::Offline,
+                    Some(MonitorStatusReason::Transport),
+                ))
+                .await
+                .expect("report");
+            tokio::time::sleep(Duration::from_secs(600)).await;
+            assert!(
+                status_rx.try_recv().is_err(),
+                "a paused monitor holds Paused regardless of agent reports"
+            );
+
+            drop(raw_tx);
+            handle.await.expect("driver ends when raw channel closes");
         }
     }
 }

@@ -21,6 +21,7 @@ use tracing::{debug, error, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
+use termihub_core::protocol::methods::MonitoringStatusNotification;
 use termihub_core::protocol::methods::{
     AgentForwardCloseParams, AgentForwardDataParams, AgentShutdownParams, AgentShutdownResult,
     ConnectionCreateParams, ConnectionDefinition, ConnectionDeleteParams, ConnectionListResult,
@@ -97,7 +98,12 @@ pub(crate) enum AgentIoCommand {
         session_id: String,
         monitoring_tx: MonitoringSender,
     },
-    /// Unregister a session's monitoring sender.
+    /// Attach a status sender to a registered monitoring route (#3321).
+    RegisterMonitoringStatus {
+        session_id: String,
+        status_tx: MonitoringStatusSender,
+    },
+    /// Unregister a session's monitoring sender (and its status sender).
     UnregisterMonitoring { session_id: String },
     /// Send the operator's ssh-agent reply bytes for a forwarded stream to the
     /// agent (`agent.forward.data`, desktop→agent leg of the relay, #1727).
@@ -333,6 +339,23 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         remote_session_id: &str,
     ) -> Result<(), TerminalError>;
 
+    /// Route the agent's `connection.monitoring.status` reports for an
+    /// already-registered monitored host to `status_tx` (#3321).
+    ///
+    /// Call after [`register_monitoring_output`](Self::register_monitoring_output);
+    /// [`unregister_monitoring_output`](Self::unregister_monitoring_output)
+    /// drops it too. The default is a no-op: a client that never forwards
+    /// status reports leaves the monitor on sample-flow inference, exactly as
+    /// against an older agent that never sends them.
+    fn register_monitoring_status_output(
+        &self,
+        _agent_id: &str,
+        _remote_session_id: &str,
+        _status_tx: MonitoringStatusSender,
+    ) -> Result<(), TerminalError> {
+        Ok(())
+    }
+
     /// Send input to a session (fire-and-forget).
     fn send_session_input(
         &self,
@@ -364,6 +387,27 @@ pub trait AgentRpcClient: Send + Sync + 'static {
 /// keyed by `agent_id`. Lets a Cancel while connecting abort the blocking
 /// handshake promptly instead of waiting out the connect timeout (G1, #1235).
 type ConnectingRegistry = Arc<Mutex<HashMap<String, CancellationToken>>>;
+
+/// Sender for an agent-hosted monitor's `connection.monitoring.status`
+/// reports (#3321).
+pub type MonitoringStatusSender = mpsc::Sender<MonitoringStatusNotification>;
+
+/// Where the I/O task routes one monitored host's notifications: its
+/// `connection.monitoring.data` samples, and — once the monitor asked for them —
+/// its `connection.monitoring.status` reports (#3321).
+pub(crate) struct MonitoringRoute {
+    stats: MonitoringSender,
+    status: Option<MonitoringStatusSender>,
+}
+
+impl From<MonitoringSender> for MonitoringRoute {
+    fn from(stats: MonitoringSender) -> Self {
+        Self {
+            stats,
+            status: None,
+        }
+    }
+}
 
 /// Register a cancellation token for an in-flight agent connect.
 fn register_connecting_token(
@@ -1561,6 +1605,31 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
     }
 
+    /// Route `connection.monitoring.status` reports for a registered monitored
+    /// host to `status_tx` (#3321).
+    pub fn register_monitoring_status_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        status_tx: MonitoringStatusSender,
+    ) -> Result<(), TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+
+        let conn = agents.get(agent_id).ok_or_else(|| {
+            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+        })?;
+
+        conn.command_tx
+            .send(AgentIoCommand::RegisterMonitoringStatus {
+                session_id: remote_session_id.to_string(),
+                status_tx,
+            })
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
+    }
+
     /// Unregister the monitoring channel for a remote session.
     pub fn unregister_monitoring_output(
         &self,
@@ -1839,6 +1908,20 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
         AgentConnectionManager::unregister_monitoring_output(self, agent_id, remote_session_id)
+    }
+
+    fn register_monitoring_status_output(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        status_tx: MonitoringStatusSender,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::register_monitoring_status_output(
+            self,
+            agent_id,
+            remote_session_id,
+            status_tx,
+        )
     }
 
     fn send_session_input(
@@ -2196,7 +2279,7 @@ async fn agent_io_task<R: Runtime>(
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut line_buf = String::new();
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
-    let mut monitoring_outputs: HashMap<String, MonitoringSender> = HashMap::new();
+    let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
     let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, String>>> =
         HashMap::new();
     // Desktop end of the ssh-agent relay (#1727): bridges forwarded ssh-agent
@@ -2333,7 +2416,12 @@ async fn agent_io_task<R: Runtime>(
                             session_outputs.remove(&session_id);
                         }
                         AgentIoCommand::RegisterMonitoring { session_id, monitoring_tx } => {
-                            monitoring_outputs.insert(session_id, monitoring_tx);
+                            monitoring_outputs.insert(session_id, monitoring_tx.into());
+                        }
+                        AgentIoCommand::RegisterMonitoringStatus { session_id, status_tx } => {
+                            if let Some(route) = monitoring_outputs.get_mut(&session_id) {
+                                route.status = Some(status_tx);
+                            }
                         }
                         AgentIoCommand::UnregisterMonitoring { session_id } => {
                             monitoring_outputs.remove(&session_id);
@@ -2769,7 +2857,7 @@ pub(crate) async fn resolve_hosted_sessions_after_reconnect<R: tauri::Runtime>(
 /// for sessions that did not survive the reconnect are released (G7, #1239).
 fn reconcile_output_senders(
     session_outputs: &mut HashMap<String, OutputSender>,
-    monitoring_outputs: &mut HashMap<String, MonitoringSender>,
+    monitoring_outputs: &mut HashMap<String, MonitoringRoute>,
     live_ids: &std::collections::HashSet<String>,
 ) {
     session_outputs.retain(|id, _| live_ids.contains(id));
@@ -2902,7 +2990,7 @@ fn dispatch_agent_notification<R: Runtime>(
     method: &str,
     params: &Value,
     session_outputs: &HashMap<String, OutputSender>,
-    monitoring_outputs: &HashMap<String, MonitoringSender>,
+    monitoring_outputs: &HashMap<String, MonitoringRoute>,
     b64: &base64::engine::GeneralPurpose,
 ) {
     if method == termihub_core::protocol::methods::AGENT_UPDATE_AVAILABLE {
@@ -2956,16 +3044,21 @@ fn handle_agent_forward_notification(
 
 /// Handle a notification from the agent.
 ///
-/// Routes `connection.output` to session output channels and
-/// `connection.monitoring.data` to monitoring channels.
+/// Routes `connection.output` to session output channels,
+/// `connection.monitoring.data` to monitoring channels, and
+/// `connection.monitoring.status` to the monitor's status channel when it
+/// registered one (#3321). Any other method — including one a newer agent adds
+/// that this build does not know — is ignored.
 fn handle_notification(
     method: &str,
     params: &Value,
     session_outputs: &HashMap<String, OutputSender>,
-    monitoring_outputs: &HashMap<String, MonitoringSender>,
+    monitoring_outputs: &HashMap<String, MonitoringRoute>,
     b64: &base64::engine::GeneralPurpose,
 ) {
-    use termihub_core::protocol::methods::{CONNECTION_MONITORING_DATA, CONNECTION_OUTPUT};
+    use termihub_core::protocol::methods::{
+        CONNECTION_MONITORING_DATA, CONNECTION_MONITORING_STATUS, CONNECTION_OUTPUT,
+    };
     match method {
         m if m == CONNECTION_OUTPUT => {
             let session_id = match params["session_id"].as_str() {
@@ -2994,8 +3087,23 @@ fn handle_notification(
                 Ok(s) => s,
                 Err(_) => return,
             };
-            if let Some(monitoring_tx) = monitoring_outputs.get(host) {
-                let _ = monitoring_tx.try_send(stats);
+            if let Some(route) = monitoring_outputs.get(host) {
+                let _ = route.stats.try_send(stats);
+            }
+        }
+        m if m == CONNECTION_MONITORING_STATUS => {
+            // An unparseable report (e.g. a status value this build does not
+            // know) is dropped; the monitor keeps inferring from samples.
+            let report: MonitoringStatusNotification = match serde_json::from_value(params.clone())
+            {
+                Ok(r) => r,
+                Err(_) => return,
+            };
+            if let Some(status_tx) = monitoring_outputs
+                .get(&report.host)
+                .and_then(|route| route.status.as_ref())
+            {
+                let _ = status_tx.try_send(report);
             }
         }
         _ => {}
