@@ -783,3 +783,30 @@ fn reflect_saved_agents_with_an_empty_list_clears_membership() {
         json!({ "agents": [], "sessions": {}, "definitions": {}, "folders": {} })
     );
 }
+
+/// SM-020 slice 4 behavior-preservation lock: unifying `AgentConnectionState`
+/// onto the canonical `SessionStatus` must not change a single wire byte for the
+/// four states the agent uses. This asserts each state's serialised form in the
+/// projection view model is exactly the string the frontend badge keys on
+/// (`connectionStateLabel` / `agentStateTone`), so the IPC payload and every
+/// rendered badge are byte-identical to the former dedicated enum.
+#[test]
+fn connection_state_serialises_byte_identically_for_the_four_agent_states() {
+    let cases = [
+        (AgentConnectionState::Disconnected, "disconnected"),
+        (AgentConnectionState::Connecting, "connecting"),
+        (AgentConnectionState::Connected, "connected"),
+        (AgentConnectionState::Reconnecting, "reconnecting"),
+    ];
+    for (state, wire) in cases {
+        let store = AgentsStore::new();
+        store.add("a1", "One", config("h1"), settings());
+        store.set_status("a1", state, None);
+        let view = store.snapshot();
+        assert_eq!(
+            view["agents"][0]["connectionState"],
+            json!(wire),
+            "state {state:?} must serialise to {wire:?} (unchanged wire contract)"
+        );
+    }
+}
