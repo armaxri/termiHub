@@ -421,12 +421,22 @@ export function reconcileNode(
  * optimistic dispatch rolls its overlay back at
  * once ({@link ProjectionClient.dispatchOptimistic}), leaving the region on the
  * backend's view while `appStore` holds the local result.
+ *
+ * **Transactional coupled rollback (SM-027).** The `ProjectionClient` overlay only
+ * reverts the panel-tree **structure** on rejection. A layout reducer also commits
+ * its **coupled non-layout fields** (`tabContent`, `zoomedTabId`, the per-tab maps)
+ * to `appStore` synchronously — those live outside the region and would otherwise
+ * stay mutated after a rejection, diverging the store. `onReject`, supplied by the
+ * caller, restores exactly those fields to their pre-apply values so a rejection is
+ * all-or-nothing; it is invoked on every fallback path (no transport, rejected ack,
+ * failed dispatch) and never on success (where the committed fields are kept).
  */
 export function mirrorLayoutIntent(
   kind: string,
   payload: Record<string, unknown>,
   preSnapshot: LayoutSnapshot,
-  postSnapshot: LayoutSnapshot
+  postSnapshot: LayoutSnapshot,
+  onReject?: () => void
 ): void {
   // No-op guard (#2283 slice E1): a reducer that made no structural change — a
   // defensive no-op such as dragging a tab onto its own group, or moving a tab
@@ -441,8 +451,11 @@ export function mirrorLayoutIntent(
     client = layoutRegionClient();
   } catch (err) {
     // No transport (e.g. non-Tauri without a socket): a failed mirror is a
-    // resilience event, not a crash — the next reseed re-syncs the region.
+    // resilience event, not a crash — the next reseed re-syncs the region. The
+    // optimistic overlay never applied, so revert the coupled fields too (SM-027)
+    // to leave `appStore` fully on its pre-apply state.
     logBridgeFallback(kind, err);
+    onReject?.();
     return;
   }
 
@@ -474,10 +487,18 @@ export function mirrorLayoutIntent(
     .dispatchOptimistic(intent, () => postView)
     .then((ack) => {
       if (ack.status === "rejected") {
+        // The overlay rolled the structure back ({@link dispatchOptimistic}); revert
+        // the coupled non-layout fields alongside it so the store is all-or-nothing.
         logBridgeFallback(kind, new Error(ack.error?.message ?? "rejected"));
+        onReject?.();
       }
     })
-    .catch((err) => logBridgeFallback(kind, err));
+    .catch((err) => {
+      // The dispatch threw: the overlay was rolled back and the caller's fallback
+      // path runs on a clean structure — revert the coupled fields to match.
+      logBridgeFallback(kind, err);
+      onReject?.();
+    });
 }
 
 /**
