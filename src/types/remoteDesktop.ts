@@ -10,6 +10,13 @@
 /** Maximum automatic reconnect attempts (mirrors Rust `MAX_RECONNECT_ATTEMPTS`). */
 export const MAX_RECONNECT_ATTEMPTS = 3;
 
+/**
+ * Upper bound on either framebuffer dimension, in pixels (mirrors Rust
+ * `MAX_FRAMEBUFFER_DIMENSION`, MOCK-011). The backend frame pump already drops
+ * frames above it; the canvas re-checks before sizing its offscreen buffer.
+ */
+export const MAX_FRAMEBUFFER_DIMENSION = 8192;
+
 /** How the remote framebuffer fills the tab. */
 export type ScaleMode = "fit" | "pixel" | "match";
 

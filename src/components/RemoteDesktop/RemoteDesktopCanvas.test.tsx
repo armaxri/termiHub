@@ -4,6 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { flushAsync } from "@/test/flushAsync";
 import { installCanvas2DStub, type CanvasStubHandle } from "@/test/canvasMock";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
+import { MAX_FRAMEBUFFER_DIMENSION } from "@/types/remoteDesktop";
 import type {
   RemoteDesktopFramePayload,
   RemoteDesktopCursorPayload,
@@ -190,6 +191,50 @@ describe("RemoteDesktopCanvas", () => {
     expect(onDimensions).not.toHaveBeenCalled();
     // Nothing was painted onto the visible canvas.
     expect(canvasStub.contextFor(canvasEl()).drawImage).not.toHaveBeenCalled();
+  });
+
+  // MOCK-011: the backend frame pump enforces the shared bound, but the canvas
+  // must not trust the wire either — it sizes an offscreen canvas from these.
+  it("ignores a frame whose framebuffer exceeds the shared cap without resizing", () => {
+    const { onDimensions, onFirstFrame } = render();
+    emitFrame({
+      session_id: SESSION,
+      width: MAX_FRAMEBUFFER_DIMENSION + 1,
+      height: 65_535,
+      rects: [],
+    });
+    expect(onDimensions).not.toHaveBeenCalled();
+    expect(onFirstFrame).not.toHaveBeenCalled();
+    expect(canvasStub.contextFor(canvasEl()).drawImage).not.toHaveBeenCalled();
+  });
+
+  it("ignores a zero-sized framebuffer", () => {
+    const { onDimensions } = render();
+    emitFrame({ session_id: SESSION, width: 0, height: 50, rects: [] });
+    expect(onDimensions).not.toHaveBeenCalled();
+  });
+
+  it("skips dirty rects that fall outside the framebuffer or are malformed", () => {
+    render({ scaleMode: "pixel" });
+    const inBounds = { x: 0, y: 0, width: 2, height: 2, data: new Array<number>(16).fill(0) };
+    emitFrame({
+      session_id: SESSION,
+      width: 10,
+      height: 10,
+      rects: [
+        // Spills past the right/bottom edge.
+        { x: 9, y: 9, width: 2, height: 2, data: new Array<number>(16).fill(0) },
+        // Wrong byte length.
+        { x: 0, y: 0, width: 2, height: 2, data: new Array<number>(15).fill(0) },
+        // Zero-sized.
+        { x: 0, y: 0, width: 0, height: 2, data: [] },
+        inBounds,
+      ],
+    });
+    const fb = canvasStub.contextFor(canvasEl()).drawImage.mock.calls[0][0] as HTMLCanvasElement;
+    const put = canvasStub.contextFor(fb).putImageData;
+    expect(put).toHaveBeenCalledOnce();
+    expect(put.mock.calls[0].slice(1)).toEqual([0, 0]);
   });
 
   it("fit mode scales uniformly and letterboxes into the container", () => {
