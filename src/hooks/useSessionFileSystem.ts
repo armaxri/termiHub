@@ -9,6 +9,8 @@ import {
   sessionDeleteFile,
   sessionRenameFile,
   sessionMkdir,
+  sessionListFiles,
+  sessionCopy,
   sessionSetPermissions,
   sessionSetOwner,
   sessionCreateSymlink,
@@ -18,6 +20,7 @@ import {
   sessionVscodeOpenRemote,
   sessionHasExecCapability,
   sessionSupportsTransferQueue,
+  localListDir,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
@@ -418,73 +421,144 @@ export function useSessionFileSystem() {
     const clipboard = currentFileBrowsersView().clipboard;
     if (!clipboard || !sessionFileBrowserId) return;
 
+    const destSession = sessionFileBrowserId;
     const destDir = sessionCurrentPath;
 
-    // Resolves to whether the leg drove the dedicated (event-emitting) transfer
-    // channel — `true` lets the caller defer the success toast to the event path,
-    // `false` marks a byte-based round-trip that owns its own toast (#2906).
-    const pasteOne = async (clipEntry: FileEntry): Promise<boolean> => {
-      const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
+    // The clipboard's source session (and whether it is SFTP-backed) is constant
+    // across every entry, so resolve it once rather than probing per file. A
+    // session source keys on `terminalSessionId` — SSH flows through here too
+    // since the convergence (#2421), so the retired `sftpSessionId` field is
+    // unused; a same-session paste falls back to the active session id. `null`
+    // for a local source.
+    const srcSession =
+      clipboard.sourceMode === "session" ? (clipboard.terminalSessionId ?? destSession) : null;
+    const srcSftp =
+      srcSession === null
+        ? false
+        : srcSession === destSession
+          ? sftpCapable
+          : await sessionHasExecCapability(srcSession)
+              .then(() => true)
+              .catch(() => false);
 
+    // Copy ONE file entry from `srcPath` → `destPath`. Resolves to whether the
+    // leg drove the dedicated (event-emitting) transfer channel — `true` lets the
+    // caller defer the success toast to the event path, `false` marks a byte-based
+    // round-trip that owns its own toast (#2906). `deleteSourceOnCut` is `false`
+    // during a directory recursion (the whole source subtree is removed once,
+    // after it has copied) and `true` for a top-level single-file cut.
+    const pasteFile = async (
+      srcPath: string,
+      destPath: string,
+      deleteSourceOnCut: boolean
+    ): Promise<boolean> => {
       if (clipboard.sourceMode === "session") {
-        // Cross-pane paste keys the source session on `terminalSessionId` (the
-        // session id) — SSH now flows through here too since the convergence
-        // (#2421), so the retired `sftpSessionId` clipboard field is unused.
-        const srcId = clipboard.terminalSessionId;
-        if (clipboard.operation === "cut" && srcId === sessionFileBrowserId) {
+        const src = srcSession ?? destSession;
+        if (clipboard.operation === "cut" && src === destSession) {
           // Same-session move: a metadata rename with no transfer-progress event.
-          await sessionRenameFile(sessionFileBrowserId, clipEntry.path, destPath);
+          await sessionRenameFile(destSession, srcPath, destPath);
           return false;
+        }
+        // Cross-session or copy. When BOTH endpoints are SFTP-backed, stream the
+        // copy directly source→destination through the desktop as ONE tracked
+        // transfer — no local temp file (PROD-0013). This replaces the pre-#2421
+        // download-to-temp + upload dance (two rows + a local disk round-trip).
+        // The single row's name and remote path come from the destination remote
+        // path (#1531/#1573); the backend derives `file_name` from it. A
+        // byte-based endpoint (Docker/FTP/agent) has no SFTP channel, so it keeps
+        // the read/write fallback below.
+        let tracked: boolean;
+        if (sftpCapable && srcSftp) {
+          await startRemoteCopy(src, srcPath, destSession, destPath);
+          tracked = true;
         } else {
-          // Cross-session or copy. When BOTH endpoints are SFTP-backed, stream
-          // the copy directly source→destination through the desktop as ONE
-          // tracked transfer — no local temp file (PROD-0013). This replaces the
-          // pre-#2421 download-to-temp + upload dance (two rows + a local disk
-          // round-trip). The single row's name and remote path come from the
-          // destination remote path (#1531/#1573); the backend derives
-          // `file_name` from it. A byte-based endpoint (Docker/FTP/agent) has no
-          // SFTP channel, so it keeps the read/write fallback below.
-          const srcSession = srcId ?? sessionFileBrowserId;
-          const srcSftp =
-            srcSession === sessionFileBrowserId
-              ? sftpCapable
-              : await sessionHasExecCapability(srcSession)
-                  .then(() => true)
-                  .catch(() => false);
-          let tracked: boolean;
-          if (sftpCapable && srcSftp) {
-            await startRemoteCopy(srcSession, clipEntry.path, sessionFileBrowserId, destPath);
-            tracked = true;
-          } else {
-            // Byte-based fallback (Docker / FTP / remote-agent, or a mixed
-            // transport where an endpoint has no SFTP channel): blocking
-            // read/write round-trip, which registers no tracked transfer.
-            const data = await sessionReadFile(srcSession, clipEntry.path);
-            await sessionWriteFile(sessionFileBrowserId, destPath, data);
-            tracked = false;
-          }
-          if (clipboard.operation === "cut") {
-            await sessionDeleteFile(srcSession, clipEntry.path);
-          }
-          return tracked;
+          // Byte-based fallback (Docker / FTP / remote-agent, or a mixed
+          // transport where an endpoint has no SFTP channel): blocking read/write
+          // round-trip, which registers no tracked transfer.
+          const data = await sessionReadFile(src, srcPath);
+          await sessionWriteFile(destSession, destPath, data);
+          tracked = false;
         }
-      } else if (clipboard.sourceMode === "local") {
-        // local→session: upload the local file to the remote destination.
-        if (transferQueueCapable) {
-          // Queue-capable (SFTP/FTP): register a tracked transfer on the rich
-          // queue engine (#2421, PROD-010).
-          await startUpload(sessionFileBrowserId, clipEntry.path, destPath);
-          return true;
+        if (clipboard.operation === "cut" && deleteSourceOnCut) {
+          await sessionDeleteFile(src, srcPath);
         }
-        // Byte-based fallback (Docker / remote-agent): blocking round-trip
-        // with no transfer-progress event.
-        const { readFile } = await import("@tauri-apps/plugin-fs");
-        const data = await readFile(clipEntry.path);
-        await sessionWriteFile(sessionFileBrowserId, destPath, data);
+        return tracked;
+      }
+      // local→session: upload the local file to the remote destination.
+      if (transferQueueCapable) {
+        // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
+        // engine (#2421, PROD-010).
+        await startUpload(destSession, srcPath, destPath);
+        return true;
+      }
+      // Byte-based fallback (Docker / remote-agent): blocking round-trip with no
+      // transfer-progress event.
+      const { readFile } = await import("@tauri-apps/plugin-fs");
+      const data = await readFile(srcPath);
+      await sessionWriteFile(destSession, destPath, data);
+      return false;
+    };
+
+    // Recursively copy a DIRECTORY from `srcDir` → `destPath` so a pasted folder
+    // lands with ALL of its contents instead of being silently dropped (audit
+    // PROD-004 — the pre-fix path treated every clipboard entry as a single file).
+    // Resolves to whether any leg drove the dedicated (event-emitting) channel.
+    const pasteDirectory = async (srcDir: string, destPath: string): Promise<boolean> => {
+      // Same-session move: rename the directory in one metadata op (recursive
+      // server-side); no per-file work.
+      if (
+        clipboard.sourceMode === "session" &&
+        clipboard.operation === "cut" &&
+        srcSession === destSession
+      ) {
+        await sessionRenameFile(destSession, srcDir, destPath);
         return false;
       }
-      // sftp→session: not supported (no legacy SFTP source pane remains post-#2421)
-      return false;
+      // Same-session copy on an SFTP-backed session: one server-side recursive
+      // copy via the file-browser `copy()` capability (#3201) — no desktop
+      // round-trip, no per-file enumeration. Byte-based backends reject
+      // `session_copy`, so they fall through to the manual recursion below.
+      if (
+        clipboard.sourceMode === "session" &&
+        clipboard.operation === "copy" &&
+        srcSession === destSession &&
+        sftpCapable
+      ) {
+        await sessionCopy(destSession, srcDir, destPath);
+        return false;
+      }
+      // Cross-session, byte-based, or local→session: recreate the directory on
+      // the destination, then copy each child — recursing into subdirectories and
+      // transferring each file (reusing the session transfer queue / byte
+      // fallback via `pasteFile`).
+      await sessionMkdir(destSession, destPath);
+      const children =
+        clipboard.sourceMode === "local"
+          ? await localListDir(srcDir)
+          : await sessionListFiles(srcSession ?? destSession, srcDir);
+      let tracked = false;
+      for (const child of children) {
+        const childDest = `${destPath}/${child.name}`;
+        const childTracked = child.isDirectory
+          ? await pasteDirectory(child.path, childDest)
+          : await pasteFile(child.path, childDest, false);
+        tracked = tracked || childTracked;
+      }
+      // Cross-session / byte-based cut: remove the copied source subtree once the
+      // whole tree has landed (a same-session cut renamed above and never reaches
+      // here; a local source is never mutated by a paste).
+      if (clipboard.operation === "cut" && clipboard.sourceMode === "session") {
+        await sessionDeleteFile(srcSession ?? destSession, srcDir);
+      }
+      return tracked;
+    };
+
+    // Resolves to whether the leg drove the dedicated (event-emitting) channel.
+    const pasteOne = async (clipEntry: FileEntry): Promise<boolean> => {
+      const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
+      return clipEntry.isDirectory
+        ? pasteDirectory(clipEntry.path, destPath)
+        : pasteFile(clipEntry.path, destPath, true);
     };
 
     for (const clipEntry of clipboard.entries) {

@@ -26,7 +26,7 @@ vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
   sftpClose: vi.fn(),
   sftpListDir: vi.fn(),
-  localListDir: vi.fn(),
+  localListDir: vi.fn(() => Promise.resolve([])),
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   sessionListFiles: vi.fn(() => Promise.resolve([])),
   sessionReadFile: vi.fn(() => Promise.resolve(new Uint8Array())),
@@ -34,6 +34,7 @@ vi.mock("@/services/api", () => ({
   sessionDeleteFile: vi.fn(() => Promise.resolve()),
   sessionRenameFile: vi.fn(() => Promise.resolve()),
   sessionMkdir: vi.fn(() => Promise.resolve()),
+  sessionCopy: vi.fn(() => Promise.resolve()),
   sessionSetPermissions: vi.fn(() => Promise.resolve()),
   sessionDownload: vi.fn(() => Promise.resolve(0)),
   sessionUpload: vi.fn(() => Promise.resolve(0)),
@@ -1033,5 +1034,227 @@ describe("useSessionFileSystem — FTP transport (queue-capable, not SFTP)", () 
     expect(vi.mocked(sessionVscodeOpenRemote)).not.toHaveBeenCalled();
     // chmod/chown/symlink stay SFTP-only.
     expect(api.supportsPermissions).toBe(false);
+  });
+});
+
+// PROD-004: pasting a DIRECTORY must copy the whole subtree, not silently drop
+// its contents. Same-backend copies route through the recursive server-side
+// `copy()` capability (#3201, `session_copy`); cross-session / byte-based /
+// local→session pastes recreate the destination tree (`session_mkdir`) and copy
+// each child, reusing the session transfer queue (#3237).
+import { sessionCopy, sessionListFiles, localListDir } from "@/services/api";
+import type { FileEntry } from "@/types/connection";
+
+function dirEntry(name: string, path: string): FileEntry {
+  return {
+    name,
+    path,
+    isDirectory: true,
+    size: 0,
+    modified: "",
+    permissions: null,
+    writable: null,
+  };
+}
+function fileEntry(name: string, path: string): FileEntry {
+  return {
+    name,
+    path,
+    isDirectory: false,
+    size: 1,
+    modified: "",
+    permissions: null,
+    writable: null,
+  };
+}
+
+describe("useSessionFileSystem — recursive directory paste (PROD-004)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+
+  type SessionFs = ReturnType<typeof useSessionFileSystem>;
+
+  async function mountHook(sessionId: string): Promise<SessionFs> {
+    useAppStore.setState({ sessionFileBrowserId: sessionId });
+    seedFileBrowsers({
+      session: { path: "/remote/dir", entries: [], loading: false, error: null },
+    });
+    let api: SessionFs | undefined;
+    function Harness() {
+      api = useSessionFileSystem();
+      return null;
+    }
+    await act(async () => {
+      root.render(React.createElement(Harness));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    return api!;
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+  });
+
+  it("routes a same-session SFTP directory copy through the recursive copy() capability", async () => {
+    vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
+    const api = await mountHook("ssh-1");
+    useAppStore.getState().setFileClipboard({
+      entries: [dirEntry("folder", "/remote/src/folder")],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "ssh-1",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    // ONE server-side recursive copy — no per-file enumeration, no single-file
+    // stream of the directory path (the pre-fix silent-skip bug).
+    expect(vi.mocked(sessionCopy)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sessionCopy)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/remote/src/folder",
+      "/remote/dir/folder"
+    );
+    expect(vi.mocked(sessionCopyRemote)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionReadFile)).not.toHaveBeenCalled();
+    // The source directory is never enumerated — the copy is one server-side op.
+    // (A post-paste refresh may list the *destination* dir, which is fine.)
+    expect(vi.mocked(sessionListFiles)).not.toHaveBeenCalledWith(
+      expect.anything(),
+      "/remote/src/folder"
+    );
+    // Untracked single op → the paste helper owns the success toast.
+    expect(vi.mocked(toast.success)).toHaveBeenCalledTimes(1);
+  });
+
+  it("recursively copies a cross-session SFTP directory, recreating the tree and copying each file", async () => {
+    vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
+    vi.mocked(sessionCopyRemote).mockResolvedValue(0);
+    vi.mocked(sessionListFiles).mockImplementation(async (_id, path) => {
+      if (path === "/remote/src/folder") {
+        return [
+          fileEntry("a.txt", "/remote/src/folder/a.txt"),
+          dirEntry("sub", "/remote/src/folder/sub"),
+        ];
+      }
+      if (path === "/remote/src/folder/sub") {
+        return [fileEntry("b.txt", "/remote/src/folder/sub/b.txt")];
+      }
+      return [];
+    });
+
+    const api = await mountHook("ssh-1");
+    useAppStore.getState().setFileClipboard({
+      entries: [dirEntry("folder", "/remote/src/folder")],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "ssh-src",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    // No same-backend fast path across two sessions.
+    expect(vi.mocked(sessionCopy)).not.toHaveBeenCalled();
+    // Destination tree recreated.
+    expect(vi.mocked(sessionMkdir)).toHaveBeenCalledWith("ssh-1", "/remote/dir/folder");
+    expect(vi.mocked(sessionMkdir)).toHaveBeenCalledWith("ssh-1", "/remote/dir/folder/sub");
+    // Each file streamed directly source→destination (both SFTP-backed).
+    expect(vi.mocked(sessionCopyRemote)).toHaveBeenCalledWith(
+      "ssh-src",
+      "/remote/src/folder/a.txt",
+      "ssh-1",
+      "/remote/dir/folder/a.txt",
+      expect.any(Function)
+    );
+    expect(vi.mocked(sessionCopyRemote)).toHaveBeenCalledWith(
+      "ssh-src",
+      "/remote/src/folder/sub/b.txt",
+      "ssh-1",
+      "/remote/dir/folder/sub/b.txt",
+      expect.any(Function)
+    );
+  });
+
+  it("recursively copies a same-session directory over a byte-based backend via read/write", async () => {
+    vi.mocked(sessionHasExecCapability).mockRejectedValue(new Error("not sftp-backed"));
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(false);
+    vi.mocked(sessionListFiles).mockImplementation(async (_id, path) => {
+      if (path === "/remote/src/folder") return [fileEntry("a.txt", "/remote/src/folder/a.txt")];
+      return [];
+    });
+
+    const api = await mountHook("docker-1");
+    useAppStore.getState().setFileClipboard({
+      entries: [dirEntry("folder", "/remote/src/folder")],
+      operation: "copy",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "docker-1",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    // Byte backends have no server-side copy(); recurse via mkdir + read/write.
+    expect(vi.mocked(sessionCopy)).not.toHaveBeenCalled();
+    expect(vi.mocked(sessionMkdir)).toHaveBeenCalledWith("docker-1", "/remote/dir/folder");
+    expect(vi.mocked(sessionReadFile)).toHaveBeenCalledWith("docker-1", "/remote/src/folder/a.txt");
+    expect(vi.mocked(sessionWriteFile)).toHaveBeenCalledWith(
+      "docker-1",
+      "/remote/dir/folder/a.txt",
+      expect.any(Uint8Array)
+    );
+  });
+
+  it("recursively uploads a local directory, recreating the tree and uploading each file", async () => {
+    vi.mocked(sessionHasExecCapability).mockResolvedValue(true);
+    vi.mocked(sessionSupportsTransferQueue).mockResolvedValue(true);
+    vi.mocked(localListDir).mockImplementation(async (path) => {
+      if (path === "/local/proj") return [fileEntry("x.txt", "/local/proj/x.txt")];
+      return [];
+    });
+
+    const api = await mountHook("ssh-1");
+    useAppStore.getState().setFileClipboard({
+      entries: [dirEntry("proj", "/local/proj")],
+      operation: "copy",
+      sourceMode: "local",
+      sourcePath: "/local",
+    });
+
+    await act(async () => {
+      await api.pasteEntry();
+    });
+
+    expect(vi.mocked(sessionMkdir)).toHaveBeenCalledWith("ssh-1", "/remote/dir/proj");
+    expect(vi.mocked(localListDir)).toHaveBeenCalledWith("/local/proj");
+    // Queue-capable destination → each local file uploads via session_upload.
+    expect(vi.mocked(sessionUpload)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/local/proj/x.txt",
+      "/remote/dir/proj/x.txt",
+      expect.any(Function)
+    );
   });
 });
