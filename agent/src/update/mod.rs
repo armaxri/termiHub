@@ -52,6 +52,7 @@ mod checksum;
 mod coordinate;
 mod download;
 mod github;
+mod signature;
 #[cfg(any(feature = "test-hooks", debug_assertions))]
 mod test_hook;
 mod version;
