@@ -123,7 +123,7 @@ impl ConnectionTypeRegistry {
         self.factories
             .get(type_id)
             .map(|entry| (entry.factory)())
-            .ok_or_else(|| CoreError::Config(format!("Unknown connection type: {type_id}")))
+            .ok_or_else(|| CoreError::Config(unknown_type_message(type_id)))
     }
 
     /// Check whether a connection type is registered.
@@ -143,6 +143,20 @@ impl ConnectionTypeRegistry {
         } else {
             false
         }
+    }
+}
+
+/// The error text for a [`ConnectionTypeRegistry::create`] of an unregistered
+/// type. A namespaced plugin id (PLG-007) names the plugin the connection needs,
+/// so a connection saved against an uninstalled or disabled plugin says which
+/// plugin is missing instead of an opaque "unknown type".
+fn unknown_type_message(type_id: &str) -> String {
+    match super::plugin_type_id::parse_plugin_type_id(type_id) {
+        Some((plugin_id, connection_type)) => format!(
+            "Unknown connection type: {type_id} (provided by plugin '{plugin_id}' as \
+             '{connection_type}', which is not installed or not enabled)"
+        ),
+        None => format!("Unknown connection type: {type_id}"),
     }
 }
 
@@ -348,6 +362,19 @@ mod tests {
                 assert!(msg.contains("nonexistent"));
             }
             Ok(_) => panic!("expected error for unknown type"),
+        }
+    }
+
+    #[test]
+    fn unknown_plugin_type_error_names_the_missing_plugin() {
+        let registry = ConnectionTypeRegistry::new();
+        match registry.create("plugin:k8s-tools:k8s") {
+            Err(err) => {
+                let msg = err.to_string();
+                assert!(msg.contains("Unknown connection type"));
+                assert!(msg.contains("plugin 'k8s-tools'"), "{msg}");
+            }
+            Ok(_) => panic!("expected error for an unregistered plugin type"),
         }
     }
 

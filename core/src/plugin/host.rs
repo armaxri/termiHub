@@ -49,11 +49,12 @@ use termihub_plugin_api::{
     PluginSessionConfig, CURRENT_PLUGIN_API_VERSION,
 };
 
-use crate::connection::ConnectionTypeRegistry;
+use crate::connection::{plugin_type_id, ConnectionFactory, ConnectionTypeRegistry};
 
 use super::capabilities::ConnectionPolicy;
 use super::connection::PluginConnectionType;
 use super::manager::InstalledPlugin;
+use super::manifest::TerminalBackendExtension;
 use super::native_trust::NativeTrustStore;
 use super::security::{PermissionError, PermissionSet, RecoveryAction, RestartTracker};
 
@@ -604,35 +605,47 @@ fn symbol_name(sym: &[u8]) -> String {
     String::from_utf8_lossy(sym.strip_suffix(b"\0").unwrap_or(sym)).into_owned()
 }
 
-/// Pick a registry key for a plugin's declared connection type that does not
-/// collide with anything already registered.
+/// Register a plugin's terminal backend into `registry` under its **stable,
+/// namespaced** type id and return that id (PLG-007).
 ///
-/// If `desired` is free it is used unchanged (the first registrant of a name
-/// wins). Otherwise it is suffixed with the plugin `id` — and, in the vanishingly
-/// unlikely event that is *also* taken, with a numeric counter — so a second
-/// plugin declaring the same `connectionType`, or one colliding with a built-in,
-/// still registers under a distinct, stable id (concept "Edge Cases").
-fn disambiguate_type_id(
-    desired: &str,
+/// The id is `plugin:<plugin-id>:<connectionType>` — a pure function of the
+/// plugin's own manifest, never of load order or of what else is registered.
+/// Two plugins declaring the same `connectionType` therefore get distinct ids,
+/// and a plugin can neither shadow nor be demoted by a built-in (built-in ids
+/// never carry the `plugin:` prefix). A saved connection that references the id
+/// keeps resolving to the same plugin across launches.
+///
+/// The display name is cosmetic (never persisted): when it matches a type that
+/// is already registered, the plugin's name is appended so the selector shows
+/// distinct labels.
+///
+/// `factory_for(type_id, display_name)` builds the registry factory, so the
+/// registration itself is testable without a native library.
+fn register_backend_type(
+    registry: &mut ConnectionTypeRegistry,
     plugin_id: &str,
-    registry: &ConnectionTypeRegistry,
+    plugin_name: &str,
+    backend: &TerminalBackendExtension,
+    factory_for: impl FnOnce(String, String) -> ConnectionFactory,
 ) -> String {
-    if !registry.has_type(desired) {
-        return desired.to_string();
-    }
-    let suffixed = format!("{desired}-{plugin_id}");
-    if !registry.has_type(&suffixed) {
-        return suffixed;
-    }
-    let mut n = 2;
-    loop {
-        let candidate = format!("{suffixed}-{n}");
-        if !registry.has_type(&candidate) {
-            return candidate;
-        }
-        n += 1;
-    }
+    let type_id = plugin_type_id(plugin_id, &backend.connection_type);
+    let label_taken = registry
+        .available_types()
+        .iter()
+        .any(|t| t.type_id != type_id && t.display_name == backend.display_name);
+    let display_name = if label_taken {
+        format!("{} ({plugin_name})", backend.display_name)
+    } else {
+        backend.display_name.clone()
+    };
+    let factory = factory_for(type_id.clone(), display_name.clone());
+    registry.register(&type_id, &display_name, PLUGIN_TYPE_ICON, factory);
+    type_id
 }
+
+/// The registry icon every plugin-provided connection type carries. The
+/// frontend partitions the type list on it (`PLUGIN_CONNECTION_TYPE_ICON`).
+const PLUGIN_TYPE_ICON: &str = "puzzle";
 
 /// A record of one loaded plugin: the connection type it registered and the
 /// library backing it.
@@ -808,23 +821,7 @@ impl PluginHost {
         let settings_schema =
             super::connection::config_schema_to_settings_schema(&backend.config_schema);
 
-        // Two plugins may declare the same `connectionType`, and a plugin may even
-        // collide with a built-in. Disambiguate against whatever is already
-        // registered by suffixing this one with the plugin id (concept "Edge
-        // Cases"); the first registrant keeps the plain id.
-        let connection_type = {
-            let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            disambiguate_type_id(&backend.connection_type, &id, &registry)
-        };
-        let display_name = if connection_type == backend.connection_type {
-            backend.display_name.clone()
-        } else {
-            format!("{} ({})", backend.display_name, plugin.manifest.name)
-        };
-
         let lib_for_factory = Arc::clone(&library);
-        let ct_for_factory = connection_type.clone();
-        let dn_for_factory = display_name.clone();
         let schema_for_factory = settings_schema;
         // Each session created for this plugin carries its own permission scope,
         // so a host-mediated capability (filesystem path resolution, network, …)
@@ -844,27 +841,32 @@ impl PluginHost {
         let settings_for_factory =
             super::manager::resolve_plugin_settings_json(&self.root, &plugin.manifest);
 
-        {
+        // Register under the stable namespaced id `plugin:<id>:<connectionType>`
+        // (PLG-007) — never a load-order-dependent disambiguation.
+        let connection_type = {
             let mut registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
-            registry.register(
-                &connection_type,
-                &display_name,
-                "puzzle",
-                Box::new(move || {
-                    Box::new(
-                        PluginConnectionType::new(
-                            Arc::clone(&lib_for_factory),
-                            ct_for_factory.clone(),
-                            dn_for_factory.clone(),
-                            schema_for_factory.clone(),
-                            perms_for_factory.clone(),
+            register_backend_type(
+                &mut registry,
+                &id,
+                &plugin.manifest.name,
+                backend,
+                move |ct_for_factory, dn_for_factory| {
+                    Box::new(move || {
+                        Box::new(
+                            PluginConnectionType::new(
+                                Arc::clone(&lib_for_factory),
+                                ct_for_factory.clone(),
+                                dn_for_factory.clone(),
+                                schema_for_factory.clone(),
+                                perms_for_factory.clone(),
+                            )
+                            .with_connection_policy(policy_for_factory)
+                            .with_plugin_settings(settings_for_factory.clone()),
                         )
-                        .with_connection_policy(policy_for_factory)
-                        .with_plugin_settings(settings_for_factory.clone()),
-                    )
-                }),
-            );
-        }
+                    })
+                },
+            )
+        };
 
         self.loaded
             .lock()
@@ -1217,7 +1219,7 @@ mod tests {
     use crate::monitoring::MonitoringProvider;
 
     /// A do-nothing connection type, just enough for the registry to register it
-    /// so [`disambiguate_type_id`] sees an occupied key.
+    /// so the registration tests see an occupied key.
     struct StubConnection;
 
     #[async_trait::async_trait]
@@ -1278,31 +1280,150 @@ mod tests {
         );
     }
 
-    #[test]
-    fn disambiguate_leaves_a_free_id_unchanged() {
-        let registry = ConnectionTypeRegistry::new();
-        assert_eq!(
-            disambiguate_type_id("echo", "echo-backend", &registry),
-            "echo"
-        );
+    fn backend(connection_type: &str, display_name: &str) -> TerminalBackendExtension {
+        TerminalBackendExtension {
+            connection_type: connection_type.to_string(),
+            display_name: display_name.to_string(),
+            config_schema: serde_json::json!({}),
+        }
+    }
+
+    fn stub_factory(_type_id: String, _display_name: String) -> ConnectionFactory {
+        Box::new(|| Box::new(StubConnection))
+    }
+
+    /// The `(plugin_id, plugin_name, connectionType, displayName)` fixtures the
+    /// load-order tests register: two plugins declaring the same type, one
+    /// colliding with a built-in id, one unique.
+    const PLUGINS: [(&str, &str, &str, &str); 4] = [
+        ("alpha", "Alpha", "k8s", "Kubernetes"),
+        ("beta", "Beta", "k8s", "Kubernetes"),
+        ("gamma", "Gamma", "ssh", "Fancy SSH"),
+        ("delta", "Delta", "mqtt", "MQTT"),
+    ];
+
+    /// Register `order` (indices into [`PLUGINS`]) over a registry that already
+    /// holds the built-in `ssh`, returning each plugin's registered id.
+    fn register_in_order(order: &[usize]) -> BTreeMap<&'static str, String> {
+        let mut registry = ConnectionTypeRegistry::new();
+        register_stub(&mut registry, "ssh");
+        let mut ids = BTreeMap::new();
+        for &i in order {
+            let (id, name, ct, dn) = PLUGINS[i];
+            let type_id =
+                register_backend_type(&mut registry, id, name, &backend(ct, dn), stub_factory);
+            assert!(registry.has_type(&type_id));
+            ids.insert(id, type_id);
+        }
+        // The built-in is never shadowed or replaced.
+        assert!(registry.has_type("ssh"));
+        ids
     }
 
     #[test]
-    fn disambiguate_suffixes_a_taken_id_with_the_plugin_id() {
-        let mut registry = ConnectionTypeRegistry::new();
-        register_stub(&mut registry, "echo");
-        assert_eq!(
-            disambiguate_type_id("echo", "second-plugin", &registry),
-            "echo-second-plugin"
-        );
+    fn registered_type_id_is_namespaced_by_plugin_id() {
+        let ids = register_in_order(&[0, 1, 2, 3]);
+        assert_eq!(ids["alpha"], "plugin:alpha:k8s");
+        assert_eq!(ids["beta"], "plugin:beta:k8s");
+        assert_eq!(ids["gamma"], "plugin:gamma:ssh");
+        assert_eq!(ids["delta"], "plugin:delta:mqtt");
     }
 
     #[test]
-    fn disambiguate_appends_a_counter_when_even_the_suffix_is_taken() {
+    fn registered_type_ids_do_not_depend_on_load_order() {
+        let reference = register_in_order(&[0, 1, 2, 3]);
+        // Every permutation of the four plugins yields identical ids (PLG-007).
+        let mut order = [0usize, 1, 2, 3];
+        let mut permutations = 0;
+        loop {
+            assert_eq!(register_in_order(&order), reference, "order {order:?}");
+            permutations += 1;
+            if !next_permutation(&mut order) {
+                break;
+            }
+        }
+        assert_eq!(permutations, 24);
+    }
+
+    /// Lexicographic next permutation; `false` once the last one was reached.
+    fn next_permutation(v: &mut [usize]) -> bool {
+        let Some(i) = (1..v.len()).rev().find(|&i| v[i - 1] < v[i]) else {
+            return false;
+        };
+        let j = (i..v.len()).rev().find(|&j| v[j] > v[i - 1]).unwrap_or(i);
+        v.swap(i - 1, j);
+        v[i..].reverse();
+        true
+    }
+
+    #[test]
+    fn two_plugins_with_the_same_connection_type_both_register() {
         let mut registry = ConnectionTypeRegistry::new();
-        register_stub(&mut registry, "echo");
-        register_stub(&mut registry, "echo-p");
-        assert_eq!(disambiguate_type_id("echo", "p", &registry), "echo-p-2");
+        let a = register_backend_type(
+            &mut registry,
+            "alpha",
+            "Alpha",
+            &backend("k8s", "Kubernetes"),
+            stub_factory,
+        );
+        let b = register_backend_type(
+            &mut registry,
+            "beta",
+            "Beta",
+            &backend("k8s", "Kubernetes"),
+            stub_factory,
+        );
+        assert_ne!(a, b);
+        let types = registry.available_types();
+        assert_eq!(types.len(), 2);
+        // The cosmetic label of the second is disambiguated; ids never are.
+        assert_eq!(types[0].display_name, "Kubernetes");
+        assert_eq!(types[1].display_name, "Kubernetes (Beta)");
+        assert!(types.iter().all(|t| t.icon == PLUGIN_TYPE_ICON));
+    }
+
+    #[test]
+    fn a_plugin_declaring_a_builtin_type_does_not_shadow_it() {
+        let mut registry = ConnectionTypeRegistry::new();
+        register_stub(&mut registry, "ssh");
+        let id = register_backend_type(
+            &mut registry,
+            "gamma",
+            "Gamma",
+            &backend("ssh", "SSH+"),
+            stub_factory,
+        );
+        assert_eq!(id, "plugin:gamma:ssh");
+        // The built-in keeps its id and its entry (the stub's own icon).
+        let ssh = registry
+            .available_types()
+            .into_iter()
+            .find(|t| t.type_id == "ssh")
+            .unwrap();
+        assert_eq!(ssh.display_name, "ssh");
+    }
+
+    #[test]
+    fn reregistering_the_same_plugin_keeps_its_id() {
+        let mut registry = ConnectionTypeRegistry::new();
+        let first = register_backend_type(
+            &mut registry,
+            "alpha",
+            "Alpha",
+            &backend("k8s", "Kubernetes"),
+            stub_factory,
+        );
+        let second = register_backend_type(
+            &mut registry,
+            "alpha",
+            "Alpha",
+            &backend("k8s", "Kubernetes"),
+            stub_factory,
+        );
+        assert_eq!(first, second);
+        assert_eq!(registry.available_types().len(), 1);
+        // Its own previous registration does not count as a label collision.
+        assert_eq!(registry.available_types()[0].display_name, "Kubernetes");
     }
 
     #[test]

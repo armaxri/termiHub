@@ -11,8 +11,8 @@
 //!   (connect → write → output → disconnect),
 //! * confirms the plugin's manifest `configSchema` surfaced as the type's
 //!   `settings_schema` (so the dynamic form renders with no bespoke UI),
-//! * confirms two plugins declaring the same `connectionType` are disambiguated
-//!   (the second suffixed with its plugin id), and
+//! * confirms two plugins declaring the same `connectionType` register under
+//!   distinct, load-order-independent `plugin:<id>:<type>` ids (PLG-007), and
 //! * confirms sessions are independent — closing one leaves the other running.
 //!
 //! Like the round-trip test it builds the real `cdylib` fixture with `cargo` and
@@ -29,6 +29,10 @@ use termihub_core::plugin::{
     native_library_hash, parse_manifest, HostLifecycleHook, InstalledPlugin, NativeTrustStore,
     PluginHost, PluginManager, PluginState,
 };
+
+/// Stable registry ids of the two colliding `echo` fixture plugins (PLG-007).
+const ECHO_A: &str = "plugin:echo-a:echo";
+const ECHO_B: &str = "plugin:echo-b:echo";
 
 /// Enable native plugins globally and acknowledge trust for `id`, bound to the
 /// exact backend library on disk — the setup a real user performs before a native
@@ -276,25 +280,26 @@ async fn plugin_type_is_creatable_and_listed_through_the_registry() {
     let registry = Arc::new(Mutex::new(ConnectionTypeRegistry::new()));
     let host = PluginHost::new(root.clone(), Arc::clone(&registry));
 
-    // Load two plugins that BOTH declare connectionType "echo". The first keeps
-    // the plain id; the second must be disambiguated with its plugin id.
+    // Load two plugins that BOTH declare connectionType "echo". Each registers
+    // under its own stable namespaced id (PLG-007) — neither takes the bare name.
     let plugin_a = install(&root, &lib, "echo-a", "Echo A", "echo");
     let plugin_b = install(&root, &lib, "echo-b", "Echo B", "echo");
     host.load(&plugin_a).expect("first plugin should load");
     host.load(&plugin_b).expect("second plugin should load");
 
-    // --- 1. Both types are surfaced, the collision disambiguated. ---
+    // --- 1. Both types are surfaced under distinct, namespaced ids. ---
     let types = registry.lock().unwrap().available_types();
     let ids: Vec<String> = types.iter().map(|t| t.type_id.clone()).collect();
-    assert!(ids.contains(&"echo".to_string()), "got {ids:?}");
-    assert!(ids.contains(&"echo-echo-b".to_string()), "got {ids:?}");
+    assert!(ids.contains(&ECHO_A.to_string()), "got {ids:?}");
+    assert!(ids.contains(&ECHO_B.to_string()), "got {ids:?}");
+    assert!(!ids.contains(&"echo".to_string()), "got {ids:?}");
 
-    // The disambiguated type's display name is suffixed with the plugin name.
-    let echo_b = types.iter().find(|t| t.type_id == "echo-echo-b").unwrap();
+    // The clashing display name of the second is suffixed with the plugin name.
+    let echo_b = types.iter().find(|t| t.type_id == ECHO_B).unwrap();
     assert_eq!(echo_b.display_name, "Echo (Echo B)");
 
     // --- 2. The manifest configSchema surfaced as the type's settings schema. ---
-    let echo = types.iter().find(|t| t.type_id == "echo").unwrap();
+    let echo = types.iter().find(|t| t.type_id == ECHO_A).unwrap();
     assert_eq!(
         echo.schema.groups.len(),
         1,
@@ -309,18 +314,18 @@ async fn plugin_type_is_creatable_and_listed_through_the_registry() {
     let mut conn = registry
         .lock()
         .unwrap()
-        .create("echo")
+        .create(ECHO_A)
         .expect("plugin type should be creatable by id");
     round_trip(&mut conn, b"hello via registry").await;
     conn.disconnect().await.expect("disconnect should succeed");
     assert!(!conn.is_connected());
 
-    // The disambiguated second plugin is equally usable.
-    let mut conn_b = registry.lock().unwrap().create("echo-echo-b").unwrap();
+    // The second plugin is equally usable.
+    let mut conn_b = registry.lock().unwrap().create(ECHO_B).unwrap();
     round_trip(&mut conn_b, b"second plugin").await;
     conn_b.disconnect().await.unwrap();
 
-    // --- 4. Unloading a plugin unregisters exactly its (effective) type. ---
+    // --- 4. Unloading a plugin unregisters exactly its type. ---
     host.unload("echo-b");
     let after: Vec<String> = registry
         .lock()
@@ -329,8 +334,62 @@ async fn plugin_type_is_creatable_and_listed_through_the_registry() {
         .into_iter()
         .map(|t| t.type_id)
         .collect();
-    assert!(after.contains(&"echo".to_string()));
-    assert!(!after.contains(&"echo-echo-b".to_string()));
+    assert!(after.contains(&ECHO_A.to_string()));
+    assert!(!after.contains(&ECHO_B.to_string()));
+}
+
+/// PLG-007: the registry id a plugin's type gets is a pure function of its own
+/// manifest. Loading the same colliding plugins in either order — and loading a
+/// plugin whose `connectionType` equals a built-in's — yields identical ids, and
+/// the built-in is never shadowed.
+#[tokio::test]
+async fn plugin_type_ids_do_not_depend_on_load_order() {
+    let tmp = tempfile::TempDir::new().unwrap();
+    let lib = build_fixture(&tmp.path().join("target"));
+    let root = tmp.path().join("plugins");
+    std::fs::create_dir_all(&root).unwrap();
+    let plugin_a = install(&root, &lib, "echo-a", "Echo A", "echo");
+    let plugin_b = install(&root, &lib, "echo-b", "Echo B", "echo");
+    let plugin_ssh = install(&root, &lib, "echo-ssh", "Echo SSH", "ssh");
+
+    let mut outcomes = Vec::new();
+    for order in [
+        [&plugin_a, &plugin_b, &plugin_ssh],
+        [&plugin_ssh, &plugin_b, &plugin_a],
+        [&plugin_b, &plugin_ssh, &plugin_a],
+    ] {
+        let mut builtin = ConnectionTypeRegistry::new();
+        termihub_core::connection::register_core_backends(&mut builtin);
+        let had_ssh = builtin.has_type("ssh");
+        let registry = Arc::new(Mutex::new(builtin));
+        let host = PluginHost::new(root.clone(), Arc::clone(&registry));
+        for plugin in order {
+            host.load(plugin).expect("plugin should load");
+        }
+        let registry = registry.lock().unwrap();
+        let mut ids: Vec<String> = registry
+            .available_types()
+            .into_iter()
+            .filter(|t| t.type_id.starts_with("plugin:"))
+            .map(|t| t.type_id)
+            .collect();
+        ids.sort();
+        // A built-in `ssh` (when this build registers one) keeps its bare id.
+        assert_eq!(registry.has_type("ssh"), had_ssh);
+        outcomes.push(ids);
+    }
+    assert_eq!(
+        outcomes[0],
+        vec![
+            ECHO_A.to_string(),
+            ECHO_B.to_string(),
+            "plugin:echo-ssh:ssh".to_string()
+        ]
+    );
+    assert!(
+        outcomes.iter().all(|ids| ids == &outcomes[0]),
+        "{outcomes:?}"
+    );
 }
 
 #[tokio::test]
@@ -366,7 +425,7 @@ async fn already_enabled_plugin_is_loaded_at_startup_without_a_toggle() {
 
     // Before the startup load, the type is not registered.
     assert!(
-        !registry.lock().unwrap().has_type("echo"),
+        !registry.lock().unwrap().has_type("plugin:echo:echo"),
         "type must not be registered before the startup load"
     );
 
@@ -377,13 +436,13 @@ async fn already_enabled_plugin_is_loaded_at_startup_without_a_toggle() {
 
     // The healthy plugin's type is now registered and creatable — no toggle.
     assert!(
-        registry.lock().unwrap().has_type("echo"),
+        registry.lock().unwrap().has_type("plugin:echo:echo"),
         "already-enabled plugin should be loaded at startup"
     );
     let mut conn = registry
         .lock()
         .unwrap()
-        .create("echo")
+        .create("plugin:echo:echo")
         .expect("plugin type should be creatable straight after startup load");
     round_trip(&mut conn, b"loaded at startup").await;
     conn.disconnect().await.unwrap();
@@ -416,8 +475,8 @@ async fn sessions_are_independent_so_closing_one_leaves_the_other_running() {
         .expect("plugin should load");
 
     // Two independent sessions of the same plugin type.
-    let mut first = registry.lock().unwrap().create("echo").unwrap();
-    let mut second = registry.lock().unwrap().create("echo").unwrap();
+    let mut first = registry.lock().unwrap().create(ECHO_A).unwrap();
+    let mut second = registry.lock().unwrap().create(ECHO_A).unwrap();
 
     let mut second_rx = second.subscribe_output();
     first.connect(serde_json::json!({})).await.unwrap();
@@ -476,7 +535,7 @@ async fn declared_plugin_settings_are_delivered_to_the_backend_at_connect() {
     );
     host.load(&plugin).expect("plugin should load");
 
-    let mut conn = registry.lock().unwrap().create("echo").unwrap();
+    let mut conn = registry.lock().unwrap().create(ECHO_A).unwrap();
     let delivered = probe_delivered_settings(&mut conn).await;
     assert_eq!(
         delivered.get("defaultNamespace").and_then(|v| v.as_str()),
@@ -501,7 +560,7 @@ async fn a_plugin_without_declared_settings_still_creates_a_session() {
     host.load(&install(&root, &lib, "echo-a", "Echo A", "echo"))
         .expect("plugin should load");
 
-    let mut conn = registry.lock().unwrap().create("echo").unwrap();
+    let mut conn = registry.lock().unwrap().create(ECHO_A).unwrap();
     let delivered = probe_delivered_settings(&mut conn).await;
     assert!(
         delivered.as_object().is_some_and(|m| m.is_empty()),

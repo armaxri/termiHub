@@ -62,12 +62,14 @@ impl ConnectionStorage {
         match load_versioned::<ConnectionStore>(&data) {
             LoadOutcome::Loaded { data: store, .. } => {
                 let (connections, folders) = flatten_tree(&store.children, None);
+                let mut flat = FlatConnectionStore {
+                    connections,
+                    folders,
+                    agents: store.agents,
+                };
+                self.migrate_plugin_type_ids(&mut flat);
                 return Ok(RecoveryResult {
-                    data: FlatConnectionStore {
-                        connections,
-                        folders,
-                        agents: store.agents,
-                    },
+                    data: flat,
                     warnings: Vec::new(),
                 });
             }
@@ -172,7 +174,7 @@ impl ConnectionStorage {
         }
 
         let recovered_store = ConnectionStore {
-            version: "2".to_string(),
+            version: ConnectionStore::CURRENT_VERSION.to_string(),
             children: recovered_children,
             agents: recovered_agents,
         };
@@ -181,15 +183,35 @@ impl ConnectionStorage {
             .context("Failed to save recovered connections")?;
 
         let (connections, folders) = flatten_tree(&recovered_store.children, None);
+        let mut flat = FlatConnectionStore {
+            connections,
+            folders,
+            agents: recovered_store.agents,
+        };
+        self.migrate_plugin_type_ids(&mut flat);
 
         Ok(RecoveryResult {
-            data: FlatConnectionStore {
-                connections,
-                folders,
-                agents: recovered_store.agents,
-            },
+            data: flat,
             warnings,
         })
+    }
+
+    /// Rewrite legacy (load-order-disambiguated) plugin connection-type ids to
+    /// their stable `plugin:<plugin-id>:<type>` form (PLG-007), resolving them
+    /// against the plugins installed next to this file. A connection whose
+    /// plugin is not installed is kept unchanged. When anything was rewritten the
+    /// result is persisted right away (best-effort) so the resolution sticks even
+    /// if the plugin set changes before the next user edit.
+    fn migrate_plugin_type_ids(&self, flat: &mut FlatConnectionStore) {
+        let Some(config_dir) = self.file_path.parent() else {
+            return;
+        };
+        let resolver = super::plugin_type_ids::legacy_resolver(config_dir);
+        if super::plugin_type_ids::migrate_connections(&mut flat.connections, &resolver) {
+            if let Err(e) = self.save_flat(flat) {
+                tracing::warn!("Failed to persist migrated plugin connection types: {e:#}");
+            }
+        }
     }
 
     /// Save the connection store to disk (pretty-printed JSON).
@@ -217,7 +239,7 @@ impl ConnectionStorage {
     pub fn save_flat(&self, flat: &FlatConnectionStore) -> Result<()> {
         let tree = super::tree::build_tree(&flat.connections, &flat.folders);
         let store = ConnectionStore {
-            version: "2".to_string(),
+            version: ConnectionStore::CURRENT_VERSION.to_string(),
             children: tree,
             agents: flat.agents.clone(),
         };
@@ -542,10 +564,10 @@ mod tests {
 
         storage.save_flat(&flat).unwrap();
 
-        // Verify on-disk format is nested v2
+        // Verify on-disk format is the nested tree, at the current schema (v3)
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "2");
+        assert_eq!(on_disk.version, "3");
         assert_eq!(on_disk.children.len(), 1); // One folder
         match &on_disk.children[0] {
             ConnectionTreeNode::Folder { name, children, .. } => {
@@ -561,5 +583,151 @@ mod tests {
         assert_eq!(result.data.connections.len(), 1);
         assert_eq!(result.data.connections[0].name, "SSH");
         assert_eq!(result.data.connections[0].id, "Work/SSH");
+    }
+
+    /// A v2 file carrying legacy plugin type ids, alongside a built-in.
+    fn legacy_v2_file(types: &[(&str, &str)]) -> String {
+        let children: Vec<serde_json::Value> = types
+            .iter()
+            .map(|(name, ty)| {
+                serde_json::json!({
+                    "type": "connection",
+                    "name": name,
+                    "config": { "type": ty, "config": { "pod": name } }
+                })
+            })
+            .collect();
+        serde_json::json!({ "version": "2", "children": children }).to_string()
+    }
+
+    fn type_of<'a>(flat: &'a FlatConnectionStore, name: &str) -> &'a str {
+        &flat
+            .connections
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap()
+            .config
+            .type_id
+    }
+
+    /// PLG-007: loading a pre-namespacing (v2) file rewrites legacy plugin type
+    /// ids to `plugin:<id>:<type>` against the installed plugins, persists that as
+    /// v3, keeps built-ins, resolves an ambiguous plain id deterministically, and
+    /// keeps (never drops) a connection whose plugin is not installed.
+    #[test]
+    fn load_migrates_legacy_plugin_type_ids_to_namespaced() {
+        use crate::connection::plugin_type_ids::write_backend_plugin_manifest;
+
+        let dir = TempDir::new().unwrap();
+        write_backend_plugin_manifest(dir.path(), "beta", "k8s");
+        write_backend_plugin_manifest(dir.path(), "alpha", "k8s");
+        write_backend_plugin_manifest(dir.path(), "gamma", "ssh");
+        let storage = create_test_storage(&dir);
+        fs::write(
+            &storage.file_path,
+            legacy_v2_file(&[
+                ("builtin", "ssh"),
+                ("first", "k8s"),
+                ("second", "k8s-beta"),
+                ("collider", "ssh-gamma"),
+                ("orphan", "mqtt"),
+            ]),
+        )
+        .unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        let flat = &loaded.data;
+        assert_eq!(flat.connections.len(), 5, "no connection may be dropped");
+        assert_eq!(type_of(flat, "builtin"), "ssh");
+        assert_eq!(type_of(flat, "first"), "plugin:alpha:k8s");
+        assert_eq!(type_of(flat, "second"), "plugin:beta:k8s");
+        assert_eq!(type_of(flat, "collider"), "plugin:gamma:ssh");
+        assert_eq!(type_of(flat, "orphan"), "mqtt");
+        // Settings ride along untouched.
+        let second = flat
+            .connections
+            .iter()
+            .find(|c| c.name == "second")
+            .unwrap();
+        assert_eq!(second.config.settings["pod"], "second");
+
+        // The migration was persisted at the new schema version.
+        let raw = fs::read_to_string(&storage.file_path).unwrap();
+        let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
+        assert_eq!(on_disk.version, "3");
+        assert!(raw.contains("plugin:beta:k8s"));
+        assert!(!raw.contains("k8s-beta"));
+    }
+
+    /// The migration does not depend on which order the plugins were installed
+    /// (the directory scan order): the same file resolves identically.
+    #[test]
+    fn legacy_migration_is_independent_of_plugin_install_order() {
+        use crate::connection::plugin_type_ids::write_backend_plugin_manifest;
+
+        let mut results = Vec::new();
+        for order in [["alpha", "beta"], ["beta", "alpha"]] {
+            let dir = TempDir::new().unwrap();
+            for id in order {
+                write_backend_plugin_manifest(dir.path(), id, "k8s");
+            }
+            let storage = create_test_storage(&dir);
+            fs::write(
+                &storage.file_path,
+                legacy_v2_file(&[("a", "k8s"), ("b", "k8s-alpha"), ("c", "k8s-beta")]),
+            )
+            .unwrap();
+            let flat = storage.load_with_recovery().unwrap().data;
+            results.push(
+                ["a", "b", "c"]
+                    .map(|n| type_of(&flat, n).to_string())
+                    .to_vec(),
+            );
+        }
+        assert_eq!(results[0], results[1]);
+        assert_eq!(
+            results[0],
+            ["plugin:alpha:k8s", "plugin:alpha:k8s", "plugin:beta:k8s"]
+        );
+    }
+
+    /// A connection whose plugin is missing keeps its legacy id and heals on a
+    /// later load once the plugin is installed. Nothing is rewritten (or saved)
+    /// while it cannot be resolved.
+    #[test]
+    fn missing_plugin_connection_is_kept_and_heals_once_installed() {
+        use crate::connection::plugin_type_ids::write_backend_plugin_manifest;
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let original = legacy_v2_file(&[("orphan", "k8s")]);
+        fs::write(&storage.file_path, &original).unwrap();
+
+        let flat = storage.load_with_recovery().unwrap().data;
+        assert_eq!(type_of(&flat, "orphan"), "k8s");
+        assert_eq!(fs::read_to_string(&storage.file_path).unwrap(), original);
+
+        write_backend_plugin_manifest(dir.path(), "beta", "k8s");
+        let flat = storage.load_with_recovery().unwrap().data;
+        assert_eq!(type_of(&flat, "orphan"), "plugin:beta:k8s");
+    }
+
+    /// Downgrade safety: a file the current build wrote (v3, namespaced ids) is
+    /// refused for overwrite by a v2 build — the version gate an older binary runs
+    /// before every save — so it cannot mangle ids it does not understand.
+    #[test]
+    fn v3_file_is_protected_from_a_v2_build() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        storage.save_store(&ConnectionStore::default()).unwrap();
+
+        let err = guard_not_newer(&storage.file_path, ConnectionStore::STORE_NAME, 2).unwrap_err();
+        assert!(err.to_string().contains("newer version"), "{err}");
+        let raw = fs::read_to_string(&storage.file_path).unwrap();
+        assert!(matches!(
+            load_versioned::<ConnectionStore>(&raw),
+            LoadOutcome::Loaded { .. }
+        ));
     }
 }

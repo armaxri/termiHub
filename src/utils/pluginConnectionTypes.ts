@@ -7,17 +7,31 @@ import type { ConnectionTypeInfo } from "@/types/connection";
  * type into the shared `ConnectionTypeRegistry` (#1999), so it flows to the
  * frontend through the normal `get_connection_types` path alongside the
  * built-ins — including a settings schema derived from the manifest
- * `configSchema` (which the generic `DynamicForm` then renders) and, when the
- * declared `connectionType` collided with a built-in or another plugin, a
- * disambiguated `type_id` / display name suffixed by the plugin.
+ * `configSchema` (which the generic `DynamicForm` then renders).
+ *
+ * A plugin type is registered under the stable, namespaced id
+ * `plugin:<pluginId>:<connectionType>` ({@link pluginConnectionTypeId}, PLG-007)
+ * — never the bare manifest `connectionType`, and never an id that depends on
+ * load order. Anything matching a saved connection or open tab against a
+ * plugin's backend must compare against that id. When two types share a display
+ * name, the later one's label is suffixed with the plugin name.
  *
  * The plugin host stamps every such registry entry with the {@link
- * PLUGIN_CONNECTION_TYPE_ICON} icon; no built-in type uses it. That icon is the
- * authoritative marker of a plugin-provided type — it survives the backend's
- * disambiguation (unlike matching a raw manifest `connectionType` name against
- * the store's `pluginBackendTypes` projection, which does not) — so the selector
+ * PLUGIN_CONNECTION_TYPE_ICON} icon; no built-in type uses it, so the selector
  * partitions the registry on it to list plugin types under their own separator.
  */
+
+/** The prefix of every plugin-provided connection-type id (mirrors Rust `PLUGIN_TYPE_ID_PREFIX`). */
+export const PLUGIN_CONNECTION_TYPE_PREFIX = "plugin:";
+
+/**
+ * The stable registry id of a plugin's terminal-backend connection type:
+ * `plugin:<pluginId>:<connectionType>`. Mirrors Rust `plugin_type_id` — this is
+ * the `type` a saved connection or open tab of that plugin carries.
+ */
+export function pluginConnectionTypeId(pluginId: string, connectionType: string): string {
+  return `${PLUGIN_CONNECTION_TYPE_PREFIX}${pluginId}:${connectionType}`;
+}
 
 /** The registry icon the plugin host assigns to every plugin-provided type (#1999). */
 export const PLUGIN_CONNECTION_TYPE_ICON = "puzzle";
@@ -29,9 +43,8 @@ export function isPluginConnectionType(info: Pick<ConnectionTypeInfo, "icon">): 
 
 /**
  * Split a connection-type registry into built-in and plugin-provided types,
- * preserving each group's original registry order. The plugin group carries the
- * types' already-disambiguated display names, so two plugins registering the
- * same `connectionType` render distinct labels.
+ * preserving each group's original registry order. Two plugins registering the
+ * same `connectionType` have distinct ids and distinct labels.
  */
 export function partitionConnectionTypes(types: ConnectionTypeInfo[]): {
   builtins: ConnectionTypeInfo[];

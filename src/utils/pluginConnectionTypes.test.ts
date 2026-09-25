@@ -3,6 +3,7 @@ import {
   PLUGIN_CONNECTION_TYPE_ICON,
   isPluginConnectionType,
   partitionConnectionTypes,
+  pluginConnectionTypeId,
 } from "./pluginConnectionTypes";
 import type { ConnectionTypeInfo } from "@/types/connection";
 import type { SettingsSchema, Capabilities } from "@/types/schema";
@@ -64,5 +65,15 @@ describe("partitionConnectionTypes", () => {
     const { builtins, plugins } = partitionConnectionTypes(registry);
     expect(plugins).toEqual([]);
     expect(builtins).toHaveLength(2);
+  });
+});
+
+describe("pluginConnectionTypeId", () => {
+  it("namespaces the connection type by plugin id (PLG-007)", () => {
+    expect(pluginConnectionTypeId("k8s-tools", "k8s")).toBe("plugin:k8s-tools:k8s");
+  });
+
+  it("gives two plugins declaring the same type distinct ids", () => {
+    expect(pluginConnectionTypeId("alpha", "k8s")).not.toBe(pluginConnectionTypeId("beta", "k8s"));
   });
 });

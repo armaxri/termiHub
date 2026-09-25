@@ -275,6 +275,9 @@ impl PluginManifest {
         if self.extensions.is_empty() {
             return Err(ManifestValidationError::NoExtensions);
         }
+        if let Some(backend) = &self.extensions.terminal_backend {
+            validate_connection_type(&backend.connection_type)?;
+        }
         Ok(())
     }
 
@@ -347,6 +350,14 @@ pub enum ManifestValidationError {
     /// The manifest declares no extension points.
     #[error("plugin manifest declares no extensions; at least one is required")]
     NoExtensions,
+    /// `terminalBackend.connectionType` is empty, too long, or contains a
+    /// character outside `[A-Za-z0-9._-]` (notably `:`, the separator of the
+    /// namespaced `plugin:<id>:<connectionType>` registry id — PLG-007).
+    #[error(
+        "plugin manifest `terminalBackend.connectionType` must be 1-{MAX_CONNECTION_TYPE_LEN} \
+         characters of letters, digits, `.`, `_` or `-` (got `{0}`)"
+    )]
+    InvalidConnectionType(String),
 }
 
 /// Parse a `"major"` or `"major.minor"` version into its numeric components.
@@ -383,6 +394,28 @@ fn require_non_empty(field: &'static str, value: &str) -> Result<(), ManifestVal
 /// characters that would let it escape `plugins/<id>/`.
 pub(crate) fn is_valid_plugin_id(id: &str) -> bool {
     validate_plugin_id(id).is_ok()
+}
+
+/// Maximum length of a declared `terminalBackend.connectionType`.
+pub const MAX_CONNECTION_TYPE_LEN: usize = 64;
+
+/// A declared `connectionType` must be 1..=[`MAX_CONNECTION_TYPE_LEN`] chars of
+/// `[A-Za-z0-9._-]`. It becomes the last segment of the stable registry id
+/// `plugin:<plugin-id>:<connectionType>` (PLG-007), so it must not contain the
+/// `:` separator or anything that could make that id ambiguous.
+fn validate_connection_type(connection_type: &str) -> Result<(), ManifestValidationError> {
+    let ok = !connection_type.is_empty()
+        && connection_type.len() <= MAX_CONNECTION_TYPE_LEN
+        && connection_type
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'));
+    if ok {
+        Ok(())
+    } else {
+        Err(ManifestValidationError::InvalidConnectionType(
+            connection_type.to_string(),
+        ))
+    }
 }
 
 /// A plugin id must be a filesystem-safe slug: 1..=64 chars of `[a-z0-9-]`, not
@@ -589,6 +622,46 @@ mod tests {
             manifest
                 .validate()
                 .unwrap_or_else(|e| panic!("id {good:?} should validate: {e}"));
+        }
+    }
+
+    #[test]
+    fn validate_rejects_bad_connection_types() {
+        let too_long = "x".repeat(MAX_CONNECTION_TYPE_LEN + 1);
+        for bad in [
+            "",
+            "has:colon",
+            "plugin:x:y",
+            "has space",
+            "sla/sh",
+            too_long.as_str(),
+        ] {
+            let json = valid_manifest_json().replace(
+                "\"connectionType\": \"k8s-exec\"",
+                &format!("\"connectionType\": \"{bad}\""),
+            );
+            let manifest = parse_manifest(&json).expect("shape is fine");
+            assert!(
+                matches!(
+                    manifest.validate(),
+                    Err(ManifestValidationError::InvalidConnectionType(_))
+                ),
+                "connectionType {bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_accepts_good_connection_types() {
+        for good in ["k8s-exec", "echo", "My_Type.v2", "a"] {
+            let json = valid_manifest_json().replace(
+                "\"connectionType\": \"k8s-exec\"",
+                &format!("\"connectionType\": \"{good}\""),
+            );
+            let manifest = parse_manifest(&json).expect("shape is fine");
+            manifest
+                .validate()
+                .unwrap_or_else(|e| panic!("connectionType {good:?} should validate: {e}"));
         }
     }
 

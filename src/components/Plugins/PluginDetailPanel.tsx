@@ -3,6 +3,7 @@ import { CircleAlert, Power, Shield, SlidersHorizontal, Trash2 } from "lucide-re
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { getAllLeaves } from "@/utils/panelTree";
+import { pluginConnectionTypeId } from "@/utils/pluginConnectionTypes";
 import type { PluginDetailMeta } from "@/types/terminal";
 import type { InstalledPlugin } from "@/types/plugin";
 import { Button, ConfirmDialog, StatusDot } from "@/components/ui";
@@ -35,8 +36,11 @@ export interface PluginDetailPanelProps {
 function useActiveSessionCount(plugin: InstalledPlugin | undefined): number {
   const rootPanel = useLayoutRenderTree();
   return useMemo(() => {
-    const backendType = plugin?.manifest.extensions.terminalBackend?.connectionType;
-    if (!backendType) return 0;
+    const declared = plugin?.manifest.extensions.terminalBackend?.connectionType;
+    if (!plugin || !declared) return 0;
+    // Sessions carry the plugin's namespaced registry id, not the bare
+    // manifest `connectionType` (PLG-007).
+    const backendType = pluginConnectionTypeId(plugin.manifest.id, declared);
     let count = 0;
     for (const leaf of getAllLeaves(rootPanel)) {
       for (const tab of leaf.tabs) {

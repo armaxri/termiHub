@@ -195,7 +195,7 @@ pub struct ConnectionStore {
 impl Default for ConnectionStore {
     fn default() -> Self {
         Self {
-            version: "2".to_string(),
+            version: <Self as crate::utils::migrate::VersionedStore>::CURRENT_VERSION.to_string(),
             children: Vec::new(),
             agents: Vec::new(),
         }
@@ -204,9 +204,17 @@ impl Default for ConnectionStore {
 
 impl crate::utils::migrate::VersionedStore for ConnectionStore {
     const STORE_NAME: &'static str = "connections.json";
-    /// The connections file has shipped a v2 nested format for some time; v2 is
-    /// the current baseline. (Legacy v1 flat files predate the versioned layer.)
-    const CURRENT_VERSION: u32 = 2;
+    /// v2 is the nested tree format (legacy v1 flat files predate the versioned
+    /// layer). v3 (PLG-007) keeps the same shape but plugin-provided connection
+    /// types are persisted under their stable `plugin:<plugin-id>:<type>` id. The
+    /// bump is what makes that downgrade-safe: an older build sees a newer schema
+    /// and refuses to overwrite the file instead of mangling ids it cannot read.
+    ///
+    /// v1/v2 → v3 is structurally the identity (the default `migrate`). Rewriting
+    /// legacy plugin type ids needs the installed plugins' manifests, so it runs
+    /// as the post-load pass in [`crate::connection::plugin_type_ids`] — on every
+    /// load, so an id whose plugin is installed later still heals.
+    const CURRENT_VERSION: u32 = 3;
 }
 
 /// Schema for external connection files. Same nested format with an optional `name`.
@@ -425,9 +433,10 @@ mod tests {
     }
 
     #[test]
-    fn connection_store_default_is_v2() {
+    fn connection_store_default_is_current_version() {
         let store = ConnectionStore::default();
-        assert_eq!(store.version, "2");
+        // v3: plugin connection types persist namespaced (PLG-007).
+        assert_eq!(store.version, "3");
         assert!(store.children.is_empty());
         assert!(store.agents.is_empty());
     }

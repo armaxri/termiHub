@@ -1542,8 +1542,10 @@
         <h3>Edge Cases</h3>
         <ul>
           <li>
-            <strong>Two plugins providing the same connection-type name</strong>: the second type is
-            suffixed with the plugin name to disambiguate.
+            <strong>Two plugins providing the same connection-type name</strong>: every plugin type is
+            registered under the stable id <code>plugin:&lt;plugin-id&gt;:&lt;connectionType&gt;</code>
+            (PLG-007), so the ids never collide and never depend on load order; only a clashing
+            display name is suffixed with the plugin name.
           </li>
           <li>
             <strong>Plugin and core theme with the same name</strong>: core themes always win; the
@@ -2020,7 +2022,10 @@ flowchart TD
             <tbody>
               <tr>
                 <td>Two plugins provide the same connection type</td>
-                <td>Second type is suffixed with the plugin name to disambiguate</td>
+                <td>
+                  Both register under their own <code>plugin:&lt;plugin-id&gt;:&lt;type&gt;</code> id;
+                  a clashing display name is suffixed with the plugin name
+                </td>
               </tr>
               <tr>
                 <td>Plugin and core theme share a name</td>
