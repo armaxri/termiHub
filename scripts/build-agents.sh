@@ -46,6 +46,11 @@ agent_binary_name() {
 # (#1350). Uses sha256sum where available (Linux, Git Bash) and falls back to
 # `shasum -a 256` (macOS). Runs in the binary's directory so the sidecar records
 # a bare file name rather than a full path.
+#
+# Returns non-zero -- and the caller FAILS the target (WA-CI-036) -- when no
+# hashing tool exists, the write fails, or the sidecar ends up empty: the
+# sidecar feeds core/build.rs (#1762), the update checksum, and the .sig flow,
+# so a silently missing one must never pass as a successful build.
 write_checksum() {
     local binary="$1"
     local dir base
@@ -54,14 +59,32 @@ write_checksum() {
     (
         cd "$dir" || exit 1
         if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "$base" >"$base.sha256"
+            sha256sum "$base" >"$base.sha256" || exit 1
         elif command -v shasum >/dev/null 2>&1; then
-            shasum -a 256 "$base" >"$base.sha256"
+            shasum -a 256 "$base" >"$base.sha256" || exit 1
         else
-            echo "  WARNING: no sha256sum/shasum found; skipping checksum for $base" >&2
-            return 1
+            echo "  ERROR: no sha256sum/shasum found; cannot checksum $base" >&2
+            exit 1
         fi
-    )
+        [ -s "$base.sha256" ] || exit 1
+    ) || {
+        echo "  ERROR: could not write checksum sidecar $binary.sha256" >&2
+        return 1
+    }
+}
+
+# Post-build gate (WA-CI-036): every binary reported as built must have a
+# non-empty "<binary>.sha256" sidecar. Prints one line per missing sidecar and
+# returns the number missing (0 = all present).
+verify_checksum_sidecars() {
+    local missing=0 binary
+    for binary in "$@"; do
+        if [ ! -s "$binary.sha256" ]; then
+            echo "  ERROR: $binary has no checksum sidecar ($binary.sha256)" >&2
+            missing=$((missing + 1))
+        fi
+    done
+    return "$missing"
 }
 
 # Write (or clear) the "<binary>.sig" update-signature sidecar (AGT-005, #3213).
@@ -327,6 +350,7 @@ unset _installed_targets
 built=0
 failed=0
 results=()
+produced=() # binaries built successfully; each must carry a .sha256 sidecar
 
 if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
     # ------------------------------------------------------------------ #
@@ -357,16 +381,20 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
             binary="target/$target/$PROFILE_DIR/$(agent_binary_name "$target")"
             if [ -f "$binary" ]; then
                 size=$(du -h "$binary" | cut -f1)
-                write_checksum "$binary" || true
-                if write_signature "$binary"; then
-                    results+=("  OK    $target  ($size)")
-                else
-                    results+=("  FAIL  $target  (signing failed)")
+                if ! write_checksum "$binary"; then
+                    results+=("  FAIL  $target  (checksum failed)")
+                    echo "  FAILED: could not write $binary.sha256"
                     failed=$((failed + 1))
-                    built=$((built - 1))
+                elif ! write_signature "$binary"; then
+                    results+=("  FAIL  $target  (signing failed)")
+                    echo "  FAILED: could not sign $binary"
+                    failed=$((failed + 1))
+                else
+                    results+=("  OK    $target  ($size)")
+                    produced+=("$binary")
+                    echo "  -> $binary ($size)"
+                    built=$((built + 1))
                 fi
-                echo "  -> $binary ($size)"
-                built=$((built + 1))
             else
                 results+=("  FAIL  $target  (binary not found)")
                 echo "  FAILED: binary not found"
@@ -479,16 +507,20 @@ else
                 mkdir -p "$dst_dir"
                 cp "$src_binary" "$dst_binary"
                 size=$(du -h "$dst_binary" | cut -f1)
-                write_checksum "$dst_binary" || true
-                if write_signature "$dst_binary"; then
-                    results+=("  OK    $target  ($size)")
-                else
-                    results+=("  FAIL  $target  (signing failed)")
+                if ! write_checksum "$dst_binary"; then
+                    results+=("  FAIL  $target  (checksum failed)")
+                    echo "  FAILED: could not write $dst_binary.sha256"
                     failed=$((failed + 1))
-                    built=$((built - 1))
+                elif ! write_signature "$dst_binary"; then
+                    results+=("  FAIL  $target  (signing failed)")
+                    echo "  FAILED: could not sign $dst_binary"
+                    failed=$((failed + 1))
+                else
+                    results+=("  OK    $target  ($size)")
+                    produced+=("$dst_binary")
+                    echo "  -> $dst_binary ($size)"
+                    built=$((built + 1))
                 fi
-                echo "  -> $dst_binary ($size)"
-                built=$((built + 1))
             else
                 results+=("  FAIL  $target  (binary not found)")
                 echo "  FAILED: binary not found"
@@ -501,6 +533,16 @@ else
         fi
         echo ""
     done
+fi
+
+# --- Checksum sidecar gate (WA-CI-036) ---
+if [ "${#produced[@]}" -gt 0 ]; then
+    missing_sidecars=0
+    verify_checksum_sidecars "${produced[@]}" || missing_sidecars=$?
+    if [ "$missing_sidecars" -gt 0 ]; then
+        results+=("  FAIL  $missing_sidecars built binary(ies) missing a .sha256 sidecar")
+        failed=$((failed + missing_sidecars))
+    fi
 fi
 
 # --- Summary ---
