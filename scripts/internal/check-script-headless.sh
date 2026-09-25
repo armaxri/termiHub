@@ -38,6 +38,7 @@ cd "$REPO_ROOT"
 SCRIPTS=(
   "scripts/build-agents.sh"
   "scripts/internal/agent-update-signing.sh"
+  "scripts/internal/ci-rust-tests.sh"
   "scripts/internal/setup-agent-signing-key.sh"
   "scripts/build-rdp-sidecar.sh"
   "scripts/ci-local.sh"
