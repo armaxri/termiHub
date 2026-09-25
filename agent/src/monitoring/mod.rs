@@ -3,6 +3,9 @@
 //! Supports monitoring the agent's own host ("self") and remote SSH
 //! jump targets (by connection ID). Stats are collected at a configurable
 //! interval and sent as `connection.monitoring.data` JSON-RPC notifications.
+//! Every collect-loop status transition is also sent as a
+//! `connection.monitoring.status` notification (#3321), so the desktop can
+//! mirror the agent's own status instead of inferring it from missing samples.
 
 pub mod collector;
 
@@ -19,12 +22,15 @@ use tracing::{debug, info, warn};
 use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
     BackoffSchedule, CollectLoopState, MonitorStatus, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
-    DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
+    DEFAULT_COLLECT_TIMEOUT, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
 };
 
 use crate::io::transport::NotificationSender;
 use crate::protocol::messages::JsonRpcNotification;
-use crate::protocol::methods::{MonitoringData, SshSessionConfig, CONNECTION_MONITORING_DATA};
+use crate::protocol::methods::{
+    MonitoringData, MonitoringStatusNotification, SshSessionConfig, CONNECTION_MONITORING_DATA,
+    CONNECTION_MONITORING_STATUS,
+};
 use crate::session::definitions::ConnectionStore;
 
 use self::collector::{LocalCollector, SshCollector, StatsCollector};
@@ -46,8 +52,9 @@ const MIN_INTERVAL_MS: u64 = 500;
 /// task returns to its `select!` — where cancellation is honored — instead of
 /// awaiting the collect forever (#1228, gap G3). The sequential loop is the
 /// in-flight guard: the next tick's collect never starts until this one
-/// resolves or times out.
-const COLLECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// resolves or times out. Shared with the desktop via core, which sizes its
+/// `Stale` bound from it (#3321).
+const COLLECT_TIMEOUT: Duration = DEFAULT_COLLECT_TIMEOUT;
 
 // ── MonitoringManagerApi trait ─────────────────────────────────────
 
@@ -318,6 +325,32 @@ async fn reconnect_collector(
     None
 }
 
+/// Report a collect-loop status transition to the desktop as a
+/// `connection.monitoring.status` notification (#3321).
+///
+/// Best-effort: a closed notification channel is detected (and ends the task)
+/// on the next data send, so a failed status send is only logged.
+fn emit_status(tx: &NotificationSender, host: &str, loop_state: &CollectLoopState) {
+    let payload = MonitoringStatusNotification {
+        host: host.to_string(),
+        status: loop_state.status(),
+        reason: loop_state.reason(),
+    };
+    debug!(
+        "Monitoring status for '{host}': {:?} ({:?})",
+        payload.status, payload.reason
+    );
+    match serde_json::to_value(&payload) {
+        Ok(value) => {
+            let notification = JsonRpcNotification::new(CONNECTION_MONITORING_STATUS, value);
+            if tx.send(notification).is_err() {
+                debug!("Notification channel closed; status for '{host}' not sent");
+            }
+        }
+        Err(e) => warn!("Failed to serialize monitoring status for '{host}': {e}"),
+    }
+}
+
 /// Background task that periodically collects stats and sends notifications.
 ///
 /// The collector is wrapped in `Arc<std::sync::Mutex>` so it can be shared with
@@ -349,8 +382,10 @@ async fn monitoring_task(
             _ = ticker.tick() => {
                 match collect_tick(&host, &collector).await {
                     CollectOutcome::Sample(stats) => {
-                        if let Some(status) = loop_state.on_success() {
-                            debug!("Monitoring status for '{host}': {status:?}");
+                        // Status before data, so the desktop has applied `Live`
+                        // by the time it sees the sample.
+                        if loop_state.on_success().is_some() {
+                            emit_status(&tx, &host, &loop_state);
                         }
                         let data = MonitoringData::new(host.clone(), *stats);
                         match serde_json::to_value(&data) {
@@ -366,13 +401,13 @@ async fn monitoring_task(
                         }
                     }
                     CollectOutcome::Failed => {
-                        if let Some(status) = loop_state.on_failure() {
-                            debug!("Monitoring status for '{host}': {status:?}");
+                        if loop_state.on_failure().is_some() {
+                            emit_status(&tx, &host, &loop_state);
                         }
                     }
                     CollectOutcome::Unparseable => {
-                        if let Some(status) = loop_state.on_parse_failure() {
-                            debug!("Monitoring status for '{host}': {status:?}");
+                        if loop_state.on_parse_failure().is_some() {
+                            emit_status(&tx, &host, &loop_state);
                         }
                     }
                 }
@@ -380,8 +415,9 @@ async fn monitoring_task(
                 // No sample since (re)connecting within the bounded pre-Live
                 // failure run (parse: `stale_threshold`; transport: the more
                 // generous `pre_live_failure_limit`): `Offline` is terminal, so
-                // stop streaming. The desktop infers the same bound from the
-                // missing samples (#3300).
+                // stop streaming. The transition was already reported to the
+                // desktop above (#3321); an older desktop infers the same bound
+                // from the missing samples (#3300).
                 if loop_state.is_offline() {
                     warn!("Monitoring for '{host}' never produced a sample: Offline");
                     break;
@@ -390,8 +426,8 @@ async fn monitoring_task(
                 // A sustained drop triggers a bounded reconnect campaign that
                 // re-dials the transport in place (#1230, gap G2).
                 if loop_state.should_begin_reconnect() {
-                    if let Some(status) = loop_state.begin_reconnect() {
-                        debug!("Monitoring status for '{host}': {status:?}");
+                    if loop_state.begin_reconnect().is_some() {
+                        emit_status(&tx, &host, &loop_state);
                     }
                     match reconnect_collector(&host, &factory, backoff.clone(), &cancel).await {
                         Some(fresh) => {
@@ -400,6 +436,7 @@ async fn monitoring_task(
                         None => {
                             if let Some(status @ MonitorStatus::Offline) = loop_state.exhaust_reconnect() {
                                 warn!("Monitoring for '{host}' exhausted reconnect budget: {status:?}");
+                                emit_status(&tx, &host, &loop_state);
                             }
                             break;
                         }
@@ -484,7 +521,46 @@ mod tests {
     // ── Reconnect behavior (#1230, gap G2) ─────────────────────────────
 
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use termihub_core::monitoring::SystemStats;
+    use termihub_core::monitoring::{MonitorStatusReason, SystemStats};
+
+    type Received = tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>;
+
+    /// Everything queued on the notification channel right now.
+    fn drain(rx: &mut Received) -> Vec<JsonRpcNotification> {
+        let mut out = Vec::new();
+        while let Ok(n) = rx.try_recv() {
+            out.push(n);
+        }
+        out
+    }
+
+    /// The `connection.monitoring.status` payloads, in order (#3321).
+    fn statuses(notifs: &[JsonRpcNotification]) -> Vec<MonitoringStatusNotification> {
+        notifs
+            .iter()
+            .filter(|n| n.method == CONNECTION_MONITORING_STATUS)
+            .map(|n| serde_json::from_value(n.params.clone()).expect("status payload"))
+            .collect()
+    }
+
+    /// Number of `connection.monitoring.data` samples.
+    fn data_count(notifs: &[JsonRpcNotification]) -> usize {
+        notifs
+            .iter()
+            .filter(|n| n.method == CONNECTION_MONITORING_DATA)
+            .count()
+    }
+
+    fn status(
+        status: MonitorStatus,
+        reason: Option<MonitorStatusReason>,
+    ) -> MonitoringStatusNotification {
+        MonitoringStatusNotification {
+            host: "fake".into(),
+            status,
+            reason,
+        }
+    }
 
     fn sample_stats() -> SystemStats {
         SystemStats {
@@ -642,6 +718,21 @@ mod tests {
             redial_calls.load(Ordering::SeqCst) >= 1,
             "at least one re-dial must be attempted before giving up"
         );
+
+        // The desktop is told each transition, ending on a transport-typed
+        // Offline — not left to infer it from the silence (#3321). The first
+        // `recv` above consumed the `Live` status.
+        assert_eq!(
+            statuses(&drain(&mut rx)),
+            vec![
+                status(MonitorStatus::Stale, Some(MonitorStatusReason::Transport)),
+                status(
+                    MonitorStatus::Reconnecting,
+                    Some(MonitorStatusReason::Transport)
+                ),
+                status(MonitorStatus::Offline, Some(MonitorStatusReason::Transport)),
+            ]
+        );
     }
 
     // ── Bounded pre-Live resolution (#3300) ────────────────────────────
@@ -725,7 +816,16 @@ mod tests {
             "transport failures use the generous pre-Live bound"
         );
         assert_eq!(redials.load(Ordering::SeqCst), 0, "no re-dial before Live");
-        assert!(rx.try_recv().is_err(), "no sample was ever streamed");
+        let notifs = drain(&mut rx);
+        assert_eq!(data_count(&notifs), 0, "no sample was ever streamed");
+        assert_eq!(
+            statuses(&notifs),
+            vec![status(
+                MonitorStatus::Offline,
+                Some(MonitorStatusReason::Transport)
+            )],
+            "the pre-Live Offline is reported, typed as a transport failure (#3321)"
+        );
     }
 
     /// Persistently unparseable output is typed apart from a transport failure
@@ -751,7 +851,16 @@ mod tests {
             "unparseable output uses the strict parse bound, not the transport one"
         );
         assert_eq!(redials.load(Ordering::SeqCst), 0, "no re-dial before Live");
-        assert!(rx.try_recv().is_err(), "no sample was ever streamed");
+        let notifs = drain(&mut rx);
+        assert_eq!(data_count(&notifs), 0, "no sample was ever streamed");
+        assert_eq!(
+            statuses(&notifs),
+            vec![status(
+                MonitorStatus::Offline,
+                Some(MonitorStatusReason::Parse)
+            )],
+            "the unparseable Offline is reported, typed as a parse failure (#3321)"
+        );
     }
 
     /// After a mid-stream drop the re-dial succeeds but the fresh collector
@@ -793,6 +902,115 @@ mod tests {
             calls.load(Ordering::SeqCst),
             CollectLoopState::new().pre_live_failure_limit() as usize,
             "the re-dialled collector gets the generous pre-Live bound"
+        );
+        // The desktop hears the terminal Offline instead of staying Stale (#3321).
+        let tail = statuses(&drain(&mut rx));
+        assert_eq!(
+            tail.last(),
+            Some(&status(
+                MonitorStatus::Offline,
+                Some(MonitorStatusReason::Transport)
+            ))
+        );
+    }
+
+    // ── connection.monitoring.status notification (#3321) ──────────────
+
+    /// The first sample is preceded by a `Live` status, so the desktop has
+    /// applied `Live` by the time it sees the data.
+    #[tokio::test]
+    async fn monitoring_task_reports_live_before_the_first_sample() {
+        let first = Box::new(FakeCollector {
+            fail: Arc::new(AtomicBool::new(false)),
+        }) as Box<dyn StatsCollector>;
+        let factory: CollectorFactory = Arc::new(|| Err(anyhow::anyhow!("unused")));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        let handle = tokio::spawn(monitoring_task(
+            "fake".into(),
+            first,
+            factory,
+            Duration::from_millis(20),
+            BackoffSchedule::default(),
+            tx,
+            cancel.clone(),
+        ));
+
+        let mut seen = Vec::new();
+        while seen.len() < 3 {
+            let n = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("notification before timeout")
+                .expect("channel open");
+            seen.push(n);
+        }
+        cancel.cancel();
+        let _ = handle.await;
+
+        assert_eq!(seen[0].method, CONNECTION_MONITORING_STATUS);
+        assert_eq!(
+            statuses(&seen[..1]),
+            vec![status(MonitorStatus::Live, None)]
+        );
+        assert_eq!(seen[1].method, CONNECTION_MONITORING_DATA);
+        assert_eq!(
+            statuses(&seen),
+            vec![status(MonitorStatus::Live, None)],
+            "a steady Live loop reports its status once, not every tick"
+        );
+    }
+
+    /// A drop that recovers reports every transition: Live → Stale →
+    /// Reconnecting → Live.
+    #[tokio::test]
+    async fn monitoring_task_reports_each_transition_through_a_recovery() {
+        let fail = Arc::new(AtomicBool::new(false));
+        let factory: CollectorFactory = Arc::new(|| {
+            Ok(Box::new(FakeCollector {
+                fail: Arc::new(AtomicBool::new(false)),
+            }) as Box<dyn StatsCollector>)
+        });
+        let first = Box::new(FakeCollector { fail: fail.clone() }) as Box<dyn StatsCollector>;
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = CancellationToken::new();
+        let handle = tokio::spawn(monitoring_task(
+            "fake".into(),
+            first,
+            factory,
+            Duration::from_millis(20),
+            BackoffSchedule::new(Duration::from_millis(5), Duration::from_millis(20), 8),
+            tx,
+            cancel.clone(),
+        ));
+
+        let mut reported = Vec::new();
+        let mut dropped = false;
+        while reported.len() < 4 {
+            let n = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .expect("notification before timeout")
+                .expect("channel open");
+            if n.method == CONNECTION_MONITORING_DATA && !dropped {
+                // First sample seen: drop the stream.
+                fail.store(true, Ordering::SeqCst);
+                dropped = true;
+            }
+            reported.extend(statuses(std::slice::from_ref(&n)));
+        }
+        cancel.cancel();
+        let _ = handle.await;
+
+        assert_eq!(
+            reported,
+            vec![
+                status(MonitorStatus::Live, None),
+                status(MonitorStatus::Stale, Some(MonitorStatusReason::Transport)),
+                status(
+                    MonitorStatus::Reconnecting,
+                    Some(MonitorStatusReason::Transport)
+                ),
+                status(MonitorStatus::Live, None),
+            ]
         );
     }
 }
