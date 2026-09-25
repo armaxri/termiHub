@@ -718,7 +718,7 @@ pub struct UpdatePendingNotification {
 
 // ── network.port_scan ───────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkPortScanParams {
     pub host: String,
     /// Port specification: "22", "80,443", "1-1024"
@@ -731,7 +731,7 @@ pub use crate::network::types::{
     OpenPort, PingResult, PingStats, PortScanResult, PortScanSummary, TracerouteHop,
 };
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkPortScanResponse {
     pub results: Vec<PortScanResult>,
     pub summary: PortScanSummary,
@@ -739,14 +739,14 @@ pub struct NetworkPortScanResponse {
 
 // ── network.ping ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkPingParams {
     pub host: String,
     pub count: Option<u32>,
     pub interval_ms: Option<u64>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkPingResponse {
     pub results: Vec<PingResult>,
     pub stats: PingStats,
@@ -754,7 +754,7 @@ pub struct NetworkPingResponse {
 
 // ── network.dns_lookup ──────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkDnsLookupParams {
     pub hostname: String,
     pub record_type: String,
@@ -770,20 +770,20 @@ pub struct NetworkOpenPortsResponse {
 
 // ── network.traceroute ──────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkTracerouteParams {
     pub host: String,
     pub max_hops: Option<u8>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkTracerouteResponse {
     pub hops: Vec<TracerouteHop>,
 }
 
 // ── network.wol ─────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkWolParams {
     pub mac: String,
     #[serde(default = "default_broadcast")]

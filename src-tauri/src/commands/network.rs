@@ -506,7 +506,12 @@ pub async fn network_dns_lookup(
             let client = manager.agent_rpc_client().ok_or_else(|| {
                 TerminalError::NetworkError("agent manager is not available".into())
             })?;
-            let params = agent_tools::dns_params(&hostname, &record_type, server.as_deref());
+            let params = serde_json::to_value(agent_tools::dns_params(
+                &hostname,
+                &record_type,
+                server.as_deref(),
+            ))
+            .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
             tokio::task::spawn_blocking(move || {
                 client.send_request(
                     &agent_id,
@@ -653,7 +658,8 @@ pub fn network_wol_send(
             let client = manager.agent_rpc_client().ok_or_else(|| {
                 TerminalError::NetworkError("agent manager is not available".into())
             })?;
-            let params = agent_tools::wol_params(&mac, &broadcast, port);
+            let params = serde_json::to_value(agent_tools::wol_params(&mac, &broadcast, port))
+                .map_err(|e| TerminalError::NetworkError(e.to_string()))?;
             client
                 .send_request(
                     &agent_id,
