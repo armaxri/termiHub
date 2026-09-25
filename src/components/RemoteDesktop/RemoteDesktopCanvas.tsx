@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { onRemoteDesktopFrame, onRemoteDesktopCursor } from "@/services/events";
 import type { RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
+import { isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
 
 interface RemoteDesktopCanvasProps {
   /** Backend graphical session id; the canvas filters events by it. */
@@ -179,6 +180,8 @@ export function RemoteDesktopCanvas({
 
     void onRemoteDesktopFrame((payload) => {
       if (disposed || payload.session_id !== sessionId) return;
+      // Never size the offscreen canvas from an untrusted, absurd size (MOCK-011).
+      if (!isFramebufferSizeValid(payload.width, payload.height)) return;
       const prev = fbRef.current;
       const changed = !prev || prev.width !== payload.width || prev.height !== payload.height;
       const fb = ensureFramebuffer(payload.width, payload.height);
@@ -186,8 +189,7 @@ export function RemoteDesktopCanvas({
       const ctx = fb.getContext("2d");
       if (!ctx) return;
       for (const rect of payload.rects) {
-        const expected = rect.width * rect.height * 4;
-        if (rect.data.length !== expected) continue;
+        if (!isDirtyRectValid(rect, fb.width, fb.height)) continue;
         const img = new ImageData(new Uint8ClampedArray(rect.data), rect.width, rect.height);
         ctx.putImageData(img, rect.x, rect.y);
       }
