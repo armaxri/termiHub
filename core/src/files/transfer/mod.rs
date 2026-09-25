@@ -31,6 +31,16 @@ pub mod retry;
 pub mod scheduler;
 pub mod state;
 
+// The transport-specific transfer executors (DUP-026 slice 2b). Each drives the
+// pure queue machinery above around one backend's streaming primitive, so both
+// the desktop backend and the remote agent reuse one implementation. Gated on
+// the backend feature they depend on: `ftp` (`crate::backends::ftp`) and `ssh`
+// (`crate::backends::ssh`). The public executors return `()` — no error escapes.
+#[cfg(feature = "ftp")]
+pub mod ftp;
+#[cfg(feature = "ssh")]
+pub mod sftp;
+
 pub use progress::{
     is_queue_teardown, ProgressSink, TransferDirection, TransferPhase, TransferProgress,
     CHUNK_SIZE, PROGRESS_THROTTLE, QUEUE_TEARDOWN,
