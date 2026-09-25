@@ -1060,10 +1060,18 @@ impl AgentRpcClient for NullAgent {
     fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
         unimplemented!()
     }
-    fn save_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+    fn save_definition(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::ConnectionCreateParams,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
         unimplemented!()
     }
-    fn update_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+    fn update_definition(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::ConnectionUpdateParams,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
         unimplemented!()
     }
     fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
@@ -1077,7 +1085,11 @@ impl AgentRpcClient for NullAgent {
     ) -> Result<AgentFolderInfo, TerminalError> {
         unimplemented!()
     }
-    fn update_folder(&self, _: &str, _: Value) -> Result<AgentFolderInfo, TerminalError> {
+    fn update_folder(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::FolderUpdateParams,
+    ) -> Result<AgentFolderInfo, TerminalError> {
         unimplemented!()
     }
     fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
@@ -1402,10 +1414,18 @@ impl AgentRpcClient for RetainAgent {
     fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
         unimplemented!()
     }
-    fn save_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+    fn save_definition(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::ConnectionCreateParams,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
         unimplemented!()
     }
-    fn update_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+    fn update_definition(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::ConnectionUpdateParams,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
         unimplemented!()
     }
     fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
@@ -1419,7 +1439,11 @@ impl AgentRpcClient for RetainAgent {
     ) -> Result<AgentFolderInfo, TerminalError> {
         unimplemented!()
     }
-    fn update_folder(&self, _: &str, _: Value) -> Result<AgentFolderInfo, TerminalError> {
+    fn update_folder(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::FolderUpdateParams,
+    ) -> Result<AgentFolderInfo, TerminalError> {
         unimplemented!()
     }
     fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
@@ -2640,10 +2664,18 @@ impl AgentRpcClient for SpyAgent {
     fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
         unimplemented!()
     }
-    fn save_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+    fn save_definition(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::ConnectionCreateParams,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
         unimplemented!()
     }
-    fn update_definition(&self, _: &str, _: Value) -> Result<AgentDefinitionInfo, TerminalError> {
+    fn update_definition(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::ConnectionUpdateParams,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
         unimplemented!()
     }
     fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
@@ -2657,7 +2689,11 @@ impl AgentRpcClient for SpyAgent {
     ) -> Result<AgentFolderInfo, TerminalError> {
         unimplemented!()
     }
-    fn update_folder(&self, _: &str, _: Value) -> Result<AgentFolderInfo, TerminalError> {
+    fn update_folder(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::FolderUpdateParams,
+    ) -> Result<AgentFolderInfo, TerminalError> {
         unimplemented!()
     }
     fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {

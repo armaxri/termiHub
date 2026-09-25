@@ -1086,7 +1086,11 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
 3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb)
 4. Upload all artifacts to the GitHub Release page, each agent binary with a `.sha256`
    checksum and a `.sig` update signature
-5. Update the `latest` tag
+5. Attest build provenance for every installer, agent binary and SBOM, and publish
+   CycloneDX SBOMs (see [Verifying release artifacts](#verifying-release-artifacts))
+6. Verify the complete asset set, including SBOMs and a valid attestation on every artifact
+   (`verify-release`) — a release missing either fails here
+7. Update the `latest` tag
 
 ### Post-Release Verification
 
@@ -1096,6 +1100,53 @@ After the workflow completes:
 - [ ] Visit the [Releases page](https://github.com/armaxri/termiHub/releases) — verify the release exists with correct notes
 - [ ] Confirm all platform artifacts are attached (macOS x64, macOS ARM64, Windows x64, Linux x64, Linux ARM64)
 - [ ] Download and smoke-test at least one artifact on your platform
+- [ ] Spot-check provenance on the downloaded artifact:
+      `gh attestation verify <file> --repo armaxri/termiHub`
+
+### Verifying Release Artifacts
+
+The release workflow adds two supply-chain records to every release (CI-022,
+[#3347](https://github.com/armaxri/termiHub/issues/3347)):
+
+- **Build provenance attestations.** `actions/attest-build-provenance` signs (keyless,
+  Sigstore) a SLSA provenance statement for every published installer (`.dmg`, `.msi`,
+  `.AppImage`, `.deb`, `.rpm`), every agent binary and every SBOM, binding its SHA-256 to the
+  release workflow run, commit and tag. The agent `.sha256` / `.sig` sidecars are not
+  attested — both derive from the binary's digest, which the attestation already covers.
+  Anyone can verify a download with the GitHub CLI:
+
+  ```bash
+  gh attestation verify <file> --repo armaxri/termiHub
+  # stricter: pin the signing workflow and the release tag
+  gh attestation verify <file> --repo armaxri/termiHub \
+    --signer-workflow armaxri/termiHub/.github/workflows/release.yml \
+    --source-ref refs/tags/vX.Y.Z
+  ```
+
+  The `verify-release` job runs the stricter form against every published artifact, so a
+  release is never marked complete with an unattested asset.
+
+- **SBOMs (CycloneDX JSON).** Attached to each release as:
+
+  | Asset                                      | Covers                                           | Generator                                 |
+  | ------------------------------------------ | ------------------------------------------------ | ----------------------------------------- |
+  | `termiHub-X.Y.Z-sbom-desktop.cdx.json`     | Desktop app (`src-tauri` + its workspace crates) | `cargo-cyclonedx` (`--target all`)        |
+  | `termiHub-X.Y.Z-sbom-agent.cdx.json`       | Remote agent                                     | `cargo-cyclonedx` (`--target all`)        |
+  | `termiHub-X.Y.Z-sbom-rdp-sidecar.cdx.json` | RDP sidecar (own `Cargo.lock`)                   | `cargo-cyclonedx` (`--target all`)        |
+  | `termiHub-X.Y.Z-sbom-frontend.cdx.json`    | Production npm dependencies bundled by Vite      | `@cyclonedx/cyclonedx-npm` (`--omit dev`) |
+
+  Feed them to a scanner (e.g. `grype sbom:termiHub-X.Y.Z-sbom-desktop.cdx.json`) for
+  vulnerability response. The frontend SBOM is generated from a `node-linker=hoisted` install
+  of the frozen lockfile because `cyclonedx-npm` cannot read pnpm's symlinked store; the job
+  fails if any direct production dependency is missing from it.
+
+To reproduce the SBOMs locally (no build needed; generated files land next to each crate):
+
+```bash
+cargo cyclonedx --format json --spec-version 1.5 --target all --override-filename sbom
+cargo cyclonedx --manifest-path rdp-sidecar/Cargo.toml --format json --spec-version 1.5 \
+  --target all --override-filename sbom
+```
 
 ### Agent Update Signing Key
 

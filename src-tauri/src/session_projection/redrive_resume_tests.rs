@@ -210,14 +210,14 @@ impl AgentRpcClient for FakeAgent {
     fn save_definition(
         &self,
         _agent_id: &str,
-        _definition: Value,
+        _definition: termihub_core::protocol::methods::ConnectionCreateParams,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
         unimplemented!()
     }
     fn update_definition(
         &self,
         _agent_id: &str,
-        _params: Value,
+        _params: termihub_core::protocol::methods::ConnectionUpdateParams,
     ) -> Result<AgentDefinitionInfo, TerminalError> {
         unimplemented!()
     }
@@ -235,7 +235,7 @@ impl AgentRpcClient for FakeAgent {
     fn update_folder(
         &self,
         _agent_id: &str,
-        _params: Value,
+        _params: termihub_core::protocol::methods::FolderUpdateParams,
     ) -> Result<AgentFolderInfo, TerminalError> {
         unimplemented!()
     }

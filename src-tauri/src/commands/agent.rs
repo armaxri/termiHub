@@ -23,7 +23,8 @@ use crate::terminal::backend::{RemoteAgentConfig, UpdateStrategy};
 use crate::utils::errors::TerminalError;
 use termihub_core::protocol::methods::{
     AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
-    AgentRequestUpdateResult,
+    AgentRequestUpdateResult, ConnectionCreateParams, ConnectionUpdateParams, FolderUpdateParams,
+    CONNECTIONS_CREATE, CONNECTIONS_FOLDERS_UPDATE, CONNECTIONS_UPDATE,
 };
 
 // ── Structured IPC error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ────
@@ -53,6 +54,47 @@ fn blocking_join_error(e: impl std::fmt::Display) -> TerminalError {
 /// preserving the "Agent … not connected" message.
 fn agent_not_connected(agent_id: &str) -> TerminalError {
     TerminalError::RemoteError(format!("Agent {agent_id} not connected"))
+}
+
+// ── Typed connections.* params (AGT-028) ─────────────────────────────────────
+//
+// The connection-management commands used to forward the frontend's payload to
+// the agent as an opaque `serde_json::Value`, so a frontend↔agent key drift
+// (e.g. `session_type` vs the wire's `type`) was invisible to both type systems and
+// the agent's serde silently dropped the unknown key. The payload is now decoded
+// into the shared core DTO here, at the command boundary, and re-serialized onto
+// the wire from that typed value.
+
+/// Decode an IPC payload into the typed `connections.*` params `T`.
+///
+/// Rejects (with [`TerminalError::InvalidParams`], `invalid_params` on the IPC
+/// envelope) a payload that does not match the DTO **or** that carries a non-null
+/// top-level key the DTO does not know — the agent's own decode ignores unknown
+/// keys, so without this check a misspelt field would be silently discarded.
+/// `null`-valued extra keys are tolerated: `null` means "unset" on every field.
+fn decode_agent_params<T>(method: &str, payload: Value) -> Result<T, TerminalError>
+where
+    T: serde::de::DeserializeOwned + serde::Serialize,
+{
+    let decoded: T = serde_json::from_value(payload.clone())
+        .map_err(|e| TerminalError::InvalidParams(format!("{method}: {e}")))?;
+    let known = serde_json::to_value(&decoded)
+        .map_err(|e| TerminalError::InvalidParams(format!("{method}: {e}")))?;
+    if let (Value::Object(input), Value::Object(known)) = (&payload, &known) {
+        let mut unknown: Vec<&str> = input
+            .iter()
+            .filter(|(key, value)| !value.is_null() && !known.contains_key(key.as_str()))
+            .map(|(key, _)| key.as_str())
+            .collect();
+        if !unknown.is_empty() {
+            unknown.sort_unstable();
+            return Err(TerminalError::InvalidParams(format!(
+                "{method}: unknown field(s): {}",
+                unknown.join(", ")
+            )));
+        }
+    }
+    Ok(decoded)
 }
 
 // ── Server-authority projection folds (#2388) ────────────────────────────────
@@ -501,6 +543,7 @@ pub async fn save_agent_definition(
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentDefinitionInfo, TerminalError> {
     debug!(agent_id, "Saving agent definition");
+    let definition: ConnectionCreateParams = decode_agent_params(CONNECTIONS_CREATE, definition)?;
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
     let result =
@@ -587,6 +630,7 @@ pub async fn update_agent_definition(
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentDefinitionInfo, TerminalError> {
     debug!(agent_id, "Updating agent definition");
+    let params: ConnectionUpdateParams = decode_agent_params(CONNECTIONS_UPDATE, params)?;
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
     let result =
@@ -643,6 +687,7 @@ pub async fn update_agent_folder(
     agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<AgentFolderInfo, TerminalError> {
     debug!(agent_id, "Updating agent folder");
+    let params: FolderUpdateParams = decode_agent_params(CONNECTIONS_FOLDERS_UPDATE, params)?;
     let manager = agent_manager.inner().clone();
     let aid = agent_id.clone();
     let result = tauri::async_runtime::spawn_blocking(move || manager.update_folder(&aid, params))
@@ -1154,6 +1199,74 @@ fn is_expected_apply_disconnect(message: &str) -> bool {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // ── decode_agent_params (AGT-028) ───────────────────────────────────────
+
+    #[test]
+    fn decode_agent_params_accepts_canonical_create_payload() {
+        let payload = json!({
+            "name": "Build",
+            "type": "ssh",
+            "config": {"host": "h"},
+            "persistent": true,
+            "folder_id": null,
+            "terminal_options": null,
+            "icon": null
+        });
+        let params: ConnectionCreateParams =
+            decode_agent_params(CONNECTIONS_CREATE, payload.clone()).expect("decodes");
+        assert_eq!(params.session_type, "ssh");
+        // Re-serialized onto the wire byte-for-byte unchanged.
+        assert_eq!(serde_json::to_value(&params).expect("encode"), payload);
+    }
+
+    /// The pre-AGT-028 frontend sent `session_type` on `connections.update`; the
+    /// wire key is `type`, so the agent silently dropped it. It is now rejected at
+    /// the desktop boundary with a typed `invalid_params` envelope error.
+    #[test]
+    fn decode_agent_params_rejects_drifted_key() {
+        let payload = json!({"id": "c-1", "name": "N", "session_type": "ssh"});
+        let err = decode_agent_params::<ConnectionUpdateParams>(CONNECTIONS_UPDATE, payload)
+            .expect_err("drifted key must be rejected");
+        assert!(matches!(err, TerminalError::InvalidParams(_)), "{err:?}");
+        assert_eq!(
+            err.code(),
+            crate::utils::errors::IpcErrorCode::InvalidParams
+        );
+        assert!(err.to_string().contains("session_type"), "{err}");
+        assert!(err.to_string().contains("connections.update"), "{err}");
+    }
+
+    #[test]
+    fn decode_agent_params_rejects_shape_mismatch() {
+        // `name` is required on connections.create.
+        let err = decode_agent_params::<ConnectionCreateParams>(
+            CONNECTIONS_CREATE,
+            json!({"type": "local"}),
+        )
+        .expect_err("missing name must be rejected");
+        assert!(matches!(err, TerminalError::InvalidParams(_)), "{err:?}");
+        // Wrong JSON type for a typed field.
+        let err = decode_agent_params::<FolderUpdateParams>(
+            CONNECTIONS_FOLDERS_UPDATE,
+            json!({"id": "f", "is_expanded": "yes"}),
+        )
+        .expect_err("wrong type must be rejected");
+        assert!(matches!(err, TerminalError::InvalidParams(_)), "{err:?}");
+    }
+
+    #[test]
+    fn decode_agent_params_keeps_tristate_and_tolerates_null_extras() {
+        let params: FolderUpdateParams = decode_agent_params(
+            CONNECTIONS_FOLDERS_UPDATE,
+            json!({"id": "f", "parent_id": null, "stale_extra": null}),
+        )
+        .expect("null extra keys are tolerated");
+        assert_eq!(
+            serde_json::to_value(&params).expect("encode"),
+            json!({"id": "f", "parent_id": null})
+        );
+    }
 
     /// The coordinated deploy result carries the RPC's coordination outcome so
     /// the desktop can report "N hosts notified, M still attached" (#1616).

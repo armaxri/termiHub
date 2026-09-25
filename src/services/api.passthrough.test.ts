@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
 import { invoke } from "@tauri-apps/api/core";
 
 vi.mock("@tauri-apps/api/core", () => ({
@@ -882,7 +883,15 @@ describe("api pass-through wrappers (#2975)", () => {
     it("saveAgentDefinition forwards the definition and returns the saved record", async () => {
       const saved = { id: "d1", name: "n", sessionType: "ssh", config: {}, persistent: false };
       mockedInvoke.mockResolvedValue(saved);
-      const definition = { name: "n", sessionType: "ssh" };
+      const definition: ConnectionCreateParams = {
+        name: "n",
+        type: "ssh",
+        config: {},
+        persistent: false,
+        folder_id: null,
+        terminal_options: null,
+        icon: null,
+      };
 
       const result = await saveAgentDefinition("agent-1", definition);
 

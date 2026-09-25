@@ -20,6 +20,9 @@ import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
 import type { ImportPreview } from "@/types/generated/ImportPreview";
 import type { ImportResult } from "@/types/generated/ImportResult";
+import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
+import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateParams";
+import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -2113,7 +2116,7 @@ export async function listAgentDefinitions(agentId: string): Promise<AgentDefini
 /** Save a session definition on an agent. */
 export async function saveAgentDefinition(
   agentId: string,
-  definition: Record<string, unknown>
+  definition: ConnectionCreateParams
 ): Promise<AgentDefinitionInfo> {
   return await invoke<AgentDefinitionInfo>("save_agent_definition", { agentId, definition });
 }
@@ -2131,7 +2134,7 @@ export async function listAgentConnections(agentId: string): Promise<AgentConnec
 /** Update a saved connection definition on an agent. */
 export async function updateAgentDefinition(
   agentId: string,
-  params: Record<string, unknown>
+  params: ConnectionUpdateParams
 ): Promise<AgentDefinitionInfo> {
   return await invoke<AgentDefinitionInfo>("update_agent_definition", { agentId, params });
 }
@@ -2152,7 +2155,7 @@ export async function createAgentFolder(
 /** Update a folder on an agent. */
 export async function updateAgentFolder(
   agentId: string,
-  params: Record<string, unknown>
+  params: FolderUpdateParams
 ): Promise<AgentFolderInfo> {
   return await invoke<AgentFolderInfo>("update_agent_folder", { agentId, params });
 }

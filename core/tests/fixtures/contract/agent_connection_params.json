@@ -1,0 +1,104 @@
+{
+  "cases": [
+    {
+      "name": "create: full definition inside a folder",
+      "method": "connections.create",
+      "params": {
+        "name": "Build Box",
+        "type": "ssh",
+        "config": {
+          "host": "build.example.com",
+          "port": 22,
+          "username": "ci",
+          "authMethod": "key"
+        },
+        "persistent": true,
+        "folder_id": "folder-1",
+        "terminal_options": {
+          "fontFamily": "Hack",
+          "fontSize": 14
+        },
+        "icon": "server"
+      }
+    },
+    {
+      "name": "create: defaults at the root (no terminal options, no icon)",
+      "method": "connections.create",
+      "params": {
+        "name": "Scratch",
+        "type": "local",
+        "config": {},
+        "persistent": false,
+        "folder_id": null,
+        "terminal_options": null,
+        "icon": null
+      }
+    },
+    {
+      "name": "update: editor save with terminal options and icon",
+      "method": "connections.update",
+      "params": {
+        "id": "conn-1",
+        "name": "Build Box",
+        "type": "ssh",
+        "config": {
+          "host": "build.example.com",
+          "port": 22,
+          "username": "ci",
+          "authMethod": "key"
+        },
+        "persistent": true,
+        "terminal_options": {
+          "fontFamily": "Hack",
+          "fontSize": 14
+        },
+        "icon": "server"
+      }
+    },
+    {
+      "name": "update: editor save clearing terminal options and icon",
+      "method": "connections.update",
+      "params": {
+        "id": "conn-2",
+        "name": "Scratch",
+        "type": "local",
+        "config": {},
+        "persistent": false,
+        "terminal_options": null,
+        "icon": null
+      }
+    },
+    {
+      "name": "update: move into a folder",
+      "method": "connections.update",
+      "params": {
+        "id": "conn-3",
+        "folder_id": "folder-2"
+      }
+    },
+    {
+      "name": "update: move to the root",
+      "method": "connections.update",
+      "params": {
+        "id": "conn-3",
+        "folder_id": null
+      }
+    },
+    {
+      "name": "folders.update: expand",
+      "method": "connections.folders.update",
+      "params": {
+        "id": "folder-1",
+        "is_expanded": true
+      }
+    },
+    {
+      "name": "folders.update: collapse",
+      "method": "connections.folders.update",
+      "params": {
+        "id": "folder-1",
+        "is_expanded": false
+      }
+    }
+  ]
+}

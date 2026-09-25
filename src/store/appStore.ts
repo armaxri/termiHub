@@ -83,6 +83,14 @@ import {
   collectWindowLayouts,
   takePendingWindowRestore,
 } from "@/services/api";
+import {
+  buildAgentConnectionCreate,
+  buildAgentConnectionMove,
+  buildAgentFolderExpanded,
+} from "@/services/agentConnectionPayloads";
+import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
+import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateParams";
+import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
 import type {
   MoveWindowTarget,
   TabHandoffRecord,
@@ -1138,9 +1146,9 @@ export interface AppState
   clearAgentSessions: (agentId: string) => void;
   updateAgentSettings: (agentId: string, settings: AgentSettings) => Promise<void>;
   refreshAgentSessions: (agentId: string) => Promise<void>;
-  saveAgentDef: (agentId: string, definition: Record<string, unknown>) => Promise<void>;
+  saveAgentDef: (agentId: string, definition: ConnectionCreateParams) => Promise<void>;
   duplicateAgentDef: (agentId: string, definitionId: string) => Promise<void>;
-  updateAgentDef: (agentId: string, params: Record<string, unknown>) => Promise<void>;
+  updateAgentDef: (agentId: string, params: ConnectionUpdateParams) => Promise<void>;
   moveAgentDefToFolder: (agentId: string, defId: string, folderId: string | null) => Promise<void>;
   bulkMoveAgentDefsToFolder: (
     agentId: string,
@@ -1149,7 +1157,7 @@ export interface AppState
   ) => Promise<void>;
   deleteAgentDef: (agentId: string, definitionId: string) => Promise<void>;
   createAgentFolder: (agentId: string, name: string, parentId?: string | null) => Promise<void>;
-  updateAgentFolder: (agentId: string, params: Record<string, unknown>) => Promise<void>;
+  updateAgentFolder: (agentId: string, params: FolderUpdateParams) => Promise<void>;
   deleteAgentFolder: (agentId: string, folderId: string) => Promise<void>;
   toggleAgentFolder: (agentId: string, folderId: string) => void;
   /** Convert all agent-error tabs for the given agent into live terminal tabs after reconnect. */
@@ -5789,15 +5797,20 @@ export const useAppStore = create<AppState>((set, get, store) => {
         (d) => d.id === definitionId
       );
       if (!original) return;
-      await useAppStore.getState().saveAgentDef(agentId, {
-        name: `Copy of ${original.name}`,
-        type: original.sessionType,
-        config: original.config,
-        persistent: original.persistent,
-        folder_id: original.folderId,
-        terminal_options: original.terminalOptions ?? null,
-        icon: original.icon ?? null,
-      });
+      await useAppStore.getState().saveAgentDef(
+        agentId,
+        buildAgentConnectionCreate(
+          {
+            name: `Copy of ${original.name}`,
+            type: original.sessionType,
+            config: original.config,
+            persistent: original.persistent,
+            terminalOptions: original.terminalOptions,
+            icon: original.icon,
+          },
+          original.folderId
+        )
+      );
     },
 
     deleteAgentDef: async (agentId, definitionId) => {
@@ -5829,7 +5842,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     },
 
     moveAgentDefToFolder: async (agentId, defId, folderId) => {
-      await get().updateAgentDef(agentId, { id: defId, folder_id: folderId });
+      await get().updateAgentDef(agentId, buildAgentConnectionMove(defId, folderId));
     },
 
     bulkMoveAgentDefsToFolder: async (agentId, defIds, folderId) => {
@@ -5897,7 +5910,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // Optimistically replace the folder (with its flipped expansion) in the
       // region (#2409), then fire-and-forget persist the expansion state.
       mirrorAgentIntent("agent.updateFolder", { id: agentId, folder });
-      apiUpdateAgentFolder(agentId, { id: folderId, is_expanded: folder.isExpanded }).catch(
+      apiUpdateAgentFolder(agentId, buildAgentFolderExpanded(folderId, folder.isExpanded)).catch(
         () => {}
       );
     },
