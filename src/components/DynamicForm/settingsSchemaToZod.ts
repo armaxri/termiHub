@@ -51,7 +51,10 @@ function fieldToZod(field: SettingsField): z.ZodTypeAny {
       return z.boolean().nullish();
 
     case "select":
-      return z.string();
+      // An optional select may be absent from a stored config (e.g. a remote
+      // agent saved before `updateStrategy` existed) or `null`-cleared on a
+      // type switch; neither may block Save (#3298). Required stays strict.
+      return field.required ? z.string() : z.string().nullish();
 
     case "text":
     case "password":

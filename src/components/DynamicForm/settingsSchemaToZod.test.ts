@@ -135,6 +135,49 @@ describe("settingsSchemaToZod", () => {
       expect(zod.safeParse({ auth: "key" }).success).toBe(true);
       expect(zod.safeParse({ auth: "password" }).success).toBe(true);
     });
+
+    it("rejects a missing or null value when required", () => {
+      const zod = settingsSchemaToZod(
+        makeSchema([
+          {
+            key: "auth",
+            label: "Auth",
+            fieldType: { type: "select", options: [{ value: "key", label: "Key" }] },
+            required: true,
+          },
+        ])
+      );
+      expect(zod.safeParse({}).success).toBe(false);
+      expect(zod.safeParse({ auth: null }).success).toBe(false);
+    });
+
+    // #3298: a stored config that simply omits an optional select (e.g. a remote
+    // agent saved before `updateStrategy` existed) must not make the form
+    // invalid; a type-switch clears it to `null` (#1820/#2467), also valid.
+    it("accepts undefined and null when optional (#3298)", () => {
+      const zod = settingsSchemaToZod(
+        makeSchema([
+          {
+            key: "strategy",
+            label: "Strategy",
+            fieldType: {
+              type: "select",
+              options: [
+                { value: "immediate", label: "Immediate" },
+                { value: "coordinated", label: "Coordinated" },
+              ],
+            },
+            required: false,
+            default: "immediate",
+          },
+        ])
+      );
+      expect(zod.safeParse({}).success).toBe(true);
+      expect(zod.safeParse({ strategy: undefined }).success).toBe(true);
+      expect(zod.safeParse({ strategy: null }).success).toBe(true);
+      expect(zod.safeParse({ strategy: "coordinated" }).success).toBe(true);
+      expect(zod.safeParse({ strategy: 42 }).success).toBe(false);
+    });
   });
 
   describe("keyValueList field", () => {
