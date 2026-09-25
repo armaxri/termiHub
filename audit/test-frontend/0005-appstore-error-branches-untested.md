@@ -9,8 +9,8 @@ subsystem: store/appStore.ts
 evidence:
   - src/store/appStore.ts
   - coverage/clover.xml
-status: in-progress
-resolution: "#3028 — first bounded slice: appStore branch 76.9->79.5% (+30, 18 tests: panel bail-outs, agent-lifecycle guards/catches); ~230 branches remain tracked in follow-up #3027; flagged toggleAgentFolder silent swallow"
+status: fixed
+resolution: "#3218 — appStore failure-path branch coverage systematized: baseline was already 84.4% (prior #2982/#3027), this slice -> 85.8% (887/1034), covering panel-tree missing-entity bail-outs + PROD-060 too-small guard, stopPersistentSession !existing/rejection, resolveAgentErrorTabs def-missing/split-recursion, dying-tab monitor teardown x4. Test-only, no behavior change. Remainder = low-value defensive ??/spread + unreachable false-arms (tracked #3217)"
 ---
 
 ## What

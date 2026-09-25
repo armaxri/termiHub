@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/monitoring, agent/monitoring
 evidence:
   - core/src/monitoring/types.rs:11
-status: open
+status: fixed
+resolution: "#3211 — process list + kill: core monitoring::process module (ProcessInfo, KillSignal TERM/KILL, typed ProcessError as {code,message,details}, ProcessManager trait, shared ExecProcessManager ps-parser cap 50, exact-pid build_kill_command), LocalProcessManager (sysinfo), agent RPC connection.processes.list/kill + RemoteProcessProxy, Tauri list_processes/kill_process + processes capability, sortable process-table modal with 5s refresh only while open + mandatory confirm dialog (pid+name) SIGTERM/SIGKILL. Follow-ups #3209 (full signal menu) / #3210 (agent-hosted remote process). Agent-hosted SSH/Docker/WSL = NotSupported (mirrors file-browser)"
 ---
 
 ## What

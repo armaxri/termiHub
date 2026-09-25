@@ -10,7 +10,8 @@ evidence:
   - src/components/Terminal/Terminal.tsx:368
   - src/components/Terminal/Terminal.tsx:1110
   - coverage/clover.xml
-status: open
+status: fixed
+resolution: "#3216 — Terminal connect/reconnect transition logic extracted to the pure, unit-testable core/src/components/Terminal/terminalConnectionPlan.ts (resolveEstablishmentPlan/resolveAgentSpawnAction from FEC-016 + new resolveBackendRedriveOutcome + classifyExitReason for the reconnect/error hot path). Behavior-preserving (existing Terminal.tsx tests unchanged); module now 100% branch (36/36), test cases 21->135. The reliability-critical reconnect/error edges are now covered without a full mount"
 ---
 
 ## What

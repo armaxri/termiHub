@@ -10,8 +10,8 @@ evidence:
   - agent/src/handler/dispatch.rs:1816
   - agent/src/session/manager.rs:975
   - agent/src/update/apply.rs:207
-status: deferred
-resolution: "maintainer-decision — agent-update RCE full redesign (mitigation grindable)"
+status: partial
+resolution: "#3214 — CRITICAL RCE MITIGATED (#3214): agent-update binaryPath now confined to canonicalized trusted staging roots (<config>/updates + /tmp/termihub-agent-upload) via component-wise starts_with, enforced at the request_deferred_update choke point AND re-asserted defense-in-depth before replace_binary; fails closed; bypass-vector tests (symlink escape, .. traversal, sibling-prefix). Closes the RPC-only arbitrary-path RCE. REMAINING (deferred, maintainer-gated #3213 = AGT-005): cryptographic signature verification of the new binary + per-method authorization beyond the initialized flag — needs a signing key"
 ---
 
 ## What
