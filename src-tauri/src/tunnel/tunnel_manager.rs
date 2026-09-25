@@ -9,7 +9,10 @@ use termihub_core::backends::ssh::auth::connect_and_authenticate_cancellable_wit
 use termihub_core::backends::ssh::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession};
 use termihub_core::backends::ssh::jump_host::connect_target_through_pooled_gateway_with_liveness;
 use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool, SshGateway};
-use termihub_core::protocol::methods::TunnelForwardSpec;
+use termihub_core::protocol::methods::{
+    TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
+    TunnelStatusResult, TunnelStopParams,
+};
 use termihub_core::tunnel::ActiveForwarder;
 use tokio_util::sync::CancellationToken;
 
@@ -333,7 +336,21 @@ fn poll_agent_tunnel_stats(
 ) -> Vec<(String, TunnelStats)> {
     let mut out = Vec::with_capacity(targets.len());
     for (tunnel_id, agent_id) in targets {
-        let params = serde_json::json!({ "tunnelId": tunnel_id });
+        // Build the request from the shared `TunnelStatusParams` DTO so the
+        // desktop and agent share one definition of the wire shape (DUP-001).
+        let params = match serde_json::to_value(TunnelStatusParams {
+            tunnel_id: tunnel_id.clone(),
+        }) {
+            Ok(params) => params,
+            Err(e) => {
+                tracing::debug!(
+                    "tunnel.status params serialize for {} failed: {}",
+                    tunnel_id,
+                    e
+                );
+                continue;
+            }
+        };
         match client.send_request(
             agent_id,
             termihub_core::protocol::methods::TUNNEL_STATUS,
@@ -361,10 +378,11 @@ fn poll_agent_tunnel_stats(
 /// the tunnel is not running on the agent or the reply carries no parseable
 /// stats (#2199). Pure, so the parse is unit-testable without an agent mock.
 fn stats_from_status_reply(result: &serde_json::Value) -> Option<TunnelStats> {
-    if result["running"].as_bool() != Some(true) {
+    let status = serde_json::from_value::<TunnelStatusResult>(result.clone()).ok()?;
+    if !status.running {
         return None;
     }
-    serde_json::from_value::<TunnelStats>(result["stats"].clone()).ok()
+    status.stats
 }
 
 /// An active tunnel instance.
@@ -783,7 +801,7 @@ impl TunnelManager {
         Ok(())
     }
 
-    /// Map a desktop [`TunnelType`] to the agent wire [`TunnelForwardSpec`] value
+    /// Map a desktop [`TunnelType`] to the shared agent-wire [`TunnelForwardSpec`]
     /// sent as `tunnel.start`'s `forward` parameter (DUP-019).
     ///
     /// Both enums wrap the same core forward-config structs, so mapping through
@@ -795,21 +813,15 @@ impl TunnelManager {
     /// golden/contract tests at build time instead of the CI-dark integration lane
     /// at runtime.
     ///
-    /// The produced JSON is byte-identical to the old shape — `serde_json::Value`
-    /// serializes object keys alphabetically (no `preserve_order` feature), so the
-    /// internally-tagged spec's `mode` key lands in exactly the same position the
-    /// appended literal did. Pinned by `agent_forward_wire_bytes_are_stable`.
-    fn forward_spec_for_wire(
-        tunnel_type: &TunnelType,
-    ) -> std::result::Result<serde_json::Value, TerminalError> {
-        let spec = match tunnel_type {
+    /// Returns the typed spec (not a pre-serialized `Value`) so the caller can
+    /// embed it directly in the shared [`TunnelStartParams`] DTO; the wire bytes
+    /// are pinned by `agent_forward_wire_bytes_are_stable`.
+    fn forward_spec(tunnel_type: &TunnelType) -> TunnelForwardSpec {
+        match tunnel_type {
             TunnelType::Local(config) => TunnelForwardSpec::Local(config.clone()),
             TunnelType::Remote(config) => TunnelForwardSpec::Remote(config.clone()),
             TunnelType::Dynamic(config) => TunnelForwardSpec::Dynamic(config.clone()),
-        };
-        serde_json::to_value(&spec).map_err(|e| {
-            TerminalError::TunnelError(format!("Failed to serialize forward spec: {}", e))
-        })
+        }
     }
 
     /// Start a tunnel hosted on a remote agent (S3, #2185).
@@ -834,7 +846,7 @@ impl TunnelManager {
         // the `mode` string is sourced from the agent enum's serde and can never
         // silently desync (DUP-019). Local, remote, and dynamic all run on an
         // agent (#2185, #2198).
-        let forward = Self::forward_spec_for_wire(&config.tunnel_type)?;
+        let forward = Self::forward_spec(&config.tunnel_type);
 
         // Reject a double-start (already active on the desktop or an agent).
         {
@@ -871,14 +883,19 @@ impl TunnelManager {
             TerminalError::TunnelError("Agent manager is not available".to_string())
         })?;
 
-        // Send the tunnel.start request. `forward` is the agent's
-        // internally-tagged `TunnelForwardSpec` shape (built above): the
-        // forward-config fields plus a `mode` discriminator.
-        let params = serde_json::json!({
-            "tunnelId": tunnel_id,
-            "sshConfig": ssh_config,
-            "forward": forward,
-        });
+        // Build the tunnel.start request from the shared `TunnelStartParams` DTO
+        // (DUP-001): the desktop and agent now share one definition of the params
+        // wire shape. `forward` is the agent's internally-tagged
+        // `TunnelForwardSpec` (built above): the forward-config fields plus a
+        // `mode` discriminator.
+        let params = serde_json::to_value(TunnelStartParams {
+            tunnel_id: tunnel_id.to_string(),
+            ssh_config,
+            forward,
+        })
+        .map_err(|e| {
+            TerminalError::TunnelError(format!("Failed to serialize tunnel.start params: {}", e))
+        })?;
 
         match agent_manager.send_request(
             agent_id,
@@ -886,14 +903,18 @@ impl TunnelManager {
             params,
         ) {
             Ok(result) => {
-                let bound_address = result["boundAddress"].as_str().unwrap_or("").to_string();
-                // The agent reports its runtime classification (loopback → agent
-                // only, widened → agent LAN, `-R` → the SSH server). Fall back to
-                // the loopback-safe `AgentOnly` if the field is missing/garbled so
-                // the UI never over-promises reachability (#2199).
-                let reachable_from =
-                    serde_json::from_value::<ReachableFrom>(result["reachableFrom"].clone())
-                        .unwrap_or(ReachableFrom::AgentOnly);
+                // Parse the reply into the shared `TunnelStartResult` DTO. A
+                // malformed/absent reply falls back to the loopback-safe defaults
+                // (empty bound address, `AgentOnly`) so the UI never over-promises
+                // reachability (#2199).
+                let reply = serde_json::from_value::<TunnelStartResult>(result).unwrap_or(
+                    TunnelStartResult {
+                        bound_address: String::new(),
+                        reachable_from: ReachableFrom::AgentOnly,
+                    },
+                );
+                let bound_address = reply.bound_address;
+                let reachable_from = reply.reachable_from;
                 {
                     let mut agent = self
                         .agent_tunnels
@@ -940,18 +961,29 @@ impl TunnelManager {
             return false;
         };
         if let Some(agent_manager) = agent_rpc_client(&self.app_handle) {
-            let params = serde_json::json!({ "tunnelId": tunnel_id });
-            if let Err(e) = agent_manager.send_request(
-                &handle.agent_id,
-                termihub_core::protocol::methods::TUNNEL_STOP,
-                params,
-            ) {
-                tracing::warn!(
-                    "Failed to stop agent-hosted tunnel {} on agent {}: {}",
+            // Build the request from the shared `TunnelStopParams` DTO (DUP-001).
+            match serde_json::to_value(TunnelStopParams {
+                tunnel_id: tunnel_id.to_string(),
+            }) {
+                Ok(params) => {
+                    if let Err(e) = agent_manager.send_request(
+                        &handle.agent_id,
+                        termihub_core::protocol::methods::TUNNEL_STOP,
+                        params,
+                    ) {
+                        tracing::warn!(
+                            "Failed to stop agent-hosted tunnel {} on agent {}: {}",
+                            tunnel_id,
+                            handle.agent_id,
+                            e
+                        );
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    "tunnel.stop params serialize for {} failed: {}",
                     tunnel_id,
-                    handle.agent_id,
                     e
-                );
+                ),
             }
         }
         self.emit_status(tunnel_id, TunnelStatus::Disconnected, None);
@@ -2607,15 +2639,19 @@ mod tests {
     // ── DUP-019: typed agent-tunnel forward-spec wire bridge ─────────────
     //
     // `start_agent_tunnel` sends the tunnel mode to the agent through the shared
-    // `TunnelForwardSpec` type (`forward_spec_for_wire`) instead of poking a
+    // `TunnelForwardSpec` type (`forward_spec`) instead of poking a
     // hard-coded `"local"/"remote"/"dynamic"` string into a `Value`. These tests
     // pin the exact wire bytes (they must NOT change — the agent parses them) and
     // assert the desktop discriminator stays identical to the agent enum's serde,
     // so a rename on either side fails here at build time rather than silently on
     // the CI-dark agent-integration lane.
 
-    use crate::tunnel::config::{DynamicForwardConfig, RemoteForwardConfig};
-    use termihub_core::protocol::methods::TunnelForwardSpec;
+    use crate::terminal::backend::SshConfig;
+    use crate::tunnel::config::{DynamicForwardConfig, ReachableFrom, RemoteForwardConfig};
+    use termihub_core::protocol::methods::{
+        TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
+        TunnelStatusResult, TunnelStopParams,
+    };
 
     fn sample_local() -> LocalForwardConfig {
         LocalForwardConfig {
@@ -2649,24 +2685,28 @@ mod tests {
         // `preserve_order`), so the internally-tagged `mode` key lands exactly
         // where the old appended literal did. Changing any of these strings is a
         // WIRE BREAK — the agent deserializes them.
-        let local = super::TunnelManager::forward_spec_for_wire(&TunnelType::Local(sample_local()))
-            .expect("serialize local forward");
+        let local = serde_json::to_value(super::TunnelManager::forward_spec(&TunnelType::Local(
+            sample_local(),
+        )))
+        .expect("serialize local forward");
         assert_eq!(
             serde_json::to_string(&local).unwrap(),
             r#"{"localHost":"127.0.0.1","localPort":5432,"mode":"local","remoteHost":"db.internal","remotePort":5433}"#
         );
 
-        let remote =
-            super::TunnelManager::forward_spec_for_wire(&TunnelType::Remote(sample_remote()))
-                .expect("serialize remote forward");
+        let remote = serde_json::to_value(super::TunnelManager::forward_spec(&TunnelType::Remote(
+            sample_remote(),
+        )))
+        .expect("serialize remote forward");
         assert_eq!(
             serde_json::to_string(&remote).unwrap(),
             r#"{"localHost":"127.0.0.1","localPort":3000,"mode":"remote","remoteHost":"0.0.0.0","remotePort":8080}"#
         );
 
-        let dynamic =
-            super::TunnelManager::forward_spec_for_wire(&TunnelType::Dynamic(sample_dynamic()))
-                .expect("serialize dynamic forward");
+        let dynamic = serde_json::to_value(super::TunnelManager::forward_spec(
+            &TunnelType::Dynamic(sample_dynamic()),
+        ))
+        .expect("serialize dynamic forward");
         assert_eq!(
             serde_json::to_string(&dynamic).unwrap(),
             r#"{"localHost":"127.0.0.1","localPort":1080,"mode":"dynamic"}"#
@@ -2690,7 +2730,8 @@ mod tests {
                 TunnelType::Dynamic(c) => serde_json::to_value(c).unwrap(),
             };
             legacy["mode"] = serde_json::json!(mode);
-            let typed = super::TunnelManager::forward_spec_for_wire(&tunnel_type).unwrap();
+            let typed =
+                serde_json::to_value(super::TunnelManager::forward_spec(&tunnel_type)).unwrap();
             assert_eq!(
                 serde_json::to_string(&typed).unwrap(),
                 serde_json::to_string(&legacy).unwrap(),
@@ -2723,7 +2764,8 @@ mod tests {
             ),
         ];
         for (tunnel_type, agent_spec, expected_mode) in cases {
-            let wire = super::TunnelManager::forward_spec_for_wire(&tunnel_type).unwrap();
+            let wire =
+                serde_json::to_value(super::TunnelManager::forward_spec(&tunnel_type)).unwrap();
             let agent_mode = serde_json::to_value(&agent_spec).unwrap()["mode"].clone();
             assert_eq!(
                 wire["mode"], agent_mode,
@@ -2744,5 +2786,112 @@ mod tests {
                 "agent parsed the wrong variant for {expected_mode}"
             );
         }
+    }
+
+    // ── DUP-001: shared tunnel.* request/response DTOs ───────────────────
+    //
+    // The desktop now builds every `tunnel.start`/`tunnel.stop`/`tunnel.status`
+    // request from the shared `Tunnel*Params` DTOs and parses replies into the
+    // shared `Tunnel*Result` DTOs, instead of hand-building `serde_json::json!`
+    // params and reading `Value["key"]`. These tests pin the request wire bytes
+    // byte-for-byte against the pre-migration hand-built JSON (a change here is a
+    // WIRE BREAK — the agent deserializes them) and prove the reply parse.
+
+    #[test]
+    fn tunnel_start_params_wire_matches_hand_built_json() {
+        // The forward + ssh_config values are serialized identically on both
+        // sides, so the only thing this pins is the top-level camelCase wrapper
+        // (`tunnelId`/`sshConfig`/`forward`) the desktop used to build by hand.
+        let ssh_config = SshConfig::default();
+        let forward = super::TunnelManager::forward_spec(&TunnelType::Local(sample_local()));
+
+        // Pre-migration hand-built shape.
+        let legacy = serde_json::json!({
+            "tunnelId": "tunnel-1",
+            "sshConfig": serde_json::to_value(&ssh_config).unwrap(),
+            "forward": serde_json::to_value(&forward).unwrap(),
+        });
+
+        let typed = serde_json::to_value(TunnelStartParams {
+            tunnel_id: "tunnel-1".to_string(),
+            ssh_config,
+            forward,
+        })
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_string(&typed).unwrap(),
+            serde_json::to_string(&legacy).unwrap(),
+            "tunnel.start params wire diverged from the hand-built json!"
+        );
+    }
+
+    #[test]
+    fn tunnel_stop_and_status_params_wire_match_hand_built_json() {
+        // Both were `json!({ "tunnelId": tunnel_id })` before the migration.
+        let stop = serde_json::to_value(TunnelStopParams {
+            tunnel_id: "tunnel-1".to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&stop).unwrap(),
+            r#"{"tunnelId":"tunnel-1"}"#
+        );
+
+        let status = serde_json::to_value(TunnelStatusParams {
+            tunnel_id: "tunnel-1".to_string(),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&status).unwrap(),
+            r#"{"tunnelId":"tunnel-1"}"#
+        );
+    }
+
+    #[test]
+    fn tunnel_start_result_parses_agent_reply() {
+        // The exact reply shape the agent sends for `tunnel.start`; the desktop
+        // now deserializes it into the shared `TunnelStartResult` instead of
+        // reading `result["boundAddress"]`/`result["reachableFrom"]` by hand.
+        let reply = serde_json::json!({
+            "boundAddress": "127.0.0.1:5432",
+            "reachableFrom": "agentOnly"
+        });
+        let parsed: TunnelStartResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.bound_address, "127.0.0.1:5432");
+        assert!(matches!(parsed.reachable_from, ReachableFrom::AgentOnly));
+    }
+
+    #[test]
+    fn tunnel_status_result_parses_running_and_stopped_replies() {
+        // Running reply carries live stats + endpoint fields.
+        let running = serde_json::json!({
+            "running": true,
+            "stats": {
+                "bytesSent": 2048,
+                "bytesReceived": 4096,
+                "activeConnections": 3,
+                "totalConnections": 7
+            },
+            "boundAddress": "127.0.0.1:5432",
+            "reachableFrom": "agentOnly"
+        });
+        let parsed: TunnelStatusResult = serde_json::from_value(running).unwrap();
+        assert!(parsed.running);
+        assert_eq!(parsed.bound_address.as_deref(), Some("127.0.0.1:5432"));
+        assert!(matches!(
+            parsed.reachable_from,
+            Some(ReachableFrom::AgentOnly)
+        ));
+        let stats = parsed.stats.expect("running reply carries stats");
+        assert_eq!(stats.bytes_sent, 2048);
+        assert_eq!(stats.total_connections, 7);
+
+        // Stopped reply: the optional endpoint/stats fields are absent.
+        let stopped: TunnelStatusResult =
+            serde_json::from_value(serde_json::json!({ "running": false })).unwrap();
+        assert!(!stopped.running);
+        assert!(stopped.stats.is_none());
+        assert!(stopped.bound_address.is_none());
     }
 }
