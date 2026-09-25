@@ -762,6 +762,8 @@ mod tests {
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
+    use serial_test::serial;
+
     use crate::connection::validate_settings;
     use crate::session::shell::ShellCommand;
     use crate::session::traits::SpawnedShell;
@@ -790,6 +792,10 @@ mod tests {
     /// The ceiling stays **bounded**, so the assertion stays genuine: a shell
     /// that never produces the expected output still FAILS once the deadline
     /// elapses — a real hang is never turned into a vacuous pass.
+    ///
+    /// A ceiling alone did not end the flake: the recurrence was not a slow
+    /// shell but a `powershell.exe` cold start that stalled past the whole
+    /// 60s. See [`integration_test_shell`] for the deterministic fix.
     fn pty_output_timeout() -> tokio::time::Duration {
         std::env::var("TERMIHUB_TEST_READY_TIMEOUT_SECS")
             .ok()
@@ -1613,13 +1619,53 @@ mod tests {
     }
 
     // ── Integration tests (spawn real shells, require PTY) ───────────
+    //
+    // Every test below that spawns a real shell is tagged
+    // `#[serial(local_pty)]`: each one launches a full shell process behind a
+    // PTY (ConPTY + conhost on Windows), and running a handful of those at once
+    // on an oversubscribed CI runner only adds startup contention. They are
+    // short, so serializing them costs well under a second on the green path.
+
+    /// The shell the *cross-platform* PTY integration tests spawn.
+    ///
+    /// These tests exercise `LocalShell`'s own plumbing (spawn, output
+    /// streaming, subscriber replacement, exit detection, teardown) — not any
+    /// particular shell — so they must use a shell whose startup is fast and
+    /// deterministic on every CI platform.
+    ///
+    /// # Why not the platform default on Windows (#2498)
+    ///
+    /// `detect_available_shells().first()` is `powershell` (Windows PowerShell
+    /// 5.1) on Windows. On the Windows CI runner its startup intermittently
+    /// stalls for over a minute: in the failing runs the ConPTY emitted its
+    /// init sequence (`ESC[?9001h ESC[?1004h`) immediately and then *nothing*
+    /// for the full 60s budget — no `Clear-Host`, no prompt, not even the echo
+    /// of the typed-ahead command — while `cmd.exe` sessions spawned in the
+    /// same second completed in under a second. The stall is inside
+    /// `powershell.exe` startup (a .NET/AMSI cold start on the runner), not in
+    /// `LocalShell`: typed-ahead input sits in the console input buffer and is
+    /// not lost. No deadline makes a test deterministic against an external
+    /// process that stalls for an unbounded time, so the plumbing tests use
+    /// `cmd` on Windows (the ConPTY + child-exit-watcher paths they cover are
+    /// shell-agnostic). PowerShell-specific coverage lives in the quarantined
+    /// `windows_powershell_spawn_echo_resize_teardown`.
+    fn integration_test_shell() -> String {
+        if cfg!(windows) {
+            "cmd".to_string()
+        } else {
+            detect_available_shells()
+                .into_iter()
+                .next()
+                .expect("at least one shell available")
+        }
+    }
 
     #[tokio::test]
+    #[serial(local_pty)]
     async fn connect_and_receive_output() {
         let mut shell = LocalShell::new();
 
-        let shells = detect_available_shells();
-        let shell_name = shells.first().expect("at least one shell available");
+        let shell_name = integration_test_shell();
 
         let settings = serde_json::json!({
             "shell": shell_name,
@@ -1629,7 +1675,7 @@ mod tests {
         assert!(shell.is_connected());
 
         let mut rx = shell.subscribe_output();
-        shell.write(b"echo HELLO_TERMIHUB\n").expect("write failed");
+        shell.write(b"echo HELLO_TERMIHUB\r").expect("write failed");
 
         let mut output = Vec::new();
         let deadline = pty_output_timeout();
@@ -1662,11 +1708,11 @@ mod tests {
     /// output pipe does not, so without the child-exit watcher the output
     /// channel here would never close and the assertion would time out.
     #[tokio::test]
+    #[serial(local_pty)]
     async fn typing_exit_ends_the_session() {
         let mut shell = LocalShell::new();
 
-        let shells = detect_available_shells();
-        let shell_name = shells.first().expect("at least one shell available");
+        let shell_name = integration_test_shell();
         let settings = serde_json::json!({ "shell": shell_name });
 
         shell.connect(settings).await.expect("connect failed");
@@ -1708,10 +1754,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(local_pty)]
     async fn connect_already_connected_fails() {
         let mut shell = LocalShell::new();
-        let shells = detect_available_shells();
-        let shell_name = shells.first().expect("at least one shell available");
+        let shell_name = integration_test_shell();
         let settings = serde_json::json!({ "shell": shell_name });
 
         shell
@@ -1725,10 +1771,10 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial(local_pty)]
     async fn subscribe_output_replaces_previous() {
         let mut shell = LocalShell::new();
-        let shells = detect_available_shells();
-        let shell_name = shells.first().expect("at least one shell available");
+        let shell_name = integration_test_shell();
         let settings = serde_json::json!({ "shell": shell_name });
 
         shell.connect(settings).await.expect("connect failed");
@@ -1736,7 +1782,7 @@ mod tests {
         let _rx1 = shell.subscribe_output();
         let mut rx2 = shell.subscribe_output();
 
-        shell.write(b"echo TEST_REPLACE\n").expect("write failed");
+        shell.write(b"echo TEST_REPLACE\r").expect("write failed");
 
         let mut output = Vec::new();
         let deadline = pty_output_timeout();
@@ -1772,6 +1818,7 @@ mod tests {
     /// function definition in the echoed output.
     #[cfg(unix)]
     #[tokio::test]
+    #[serial(local_pty)]
     async fn osc7_setup_injected_for_bash() {
         use std::path::Path;
 
@@ -1830,8 +1877,21 @@ mod tests {
     /// Windows-only: spawn PowerShell via the native ConPTY-backed
     /// spawner, write a command, observe its output, resize the PTY, and
     /// disconnect cleanly.
+    ///
+    /// Quarantined (#2498): `powershell.exe` startup on the Windows CI runner
+    /// intermittently stalls for more than a minute before its first prompt —
+    /// ConPTY emits its init sequence and then nothing, while `cmd.exe`
+    /// sessions spawned alongside finish in under a second. The stall is in
+    /// the external process's cold start, not in `LocalShell`, so no deadline
+    /// makes this deterministic. Run it by hand with `--ignored` on Windows;
+    /// #2498 tracks restoring it once the stall is understood.
     #[cfg(windows)]
     #[tokio::test]
+    #[serial(local_pty)]
+    #[cfg_attr(
+        windows,
+        ignore = "flaky: powershell.exe startup can stall >60s on Windows CI — see #2498"
+    )]
     async fn windows_powershell_spawn_echo_resize_teardown() {
         let mut shell = LocalShell::new();
         let settings = serde_json::json!({ "shell": "powershell" });
@@ -1884,6 +1944,7 @@ mod tests {
     /// cadence than PowerShell under ConPTY, so it is tested separately.
     #[cfg(windows)]
     #[tokio::test]
+    #[serial(local_pty)]
     async fn windows_cmd_spawn_echo_resize_teardown() {
         let mut shell = LocalShell::new();
         let settings = serde_json::json!({ "shell": "cmd" });
@@ -1930,6 +1991,7 @@ mod tests {
     /// interesting failure mode to exercise.
     #[cfg(windows)]
     #[tokio::test]
+    #[serial(local_pty)]
     async fn windows_back_to_back_resizes_under_conpty() {
         let mut shell = LocalShell::new();
         let settings = serde_json::json!({ "shell": "cmd" });
@@ -1950,10 +2012,10 @@ mod tests {
 
     /// Old saved connections use `"shellType"` instead of `"shell"`.
     #[tokio::test]
+    #[serial(local_pty)]
     async fn connect_with_legacy_shell_type_key() {
         let mut shell = LocalShell::new();
-        let shells = detect_available_shells();
-        let shell_name = shells.first().expect("at least one shell available");
+        let shell_name = integration_test_shell();
 
         let settings = serde_json::json!({ "shellType": shell_name });
 
