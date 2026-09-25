@@ -860,6 +860,88 @@ Inter-|   Receive                                                |  Transmit
         provider.unsubscribe().await.expect("unsubscribe");
     }
 
+    /// #3300: a transport that connects but whose every collect fails (timeout /
+    /// exec error) before the first sample must not hang in `Connecting`: after
+    /// `pre_live_failure_limit` consecutive failures the loop resolves to the
+    /// terminal `Offline` and ends, without a reconnect campaign.
+    #[tokio::test(start_paused = true)]
+    async fn collect_loop_resolves_offline_when_no_first_sample_ever_arrives() {
+        let (transport, collect_fail, _connect_fail) =
+            FakeTransport::with_collect_and_connect_flags();
+        collect_fail.store(true, Ordering::SeqCst);
+        let collect_calls = transport.collect_calls.clone();
+        let connect_calls = transport.connect_calls.clone();
+        let mut provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 2;
+        provider.reconnect_backoff = fast_backoff(8);
+        let limit = CollectLoopState::with_threshold(2).pre_live_failure_limit();
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "a pre-Live run of transport failures must resolve Connecting -> Offline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop pushes no sample and closes its stats channel"
+        );
+        assert_eq!(
+            collect_calls.load(Ordering::SeqCst),
+            limit as usize,
+            "exactly `pre_live_failure_limit` collects before giving up"
+        );
+        assert_eq!(
+            connect_calls.load(Ordering::SeqCst),
+            1,
+            "a pre-Live Offline must not start a re-dial campaign"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// #3300: after a mid-stream drop the re-dial succeeds, but every collect
+    /// on the fresh transport still fails. The loop must not sit in
+    /// `Reconnecting` forever: it resolves to `Offline` in bounded time.
+    #[tokio::test(start_paused = true)]
+    async fn collect_loop_resolves_offline_when_re_dialled_transport_never_samples() {
+        let (transport, collect_fail, _connect_fail) =
+            FakeTransport::with_collect_and_connect_flags();
+        let connect_calls = transport.connect_calls.clone();
+        let mut provider = SshMonitoringProviderImpl::with_transport(transport, COLLECT_TIMEOUT);
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 1;
+        provider.reconnect_backoff = fast_backoff(8);
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+
+        // Collects fail from here on; re-dials keep succeeding.
+        collect_fail.store(true, Ordering::SeqCst);
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Stale);
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Reconnecting
+        );
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "a re-dialled transport that never samples must resolve to Offline"
+        );
+        assert_eq!(
+            connect_calls.load(Ordering::SeqCst),
+            2,
+            "the re-dial succeeded once; Offline came from the collect bound"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
     /// G3: a stalled collect must time out and be reported as a failure rather
     /// than hanging forever.
     #[tokio::test]

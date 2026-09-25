@@ -565,6 +565,13 @@ Inter-|   Receive                                                |  Transmit
         outputs: Vec<String>,
         calls: Arc<AtomicUsize>,
         fail: Arc<AtomicBool>,
+        /// Every call with index `>= fail_from` fails (default: never), so a
+        /// test can let the subscribe probe pass and fail every loop collect
+        /// deterministically, without racing the loop on the `fail` flag.
+        fail_from: usize,
+        /// Call indexes that succeed even at or after `fail_from` (e.g. a
+        /// reconnect probe that recovers).
+        succeed_at: Vec<usize>,
     }
 
     impl FakeSource {
@@ -573,6 +580,17 @@ Inter-|   Receive                                                |  Transmit
                 outputs: outputs.iter().map(|s| s.to_string()).collect(),
                 calls: Arc::new(AtomicUsize::new(0)),
                 fail: Arc::new(AtomicBool::new(false)),
+                fail_from: usize::MAX,
+                succeed_at: Vec::new(),
+            }
+        }
+
+        /// Calls `>= fail_from` fail, except the indexes in `succeed_at`.
+        fn failing_from(outputs: &[&str], fail_from: usize, succeed_at: &[usize]) -> Self {
+            Self {
+                fail_from,
+                succeed_at: succeed_at.to_vec(),
+                ..Self::with_outputs(outputs)
             }
         }
 
@@ -582,6 +600,8 @@ Inter-|   Receive                                                |  Transmit
                 outputs: Vec::new(),
                 calls: Arc::new(AtomicUsize::new(0)),
                 fail: Arc::new(AtomicBool::new(true)),
+                fail_from: usize::MAX,
+                succeed_at: Vec::new(),
             }
         }
     }
@@ -590,7 +610,8 @@ Inter-|   Receive                                                |  Transmit
     impl ProcStatsSource for FakeSource {
         async fn collect_proc(&self) -> Result<String, CoreError> {
             let n = self.calls.fetch_add(1, Ordering::SeqCst);
-            if self.fail.load(Ordering::SeqCst) || self.outputs.is_empty() {
+            let scripted_fail = n >= self.fail_from && !self.succeed_at.contains(&n);
+            if scripted_fail || self.fail.load(Ordering::SeqCst) || self.outputs.is_empty() {
                 return Err(CoreError::Other("no /proc".into()));
             }
             let idx = n.min(self.outputs.len() - 1);
@@ -758,6 +779,74 @@ Inter-|   Receive                                                |  Transmit
                 .expect("the collect loop must end after going Offline")
                 .is_none(),
             "an Offline loop pushes no sample and closes its stats channel"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// #3300: the subscribe probe parsed, but every loop collect fails at the
+    /// transport level (exec error). Before the first sample the loop must not
+    /// hang in `Connecting`: after `pre_live_failure_limit` consecutive
+    /// failures it resolves to the terminal `Offline` and ends, with no
+    /// recovery campaign.
+    #[tokio::test(start_paused = true)]
+    async fn persistent_transport_failures_before_live_resolve_offline() {
+        // Call 0 is the (parseable) subscribe probe; every later call fails.
+        let source = FakeSource::failing_from(&[SAMPLE_1], 1, &[]);
+        let calls = source.calls.clone();
+        let mut provider = ExecMonitoringProvider::new(Arc::new(source));
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 2;
+        let limit = CollectLoopState::with_threshold(2).pre_live_failure_limit();
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "persistent pre-Live transport failures must resolve Connecting -> Offline"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(5), sub.stats.recv())
+                .await
+                .expect("the collect loop must end after going Offline")
+                .is_none(),
+            "an Offline loop pushes no sample and closes its stats channel"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1 + limit as usize,
+            "the probe plus exactly `pre_live_failure_limit` collects, no re-probe"
+        );
+
+        provider.unsubscribe().await.expect("unsubscribe");
+    }
+
+    /// #3300: after a mid-stream drop the recovery probe parses (the source
+    /// looks reachable again), but every collect afterwards still fails. The
+    /// loop must not sit in `Reconnecting` forever.
+    #[tokio::test(start_paused = true)]
+    async fn transport_failures_after_a_successful_re_probe_resolve_offline() {
+        // 0: subscribe probe, 1: first loop collect (Live), 2: drop (Stale),
+        // 3: recovery probe succeeds, 4..: every collect fails.
+        let source = FakeSource::failing_from(&[SAMPLE_1, SAMPLE_2], 2, &[3]);
+        let mut provider = ExecMonitoringProvider::new(Arc::new(source));
+        provider.interval = Duration::from_millis(20);
+        provider.stale_threshold = 1;
+        provider.reconnect_backoff =
+            BackoffSchedule::new(Duration::from_millis(5), Duration::from_millis(20), 8);
+
+        let mut sub = provider.subscribe().await.expect("subscribe");
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Live);
+        assert_eq!(next_status(&mut sub.status).await, MonitorStatus::Stale);
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Reconnecting
+        );
+        assert_eq!(
+            next_status(&mut sub.status).await,
+            MonitorStatus::Offline,
+            "a re-probed source that never samples again must resolve to Offline"
         );
 
         provider.unsubscribe().await.expect("unsubscribe");
