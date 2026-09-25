@@ -61,6 +61,21 @@ AppImage is not built for ARM64, so use the Debian package. Download `termiHub-0
 sudo dpkg -i termiHub-0.1.0-linux-arm64.deb
 ```
 
+### Verifying a download
+
+Every release artifact (installers, agent binaries and SBOMs) carries a GitHub
+[build provenance attestation](https://docs.github.com/actions/security-for-github-actions/using-artifact-attestations)
+proving it was built by this repository's release workflow from the tagged commit. With the
+[GitHub CLI](https://cli.github.com/) installed, verify any downloaded file with:
+
+```bash
+gh attestation verify termiHub-0.1.0-macos-arm64.dmg --repo armaxri/termiHub
+```
+
+Each release also ships CycloneDX software bills of materials (`termiHub-<version>-sbom-*.cdx.json`
+for the desktop app, the agent, the RDP sidecar and the frontend) listing every bundled dependency.
+See [Verifying release artifacts](docs/contributing.md#verifying-release-artifacts) for details.
+
 ### Known limitations (beta)
 
 - **Unsigned binaries** — macOS shows a Gatekeeper prompt (right-click → Open) and Windows shows a SmartScreen warning (More info → Run anyway); see the per-platform steps above.

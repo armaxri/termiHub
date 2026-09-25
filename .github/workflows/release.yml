@@ -158,6 +158,13 @@ jobs:
     name: Build and Upload - ${{ matrix.platform }}
     needs: create-release
     runs-on: ${{ matrix.os }}
+    # A job-level block REPLACES the workflow-level one, so contents: write is
+    # restated. id-token + attestations are granted only to the jobs that
+    # attest build provenance (CI-022), never workflow-wide.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -397,11 +404,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Build provenance (CI-022): a Sigstore-signed SLSA statement binding each
+      # published bundle's SHA-256 to this workflow run, commit and tag. The glob
+      # covers the primary artifact plus the .deb/.rpm side-uploads renamed
+      # above. Users verify with `gh attestation verify <file> --repo <repo>`;
+      # verify-release does the same for every asset before `latest` moves.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.*
+
   # Build and upload Linux agent binaries as release assets (static musl)
   agent-binaries-linux:
     name: Agent Binary (${{ matrix.target }})
     needs: create-release
     runs-on: ubuntu-latest
+    # Same scoped attestation grant as build-and-upload (CI-022).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -466,11 +488,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
+      # sidecars are not attested: the attestation already binds the binary's
+      # SHA-256, and the .sig is itself a signature over that same digest.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ matrix.artifact_name }}
+
   # Build and upload macOS agent binaries as release assets (native build)
   agent-binaries-macos:
     name: Agent Binary (${{ matrix.target }})
     needs: create-release
     runs-on: macos-latest
+    # Same scoped attestation grant as build-and-upload (CI-022).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -509,6 +544,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
+      # sidecars are not attested: the attestation already binds the binary's
+      # SHA-256, and the .sig is itself a signature over that same digest.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ matrix.artifact_name }}
+
   # Build and upload Windows agent binaries as release assets (native MSVC build).
   # cross-rs cannot build the MSVC ABI, so this runs native cargo on a Windows
   # runner. The binary is emitted as termihub-agent.exe.
@@ -524,6 +567,11 @@ jobs:
     name: Agent Binary (${{ matrix.target }})
     needs: create-release
     runs-on: windows-latest
+    # Same scoped attestation grant as build-and-upload (CI-022).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -562,7 +610,109 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  # Verify the full checksummed asset set + release notes are present (folds in
+      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
+      # sidecars are not attested: the attestation already binds the binary's
+      # SHA-256, and the .sig is itself a signature over that same digest.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ matrix.artifact_name }}
+
+  # Software bills of materials (CI-022): one CycloneDX JSON per shipped
+  # component, uploaded as release assets and provenance-attested so a
+  # consumer can prove the SBOM came from this run. Needs no build — both
+  # generators read the lockfiles / an install tree only.
+  #   - desktop / agent: cargo-cyclonedx over the src-tauri and agent crates
+  #     (every workspace crate they pull in, e.g. core/plugin-api/vnc-rs, is a
+  #     component), --target all so every platform's deps are listed.
+  #   - rdp-sidecar: its own crate + Cargo.lock (workspace-excluded, #1747).
+  #   - frontend: @cyclonedx/cyclonedx-npm over the production (--omit dev)
+  #     tree. It reads the tree via `npm ls`, which cannot follow pnpm's
+  #     symlinked store, so this job installs with node-linker=hoisted (an
+  #     npm-shaped node_modules from the same frozen lockfile).
+  sbom:
+    name: Generate SBOMs
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+
+      - name: Install cargo-cyclonedx
+        uses: taiki-e/install-action@fa23953489c080190314742a9b907f8e97c6767c # v2.87.10
+        with:
+          tool: cargo-cyclonedx@0.5.9
+
+      - name: Generate Rust SBOMs
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          # One run per lockfile; cargo-cyclonedx writes <crate dir>/sbom.json
+          # for EVERY member of the workspace, so pick the shipped crates.
+          args=(--format json --spec-version 1.5 --target all --override-filename sbom)
+          cargo cyclonedx "${args[@]}"
+          cargo cyclonedx --manifest-path rdp-sidecar/Cargo.toml "${args[@]}"
+          mv src-tauri/sbom.json "termiHub-${VERSION}-sbom-desktop.cdx.json"
+          mv agent/sbom.json "termiHub-${VERSION}-sbom-agent.cdx.json"
+          mv rdp-sidecar/sbom.json "termiHub-${VERSION}-sbom-rdp-sidecar.cdx.json"
+
+      - name: Generate frontend SBOM
+        env:
+          VERSION: ${{ needs.create-release.outputs.version }}
+          CYCLONEDX_NPM_VERSION: '6.0.1'
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --ignore-scripts --config.node-linker=hoisted
+          out="termiHub-${VERSION}-sbom-frontend.cdx.json"
+          # --ignore-npm-errors: npm ls flags a few pnpm-hoisted packages as
+          # "extraneous"; that is a layout quirk, not a missing package. The
+          # completeness check below is what guards the result instead.
+          npx --yes "@cyclonedx/cyclonedx-npm@${CYCLONEDX_NPM_VERSION}" \
+            --ignore-npm-errors --omit dev --spec-version 1.6 --output-reproducible \
+            --output-format JSON --output-file "$out"
+          # Every direct production dependency must appear in the SBOM.
+          missing=$(jq -r --slurpfile bom "$out" '
+            ($bom[0] | [.components[]? | recurse(.components[]?)
+              | if (.group // "") != "" then "\(.group)/\(.name)" else .name end]) as $have
+            | .dependencies | keys[] | select(. as $d | $have | index($d) | not)
+          ' package.json)
+          if [ -n "$missing" ]; then
+            echo "::error::Frontend SBOM is missing direct dependencies:"
+            while IFS= read -r dep; do
+              echo "::error::  ${dep}"
+            done <<< "$missing"
+            exit 1
+          fi
+
+      - name: Attest SBOM provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: termiHub-${{ needs.create-release.outputs.version }}-sbom-*.cdx.json
+
+      - name: Upload SBOMs as release assets
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: gh release upload "v${VERSION}" termiHub-"${VERSION}"-sbom-*.cdx.json
+
   # Sign every agent binary with the release key (AGT-005, #3213). One job holds
   # the private key (never the build jobs): it downloads the just-published
   # agent assets, checks their .sha256 sidecars, writes a detached <asset>.sig
@@ -637,6 +787,7 @@ jobs:
           done
           "$HELPER" verify "${agents[@]}"
 
+  # Verify the full checksummed asset set + release notes are present (folds in
   # #480). release.yml is not exercised by per-PR CI, so this turns the old manual
   # "eyeball the Release page" checklist into a hard gate: if any expected asset is
   # missing, the release job fails instead of shipping an incomplete release.
@@ -650,8 +801,18 @@ jobs:
         agent-binaries-macos,
         agent-binaries-windows,
         sign-agent-binaries,
+        sbom,
       ]
     runs-on: ubuntu-latest
+    # Read-only: this job only inspects the published release. attestations:
+    # read lets `gh attestation verify` fetch the provenance bundles.
+    permissions:
+      contents: read
+      attestations: read
+    # No checkout in this job, so gh cannot infer the repository from a git
+    # remote; without GH_REPO the bare `gh release view "$TAG"` calls fail.
+    env:
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - name: Verify expected asset set and release notes
@@ -691,6 +852,11 @@ jobs:
             expected+=("$a" "${a}.sha256" "${a}.sig")
           done
 
+          # CycloneDX SBOMs from the sbom job (CI-022).
+          for c in desktop agent rdp-sidecar frontend; do
+            expected+=("termiHub-${VERSION}-sbom-${c}.cdx.json")
+          done
+
           echo "Fetching asset list for ${TAG}..."
           mapfile -t actual < <(gh release view "$TAG" --json assets --jq '.assets[].name')
 
@@ -728,6 +894,41 @@ jobs:
             exit 1
           fi
           echo "Release notes present (${#BODY} chars)."
+
+      # Every published artifact must carry a build-provenance attestation from
+      # THIS workflow at THIS tag (CI-022) — the same check users run. The
+      # .sha256/.sig sidecars are not attested (they derive from the binary's
+      # digest, which the attestation already binds), so they are skipped.
+      - name: Verify build provenance attestations
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.create-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          TAG="v${VERSION}"
+          work="$RUNNER_TEMP/attestation-verify"
+          mkdir -p "$work"
+          cd "$work"
+          mapfile -t subjects < <(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" \
+            --json assets --jq '.assets[].name | select(endswith(".sha256") or endswith(".sig") | not)')
+          failed=()
+          for f in "${subjects[@]}"; do
+            gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern "$f"
+            if gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+              --source-ref "refs/tags/${TAG}" >/dev/null; then
+              echo "attested: $f"
+            else
+              failed+=("$f")
+            fi
+            rm -f "$f"
+          done
+          if [ "${#failed[@]}" -gt 0 ]; then
+            echo "::error::${#failed[@]} release asset(s) lack a valid provenance attestation:"
+            printf '::error::  %s\n' "${failed[@]}"
+            exit 1
+          fi
+          echo "All ${#subjects[@]} release artifacts carry valid build provenance."
 
   # Update latest release tag
   update-latest:
