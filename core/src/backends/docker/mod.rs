@@ -20,6 +20,7 @@ use bollard::image::CreateImageOptions;
 use bollard::models::HostConfig;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::config::{ContainerRuntime, DockerConfig, VolumeMount};
@@ -788,6 +789,24 @@ impl ConnectionType for Docker {
     }
 
     async fn connect(&mut self, settings: serde_json::Value) -> Result<(), SessionError> {
+        self.connect_cancellable(settings, None).await
+    }
+
+    /// Connect, aborting the multi-step runtime-connect → image-pull →
+    /// create/start → exec flow promptly when `cancel` fires (PARITY-007).
+    ///
+    /// The two slow, resource-free steps — connecting to the runtime and
+    /// pulling the image — are raced against the token (bollard futures cancel
+    /// on drop). Once a container has been *created*, every exit path — a later
+    /// error **or** cancellation — routes through `cleanup_container`, so a
+    /// cancelled connect never leaks a container on the host (CORE-009).
+    ///
+    /// When `cancel` is `None` the flow is byte-for-byte the previous connect.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
         if self.state.is_some() {
             return Err(SessionError::AlreadyExists("Already connected".to_string()));
         }
@@ -799,29 +818,37 @@ impl ConnectionType for Docker {
 
         info!(image = %config.image, "Connecting Docker session");
 
-        // Connect to the container runtime (Docker or Podman).
-        let client = connect_to_runtime(&config.runtime).await?;
+        // Connect to the container runtime (Docker or Podman). No container
+        // exists yet, so a cancel here just drops the in-flight connect.
+        let client =
+            super::race_connect(cancel.clone(), connect_to_runtime(&config.runtime)).await?;
 
-        // Pull the image if it's not already available locally.
+        // Pull the image if it's not already available locally. Racing the whole
+        // pull against the token lets a cancel abort a long download promptly;
+        // still no container exists, so nothing leaks on cancel.
         info!(image = %config.image, "Pulling Docker image");
-        let pull_opts = CreateImageOptions {
-            from_image: config.image.as_str(),
-            ..Default::default()
-        };
-        let mut pull_stream = client.create_image(Some(pull_opts), None, None);
-        while let Some(result) = pull_stream.next().await {
-            match result {
-                Ok(info) => {
-                    debug!(?info, "Image pull progress");
-                }
-                Err(e) => {
-                    return Err(SessionError::SpawnFailed(format!(
-                        "Failed to pull image '{}': {e}",
-                        config.image
-                    )));
+        let pull = async {
+            let pull_opts = CreateImageOptions {
+                from_image: config.image.as_str(),
+                ..Default::default()
+            };
+            let mut pull_stream = client.create_image(Some(pull_opts), None, None);
+            while let Some(result) = pull_stream.next().await {
+                match result {
+                    Ok(info) => {
+                        debug!(?info, "Image pull progress");
+                    }
+                    Err(e) => {
+                        return Err(SessionError::SpawnFailed(format!(
+                            "Failed to pull image '{}': {e}",
+                            config.image
+                        )));
+                    }
                 }
             }
-        }
+            Ok(())
+        };
+        super::race_connect(cancel.clone(), pull).await?;
         info!(image = %config.image, "Image ready");
 
         let container_name = generate_container_name();
@@ -871,6 +898,12 @@ impl ConnectionType for Docker {
             ..Default::default()
         };
 
+        // Last cancel checkpoint before a container exists — a cancel here
+        // returns without having created anything to clean up.
+        if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+            return Err(super::connect_cancelled());
+        }
+
         // Create the container.
         let create_opts = CreateContainerOptions {
             name: container_name.as_str(),
@@ -884,20 +917,32 @@ impl ConnectionType for Docker {
         let container_id = create_response.id;
         debug!(container_id = %container_id, "Container created");
 
-        // Start the container.
-        client
-            .start_container::<String>(&container_id, None)
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("Failed to start container: {e}")))?;
-
-        info!(container_id = %container_id, "Container started");
-
-        // The container is now running. Every step below can fail, and until a
-        // `ConnectedState` is stored `disconnect` will not run — so any error
-        // from here on must tear the started container down first, or a failed
-        // connect leaks a running container on the host (CORE-009). The exec
-        // setup is run in a helper block whose error path calls `cleanup_container`.
+        // A container now exists. Every step below — starting it, the exec
+        // setup, and any cancellation — can fail, and until a `ConnectedState`
+        // is stored `disconnect` will not run, so every exit path must tear the
+        // container down first or a failed/cancelled connect leaks it on the
+        // host (CORE-009). Start + exec therefore run in one helper block whose
+        // error path calls `cleanup_container`; a cancel between steps returns
+        // the shared cancellation error and drops through the same cleanup.
         let setup: Result<ConnectedState, SessionError> = async {
+            if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                return Err(super::connect_cancelled());
+            }
+
+            // Start the container.
+            client
+                .start_container::<String>(&container_id, None)
+                .await
+                .map_err(|e| {
+                    SessionError::SpawnFailed(format!("Failed to start container: {e}"))
+                })?;
+
+            info!(container_id = %container_id, "Container started");
+
+            if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                return Err(super::connect_cancelled());
+            }
+
             // Create an interactive exec instance with the shell. When a working
             // directory is configured, start the exec there so the shell opens
             // `cd`'d into it — this is how a directory-mount container spawn (#1372)
@@ -1718,6 +1763,36 @@ mod tests {
         });
         let result = docker.connect(settings).await;
         assert!(result.is_err());
+    }
+
+    /// A pre-cancelled token aborts the connect at its first step — before the
+    /// runtime is even contacted, so no Docker daemon is required — and surfaces
+    /// the shared cancellation error, leaving the backend disconnected. The
+    /// config is otherwise valid, so only the token stops it (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_runtime() {
+        let mut docker = Docker::new();
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = docker
+            .connect_cancellable(serde_json::json!({ "image": "ubuntu:22.04" }), Some(token))
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!docker.is_connected());
+    }
+
+    /// With no token the cancellable path behaves exactly as `connect`: an empty
+    /// image fails validation the same way, before any runtime contact.
+    #[tokio::test]
+    async fn connect_cancellable_none_matches_connect() {
+        let settings = serde_json::json!({ "image": "" });
+        let plain = Docker::new().connect(settings.clone()).await;
+        let cancellable = Docker::new().connect_cancellable(settings, None).await;
+        assert!(plain.is_err());
+        assert!(cancellable.is_err());
     }
 
     /// Manual, host-dependent diagnostic for #1600. Requires a live host where

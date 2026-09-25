@@ -20,6 +20,7 @@ use crate::monitoring::MonitoringProvider;
 use crate::session::serial::{open_serial_port, parse_serial_config};
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use tokio_util::sync::CancellationToken;
 
 /// Channel capacity for write data sent to the serial writer task.
 const WRITE_CHANNEL_CAPACITY: usize = 256;
@@ -500,6 +501,18 @@ impl ConnectionType for Serial {
         Ok(())
     }
 
+    /// Connect, honoring the cancellation token (PARITY-007). Opening a serial
+    /// port is fast and synchronous, so there is no long await to interrupt
+    /// mid-connect; an *already*-cancelled token still short-circuits before
+    /// the port is opened, so cancellation is uniform across every backend.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        super::race_connect(cancel, self.connect(settings)).await
+    }
+
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(mut state) = self.state.take() {
             // Mark the graceful path so the `Drop` guard on `state` (which runs
@@ -771,6 +784,48 @@ mod tests {
         });
         let result = serial.connect(settings).await;
         assert!(result.is_err());
+    }
+
+    /// A pre-cancelled token short-circuits before the port is opened (so no
+    /// serial hardware is touched) and surfaces the shared cancellation error,
+    /// leaving the backend disconnected (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_open() {
+        let mut serial = Serial::new();
+        let token = CancellationToken::new();
+        token.cancel();
+        let settings = serde_json::json!({
+            "port": "/dev/ttyUSB0",
+            "baudRate": "115200",
+            "dataBits": "8",
+            "stopBits": "1",
+            "parity": "none",
+            "flowControl": "none",
+        });
+        let result = serial.connect_cancellable(settings, Some(token)).await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!serial.is_connected());
+    }
+
+    /// With no token the cancellable path behaves exactly as `connect`: an empty
+    /// port fails the same way.
+    #[tokio::test]
+    async fn connect_cancellable_none_matches_connect() {
+        let settings = serde_json::json!({
+            "port": "",
+            "baudRate": "115200",
+            "dataBits": "8",
+            "stopBits": "1",
+            "parity": "none",
+            "flowControl": "none",
+        });
+        let plain = Serial::new().connect(settings.clone()).await;
+        let cancellable = Serial::new().connect_cancellable(settings, None).await;
+        assert!(plain.is_err());
+        assert!(cancellable.is_err());
     }
 
     #[tokio::test]

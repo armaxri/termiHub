@@ -27,6 +27,7 @@ use crate::monitoring::{
 use crate::session::shell::{detect_wsl_distros, osc7_setup_command, shell_to_command};
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use tokio_util::sync::CancellationToken;
 
 /// WSL backend using portable-pty, implementing [`ConnectionType`].
 ///
@@ -1131,6 +1132,18 @@ impl ConnectionType for Wsl {
         Ok(())
     }
 
+    /// Connect, honoring the cancellation token (PARITY-007). Spawning the WSL
+    /// PTY is fast and synchronous, so there is no long await to interrupt
+    /// mid-connect; an *already*-cancelled token still short-circuits before
+    /// the PTY is spawned, so cancellation is uniform across every backend.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        super::race_connect(cancel, self.connect(settings)).await
+    }
+
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(mut state) = self.state.take() {
             // Mark the graceful path so the `Drop` guard on `state` (which runs
@@ -1229,6 +1242,36 @@ mod tests {
     fn type_id() {
         let wsl = Wsl::new();
         assert_eq!(wsl.type_id(), "wsl");
+    }
+
+    /// A pre-cancelled token short-circuits before the WSL PTY is spawned and
+    /// surfaces the shared cancellation error, leaving the backend disconnected
+    /// (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_spawn() {
+        let mut wsl = Wsl::new();
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = wsl
+            .connect_cancellable(serde_json::json!({ "distribution": "Ubuntu" }), Some(token))
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!wsl.is_connected());
+    }
+
+    /// With no token the cancellable path behaves exactly as `connect`: a
+    /// missing distribution fails the same way.
+    #[tokio::test]
+    async fn connect_cancellable_none_matches_connect() {
+        let plain = Wsl::new().connect(serde_json::json!({})).await;
+        let cancellable = Wsl::new()
+            .connect_cancellable(serde_json::json!({}), None)
+            .await;
+        assert!(matches!(plain, Err(SessionError::InvalidConfig(_))));
+        assert!(matches!(cancellable, Err(SessionError::InvalidConfig(_))));
     }
 
     /// A `Write` that always fails, to exercise the PTY-write error path.
