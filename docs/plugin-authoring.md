@@ -96,7 +96,7 @@ silently ignored.
 | `author`      | string   | yes      | Plugin author.                                                                                                                                                                 |
 | `description` | string   | yes      | Short description.                                                                                                                                                             |
 | `license`     | string   | yes      | SPDX-style license identifier.                                                                                                                                                 |
-| `apiVersion`  | string   | yes      | Plugin-API version as `"major"` or `"major.minor"` (e.g. `"1.0"`).                                                                                                             |
+| `apiVersion`  | string   | yes      | Plugin ABI version as canonical `"major.minor"` (currently `"1.0"`); must mirror the native library's ABI — see [API-version compatibility](#api-version-compatibility).       |
 | `platforms`   | string[] | yes      | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                      |
 | `permissions` | string[] | yes      | Requested capabilities (see below). May be empty.                                                                                                                              |
 | `extensions`  | object   | yes      | Extension points provided; **at least one** required.                                                                                                                          |
@@ -130,10 +130,23 @@ Each entry under `settings` describes one user-configurable value:
 
 ### API-version compatibility
 
-The manifest's `apiVersion` is checked against the host's supported version:
-**major versions must match, and the plugin's minor must not exceed the host's.**
-An incompatible version is reported as its own distinct outcome so the host can
-prompt the user to update rather than treating the package as malformed.
+termiHub has **one** plugin version number: the native plugin **ABI version**,
+`major.minor`, currently **1.0** (frozen — see
+[ABI 1.0 and the compatibility promise](#abi-10-and-the-compatibility-promise)).
+The manifest's `apiVersion` is a checked **mirror** of it, never an independent
+number:
+
+- It must be written as canonical `"major.minor"` (`"1.0"`, not `"1"`).
+- It is checked on install and on every start with the ABI rule: **major versions
+  must match, and the plugin's minor must not exceed the host's.** An
+  incompatible version is reported as its own distinct outcome (the plugin is
+  shown as _incompatible_ and auto-disabled) rather than as a malformed package.
+- For a plugin with a native `terminalBackend`, the loader additionally requires
+  `apiVersion` to **equal** the ABI version the library itself exports. A package
+  whose manifest and library disagree is refused with an error naming both.
+
+Theme / JS-only plugins have no library, so for them `apiVersion` is checked
+against the host with the same rule and nothing else.
 
 ## Extension points
 
@@ -254,8 +267,9 @@ sequenceDiagram
     participant Host
     participant Lib as plugin cdylib
     Host->>Lib: termihub_plugin_abi_version()
-    Note over Host: refuse load if incompatible
+    Note over Host: refuse: other major, newer minor,<br/>or manifest apiVersion ≠ library ABI
     Host->>Lib: termihub_plugin_init(&mut PluginInfo)
+    Note over Host: refuse if PluginInfo ABI ≠ exported ABI
     Host->>Lib: termihub_plugin_create_backend(config, output) -> PluginBackend
     loop session
         Host->>Lib: write_input / resize
@@ -266,7 +280,59 @@ sequenceDiagram
 ```
 
 [`echo-backend/src/lib.rs`](../examples/plugins/echo-backend/src/lib.rs) is a
-complete, tested implementation of all four symbols.
+complete, tested implementation of all four symbols. `termihub_plugin_abi_version`
+returns `CURRENT_PLUGIN_ABI_VERSION.to_packed()` (the version packed into a `u32`
+as `major << 16 | minor`), and `PluginInfo::new` fills in the same value.
+
+### ABI 1.0 and the compatibility promise
+
+The native ABI is **frozen at 1.0** (maintainer decision 2026-09-26, #3367). A
+host at ABI `H.h` loads a plugin built for ABI `P.p` only when `P == H` and
+`p <= h`:
+
+```mermaid
+flowchart TD
+    A[plugin ABI P.p, host ABI H.h] --> B{P == H?}
+    B -- no --> R1["refused: major P is not supported<br/>(rebuild the plugin, or update termiHub)"]
+    B -- yes --> C{p <= h?}
+    C -- no --> R2["refused: plugin built for ABI P.p,<br/>this termiHub supports H.h — update termiHub"]
+    C -- yes --> L[loads]
+```
+
+So a plugin keeps loading across termiHub updates for the whole 1.x line, and a
+plugin built for a newer minor is refused with a clear "update termiHub" instead
+of misbehaving. Plugins built before the freeze (which exported a bare counter,
+`1`–`4`) read as ABI `0.x` and are refused as an unsupported major — rebuild them.
+
+**What a minor may add** (older-minor plugins keep working):
+
+- a callback appended to a **host-owned** table — the capability-bridge vtable
+  (`PluginHostBridgeVTable`) or the mediated-stream vtable;
+- a field appended to a **host-allocated** struct the host passes by pointer or
+  as an out-parameter (`PluginSessionConfig`, `PluginInfo`) — the host reads an
+  appended field only when the plugin's ABI supports that minor;
+- a new, **optional exported symbol** for new plugin-provided behavior — the host
+  resolves it only when the plugin's minor includes it;
+- a new `PluginStatus` variant — the host never hands it to a plugin built for an
+  older minor (it is downgraded to `Other`).
+
+**What counts as breaking** (needs a new **major**, i.e. every plugin must be
+rebuilt): reordering, removing, retyping or resizing an existing field, variant
+or symbol; changing its meaning; or growing a struct that is passed **by value**
+or owned by the plugin (`PluginBackend`, `PluginBackendVTable`,
+`PluginOutputSender`, `PluginHostBridge`, `PluginTcpStream`, `PluginFileMetadata`,
+the `Ffi*` carriers). `plugin-api/tests/abi_layout.rs` pins the 1.0 layout so an
+accidental break fails CI.
+
+### The SDK is internal for 0.1
+
+`termihub-plugin-api` is **not published** (it stays `publish = false`) for the
+0.1 release. The ABI above is frozen, but the SDK crate that implements it is
+only obtainable by building inside this repository — as the in-repo example and
+test fixture do, via a `path` dependency. Treat native-plugin authoring as
+**internal** for 0.1: there is no supported `crates.io` or `git`+`tag`
+dependency line yet, and publishing the SDK (with its version tied to the ABI
+major/minor) is a later decision. Theme and JS-only plugins need no SDK.
 
 ### The ABI caveat — read this
 
@@ -274,9 +340,9 @@ complete, tested implementation of all four symbols.
 objects and most enums can change between compiler versions and even builds. A
 native plugin is therefore only sound to load when it was:
 
-1. built against the **same major ABI version** of `termihub-plugin-api` that the
-   target host ships — the host calls `termihub_plugin_abi_version` first and
-   **refuses to load a mismatch**; and
+1. built against an ABI version the target host accepts — **the same major, and a
+   minor no newer than the host's** (see above); the host calls
+   `termihub_plugin_abi_version` first and **refuses anything else**; and
 2. built with a **compatible Rust toolchain**.
 
 Consequences for authors:

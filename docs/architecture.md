@@ -1721,6 +1721,43 @@ through.
 
 ---
 
+### ADR-15: Native Plugin ABI Frozen at 1.0 with Major/Minor Compatibility
+
+**Context:** Native terminal-backend plugins are `cdylib`s loaded in-process through the
+hand-rolled `#[repr(C)]` ABI in `termihub-plugin-api`. Before the 0.1 release that ABI was a single
+`u32` counter checked by **exact equality** and bumped on every layout change (it reached `4` via
+issues #2018, #2024 and #2030), while the manifest carried a second, independent `apiVersion` (`"1.0"`) that
+never moved (audit findings PLG-001/002/003). An auto-updating host on an exact-match ABI orphans
+every installed native plugin on any ABI-touching update, and the manifest gate — the one that feeds
+the graceful "incompatible, auto-disabled" path — could not see that skew at all.
+
+**Decision** (maintainer, 2026-09-26, #3367):
+
+- The ABI is `major.minor`, **frozen at 1.0**. A host at `H.h` loads a plugin at `P.p` iff `P == H`
+  and `p <= h`; anything else is refused with a typed error naming both versions.
+- Minors are **append-only**. Host-owned tables and host-allocated structs may grow by appending
+  (the capability bridge moved behind a host-owned `PluginHostBridgeVTable` for exactly this); new
+  plugin-provided behavior arrives as optional exported symbols resolved only when the plugin's
+  minor supports it; new enum variants are downgraded for older-minor plugins
+  (`PluginStatus::for_peer`). By-value and plugin-owned structs are frozen for the whole major.
+  `plugin-api/tests/abi_layout.rs` pins the 1.0 layout so a break fails CI.
+- **One authoritative version**: the ABI the library exports (packed `u32`, `major << 16 | minor`).
+  The manifest `apiVersion` is a checked mirror — canonical `major.minor`, gated with the same rule,
+  and required to equal the library's ABI at load (`ManifestAbiMismatch`); `PluginInfo` must repeat
+  the exported value (`InconsistentAbi`).
+- The SDK crate stays **internal for 0.1** (`publish = false`); publishing it is a later decision.
+
+**Consequences:**
+
+- Plugins keep loading across the whole 1.x line; honest ABI skew surfaces through the manifest
+  gate as the graceful _Incompatible_ state, and a package whose manifest lies is refused at load.
+- Planned ABI additions — a toolchain record in `PluginInfo` (PLG-013) and host context for backends
+  (PLG-014) — fit as future **minor** additions instead of breaking bumps.
+- A breaking change now costs a major bump that orphans every plugin, so it is a deliberate
+  maintainer decision rather than a routine counter increment.
+
+---
+
 ## 10. Quality Requirements
 
 ### Quality Requirements Overview
