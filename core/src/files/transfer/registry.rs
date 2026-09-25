@@ -1,17 +1,13 @@
 //! Transfer registry — Tauri state tracking every in-flight transfer (#1336).
 //!
-//! Two coexisting stores, so the richer queue model is added *without touching*
-//! the backward-compatible SFTP path (#1245):
+//! A `transfer_id → `[`TransferHandle`]` map plus a per-session
+//! [`SessionScheduler`], implementing the queue/concurrency/pause/resume/retry
+//! model driven by the SFTP and FTP executors and the generic `transfer_*`
+//! commands. Recently-terminal transfers are retained briefly so a frontend
+//! reconcile can settle a row whose terminal event was dropped (#1645).
 //!
-//! - **legacy** — a `transfer_id → CancellationToken` map driving the existing
-//!   SFTP `run_download`/`run_upload` copy loops. Its API (`register`,
-//!   `cancel`, `cancel_all`, `drop_entry`) is unchanged.
-//! - **rich** — a `transfer_id → `[`TransferHandle`]` map plus a per-session
-//!   [`SessionScheduler`], implementing the queue/concurrency/pause/resume/retry
-//!   model used by FTP transfers and the generic `transfer_*` commands.
-//!
-//! Cross-cutting operations (`cancel`, `cancel_all`) act on both stores so a
-//! caller (or app-quit teardown) need not know which kind a transfer is.
+//! The legacy cancel-only SFTP token map (#1245) was removed in #3188 once no
+//! production path registered legacy transfers any more.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -62,8 +58,8 @@ pub struct TransferSnapshot {
     /// after backoff, or sit awaiting a manual retry — so it reports
     /// `state: failed` with `settled: false`. Only [`TransferState::is_terminal`]
     /// states from a live handle (`completed`/`cancelled`) and
-    /// [retained-terminal](Self) snapshots (a completed/cancelled rich transfer,
-    /// or a genuinely-final legacy SFTP transfer) are `settled`. This stops a
+    /// [retained-terminal](Self) snapshots (a dropped, genuinely-final
+    /// transfer) are `settled`. This stops a
     /// transient mid-retry failure from being reconciled into a terminal
     /// `failed` row (which the reconcile guard would then never re-settle).
     pub settled: bool,
@@ -209,49 +205,6 @@ impl TransferHandle {
     }
 }
 
-/// A live legacy (SFTP) transfer: its cancellation token plus the minimal
-/// identity needed to surface it in `transfer_list` (#1645).
-///
-/// The legacy SFTP copy path reports live progress only via best-effort
-/// `transfer-progress` events (it does not update the registry mid-flight), so
-/// the registry holds just the transfer's identity and total. That is enough
-/// for a reconcile: a listed legacy transfer shows as `active` while live, and
-/// [`TransferRegistry::finish_legacy`] records its true terminal state when the
-/// copy loop ends.
-#[derive(Debug)]
-struct LegacyEntry {
-    token: CancellationToken,
-    session_id: String,
-    direction: TransferDirection,
-    file_name: String,
-    path: String,
-    total: u64,
-}
-
-impl LegacyEntry {
-    /// A live (`active`) snapshot of this legacy transfer. `transferred` is not
-    /// tracked in the registry for the legacy path, so it reports `0`; the
-    /// reconcile only ever *settles* a stuck row to a terminal state and never
-    /// moves a live row backward, so this cannot regress an event-advanced row.
-    fn snapshot(&self, transfer_id: &str) -> TransferSnapshot {
-        TransferSnapshot {
-            transfer_id: transfer_id.to_string(),
-            session_id: self.session_id.clone(),
-            direction: self.direction,
-            file_name: self.file_name.clone(),
-            path: self.path.clone(),
-            state: TransferStateTag::Active,
-            // A live legacy transfer is always in-flight, never settled (#1657).
-            settled: false,
-            transferred: 0,
-            total: self.total,
-            speed: 0,
-            attempt: 0,
-            max_attempts: MAX_RETRIES,
-        }
-    }
-}
-
 /// A recently-terminal transfer retained for a bounded window so a reconcile
 /// can still observe its final state after its live entry is dropped (#1645).
 #[derive(Debug)]
@@ -263,8 +216,6 @@ struct RetainedTerminal {
 /// Inner, lock-guarded registry state.
 #[derive(Default)]
 struct RegistryState {
-    /// Legacy SFTP transfers (#1245): id → live entry (token + identity, #1645).
-    legacy: HashMap<String, LegacyEntry>,
     /// Rich queued transfers (#1336): id → handle.
     rich: HashMap<String, Arc<TransferHandle>>,
     /// Per-session slot accounting for the rich model.
@@ -316,51 +267,10 @@ impl TransferRegistry {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    // --- Legacy SFTP API (#1245), unchanged semantics ---
-
-    /// Register a fresh legacy (SFTP) transfer, returning its cancellation
-    /// token.
-    ///
-    /// The returned token is checked by the SFTP copy loop at each chunk
-    /// boundary. The identity (`session_id`, `direction`, `file_name`, `path`,
-    /// `total`) is retained so the transfer appears in `transfer_list` and can
-    /// be settled to its terminal state by a reconcile (#1645).
-    pub fn register(
-        &self,
-        transfer_id: &str,
-        session_id: &str,
-        direction: TransferDirection,
-        file_name: &str,
-        path: &str,
-        total: u64,
-    ) -> CancellationToken {
-        let token = CancellationToken::new();
-        self.lock().legacy.insert(
-            transfer_id.to_string(),
-            LegacyEntry {
-                token: token.clone(),
-                session_id: session_id.to_string(),
-                direction,
-                file_name: file_name.to_string(),
-                path: path.to_string(),
-                total,
-            },
-        );
-        token
-    }
-
-    /// Cancel a transfer by id (legacy *or* rich). Unknown / already-finished
-    /// ids are a no-op (returns `false`); a live transfer is cancelled
-    /// (returns `true`).
+    /// Cancel a transfer by id. Unknown / already-finished ids are a no-op
+    /// (returns `false`); a live transfer is cancelled (returns `true`).
     pub fn cancel(&self, transfer_id: &str) -> bool {
-        let handle = {
-            let state = self.lock();
-            if let Some(entry) = state.legacy.get(transfer_id) {
-                entry.token.cancel();
-                return true;
-            }
-            state.rich.get(transfer_id).cloned()
-        };
+        let handle = self.lock().rich.get(transfer_id).cloned();
         match handle {
             Some(h) => {
                 h.token.cancel();
@@ -371,7 +281,7 @@ impl TransferRegistry {
         }
     }
 
-    /// Cancel every in-flight transfer (legacy and rich). Used on app quit
+    /// Cancel every in-flight transfer. Used on app quit
     /// *before* sessions are closed, so no half-written file keeps a channel
     /// open during teardown. Returns the number of transfers signalled.
     pub fn cancel_all(&self) -> usize {
@@ -380,28 +290,20 @@ impl TransferRegistry {
         // rehydrate as paused on the next launch.
         super::QUEUE_TEARDOWN.store(true, std::sync::atomic::Ordering::SeqCst);
         let state = self.lock();
-        for entry in state.legacy.values() {
-            entry.token.cancel();
-        }
         for handle in state.rich.values() {
             handle.token.cancel();
             handle.notify.notify_one();
         }
-        state.legacy.len() + state.rich.len()
+        state.rich.len()
     }
 
-    /// Drop a transfer's registry entry once its copy loop has finished
-    /// (legacy or rich). For a rich transfer this also releases any slot it
-    /// still holds so a queued peer can be promoted, and — when the transfer
-    /// reached a terminal state — retains a snapshot briefly so a reconcile can
-    /// still settle a stuck row whose terminal event was dropped (#1645).
-    ///
-    /// The legacy SFTP path records its terminal state via [`Self::finish_legacy`]
-    /// instead (it knows the final phase and byte count); a bare `drop_entry`
-    /// for a legacy id therefore just removes the live entry.
+    /// Drop a transfer's registry entry once its copy loop has finished. This
+    /// also releases any slot it still holds so a queued peer can be promoted,
+    /// and — when the transfer reached a terminal state — retains a snapshot
+    /// briefly so a reconcile can still settle a stuck row whose terminal event
+    /// was dropped (#1645).
     pub fn drop_entry(&self, transfer_id: &str) {
         let mut state = self.lock();
-        state.legacy.remove(transfer_id);
         if let Some(handle) = state.rich.remove(transfer_id) {
             let snapshot = handle.snapshot();
             Self::release_slot_locked(&mut state, &handle);
@@ -411,29 +313,12 @@ impl TransferRegistry {
         }
     }
 
-    /// Record a legacy (SFTP) transfer's terminal outcome and remove its live
-    /// entry (#1645). Called by the SFTP copy path when the transfer settles, so
-    /// the transfer stays snapshot-able for the retention window even if its
-    /// terminal `transfer-progress` event was dropped. A no-op for an id with no
-    /// live legacy entry (e.g. already dropped).
-    pub fn finish_legacy(&self, transfer_id: &str, state_tag: TransferStateTag, transferred: u64) {
-        let mut state = self.lock();
-        if let Some(entry) = state.legacy.remove(transfer_id) {
-            let mut snapshot = entry.snapshot(transfer_id);
-            snapshot.state = state_tag;
-            snapshot.transferred = transferred;
-            if state_tag.is_terminal() {
-                Self::record_terminal_locked(&mut state, snapshot);
-            }
-        }
-    }
-
     /// Push a terminal snapshot into the retention history, then evict anything
     /// past the capacity or TTL bound. Callers hold the state lock.
     fn record_terminal_locked(state: &mut RegistryState, mut snapshot: TransferSnapshot) {
         // A retained terminal is, by definition, a genuinely-final outcome the
-        // reconcile may settle a stuck row to — including a legacy SFTP failure
-        // (which, unlike a live rich `failed` handle, never retries) (#1657).
+        // reconcile may settle a stuck row to — including a dropped failure
+        // (which, unlike a live `failed` handle, can no longer retry) (#1657).
         snapshot.settled = true;
         let now = Instant::now();
         state
@@ -497,7 +382,7 @@ impl TransferRegistry {
     }
 
     /// Register a rich, queued transfer **only if no transfer with this id is
-    /// already tracked** (rich or legacy), returning its handle. Returns `None`
+    /// already tracked**, returning its handle. Returns `None`
     /// when the id is already present.
     ///
     /// This closes the resume-relaunch race (#3199): a rehydrated transfer has no
@@ -517,7 +402,7 @@ impl TransferRegistry {
         total: u64,
     ) -> Option<Arc<TransferHandle>> {
         let mut state = self.lock();
-        if state.rich.contains_key(transfer_id) || state.legacy.contains_key(transfer_id) {
+        if state.rich.contains_key(transfer_id) {
             return None;
         }
         let handle = Arc::new(TransferHandle {
@@ -647,8 +532,7 @@ impl TransferRegistry {
     }
 
     /// Snapshot every transfer for `transfer_list` (optionally filtered by
-    /// session): live rich transfers, live legacy SFTP transfers (#1645), and
-    /// recently-terminal transfers retained for the reconcile window (#1645).
+    /// session): live transfers, and recently-terminal transfers retained for the reconcile window (#1645).
     ///
     /// A live entry always shadows a retained snapshot for the same id, so an id
     /// that (impossibly, given UUIDs) reappeared live would never be reported as
@@ -666,12 +550,6 @@ impl TransferRegistry {
                 let snap = handle.snapshot();
                 live_ids.insert(snap.transfer_id.clone());
                 out.push(snap);
-            }
-        }
-        for (id, entry) in &state.legacy {
-            if matches(&entry.session_id) {
-                live_ids.insert(id.clone());
-                out.push(entry.snapshot(id));
             }
         }
         for retained in &state.terminal {
@@ -695,23 +573,6 @@ impl TransferRegistry {
             .unwrap_or(0)
     }
 
-    // --- Test/diagnostic helpers (legacy map) ---
-
-    #[cfg(test)]
-    pub fn len(&self) -> usize {
-        self.lock().legacy.len()
-    }
-
-    #[cfg(test)]
-    pub fn is_empty(&self) -> bool {
-        self.lock().legacy.is_empty()
-    }
-
-    #[cfg(test)]
-    pub fn contains(&self, transfer_id: &str) -> bool {
-        self.lock().legacy.contains_key(transfer_id)
-    }
-
     /// Number of retained terminal snapshots (#1645 tests).
     #[cfg(test)]
     fn retained_len(&self) -> usize {
@@ -732,40 +593,7 @@ impl TransferRegistry {
 mod tests {
     use super::*;
 
-    // --- Legacy API (unchanged #1245 behaviour) ---
-
-    /// Register a legacy transfer with placeholder identity, for tests that only
-    /// exercise the token/cancel/drop semantics.
-    fn reg_legacy(reg: &TransferRegistry, id: &str) -> CancellationToken {
-        reg.register(
-            id,
-            "sess",
-            TransferDirection::Download,
-            id,
-            &format!("/remote/{id}"),
-            100,
-        )
-    }
-
-    #[test]
-    fn register_adds_a_live_token() {
-        let reg = TransferRegistry::new();
-        let token = reg_legacy(&reg, "t1");
-        assert!(reg.contains("t1"));
-        assert_eq!(reg.len(), 1);
-        assert!(!token.is_cancelled());
-    }
-
-    #[test]
-    fn cancel_trips_the_token_and_reports_true() {
-        let reg = TransferRegistry::new();
-        let token = reg_legacy(&reg, "t1");
-        assert!(reg.cancel("t1"), "cancelling a live transfer returns true");
-        assert!(
-            token.is_cancelled(),
-            "the copy loop's token must be tripped"
-        );
-    }
+    // --- Cancel / drop semantics ---
 
     #[test]
     fn cancel_unknown_id_is_a_noop() {
@@ -779,9 +607,9 @@ mod tests {
     #[test]
     fn cancel_all_trips_every_token() {
         let reg = TransferRegistry::new();
-        let a = reg_legacy(&reg, "a");
-        let b = reg_legacy(&reg, "b");
-        let c = reg_legacy(&reg, "c");
+        let a = enq(&reg, "a", "s1");
+        let b = enq(&reg, "b", "s1");
+        let c = enq(&reg, "c", "s2");
         assert_eq!(
             reg.cancel_all(),
             3,
@@ -801,25 +629,24 @@ mod tests {
     #[test]
     fn drop_entry_removes_the_transfer() {
         let reg = TransferRegistry::new();
-        reg_legacy(&reg, "t1");
+        enq(&reg, "t1", "s1");
         reg.drop_entry("t1");
-        assert!(!reg.contains("t1"));
-        assert_eq!(reg.len(), 0);
+        assert!(reg.get("t1").is_none());
     }
 
     #[test]
     fn drop_entry_for_unknown_id_is_a_noop() {
         let reg = TransferRegistry::new();
-        reg_legacy(&reg, "t1");
+        enq(&reg, "t1", "s1");
         reg.drop_entry("other");
-        assert!(reg.contains("t1"), "unrelated entry must survive");
-        assert_eq!(reg.len(), 1);
+        assert!(reg.get("t1").is_some(), "unrelated entry must survive");
+        assert_eq!(reg.list(None).len(), 1);
     }
 
     #[test]
     fn cancel_after_drop_is_a_noop() {
         let reg = TransferRegistry::new();
-        reg_legacy(&reg, "t1");
+        enq(&reg, "t1", "s1");
         reg.drop_entry("t1");
         assert!(!reg.cancel("t1"));
     }
@@ -978,24 +805,6 @@ mod tests {
     }
 
     #[test]
-    fn enqueue_if_absent_is_none_for_a_live_legacy_id() {
-        let reg = TransferRegistry::new();
-        reg_legacy(&reg, "t1");
-        assert!(
-            reg.enqueue_if_absent(
-                "t1",
-                "s1",
-                TransferDirection::Download,
-                "t1",
-                "/remote/t1",
-                100,
-            )
-            .is_none(),
-            "an id already registered (legacy) is not re-enqueued"
-        );
-    }
-
-    #[test]
     fn pause_unknown_id_is_false() {
         let reg = TransferRegistry::new();
         assert!(!reg.pause("nope"));
@@ -1003,81 +812,37 @@ mod tests {
         assert!(!reg.retry("nope"));
     }
 
-    // --- Legacy SFTP in transfer_list + terminal retention (#1645) ---
+    // --- Terminal retention (#1645) ---
 
-    #[test]
-    fn legacy_transfer_is_listed_as_active_while_live() {
-        // Before #1645 an SFTP transfer registered only in the legacy token map
-        // and never appeared in `transfer_list`. It must now show up as active,
-        // carrying its identity, so a reconcile has a snapshot to match.
-        let reg = TransferRegistry::new();
-        reg.register(
-            "s1",
-            "sess-a",
-            TransferDirection::Upload,
-            "file.txt",
-            "/remote/file.txt",
-            2048,
-        );
-
-        let list = reg.list(None);
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0].transfer_id, "s1");
-        assert_eq!(list[0].session_id, "sess-a");
-        assert_eq!(list[0].direction, TransferDirection::Upload);
-        assert_eq!(list[0].file_name, "file.txt");
-        assert_eq!(list[0].path, "/remote/file.txt");
-        assert_eq!(list[0].state, TransferStateTag::Active);
-        assert_eq!(list[0].total, 2048);
+    /// Drive a fresh transfer to `Completed` and drop it, so its terminal
+    /// snapshot lands in the retention history.
+    fn complete_and_drop(reg: &TransferRegistry, id: &str, session: &str) {
+        let h = enq(reg, id, session);
+        reg.request_slot(&h); // Active
+        h.transition(TransferEvent::Complete); // Active → Completed
+        reg.drop_entry(id);
     }
 
     #[test]
-    fn finish_legacy_retains_a_terminal_snapshot_after_the_live_entry_is_gone() {
-        // The crux of #1645: an SFTP transfer whose terminal event was dropped
-        // is still observable as *completed* for the retention window, so the
-        // reconcile can settle the stuck row.
+    fn dropping_a_cancelled_transfer_retains_its_terminal_state() {
         let reg = TransferRegistry::new();
-        reg.register(
-            "s1",
-            "sess-a",
-            TransferDirection::Download,
-            "file.txt",
-            "/remote/file.txt",
-            100,
-        );
-        reg.finish_legacy("s1", TransferStateTag::Completed, 100);
+        let h = enq(&reg, "r1", "sess-a");
+        reg.request_slot(&h); // Active
+        h.set_metrics(42, 100, 0);
+        h.transition(TransferEvent::Cancel); // Active → Cancelled
+        reg.drop_entry("r1");
 
-        assert!(!reg.contains("s1"), "the live legacy entry is removed");
-        let list = reg.list(None);
-        assert_eq!(list.len(), 1, "the terminal snapshot is retained");
-        assert_eq!(list[0].transfer_id, "s1");
-        assert_eq!(list[0].state, TransferStateTag::Completed);
-        assert_eq!(list[0].transferred, 100);
-        assert_eq!(list[0].file_name, "file.txt");
-    }
-
-    #[test]
-    fn finish_legacy_records_a_cancelled_terminal_state() {
-        let reg = TransferRegistry::new();
-        reg.register(
-            "s1",
-            "sess-a",
-            TransferDirection::Download,
-            "f",
-            "/remote/f",
-            100,
-        );
-        reg.finish_legacy("s1", TransferStateTag::Cancelled, 42);
         let list = reg.list(None);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].state, TransferStateTag::Cancelled);
         assert_eq!(list[0].transferred, 42);
+        assert!(list[0].settled);
     }
 
     #[test]
-    fn finish_legacy_for_an_unknown_id_is_a_noop() {
+    fn dropping_an_unknown_id_retains_nothing() {
         let reg = TransferRegistry::new();
-        reg.finish_legacy("nope", TransferStateTag::Completed, 0);
+        reg.drop_entry("nope");
         assert_eq!(reg.list(None).len(), 0);
         assert_eq!(reg.retained_len(), 0);
     }
@@ -1129,21 +894,22 @@ mod tests {
     }
 
     #[test]
-    fn a_retained_legacy_failure_is_settled() {
-        // Unlike a live rich `failed` handle, a legacy SFTP transfer that failed
-        // is genuinely final (it does not retry through the registry), so its
-        // retained snapshot is settled and a reconcile may fold it in (#1657).
+    fn a_retained_failure_is_settled() {
+        // Unlike a live `failed` handle, a failed transfer whose entry has been
+        // dropped can no longer retry, so its retained snapshot is settled and a
+        // reconcile may fold it in (#1657).
         let reg = TransferRegistry::new();
-        reg.register("s1", "sess-a", TransferDirection::Download, "f", "/f", 100);
-        reg.finish_legacy("s1", TransferStateTag::Failed, 30);
+        let h = enq(&reg, "r1", "sess-a");
+        reg.request_slot(&h); // Active
+        h.transition(TransferEvent::Fail {
+            attempt: MAX_RETRIES,
+        });
+        reg.drop_entry("r1");
 
         let list = reg.list(None);
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].state, TransferStateTag::Failed);
-        assert!(
-            list[0].settled,
-            "a retained legacy failure is genuinely settled"
-        );
+        assert!(list[0].settled, "a retained failure is genuinely settled");
     }
 
     #[test]
@@ -1159,14 +925,14 @@ mod tests {
 
     #[test]
     fn a_live_entry_shadows_a_retained_snapshot_for_the_same_id() {
-        // Retain a terminal snapshot, then register a *live* transfer reusing the
+        // Retain a terminal snapshot, then enqueue a *live* transfer reusing the
         // id: the live entry must win (no duplicate, no stale terminal row).
         let reg = TransferRegistry::new();
-        reg.register("s1", "sess-a", TransferDirection::Download, "f", "/f", 100);
-        reg.finish_legacy("s1", TransferStateTag::Completed, 100);
+        complete_and_drop(&reg, "s1", "sess-a");
         assert_eq!(reg.retained_len(), 1);
 
-        reg.register("s1", "sess-a", TransferDirection::Download, "f", "/f", 100);
+        let h = enq(&reg, "s1", "sess-a");
+        reg.request_slot(&h); // Active
         let list = reg.list(None);
         assert_eq!(list.len(), 1, "no duplicate for the reused id");
         assert_eq!(
@@ -1180,9 +946,7 @@ mod tests {
     fn retained_terminals_are_evicted_past_the_capacity_cap() {
         let reg = TransferRegistry::new();
         for i in 0..(TERMINAL_RETENTION_MAX + 10) {
-            let id = format!("s{i}");
-            reg.register(&id, "sess-a", TransferDirection::Download, "f", "/f", 1);
-            reg.finish_legacy(&id, TransferStateTag::Completed, 1);
+            complete_and_drop(&reg, &format!("s{i}"), "sess-a");
         }
         assert_eq!(
             reg.retained_len(),
@@ -1194,8 +958,7 @@ mod tests {
     #[test]
     fn retained_terminals_are_evicted_after_the_ttl() {
         let reg = TransferRegistry::new();
-        reg.register("s1", "sess-a", TransferDirection::Download, "f", "/f", 1);
-        reg.finish_legacy("s1", TransferStateTag::Completed, 1);
+        complete_and_drop(&reg, "s1", "sess-a");
         assert_eq!(reg.retained_len(), 1);
 
         // As if the clock advanced well past the retention window.
@@ -1207,10 +970,8 @@ mod tests {
     #[test]
     fn retained_terminals_respect_the_session_filter() {
         let reg = TransferRegistry::new();
-        reg.register("s1", "sess-a", TransferDirection::Download, "f", "/f", 1);
-        reg.finish_legacy("s1", TransferStateTag::Completed, 1);
-        reg.register("s2", "sess-b", TransferDirection::Download, "f", "/f", 1);
-        reg.finish_legacy("s2", TransferStateTag::Completed, 1);
+        complete_and_drop(&reg, "s1", "sess-a");
+        complete_and_drop(&reg, "s2", "sess-b");
 
         assert_eq!(reg.list(Some("sess-a")).len(), 1);
         assert_eq!(reg.list(Some("sess-b")).len(), 1);

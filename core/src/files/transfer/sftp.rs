@@ -1,10 +1,10 @@
 //! SFTP transfer executor — drives the queue state machine around a dedicated
 //! [`SftpTransferChannel`] copy (product feature PROD-0012).
 //!
-//! This is the SFTP counterpart to the FTP executor (`run_ftp_transfer`). Where
-//! the desktop's legacy SFTP path (`run_download` / `run_upload`) was a
-//! single-shot, cancel-only chunked copy, this executor wraps the same core streaming
-//! primitive with the desktop's full **queue orchestration**: acquire a
+//! This is the SFTP counterpart to the FTP executor (`run_ftp_transfer`). It
+//! replaced the desktop's original single-shot, cancel-only chunked copy
+//! (removed in #3188), wrapping the core streaming primitive with the desktop's
+//! full **queue orchestration**: acquire a
 //! per-session concurrency slot, stream with throttled progress + ETA,
 //! auto-retry with exponential backoff on error, honour pause/resume and
 //! cancel, and drive the [`TransferHandle`] through its `Queued → Active → …`
