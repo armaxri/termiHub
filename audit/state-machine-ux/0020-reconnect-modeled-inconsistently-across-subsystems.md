@@ -14,7 +14,7 @@ evidence:
   - src/types/monitoring.ts:9
   - src/types/remoteDesktop.ts:11
 status: partial
-resolution: "develop — first step done: untyped remoteStates/setRemoteState map retired from appStore (SM-011); per-tab status derives from session-lifecycle region (sessionBridge.ts:59). Residual architectural: 5 divergent status vocabularies + retry caps still coexist, no single canonical enum/backoff engine"
+resolution: "#3270 — reconnect-model unification underway (planned into slices; canonical = SessionStatus + core/reconnect_backoff.rs). DONE: SM-011 (untyped remoteStates retired); Slice 0 #3270 (SessionStatus moved to core + total mapping fns from each subsystem enum, lossy vocab mappings flagged); Slice 1 #3272 (monitoring backoff -> canonical engine, jitter:0 byte-identical). IN FLIGHT: Slice 2 #3277 (tunnel engine), Slice 3 (agent engine, dev4) — all behavior-preserving engine migrations (jitter:0). REMAINING/DEFERRED FORKS (maintainer): vocab unification (monitoring Stale/Paused, graphical vocab), attempt-cap unification, PARITY-008 default collision (ssh resilientReconnect=false vs graphical autoReconnect=true), jitter rollout — per the SM-020 plan"
 ---
 
 ## What
