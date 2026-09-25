@@ -92,6 +92,11 @@ if (typeof Element !== "undefined") {
 }
 
 // Mock monaco-editor so tests don't need a browser environment.
+// NOTE: the hard-coded `getLanguages()` list below includes termiHub's built-in
+// custom languages (cmake, toml, nginx, nix). It is kept in sync with the real
+// registration by `monacoCustomLanguages.setup-sync.test.ts` (guards MOCK-007) —
+// if you add/remove a built-in language in `utils/monacoCustomLanguages.ts`,
+// update this list too or that guard test will fail.
 vi.mock("monaco-editor", () => ({
   editor: {
     setTheme: vi.fn(),

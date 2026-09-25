@@ -54,6 +54,108 @@ export function getMonacoTheme(appThemeId: string): string {
   return appThemeId === "light" ? MONACO_LIGHT_THEME : MONACO_DARK_THEME;
 }
 
+/**
+ * A built-in custom language: its Monaco language registration plus the editor
+ * configuration (comments, brackets, auto-closing pairs) applied to it.
+ */
+interface BuiltinLanguageDefinition {
+  language: monaco.languages.ILanguageExtensionPoint;
+  configuration: monaco.languages.LanguageConfiguration;
+}
+
+/**
+ * Single source of truth for the custom languages termiHub registers with Monaco
+ * at startup. Both {@link registerBuiltinLanguageDefinitions} and the initial
+ * Shiki grammar-load set are derived from this list, and the test suite derives
+ * its expectations from it too — so adding or removing a built-in language cannot
+ * silently drift between the registration code, the grammar loader, and the tests.
+ */
+export const BUILTIN_LANGUAGE_DEFINITIONS: readonly BuiltinLanguageDefinition[] = [
+  {
+    language: {
+      id: "cmake",
+      aliases: ["CMake", "cmake"],
+      extensions: [".cmake"],
+      filenames: ["CMakeLists.txt"],
+    },
+    configuration: {
+      comments: { lineComment: "#" },
+      brackets: [
+        ["(", ")"],
+        ["{", "}"],
+        ["[", "]"],
+      ],
+      autoClosingPairs: [
+        { open: "(", close: ")" },
+        { open: '"', close: '"', notIn: ["string"] },
+      ],
+    },
+  },
+  {
+    language: { id: "toml", aliases: ["TOML", "toml"], extensions: [".toml"] },
+    configuration: {
+      comments: { lineComment: "#" },
+      brackets: [
+        ["[", "]"],
+        ["{", "}"],
+      ],
+      autoClosingPairs: [
+        { open: "[", close: "]" },
+        { open: "{", close: "}" },
+        { open: '"', close: '"', notIn: ["string"] },
+        { open: "'", close: "'", notIn: ["string"] },
+      ],
+    },
+  },
+  {
+    language: {
+      id: "nginx",
+      aliases: ["Nginx", "nginx"],
+      extensions: [],
+      filenames: ["nginx.conf"],
+    },
+    configuration: {
+      comments: { lineComment: "#" },
+      brackets: [["{", "}"]],
+      autoClosingPairs: [
+        { open: "{", close: "}" },
+        { open: '"', close: '"', notIn: ["string"] },
+        { open: "'", close: "'", notIn: ["string"] },
+      ],
+    },
+  },
+  {
+    language: { id: "nix", aliases: ["Nix", "nix"], extensions: [".nix"] },
+    configuration: {
+      comments: {
+        lineComment: "#",
+        blockComment: ["/*", "*/"],
+      },
+      brackets: [
+        ["{", "}"],
+        ["[", "]"],
+        ["(", ")"],
+      ],
+      autoClosingPairs: [
+        { open: "{", close: "}" },
+        { open: "[", close: "]" },
+        { open: "(", close: ")" },
+        { open: '"', close: '"', notIn: ["string"] },
+      ],
+    },
+  },
+];
+
+/**
+ * Monaco language IDs registered by {@link BUILTIN_LANGUAGE_DEFINITIONS}, in
+ * registration order. Note this excludes `lua`, which is loaded as a Shiki
+ * grammar (nginx's embedded-Lua dependency) but is not registered as a
+ * standalone Monaco language definition.
+ */
+export const BUILTIN_LANGUAGE_IDS: readonly string[] = BUILTIN_LANGUAGE_DEFINITIONS.map(
+  (d) => d.language.id
+);
+
 let initPromise: Promise<void> | null = null;
 let shikiHighlighter: HighlighterGeneric<BundledLanguage, BundledTheme> | null = null;
 /** IDs that have been registered with the Shiki highlighter. */
@@ -73,8 +175,9 @@ async function doRegister(): Promise<void> {
 
   // Load TextMate grammars via Shiki.
   // Both dark-plus and light-plus are loaded so the editor can switch themes.
-  // nginx depends on lua for embedded Lua blocks (ngx_lua) — include it explicitly.
-  const langs: BundledLanguage[] = ["cmake", "toml", "nginx", "nix", "lua"];
+  // Derived from the source-of-truth built-in IDs; nginx depends on lua for
+  // embedded Lua blocks (ngx_lua), so include it explicitly.
+  const langs: BundledLanguage[] = [...BUILTIN_LANGUAGE_IDS, "lua"] as BundledLanguage[];
   shikiHighlighter = await createHighlighter({
     themes: [MONACO_DARK_THEME, MONACO_LIGHT_THEME],
     langs,
@@ -228,82 +331,12 @@ export async function registerCustomGrammars(grammars: CustomLanguageGrammar[]):
 }
 
 function registerBuiltinLanguageDefinitions(): void {
-  monaco.languages.register({
-    id: "cmake",
-    aliases: ["CMake", "cmake"],
-    extensions: [".cmake"],
-    filenames: ["CMakeLists.txt"],
-  });
-  monaco.languages.setLanguageConfiguration("cmake", {
-    comments: { lineComment: "#" },
-    brackets: [
-      ["(", ")"],
-      ["{", "}"],
-      ["[", "]"],
-    ],
-    autoClosingPairs: [
-      { open: "(", close: ")" },
-      { open: '"', close: '"', notIn: ["string"] },
-    ],
-  });
-
-  monaco.languages.register({
-    id: "toml",
-    aliases: ["TOML", "toml"],
-    extensions: [".toml"],
-  });
-  monaco.languages.setLanguageConfiguration("toml", {
-    comments: { lineComment: "#" },
-    brackets: [
-      ["[", "]"],
-      ["{", "}"],
-    ],
-    autoClosingPairs: [
-      { open: "[", close: "]" },
-      { open: "{", close: "}" },
-      { open: '"', close: '"', notIn: ["string"] },
-      { open: "'", close: "'", notIn: ["string"] },
-    ],
-  });
-
-  monaco.languages.register({
-    id: "nginx",
-    aliases: ["Nginx", "nginx"],
-    extensions: [],
-    filenames: ["nginx.conf"],
-  });
-  monaco.languages.setLanguageConfiguration("nginx", {
-    comments: { lineComment: "#" },
-    brackets: [["{", "}"]],
-    autoClosingPairs: [
-      { open: "{", close: "}" },
-      { open: '"', close: '"', notIn: ["string"] },
-      { open: "'", close: "'", notIn: ["string"] },
-    ],
-  });
-
-  monaco.languages.register({
-    id: "nix",
-    aliases: ["Nix", "nix"],
-    extensions: [".nix"],
-  });
-  monaco.languages.setLanguageConfiguration("nix", {
-    comments: {
-      lineComment: "#",
-      blockComment: ["/*", "*/"],
-    },
-    brackets: [
-      ["{", "}"],
-      ["[", "]"],
-      ["(", ")"],
-    ],
-    autoClosingPairs: [
-      { open: "{", close: "}" },
-      { open: "[", close: "]" },
-      { open: "(", close: ")" },
-      { open: '"', close: '"', notIn: ["string"] },
-    ],
-  });
+  // Register every built-in language from the single source-of-truth list so the
+  // set of custom languages cannot drift between here and the grammar loader/tests.
+  for (const { language, configuration } of BUILTIN_LANGUAGE_DEFINITIONS) {
+    monaco.languages.register(language);
+    monaco.languages.setLanguageConfiguration(language.id, configuration);
+  }
 
   // Exclude built-ins from the BUILTIN_PACKAGE_IDS check used elsewhere.
   for (const id of BUILTIN_PACKAGE_IDS) {
