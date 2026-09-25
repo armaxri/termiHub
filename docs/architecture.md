@@ -783,6 +783,35 @@ sequenceDiagram
     Note over Desktop: Tabs restored with buffered output
 ```
 
+### Auto-Reconnect Setting (PARITY-008)
+
+Every connection type that supports automatically recovering a dropped connection
+exposes it under **one** settings key, `autoReconnect` (label "Auto-Reconnect"), which
+defaults to **on**: an absent key means "on", only an explicit `false` opts out. Today
+that is SSH (backend-driven backoff redrive into the same tab) and the graphical
+backends (VNC/RDP). The key, default and legacy handling live in
+`core/src/connection/auto_reconnect.rs` (mirrored for the frontend in
+`src/utils/autoReconnect.ts`).
+
+SSH previously used `resilientReconnect` (default off). The legacy key is migrated and
+still accepted on read so mixed versions interoperate:
+
+```mermaid
+flowchart LR
+    V3["connections.json v3<br/>resilientReconnect: false"] -->|v3 → v4 migrate| V4["v4<br/>autoReconnect: false"]
+    OLD["older agent / external file / import<br/>resilientReconnect"] -->|"serde with = settings_bag"| NEW["autoReconnect"]
+    V4 -.->|older build| REFUSE["refuses to overwrite<br/>(guard_not_newer)"]
+```
+
+- `connections.json` is at schema **v4**; the v3 → v4 step renames the key in every saved
+  connection, preserving the user's explicit value. An older build refuses to overwrite a
+  v4 file.
+- The desktop `ConnectionConfig`, the agent's persisted connection definitions and the
+  agent wire DTOs (`ConnectionDefinition`, `connections.create`/`update` params) rewrite
+  the legacy key on read and write only `autoReconnect`.
+- Agent-hosted terminal tabs are always reconnect-eligible (agent-level session
+  re-attach), independent of this setting.
+
 ### Agent Update Flow
 
 ```mermaid
