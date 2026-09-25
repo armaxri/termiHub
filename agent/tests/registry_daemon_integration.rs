@@ -36,11 +36,14 @@
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
 use tempfile::TempDir;
+
+mod common;
 
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_termihub-agent")
@@ -59,12 +62,31 @@ const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 struct AgentProcess {
     child: Child,
     addr: String,
+    /// Per-agent `XDG_CONFIG_HOME`, kept alive for the process lifetime so its
+    /// `termihub-agent/listen-auth.token` stays readable and isolated from the
+    /// developer's real config (AGT-002 / SEC-004).
+    config_dir: TempDir,
 }
 
 impl Drop for AgentProcess {
     fn drop(&mut self) {
         let _ = self.child.kill();
         let _ = self.child.wait();
+    }
+}
+
+impl AgentProcess {
+    /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
+    fn config_home(&self) -> &Path {
+        self.config_dir.path()
+    }
+
+    /// Connect a desktop client and complete the `--listen` auth handshake using
+    /// this agent's per-instance token (AGT-002 / SEC-004).
+    fn client(&self) -> Client {
+        let mut c = Client::connect(&self.addr);
+        c.authenticate(&common::read_listen_token(self.config_home()));
+        c
     }
 }
 
@@ -104,10 +126,16 @@ fn spawn_agent_skipping_registry(registry_endpoint: &str) -> AgentProcess {
 }
 
 fn spawn_agent_inner(registry_endpoint: &str, skip_registry_daemon: bool) -> AgentProcess {
+    // Per-agent config isolation: without this the agent writes its state and
+    // per-instance auth token into the developer's real `~/.config/termihub-agent`
+    // (and several agents in one test would share it). A throwaway
+    // `XDG_CONFIG_HOME` gives each agent its own readable token file.
+    let config_dir = TempDir::new().expect("temp config dir");
     let mut command = Command::new(agent_binary());
     command
         .arg("--listen")
         .arg("127.0.0.1:0")
+        .env("XDG_CONFIG_HOME", config_dir.path())
         .env("TERMIHUB_REGISTRY_ENDPOINT", registry_endpoint);
     if skip_registry_daemon {
         command.env("TERMIHUB_AGENT_SKIP_REGISTRY_DAEMON", "1");
@@ -121,7 +149,11 @@ fn spawn_agent_inner(registry_endpoint: &str, skip_registry_daemon: bool) -> Age
 
     let stderr = child.stderr.take().expect("piped stderr");
     let addr = read_listen_addr(stderr);
-    AgentProcess { child, addr }
+    AgentProcess {
+        child,
+        addr,
+        config_dir,
+    }
 }
 
 /// Read the agent's `Listening on <addr>` startup line, then keep the pipe
@@ -236,6 +268,30 @@ impl Client {
             writer: stream,
             next_id: 1,
         }
+    }
+
+    /// Complete the `--listen` auth handshake (AGT-002/SEC-004): send the `auth`
+    /// request as the first message and read its response, asserting acceptance.
+    /// Must run before any RPC.
+    fn authenticate(&mut self, token: &str) {
+        let line = common::auth_request_line(token);
+        writeln!(self.writer, "{line}").expect("write auth request");
+        self.writer.flush().expect("flush auth request");
+        let mut resp = String::new();
+        let n = self
+            .reader
+            .read_line(&mut resp)
+            .expect("read auth response");
+        assert!(
+            n > 0,
+            "agent closed the connection during the auth handshake"
+        );
+        let value: Value = serde_json::from_str(resp.trim()).expect("auth response was not JSON");
+        assert_eq!(
+            value["result"]["authenticated"],
+            json!(true),
+            "auth handshake was not accepted: {resp}"
+        );
     }
 
     fn call(&mut self, method: &str, params: Value) -> Value {
@@ -422,8 +478,8 @@ fn a_second_session_less_desktop_is_visible_to_the_first() {
     let agent_a = spawn_agent(&endpoint);
     let agent_b = spawn_agent(&endpoint);
 
-    let mut desktop_a = Client::connect(&agent_a.addr);
-    let mut desktop_b = Client::connect(&agent_b.addr);
+    let mut desktop_a = agent_a.client();
+    let mut desktop_b = agent_b.client();
     desktop_a.initialize("desktop-a");
     desktop_b.initialize("desktop-b");
 
@@ -460,8 +516,8 @@ fn a_worker_spawns_the_registry_when_none_is_running() {
     // No `spawn_registry` here — only agents.
     let agent_a = spawn_agent(&endpoint);
     let agent_b = spawn_agent(&endpoint);
-    let mut desktop_a = Client::connect(&agent_a.addr);
-    let mut desktop_b = Client::connect(&agent_b.addr);
+    let mut desktop_a = agent_a.client();
+    let mut desktop_b = agent_b.client();
     desktop_a.initialize("desktop-a");
     desktop_b.initialize("desktop-b");
 
@@ -496,7 +552,7 @@ fn a_worker_with_the_skip_env_never_spawns_the_registry_but_still_serves() {
 
     // A single agent with the opt-out env set — the harness's single-client shape.
     let agent = spawn_agent_skipping_registry(&endpoint);
-    let mut desktop = Client::connect(&agent.addr);
+    let mut desktop = agent.client();
 
     // The connect path is unaffected: initialize completes and returns a client_id.
     let client_id = desktop.initialize("skip-desktop");
@@ -538,8 +594,8 @@ fn a_disconnected_desktop_disappears_from_the_host_wide_view() {
 
     let agent_a = spawn_agent(&endpoint);
     let agent_b = spawn_agent(&endpoint);
-    let mut desktop_a = Client::connect(&agent_a.addr);
-    let mut desktop_b = Client::connect(&agent_b.addr);
+    let mut desktop_a = agent_a.client();
+    let mut desktop_b = agent_b.client();
     desktop_a.initialize("desktop-a");
     desktop_b.initialize("desktop-b");
     assert_eq!(
@@ -569,12 +625,12 @@ fn a_killed_worker_is_garbage_collected_by_the_registry() {
     assert!(wait_for_endpoint(&endpoint), "registry never bound");
 
     let agent_a = spawn_agent(&endpoint);
-    let mut desktop_a = Client::connect(&agent_a.addr);
+    let mut desktop_a = agent_a.client();
     desktop_a.initialize("desktop-a");
 
     {
         let agent_b = spawn_agent(&endpoint);
-        let mut desktop_b = Client::connect(&agent_b.addr);
+        let mut desktop_b = agent_b.client();
         desktop_b.initialize("desktop-b");
         assert_eq!(
             wait_for_connections(&mut desktop_a, &["desktop-a", "desktop-b"]),
@@ -602,7 +658,7 @@ fn an_agent_works_and_reports_itself_when_the_registry_cannot_run() {
     let endpoint = unbindable_endpoint(&dir);
 
     let agent = spawn_agent(&endpoint);
-    let mut desktop = Client::connect(&agent.addr);
+    let mut desktop = agent.client();
     desktop.initialize("desktop-a");
 
     assert_eq!(
@@ -631,8 +687,8 @@ fn the_host_wide_view_heals_after_the_registry_restarts() {
 
     let agent_a = spawn_agent(&endpoint);
     let agent_b = spawn_agent(&endpoint);
-    let mut desktop_a = Client::connect(&agent_a.addr);
-    let mut desktop_b = Client::connect(&agent_b.addr);
+    let mut desktop_a = agent_a.client();
+    let mut desktop_b = agent_b.client();
     desktop_a.initialize("desktop-a");
     desktop_b.initialize("desktop-b");
     assert_eq!(
@@ -666,7 +722,7 @@ fn a_second_registry_exits_rather_than_stealing_a_live_endpoint() {
     assert!(wait_for_endpoint(&endpoint), "registry never bound");
 
     let agent = spawn_agent(&endpoint);
-    let mut desktop = Client::connect(&agent.addr);
+    let mut desktop = agent.client();
     desktop.initialize("desktop-a");
     assert_eq!(
         wait_for_connections(&mut desktop, &["desktop-a"]),
@@ -1043,8 +1099,8 @@ fn the_update_notice_reaches_a_second_session_less_desktop() {
 
     let agent_a = spawn_agent(&endpoint);
     let agent_b = spawn_agent(&endpoint);
-    let mut desktop_a = Client::connect(&agent_a.addr);
-    let mut desktop_b = Client::connect(&agent_b.addr);
+    let mut desktop_a = agent_a.client();
+    let mut desktop_b = agent_b.client();
     desktop_a.initialize("desktop-a");
     desktop_b.initialize("desktop-b");
 
@@ -1098,8 +1154,8 @@ fn a_desktop_that_disconnects_releases_the_update_early() {
 
     let agent_a = spawn_agent(&endpoint);
     let agent_b = spawn_agent(&endpoint);
-    let mut desktop_a = Client::connect(&agent_a.addr);
-    let mut desktop_b = Client::connect(&agent_b.addr);
+    let mut desktop_a = agent_a.client();
+    let mut desktop_b = agent_b.client();
     desktop_a.initialize("desktop-a");
     desktop_b.initialize("desktop-b");
     assert_eq!(
@@ -1137,8 +1193,8 @@ fn a_desktop_that_never_leaves_does_not_block_the_update() {
 
     let agent_a = spawn_agent(&endpoint);
     let agent_b = spawn_agent(&endpoint);
-    let mut desktop_a = Client::connect(&agent_a.addr);
-    let mut desktop_b = Client::connect(&agent_b.addr);
+    let mut desktop_a = agent_a.client();
+    let mut desktop_b = agent_b.client();
     desktop_a.initialize("desktop-a");
     desktop_b.initialize("desktop-b");
     assert_eq!(

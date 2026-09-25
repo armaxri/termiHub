@@ -82,6 +82,8 @@ use serde_json::{json, Value};
 use tempfile::{NamedTempFile, TempDir};
 use termihub_core::monitoring::BackoffSchedule;
 
+mod common;
+
 // ── Binary path ───────────────────────────────────────────────────────────────
 
 fn agent_binary() -> &'static str {
@@ -344,6 +346,19 @@ impl LocalAgent {
             _stderr: stderr,
             _slot: slot,
         }
+    }
+
+    /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
+    fn config_home(&self) -> &Path {
+        self._config_dir.path()
+    }
+
+    /// Connect a new client and complete the `--listen` auth handshake using this
+    /// agent's per-instance token (AGT-002 / SEC-004).
+    fn client(&self) -> AgentClient {
+        let mut c = AgentClient::connect(&self.addr);
+        c.authenticate(&common::read_listen_token(self.config_home()));
+        c
     }
 
     /// Spawn an agent pointed at an explicit, caller-owned registry endpoint.
@@ -1098,6 +1113,7 @@ fn agent_responds_to_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = connect_with_retry(&agent.addr);
     stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
+    common::authenticate_raw(&mut stream, &common::read_listen_token(agent.config_home()));
 
     let response = rpc(
         &mut stream,
@@ -1124,6 +1140,7 @@ fn agent_returns_error_for_unknown_method_before_initialize() {
     let agent = LocalAgent::spawn();
     let mut stream = connect_with_retry(&agent.addr);
     stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
+    common::authenticate_raw(&mut stream, &common::read_listen_token(agent.config_home()));
 
     let response = rpc(
         &mut stream,
@@ -1148,10 +1165,13 @@ fn agent_returns_error_for_unknown_method_before_initialize() {
 )]
 fn agent_handles_multiple_sequential_connections() {
     let agent = LocalAgent::spawn();
+    let token = common::read_listen_token(agent.config_home());
 
     for i in 0..3 {
         let mut stream = connect_with_retry(&agent.addr);
         stream.set_read_timeout(Some(RPC_READ_TIMEOUT)).unwrap();
+        // Each sequential connection re-authenticates on its fresh socket.
+        common::authenticate_raw(&mut stream, &token);
 
         let response = rpc(
             &mut stream,
@@ -1265,6 +1285,19 @@ impl AgentClient {
             }
             // notification — discard and keep waiting for the response
         }
+    }
+
+    /// Complete the `--listen` auth handshake (AGT-002 / SEC-004): send the
+    /// `auth` request with `token` as the very first message and read its
+    /// response, asserting the agent accepted it. Must be called before any RPC.
+    fn authenticate(&mut self, token: &str) {
+        self.send(&common::auth_request_line(token));
+        let resp = self.read_one("auth");
+        assert_eq!(
+            resp["result"]["authenticated"],
+            json!(true),
+            "auth handshake was not accepted: {resp}"
+        );
     }
 
     fn initialize(&mut self) -> Value {
@@ -1542,7 +1575,7 @@ fn counters_in(text: &str, prefix: &str) -> Vec<u64> {
 )]
 fn shell_session_create_returns_session_id() {
     let agent = LocalAgent::spawn();
-    let mut client = AgentClient::connect(&agent.addr);
+    let mut client = agent.client();
     client.initialize();
 
     let resp = client.rpc(
@@ -1573,7 +1606,7 @@ fn shell_session_create_returns_session_id() {
 )]
 fn shell_session_attach_and_receive_output() {
     let agent = LocalAgent::spawn();
-    let mut client = AgentClient::connect(&agent.addr);
+    let mut client = agent.client();
     client.initialize();
     let session_id = client.create_shell_session("output-test");
 
@@ -1613,13 +1646,13 @@ fn shell_session_persists_across_client_disconnect() {
     let session_id;
 
     {
-        let mut client = AgentClient::connect(&agent.addr);
+        let mut client = agent.client();
         client.initialize();
         session_id = client.create_shell_session("persist-test");
         // implicit drop → TCP connection closes → agent calls detach_all()
     }
 
-    let mut client2 = AgentClient::connect(&agent.addr);
+    let mut client2 = agent.client();
     client2.initialize();
 
     // Wait for the agent's async runtime to process the disconnect and mark the
@@ -1667,7 +1700,7 @@ fn shell_session_reattach_after_reconnect() {
     let session_id;
 
     {
-        let mut client = AgentClient::connect(&agent.addr);
+        let mut client = agent.client();
         client.initialize();
         session_id = client.create_shell_session("reattach-test");
 
@@ -1688,7 +1721,7 @@ fn shell_session_reattach_after_reconnect() {
         // implicit drop → disconnects
     }
 
-    let mut client2 = AgentClient::connect(&agent.addr);
+    let mut client2 = agent.client();
     client2.initialize();
 
     // Poll until the agent reports the session detached instead of a fixed sleep
@@ -1770,7 +1803,7 @@ fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
     // ── Agent A: connect, create a live session (this spawns the registry) ────
     {
         let agent_a = LocalAgent::spawn_with_registry(&registry_endpoint);
-        let mut client = AgentClient::connect(&agent_a.addr);
+        let mut client = agent_a.client();
         client.initialize();
         let sid = client.create_shell_session("pre-drop");
         let attach = client.attach(&sid);
@@ -1812,7 +1845,7 @@ fn fresh_agent_after_reconnect_creates_session_over_surviving_registry() {
     // stall on the registry handshake is caught as a bounded FAILURE.
     let started = Instant::now();
     let agent_b = LocalAgent::spawn_with_registry(&registry_endpoint);
-    let mut client = AgentClient::connect(&agent_b.addr);
+    let mut client = agent_b.client();
     client.initialize();
     let sid = client.create_shell_session("post-reconnect");
     let create_elapsed = started.elapsed();
@@ -1961,6 +1994,8 @@ fn spawn_daemon_for_local_shell(session_id: &str, socket_path: &Path) -> (Child,
 struct IsolatedAgent {
     process: Child,
     pub addr: String,
+    /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
+    config_dir: PathBuf,
     /// Captured agent stderr, kept alive for startup-failure diagnostics.
     _stderr: NamedTempFile,
     /// Concurrency-gate permit for this live agent process (#2495), released on
@@ -1979,9 +2014,23 @@ impl IsolatedAgent {
         IsolatedAgent {
             process,
             addr,
+            config_dir: xdg_home.to_path_buf(),
             _stderr: stderr,
             _slot: slot,
         }
+    }
+
+    /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
+    fn config_home(&self) -> &Path {
+        &self.config_dir
+    }
+
+    /// Connect a new client and complete the `--listen` auth handshake using this
+    /// agent's per-instance token (AGT-002 / SEC-004).
+    fn client(&self) -> AgentClient {
+        let mut c = AgentClient::connect(&self.addr);
+        c.authenticate(&common::read_listen_token(self.config_home()));
+        c
     }
 }
 
@@ -2065,7 +2114,7 @@ impl PersistentShellSetup {
 
     /// Connect a new JSON-RPC client to the agent and call initialize.
     fn connect_client(&self) -> AgentClient {
-        let mut c = AgentClient::connect(&self.agent.addr);
+        let mut c = self.agent.client();
         c.initialize();
         c
     }
@@ -2386,7 +2435,7 @@ fn fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
     // ── Agent A: recover the daemon session, attach, write a marker ───────────
     {
         let agent_a = IsolatedAgent::spawn(&tmp_path);
-        let mut client = AgentClient::connect(&agent_a.addr);
+        let mut client = agent_a.client();
         client.initialize();
 
         // The session recovered from state must be present and match our id.
@@ -2428,7 +2477,7 @@ fn fresh_agent_recovers_daemon_session_from_dead_prior_agent() {
 
     // ── Agent B: a *fresh* process recovers the surviving daemon ──────────────
     let agent_b = IsolatedAgent::spawn(&tmp_path);
-    let mut client = AgentClient::connect(&agent_b.addr);
+    let mut client = agent_b.client();
     client.initialize();
 
     // Agent B must re-attach the ORIGINAL session, not create a new one: the
@@ -2498,7 +2547,7 @@ fn recovered_shell_preserves_environment_variable_across_agent_swap() {
     // ── Agent A: recover the daemon session, attach, set a shell variable ──────
     {
         let agent_a = IsolatedAgent::spawn(&daemon.tmp_path);
-        let mut client = AgentClient::connect(&agent_a.addr);
+        let mut client = agent_a.client();
         client.initialize();
 
         let entry = client
@@ -2537,7 +2586,7 @@ fn recovered_shell_preserves_environment_variable_across_agent_swap() {
 
     // ── Agent B: a fresh process recovers the surviving shell and reads MYVAR ──
     let agent_b = IsolatedAgent::spawn(&daemon.tmp_path);
-    let mut client = AgentClient::connect(&agent_b.addr);
+    let mut client = agent_b.client();
     client.initialize();
 
     assert!(
@@ -2594,7 +2643,7 @@ fn daemon_shell_keeps_running_during_disconnect_and_after_recovery() {
     let before;
     {
         let agent_a = IsolatedAgent::spawn(&daemon.tmp_path);
-        let mut client = AgentClient::connect(&agent_a.addr);
+        let mut client = agent_a.client();
         client.initialize();
 
         let ar = client.attach(&daemon.session_id);
@@ -2631,7 +2680,7 @@ fn daemon_shell_keeps_running_during_disconnect_and_after_recovery() {
 
     // ── Agent B: recover + attach; the replay must carry gap-produced ticks ────
     let agent_b = IsolatedAgent::spawn(&daemon.tmp_path);
-    let mut client = AgentClient::connect(&agent_b.addr);
+    let mut client = agent_b.client();
     client.initialize();
 
     let ar = client.attach(&daemon.session_id);
