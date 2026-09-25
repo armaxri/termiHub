@@ -2514,11 +2514,43 @@ Agent → Desktop:
 
 ### Transport Security
 
-The protocol relies entirely on the SSH transport for encryption and authentication. No additional encryption or authentication layer is implemented at the protocol level.
+Over the **SSH-exec (`--stdio`) transport** — the transport the desktop uses —
+the protocol relies entirely on the SSH channel for encryption and
+authentication. No additional encryption or authentication layer is implemented
+at the protocol level.
 
 - **Encryption**: All messages are encrypted by the SSH channel
 - **Authentication**: SSH key-based or password authentication (same as existing SSH connections in termiHub)
 - **Authorization**: The agent trusts any client that successfully authenticates over SSH — no additional authorization model
+
+#### `--listen` TCP transport: per-instance token handshake (AGT-002 / SEC-004)
+
+The alternative `--listen` TCP transport (the systemd-service deployment) has no
+SSH channel to derive trust from, so it enforces its own **per-instance
+authentication token**. It was previously unauthenticated — any local process
+that could reach the port had full agent access — which this handshake closes.
+
+- **Token generation**: on every `--listen` start the agent generates a fresh,
+  cryptographically-random token (32 bytes from the OS CSPRNG) before it binds
+  the port.
+- **Emission channel**: the token is written to an owner-only file
+  (`listen-auth.token`, mode `0600` on unix; under the per-user `%APPDATA%` ACL
+  on Windows) in the agent's config directory, next to `state.json`. Only a
+  process running as the agent's own user can read it. The token value is never
+  written to the logs; only the file path is logged.
+- **Handshake**: the client MUST send, as its **first** NDJSON line, a JSON-RPC
+  request naming the `auth` method with the token in `params.token`, and wait
+  for the response, before sending `initialize` or any other method:
+
+  ```jsonc
+  → {"jsonrpc":"2.0","id":0,"method":"auth","params":{"token":"<token>"}}
+  ← {"jsonrpc":"2.0","id":0,"result":{"authenticated":true}}
+  ```
+
+  The agent verifies the token with a **constant-time** comparison. On a missing,
+  malformed, or wrong token it writes a JSON-RPC error (code `-32021`) and
+  **closes the connection** — fail closed, no session or RPC access. Each
+  sequential client re-authenticates.
 
 ### Agent Security
 

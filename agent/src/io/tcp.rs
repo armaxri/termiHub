@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
 
 use crate::handler::dispatch::AgentHandler;
+use crate::io::auth::{authenticate_connection, AuthOutcome, ListenAuthToken};
 use crate::io::transport::run_transport_loop;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
@@ -13,6 +14,12 @@ use crate::registry::build_registry;
 use crate::registry_daemon::client::{RegistryClient, RegistryConfig};
 use crate::session::definitions::{ConnectionStore, ConnectionStoreApi};
 use crate::session::manager::SessionManager;
+
+/// How long a freshly-accepted `--listen` client has to complete the auth
+/// handshake (AGT-002 / SEC-004) before it is dropped. Because the listener
+/// serves one client at a time, a silent peer that never authenticates would
+/// otherwise hold the accept slot open indefinitely; this bounds that.
+const AUTH_HANDSHAKE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Run the NDJSON transport loop over a TCP listener.
 ///
@@ -84,6 +91,13 @@ pub async fn run_tcp_listener(
     // exactly as the real #1551 startup work now does.
     startup_test_delay().await;
 
+    // Generate the per-instance auth token and write its 0600 file BEFORE the
+    // listener binds (AGT-002 / SEC-004). Writing it first guarantees the file
+    // exists by the time the port is connectable, so the legitimate launcher can
+    // read it. A failure here is fatal: the `--listen` transport must never come
+    // up unauthenticated (fail closed).
+    let auth_token = ListenAuthToken::generate_and_persist()?;
+
     // Bind and announce readiness only now, after all the startup work above
     // has finished (#1579). Binding earlier makes `Listening on …` a lie: the
     // kernel accepts connections into the listen backlog the instant the socket
@@ -120,6 +134,37 @@ pub async fn run_tcp_listener(
                 };
                 info!("Client connected from {}", peer);
 
+                let (reader_half, mut writer_half) = stream.into_split();
+                let mut reader = BufReader::new(reader_half);
+
+                // Fail-closed auth gate (AGT-002 / SEC-004): the client must
+                // present the correct per-instance token as its very first
+                // message before ANY RPC is dispatched. A missing/wrong token —
+                // or a peer that stalls past the handshake deadline — is dropped
+                // here, with no handler built and no session access. The timeout
+                // stops a silent peer from holding the single-client accept slot
+                // open indefinitely.
+                let auth = tokio::time::timeout(
+                    AUTH_HANDSHAKE_TIMEOUT,
+                    authenticate_connection(&mut reader, &mut writer_half, &auth_token),
+                )
+                .await;
+                match auth {
+                    Ok(Ok(AuthOutcome::Authenticated)) => {}
+                    Ok(Ok(AuthOutcome::Rejected)) => {
+                        warn!("Rejected unauthenticated client {}", peer);
+                        continue;
+                    }
+                    Ok(Err(e)) => {
+                        warn!("Auth handshake I/O error for {}, dropping client: {}", peer, e);
+                        continue;
+                    }
+                    Err(_) => {
+                        warn!("Auth handshake timed out for {}, dropping client", peer);
+                        continue;
+                    }
+                }
+
                 // Drain stale notifications from previous connection.
                 // Buffered data is preserved in serial ring buffers and
                 // replayed on attach, so these are not needed.
@@ -147,9 +192,6 @@ pub async fn run_tcp_listener(
                         continue;
                     }
                 };
-
-                let (reader_half, mut writer_half) = stream.into_split();
-                let mut reader = BufReader::new(reader_half);
 
                 let result = run_transport_loop(
                     &mut reader,
@@ -179,6 +221,11 @@ pub async fn run_tcp_listener(
     info!("Shutting down — stopping monitoring and closing all sessions");
     monitoring_manager.shutdown().await;
     session_manager.close_all().await;
+
+    // Best-effort hygiene: remove the per-instance token file. A stale file is
+    // harmless (the next start overwrites it before the port is connectable), so
+    // a failure is logged, not fatal.
+    crate::io::auth::remove_token_file();
 
     Ok(())
 }

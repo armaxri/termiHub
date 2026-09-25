@@ -229,6 +229,11 @@ impl LiveAgent {
     fn stderr(&self) -> String {
         std::fs::read_to_string(&self.stderr_path).unwrap_or_default()
     }
+
+    /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
+    fn config_home(&self) -> &Path {
+        self.config_home.path()
+    }
 }
 
 // ── Waiting helper ─────────────────────────────────────────────────────────────
@@ -257,7 +262,7 @@ impl Client {
     /// answers or `timeout` elapses (it may still be mid-restart after a
     /// self-apply). Each handshake read is bounded well below the overall budget
     /// so a single stalled read leaves retries (#1579).
-    fn connect(addr: &str, timeout: Duration) -> Option<Self> {
+    fn connect(addr: &str, config_home: &Path, timeout: Duration) -> Option<Self> {
         let deadline = Instant::now() + timeout;
         let handshake_read = (timeout / 3).min(Duration::from_secs(5));
         while Instant::now() < deadline {
@@ -271,6 +276,16 @@ impl Client {
                     writer,
                     next_id: 1,
                 };
+                // Auth gate first (AGT-002/SEC-004). Re-read the token each
+                // attempt: a self-apply re-execs the agent and regenerates its
+                // per-instance token, so a captured token would go stale across
+                // the restart. A failure drops to a fresh-socket retry, as a
+                // failed `initialize` does.
+                let token = common::read_listen_token(config_home);
+                if !client.authenticate(&token) {
+                    std::thread::sleep(Duration::from_millis(100));
+                    continue;
+                }
                 let resp = client.rpc(
                     "initialize",
                     json!({"protocolVersion": "0.3.0", "client": "docker-deferred-it", "clientVersion": "0.1.0"}),
@@ -287,6 +302,26 @@ impl Client {
             std::thread::sleep(Duration::from_millis(100));
         }
         None
+    }
+
+    /// Complete the `--listen` auth handshake (AGT-002/SEC-004) before any RPC.
+    /// Returns `false` on any failure so `connect` retries on a fresh socket.
+    fn authenticate(&mut self, token: &str) -> bool {
+        let line = common::auth_request_line(token);
+        if writeln!(self.writer, "{line}")
+            .and_then(|()| self.writer.flush())
+            .is_err()
+        {
+            return false;
+        }
+        let mut resp = String::new();
+        match self.reader.read_line(&mut resp) {
+            Ok(n) if n > 0 => serde_json::from_str::<Value>(resp.trim())
+                .ok()
+                .and_then(|v| v["result"]["authenticated"].as_bool())
+                .unwrap_or(false),
+            _ => false,
+        }
     }
 
     /// Send an RPC and return the matching response, skipping notifications. A
@@ -442,7 +477,7 @@ async fn deferred_update_applies_on_last_docker_disconnect() {
     // apply-path confinement (AGT-003, #3214) accepts it; the harness sends its
     // SHA-256 so the AGT-004 integrity gate accepts it too.
     let staged_bin = stage_newer_binary(&agent.staging_dir());
-    let mut client = Client::connect(&agent.addr, Duration::from_secs(30))
+    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(30))
         .unwrap_or_else(|| panic!("agent never came up.\n{}", agent.stderr()));
 
     // ── Open a real Docker container session ────────────────────────────────
@@ -501,12 +536,13 @@ async fn deferred_update_applies_on_last_docker_disconnect() {
 
     // It re-execed with the same args → same port → reconnect succeeds and the
     // agent is healthy on the swapped-in binary.
-    let mut client = Client::connect(&agent.addr, Duration::from_secs(30)).unwrap_or_else(|| {
-        panic!(
-            "agent did not come back after the deferred apply + re-exec.\n{}",
-            agent.stderr()
-        )
-    });
+    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(30))
+        .unwrap_or_else(|| {
+            panic!(
+                "agent did not come back after the deferred apply + re-exec.\n{}",
+                agent.stderr()
+            )
+        });
     assert!(
         !client.agent_version().is_empty(),
         "re-execed agent did not report a version.\n{}",

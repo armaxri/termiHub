@@ -3,9 +3,78 @@
 //! Cargo does not build `tests/common/mod.rs` as a test binary of its own, so
 //! this is a plain module each suite pulls in with `mod common;`.
 
+use std::io::{Read, Write};
+use std::net::TcpStream;
+use std::path::Path;
 use std::sync::{Mutex, MutexGuard, OnceLock};
+use std::time::{Duration, Instant};
 
 static FORK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// Read this agent's per-instance `--listen` auth token from its config dir
+/// (AGT-002 / SEC-004).
+///
+/// The token file (`<config>/termihub-agent/listen-auth.token`) is written just
+/// before the listener binds, so by the time a suite has observed readiness it
+/// exists; the short retry only covers the rare interleaving where a test reads
+/// it the instant the port becomes connectable. `config_home` is the same dir the
+/// suite passes as `XDG_CONFIG_HOME` when spawning the agent.
+#[allow(dead_code)]
+pub fn read_listen_token(config_home: &Path) -> String {
+    let path = config_home.join("termihub-agent").join("listen-auth.token");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match std::fs::read_to_string(&path) {
+            Ok(s) if !s.trim().is_empty() => return s.trim().to_string(),
+            _ if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            other => panic!(
+                "listen auth token not found at {} within 10s: {other:?}",
+                path.display()
+            ),
+        }
+    }
+}
+
+/// The first NDJSON line a `--listen` client must send to authenticate, WITHOUT
+/// the trailing newline (callers frame it however they frame their other lines).
+#[allow(dead_code)]
+pub fn auth_request_line(token: &str) -> String {
+    format!(r#"{{"jsonrpc":"2.0","id":0,"method":"auth","params":{{"token":"{token}"}}}}"#)
+}
+
+/// Perform the `--listen` auth handshake on a raw [`TcpStream`]: write the auth
+/// request, then read exactly one response line **byte-wise** — so no bytes past
+/// the newline are pulled into a buffer a later reader would then miss — and
+/// assert the agent accepted the token. Panics on rejection or a closed socket.
+#[allow(dead_code)]
+pub fn authenticate_raw(stream: &mut TcpStream, token: &str) {
+    let line = format!("{}\n", auth_request_line(token));
+    stream
+        .write_all(line.as_bytes())
+        .expect("write auth request");
+    stream.flush().ok();
+    let mut resp = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        let n = stream.read(&mut byte).expect("read auth response");
+        assert_ne!(
+            n, 0,
+            "agent closed the connection during the auth handshake"
+        );
+        if byte[0] == b'\n' {
+            break;
+        }
+        resp.push(byte[0]);
+    }
+    let value: serde_json::Value =
+        serde_json::from_slice(&resp).expect("auth response was not valid JSON");
+    assert_eq!(
+        value["result"]["authenticated"],
+        serde_json::json!(true),
+        "auth handshake was not accepted: {}",
+        String::from_utf8_lossy(&resp)
+    );
+}
 
 /// Serialises **every `fork`** in this test binary against **every write to a
 /// binary this suite is about to `execve`** (#1597).
@@ -54,6 +123,7 @@ static FORK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 /// Hold it for the copy and the spawn only. Drop it before anything that waits
 /// on the child (reading its log, polling its port), or the suite serialises
 /// wholesale instead of just at the hazard.
+#[allow(dead_code)]
 pub fn fork_guard() -> MutexGuard<'static, ()> {
     FORK_LOCK
         .get_or_init(|| Mutex::new(()))

@@ -23,10 +23,28 @@ use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
+use tempfile::TempDir;
 use termihub_core::monitoring::BackoffSchedule;
+
+mod common;
 
 fn agent_binary() -> &'static str {
     env!("CARGO_BIN_EXE_termihub-agent")
+}
+
+/// An isolated host-wide-registry (ADR-11) endpoint under `dir`, mirroring the
+/// sibling live-agent suites. Without this the agent joins the shared per-user
+/// default registry, whose stale sockets from other runs can wedge startup on a
+/// busy dev machine — so it must never reach `accept()` and the #1579 timing this
+/// test measures would be swamped by unrelated registry contention.
+#[cfg(unix)]
+fn registry_endpoint_in(dir: &std::path::Path) -> String {
+    dir.join("registry.sock").to_string_lossy().into_owned()
+}
+
+#[cfg(windows)]
+fn registry_endpoint_in(_dir: &std::path::Path) -> String {
+    format!(r"\\.\pipe\termihub-tlr-{}", std::process::id())
 }
 
 /// Per-attempt connect timeout for [`connect_with_retry`].
@@ -119,9 +137,18 @@ impl Drop for AgentProcess {
 )]
 fn listening_log_is_a_true_readiness_signal() {
     let spawned_at = Instant::now();
+    // Isolate the agent's config dir so its per-instance auth token file
+    // (AGT-002/SEC-004) is readable and does not touch the developer's real
+    // config. Kept alive for the process lifetime.
+    let config_home = TempDir::new().expect("temp config dir");
+    let registry_endpoint = registry_endpoint_in(config_home.path());
     let mut child = Command::new(agent_binary())
         .arg("--listen")
         .arg("127.0.0.1:0")
+        .env("XDG_CONFIG_HOME", config_home.path())
+        // Isolate the host-wide registry so a stale shared-default socket cannot
+        // wedge this agent's startup before it binds (see `registry_endpoint_in`).
+        .env("TERMIHUB_REGISTRY_ENDPOINT", &registry_endpoint)
         .env(
             "TERMIHUB_TEST_STARTUP_DELAY_MS",
             STARTUP_DELAY.as_millis().to_string(),
@@ -160,11 +187,38 @@ fn listening_log_is_a_true_readiness_signal() {
     // does not 10060 before the read-timing assertion runs (#2490); the
     // `initialize` read budget below is unchanged and remains the #1579 check.
     let stream = connect_with_retry(&addr);
-    stream
-        .set_read_timeout(Some(INITIALIZE_READ_TIMEOUT))
-        .expect("set read timeout");
     let mut writer = stream.try_clone().expect("clone stream");
     let mut reader = BufReader::new(stream);
+
+    // Complete the `--listen` auth handshake first (AGT-002/SEC-004). Give it a
+    // generous read budget that is deliberately NOT the #1579 measurement below —
+    // the initialize-timing clock only starts once auth is done, so the auth
+    // round-trip is never counted against INITIALIZE_READ_TIMEOUT.
+    reader
+        .get_ref()
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .expect("set auth read timeout");
+    let token = common::read_listen_token(config_home.path());
+    let auth_line = common::auth_request_line(&token);
+    writeln!(writer, "{auth_line}").expect("write auth request");
+    writer.flush().expect("flush auth request");
+    let mut auth_resp = String::new();
+    reader
+        .read_line(&mut auth_resp)
+        .expect("read auth response");
+    let auth_json: serde_json::Value =
+        serde_json::from_str(auth_resp.trim()).expect("auth response not JSON");
+    assert_eq!(
+        auth_json["result"]["authenticated"],
+        serde_json::json!(true),
+        "auth handshake was not accepted: {auth_resp}"
+    );
+
+    // Now begin the #1579 readiness measurement on the honest `initialize` reply.
+    reader
+        .get_ref()
+        .set_read_timeout(Some(INITIALIZE_READ_TIMEOUT))
+        .expect("set read timeout");
 
     let request = concat!(
         r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":"#,
