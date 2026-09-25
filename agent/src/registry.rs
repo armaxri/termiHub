@@ -44,11 +44,23 @@ mod tests {
         #[cfg(not(windows))]
         assert!(!registry.has_type("wsl"));
 
-        // Verify total count.
-        #[cfg(windows)]
-        assert_eq!(types.len(), 6);
-        #[cfg(not(windows))]
-        assert_eq!(types.len(), 5);
+        // FTP when the `ftp` feature is enabled (PARITY-003) — parity with the
+        // desktop registry.
+        #[cfg(feature = "ftp")]
+        assert!(registry.has_type("ftp"));
+        #[cfg(not(feature = "ftp"))]
+        assert!(!registry.has_type("ftp"));
+
+        // Graphical backends (mock-remote-desktop / vnc / rdp) are deliberately
+        // NOT hosted on the agent: it has no graphical/frame session transport.
+        assert!(!registry.has_type("mock-remote-desktop"));
+        assert!(!registry.has_type("vnc"));
+        assert!(!registry.has_type("rdp"));
+
+        // 5 always-on backends (local/serial/ssh/telnet/docker), plus WSL on
+        // Windows and FTP when the `ftp` feature is enabled.
+        let expected = 5 + cfg!(windows) as usize + cfg!(feature = "ftp") as usize;
+        assert_eq!(types.len(), expected);
     }
 
     #[test]
@@ -69,5 +81,20 @@ mod tests {
 
         let conn = registry.create("docker").unwrap();
         assert_eq!(conn.type_id(), "docker");
+    }
+
+    /// The agent can construct an FTP connection through the registry (PARITY-003),
+    /// so an agent-hosted FTP connection is no longer a strict subset gap versus
+    /// the desktop. Constructing does not connect — it only proves the factory is
+    /// wired and the core `ftp` backend is compiled into the agent.
+    #[cfg(feature = "ftp")]
+    #[test]
+    fn registry_constructs_ftp_backend() {
+        let registry = build_registry();
+        assert!(registry.has_type("ftp"));
+        let conn = registry
+            .create("ftp")
+            .expect("ftp backend should be registered");
+        assert_eq!(conn.type_id(), "ftp");
     }
 }
