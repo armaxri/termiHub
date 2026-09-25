@@ -28,6 +28,9 @@ use termihub_core::protocol::methods::{
     SessionCreateParams, SessionCreateResult, SessionDetachParams, SessionInputParams,
     SessionListEntry, SessionListResult, SessionResizeParams,
 };
+use termihub_core::reconnect_backoff::{
+    reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
+};
 
 use crate::agents_projection::projection::fold_agent_transition;
 use crate::agents_projection::store::AgentConnectionState;
@@ -3005,6 +3008,24 @@ async fn cancel_connect_when_disconnected(alive: Arc<AtomicBool>, token: Cancell
     token.cancel();
 }
 
+/// Agent reconnect backoff as a canonical [`BackoffConfig`] (SM-020 slice 3).
+///
+/// The agent's long-standing schedule — a 1 s first retry, doubling up to a 30 s
+/// ceiling, 10 attempts — now driven through the shared [`reconnect_reducer`]
+/// engine instead of a hand-rolled capped-exponential. `jitter_ratio: 0.0` keeps
+/// the schedule deterministic and byte-identical (1, 2, 4, 8, 16, 30, 30, 30,
+/// 30, 30 s) to what it replaced; the agent-reconnect golden-vector test pins
+/// that equivalence. These numbers equal the workspace `DEFAULT_BACKOFF` in every
+/// field except `jitter_ratio` (which `DEFAULT_BACKOFF` sets to `0.2`), so the
+/// agent path spells its jitterless config out explicitly rather than reusing it.
+const AGENT_BACKOFF: BackoffConfig = BackoffConfig {
+    base_delay_ms: 1_000.0,
+    factor: 2.0,
+    max_delay_ms: 30_000.0,
+    max_attempts: 10,
+    jitter_ratio: 0.0,
+};
+
 /// Attempt to reconnect to an agent with exponential backoff.
 ///
 /// Respects the `alive` flag — if it becomes `false` during the inter-attempt
@@ -3025,17 +3046,34 @@ async fn reconnect_agent(
     ),
     String,
 > {
-    const MAX_RETRIES: u32 = 10;
-    const MAX_BACKOFF_SECS: u64 = 30;
+    // SM-020 slice 3: the reconnect delay, attempt count, and give-up decision
+    // are driven through the canonical reconnect engine ([`reconnect_backoff`])
+    // rather than a hand-rolled capped-exponential. Jitter is disabled
+    // ([`AGENT_BACKOFF`]), so the RNG is never consulted and the schedule stays
+    // deterministic and byte-identical to what it replaced. The separate bounded
+    // `connection.list` re-probe budget and the `fold_agent_session_*` paths are
+    // unchanged.
+    let mut no_jitter = || 0.0;
+    // A fresh drop arms the first backoff window.
+    let mut state = reconnect_reducer(
+        &INITIAL_RECONNECT_STATE,
+        ReconnectEvent::Drop,
+        &AGENT_BACKOFF,
+        &mut no_jitter,
+    );
 
-    for attempt in 0..MAX_RETRIES {
-        // Capped exponential backoff (1s, 2s, 4s, …, capped at 30s) via the
-        // shared MATH (DUP-007). `attempt` is 0-based, matching the helper.
-        let backoff = termihub_core::util::backoff::capped_exponential_delay(
-            tokio::time::Duration::from_secs(1),
-            attempt,
-            tokio::time::Duration::from_secs(MAX_BACKOFF_SECS),
+    while state.phase == ReconnectPhase::Waiting {
+        // The armed backoff delay for the attempt about to start.
+        let backoff = tokio::time::Duration::from_millis(state.delay_ms.max(0) as u64);
+        // The backoff timer fires: begin an attempt (advances the attempt count).
+        state = reconnect_reducer(
+            &state,
+            ReconnectEvent::Attempt,
+            &AGENT_BACKOFF,
+            &mut no_jitter,
         );
+        // 0-based attempt index, preserved for the existing `attempt + 1` logs.
+        let attempt = state.attempt - 1;
 
         // Sleep in small increments so we can respect the alive flag promptly
         let deadline = tokio::time::Instant::now() + backoff;
@@ -3080,6 +3118,12 @@ async fn reconnect_agent(
                     return Err("Reconnect stopped by user".to_string());
                 }
                 warn!("Reconnect attempt {} failed (SSH): {}", attempt + 1, e);
+                state = reconnect_reducer(
+                    &state,
+                    ReconnectEvent::Failure,
+                    &AGENT_BACKOFF,
+                    &mut no_jitter,
+                );
                 continue;
             }
         };
@@ -3089,12 +3133,24 @@ async fn reconnect_agent(
             Ok(c) => c,
             Err(e) => {
                 warn!("Reconnect attempt {} failed (channel): {}", attempt + 1, e);
+                state = reconnect_reducer(
+                    &state,
+                    ReconnectEvent::Failure,
+                    &AGENT_BACKOFF,
+                    &mut no_jitter,
+                );
                 continue;
             }
         };
         let exec_cmd = config.agent_exec_command();
         if let Err(e) = channel.exec(false, exec_cmd.as_str()).await {
             warn!("Reconnect attempt {} failed (exec): {}", attempt + 1, e);
+            state = reconnect_reducer(
+                &state,
+                ReconnectEvent::Failure,
+                &AGENT_BACKOFF,
+                &mut no_jitter,
+            );
             continue;
         }
 
@@ -3119,6 +3175,12 @@ async fn reconnect_agent(
                     attempt + 1,
                     e
                 );
+                state = reconnect_reducer(
+                    &state,
+                    ReconnectEvent::Failure,
+                    &AGENT_BACKOFF,
+                    &mut no_jitter,
+                );
                 continue;
             }
         };
@@ -3128,6 +3190,12 @@ async fn reconnect_agent(
                 "Reconnect attempt {} failed (write init): {}",
                 attempt + 1,
                 e
+            );
+            state = reconnect_reducer(
+                &state,
+                ReconnectEvent::Failure,
+                &AGENT_BACKOFF,
+                &mut no_jitter,
             );
             continue;
         }
@@ -3211,11 +3279,21 @@ async fn reconnect_agent(
         if success {
             return Ok((session, channel, buffered));
         }
+
+        // The init handshake did not complete (channel closed / rejected / parse
+        // failure): this attempt failed. Arm the next backoff window, or give up
+        // once the attempt budget is spent (the `while` then exits).
+        state = reconnect_reducer(
+            &state,
+            ReconnectEvent::Failure,
+            &AGENT_BACKOFF,
+            &mut no_jitter,
+        );
     }
 
     Err(format!(
         "Failed to reconnect after {} attempts",
-        MAX_RETRIES
+        AGENT_BACKOFF.max_attempts
     ))
 }
 
