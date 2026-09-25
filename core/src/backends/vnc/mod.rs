@@ -597,6 +597,20 @@ impl ConnectionType for Vnc {
         Ok(())
     }
 
+    /// Connect, aborting transport setup (direct TCP or SSH tunnel), VeNCrypt
+    /// TLS negotiation and RFB handshake promptly when `cancel` fires instead
+    /// of waiting them out (PARITY-007). Nothing is stored on `self` until
+    /// [`connect`](Self::connect) fully succeeds, and the transport/tunnel are
+    /// held in locals whose `Drop` tears them down, so dropping the in-flight
+    /// connect on cancel leaks nothing.
+    async fn connect_cancellable(
+        &mut self,
+        settings: serde_json::Value,
+        cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        super::race_connect(cancel, self.connect(settings)).await
+    }
+
     async fn disconnect(&mut self) -> Result<(), SessionError> {
         if let Some(rt) = self.runtime.take() {
             rt.cancel.cancel();
@@ -852,6 +866,39 @@ mod tests {
         let mut v = Vnc::new();
         let err = v.connect(serde_json::json!({})).await.unwrap_err();
         assert!(matches!(err, SessionError::InvalidConfig(_)));
+    }
+
+    /// A pre-cancelled token aborts the connect before any transport / TLS / RFB
+    /// I/O (the config names a would-be-real host) and surfaces the shared
+    /// cancellation error, leaving the backend disconnected (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_connecting() {
+        let mut v = Vnc::new();
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = v
+            .connect_cancellable(
+                serde_json::json!({ "host": "vnc.example.com", "port": 5900 }),
+                Some(token),
+            )
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!v.is_connected());
+    }
+
+    /// With no token the cancellable path behaves exactly as `connect`: a
+    /// missing host fails the same way.
+    #[tokio::test]
+    async fn connect_cancellable_none_matches_connect() {
+        let plain = Vnc::new().connect(serde_json::json!({})).await;
+        let cancellable = Vnc::new()
+            .connect_cancellable(serde_json::json!({}), None)
+            .await;
+        assert!(matches!(plain, Err(SessionError::InvalidConfig(_))));
+        assert!(matches!(cancellable, Err(SessionError::InvalidConfig(_))));
     }
 
     #[tokio::test]

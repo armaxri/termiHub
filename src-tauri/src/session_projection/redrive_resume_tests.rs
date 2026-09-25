@@ -543,9 +543,15 @@ fn agent_reconnect_folds_session_lost_when_live_session_unrecoverable() {
         "session-lost must NOT mint a replacement shell — only the initial \
          create_session ran (#2512)"
     );
-    assert!(
-        !manager_ref.has_retained_request("tab-1"),
-        "the terminal session-lost state scrubs the retained request"
+    // The redrive runs on a spawned task: it folds session-lost (polled above),
+    // then scrubs the retained request as its *next* step. On a loaded runner the
+    // `SessionLost` status is observable a beat before the scrub lands, so a bare
+    // `assert!` here raced on the Windows leg (same shape as #2719). Wait for the
+    // observable scrub instead; a timeout here still fails the test, so this keeps
+    // proving the terminal session-lost state DOES scrub the retained request.
+    poll_until(
+        || !manager_ref.has_retained_request("tab-1"),
+        "the terminal session-lost state scrubs the retained request",
     );
 }
 
