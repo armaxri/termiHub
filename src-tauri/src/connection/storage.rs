@@ -564,10 +564,10 @@ mod tests {
 
         storage.save_flat(&flat).unwrap();
 
-        // Verify on-disk format is the nested tree, at the current schema (v3)
+        // Verify on-disk format is the nested tree, at the current schema (v4)
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "3");
+        assert_eq!(on_disk.version, "4");
         assert_eq!(on_disk.children.len(), 1); // One folder
         match &on_disk.children[0] {
             ConnectionTreeNode::Folder { name, children, .. } => {
@@ -655,7 +655,10 @@ mod tests {
         // The migration was persisted at the new schema version.
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
-        assert_eq!(on_disk.version, "3");
+        assert_eq!(
+            on_disk.version,
+            ConnectionStore::CURRENT_VERSION.to_string()
+        );
         assert!(raw.contains("plugin:beta:k8s"));
         assert!(!raw.contains("k8s-beta"));
     }
@@ -713,21 +716,116 @@ mod tests {
         assert_eq!(type_of(&flat, "orphan"), "plugin:beta:k8s");
     }
 
-    /// Downgrade safety: a file the current build wrote (v3, namespaced ids) is
-    /// refused for overwrite by a v2 build — the version gate an older binary runs
-    /// before every save — so it cannot mangle ids it does not understand.
+    /// Downgrade safety: a file the current build wrote (v4: namespaced ids,
+    /// unified `autoReconnect`) is refused for overwrite by a v2 or v3 build — the
+    /// version gate an older binary runs before every save — so it cannot mangle
+    /// ids or drop the renamed reconnect setting it does not understand.
     #[test]
-    fn v3_file_is_protected_from_a_v2_build() {
+    fn current_file_is_protected_from_older_builds() {
         let dir = TempDir::new().unwrap();
         let storage = create_test_storage(&dir);
         storage.save_store(&ConnectionStore::default()).unwrap();
 
-        let err = guard_not_newer(&storage.file_path, ConnectionStore::STORE_NAME, 2).unwrap_err();
-        assert!(err.to_string().contains("newer version"), "{err}");
+        for older in [2, 3] {
+            let err = guard_not_newer(&storage.file_path, ConnectionStore::STORE_NAME, older)
+                .unwrap_err();
+            assert!(err.to_string().contains("newer version"), "{err}");
+        }
         let raw = fs::read_to_string(&storage.file_path).unwrap();
         assert!(matches!(
             load_versioned::<ConnectionStore>(&raw),
             LoadOutcome::Loaded { .. }
         ));
+    }
+
+    /// PARITY-008: a v3 file's SSH connections carrying the legacy
+    /// `resilientReconnect` key migrate to the unified `autoReconnect` key — an
+    /// explicit `false` or `true` is preserved, an absent key stays absent
+    /// (meaning "on") — including connections nested inside folders. The next
+    /// save writes schema v4 with only the new key.
+    #[test]
+    fn v3_resilient_reconnect_migrates_to_auto_reconnect() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let conn = |name: &str, settings: serde_json::Value| {
+            serde_json::json!({
+                "type": "connection",
+                "name": name,
+                "config": { "type": "ssh", "config": settings }
+            })
+        };
+        let v3 = serde_json::json!({
+            "version": "3",
+            "children": [
+                conn("off", serde_json::json!({ "host": "a", "resilientReconnect": false })),
+                conn("on", serde_json::json!({ "host": "b", "resilientReconnect": true })),
+                conn("absent", serde_json::json!({ "host": "c" })),
+                {
+                    "type": "folder",
+                    "name": "Work",
+                    "children": [
+                        conn("nested", serde_json::json!({ "resilientReconnect": false }))
+                    ]
+                }
+            ]
+        });
+        fs::write(&storage.file_path, v3.to_string()).unwrap();
+
+        let loaded = storage.load_with_recovery().unwrap();
+        assert!(loaded.warnings.is_empty());
+        let settings = |name: &str| {
+            loaded
+                .data
+                .connections
+                .iter()
+                .find(|c| c.name == name)
+                .unwrap()
+                .config
+                .settings
+                .clone()
+        };
+        assert_eq!(
+            settings("off"),
+            serde_json::json!({ "host": "a", "autoReconnect": false })
+        );
+        assert_eq!(
+            settings("on"),
+            serde_json::json!({ "host": "b", "autoReconnect": true })
+        );
+        assert_eq!(settings("absent"), serde_json::json!({ "host": "c" }));
+        assert!(termihub_core::connection::auto_reconnect_enabled(
+            &settings("absent")
+        ));
+        assert_eq!(
+            settings("nested"),
+            serde_json::json!({ "autoReconnect": false })
+        );
+
+        storage.save_flat(&loaded.data).unwrap();
+        let raw = fs::read_to_string(&storage.file_path).unwrap();
+        let on_disk: ConnectionStore = serde_json::from_str(&raw).unwrap();
+        assert_eq!(on_disk.version, "4");
+        assert!(!raw.contains("resilientReconnect"));
+    }
+
+    /// The raw v3 → v4 step itself (before the typed parse) renames the key.
+    #[test]
+    fn migrate_step_rewrites_legacy_key_in_raw_json() {
+        use crate::utils::migrate::VersionedStore;
+        let raw = serde_json::json!({
+            "version": "3",
+            "children": [{
+                "type": "folder", "name": "F",
+                "children": [{
+                    "type": "connection", "name": "s",
+                    "config": { "type": "ssh", "config": { "resilientReconnect": true } }
+                }]
+            }]
+        });
+        let migrated = ConnectionStore::migrate(raw, 3).unwrap();
+        assert_eq!(
+            migrated["children"][0]["children"][0]["config"]["config"],
+            serde_json::json!({ "autoReconnect": true })
+        );
     }
 }

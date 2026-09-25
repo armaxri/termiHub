@@ -269,6 +269,7 @@ class ConnectionsUi(HarnessMixin):
         auth_method: str = "password",
         key_path: Optional[str] = None,
         save_password: bool = False,
+        auto_reconnect: bool = True,
         connect: bool = False,
     ) -> None:
         """Fill the editor for an SSH connection and save (or Save & Connect).
@@ -281,6 +282,9 @@ class ConnectionsUi(HarnessMixin):
         raise the key-passphrase prompt on the sidebar-connect path. That field is
         only present when the credential store is not in ``"none"`` mode (see
         :class:`~termihub_harness.ui.CredentialStoreUi`).
+        ``auto_reconnect=False`` flips the default-on "Auto-Reconnect" toggle off
+        (PARITY-008), for a test that exercises the manual disconnect overlay
+        rather than the automatic reconnect loop.
         """
         self.open_new_connection_editor()
         self.driver.type("connection-editor-name-input", name)
@@ -310,6 +314,12 @@ class ConnectionsUi(HarnessMixin):
                 what="the Save credentials toggle",
             )
             self.driver.click("field-savePassword")
+        if not auto_reconnect:
+            self.wait(
+                lambda: self.driver.exists("field-autoReconnect"),
+                what="the Auto-Reconnect toggle",
+            )
+            self.driver.click("field-autoReconnect")
         self._click_editor_save(connect)
 
     def _click_editor_save(self, connect: bool) -> None:

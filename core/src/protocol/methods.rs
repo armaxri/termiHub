@@ -406,7 +406,9 @@ pub struct ConnectionCreateParams {
     pub name: String,
     #[serde(rename = "type")]
     pub session_type: String,
-    #[serde(default)]
+    /// Settings bag. The legacy `resilientReconnect` key is accepted on read and
+    /// rewritten to `autoReconnect` (PARITY-008) so an older desktop interoperates.
+    #[serde(default, with = "crate::connection::auto_reconnect::settings_bag")]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub config: serde_json::Value,
     #[serde(default)]
@@ -435,7 +437,12 @@ pub struct ConnectionUpdateParams {
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub session_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Settings bag; accepts the legacy `resilientReconnect` key on read (PARITY-008).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::connection::auto_reconnect::optional_settings_bag"
+    )]
     #[cfg_attr(test, ts(optional, type = "Record<string, unknown>"))]
     pub config: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -542,7 +549,10 @@ pub struct ConnectionDefinition {
     /// Session type: "shell", "serial", "docker", "ssh", "local", etc.
     pub session_type: String,
     /// Session-specific configuration (shell path, serial params, etc.).
-    #[serde(default)]
+    ///
+    /// The legacy `resilientReconnect` key an older agent may still report is
+    /// accepted on read and rewritten to `autoReconnect` (PARITY-008).
+    #[serde(default, with = "crate::connection::auto_reconnect::settings_bag")]
     pub config: Value,
     /// Whether sessions created from this definition are persistent.
     #[serde(default)]
@@ -1263,6 +1273,41 @@ pub struct ServiceStatusResult {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// PARITY-008: every connection-definition DTO accepts the legacy
+    /// `resilientReconnect` key on read (explicit value preserved) and carries
+    /// only the unified `autoReconnect` key afterwards, so a mixed-version
+    /// desktop/agent pair interoperates in both directions.
+    #[test]
+    fn connection_dtos_accept_legacy_resilient_reconnect_key() {
+        let def: ConnectionDefinition = serde_json::from_value(json!({
+            "id": "c1", "name": "n", "session_type": "ssh",
+            "config": { "host": "h", "resilientReconnect": false }
+        }))
+        .unwrap();
+        assert_eq!(def.config, json!({ "host": "h", "autoReconnect": false }));
+
+        let create: ConnectionCreateParams = serde_json::from_value(json!({
+            "name": "n", "type": "ssh",
+            "config": { "resilientReconnect": true },
+            "folder_id": null, "terminal_options": null, "icon": null
+        }))
+        .unwrap();
+        assert_eq!(create.config, json!({ "autoReconnect": true }));
+
+        let update: ConnectionUpdateParams = serde_json::from_value(json!({
+            "id": "c1", "config": { "resilientReconnect": false }
+        }))
+        .unwrap();
+        assert_eq!(update.config, Some(json!({ "autoReconnect": false })));
+
+        // Absent config stays absent / null config stays None.
+        let update: ConnectionUpdateParams = serde_json::from_value(json!({ "id": "c1" })).unwrap();
+        assert_eq!(update.config, None);
+        let update: ConnectionUpdateParams =
+            serde_json::from_value(json!({ "id": "c1", "config": null })).unwrap();
+        assert_eq!(update.config, None);
+    }
 
     /// Locks the `tunnel.start` wire contract against desktop/agent drift
     /// (#2185): the desktop builds this exact JSON — `forward` is the
