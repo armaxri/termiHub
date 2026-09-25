@@ -543,7 +543,7 @@ pub fn cleanup_stale_update_backup(_exe: &Path) {}
 /// running executable can be replaced in place. Returns an error so the caller
 /// surfaces it; keeps Windows/other builds compiling.
 #[cfg(not(unix))]
-fn apply_update_binary(_binary_path: &str) -> anyhow::Result<()> {
+fn apply_update_binary(_binary_path: &str, _expected_sha256: Option<&str>) -> anyhow::Result<()> {
     anyhow::bail!("deferred agent update apply is only supported on Unix platforms")
 }
 
