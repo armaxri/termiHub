@@ -4,11 +4,14 @@ import { ShellType } from "@/types/terminal";
 import { detectAvailableShells } from "@/utils/shell-detection";
 import { getWslDistroName } from "@/utils/shell-detection";
 import { useAppStore } from "@/store/appStore";
-import { isWindows } from "@/utils/platform";
+import { isWindows, getPlatform } from "@/utils/platform";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
-import { Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
+import { Button, Input, Select, SelectItem, Toggle, toast } from "@/components/ui";
+import { ClipboardCopy } from "lucide-react";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
-import { setFileLogLevel, getLogFilePath } from "@/services/api";
+import { setFileLogLevel, getLogFilePath, getCredentialStoreStatus } from "@/services/api";
+import { useAppInfo } from "@/hooks/useAppInfo";
+import { buildDebugInfo } from "@/utils/debugInfo";
 import { frontendError } from "@/utils/frontendLog";
 import { KeyPathInput } from "./KeyPathInput";
 import { SettingsField } from "./SettingsField";
@@ -73,6 +76,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
   const [gitBashSetupOpen, setGitBashSetupOpen] = useState(false);
   const [logFilePath, setLogFilePath] = useState<string | null>(null);
   const platformDefaultShell = useAppStore((s) => s.defaultShell);
+  const appInfo = useAppInfo();
 
   // Resolve the log file location once so the control can point a user/supporter
   // straight at the file to read or attach to a bug report (OBS-011).
@@ -97,6 +101,41 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
     },
     [onChange]
   );
+
+  // Gather a consolidated diagnostics bundle for bug reports and copy it to the
+  // clipboard. Everything is sourced from existing APIs and run through
+  // redaction (inside buildDebugInfo) before it leaves the app (OBS-008).
+  const handleCopyDebugInfo = useCallback(async () => {
+    let credentialStoreMode: string | null = null;
+    let credentialStoreStatus: string | null = null;
+    try {
+      const cred = await getCredentialStoreStatus();
+      credentialStoreMode = cred.mode;
+      credentialStoreStatus = cred.status;
+    } catch {
+      // Credential-store status is best-effort; leave it unknown on failure.
+    }
+    try {
+      const info = buildDebugInfo({
+        version: appInfo?.version ?? null,
+        gitHash: appInfo?.gitHash ?? null,
+        buildBranch: appInfo?.buildBranch ?? null,
+        isDev: appInfo?.isDev ?? null,
+        platform: getPlatform(),
+        userAgent: navigator.userAgent,
+        logFilePath,
+        credentialStoreMode,
+        credentialStoreStatus,
+      });
+      await navigator.clipboard.writeText(info);
+      toast.success("Debug info copied to clipboard");
+    } catch (err) {
+      const message = errorMessage(err);
+      frontendError("general_settings", `failed to copy debug info: ${message}`);
+      toast.error(`Failed to copy debug info: ${message}`);
+      throw err;
+    }
+  }, [appInfo, logFilePath]);
 
   const refreshShells = useCallback(() => {
     detectAvailableShells().then(setAvailableShells);
@@ -270,6 +309,24 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
               aria-label="Log file verbosity"
               data-testid="settings-file-log-level"
             />
+          </SettingsField>
+
+          <SettingsField
+            label="Debug Info"
+            hint={
+              "Copy a consolidated diagnostics summary (app version, build, platform, log file path, and credential store mode) " +
+              "for pasting into a bug report. Secrets are redacted before the text leaves the app."
+            }
+          >
+            <Button
+              variant="secondary"
+              size="sm"
+              icon={<ClipboardCopy size={14} />}
+              onClick={handleCopyDebugInfo}
+              data-testid="settings-copy-debug-info"
+            >
+              Copy debug info
+            </Button>
           </SettingsField>
         </div>
       )}
