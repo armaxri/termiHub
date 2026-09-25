@@ -165,6 +165,56 @@ A clean run means a green PR gate. Use `./scripts/ci-local.sh --quick` for the q
 subset (skips the slow test/audit/build gates); this is what the pre-push hook runs. Missing
 optional tools (`cargo-audit`, `cargo-deny`, `uv`) are skipped with a warning, not a failure.
 
+### CI lanes: what a green PR proves (and what it does not)
+
+CI runner queueing is the project's throughput bottleneck, so CI is split into a
+**lean per-PR lane** and a **full post-merge lane** (#3325). The maintainer
+accepted (2026-09-25) that some findings — e.g. a new package-audit advisory, or
+a macOS-only break — surface on `develop` after merge instead of on the PR.
+
+**Per-PR lane.** A `Detect Changed Areas` job classifies the PR's changed files
+([`scripts/internal/ci-changes.mjs`](../scripts/internal/ci-changes.mjs)) and
+each job runs only if the PR can affect it:
+
+| Check                                        | Runs on a PR when…                                        |
+| -------------------------------------------- | --------------------------------------------------------- |
+| Rust Code Quality (fmt, clippy, feature iso) | Rust or `rdp-sidecar/` changed                            |
+| Frontend Code Quality (lint, tsc, prettier)  | frontend changed, or docs/Markdown changed                |
+| Run Tests (ubuntu-latest)                    | Rust and/or frontend changed — runs only the changed half |
+| Run Tests (windows-latest)                   | Rust changed — Rust tests only (no vitest)                |
+| Build on ubuntu-latest (release compile)     | Rust or frontend changed                                  |
+| RDP Sidecar Quality                          | `rdp-sidecar/` changed                                    |
+| Shell Script Quality                         | a shell/cmd script changed                                |
+| System-Test Harness / Test-ID Drift Guard    | `tests/system/` changed (drift guard: also frontend)      |
+| Security Audit                               | a dependency manifest/lockfile changed                    |
+| Agent — Linux musl cross-builds              | `agent/`, `core/` or `Cargo.toml` changed                 |
+| Lint Commit Messages                         | always                                                    |
+
+A skipped check reports as **skipped**, which is a pass. The classifier is
+**fail-open**: an unrecognised path, any `.github/` change, or a failure of the
+detection job itself runs every per-PR job. An `audit/**`-only PR runs only
+commit-lint; a docs-only PR runs commit-lint plus the Markdown checks.
+
+**So a green PR proves:** formatting, Clippy and lint are clean; the PR's Rust
+tests pass on Linux and Windows; the vitest suite and its coverage floors pass
+(on Linux); the app release-compiles and Vite-bundles on Linux.
+
+**It does NOT prove** (these run only post-merge): Rust tests and vitest on
+**macOS**; vitest on **Windows**; release compiles/installers on macOS, Windows
+and Linux arm64 (Dev Build); the Windows and macOS agent builds; the workspace
+`cargo audit`/`cargo deny`/`pnpm audit` gate for PRs that do not touch
+dependencies; unified coverage; bundle size; the Windows serial grade (#2495).
+
+**Post-merge lane.** Every push to `develop` or `main` runs **every** job above
+on **every** platform — Code Quality with the full three-OS test matrix, Security
+Audit (also daily on both branches), Coverage, Bundle Size, the full Agent
+matrix, the Windows serial grade and Dev Build. A superseded run on the same
+branch is cancelled, so the newest commit's run is the one to read (it covers
+all earlier merges). **Watch `develop`'s own runs after merging**: a failure there
+is a real regression (or a new advisory) and needs a follow-up fix, since the PR
+that caused it was not gated on it. The nightly system-integration and Docker
+fixture lanes are unchanged.
+
 ### Git hooks
 
 Committed git hooks (in [`scripts/hooks/`](../scripts/hooks/)) are enabled by `./scripts/setup.sh`
