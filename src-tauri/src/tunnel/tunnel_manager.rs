@@ -1885,6 +1885,9 @@ mod tests {
     use tauri::Manager;
     use termihub_core::backends::ssh::session_pool::{PooledRef, RefPool};
     use termihub_core::connection::{Capabilities, ConnectionTypeInfo, SettingsSchema};
+    use termihub_core::reconnect_backoff::{
+        reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
+    };
     use termihub_core::tunnel::local_forward::ForwarderStats;
     use tokio_util::sync::CancellationToken;
 
@@ -2340,6 +2343,59 @@ mod tests {
     // via the managed TunnelManager) needs an AppHandle + SSH and can't run in a
     // unit test. These lock in the risky part — the backoff schedule and the loop's
     // success/exhaustion/cancel control flow — with injected closures + paused time.
+
+    // ── Golden vector: canonical-engine migration (SM-020 slice 2) ──────
+    //
+    // Pins the EXACT delay sequence + give-up the tunnel reconnect produces, so
+    // moving `run_reconnect_loop` onto the canonical `reconnect_backoff` engine
+    // is proven behavior-preserving: fed the tunnel's own numbers with jitter
+    // disabled, the shared engine must yield the same 1,2,4,8,16 s schedule then
+    // give up that the hand-rolled `backoff_delay(1..=5)` did.
+
+    /// The tunnel reconnect delays, in whole ms, for its production
+    /// configuration (base 1 s, factor 2, cap 30 s, 5 attempts). All five stay
+    /// under the 30 s cap, so the cap never clamps here.
+    const TUNNEL_GOLDEN_DELAYS_MS: [i64; 5] = [1_000, 2_000, 4_000, 8_000, 16_000];
+
+    /// The tunnel's reconnect schedule expressed as a canonical [`BackoffConfig`]
+    /// with jitter disabled — the deterministic form the migration will adopt.
+    fn tunnel_backoff_golden_config() -> BackoffConfig {
+        BackoffConfig {
+            base_delay_ms: 1_000.0,
+            factor: 2.0,
+            max_delay_ms: 30_000.0,
+            max_attempts: 5,
+            jitter_ratio: 0.0,
+        }
+    }
+
+    #[test]
+    fn golden_vector_tunnel_backoff_sequence_then_give_up() {
+        let config = tunnel_backoff_golden_config();
+        let mut no_jitter = || 0.0;
+        let mut state = INITIAL_RECONNECT_STATE;
+        let mut delays = Vec::new();
+
+        // A fresh drop arms the first backoff window; each subsequent window is
+        // armed by a failed attempt (the timer fires, then the attempt fails).
+        state = reconnect_reducer(&state, ReconnectEvent::Drop, &config, &mut no_jitter);
+        while state.phase == ReconnectPhase::Waiting {
+            delays.push(state.delay_ms);
+            state = reconnect_reducer(&state, ReconnectEvent::Attempt, &config, &mut no_jitter);
+            state = reconnect_reducer(&state, ReconnectEvent::Failure, &config, &mut no_jitter);
+        }
+
+        assert_eq!(
+            delays,
+            TUNNEL_GOLDEN_DELAYS_MS.to_vec(),
+            "tunnel backoff must yield exactly 1,2,4,8,16 s (jitter disabled)"
+        );
+        assert_eq!(
+            state.phase,
+            ReconnectPhase::Gaveup,
+            "after 5 failed attempts the engine gives up (was `Exhausted`)"
+        );
+    }
 
     #[test]
     fn backoff_delay_is_capped_exponential() {
