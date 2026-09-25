@@ -34,7 +34,7 @@ pub fn backoff_delay(failed_attempts: u32) -> Option<Duration> {
     // - 1` is passed to the 0-based helper. There is no delay cap (the retry
     // budget above bounds it), so `Duration::MAX` is passed as the cap; the
     // helper's saturating arithmetic keeps a large attempt from overflowing.
-    Some(termihub_core::util::backoff::capped_exponential_delay(
+    Some(crate::util::backoff::capped_exponential_delay(
         BASE_BACKOFF,
         failed_attempts - 1,
         Duration::MAX,
