@@ -1125,7 +1125,7 @@ so the principle is: (1) add the new public key next to the old one and keep sig
 the old private key; (2) ship at least one release carrying both keys and let agents update
 to it; (3) switch the secret to the new private key and drop the old block. The setup script
 does not yet automate step (1)–(3) (it discards the private key it does not upload) — that
-tooling is tracked as a follow-up to #3213. Until then, plan a rotation with the maintainer
+tooling is tracked in [#3329](https://github.com/armaxri/termiHub/issues/3329). Until then, plan a rotation with the maintainer
 rather than re-running the script.
 
 **Compromise:** replace the secret and the public key immediately (`--force`). Agents that
