@@ -9,7 +9,8 @@ subsystem: rust / static-analysis
 evidence:
   - .claude/CLAUDE.md:1
   - .github/workflows/code-quality.yml:200
-status: open
+status: fixed
+resolution: "#3224 — no-panic-in-prod policy now lint-enforced: #![cfg_attr(not(test), deny(clippy::unwrap_used, expect_used, panic))] on all 4 first-party crate roots (core/agent/src-tauri/plugin-api); CI's clippy -D warnings gates new violations. All 28 existing prod violations fixed behavior-preservingly (agent dispatch via to_result_value, runtime/main return anyhow::Result, mutex poison-recovery, typed TerminalError propagation). Lint confirmed firing. Test/vendored/example code exempt via not(test)"
 ---
 
 ## What

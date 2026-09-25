@@ -12,8 +12,8 @@ evidence:
   - src/components/ConnectionEditor/ConnectionEditor.tsx:738
   - src/hooks/useRemoteDesktopSession.ts:120
   - src/utils/featureFlags.ts:19
-status: partial
-resolution: "#3084 — (≡WA-FE-003) added typed runtime-checked accessors src/utils/connectionConfigFields.ts (readConfigString/Boolean/Number + connectionConfigFields/Host, each typeof-narrows) instead of a full discriminated union (which would drift vs Rust DTOs — DUP-030 codegen). Removed ~35 unsafe casts across 19 sites (connectionSearch/featureFlags/ConnectionList/useConnectSavedConnection/appStore/etc), each real narrowing not re-spelled cast, no any. tsc clean, 6599 tests. Remaining: 3 field-cast sites + RemoteAgentConfig↔Record casts need the union → follow-up #3083 (tied to DUP-030)"
+status: fixed
+resolution: "#3163 — config type-erasure eliminated: typed runtime-checked accessors (connectionConfigFields.ts, #3084) + BuiltInConnectionConfig discriminated union & guards (typedConnectionConfig.ts, #3163) + final RemoteAgentConfig form-boundary converters (remoteAgentConfig.ts, #3225). ~35+ `as unknown as Record` casts removed across the frontend; only localized narrowings inside validated guards remain. End-to-end Rust↔TS codegen is the separate DUP-030 track"
 ---
 
 ## What
