@@ -213,7 +213,7 @@ pub struct InitializeResult {
 
 /// Result of `agent.list_connections`: a snapshot of every client currently
 /// connected to this agent process (see [`ConnectionInfo`]).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionListResult {
     pub connections: Vec<ConnectionInfo>,
 }
@@ -221,7 +221,7 @@ pub struct ConnectionListResult {
 /// A single client connected to this agent process, as reported by
 /// `agent.list_connections`. Mirrors the agent's internal `ConnectedClient`,
 /// with the timestamp rendered as an ISO 8601 (RFC 3339) string for the wire.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionInfo {
     /// Agent-assigned id for this client connection.
     pub client_id: String,
@@ -252,21 +252,22 @@ pub struct ConnectionTypesResult {
 
 // ── session.create ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCreateParams {
     #[serde(rename = "type")]
     pub session_type: String,
     #[serde(default)]
     pub config: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// ID of the saved connection definition this session was created from, if any.
     /// Lets clients re-link an active session to its source definition after
     /// tab close, agent restart, or desktop restart.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCreateResult {
     pub session_id: String,
     pub title: String,
@@ -280,12 +281,12 @@ pub struct SessionCreateResult {
 
 // ── session.list ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionListResult {
     pub sessions: Vec<SessionListEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionListEntry {
     pub session_id: String,
     pub title: String,
@@ -301,21 +302,21 @@ pub struct SessionListEntry {
 
 // ── session.close ───────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCloseParams {
     pub session_id: String,
 }
 
 // ── session.attach ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionAttachParams {
     pub session_id: String,
 }
 
 // ── session.detach ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionDetachParams {
     pub session_id: String,
 }
@@ -657,14 +658,14 @@ pub struct ProcessKillParams {
 
 // ── agent.shutdown ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentShutdownParams {
     /// Optional reason: "update", "user", etc.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentShutdownResult {
     /// Number of sessions that were detached (left running in daemons).
     pub detached_sessions: u32,
@@ -2476,6 +2477,156 @@ mod tests {
                 "status": "running",
                 "created_at": "2026-02-14T10:30:00Z"
             })
+        );
+    }
+
+    // ── agent_manager request/response wire (DUP-001) ───────────────────
+    //
+    // The desktop's `agent_manager` builds these requests and parses these
+    // replies. Each request test compares `to_value(<Params>)` byte-for-byte with
+    // the exact `serde_json::json!` the module built before the migration — a
+    // change here is a WIRE BREAK, since the agent deserializes the params. Each
+    // reply test proves the shared result DTO deserializes the exact agent reply.
+    //
+    // The wire carries a JSON object, whose key order is not significant; the RPC
+    // client serializes the params `Value` on the way out. So each test compares
+    // `to_value(<Params>)` with the legacy `json!` `Value` (both maps), which pins
+    // the key set and every value while staying order-independent.
+
+    #[test]
+    fn session_create_params_serialize_matches_hand_built_json() {
+        // Both optionals present — the desktop sends `title` + `definition_id`.
+        let legacy = json!({
+            "type": "shell",
+            "config": { "shell": "/bin/bash" },
+            "title": "Build",
+            "definition_id": "def-1",
+        });
+        let typed = SessionCreateParams {
+            session_type: "shell".to_string(),
+            config: json!({ "shell": "/bin/bash" }),
+            title: Some("Build".to_string()),
+            definition_id: Some("def-1".to_string()),
+        };
+        assert_eq!(serde_json::to_value(&typed).unwrap(), legacy);
+
+        // Both optionals absent — the old builder omitted the keys entirely, so
+        // `skip_serializing_if` must keep them out (a `null` key would be a break).
+        let legacy_min = json!({ "type": "serial", "config": {} });
+        let typed_min = SessionCreateParams {
+            session_type: "serial".to_string(),
+            config: json!({}),
+            title: None,
+            definition_id: None,
+        };
+        assert_eq!(serde_json::to_value(&typed_min).unwrap(), legacy_min);
+    }
+
+    #[test]
+    fn session_lifecycle_params_serialize_matches_hand_built_json() {
+        let legacy = json!({ "session_id": "s-1" });
+        assert_eq!(
+            serde_json::to_value(SessionAttachParams {
+                session_id: "s-1".to_string()
+            })
+            .unwrap(),
+            legacy,
+        );
+        assert_eq!(
+            serde_json::to_value(SessionDetachParams {
+                session_id: "s-1".to_string()
+            })
+            .unwrap(),
+            legacy,
+        );
+        assert_eq!(
+            serde_json::to_value(SessionCloseParams {
+                session_id: "s-1".to_string()
+            })
+            .unwrap(),
+            legacy,
+        );
+    }
+
+    #[test]
+    fn agent_shutdown_params_serialize_matches_hand_built_json() {
+        // Absent reason → `{}` (the old builder started from `json!({})` and only
+        // inserted `reason` when present).
+        assert_eq!(
+            serde_json::to_value(AgentShutdownParams { reason: None }).unwrap(),
+            json!({}),
+        );
+        assert_eq!(
+            serde_json::to_value(AgentShutdownParams {
+                reason: Some("update".to_string())
+            })
+            .unwrap(),
+            json!({ "reason": "update" }),
+        );
+    }
+
+    #[test]
+    fn agent_shutdown_result_parses_agent_reply() {
+        let reply = json!({ "detached_sessions": 3 });
+        let parsed: AgentShutdownResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.detached_sessions, 3);
+    }
+
+    #[test]
+    fn session_create_result_parses_agent_reply() {
+        let reply = json!({
+            "session_id": "s-9",
+            "title": "Build",
+            "type": "shell",
+            "status": "running",
+            "created_at": "2026-02-14T10:30:00Z",
+            "definition_id": "def-1",
+        });
+        let parsed: SessionCreateResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.session_id, "s-9");
+        assert_eq!(parsed.session_type, "shell");
+        assert_eq!(parsed.status, "running");
+        assert_eq!(parsed.definition_id.as_deref(), Some("def-1"));
+    }
+
+    #[test]
+    fn session_list_result_parses_agent_reply() {
+        let reply = json!({
+            "sessions": [{
+                "session_id": "s-1",
+                "title": "Build",
+                "type": "shell",
+                "status": "running",
+                "created_at": "2026-02-14T10:30:00Z",
+                "last_activity": "2026-02-14T12:00:00Z",
+                "attached": true,
+            }],
+        });
+        let parsed: SessionListResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.sessions.len(), 1);
+        assert_eq!(parsed.sessions[0].session_id, "s-1");
+        assert!(parsed.sessions[0].attached);
+        assert_eq!(parsed.sessions[0].definition_id, None);
+    }
+
+    #[test]
+    fn connection_list_result_parses_agent_reply() {
+        let reply = json!({
+            "connections": [{
+                "client_id": "c-1",
+                "client": "termihub-desktop",
+                "client_version": "0.1.0",
+                "connected_since": "2026-02-14T10:30:00Z",
+            }],
+        });
+        let parsed: ConnectionListResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.connections.len(), 1);
+        assert_eq!(parsed.connections[0].client_id, "c-1");
+        assert_eq!(parsed.connections[0].client, "termihub-desktop");
+        assert_eq!(parsed.connections[0].client_version, "0.1.0");
+        assert_eq!(
+            parsed.connections[0].connected_since,
+            "2026-02-14T10:30:00Z"
         );
     }
 }
