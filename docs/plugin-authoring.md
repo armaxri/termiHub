@@ -155,9 +155,38 @@ Registers a new connection type backed by a native dynamic library (see
 
 | Field            | Notes                                                                                                                                                    |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connectionType` | The connection type this backend registers.                                                                                                              |
+| `connectionType` | The connection type this backend registers: 1–64 characters of letters, digits, `.`, `_` or `-` (no `:`).                                                |
 | `displayName`    | Name shown in the connection-type selector.                                                                                                              |
 | `configSchema`   | JSON Schema describing the backend's connection config. The host renders a form from it and hands the resulting JSON to the backend at session creation. |
+
+#### Connection type ids
+
+The host registers your backend under a **stable, namespaced id** derived only
+from your manifest:
+
+```text
+plugin:<plugin id>:<connectionType>      e.g.  plugin:k8s-exec:k8s-exec
+```
+
+This is the `type` a user's saved connections, session history and workspaces
+store for your backend. It never depends on load order or on which other plugins
+are installed, so:
+
+- two plugins declaring the same `connectionType` never collide — each keeps its
+  own id;
+- a plugin can never shadow a built-in type (`ssh`, `local`, …), and a future
+  built-in of the same name can never take over your users' connections;
+- saved connections keep resolving to your plugin across restarts.
+
+Consequently, **changing your plugin `id` or `connectionType` in an update
+orphans every connection users saved against the old id** — treat both as
+permanent once published. (A connection whose plugin is missing is kept, not
+deleted; it works again once the plugin is reinstalled.) If two types share a
+`displayName`, the selector suffixes the later one with your plugin `name`.
+
+Connections saved before this scheme (when the first plugin to load got the
+bare `connectionType` and later ones `<connectionType>-<plugin id>`) are
+migrated to the namespaced id automatically when termiHub loads them.
 
 ### `theme`
 
