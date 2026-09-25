@@ -9,8 +9,46 @@ permissions:
   contents: write
 
 jobs:
+  # Release gate (PKG-007): fail BEFORE anything is created, built or published
+  # when the tag disagrees with the in-repo version sources (package.json,
+  # tauri.conf.json, src-tauri/core/agent Cargo.toml) or the Tauri npm packages
+  # have drifted from their Rust crates. Without it, tagging v0.2.0 on a tree
+  # that still says 0.1.0 would publish termiHub-0.2.0-* assets whose bundle
+  # reports 0.1.0 (and breaks update-available detection). Reuses
+  # release-check.sh --versions-only so the manual and automatic checks agree.
+  # Every other job depends on create-release, which depends on this job.
+  verify-version:
+    name: Verify Version
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup pnpm
+        uses: ./.github/actions/setup-pnpm
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      # The Tauri npm/crate drift check reads the INSTALLED @tauri-apps/*
+      # versions from node_modules; without an install it skips every pair.
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check tag and version sources agree
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          scripts/release-check.sh --versions-only --expect-version "${TAG_NAME#v}"
+
   create-release:
     name: Create Release
+    needs: verify-version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.get_version.outputs.version }}

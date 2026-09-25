@@ -355,7 +355,7 @@ All scripts live in `scripts/` with `.sh` (Unix/macOS) and `.cmd` (Windows) vari
 | `./scripts/test-system-py.sh`      | Run the Python bridge system-test harness (`tests/system/`) — builds the app if stale, brings up `--fixtures`, forwards to pytest |
 | `./scripts/test-system-linux.sh`   | Linux per-machine orchestration: Docker infra + virtual serial ports + unit & Rust integration tests                              |
 | `./scripts/test-system-windows.sh` | Windows (WSL/Git Bash) per-machine orchestration: Docker/Podman infra + unit & Rust integration tests                             |
-| `./scripts/release-check.sh`       | Validate release readiness (version consistency, changelog, tests, quality, git state, branch, code markers)                      |
+| `./scripts/release-check.sh`       | Release readiness (versions, changelog, tests, quality, git state, branch, markers); `--versions-only` = CI tag gate              |
 | `./scripts/smoke-test.sh`          | Post-install smoke test (launch app, verify UI, confirm clean shutdown)                                                           |
 
 ### Auto-Formatting Hook
