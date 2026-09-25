@@ -9,7 +9,8 @@ subsystem: core/src/plugin/host.rs
 evidence:
   - core/src/plugin/host.rs:357
   - core/src/plugin/host.rs:521
-status: open
+status: fixed
+resolution: "#3345 — plugin:<plugin-id>:<type> stable ids independent of load order; connections.json v3 migration + session/workspace stores"
 ---
 
 ## What
