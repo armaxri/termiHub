@@ -36,8 +36,9 @@ pub enum MonitorStatus {
     /// Re-establishing the transport after it died (reserved for the reconnect
     /// stage; not yet driven by the collector loop).
     Reconnecting,
-    /// Reconnect budget exhausted; the loop is idle awaiting a retry (reserved
-    /// for the reconnect stage).
+    /// Terminal: the reconnect budget was exhausted, or the transport is up but
+    /// the remote never answered with parseable output (#3252). The loop has
+    /// ended and awaits a manual retry.
     Offline,
     /// Collection is paused by the user while the transport stays open
     /// (reserved for the pause/resume stage).
@@ -192,6 +193,9 @@ impl Default for BackoffSchedule {
 /// Transitions owned here:
 /// - `* → Live` on the first success after any non-live state.
 /// - `Live → Stale` once `stale_threshold` consecutive failures accumulate.
+/// - `Connecting`/`Reconnecting → Offline` once `stale_threshold` consecutive
+///   *parse* failures accumulate before a sample was produced
+///   ([`on_parse_failure`](CollectLoopState::on_parse_failure), #3252).
 /// - `* → Paused` on [`pause`](CollectLoopState::pause); `Paused → Live` on
 ///   [`resume`](CollectLoopState::resume). Pausing keeps the transport open and
 ///   only stops collection, so a paused monitor shows a neutral badge rather
@@ -299,6 +303,46 @@ impl CollectLoopState {
         }
     }
 
+    /// Record a collect whose transport answered but whose output could not be
+    /// parsed (#3252).
+    ///
+    /// Once the loop is `Live` this is an ordinary failure (see
+    /// [`on_failure`](CollectLoopState::on_failure)): a sustained run goes
+    /// `Stale` and begins the bounded reconnect.
+    ///
+    /// Before the loop has produced a sample since (re)connecting — i.e. while
+    /// `Connecting`, or `Reconnecting` after a re-dial that succeeded — a
+    /// reconnect cannot help: the transport is up and the remote keeps
+    /// answering with unusable data. Without this transition such a loop would
+    /// hang in `Connecting` forever with no error surfaced. So once
+    /// `stale_threshold` consecutive parse failures accumulate pre-`Live`, the
+    /// loop resolves to [`MonitorStatus::Offline`] (terminal; the caller ends
+    /// the loop) and returns it. A successful parse at any point resets the run
+    /// via [`on_success`](CollectLoopState::on_success). A `Paused` loop ignores
+    /// this, like every other collect result.
+    pub fn on_parse_failure(&mut self) -> Option<MonitorStatus> {
+        match self.status {
+            MonitorStatus::Connecting | MonitorStatus::Reconnecting => {
+                self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+                if self.consecutive_failures >= self.stale_threshold {
+                    self.status = MonitorStatus::Offline;
+                    self.consecutive_failures = 0;
+                    Some(MonitorStatus::Offline)
+                } else {
+                    None
+                }
+            }
+            MonitorStatus::Paused | MonitorStatus::Offline => None,
+            MonitorStatus::Live | MonitorStatus::Stale => self.on_failure(),
+        }
+    }
+
+    /// Whether the loop has resolved to the terminal
+    /// [`MonitorStatus::Offline`] state and should stop collecting.
+    pub fn is_offline(&self) -> bool {
+        self.status == MonitorStatus::Offline
+    }
+
     /// Whether the loop should now begin a bounded reconnect.
     ///
     /// True once the collect run has reached `Stale` — i.e. the transport has
@@ -316,6 +360,9 @@ impl CollectLoopState {
     pub fn begin_reconnect(&mut self) -> Option<MonitorStatus> {
         if self.status != MonitorStatus::Reconnecting {
             self.status = MonitorStatus::Reconnecting;
+            // A fresh run: failures counted on the way to `Stale` must not
+            // also count against the re-dialled transport (#3252).
+            self.consecutive_failures = 0;
             Some(MonitorStatus::Reconnecting)
         } else {
             None
@@ -570,7 +617,7 @@ mod tests {
         let mut state = CollectLoopState::with_threshold(2);
         assert_eq!(state.on_parse_failure(), None); // 1 failure
         assert_eq!(state.on_success(), Some(MonitorStatus::Live)); // reset
-        // Back to a clean slate: Live parse failures follow the Stale path.
+                                                                   // Back to a clean slate: Live parse failures follow the Stale path.
         assert_eq!(state.on_parse_failure(), None);
         assert_eq!(
             state.on_parse_failure(),

@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio_util::sync::CancellationToken;
-use tracing::debug;
+use tracing::{debug, warn};
 
 use crate::config::SshConfig;
 use crate::errors::CoreError;
@@ -285,6 +285,16 @@ async fn interruptible_sleep(
     true
 }
 
+/// What one collect tick produced, folded into the [`CollectLoopState`].
+enum TickOutcome {
+    /// A parsed sample was pushed.
+    Sample,
+    /// The collect errored or timed out (transport-level failure).
+    Failed,
+    /// The transport answered, but `parse_stats` rejected the output (#3252).
+    Unparseable,
+}
+
 /// Re-dial the transport under a bounded exponential backoff (#1230, gap G2).
 ///
 /// Called once the collect loop has gone `Stale`. Emits `Reconnecting`, then
@@ -386,9 +396,12 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     net_tracker = NetDeltaTracker::new();
                 }
 
-                // A collect error, a parse error, or a stat send failure all
-                // mean "no fresh sample this tick" → count as a failure.
-                let collected = match collect_once(&*transport, &session, collect_timeout).await {
+                // A collect error or a stat send failure means "no fresh sample
+                // this tick" → a failure. A parse error is tracked separately:
+                // the transport answered, but with unusable data, so before
+                // `Live` a sustained run resolves to `Offline` instead of
+                // hanging in `Connecting` (#3252).
+                let outcome = match collect_once(&*transport, &session, collect_timeout).await {
                     Ok(output) => match parse_stats(&output) {
                         Ok((mut stats, counters, per_core_counters, net_counters)) => {
                             if let Some(pct) = cpu_tracker.update(counters) {
@@ -402,26 +415,33 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                             if tx.send(stats).await.is_err() {
                                 break;
                             }
-                            true
+                            TickOutcome::Sample
                         }
                         Err(e) => {
-                            debug!("Failed to parse monitoring output: {e}");
-                            false
+                            warn!("Failed to parse monitoring output: {e}");
+                            TickOutcome::Unparseable
                         }
                     },
                     Err(e) => {
                         debug!("Monitoring collect failed: {e}");
-                        false
+                        TickOutcome::Failed
                     }
                 };
 
-                let transition = if collected {
-                    loop_state.on_success()
-                } else {
-                    loop_state.on_failure()
+                let transition = match outcome {
+                    TickOutcome::Sample => loop_state.on_success(),
+                    TickOutcome::Failed => loop_state.on_failure(),
+                    TickOutcome::Unparseable => loop_state.on_parse_failure(),
                 };
                 if let Some(status) = transition {
                     emit_status(&status_tx, status).await;
+                }
+
+                // Connected but never parseable: `Offline` is terminal — end the
+                // loop (closing the stats channel) exactly like an exhausted
+                // reconnect budget (#3252).
+                if loop_state.is_offline() {
+                    break;
                 }
 
                 // A sustained drop (now `Stale`) triggers a bounded reconnect
