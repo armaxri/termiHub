@@ -29,14 +29,12 @@ import {
   listAvailableShells,
   resolveCredential,
   storeCredential,
-  isSshKeyEncrypted,
   testTerminal,
   cancelConnecting,
 } from "@/services/api";
 import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { frontendLog } from "@/utils/frontendLog";
-import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
-import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
+import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
 import type { ConnectionTypeInfo } from "@/services/api";
 import { newId } from "@/services/transport/ids";
 import {
@@ -53,8 +51,6 @@ import { Button, Input, Select, SelectItem, Toggle, toast } from "@/components/u
 import { ConnectionSettingsForm, AGENT_SCHEMA } from "@/components/DynamicForm";
 import {
   buildDefaults,
-  findPasswordPromptInfo,
-  findKeyPassphrasePromptInfo,
   filterRuntimeOptions,
   filterCredentialFields,
 } from "@/utils/schemaDefaults";
@@ -1077,102 +1073,42 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
     let config: ConnectionConfig = saved.config;
 
-    // Use schema to detect if a password/passphrase prompt is needed.
-    // findPasswordPromptInfo only matches a visible password field (password
-    // auth); for key auth the password field is hidden, so a separate check
-    // covers passphrase-protected keys (#879).
-    const schema = isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema;
-    if (schema) {
-      // For key auth, prompt based on the key's actual encryption rather than
-      // the savePassword flag (#885): a passphrase-protected key must be
-      // unlocked even when the user didn't opt to save the passphrase, and an
-      // unencrypted key must never trigger a spurious prompt. If the file can't
-      // be read, default to prompting so an encrypted key never fails silently.
-      let keyEncrypted = false;
-      if (connSettings.authMethod === "key") {
-        keyEncrypted = await isSshKeyEncrypted((connSettings.keyPath as string) ?? "").catch(
-          () => true
+    // Resolve a password / key passphrase the form does not carry: stored
+    // credential first (behind the unlock gate, #1144), else prompt (#879/#885).
+    // Shared with Test via resolveConnectSecret (#3284).
+    const secret = await resolveConnectSecret({
+      schema: isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema,
+      settings: connSettings,
+      connectionId: saved.id,
+      requestPassword,
+    });
+    if (secret.status === "canceled") {
+      // The connection was saved; only the connect step was aborted. Surface a
+      // recoverable state (rather than silently resolving, which would flash a
+      // false success on the Button) and stop here — see #1344.
+      toast.info("Connect canceled — your changes were saved.");
+      throw new PromptCanceledError();
+    }
+    if (secret.status === "resolved") {
+      // Persist a freshly-entered secret when the prompt's Save box is checked
+      // (#874, #879). Store under the connection's persisted id — a new
+      // connection's optimistic conn-<ts> id has been reconciled by now (#863),
+      // and the editor enforces unique names per folder, so name + folderId
+      // identifies the stored entry.
+      if (secret.source === "prompt" && useAppStore.getState().passwordPromptShouldSave) {
+        const storeConn = currentConnectionsView().connections.find(
+          (c) => c.name === saved.name && (c.folderId ?? null) === (saved.folderId ?? null)
         );
+        await storeCredential(
+          storeConn?.id ?? saved.id,
+          secret.credentialType,
+          secret.secret
+        ).catch((err) => frontendLog("connection_editor", `Failed to store credential: ${err}`));
       }
-      const keyPrompt = findKeyPassphrasePromptInfo(schema, connSettings, keyEncrypted);
-      const promptInfo = findPasswordPromptInfo(schema, connSettings) ?? keyPrompt;
-      const credentialType: "password" | "key_passphrase" = keyPrompt
-        ? "key_passphrase"
-        : "password";
-      if (promptInfo) {
-        const host = (connSettings[promptInfo.hostKey] as string) ?? "";
-        const username = (connSettings[promptInfo.usernameKey] as string) ?? "";
-
-        // Before prompting, check whether the credential store already has a
-        // credential for this connection. This avoids re-entering a password
-        // when the user only changed a non-credential field and clicks Save & Connect.
-        const authMethod = connSettings.authMethod as string | undefined;
-        let resolvedPassword: string | null = null;
-        if (authMethod) {
-          const savePasswordFlag = connSettings.savePassword as boolean | undefined;
-          // Unlock gate (G3, #1144): if the store is a locked master-password
-          // store, prompt for unlock first so the saved credential can be read —
-          // otherwise resolveCredential returns null and Save & Connect silently
-          // falls back to an interactive prompt, ignoring the stored secret. This
-          // matches the sidebar/agent/workspace connect paths.
-          const proceed = await ensureCredentialStoreUnlocked({
-            authMethod,
-            savePassword: savePasswordFlag,
-          });
-          if (!proceed) {
-            // The connection was saved; only the connect step was aborted. Surface
-            // a recoverable state (rather than silently resolving, which would flash
-            // a false success on the Button) and stop here — see #1344.
-            toast.info("Connect canceled — your changes were saved.");
-            throw new PromptCanceledError();
-          }
-
-          const resolution = await resolveConnectionCredential(
-            saved.id,
-            authMethod,
-            savePasswordFlag
-          );
-          if (resolution.usedStoredCredential && resolution.password) {
-            resolvedPassword = resolution.password;
-          }
-        }
-
-        if (!resolvedPassword) {
-          resolvedPassword = await requestPassword(host, username, "", credentialType);
-          if (resolvedPassword === null) {
-            // Same recoverable-state handling as the unlock gate above (#1344):
-            // the save persisted, so inform the user the connect was canceled
-            // instead of returning silently into a false success flash.
-            toast.info("Connect canceled — your changes were saved.");
-            throw new PromptCanceledError();
-          }
-          // Persist the freshly-entered secret when the prompt's Save box is
-          // checked. The sidebar connect path did this but Save & Connect did not,
-          // so "Save password" was silently ignored here (#874, #879). The
-          // credential type follows the auth method — "password" for password
-          // auth, "key_passphrase" for a passphrase-protected key. Store under the
-          // connection's persisted id — a new connection's optimistic conn-<ts> id
-          // has been reconciled by now (#863), and the editor enforces unique names
-          // per folder, so name + folderId identifies the stored entry.
-          if (useAppStore.getState().passwordPromptShouldSave) {
-            const storeConn = currentConnectionsView().connections.find(
-              (c) => c.name === saved.name && (c.folderId ?? null) === (saved.folderId ?? null)
-            );
-            await storeCredential(
-              storeConn?.id ?? saved.id,
-              credentialType,
-              resolvedPassword
-            ).catch((err) =>
-              frontendLog("connection_editor", `Failed to store credential: ${err}`)
-            );
-          }
-        }
-
-        config = {
-          ...config,
-          config: { ...config.config, [promptInfo.passwordKey]: resolvedPassword },
-        };
-      }
+      config = {
+        ...config,
+        config: { ...config.config, [secret.passwordKey]: secret.secret },
+      };
     }
 
     addTab(saved.name, saved.config.type, config, { terminalOptions: saved.terminalOptions });
