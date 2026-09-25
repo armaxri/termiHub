@@ -172,13 +172,48 @@ pub struct Argon2Cost {
     pub parallelism: u32,
 }
 
+/// Deliberately minimal Argon2id cost used for new encryptions **only inside
+/// this crate's unit-test binary** (`#[cfg(test)]`), see [`Argon2Cost::current`].
+///
+/// The production cost makes every derivation take seconds in an unoptimised
+/// debug build; with dozens of credential tests that starved CI runners and
+/// made unrelated timing-sensitive tests flaky (#3355). `cfg(test)` is only set
+/// when rustc compiles this crate with `--test`, so these values can never
+/// reach a shipped (or even a debug) application binary. Decryption still
+/// derives from the params stored in the envelope, so tests exercise the exact
+/// same code paths — only with a cheaper, self-describing cost.
+#[cfg(test)]
+pub const TEST_ARGON2_COST: Argon2Cost = Argon2Cost {
+    // argon2's minimum memory cost is 8 KiB per lane.
+    memory_cost: 8,
+    time_cost: 1,
+    parallelism: 1,
+};
+
 impl Argon2Cost {
-    /// The current compiled-in cost parameters used for all new encryptions.
-    pub const fn current() -> Self {
+    /// The production cost parameters ([`ARGON2_MEMORY_COST`],
+    /// [`ARGON2_TIME_COST`], [`ARGON2_PARALLELISM`]), regardless of build.
+    pub const fn production() -> Self {
         Self {
             memory_cost: ARGON2_MEMORY_COST,
             time_cost: ARGON2_TIME_COST,
             parallelism: ARGON2_PARALLELISM,
+        }
+    }
+
+    /// The current compiled-in cost parameters used for all new encryptions.
+    ///
+    /// This is [`production`](Self::production) in every build except this
+    /// crate's own unit-test binary, where it is [`TEST_ARGON2_COST`] (#3355).
+    /// A compile-time assertion below guarantees the non-test value.
+    pub const fn current() -> Self {
+        #[cfg(not(test))]
+        {
+            Self::production()
+        }
+        #[cfg(test)]
+        {
+            TEST_ARGON2_COST
         }
     }
 
@@ -223,6 +258,25 @@ impl Argon2Cost {
         Ok(())
     }
 }
+
+// Compile-time guards (#3355): a non-test build must encrypt with exactly the
+// production cost, and the production cost must never drop below the
+// documented baseline (64 MiB, 3 iterations, 1 lane). Weakening either fails
+// the build rather than a test.
+#[cfg(not(test))]
+const _: () = {
+    let c = Argon2Cost::current();
+    assert!(
+        c.memory_cost == ARGON2_MEMORY_COST
+            && c.time_cost == ARGON2_TIME_COST
+            && c.parallelism == ARGON2_PARALLELISM,
+        "Argon2Cost::current() must equal the production cost outside cfg(test)"
+    );
+};
+const _: () = assert!(
+    ARGON2_MEMORY_COST >= 65536 && ARGON2_TIME_COST >= 3 && ARGON2_PARALLELISM >= 1,
+    "production Argon2 cost must not be weakened below 64 MiB / t=3 / p=1"
+);
 
 /// Derive a 256-bit key from a password and salt using Argon2id with the
 /// given [`Argon2Cost`].
@@ -545,13 +599,15 @@ mod tests {
         // (#2362); before the fix this failed with a wrong-password error.
         let password = "test-password";
         let plaintext = b"secret data";
+        // Cheap-but-distinct params keep this fast (#3355) while still differing
+        // from what `current()` would seal with.
         let cost = Argon2Cost {
-            memory_cost: ARGON2_MEMORY_COST,
-            time_cost: ARGON2_TIME_COST + 2,
-            parallelism: ARGON2_PARALLELISM,
+            time_cost: Argon2Cost::current().time_cost + 2,
+            ..Argon2Cost::current()
         };
         let envelope = encrypt_with_cost(password, plaintext, &cost).unwrap();
-        assert_eq!(envelope.kdf.time_cost, ARGON2_TIME_COST + 2);
+        assert_eq!(envelope.kdf.time_cost, Argon2Cost::current().time_cost + 2);
+        assert_ne!(cost, Argon2Cost::current());
 
         let decrypted = decrypt_with_password(password, &envelope).unwrap();
         assert_eq!(decrypted, plaintext);
@@ -675,5 +731,57 @@ mod tests {
         // re-sealed at the current version on its next save.
         let envelope = encrypt_with_password("pw", b"data").unwrap();
         assert_eq!(envelope.version, ENVELOPE_VERSION);
+    }
+
+    #[test]
+    fn production_argon2_cost_matches_documented_values() {
+        // Regression guard (#3355): the shipped KDF cost is 64 MiB / t=3 / p=1.
+        // Weakening it must fail here (and the compile-time guard), not slip by.
+        assert_eq!(ARGON2_MEMORY_COST, 65536);
+        assert_eq!(ARGON2_TIME_COST, 3);
+        assert_eq!(ARGON2_PARALLELISM, 1);
+        assert_eq!(
+            Argon2Cost::production(),
+            Argon2Cost {
+                memory_cost: 65536,
+                time_cost: 3,
+                parallelism: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn test_cost_is_only_the_unit_test_override() {
+        // Inside this test binary `current()` is the cheap test cost; it must
+        // be valid and must differ from production, so a test that needs the
+        // real cost has to ask for `production()` explicitly.
+        assert_eq!(Argon2Cost::current(), TEST_ARGON2_COST);
+        assert_ne!(TEST_ARGON2_COST, Argon2Cost::production());
+        assert!(TEST_ARGON2_COST.validate().is_ok());
+    }
+
+    #[test]
+    fn encrypt_with_password_records_current_cost_in_envelope() {
+        let envelope = encrypt_with_password("pw", b"data").unwrap();
+        assert_eq!(
+            Argon2Cost::from_kdf(&envelope.kdf).unwrap(),
+            Argon2Cost::current()
+        );
+    }
+
+    #[test]
+    fn production_cost_round_trips_end_to_end() {
+        // The one deliberately slow test (#3355): seal and open with the real
+        // production Argon2 cost so that path stays covered even though every
+        // other test uses the cheap `TEST_ARGON2_COST`.
+        let cost = Argon2Cost::production();
+        let envelope = encrypt_with_cost("prod-pw", b"production secret", &cost).unwrap();
+        assert_eq!(envelope.kdf.memory_cost, ARGON2_MEMORY_COST);
+        assert_eq!(envelope.kdf.time_cost, ARGON2_TIME_COST);
+        assert_eq!(envelope.kdf.parallelism, ARGON2_PARALLELISM);
+
+        let decrypted = decrypt_with_password("prod-pw", &envelope).unwrap();
+        assert_eq!(decrypted, b"production secret");
+        assert!(decrypt_with_password("wrong", &envelope).is_err());
     }
 }
