@@ -272,6 +272,26 @@ describe("appStore — persistent sessions", () => {
 
       expect(mockStopPersistentSession).toHaveBeenCalledWith(CONNECTION_ID);
     });
+
+    it("does not mint a 'stopping' entry when the connection is unknown (!existing guard)", async () => {
+      // The pre-await set bails out for an untracked connection, so no phantom
+      // entry is created — but the backend stop is still dispatched (idempotent).
+      await useAppStore.getState().stopPersistentSession("nonexistent:x");
+
+      expect(useAppStore.getState().persistentSessions["nonexistent:x"]).toBeUndefined();
+      expect(mockStopPersistentSession).toHaveBeenCalledWith("nonexistent:x");
+    });
+
+    it("swallows an API rejection (logged, never thrown)", async () => {
+      seedRunningEntry();
+      mockStopPersistentSession.mockRejectedValueOnce(new Error("backend down"));
+
+      await expect(
+        useAppStore.getState().stopPersistentSession(CONNECTION_ID)
+      ).resolves.toBeUndefined();
+      // The optimistic 'stopping' transition remains — the store does not roll it back.
+      expect(useAppStore.getState().persistentSessions[CONNECTION_ID].state).toBe("stopping");
+    });
   });
 
   // ── setPersistentSessionEntry ──────────────────────────────────────

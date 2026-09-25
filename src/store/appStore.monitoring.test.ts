@@ -63,8 +63,9 @@ import {
 import { DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
 import { THIS_COMPUTER } from "@/types/tunnel";
 import { flushMacrotask } from "@/test/flushAsync";
+import { seedLayoutState } from "@/test/layoutState";
 import type { SystemMonitorsView } from "./systemMonitorBridge";
-import type { TerminalTab } from "@/types/terminal";
+import type { PanelNode, TerminalTab } from "@/types/terminal";
 
 const SESSION_A = "term-sess-a";
 const SESSION_B = "term-sess-b";
@@ -279,5 +280,89 @@ describe("monitorKeyForTab", () => {
       config: { type: "ssh", config: { host: "pi.local", port: 22, username: "pi" } },
     } as unknown as TerminalTab;
     expect(monitorKeyForTab(tab)).toBeNull();
+  });
+});
+
+/**
+ * The dying-tab monitor teardown shared by the session-exit / disconnect-error /
+ * reconnect-gave-up / session-lost settlement actions (TFE-005 / #3217): each
+ * derives the dying tab's monitor key from its live session id and, when a live
+ * monitor exists for that key, tears it down via `disconnectMonitoring`
+ * (→ `session_monitoring_close`). This pins the `if (deadKey && monitors[deadKey])`
+ * TRUE arm each action carries, which the existing suites (no seeded monitor)
+ * leave dark. The session-lifecycle folds these actions also emit are best-effort
+ * and irrelevant here.
+ */
+describe("dying-tab monitor teardown (deadKey guard)", () => {
+  /** Seed a single live terminal tab carrying `sessionId` into the layout. */
+  function seedMonitoredTab(sessionId: string): string {
+    const tabId = `tab-${sessionId}`;
+    const tab = {
+      id: tabId,
+      sessionId,
+      title: "Shell",
+      connectionType: "ssh",
+      contentType: "terminal",
+      config: { type: "ssh", config: { host: "pi.local", port: 22, username: "pi" } },
+      panelId: "p",
+      isActive: true,
+    } as unknown as TerminalTab;
+    const root: PanelNode = { type: "leaf", id: "p", tabs: [tab], activeTabId: tabId };
+    seedLayoutState({
+      rootPanel: root,
+      activePanelId: "p",
+      tabGroups: [{ id: "g1", name: "Main", rootPanel: root, activePanelId: "p" }],
+      activeTabGroupId: "g1",
+    });
+    return tabId;
+  }
+
+  it("setTerminalExited stops the dying tab's live monitor", async () => {
+    const tabId = seedMonitoredTab(SESSION_A);
+    await seed(monitorsView([fakeMonitor(SESSION_A, { monitorSessionId: SESSION_A })]));
+
+    useAppStore.getState().setTerminalExited(tabId, { code: 0, reason: "killed" });
+    await flushMacrotask();
+
+    expect(mockSessionMonitoringClose).toHaveBeenCalledWith(SESSION_A);
+  });
+
+  it("setTerminalDisconnectWithError stops the dying tab's live monitor", async () => {
+    const tabId = seedMonitoredTab(SESSION_A);
+    await seed(monitorsView([fakeMonitor(SESSION_A, { monitorSessionId: SESSION_A })]));
+
+    useAppStore.getState().setTerminalDisconnectWithError(tabId, "connection reset");
+    await flushMacrotask();
+
+    expect(mockSessionMonitoringClose).toHaveBeenCalledWith(SESSION_A);
+  });
+
+  it("settleBackendReconnectGaveUp stops the dying tab's live monitor", async () => {
+    const tabId = seedMonitoredTab(SESSION_A);
+    await seed(monitorsView([fakeMonitor(SESSION_A, { monitorSessionId: SESSION_A })]));
+
+    useAppStore.getState().settleBackendReconnectGaveUp(tabId, "gave up");
+    await flushMacrotask();
+
+    expect(mockSessionMonitoringClose).toHaveBeenCalledWith(SESSION_A);
+  });
+
+  it("settleSessionLost stops the dying tab's live monitor", async () => {
+    const tabId = seedMonitoredTab(SESSION_A);
+    await seed(monitorsView([fakeMonitor(SESSION_A, { monitorSessionId: SESSION_A })]));
+
+    useAppStore.getState().settleSessionLost(tabId);
+    await flushMacrotask();
+
+    expect(mockSessionMonitoringClose).toHaveBeenCalledWith(SESSION_A);
+  });
+
+  it("does not tear down monitoring when the dying tab has no live monitor", async () => {
+    const tabId = seedMonitoredTab(SESSION_A);
+    // No monitor seeded for SESSION_A — the deadKey guard's condition is false.
+    useAppStore.getState().setTerminalExited(tabId, { code: 0, reason: "killed" });
+    await flushMacrotask();
+
+    expect(mockSessionMonitoringClose).not.toHaveBeenCalled();
   });
 });
