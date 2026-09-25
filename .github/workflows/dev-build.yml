@@ -178,6 +178,7 @@ jobs:
         if: startsWith(matrix.os, 'macos')
         shell: bash
         run: |
+          set -euo pipefail
           DMG=$(find "target/${{ matrix.rust_target }}/release/bundle/dmg" -name "*.dmg" | head -n 1)
           WORKDIR=$(mktemp -d)
           MOUNT="$WORKDIR/mount"
@@ -195,15 +196,24 @@ jobs:
           # produces a CodeResources manifest that is consistent with all signed content.
 
           # 1. Sign all individual Mach-O binaries (dylibs, executables, helpers)
+          # Every codesign failure is FATAL (PKG-005): a swallowed inner-sign
+          # failure is exactly how an inconsistent, Gatekeeper-"damaged" bundle
+          # would ship while the job reports success.
           while IFS= read -r -d '' f; do
             if file "$f" 2>/dev/null | grep -q 'Mach-O'; then
-              codesign -s - --force "$f" 2>/dev/null || true
+              if ! codesign -s - --force "$f"; then
+                echo "::error::codesign failed for Mach-O file: $f"
+                exit 1
+              fi
             fi
           done < <(find "$APP" -type f -print0)
 
           # 2. Sign nested bundle types as bundles (frameworks, plugins, XPC services)
           while IFS= read -r -d '' bundle; do
-            codesign -s - --force "$bundle" 2>/dev/null || true
+            if ! codesign -s - --force "$bundle"; then
+              echo "::error::codesign failed for nested bundle: $bundle"
+              exit 1
+            fi
           done < <(find "$APP" -mindepth 1 -type d \( \
             -name "*.framework" -o -name "*.app" -o \
             -name "*.bundle" -o -name "*.appex" -o -name "*.xpc" \) -print0)
@@ -211,11 +221,23 @@ jobs:
           # 3. Sign the top-level app bundle (no --deep; inner content already signed)
           codesign -s - --force "$APP"
 
-          # Diagnostic: Gatekeeper assessment — expect "accepted" for ad-hoc
-          echo "=== Gatekeeper assessment ==="
-          spctl --assess --type exec "$APP" 2>&1 || true
+          # 4. HARD GATE: the whole bundle must verify as consistently signed.
+          #    This is what catches the "damaged" (inconsistent) state.
+          echo "=== Signature verification (strict, deep) ==="
+          if ! codesign --verify --deep --strict --verbose=2 "$APP"; then
+            echo "::error::codesign --verify --deep --strict failed for $APP — the bundle is inconsistently signed"
+            exit 1
+          fi
+
+          # Advisory only: Gatekeeper always rejects an ad-hoc (non-Developer ID)
+          # bundle — the project ships unsigned-beta by maintainer decision — so
+          # spctl cannot be a gate. Its verdict is logged, never discarded.
+          echo "=== Gatekeeper assessment (advisory) ==="
+          if ! spctl --assess --type exec --verbose=2 "$APP" 2>&1; then
+            echo "::notice::spctl rejected the ad-hoc bundle (expected without a Developer ID)"
+          fi
           echo "=== Signature info ==="
-          codesign -dv "$APP" 2>&1 || true
+          codesign -dv "$APP" 2>&1
           find "$APP" -name "_CodeSignature" -type d 2>/dev/null || echo "(none)"
 
           rm "$DMG"
