@@ -2133,6 +2133,41 @@ const MIRROR_LAYOUT_KEYS = new Set<keyof ComposedLayoutState>([
   "activeTabGroupId",
 ]);
 
+/** A plain object record (a by-id map such as `tabContent`), not an array. */
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    !Array.isArray(v) &&
+    Object.getPrototypeOf(v) === Object.prototype
+  );
+}
+
+/**
+ * The value one coupled field should take when a rejected optimistic layout apply
+ * is rolled back (SM-027, #3256): `before` is its pre-apply value, `written` what
+ * the apply wrote, `current` what the store holds now. A field a newer write has
+ * since superseded is left alone. A by-id map is reverted per entry, so only the
+ * entries the apply changed — and that still hold its value — go back; entries a
+ * concurrent write added or changed survive. Returns `current` when nothing reverts.
+ */
+function revertCoupledField(before: unknown, written: unknown, current: unknown): unknown {
+  if (current === written) return before;
+  if (!isPlainRecord(before) || !isPlainRecord(written) || !isPlainRecord(current)) {
+    return current;
+  }
+  let out: Record<string, unknown> | null = null;
+  const entryKeys = new Set([...Object.keys(before), ...Object.keys(written)]);
+  for (const k of entryKeys) {
+    if (before[k] === written[k]) continue; // not touched by this apply
+    if (current[k] !== written[k]) continue; // superseded by a newer write
+    out ??= { ...current };
+    if (k in before) out[k] = before[k];
+    else delete out[k];
+  }
+  return out ?? current;
+}
+
 /** The **non-layout** portion of a reducer result — everything that is a real
  * `appStore` field (e.g. `zoomedTabId`, `tabContent`, the per-tab maps). The
  * virtual layout keys are dropped; the layout is dispatched to the region and
@@ -2404,26 +2439,40 @@ export const useAppStore = create<AppState>((set, get, store) => {
 
   /**
    * Build the transactional rollback for the coupled **non-layout** fields an
-   * optimistic layout reducer committed via {@link setLayoutLocal}'s `set(rest)`
-   * (SM-027). The `ProjectionClient` overlay reverts only the panel-tree structure
-   * on a rejected `layout.*` intent; these fields (`tabContent`, `zoomedTabId`, the
-   * per-tab maps) live outside the region and would otherwise stay mutated,
-   * diverging the store. Given the pre-apply `prev` state and the reducer `next`
-   * result, this returns a closure that restores exactly the keys the reducer wrote
-   * to their pre-apply values — passed to {@link mirrorLayoutIntent} as `onReject`
-   * so a rejection reverts structure and coupled fields together. Returns
-   * `undefined` when the reducer wrote no coupled field (nothing to revert).
+   * optimistic layout reducer committed via `set(rest)` — in {@link setLayoutLocal}
+   * (granular `layout.*` intents) or {@link setAndReseed} (the `layout.replaceGroups`
+   * reseed) (SM-027, #3256). The `ProjectionClient` overlay reverts only the
+   * panel-tree structure on a rejection; these fields (`tabContent`, `zoomedTabId`,
+   * the per-tab maps, `pendingSettings*`) live outside the region and would
+   * otherwise stay mutated, diverging the store. Given the pre-apply `prev` state
+   * and the reducer `next` result, this returns a closure that restores the keys
+   * the reducer wrote to their pre-apply values — passed as `onReject` so a
+   * rejection reverts structure and coupled fields together. Returns `undefined`
+   * when the reducer wrote no coupled field (nothing to revert).
+   *
+   * The restore never clobbers a newer write that superseded the optimistic one
+   * before the rejection arrived: a scalar key is restored only while it still
+   * holds the value this apply wrote, and a by-id map (a plain-object field such as
+   * `tabContent`) is reverted **per entry** — only the entries this apply changed
+   * and that still hold its value go back, so concurrent entries survive.
    */
   const layoutCoupledRollback = (
     prev: AppState,
     next: LayoutReducerResult
   ): (() => void) | undefined => {
-    const rest = nonLayoutPartial(next);
+    const rest = nonLayoutPartial(next) as Record<string, unknown>;
     const keys = Object.keys(rest);
     if (keys.length === 0) return undefined;
-    const before: Record<string, unknown> = {};
-    for (const key of keys) before[key] = (prev as unknown as Record<string, unknown>)[key];
-    return () => set(before as Partial<AppState>);
+    const before = prev as unknown as Record<string, unknown>;
+    return () => {
+      const current = get() as unknown as Record<string, unknown>;
+      const revert: Record<string, unknown> = {};
+      for (const key of keys) {
+        const merged = revertCoupledField(before[key], rest[key], current[key]);
+        if (merged !== current[key]) revert[key] = merged;
+      }
+      if (Object.keys(revert).length > 0) set(revert as Partial<AppState>);
+    };
   };
 
   /** The current composed layout — the choke point for the `get()`-time guards
@@ -2446,9 +2495,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
     const augmented = withComposedLayout(get());
     const next = typeof partial === "function" ? partial(augmented) : partial;
     if (next === augmented) return;
+    const prev = get();
     const rest = nonLayoutPartial(next);
     if (Object.keys(rest).length > 0) set(rest);
-    reseedLayoutRegion(postLayoutSnapshot(get(), next));
+    // A rejected reseed reverts the coupled fields with the structure (#3256).
+    reseedLayoutRegion(postLayoutSnapshot(get(), next), layoutCoupledRollback(prev, next));
   };
 
   return {

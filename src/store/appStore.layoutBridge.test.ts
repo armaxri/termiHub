@@ -296,6 +296,75 @@ describe("SM-027 — a rejected layout.* intent rolls back coupled non-layout fi
   });
 });
 
+describe("#3256 — a rejected setAndReseed reseed rolls back coupled non-layout fields too", () => {
+  // The non-intent structural writers (`openSettingsTab`, the singleton openers,
+  // restore, …) go through `setAndReseed`: they commit coupled non-layout fields
+  // locally, then reseed the region with an optimistic `layout.replaceGroups`. A
+  // rejected reseed must revert those fields together with the structure.
+
+  /** Tab ids whose content type is `settings`, anywhere in the active tree. */
+  function settingsTabIds(): string[] {
+    return getAllLeaves(layoutState().rootPanel).flatMap((l) =>
+      l.tabs.filter((t) => t.contentType === "settings").map((t) => t.id)
+    );
+  }
+
+  it("a rejected openSettingsTab reseed leaves appStore exactly as before", async () => {
+    transport.reject = true;
+    const before = useAppStore.getState();
+    const beforeTreeIds = tabIds(layoutState().rootPanel);
+    const beforeContent = before.tabContent;
+
+    useAppStore.getState().openSettingsTab({ category: "appearance", pluginId: "p1" });
+    await flush();
+
+    // Structure reverted by the overlay: no settings tab lingers.
+    expect(tabIds(layoutState().rootPanel)).toEqual(beforeTreeIds);
+    expect(settingsTabIds()).toEqual([]);
+    // Coupled fields reverted (#3256): the deep-link targets and the by-id map.
+    expect(useAppStore.getState().pendingSettingsCategory).toBe(before.pendingSettingsCategory);
+    expect(useAppStore.getState().pendingSettingsPluginId).toBe(before.pendingSettingsPluginId);
+    expect(useAppStore.getState().tabContent).toEqual(beforeContent);
+  });
+
+  it("a rejection does not clobber a newer write that superseded the coupled fields", async () => {
+    transport.reject = true;
+    useAppStore.getState().openSettingsTab({ category: "appearance" });
+    const settingsId = Object.keys(useAppStore.getState().tabContent).find(
+      (id) => useAppStore.getState().tabContent[id].contentType === "settings"
+    );
+    expect(settingsId).toBeDefined();
+
+    // A newer write lands before the rejection arrives: a new deep-link target and
+    // an unrelated tabContent entry.
+    const extra = tab("t9");
+    const { panelId: _p, isActive: _a, ...extraContent } = extra;
+    useAppStore.setState((s) => ({
+      pendingSettingsCategory: "terminal",
+      tabContent: { ...s.tabContent, t9: extraContent },
+    }));
+    await flush();
+
+    // The newer scalar survives the rollback …
+    expect(useAppStore.getState().pendingSettingsCategory).toBe("terminal");
+    // … and the map rollback is per-entry: the rejected settings entry is removed
+    // but the newer, unrelated entry is kept.
+    expect(useAppStore.getState().tabContent[settingsId!]).toBeUndefined();
+    expect(useAppStore.getState().tabContent.t9).toBeDefined();
+  });
+
+  it("an accepted openSettingsTab reseed keeps its coupled fields (happy path unchanged)", async () => {
+    useAppStore.getState().openSettingsTab({ category: "appearance", pluginId: "p1" });
+    await flush();
+
+    const ids = settingsTabIds();
+    expect(ids).toHaveLength(1);
+    expect(useAppStore.getState().tabContent[ids[0]]).toBeDefined();
+    expect(useAppStore.getState().pendingSettingsCategory).toBe("appearance");
+    expect(useAppStore.getState().pendingSettingsPluginId).toBe("p1");
+  });
+});
+
 describe("E2 — every listed op routes its granular intent", () => {
   const cases: { name: string; run: () => void; kind: string }[] = [
     {
