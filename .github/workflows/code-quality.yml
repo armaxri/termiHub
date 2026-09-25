@@ -293,11 +293,14 @@ jobs:
       - name: Check formatting
         run: cargo fmt --check
 
+      # `--locked` fails the job if rdp-sidecar/Cargo.lock is stale instead of
+      # silently re-locking it in CI (#3334: a stale ringbuf pin went unnoticed
+      # because every build quietly re-resolved it).
       - name: Run Clippy (linter)
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Run tests
-        run: cargo test
+        run: cargo test --locked
 
       # Prebuilt binary download (~seconds) instead of compiling from source.
       - name: Install cargo-deny

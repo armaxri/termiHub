@@ -193,6 +193,35 @@ if "%BRANCH%"=="main" (
     )
 )
 
+REM === TODO/FIXME/HACK Scan ===
+echo.
+echo === TODO/FIXME/HACK Scan ===
+
+REM FIXME and HACK mark known-broken code or workarounds and BLOCK a release
+REM (WA-CI-030); TODO stays a warning. Mirrors release-check.sh: the blocking scan
+REM only matches a marker that opens a comment (// FIXME, /* HACK, * FIXME, ...),
+REM so string literals and test fixtures that merely mention the words do not trip it.
+set "MARKER_FILES=src\*.ts src\*.tsx src-tauri\src\*.rs core\src\*.rs agent\src\*.rs"
+set "MARKER_OUT=%TEMP%\termihub-release-markers.txt"
+
+findstr /s /n /r /c:"//[/!]* *FIXME\>" /c:"//[/!]* *HACK\>" /c:"/\*[*!]* *FIXME\>" /c:"/\*[*!]* *HACK\>" /c:"^ *\* *FIXME\>" /c:"^ *\* *HACK\>" %MARKER_FILES% > "%MARKER_OUT%" 2>nul
+if %errorlevel%==0 (
+    echo   FAIL: Found FIXME/HACK markers in source code
+    type "%MARKER_OUT%"
+    set FAILED=1
+) else (
+    echo   PASS: No FIXME/HACK markers found
+)
+
+findstr /s /n /r /c:"\<TODO\>" %MARKER_FILES% > "%MARKER_OUT%" 2>nul
+if %errorlevel%==0 (
+    echo   WARN: Found TODO markers in source code
+    set /a WARNINGS+=1
+) else (
+    echo   PASS: No TODO markers found
+)
+del "%MARKER_OUT%" >nul 2>&1
+
 REM === Summary ===
 echo.
 echo ===========================================

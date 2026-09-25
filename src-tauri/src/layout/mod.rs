@@ -1,5 +1,5 @@
-//! Shadow `LayoutStore` — Phase 3 step 1 of the stateless-UI migration (#2151,
-//! part of #2139).
+//! `LayoutStore` — the authoritative panel-tree store of the stateless-UI
+//! migration (#2151, part of #2139).
 //!
 //! Moves the panel-tree + minimal tab model into a Rust authority built on the
 //! ported panel-tree algebra (`termihub_core::layout::panel_tree`, #2143). The
@@ -8,18 +8,14 @@
 //! structure) through the projection substrate ([`crate::projection`]),
 //! mirroring the SSH-tunnels pilot ([`crate::tunnel::projection`]).
 //!
-//! # Shadow mode — the remaining migration outlier (#2562)
+//! # Authority (#2283 / #2562)
 //!
-//! Unlike the other projection domains — which completed the stateless-UI
-//! inversion and are now authoritative (#2283) — layout is still **not
-//! authoritative**. The store exists, accepts intents, and projects diffs, but
-//! nothing in the live UI subscribes to or renders the `layout@<clientId>`
-//! region, and no frontend code dispatches `layout.*` intents yet. The existing
-//! `appStore` panel-tree reducers and `SplitView` rendering are untouched. The
-//! deferred hot-path layout reducer removal is tracked as #2562; until it lands,
-//! layout is the one domain where this "shadow / not authoritative" wording is
-//! still accurate. Later steps cut structural mutations over, then rendering,
-//! then remove the `appStore` reducers, then add multi-window / restore.
+//! Like the other projection domains, layout has completed the stateless-UI
+//! inversion: the `layout@<clientId>` region is the **sole writer** of the
+//! panel-tree structure. The frontend no longer keeps `rootPanel`/`tabGroups`
+//! reducers — it dispatches `layout.*` intents for granular structural
+//! mutations, reseeds the region for writers without a granular intent, and
+//! renders the tree composed from the region view (`src/store/layoutBridge.ts`).
 //!
 //! Because layout is per-window/per-client view arrangement, each attached
 //! client gets its own `layout@<clientId>` region (Open Design Decision #1/#6:

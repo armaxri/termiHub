@@ -18,8 +18,8 @@ name: Release Linux Smoke
 #
 # NOTE (#2646 fixed, #2669): the built desktop app now launches headless under
 # WebKitGTK on ubuntu-latest (the nightly integration Xvfb leg passes), so the two
-# GUI-launch smoke steps are load-bearing again and the final gate is enforcing
-# (ENFORCE=true) — a GUI-launch smoke regression fails the job. The job already
+# GUI-launch smoke steps are load-bearing and the final gate enforces them
+# — a GUI-launch smoke regression fails the job. The job already
 # HARD-fails if an artifact is missing, cannot be extracted, or will not install,
 # which is real signal on artifact well-formedness. (The steps stay
 # `continue-on-error` so both outcomes are captured and reported together, then
@@ -198,7 +198,8 @@ jobs:
 
       - name: Smoke-test AppImage (headless)
         id: smoke_appimage
-        # #2646: the built app may not launch headless under WebKitGTK 2.52 yet.
+        # continue-on-error only so both smoke steps always run and report; the
+        # "Enforce smoke results" step below fails the job on any non-success.
         continue-on-error: true
         env:
           BIN: ${{ steps.appimage.outputs.bin }}
@@ -214,7 +215,8 @@ jobs:
 
       - name: Smoke-test .deb (headless)
         id: smoke_deb
-        # #2646: the built app may not launch headless under WebKitGTK 2.52 yet.
+        # continue-on-error only so both smoke steps always run and report; the
+        # "Enforce smoke results" step below fails the job on any non-success.
         continue-on-error: true
         env:
           BIN: ${{ steps.deb.outputs.bin }}
@@ -228,15 +230,13 @@ jobs:
           xvfb-run -a dbus-run-session -- ./scripts/smoke-test.sh "$BIN" 2>&1 | tee deb-smoke.log
 
       - name: Enforce smoke results
-        # ENFORCE=true (#2669): #2646 is fixed — the ubuntu headless app now launches
-        # (the system-integration ubuntu leg passes) — so the two GUI-launch smoke
-        # steps are load-bearing again and a real regression must fail the release.
-        # The download/extract/install steps above already HARD-fail on malformed or
-        # non-installable artifacts; this gate now also fails on a GUI-launch smoke
-        # regression. (Was advisory/false while #2646 was open.)
+        # The two headless GUI-launch smoke steps are load-bearing (#2646 fixed,
+        # enforced since #2669): the app is launched under xvfb, its --version and
+        # scripts/smoke-test.sh must pass, and any non-success fails the release.
+        # The download/extract/install steps above already hard-fail on malformed or
+        # non-installable artifacts.
         if: always()
         env:
-          ENFORCE: "true"
           APPIMAGE_OUTCOME: ${{ steps.smoke_appimage.outcome }}
           DEB_OUTCOME: ${{ steps.smoke_deb.outcome }}
         run: |
@@ -250,11 +250,8 @@ jobs:
             echo "- .deb smoke: \`$DEB_OUTCOME\`"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$APPIMAGE_OUTCOME" != "success" ] || [ "$DEB_OUTCOME" != "success" ]; then
-            if [ "$ENFORCE" = "true" ]; then
-              echo "::error::Linux x64 install-smoke failed"
-              exit 1
-            fi
-            echo "::warning::Linux x64 install-smoke did not fully pass (advisory until #2646 lands)"
+            echo "::error::Linux x64 install-smoke failed"
+            exit 1
           fi
 
       - name: Upload smoke logs
