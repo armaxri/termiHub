@@ -42,6 +42,7 @@ SCRIPTS=(
   "scripts/build-rdp-sidecar.sh"
   "scripts/ci-local.sh"
   "scripts/package-plugin.sh"
+  "scripts/release-check.sh"
   "scripts/setup-agent-cross.sh"
   "scripts/smoke-test.sh"
   "scripts/test-system-linux.sh"

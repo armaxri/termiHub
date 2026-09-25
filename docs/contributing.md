@@ -1006,12 +1006,16 @@ Before creating a release, run the quality scripts and verify:
 
 ### Version Bump
 
-Update the version number in all four locations:
+Update the version number in all five locations:
 
 1. **`package.json`** — `"version": "X.Y.Z"`
 2. **`src-tauri/Cargo.toml`** — `version = "X.Y.Z"`
 3. **`src-tauri/tauri.conf.json`** — `"version": "X.Y.Z"`
 4. **`agent/Cargo.toml`** — `version = "X.Y.Z"`
+5. **`core/Cargo.toml`** — `version = "X.Y.Z"`
+
+Check them before tagging with `./scripts/release-check.sh --versions-only --expect-version X.Y.Z`
+— the same check the Release workflow runs as its first gate.
 
 Use [Semantic Versioning](https://semver.org/):
 
@@ -1060,8 +1064,9 @@ the _net_ user-facing change, not the development path:
 ### Commit, Tag, and Push
 
 ```bash
-# Commit the version bump and changelog (all four version files + CHANGELOG)
-git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json agent/Cargo.toml CHANGELOG.md
+# Commit the version bump and changelog (all five version files + CHANGELOG)
+git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json agent/Cargo.toml \
+  core/Cargo.toml CHANGELOG.md
 git commit -m "chore: release vX.Y.Z"
 
 # Create an annotated tag
@@ -1074,7 +1079,9 @@ git push origin vX.Y.Z
 
 Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/release.yml), which will:
 
-1. Refuse to start if the [agent update signing key](#agent-update-signing-key) is not configured
+1. Refuse to start if the tag does not match every version source above or the Tauri
+   npm packages have drifted from their Rust crates (`release-check.sh --versions-only`),
+   or if the [agent update signing key](#agent-update-signing-key) is not configured
 2. Create a GitHub Release with notes extracted from `CHANGELOG.md`
 3. Build platform-specific installers (macOS .dmg, Windows .msi, Linux .AppImage + .deb)
 4. Upload all artifacts to the GitHub Release page, each agent binary with a `.sha256`

@@ -1,7 +1,50 @@
 #!/usr/bin/env bash
 # Release readiness checklist — validates that the repo is ready for a release.
 # Run from anywhere: ./scripts/release-check.sh
+#
+# Usage: ./scripts/release-check.sh [--versions-only] [--expect-version <ver>] [--help]
+#
+#   --versions-only          Run only the version checks (5-file consistency, the
+#                            optional expected version, Tauri npm/crate drift) and
+#                            exit. No tests, no git/branch checks. This is the mode
+#                            the tag-triggered release workflow runs as its
+#                            verify-version gate (PKG-007).
+#   --expect-version <ver>   Also require every version source to equal <ver>
+#                            (e.g. the release tag without its leading "v").
+#   --help                   Show this help and exit.
 set -euo pipefail
+
+usage() {
+    sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+VERSIONS_ONLY=false
+EXPECT_VERSION=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --versions-only)
+            VERSIONS_ONLY=true
+            shift
+            ;;
+        --expect-version)
+            if [ $# -lt 2 ] || [ -z "$2" ]; then
+                echo "error: --expect-version needs a value" >&2
+                exit 2
+            fi
+            EXPECT_VERSION="${2#v}"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "error: unknown argument '$1'" >&2
+            usage >&2
+            exit 2
+            ;;
+    esac
+done
 
 cd "$(git rev-parse --show-toplevel)"
 
@@ -34,8 +77,21 @@ for name_ver in "src-tauri/tauri.conf.json:$TAURI_VER" \
     fi
 done
 
+if [ -z "$PKG_VER" ]; then
+    fail "Could not read a version from package.json"
+    ALL_MATCH=false
+fi
+
 if [ "$ALL_MATCH" = true ]; then
     pass "All 5 files agree on version $PKG_VER"
+fi
+
+if [ -n "$EXPECT_VERSION" ]; then
+    if [ "$PKG_VER" = "$EXPECT_VERSION" ]; then
+        pass "Repository version $PKG_VER matches the expected version $EXPECT_VERSION"
+    else
+        fail "Repository version '$PKG_VER' (package.json) does not match the expected version '$EXPECT_VERSION'"
+    fi
 fi
 
 VERSION="$PKG_VER"
@@ -52,6 +108,17 @@ if DRIFT_OUTPUT=$(node scripts/internal/check-tauri-version-drift.mjs 2>&1); the
 else
     echo "$DRIFT_OUTPUT" | sed 's/^/  /'
     fail "Tauri npm/crate version drift would block 'pnpm tauri build'"
+fi
+
+# ---------------------------------------------------------------------------
+if [ "$VERSIONS_ONLY" = true ]; then
+    echo ""
+    if [ "$FAILED" -ne 0 ]; then
+        echo "  RESULT: version checks FAILED"
+        exit 1
+    fi
+    echo "  RESULT: version checks passed"
+    exit 0
 fi
 
 # ---------------------------------------------------------------------------
