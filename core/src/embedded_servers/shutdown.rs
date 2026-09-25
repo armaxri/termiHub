@@ -4,8 +4,10 @@
 //! Wraps an [`AtomicBool`] (so synchronous pollers can still cheaply check the
 //! flag) with a [`tokio::sync::Notify`] so an async listener can *await* shutdown
 //! and wake the instant it is triggered — no busy-poll, no fixed latency
-//! (WA-RS-001 / CORE-001). The HTTP server awaits [`ShutdownSignal::wait`] inside
-//! its `with_graceful_shutdown` closure instead of sleeping in a 100 ms loop.
+//! (WA-RS-001 / CORE-001). All three servers await [`ShutdownSignal::wait`]: HTTP
+//! inside its `with_graceful_shutdown` closure, FTP in its `select!` against the
+//! listener, and TFTP in every `select!` around a socket receive (accept loop and
+//! each in-flight transfer) — none of them sleeps in a fixed-interval loop.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -17,7 +19,7 @@ use tokio::sync::Notify;
 /// Every clone shares the same underlying flag and notifier, so triggering any
 /// clone stops every holder. Async consumers call [`wait`](Self::wait) to be
 /// woken the instant the signal fires; synchronous pollers read
-/// [`is_triggered`](Self::is_triggered) or hold the raw [`flag`](Self::flag).
+/// [`is_triggered`](Self::is_triggered).
 #[derive(Clone)]
 pub struct ShutdownSignal {
     flag: Arc<AtomicBool>,
@@ -33,16 +35,18 @@ impl ShutdownSignal {
         }
     }
 
-    /// Fire the signal: mark it triggered and wake any awaiting consumer.
+    /// Fire the signal: mark it triggered and wake every awaiting consumer.
     ///
     /// Idempotent — calling it more than once is harmless.
     pub fn trigger(&self) {
         self.flag.store(true, Ordering::SeqCst);
-        // `notify_one` stores a permit even when no consumer is parked yet, so a
-        // trigger that races a consumer *about to* await is not lost — the next
-        // `notified().await` consumes the stored permit. `notify_waiters` would
-        // only wake already-parked consumers and drop that wake-up on the floor.
-        self.notify.notify_one();
+        // `notify_waiters` wakes *every* registered consumer — the FTP/TFTP
+        // servers park several at once (accept loop + each in-flight transfer),
+        // and `notify_one` would wake only one of them. It stores no permit, so
+        // [`wait`](Self::wait) registers its `Notified` *before* re-checking the
+        // flag: a trigger landing between the check and the await still finds
+        // the consumer registered, so no wake-up is lost.
+        self.notify.notify_waiters();
     }
 
     /// Whether the signal has been triggered. Cheap and lock-free — for pollers.
@@ -50,18 +54,21 @@ impl ShutdownSignal {
         self.flag.load(Ordering::SeqCst)
     }
 
-    /// The raw shared flag, for synchronous pollers that predate the event-driven
-    /// path (the FTP/TFTP loops still read this directly).
-    pub fn flag(&self) -> Arc<AtomicBool> {
-        Arc::clone(&self.flag)
-    }
-
     /// Await until the signal is triggered, returning immediately if it already
     /// has been. Event-driven: the task parks with zero wake-ups until
-    /// [`trigger`](Self::trigger) fires, then wakes at once.
+    /// [`trigger`](Self::trigger) fires, then wakes at once. Any number of
+    /// clones may wait concurrently; one trigger wakes them all.
     pub async fn wait(&self) {
-        while !self.is_triggered() {
-            self.notify.notified().await;
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            // Register interest before checking the flag, so a trigger racing
+            // this check is delivered to the registered future (see `trigger`).
+            notified.as_mut().enable();
+            if self.is_triggered() {
+                return;
+            }
+            notified.await;
         }
     }
 }
@@ -119,7 +126,7 @@ mod tests {
     #[tokio::test]
     async fn trigger_before_await_is_not_lost() {
         // A trigger that lands before the consumer ever awaits must still be
-        // observed (the `notify_one` permit + flag re-check guarantee this).
+        // observed (the flag re-check after registering guarantees this).
         let sig = ShutdownSignal::new();
         sig.trigger();
         let waiter = sig.clone();
@@ -131,12 +138,28 @@ mod tests {
         .expect("a pre-await trigger must not be lost");
     }
 
-    #[test]
-    fn flag_bridges_to_pollers() {
+    #[tokio::test]
+    async fn trigger_wakes_every_concurrent_waiter() {
+        // The FTP/TFTP servers park several consumers on one signal at once (the
+        // accept loop plus every in-flight transfer). A single trigger must wake
+        // *all* of them, not just one.
         let sig = ShutdownSignal::new();
-        let flag = sig.flag();
-        assert!(!flag.load(Ordering::SeqCst));
+        let handles: Vec<_> = (0..4)
+            .map(|_| {
+                let waiter = sig.clone();
+                tokio::spawn(async move { waiter.wait().await })
+            })
+            .collect();
+
+        // Let every waiter park before firing.
+        tokio::time::sleep(Duration::from_millis(10)).await;
         sig.trigger();
-        assert!(flag.load(Ordering::SeqCst), "flag must reflect the trigger");
+
+        for handle in handles {
+            timeout(Duration::from_millis(500), handle)
+                .await
+                .expect("every waiter must wake on a single trigger")
+                .expect("waiter task panicked");
+        }
     }
 }

@@ -7,9 +7,8 @@
 use std::fmt::Debug;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Context, Result};
 use async_trait::async_trait;
@@ -21,10 +20,11 @@ use unftp_sbe_fs::Filesystem;
 
 use super::config::{AtomicServerStats, EmbeddedServerConfig, FtpAuth};
 use super::service::BindSignal;
+use super::shutdown::ShutdownSignal;
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
-/// Start the FTP server in the current thread, blocking until `shutdown` is set.
+/// Start the FTP server in the current thread, blocking until `shutdown` fires.
 ///
 /// Internally this creates a single-threaded tokio runtime so that the async
 /// libunftp server can run inside the OS thread that the `EmbeddedServerManager`
@@ -33,7 +33,7 @@ use super::service::BindSignal;
 /// `Running` after the bind is confirmed (GAP G3, #1145).
 pub fn start_ftp_server(
     config: &EmbeddedServerConfig,
-    shutdown: Arc<AtomicBool>,
+    shutdown: ShutdownSignal,
     stats: Arc<AtomicServerStats>,
     ready: BindSignal,
 ) -> Result<()> {
@@ -54,7 +54,7 @@ pub fn start_ftp_server(
 
 async fn run_ftp_server(
     config: &EmbeddedServerConfig,
-    shutdown: Arc<AtomicBool>,
+    shutdown: ShutdownSignal,
     stats: Arc<AtomicServerStats>,
     ready: BindSignal,
 ) -> Result<()> {
@@ -108,21 +108,14 @@ async fn run_ftp_server(
         result = server.listen(&addr) => {
             result.map_err(|e| anyhow::anyhow!("FTP server error: {e}"))?;
         }
-        _ = poll_shutdown(shutdown) => {
+        // Event-driven: park until the signal fires, then drop the listener at
+        // once — no fixed-interval poll (WA-RS-001 / CORE-001).
+        _ = shutdown.wait() => {
             tracing::info!("FTP server shutting down");
         }
     }
 
     Ok(())
-}
-
-async fn poll_shutdown(shutdown: Arc<AtomicBool>) {
-    loop {
-        if shutdown.load(Ordering::Relaxed) {
-            return;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
 }
 
 // ─── Storage backend: optional read-only wrapper ──────────────────────────────
@@ -327,6 +320,111 @@ impl PresenceListener for StatsTracker {
 mod tests {
     use super::*;
     use crate::embedded_servers::config::AtomicServerStats;
+
+    // ── Event-driven shutdown (WA-RS-001 / #2782) ─────────────────────────────
+
+    fn ftp_test_config(root: &Path) -> EmbeddedServerConfig {
+        use crate::embedded_servers::config::ServerType;
+        EmbeddedServerConfig {
+            id: "test-ftp-shutdown".to_string(),
+            name: "test".to_string(),
+            server_type: ServerType::Ftp,
+            root_directory: root.to_string_lossy().into_owned(),
+            bind_host: "127.0.0.1".to_string(),
+            port: 0, // ephemeral — the tests only need a confirmed bind
+            auto_start: false,
+            read_only: false,
+            directory_listing: None,
+            ftp_auth: None,
+            http_auth: None,
+            max_transfer_bytes: None,
+        }
+    }
+
+    /// The server must observe shutdown without any timer firing: under a paused
+    /// tokio clock, a fixed-interval poll (the old 50 ms `poll_shutdown`) would
+    /// have to auto-advance virtual time before it noticed the flag, whereas the
+    /// event-driven `ShutdownSignal::wait` wakes with the clock standing still.
+    /// Deterministic — no wall-clock bound, so no CI-jitter flake.
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_is_observed_without_a_timer_tick() {
+        use crate::embedded_servers::service::BindSignal;
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let config = ftp_test_config(dir.path());
+        let shutdown = ShutdownSignal::new();
+        let (ready, ready_rx) = BindSignal::for_test();
+
+        let server = run_ftp_server(&config, shutdown.clone(), AtomicServerStats::new(), ready);
+        tokio::pin!(server);
+
+        // Drive the server (without idling, so the paused clock never advances)
+        // until it confirms its bind, then a little longer so it parks in its
+        // listen/shutdown `select!`.
+        let mut bound = false;
+        let mut polls_after_bind = 0;
+        for _ in 0..1_000_000 {
+            tokio::select! {
+                biased;
+                res = &mut server => panic!("server exited before shutdown: {res:?}"),
+                _ = tokio::task::yield_now() => {}
+            }
+            if bound {
+                polls_after_bind += 1;
+                if polls_after_bind >= 50 {
+                    break;
+                }
+            } else if let Ok(bind) = ready_rx.try_recv() {
+                assert!(bind.is_ok(), "bind should succeed, got {bind:?}");
+                bound = true;
+            }
+        }
+        assert!(bound, "server never confirmed its bind");
+
+        let start = tokio::time::Instant::now();
+        shutdown.trigger();
+        let result = server.await;
+        assert!(result.is_ok(), "server exited with error: {result:?}");
+        assert_eq!(
+            tokio::time::Instant::now() - start,
+            std::time::Duration::ZERO,
+            "shutdown must be event-driven, not observed by a timed poll"
+        );
+    }
+
+    /// End-to-end: a real FTP server thread stops cleanly once the signal fires.
+    /// The generous bound only guards against a hang; promptness itself is
+    /// asserted deterministically above.
+    #[test]
+    fn shutdown_signal_stops_server_thread_promptly() {
+        use crate::embedded_servers::service::BindSignal;
+        use std::time::{Duration, Instant};
+
+        let dir = tempfile::tempdir().expect("temp dir");
+        let config = ftp_test_config(dir.path());
+        let shutdown = ShutdownSignal::new();
+        let (ready, ready_rx) = BindSignal::for_test();
+
+        let server_shutdown = shutdown.clone();
+        let handle = std::thread::spawn(move || {
+            start_ftp_server(&config, server_shutdown, AtomicServerStats::new(), ready)
+        });
+
+        let bind = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("server should confirm its bind");
+        assert!(bind.is_ok(), "bind should succeed, got {bind:?}");
+
+        let start = Instant::now();
+        shutdown.trigger();
+        let result = handle.join().expect("server thread should not panic");
+        assert!(result.is_ok(), "server exited with error: {result:?}");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "server did not stop promptly after the shutdown signal ({:?})",
+            start.elapsed()
+        );
+    }
 
     // ── FtpAuthenticator ──────────────────────────────────────────────────────
 
