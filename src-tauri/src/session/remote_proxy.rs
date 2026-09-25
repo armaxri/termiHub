@@ -1519,7 +1519,7 @@ mod tests {
         fn save_definition(
             &self,
             _agent_id: &str,
-            _definition: serde_json::Value,
+            _definition: termihub_core::protocol::methods::ConnectionCreateParams,
         ) -> Result<AgentDefinitionInfo, TerminalError> {
             Ok(AgentDefinitionInfo {
                 id: "mock-def".to_string(),
@@ -1537,7 +1537,7 @@ mod tests {
         fn update_definition(
             &self,
             _agent_id: &str,
-            _params: serde_json::Value,
+            _params: termihub_core::protocol::methods::ConnectionUpdateParams,
         ) -> Result<AgentDefinitionInfo, TerminalError> {
             Ok(AgentDefinitionInfo {
                 id: "mock-def".to_string(),
@@ -1573,7 +1573,7 @@ mod tests {
         fn update_folder(
             &self,
             _agent_id: &str,
-            _params: serde_json::Value,
+            _params: termihub_core::protocol::methods::FolderUpdateParams,
         ) -> Result<AgentFolderInfo, TerminalError> {
             Ok(AgentFolderInfo {
                 id: "mock-folder".to_string(),
@@ -2114,14 +2114,14 @@ mod tests {
         fn save_definition(
             &self,
             _agent_id: &str,
-            _definition: serde_json::Value,
+            _definition: termihub_core::protocol::methods::ConnectionCreateParams,
         ) -> Result<AgentDefinitionInfo, TerminalError> {
             unimplemented!()
         }
         fn update_definition(
             &self,
             _agent_id: &str,
-            _params: serde_json::Value,
+            _params: termihub_core::protocol::methods::ConnectionUpdateParams,
         ) -> Result<AgentDefinitionInfo, TerminalError> {
             unimplemented!()
         }
@@ -2139,7 +2139,7 @@ mod tests {
         fn update_folder(
             &self,
             _agent_id: &str,
-            _params: serde_json::Value,
+            _params: termihub_core::protocol::methods::FolderUpdateParams,
         ) -> Result<AgentFolderInfo, TerminalError> {
             unimplemented!()
         }
@@ -2366,14 +2366,14 @@ mod tests {
         fn save_definition(
             &self,
             _agent_id: &str,
-            _definition: serde_json::Value,
+            _definition: termihub_core::protocol::methods::ConnectionCreateParams,
         ) -> Result<AgentDefinitionInfo, TerminalError> {
             unimplemented!()
         }
         fn update_definition(
             &self,
             _agent_id: &str,
-            _params: serde_json::Value,
+            _params: termihub_core::protocol::methods::ConnectionUpdateParams,
         ) -> Result<AgentDefinitionInfo, TerminalError> {
             unimplemented!()
         }
@@ -2391,7 +2391,7 @@ mod tests {
         fn update_folder(
             &self,
             _agent_id: &str,
-            _params: serde_json::Value,
+            _params: termihub_core::protocol::methods::FolderUpdateParams,
         ) -> Result<AgentFolderInfo, TerminalError> {
             unimplemented!()
         }

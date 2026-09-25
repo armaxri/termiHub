@@ -441,7 +441,7 @@ pub struct ConnectionUpdateParams {
     /// Use JSON `null` to move to root, omit to leave unchanged.
     #[serde(
         default,
-        deserialize_with = "deserialize_optional_nullable",
+        with = "optional_nullable",
         skip_serializing_if = "Option::is_none"
     )]
     #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
@@ -449,7 +449,7 @@ pub struct ConnectionUpdateParams {
     /// Use JSON `null` to clear, omit to leave unchanged.
     #[serde(
         default,
-        deserialize_with = "deserialize_optional_nullable",
+        with = "optional_nullable",
         skip_serializing_if = "Option::is_none"
     )]
     #[cfg_attr(test, ts(optional, type = "unknown"))]
@@ -457,7 +457,7 @@ pub struct ConnectionUpdateParams {
     /// Use JSON `null` to clear, omit to leave unchanged.
     #[serde(
         default,
-        deserialize_with = "deserialize_optional_nullable",
+        with = "optional_nullable",
         skip_serializing_if = "Option::is_none"
     )]
     #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
@@ -496,7 +496,7 @@ pub struct FolderUpdateParams {
     /// Use JSON `null` to move to root, omit to leave unchanged.
     #[serde(
         default,
-        deserialize_with = "deserialize_optional_nullable",
+        with = "optional_nullable",
         skip_serializing_if = "Option::is_none"
     )]
     #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
@@ -573,16 +573,30 @@ pub struct FolderDefinition {
 
 // ── Helper: distinguish absent field from explicit null ──────────────
 
-/// Deserializes a field so that absent → `None`, explicit `null` → `Some(Value::Null)`,
-/// and a present value → `Some(value)`. Standard `Option<Value>` collapses both
-/// absent and null into `None`.
-fn deserialize_optional_nullable<'de, D>(
-    deserializer: D,
-) -> Result<Option<serde_json::Value>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(Some(serde_json::Value::deserialize(deserializer)?))
+mod optional_nullable {
+    //! `#[serde(with = "optional_nullable")]` for tri-state patch fields typed
+    //! `Option<serde_json::Value>`: an absent field stays `None` (via
+    //! `#[serde(default)]`) while an explicit JSON `null` decodes to
+    //! `Some(Value::Null)` — a plain `Option<Value>` would collapse both into `None`. Paired with `skip_serializing_if = "Option::is_none"`
+    //! so the encode side reproduces the same omitted-vs-null distinction.
+    use serde::{Deserialize, Serialize};
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<serde_json::Value>, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Ok(Some(serde_json::Value::deserialize(deserializer)?))
+    }
+
+    pub fn serialize<S>(value: &Option<serde_json::Value>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match value {
+            Some(value) => value.serialize(serializer),
+            None => serializer.serialize_none(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -2026,6 +2040,87 @@ mod tests {
         assert!(params.parent_id.is_some());
         assert!(params.parent_id.unwrap().is_null());
         assert_eq!(params.is_expanded, Some(true));
+    }
+
+    /// Decode `json` into `T` and re-encode it; the wire bytes must be unchanged.
+    fn assert_wire_round_trip<T>(json: serde_json::Value)
+    where
+        T: serde::de::DeserializeOwned + Serialize,
+    {
+        let decoded: T = serde_json::from_value(json.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&decoded).unwrap(), json);
+    }
+
+    // AGT-028: the desktop now decodes the frontend payload into these DTOs and
+    // re-serializes it onto the wire, so a decode → re-encode round trip must be
+    // exact for canonical payloads (agents in the field see identical JSON).
+
+    #[test]
+    fn connection_create_params_wire_round_trip() {
+        assert_wire_round_trip::<ConnectionCreateParams>(json!({
+            "name": "Build Shell",
+            "type": "ssh",
+            "config": {"host": "h", "port": 22, "authMethod": "key"},
+            "persistent": true,
+            "folder_id": "folder-1",
+            "terminal_options": {"scrollbackLines": 5000},
+            "icon": "server"
+        }));
+        assert_wire_round_trip::<ConnectionCreateParams>(json!({
+            "name": "Temp",
+            "type": "local",
+            "config": {},
+            "persistent": false,
+            "folder_id": null,
+            "terminal_options": null,
+            "icon": null
+        }));
+    }
+
+    #[test]
+    fn connection_update_params_wire_round_trip() {
+        // Omitted fields stay omitted (leave unchanged).
+        assert_wire_round_trip::<ConnectionUpdateParams>(json!({"id": "conn-1"}));
+        assert_wire_round_trip::<ConnectionUpdateParams>(json!({
+            "id": "conn-1",
+            "name": "New Name",
+            "type": "ssh",
+            "config": {"host": "h"},
+            "persistent": true,
+            "folder_id": "folder-2",
+            "terminal_options": {"fontSize": 14},
+            "icon": "server"
+        }));
+        // Explicit nulls on the tri-state fields survive (clear / move to root).
+        assert_wire_round_trip::<ConnectionUpdateParams>(json!({
+            "id": "conn-1",
+            "folder_id": null,
+            "terminal_options": null,
+            "icon": null
+        }));
+    }
+
+    #[test]
+    fn connection_update_params_null_plain_option_is_wire_equivalent() {
+        // A `null` on a plain (non-tri-state) option is re-encoded as omitted,
+        // which the agent decodes to the identical params (both mean "unchanged").
+        let with_nulls = json!({"id": "c", "name": null, "type": null, "persistent": null});
+        let decoded: ConnectionUpdateParams = serde_json::from_value(with_nulls).unwrap();
+        let reencoded = serde_json::to_value(&decoded).unwrap();
+        assert_eq!(reencoded, json!({"id": "c"}));
+        let redecoded: ConnectionUpdateParams = serde_json::from_value(reencoded).unwrap();
+        assert_eq!(redecoded, decoded);
+    }
+
+    #[test]
+    fn folder_update_params_wire_round_trip() {
+        assert_wire_round_trip::<FolderUpdateParams>(json!({"id": "f-1", "is_expanded": false}));
+        assert_wire_round_trip::<FolderUpdateParams>(json!({
+            "id": "f-1",
+            "name": "Renamed",
+            "parent_id": null
+        }));
+        assert_wire_round_trip::<FolderUpdateParams>(json!({"id": "f-1", "parent_id": "f-0"}));
     }
 
     #[test]

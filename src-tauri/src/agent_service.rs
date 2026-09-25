@@ -438,14 +438,14 @@ mod tests {
         fn save_definition(
             &self,
             agent_id: &str,
-            definition: Value,
+            definition: termihub_core::protocol::methods::ConnectionCreateParams,
         ) -> Result<AgentDefinitionInfo, TerminalError> {
             unimplemented!()
         }
         fn update_definition(
             &self,
             agent_id: &str,
-            params: Value,
+            params: termihub_core::protocol::methods::ConnectionUpdateParams,
         ) -> Result<AgentDefinitionInfo, TerminalError> {
             unimplemented!()
         }
@@ -463,7 +463,7 @@ mod tests {
         fn update_folder(
             &self,
             agent_id: &str,
-            params: Value,
+            params: termihub_core::protocol::methods::FolderUpdateParams,
         ) -> Result<AgentFolderInfo, TerminalError> {
             unimplemented!()
         }
