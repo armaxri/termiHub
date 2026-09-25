@@ -138,13 +138,10 @@ async fn run_tftp_server(
             _ = shutdown.wait() => break,
             // Reap finished transfers so the set does not grow without bound.
             Some(_) = transfers.join_next(), if !transfers.is_empty() => continue,
-            received = socket.recv_from(&mut buf) => match received {
+            // Windows ICMP resets are skipped inside `recv_skipping_resets`, so a
+            // client that went away cannot tear the server down.
+            received = recv_skipping_resets(&socket, &mut buf) => match received {
                 Ok(r) => r,
-                // On Windows an ICMP "port unreachable" for an earlier datagram
-                // (e.g. an ERROR sent to a client that already went away) surfaces
-                // as a reset on the *next* receive. It says nothing about this
-                // socket, so keep serving instead of tearing the server down.
-                Err(e) if e.kind() == std::io::ErrorKind::ConnectionReset => continue,
                 Err(e) => {
                     tracing::error!("TFTP recv error: {e}");
                     break;
@@ -407,6 +404,41 @@ fn try_reserve_slot(in_flight: &AtomicUsize, max: usize) -> bool {
     }
 }
 
+/// Whether a UDP receive error is transient and the socket is still usable.
+///
+/// On Windows, when a datagram this socket sent is answered with an ICMP "port
+/// unreachable" (e.g. DATA/ERROR sent to a client that already went away, or a
+/// stray reply to a spoofed source), the *next* `recv_from` fails with
+/// `WSAECONNRESET` (os error 10054, [`std::io::ErrorKind::ConnectionReset`]). It
+/// says nothing about the datagram being waited for — UDP has no connection to
+/// reset — so the receive should simply be retried. Other platforms never report
+/// it on an unconnected UDP socket, so treating it as transient is harmless.
+fn is_transient_recv_error(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::ConnectionReset
+}
+
+/// `recv_from` that retries past transient errors (see
+/// [`is_transient_recv_error`]) and returns the first real datagram or the first
+/// fatal error.
+///
+/// Cancel-safe: it holds no state between iterations and `UdpSocket::recv_from`
+/// is itself cancel-safe, so it can be raced in `select!` / `timeout` freely.
+/// Callers bound it with their own deadline, so a peer that only ever triggers
+/// resets still times out.
+async fn recv_skipping_resets(
+    socket: &UdpSocket,
+    buf: &mut [u8],
+) -> std::io::Result<(usize, SocketAddr)> {
+    loop {
+        match socket.recv_from(buf).await {
+            Err(e) if is_transient_recv_error(&e) => {
+                tracing::debug!("TFTP: ignoring transient UDP receive error: {e}");
+            }
+            other => return other,
+        }
+    }
+}
+
 /// Result of waiting for the ACK to a single RRQ DATA block.
 #[derive(Debug)]
 enum AckOutcome {
@@ -448,7 +480,10 @@ async fn wait_for_ack(
         let mut ack_buf = [0u8; 4];
         let received = tokio::select! {
             _ = shutdown.wait() => return Ok(AckOutcome::Aborted),
-            received = tokio::time::timeout(ack_timeout, socket.recv_from(&mut ack_buf)) => received,
+            // Transient Windows ICMP resets are retried inside the *same*
+            // timeout, so they neither abort the transfer nor extend the
+            // deadline: a client that is really gone still times out.
+            received = tokio::time::timeout(ack_timeout, recv_skipping_resets(socket, &mut ack_buf)) => received,
         };
         match received {
             Ok(Ok((4, src))) => {
@@ -525,7 +560,8 @@ async fn handle_wrq(
                 discard_partial(file, &path).await;
                 return Ok(());
             }
-            received = socket.recv_from(&mut buf) => received,
+            // Transient Windows ICMP resets are skipped, not fatal.
+            received = recv_skipping_resets(&socket, &mut buf) => received,
         };
         let (len, src) = match received {
             Ok(r) => r,
@@ -738,12 +774,44 @@ mod tests {
             .expect("bind test socket")
     }
 
+    /// A loopback address with (almost certainly) no listener: bind an ephemeral
+    /// port and release it. DATA sent there is never ACKed, and on Windows it
+    /// draws an ICMP "port unreachable" that surfaces as `WSAECONNRESET` on the
+    /// transfer socket's next receive — so the ACK-wait tests below also prove
+    /// that reset is tolerated rather than aborting the transfer.
+    fn closed_peer() -> SocketAddr {
+        let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind probe socket");
+        probe.local_addr().expect("probe local addr")
+    }
+
+    #[test]
+    fn connection_reset_is_a_transient_recv_error() {
+        use std::io::{Error, ErrorKind};
+        // The Windows ICMP-unreachable surfacing (os error 10054) must be
+        // retried, not treated as a dead socket.
+        assert!(is_transient_recv_error(&Error::from(
+            ErrorKind::ConnectionReset
+        )));
+        // Real failures stay fatal.
+        for kind in [
+            ErrorKind::PermissionDenied,
+            ErrorKind::NotConnected,
+            ErrorKind::InvalidInput,
+            ErrorKind::Other,
+        ] {
+            assert!(
+                !is_transient_recv_error(&Error::from(kind)),
+                "{kind:?} must not be treated as transient"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn wait_for_ack_aborts_immediately_when_shutdown_set() {
         // Regression for #1145 (G1): an in-flight transfer must abort promptly
         // when the server is stopped, instead of burning its full retry budget.
         let socket = test_socket().await;
-        let peer: SocketAddr = "127.0.0.1:9".parse().expect("parse peer");
+        let peer = closed_peer();
         let shutdown = ShutdownSignal::new();
         shutdown.trigger();
 
@@ -779,7 +847,7 @@ mod tests {
         // paused clock the (huge) timeout can only fire if virtual time advances,
         // so an unchanged clock proves the wake was event-driven.
         let socket = test_socket().await;
-        let peer: SocketAddr = "127.0.0.1:9".parse().expect("parse peer");
+        let peer = closed_peer();
         let shutdown = ShutdownSignal::new();
 
         let wait = wait_for_ack(
@@ -821,7 +889,7 @@ mod tests {
         // Without shutdown, the loop must exhaust its retry budget (no peer ever
         // ACKs), proving the shutdown check is what changes the outcome above.
         let socket = test_socket().await;
-        let peer: SocketAddr = "127.0.0.1:9".parse().expect("parse peer");
+        let peer = closed_peer();
         let shutdown = ShutdownSignal::new();
 
         let outcome = wait_for_ack(
