@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/commands/transfer.rs:68
   - src/services/api.ts:1341
   - src/hooks/useSessionFileSystem.ts:336
-status: open
+status: fixed
+resolution: "#3237 — FTP transfer engine (progress/ETA/resume/retry) now reachable from the UI: FTP file-browser download/upload route through the SESSION-based transfer queue (session_download/session_upload branch SFTP->run_sftp_transfer / FTP->run_ftp_transfer using server-resolved FtpConfig — credentials never cross to the frontend, verified by test), + session_supports_transfer_queue capability probe so FTP takes the queue path while Docker/agent keep the byte fallback (#3237). Was: rich engine existed with zero non-test callers"
 ---
 
 ## What

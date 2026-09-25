@@ -9,7 +9,8 @@ subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/mod.rs:365
   - core/src/backends/docker/mod.rs:423
-status: open
+status: fixed
+resolution: "#3239 — Docker connections can now exec into an existing running container: ContainerMode new|existing (default new, back-compat) + existing_container field on DockerConfig, surfaced via the schema (DynamicForm auto-renders a mode selector + conditional container field); connect_cancellable branches existing = inspect+verify-running+docker exec (no pull/create), new = create+start as before; ConnectedState.manage_container gate so disconnect/Drop never tears down a user's container; missing/stopped target -> typed NotFound/NotRunning. Live-smoke verified (#3239). Image field moved required->connect-time (maintainer-confirm note on PR)"
 ---
 
 ## What
