@@ -1042,7 +1042,18 @@ impl RemoteMonitoringProxy {
 ///   (`on_failure`); `DEFAULT_STALE_THRESHOLD` consecutive misses → `Stale`;
 /// - once `Stale`, if the agent transport is down (`transport_alive` is
 ///   `false`, i.e. the agent-connection layer is reconnecting) the monitor
-///   reports `Reconnecting`. A later sample recovers it to `Live`.
+///   reports `Reconnecting`. A later sample recovers it to `Live`;
+/// - **bounded `Connecting`/`Reconnecting` (#3300).** If no first sample
+///   arrives — or none after entering `Reconnecting` — within
+///   `CollectLoopState::pre_live_failure_limit` consecutive freshness windows
+///   (3 × the stale threshold, 6 windows by default: ≈18 s at the 2 s default
+///   interval, comfortably past the agent's 10 s collect timeout so a slow
+///   first agent sample still lands), the monitor resolves to `Offline`
+///   instead of hanging. The agent keeps its own (typed parse-vs-transport)
+///   loop status local — the protocol has no status notification — so the
+///   desktop infers the bound from the missing samples. Unlike the direct
+///   providers the driver does not end on `Offline`: the subscription stays
+///   registered, so a sample that does arrive later still recovers to `Live`.
 ///
 /// **Pause (SM-013, #3001).** Pausing an agent-hosted monitor unsubscribes the
 /// agent's poller (`set_paused` → `connection.monitoring.unsubscribe`), so the
@@ -2638,7 +2649,9 @@ mod tests {
         use tokio::sync::mpsc;
 
         use super::super::drive_monitor_status;
-        use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver, SystemStats};
+        use termihub_core::monitoring::{
+            CollectLoopState, MonitorStatus, MonitorStatusReceiver, SystemStats,
+        };
 
         /// A syntactically valid stats sample (values are irrelevant to the
         /// status logic — only that a sample *arrived*).
@@ -2750,6 +2763,169 @@ mod tests {
                 next_status(&mut status_rx).await,
                 MonitorStatus::Reconnecting,
                 "a drop with a dead agent transport must escalate to Reconnecting"
+            );
+
+            drop(raw_tx);
+            handle
+                .await
+                .expect("driver task should end when raw channel closes");
+        }
+
+        /// #3300: an agent that never streams a first sample must not leave the
+        /// monitor in `Connecting` forever: after `pre_live_failure_limit`
+        /// missed freshness windows it resolves to `Offline`. A sample that
+        /// arrives later still recovers it to `Live` (the driver keeps going).
+        #[tokio::test(start_paused = true)]
+        async fn no_first_sample_resolves_offline_then_a_late_sample_recovers() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, mut stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(20));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
+            let started = tokio::time::Instant::now();
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                Duration::from_millis(30),
+                || true, // agent reachable, it just never streams
+                paused_rx,
+            ));
+
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Offline,
+                "no first agent sample must resolve Connecting -> Offline"
+            );
+            let limit = CollectLoopState::new().pre_live_failure_limit();
+            assert_eq!(
+                started.elapsed(),
+                Duration::from_millis(50) * limit,
+                "Offline after exactly `pre_live_failure_limit` freshness windows"
+            );
+
+            raw_tx.send(sample()).await.expect("send late sample");
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Live,
+                "a late agent sample still recovers the monitor"
+            );
+            assert!(
+                stats_rx.recv().await.is_some(),
+                "the late sample is forwarded"
+            );
+
+            drop(raw_tx);
+            handle
+                .await
+                .expect("driver task should end when raw channel closes");
+        }
+
+        /// #3300: a slow first agent sample that lands inside the generous bound
+        /// (well past the `Stale` threshold) goes straight to `Live` — the
+        /// bound must not kill a monitor whose first collect is merely slow.
+        #[tokio::test(start_paused = true)]
+        async fn a_slow_first_sample_within_the_bound_goes_live() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, _stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(20));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                Duration::from_millis(30),
+                || true,
+                paused_rx,
+            ));
+
+            // One window short of the bound (50 ms windows).
+            let limit = CollectLoopState::new().pre_live_failure_limit();
+            tokio::time::sleep(Duration::from_millis(50) * (limit - 1) + Duration::from_millis(10))
+                .await;
+            raw_tx.send(sample()).await.expect("send slow first sample");
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Live,
+                "a slow first sample inside the bound must go Live, not Offline"
+            );
+
+            drop(raw_tx);
+            handle
+                .await
+                .expect("driver task should end when raw channel closes");
+        }
+
+        /// #3300: while the agent transport is down the monitor reports
+        /// `Reconnecting`; if no sample arrives within the bound it resolves to
+        /// `Offline` rather than staying `Reconnecting` forever.
+        #[tokio::test(start_paused = true)]
+        async fn reconnecting_without_a_sample_resolves_offline() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, _stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(20));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(false);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                Duration::from_millis(30),
+                || false, // agent transport down → reconnect underway
+                paused_rx,
+            ));
+
+            raw_tx.send(sample()).await.expect("send sample");
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Live);
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Stale);
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Reconnecting
+            );
+            assert_eq!(
+                next_status(&mut status_rx).await,
+                MonitorStatus::Offline,
+                "a reconnect that never yields a sample must resolve to Offline"
+            );
+
+            drop(raw_tx);
+            handle
+                .await
+                .expect("driver task should end when raw channel closes");
+        }
+
+        /// #3300: a paused agent monitor ignores missed windows — it never
+        /// resolves to `Offline` while paused, however long the pause lasts.
+        #[tokio::test(start_paused = true)]
+        async fn paused_monitor_never_resolves_offline() {
+            let (raw_tx, raw_rx) = mpsc::channel::<SystemStats>(16);
+            let (stats_tx, _stats_rx) = mpsc::channel(16);
+            let (status_tx, mut status_rx) = mpsc::channel(8);
+            let interval = Arc::new(AtomicU64::new(20));
+            let (_paused_tx, paused_rx) = tokio::sync::watch::channel(true);
+
+            let handle = tokio::spawn(drive_monitor_status(
+                raw_rx,
+                stats_tx,
+                status_tx,
+                interval,
+                Duration::from_millis(30),
+                || true,
+                paused_rx,
+            ));
+
+            assert_eq!(next_status(&mut status_rx).await, MonitorStatus::Paused);
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            assert!(
+                status_rx.try_recv().is_err(),
+                "a paused monitor must not transition while paused"
             );
 
             drop(raw_tx);
