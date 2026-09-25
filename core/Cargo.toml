@@ -316,6 +316,11 @@ ssh = [
     "dep:p256",
     "dep:p384",
     "dep:p521",
+    # Local-file streaming for the SFTP transfer path (files/transfer/sftp.rs:
+    # local read/append/create/metadata/remove). Without it a `--features ssh`
+    # isolation build fails with `cannot find fs in tokio` (mirrors the `ftp`
+    # feature, which enables it for files/transfer/ftp.rs).
+    "tokio/fs",
 ]
 docker = [
     "dep:bollard",
