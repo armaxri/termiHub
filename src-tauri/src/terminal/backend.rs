@@ -305,7 +305,14 @@ pub struct ConnectionConfig {
     pub type_id: String,
     // `serde_json::Value` has no faithful structural TS form; the frontend
     // interface used `Record<string, unknown>` (not `any`) — keep that exactly.
-    #[serde(rename = "config")]
+    //
+    // The legacy `resilientReconnect` key is accepted on read and rewritten to the
+    // unified `autoReconnect` key (PARITY-008) — for connections.json, external
+    // connection files, imports and inline tab configs alike.
+    #[serde(
+        rename = "config",
+        with = "termihub_core::connection::auto_reconnect::settings_bag"
+    )]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub settings: serde_json::Value,
 }
