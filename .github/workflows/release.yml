@@ -158,6 +158,13 @@ jobs:
     name: Build and Upload - ${{ matrix.platform }}
     needs: create-release
     runs-on: ${{ matrix.os }}
+    # A job-level block REPLACES the workflow-level one, so contents: write is
+    # restated. id-token + attestations are granted only to the jobs that
+    # attest build provenance (CI-022), never workflow-wide.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -397,11 +404,26 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Build provenance (CI-022): a Sigstore-signed SLSA statement binding each
+      # published bundle's SHA-256 to this workflow run, commit and tag. The glob
+      # covers the primary artifact plus the .deb/.rpm side-uploads renamed
+      # above. Users verify with `gh attestation verify <file> --repo <repo>`;
+      # verify-release does the same for every asset before `latest` moves.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: termiHub-${{ needs.create-release.outputs.version }}-${{ matrix.platform }}.*
+
   # Build and upload Linux agent binaries as release assets (static musl)
   agent-binaries-linux:
     name: Agent Binary (${{ matrix.target }})
     needs: create-release
     runs-on: ubuntu-latest
+    # Same scoped attestation grant as build-and-upload (CI-022).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -466,11 +488,24 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
+      # sidecars are not attested: the attestation already binds the binary's
+      # SHA-256, and the .sig is itself a signature over that same digest.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ matrix.artifact_name }}
+
   # Build and upload macOS agent binaries as release assets (native build)
   agent-binaries-macos:
     name: Agent Binary (${{ matrix.target }})
     needs: create-release
     runs-on: macos-latest
+    # Same scoped attestation grant as build-and-upload (CI-022).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -509,6 +544,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
+      # sidecars are not attested: the attestation already binds the binary's
+      # SHA-256, and the .sig is itself a signature over that same digest.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ matrix.artifact_name }}
+
   # Build and upload Windows agent binaries as release assets (native MSVC build).
   # cross-rs cannot build the MSVC ABI, so this runs native cargo on a Windows
   # runner. The binary is emitted as termihub-agent.exe.
@@ -524,6 +567,11 @@ jobs:
     name: Agent Binary (${{ matrix.target }})
     needs: create-release
     runs-on: windows-latest
+    # Same scoped attestation grant as build-and-upload (CI-022).
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
 
     strategy:
       fail-fast: false
@@ -561,6 +609,14 @@ jobs:
             "${{ matrix.artifact_name }}" "${{ matrix.artifact_name }}.sha256"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Provenance for the agent binary itself (CI-022). The .sha256 and .sig
+      # sidecars are not attested: the attestation already binds the binary's
+      # SHA-256, and the .sig is itself a signature over that same digest.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ matrix.artifact_name }}
 
   # Verify the full checksummed asset set + release notes are present (folds in
   # Sign every agent binary with the release key (AGT-005, #3213). One job holds
