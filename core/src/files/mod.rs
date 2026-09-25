@@ -1,6 +1,7 @@
 pub mod browser;
 pub mod copy;
 pub mod local;
+pub mod transfer;
 pub mod utils;
 
 pub use browser::FileBrowser;

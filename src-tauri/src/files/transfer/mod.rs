@@ -9,10 +9,14 @@
 //! Structure:
 //!
 //! - [`state`] — the pure `Queued/Active/Paused/Completed/Failed/Cancelled`
-//!   state machine (no I/O, fully unit-tested).
-//! - [`scheduler`] — pure per-session slot accounting (`max_concurrent`).
+//!   state machine (no I/O, fully unit-tested). Now lives in
+//!   [`termihub_core::files::transfer::state`] (DUP-026) and is re-exported here
+//!   so the desktop paths keep their `super::state` / `transfer::state` imports.
+//! - [`scheduler`] — pure per-session slot accounting (`max_concurrent`), moved
+//!   to [`termihub_core::files::transfer::scheduler`] (DUP-026) and re-exported.
 //! - [`retry`] — pure backoff schedule, `REST` resume-offset math, and a
-//!   throughput/ETA meter.
+//!   throughput/ETA meter, moved to [`termihub_core::files::transfer::retry`]
+//!   (DUP-026) and re-exported.
 //! - [`registry`] — the [`TransferRegistry`] Tauri state: the legacy
 //!   `transfer_id → CancellationToken` map *plus* the rich queue model.
 //! - [`ftp`] — FTP upload/download executor (feature-gated behind `ftp`).
@@ -40,13 +44,16 @@ pub mod persist_manager;
 pub mod persist_storage;
 pub mod registry;
 pub(crate) mod relaunch;
-pub mod retry;
-pub mod scheduler;
 pub mod sftp;
-pub mod state;
 
 #[cfg(feature = "ftp")]
 pub mod ftp;
+
+// The pure, backend-agnostic transfer machinery moved to `termihub-core`
+// (DUP-026). Re-export the modules under their original names so every desktop
+// path — `super::state`, `super::scheduler`, `super::retry`, and the external
+// `crate::files::transfer::state` — resolves unchanged.
+pub use termihub_core::files::transfer::{retry, scheduler, state};
 
 pub use persist::{PersistedTransfer, PersistedTransferStatus, PersistedTransferStore};
 pub use persist_manager::TransferPersistenceManager;
