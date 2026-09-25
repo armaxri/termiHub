@@ -18,7 +18,7 @@ use tokio::sync::Notify;
 use tokio_util::sync::CancellationToken;
 
 use super::scheduler::{Admission, SessionScheduler, DEFAULT_MAX_CONCURRENT};
-use super::state::{TransferEvent, TransferState, TransferStateTag, MAX_RETRIES};
+use super::state::{TransferEvent, TransferState, TransferStateTag};
 use super::TransferDirection;
 
 /// How long a recently-terminal transfer is retained in the registry so a
@@ -592,6 +592,7 @@ impl TransferRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::files::transfer::state::MAX_RETRIES;
 
     // --- Cancel / drop semantics ---
 
