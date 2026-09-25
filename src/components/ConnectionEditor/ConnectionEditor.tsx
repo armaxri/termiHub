@@ -21,7 +21,6 @@ import { useProjectedSettings } from "@/store/useProjectedSettings";
 import {
   ConnectionConfig,
   ExternalAgentFile,
-  RemoteAgentConfig,
   ShellType,
   TerminalOptions,
   ConnectionEditorMeta,
@@ -66,6 +65,7 @@ import { JumpHostSection } from "./JumpHostSection";
 import { SshConnectionImportDialog } from "./SshConnectionImportDialog";
 import { validateProxyJump } from "@/utils/validateProxyJump";
 import { sshJumpHostOptions } from "@/utils/jumpHost";
+import { remoteAgentConfigToRecord, toRemoteAgentConfig } from "@/utils/remoteAgentConfig";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
 import { findLeafByTab } from "@/utils/panelTree";
@@ -275,8 +275,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       const typeInfo = agentConnectionTypes.find((ct) => ct.typeId === typeId);
       return {
         typeId,
-        settings: Object.keys(existingAgentDef.config as Record<string, unknown>).length
-          ? (existingAgentDef.config as Record<string, unknown>)
+        settings: Object.keys(existingAgentDef.config).length
+          ? existingAgentDef.config
           : typeInfo
             ? buildDefaults(typeInfo.schema)
             : {},
@@ -293,7 +293,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     if (existingAgent && !meta.agentDefinitionId) {
       return {
         typeId: "remote",
-        settings: existingAgent.config as unknown as Record<string, unknown>,
+        settings: remoteAgentConfigToRecord(existingAgent.config),
       };
     }
     // Local connection
@@ -835,7 +835,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     if (jumpHostValidation.errors.length > 0) return null;
 
     if (isAgentTransportMode) {
-      const agentConfig = connSettings as unknown as RemoteAgentConfig;
+      const agentConfig = toRemoteAgentConfig(connSettings);
       if (existingAgent) {
         const updated: RemoteAgentDefinition = {
           ...existingAgent,
