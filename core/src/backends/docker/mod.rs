@@ -23,9 +23,9 @@ use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
-use crate::config::{ContainerRuntime, DockerConfig, VolumeMount};
+use crate::config::{ContainerMode, ContainerRuntime, DockerConfig, VolumeMount};
 use crate::connection::{
-    Capabilities, ConnectionType, FieldType, OutputReceiver, OutputSender, SelectOption,
+    Capabilities, Condition, ConnectionType, FieldType, OutputReceiver, OutputSender, SelectOption,
     SettingsField, SettingsGroup, SettingsSchema,
 };
 use crate::errors::SessionError;
@@ -81,7 +81,14 @@ struct ConnectedState {
     container_id: String,
     /// The exec instance ID for the interactive shell.
     exec_id: String,
-    /// Whether to remove the container on disconnect.
+    /// Whether this session owns the container's lifecycle. `true` for a
+    /// container this connect created ([`ContainerMode::New`]); `false` when the
+    /// session merely exec'd into a user-provided running container
+    /// ([`ContainerMode::Existing`], PROD-016). When `false` the container is
+    /// NEVER stopped or removed on disconnect/drop — it belongs to the user.
+    manage_container: bool,
+    /// Whether to remove the container on disconnect. Only honoured when
+    /// [`manage_container`](Self::manage_container) is `true`.
     remove_on_exit: bool,
     /// Shared alive flag — set to `false` to signal the reader task to stop.
     alive: Arc<AtomicBool>,
@@ -153,6 +160,13 @@ impl Drop for ConnectedState {
             return;
         }
         self.alive.store(false, Ordering::SeqCst);
+
+        // A container the user owns (exec-into-existing) is never torn down — we
+        // only exec'd into it, we did not create it (PROD-016). Signal the reader
+        // task to stop (done above) but leave the container running.
+        if !self.manage_container {
+            return;
+        }
 
         // A detached async teardown needs a runtime to run on. If Drop is not
         // running under one (e.g. a plain thread), there is nothing safe to do
@@ -441,8 +455,18 @@ fn parse_docker_settings(settings: &serde_json::Value) -> DockerConfig {
         .and_then(|s| serde_json::from_value::<ContainerRuntime>(serde_json::json!(s)).ok())
         .unwrap_or_default();
 
+    // How to obtain the container. Unknown / absent falls back to `New` so a
+    // config from before PROD-016 creates a fresh container exactly as before.
+    let container_mode = settings
+        .get("containerMode")
+        .and_then(|v| v.as_str())
+        .and_then(|s| serde_json::from_value::<ContainerMode>(serde_json::json!(s)).ok())
+        .unwrap_or_default();
+
     DockerConfig {
         runtime,
+        container_mode,
+        existing_container: opt_str("existingContainer"),
         image: str_field("image"),
         shell: opt_str("shell"),
         cols: 80,
@@ -599,6 +623,56 @@ impl ConnectionType for Docker {
                     label: "Container".to_string(),
                     fields: vec![
                         SettingsField {
+                            key: "containerMode".to_string(),
+                            label: "Container".to_string(),
+                            description: Some(
+                                "Start a new container from an image, or connect to a \
+                                 container that is already running"
+                                    .to_string(),
+                            ),
+                            help_text: None,
+                            field_type: FieldType::Select {
+                                options: vec![
+                                    SelectOption {
+                                        value: "new".to_string(),
+                                        label: "New container".to_string(),
+                                    },
+                                    SelectOption {
+                                        value: "existing".to_string(),
+                                        label: "Existing (running) container".to_string(),
+                                    },
+                                ],
+                            },
+                            required: false,
+                            default: Some(serde_json::json!("new")),
+                            placeholder: None,
+                            supports_env_expansion: false,
+                            supports_tilde_expansion: false,
+                            visible_when: None,
+                        },
+                        SettingsField {
+                            key: "existingContainer".to_string(),
+                            label: "Existing Container".to_string(),
+                            description: Some(
+                                "Name or ID of the already-running container to open a \
+                                 shell in"
+                                    .to_string(),
+                            ),
+                            help_text: None,
+                            field_type: FieldType::Text,
+                            required: true,
+                            default: None,
+                            placeholder: Some("my-running-container".to_string()),
+                            supports_env_expansion: true,
+                            supports_tilde_expansion: false,
+                            // Only shown (and only required) when connecting to an
+                            // existing container.
+                            visible_when: Some(Condition {
+                                field: "containerMode".to_string(),
+                                equals: serde_json::json!("existing"),
+                            }),
+                        },
+                        SettingsField {
                             key: "image".to_string(),
                             label: "Image".to_string(),
                             description: Some(
@@ -606,7 +680,13 @@ impl ConnectionType for Docker {
                             ),
                             help_text: None,
                             field_type: FieldType::Text,
-                            required: true,
+                            // Not marked required at the schema level: an existing
+                            // container needs no image. New-container mode still
+                            // requires a non-empty image, enforced at connect time
+                            // by `validate_docker_config` (PROD-016). Kept visible
+                            // in every mode so pre-PROD-016 saved connections (which
+                            // carry no `containerMode`) still render/edit their image.
+                            required: false,
                             default: None,
                             placeholder: Some("ubuntu:22.04".to_string()),
                             supports_env_expansion: true,
@@ -823,122 +903,163 @@ impl ConnectionType for Docker {
         let client =
             super::race_connect(cancel.clone(), connect_to_runtime(&config.runtime)).await?;
 
-        // Pull the image if it's not already available locally. Racing the whole
-        // pull against the token lets a cancel abort a long download promptly;
-        // still no container exists, so nothing leaks on cancel.
-        info!(image = %config.image, "Pulling Docker image");
-        let pull = async {
-            let pull_opts = CreateImageOptions {
-                from_image: config.image.as_str(),
-                ..Default::default()
-            };
-            let mut pull_stream = client.create_image(Some(pull_opts), None, None);
-            while let Some(result) = pull_stream.next().await {
-                match result {
-                    Ok(info) => {
-                        debug!(?info, "Image pull progress");
-                    }
-                    Err(e) => {
-                        return Err(SessionError::SpawnFailed(format!(
-                            "Failed to pull image '{}': {e}",
-                            config.image
-                        )));
-                    }
-                }
-            }
-            Ok(())
-        };
-        super::race_connect(cancel.clone(), pull).await?;
-        info!(image = %config.image, "Image ready");
-
-        let container_name = generate_container_name();
         let shell = config
             .shell
             .clone()
             .unwrap_or_else(|| "/bin/sh".to_string());
 
-        // Build environment variables for the container.
-        let env: Vec<String> = config
-            .env_vars
-            .iter()
-            .map(|ev| format!("{}={}", ev.key, ev.value))
-            .collect();
+        // Obtain the container to exec into. `New` mode (default) pulls the image
+        // and creates + starts a fresh container; `Existing` mode targets a
+        // container the user already started (PROD-016). `manage_container`
+        // records ownership: only a container this connect created is ever torn
+        // down on disconnect/drop.
+        let (container_id, manage_container): (String, bool) = match config.container_mode {
+            ContainerMode::New => {
+                // Pull the image if it's not already available locally. Racing the
+                // whole pull against the token lets a cancel abort a long download
+                // promptly; still no container exists, so nothing leaks on cancel.
+                info!(image = %config.image, "Pulling Docker image");
+                let pull = async {
+                    let pull_opts = CreateImageOptions {
+                        from_image: config.image.as_str(),
+                        ..Default::default()
+                    };
+                    let mut pull_stream = client.create_image(Some(pull_opts), None, None);
+                    while let Some(result) = pull_stream.next().await {
+                        match result {
+                            Ok(info) => {
+                                debug!(?info, "Image pull progress");
+                            }
+                            Err(e) => {
+                                return Err(SessionError::SpawnFailed(format!(
+                                    "Failed to pull image '{}': {e}",
+                                    config.image
+                                )));
+                            }
+                        }
+                    }
+                    Ok(())
+                };
+                super::race_connect(cancel.clone(), pull).await?;
+                info!(image = %config.image, "Image ready");
 
-        // Build volume binds.
-        let binds = build_volume_binds(&config.volumes);
+                let container_name = generate_container_name();
 
-        // Attribute the container to the owning checkout under the test harness so
-        // a crashed run's orphan can be reaped per-checkout (#3049); empty (→ no
-        // label) in normal use.
-        let labels = container_labels();
+                // Build environment variables for the container.
+                let env: Vec<String> = config
+                    .env_vars
+                    .iter()
+                    .map(|ev| format!("{}={}", ev.key, ev.value))
+                    .collect();
 
-        // Create container configuration.
-        let container_config = Config {
-            image: Some(config.image.clone()),
-            tty: Some(true),
-            open_stdin: Some(true),
-            labels: if labels.is_empty() {
-                None
-            } else {
-                Some(labels)
-            },
-            env: if env.is_empty() { None } else { Some(env) },
-            working_dir: config.working_directory.clone(),
-            // Use `tail -f /dev/null` to keep the container alive.
-            cmd: Some(vec![
-                "tail".to_string(),
-                "-f".to_string(),
-                "/dev/null".to_string(),
-            ]),
-            host_config: Some(HostConfig {
-                binds: if binds.is_empty() { None } else { Some(binds) },
-                init: Some(true),
-                ..Default::default()
-            }),
-            ..Default::default()
-        };
+                // Build volume binds.
+                let binds = build_volume_binds(&config.volumes);
 
-        // Last cancel checkpoint before a container exists — a cancel here
-        // returns without having created anything to clean up.
-        if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
-            return Err(super::connect_cancelled());
-        }
+                // Attribute the container to the owning checkout under the test
+                // harness so a crashed run's orphan can be reaped per-checkout
+                // (#3049); empty (→ no label) in normal use.
+                let labels = container_labels();
 
-        // Create the container.
-        let create_opts = CreateContainerOptions {
-            name: container_name.as_str(),
-            platform: None,
-        };
-        let create_response = client
-            .create_container(Some(create_opts), container_config)
-            .await
-            .map_err(|e| SessionError::SpawnFailed(format!("Failed to create container: {e}")))?;
+                // Create container configuration.
+                let container_config = Config {
+                    image: Some(config.image.clone()),
+                    tty: Some(true),
+                    open_stdin: Some(true),
+                    labels: if labels.is_empty() {
+                        None
+                    } else {
+                        Some(labels)
+                    },
+                    env: if env.is_empty() { None } else { Some(env) },
+                    working_dir: config.working_directory.clone(),
+                    // Use `tail -f /dev/null` to keep the container alive.
+                    cmd: Some(vec![
+                        "tail".to_string(),
+                        "-f".to_string(),
+                        "/dev/null".to_string(),
+                    ]),
+                    host_config: Some(HostConfig {
+                        binds: if binds.is_empty() { None } else { Some(binds) },
+                        init: Some(true),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                };
 
-        let container_id = create_response.id;
-        debug!(container_id = %container_id, "Container created");
+                // Last cancel checkpoint before a container exists — a cancel here
+                // returns without having created anything to clean up.
+                if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
+                    return Err(super::connect_cancelled());
+                }
 
-        // A container now exists. Every step below — starting it, the exec
-        // setup, and any cancellation — can fail, and until a `ConnectedState`
-        // is stored `disconnect` will not run, so every exit path must tear the
-        // container down first or a failed/cancelled connect leaks it on the
-        // host (CORE-009). Start + exec therefore run in one helper block whose
-        // error path calls `cleanup_container`; a cancel between steps returns
-        // the shared cancellation error and drops through the same cleanup.
-        let setup: Result<ConnectedState, SessionError> = async {
-            if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
-                return Err(super::connect_cancelled());
+                // Create the container.
+                let create_opts = CreateContainerOptions {
+                    name: container_name.as_str(),
+                    platform: None,
+                };
+                let create_response = client
+                    .create_container(Some(create_opts), container_config)
+                    .await
+                    .map_err(|e| {
+                        SessionError::SpawnFailed(format!("Failed to create container: {e}"))
+                    })?;
+
+                let container_id = create_response.id;
+                debug!(container_id = %container_id, "Container created");
+
+                // A container now exists. From here every exit path must tear it
+                // down before returning, or a failed/cancelled connect leaks a
+                // running container on the host (CORE-009).
+                if let Err(e) = client.start_container::<String>(&container_id, None).await {
+                    cleanup_container(&client, &container_id).await;
+                    return Err(SessionError::SpawnFailed(format!(
+                        "Failed to start container: {e}"
+                    )));
+                }
+                info!(container_id = %container_id, "Container started");
+
+                (container_id, true)
             }
+            ContainerMode::Existing => {
+                // Target the user's already-running container. Validation has
+                // already ensured a non-empty name.
+                let name = config
+                    .existing_container
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string();
+                info!(container = %name, "Attaching to existing container");
 
-            // Start the container.
-            client
-                .start_container::<String>(&container_id, None)
-                .await
-                .map_err(|e| {
-                    SessionError::SpawnFailed(format!("Failed to start container: {e}"))
+                // Verify the container exists and is running. Never create one as
+                // a fallback (PROD-016): a missing or stopped target is a typed
+                // error, not a silent new-container spawn.
+                let info = client.inspect_container(&name, None).await.map_err(|e| {
+                    SessionError::NotFound(format!(
+                        "Container '{name}' was not found or is not accessible: {e}"
+                    ))
                 })?;
 
-            info!(container_id = %container_id, "Container started");
+                let running = info.state.as_ref().and_then(|s| s.running).unwrap_or(false);
+                if !running {
+                    return Err(SessionError::NotRunning(format!(
+                        "Container '{name}' is not running"
+                    )));
+                }
 
+                // Prefer the resolved full ID; fall back to the user-given name.
+                let container_id = info.id.unwrap_or(name);
+                debug!(container_id = %container_id, "Existing container ready");
+
+                (container_id, false)
+            }
+        };
+
+        // Wire up the interactive exec against the resolved container (shared by
+        // both modes). Until a `ConnectedState` is stored `disconnect` will not
+        // run, so a failure here must clean up a container this connect *created*
+        // (CORE-009) — but must NOT touch a user-owned existing container.
+        let setup: Result<ConnectedState, SessionError> = async {
             if cancel.as_ref().is_some_and(|t| t.is_cancelled()) {
                 return Err(super::connect_cancelled());
             }
@@ -1044,7 +1165,10 @@ impl ConnectionType for Docker {
                 client: client.clone(),
                 container_id: container_id.clone(),
                 exec_id,
-                remove_on_exit: config.remove_on_exit,
+                manage_container,
+                // Removal only applies to a container we created; an existing
+                // container is never removed regardless of this flag.
+                remove_on_exit: manage_container && config.remove_on_exit,
                 alive,
                 stdin_tx,
                 disconnected: false,
@@ -1052,13 +1176,16 @@ impl ConnectionType for Docker {
         }
         .await;
 
-        // If any step after `start_container` failed, tear down the started
-        // container before surfacing the error so a partial connect never leaks
-        // a running container on the host (CORE-009).
+        // If exec setup failed, tear down the container we created before
+        // surfacing the error so a partial connect never leaks a running
+        // container on the host (CORE-009). A user-owned existing container is
+        // left untouched (PROD-016).
         let state = match setup {
             Ok(state) => state,
             Err(e) => {
-                cleanup_container(&client, &container_id).await;
+                if manage_container {
+                    cleanup_container(&client, &container_id).await;
+                }
                 return Err(e);
             }
         };
@@ -1106,8 +1233,12 @@ impl ConnectionType for Docker {
 
             // Stop (and optionally remove) the container — best-effort, errors
             // logged not propagated. Shared with the `Drop` guard so both paths
-            // tear a container down identically.
-            teardown_container(&state.client, &state.container_id, state.remove_on_exit).await;
+            // tear a container down identically. Skipped entirely for an
+            // exec-into-existing session: that container belongs to the user and
+            // must survive disconnect (PROD-016).
+            if state.manage_container {
+                teardown_container(&state.client, &state.container_id, state.remove_on_exit).await;
+            }
 
             debug!("Docker session disconnected");
         }
@@ -1310,6 +1441,8 @@ mod tests {
         assert_eq!(
             keys,
             vec![
+                "containerMode",
+                "existingContainer",
                 "image",
                 "shell",
                 "workingDirectory",
@@ -1317,6 +1450,45 @@ mod tests {
                 "runtime"
             ]
         );
+    }
+
+    #[test]
+    fn schema_container_mode_field_is_select_defaulting_to_new() {
+        let docker = Docker::new();
+        let schema = docker.settings_schema();
+        let mode = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "containerMode")
+            .expect("containerMode field present");
+        assert!(!mode.required);
+        assert_eq!(mode.default, Some(serde_json::json!("new")));
+        if let FieldType::Select { ref options } = mode.field_type {
+            assert_eq!(options.len(), 2);
+            assert_eq!(options[0].value, "new");
+            assert_eq!(options[1].value, "existing");
+        } else {
+            panic!("expected Select field type for containerMode");
+        }
+    }
+
+    #[test]
+    fn schema_existing_container_field_only_visible_for_existing_mode() {
+        let docker = Docker::new();
+        let schema = docker.settings_schema();
+        let field = schema.groups[0]
+            .fields
+            .iter()
+            .find(|f| f.key == "existingContainer")
+            .expect("existingContainer field present");
+        assert!(matches!(field.field_type, FieldType::Text));
+        assert!(field.required);
+        let cond = field
+            .visible_when
+            .as_ref()
+            .expect("existingContainer is conditionally visible");
+        assert_eq!(cond.field, "containerMode");
+        assert_eq!(cond.equals, serde_json::json!("existing"));
     }
 
     #[test]
@@ -1358,7 +1530,12 @@ mod tests {
             .iter()
             .find(|f| f.key == "image")
             .unwrap();
-        assert!(image.required);
+        // PROD-016: image is optional at the schema level (existing-container mode
+        // needs none); new-mode requires it at connect time via
+        // `validate_docker_config`. It stays always-visible so pre-PROD-016 saved
+        // connections still render their image field.
+        assert!(!image.required);
+        assert!(image.visible_when.is_none());
         assert!(image.supports_env_expansion);
         assert!(!image.supports_tilde_expansion);
         assert!(matches!(image.field_type, FieldType::Text));
@@ -1456,13 +1633,52 @@ mod tests {
     // --- Settings validation tests ---
 
     #[test]
-    fn validation_missing_image_fails() {
+    fn validation_missing_image_is_not_schema_enforced() {
+        // PROD-016: image is no longer required at the schema level (existing-mode
+        // needs none). New-mode's image requirement moved to connect-time
+        // `validate_docker_config`; empty schema settings raise no `image` error.
         let docker = Docker::new();
         let schema = docker.settings_schema();
         let settings = serde_json::json!({});
         let errors = validate_settings(&schema, &settings);
-        assert!(!errors.is_empty());
-        assert!(errors.iter().any(|e| e.field == "image"));
+        assert!(
+            !errors.iter().any(|e| e.field == "image"),
+            "image should not be schema-required: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn validation_existing_mode_requires_existing_container() {
+        // In existing mode the container name field becomes visible and required.
+        let docker = Docker::new();
+        let schema = docker.settings_schema();
+        let settings = serde_json::json!({ "containerMode": "existing" });
+        let errors = validate_settings(&schema, &settings);
+        assert!(
+            errors.iter().any(|e| e.field == "existingContainer"),
+            "expected existingContainer required error: {errors:?}"
+        );
+
+        // Provided → valid.
+        let settings = serde_json::json!({
+            "containerMode": "existing",
+            "existingContainer": "my-app",
+        });
+        let errors = validate_settings(&schema, &settings);
+        assert!(errors.is_empty(), "errors: {errors:?}");
+    }
+
+    #[test]
+    fn validation_existing_container_hidden_in_new_mode() {
+        // The container-name field must not be required in new mode.
+        let docker = Docker::new();
+        let schema = docker.settings_schema();
+        let settings = serde_json::json!({ "containerMode": "new", "image": "alpine" });
+        let errors = validate_settings(&schema, &settings);
+        assert!(
+            !errors.iter().any(|e| e.field == "existingContainer"),
+            "existingContainer should be hidden in new mode: {errors:?}"
+        );
     }
 
     #[test]
@@ -1609,6 +1825,45 @@ mod tests {
     }
 
     #[test]
+    fn parse_container_mode_defaults_to_new() {
+        let settings = serde_json::json!({ "image": "alpine" });
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.container_mode, ContainerMode::New);
+        assert!(config.existing_container.is_none());
+
+        // Unknown value falls back to New (back-compat safe).
+        let settings = serde_json::json!({ "image": "alpine", "containerMode": "bogus" });
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.container_mode, ContainerMode::New);
+    }
+
+    #[test]
+    fn parse_existing_container_settings() {
+        let settings = serde_json::json!({
+            "containerMode": "existing",
+            "existingContainer": "my-running-app",
+        });
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.container_mode, ContainerMode::Existing);
+        assert_eq!(config.existing_container.as_deref(), Some("my-running-app"));
+
+        // Explicit "new" parses too.
+        let settings = serde_json::json!({ "image": "alpine", "containerMode": "new" });
+        let config = parse_docker_settings(&settings);
+        assert_eq!(config.container_mode, ContainerMode::New);
+    }
+
+    #[test]
+    fn parse_empty_existing_container_is_none() {
+        let settings = serde_json::json!({
+            "containerMode": "existing",
+            "existingContainer": "",
+        });
+        let config = parse_docker_settings(&settings);
+        assert!(config.existing_container.is_none());
+    }
+
+    #[test]
     fn parse_full_settings() {
         let settings = serde_json::json!({
             "image": "ubuntu:22.04",
@@ -1710,13 +1965,14 @@ mod tests {
     /// teardown the guard detaches simply fails harmlessly against the daemon (or
     /// against nothing). Returns `None` when a client cannot even be constructed
     /// in this environment, so the test skips rather than failing spuriously.
-    fn fake_connected_state(disconnected: bool) -> Option<ConnectedState> {
+    fn fake_connected_state(disconnected: bool, manage_container: bool) -> Option<ConnectedState> {
         let client = bollard::Docker::connect_with_local_defaults().ok()?;
         let (stdin_tx, _stdin_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(1);
         Some(ConnectedState {
             client,
             container_id: "termihub-core020-drop-test-nonexistent".to_string(),
             exec_id: "none".to_string(),
+            manage_container,
             remove_on_exit: true,
             alive: Arc::new(AtomicBool::new(true)),
             stdin_tx,
@@ -1730,11 +1986,27 @@ mod tests {
     /// dropping such a state must be safe even with no container behind it.
     #[tokio::test]
     async fn drop_after_disconnect_flag_is_noop() {
-        let Some(state) = fake_connected_state(true) else {
+        let Some(state) = fake_connected_state(true, true) else {
             return; // no client constructable here — skip
         };
         // `disconnected == true`, so Drop returns immediately without spawning.
         drop(state);
+    }
+
+    /// PROD-016: dropping a session that exec'd into a user-owned *existing*
+    /// container (`manage_container == false`) must be a pure no-op even without a
+    /// graceful disconnect — the container belongs to the user and must never be
+    /// stopped or removed. Constructing and dropping such a state must be safe and
+    /// panic-free.
+    #[tokio::test]
+    async fn drop_existing_container_never_tears_down() {
+        let Some(state) = fake_connected_state(false, false) else {
+            return; // no client constructable here — skip
+        };
+        // `manage_container == false`, so Drop returns before detaching any
+        // stop/remove task. No panic, no teardown.
+        drop(state);
+        tokio::task::yield_now().await;
     }
 
     /// CORE-020: dropping a connected state WITHOUT a graceful disconnect, while
@@ -1745,7 +2017,7 @@ mod tests {
     /// verification against a live daemon is out of scope for a unit test.
     #[tokio::test]
     async fn drop_without_disconnect_does_not_panic_under_runtime() {
-        let Some(state) = fake_connected_state(false) else {
+        let Some(state) = fake_connected_state(false, true) else {
             return; // no client constructable here — skip
         };
         // A runtime is present (this is a #[tokio::test]); Drop detaches a task.
@@ -1763,6 +2035,41 @@ mod tests {
         });
         let result = docker.connect(settings).await;
         assert!(result.is_err());
+    }
+
+    /// PROD-016: existing-container mode with no container name fails validation
+    /// up front — before any runtime contact, so no daemon is required — with the
+    /// typed `InvalidConfig` error, and leaves the backend disconnected.
+    #[tokio::test]
+    async fn connect_existing_mode_without_name_fails_before_runtime() {
+        let mut docker = Docker::new();
+        let settings = serde_json::json!({
+            "containerMode": "existing",
+        });
+        let result = docker.connect(settings).await;
+        assert!(
+            matches!(&result, Err(SessionError::InvalidConfig(m)) if m.contains("existing container")),
+            "expected InvalidConfig, got {result:?}"
+        );
+        assert!(!docker.is_connected());
+    }
+
+    /// PROD-016: disconnecting a session that exec'd into a user-owned existing
+    /// container must succeed without tearing the container down. With
+    /// `manage_container == false` the teardown call is skipped entirely, so no
+    /// daemon round-trip happens and the container is left running.
+    #[tokio::test]
+    async fn disconnect_existing_container_skips_teardown() {
+        let Some(state) = fake_connected_state(false, false) else {
+            return; // no client constructable here — skip
+        };
+        let mut docker = Docker::new();
+        docker.state = Some(state);
+        docker
+            .disconnect()
+            .await
+            .expect("disconnect should not fail");
+        assert!(!docker.is_connected());
     }
 
     /// A pre-cancelled token aborts the connect at its first step — before the

@@ -234,6 +234,24 @@ pub enum ContainerRuntime {
     Podman,
 }
 
+/// How a Docker/Podman session obtains its container.
+///
+/// [`New`](ContainerMode::New) (the default, back-compatible) creates and runs a
+/// fresh container from the configured image. [`Existing`](ContainerMode::Existing)
+/// execs an interactive shell into a container the user already started
+/// (identified by [`DockerConfig::existing_container`]) — the image is not pulled,
+/// no container is created, and the container is never stopped or removed on
+/// disconnect (PROD-016).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ContainerMode {
+    /// Create and run a new container from the image (default).
+    #[default]
+    New,
+    /// Exec into an existing, already-running container.
+    Existing,
+}
+
 /// Unified Docker container session configuration.
 ///
 /// Superset of desktop `DockerConfig` and agent `DockerSessionConfig`.
@@ -242,6 +260,16 @@ pub enum ContainerRuntime {
 pub struct DockerConfig {
     #[serde(default)]
     pub runtime: ContainerRuntime,
+    /// How the session gets its container. Defaults to [`ContainerMode::New`] so
+    /// existing configs (which omit the field) create a fresh container exactly
+    /// as before.
+    #[serde(default)]
+    pub container_mode: ContainerMode,
+    /// Name or ID of the running container to exec into when
+    /// [`container_mode`](Self::container_mode) is [`ContainerMode::Existing`].
+    /// Ignored in [`ContainerMode::New`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_container: Option<String>,
     pub image: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
@@ -265,6 +293,8 @@ impl Default for DockerConfig {
     fn default() -> Self {
         Self {
             runtime: ContainerRuntime::Auto,
+            container_mode: ContainerMode::New,
+            existing_container: None,
             image: String::new(),
             shell: None,
             cols: default_cols(),
@@ -764,6 +794,7 @@ impl DockerConfig {
     /// Return a copy with all `${VAR}` placeholders and `~` expanded.
     pub fn expand(mut self) -> Self {
         self.image = expand_config_value(&self.image);
+        self.existing_container = self.existing_container.map(|s| expand_config_value(&s));
         self.shell = self.shell.map(|s| expand_config_value(&s));
         self.working_directory = self.working_directory.map(|s| expand_config_value(&s));
         for env in &mut self.env_vars {
@@ -1112,6 +1143,51 @@ mod tests {
         assert!(cfg.working_directory.is_none());
         assert!(cfg.remove_on_exit);
         assert!(cfg.env.is_empty());
+        // Back-compat: default mode creates a fresh container (PROD-016).
+        assert_eq!(cfg.container_mode, ContainerMode::New);
+        assert!(cfg.existing_container.is_none());
+    }
+
+    #[test]
+    fn container_mode_default_is_new() {
+        assert_eq!(ContainerMode::default(), ContainerMode::New);
+    }
+
+    #[test]
+    fn container_mode_serde_roundtrip() {
+        for (mode, expected_json) in [
+            (ContainerMode::New, "\"new\""),
+            (ContainerMode::Existing, "\"existing\""),
+        ] {
+            let json = serde_json::to_string(&mode).unwrap();
+            assert_eq!(json, expected_json);
+            let back: ContainerMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, mode);
+        }
+    }
+
+    #[test]
+    fn docker_config_omits_container_mode_defaults_to_new() {
+        // A stored config from before PROD-016 has neither field; it must
+        // deserialize as the new-container mode so it behaves exactly as before.
+        let json = r#"{"image":"alpine"}"#;
+        let cfg: DockerConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.container_mode, ContainerMode::New);
+        assert!(cfg.existing_container.is_none());
+    }
+
+    #[test]
+    fn docker_config_existing_mode_roundtrip() {
+        let cfg = DockerConfig {
+            container_mode: ContainerMode::Existing,
+            existing_container: Some("my-running-app".into()),
+            image: String::new(),
+            ..DockerConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: DockerConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.container_mode, ContainerMode::Existing);
+        assert_eq!(back.existing_container.as_deref(), Some("my-running-app"));
     }
 
     #[test]
@@ -1338,6 +1414,8 @@ mod tests {
     fn docker_config_roundtrip() {
         let cfg = DockerConfig {
             runtime: ContainerRuntime::Podman,
+            container_mode: ContainerMode::New,
+            existing_container: None,
             image: "ubuntu:22.04".into(),
             shell: Some("/bin/bash".into()),
             cols: 80,
