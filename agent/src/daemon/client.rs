@@ -938,6 +938,61 @@ mod tests {
         );
     }
 
+    /// SM-003: an `MSG_EVICTED` frame is an eviction, not an exit — the reader
+    /// emits a typed `connection.evicted` notification, clears the writer so no
+    /// further input reaches a session another desktop controls, raises the
+    /// evicted flag, keeps the session alive and does NOT run the exit hook.
+    #[tokio::test]
+    async fn reader_loop_reports_eviction_without_exiting() {
+        let (client_sock, mut server_sock) = tokio::io::duplex(64 * 1024);
+        tokio::spawn(async move {
+            protocol::write_frame_async(&mut server_sock, MSG_EVICTED, &[])
+                .await
+                .unwrap();
+            // Keep the daemon end open: the reader must return on the frame
+            // itself, not wait for the EOF.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(server_sock);
+        });
+
+        let reader: BoxedReader = Box::new(client_sock);
+        let (on_exit, ran) = recording_exit_hook();
+        let alive = Arc::new(AtomicBool::new(true));
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_unused_reader, writer_half) = tokio::io::duplex(64);
+        let sink = EvictionSink {
+            writer: Arc::new(Mutex::new(Some(Box::new(writer_half) as BoxedWriter))),
+            evicted: Arc::new(AtomicBool::new(false)),
+        };
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            reader_loop_inner(
+                reader,
+                "sess",
+                &tx,
+                &alive,
+                Arc::new(Mutex::new(None)),
+                on_exit,
+                Some(&sink),
+            ),
+        )
+        .await
+        .expect("the reader returns on the evicted frame");
+
+        let n = rx.try_recv().expect("a connection.evicted notification");
+        assert_eq!(n.method, CONNECTION_EVICTED);
+        assert_eq!(n.params["session_id"], "sess");
+        assert_eq!(n.params["reason"], EVICTED_REASON_TAKEOVER);
+        assert!(sink.evicted.load(Ordering::SeqCst), "evicted flag raised");
+        assert!(sink.writer.lock().await.is_none(), "writer cleared");
+        assert!(alive.load(Ordering::SeqCst), "an eviction is not an exit");
+        assert!(
+            !ran.load(Ordering::SeqCst),
+            "the exit hook must not run for an eviction"
+        );
+    }
+
     /// The reader must also run the exit hook when the daemon connection reaches
     /// EOF (the daemon vanished without a clean `MSG_EXITED`) (#2381).
     #[tokio::test]
@@ -1238,6 +1293,7 @@ mod tests {
             writer: Arc::new(Mutex::new(None)),
             reader_task: None,
             alive: Arc::new(AtomicBool::new(true)),
+            evicted: Arc::new(AtomicBool::new(false)),
             notification_tx: make_notification_tx(),
             pending_buffer_reply: Arc::new(Mutex::new(None)),
             on_exit: Arc::new(OnceLock::new()),

@@ -549,7 +549,7 @@ async fn send_exited_async(writer: &mut Option<BoxedWriter>, code: i32) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::sync::Mutex;
 
@@ -899,7 +899,7 @@ mod tests {
     // a recovery connect (the second-desktop data-loss bug) while still allowing
     // a fresh worker to recover a truly-orphaned session and a deliberate
     // takeover to replace a live writer.
-    mod recovery_guard {
+    pub(crate) mod recovery_guard {
         use crate::daemon::client::{DaemonClient, OwnedByLivePeer};
         use crate::daemon::transport::{self, DaemonListener};
         use crate::io::transport::NotificationSender;
@@ -980,7 +980,7 @@ mod tests {
 
         /// Bind an endpoint and run a real `daemon_loop` against it on a
         /// background task. Returns the endpoint and the loop's join handle.
-        async fn spawn_daemon(endpoint: &str) -> tokio::task::JoinHandle<()> {
+        pub(crate) async fn spawn_daemon(endpoint: &str) -> tokio::task::JoinHandle<()> {
             let mut listener = DaemonListener::bind(endpoint)
                 .await
                 .expect("bind daemon endpoint");
@@ -1070,6 +1070,180 @@ mod tests {
                     .await
                     .expect("a takeover connect must succeed even while A is attached");
             assert!(client_b.is_alive(), "the taking-over writer must be alive");
+        }
+
+        // ── SM-003: single-attach eviction ──────────────────────────────
+
+        type NotificationRx =
+            tokio::sync::mpsc::UnboundedReceiver<crate::protocol::messages::JsonRpcNotification>;
+
+        fn notification_pair() -> (NotificationSender, NotificationRx) {
+            tokio::sync::mpsc::unbounded_channel()
+        }
+
+        /// Wait (bounded) for the next `connection.evicted` notification, skipping
+        /// any interleaved output notifications. Returns its `reason`.
+        async fn next_evicted(rx: &mut NotificationRx) -> String {
+            let deadline = std::time::Duration::from_secs(10);
+            tokio::time::timeout(deadline, async {
+                loop {
+                    let n = rx.recv().await.expect("notification channel open");
+                    if n.method == crate::protocol::methods::CONNECTION_EVICTED {
+                        assert_eq!(n.params["session_id"], "s");
+                        return n.params["reason"].as_str().unwrap_or_default().to_string();
+                    }
+                }
+            })
+            .await
+            .expect("an evicted owner must receive connection.evicted")
+        }
+
+        /// Wait (bounded) until `pred` holds, polling.
+        async fn eventually(mut pred: impl FnMut() -> bool) -> bool {
+            for _ in 0..200 {
+                if pred() {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            pred()
+        }
+
+        /// A takeover evicts the incumbent with a **typed** notification — not a
+        /// silent EOF — while the session itself stays alive and the incumbent
+        /// stops writing to it. Exactly one owner remains.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn takeover_evicts_incumbent_with_typed_notification() {
+            let endpoint = unique_endpoint("sm003-evict");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let (tx_a, mut rx_a) = notification_pair();
+            let client_a = DaemonClient::connect("s".into(), endpoint.clone(), tx_a)
+                .await
+                .expect("worker A attaches");
+            let client_b =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("worker B takes over");
+
+            assert_eq!(next_evicted(&mut rx_a).await, "takeover");
+            assert!(client_a.is_evicted(), "A must report it was taken over");
+            assert!(
+                client_a.is_alive(),
+                "an eviction is not an exit: the session is still alive"
+            );
+            assert!(
+                DaemonClient::write_via_handle(&client_a.writer_handle(), b"x")
+                    .await
+                    .is_err(),
+                "an evicted owner must not write to the session"
+            );
+            assert!(!client_b.is_evicted(), "B is the single owner");
+            client_b
+                .query_buffer()
+                .await
+                .expect("the new owner controls the session");
+        }
+
+        /// Reclaim (a takeover re-attach) flips ownership back: the reclaiming
+        /// side controls the session again and the other side is evicted in turn.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn reclaim_flips_ownership_back() {
+            let endpoint = unique_endpoint("sm003-reclaim");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let (tx_a, mut rx_a) = notification_pair();
+            let mut client_a = DaemonClient::connect("s".into(), endpoint.clone(), tx_a)
+                .await
+                .expect("worker A attaches");
+            let (tx_b, mut rx_b) = notification_pair();
+            let client_b = DaemonClient::connect("s".into(), endpoint.clone(), tx_b)
+                .await
+                .expect("worker B takes over");
+            assert_eq!(next_evicted(&mut rx_a).await, "takeover");
+
+            client_a.attach().await.expect("A reclaims");
+            assert!(!client_a.is_evicted(), "a reclaim clears A's eviction");
+            assert_eq!(next_evicted(&mut rx_b).await, "takeover");
+            assert!(client_b.is_evicted(), "B is evicted by the reclaim");
+            client_a
+                .query_buffer()
+                .await
+                .expect("A controls the session again");
+        }
+
+        /// Two owners racing to take over the same session end with **exactly one**
+        /// owner: every other contender is evicted.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+        async fn racing_takeovers_leave_exactly_one_owner() {
+            let endpoint = unique_endpoint("sm003-race");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let client_a =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("worker A attaches");
+            let (b, c) = tokio::join!(
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx()),
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx()),
+            );
+            let client_b = b.expect("B connects");
+            let client_c = c.expect("C connects");
+            let clients = [&client_a, &client_b, &client_c];
+            let single_owner =
+                eventually(|| clients.iter().filter(|c| !c.is_evicted()).count() == 1).await;
+            assert!(single_owner, "exactly one owner must remain after the race");
+            let owner = clients.iter().find(|c| !c.is_evicted()).expect("one owner");
+            owner
+                .query_buffer()
+                .await
+                .expect("the owner controls the session");
+        }
+
+        /// Backward compatibility: an incumbent that predates SM-003 sees the new
+        /// frame as one unknown type followed by the same EOF it always got, so it
+        /// falls back to today's drop handling.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn legacy_incumbent_sees_evicted_frame_then_eof() {
+            use crate::daemon::protocol::{self, MSG_EVICTED, MSG_READY};
+
+            let endpoint = unique_endpoint("sm003-legacy");
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            // A raw, pre-SM-003 incumbent: no attach-intent frame, just the
+            // handshake.
+            let (mut reader, _writer) = transport::connect(&endpoint).await.expect("connect");
+            loop {
+                let frame = protocol::read_frame_async(&mut reader)
+                    .await
+                    .expect("read")
+                    .expect("frame");
+                if frame.msg_type == MSG_READY {
+                    break;
+                }
+            }
+
+            let _client_b =
+                DaemonClient::connect("s".into(), endpoint.clone(), make_notification_tx())
+                    .await
+                    .expect("B takes over");
+
+            let frame = protocol::read_frame_async(&mut reader)
+                .await
+                .expect("read")
+                .expect("the evicted frame precedes the close");
+            assert_eq!(frame.msg_type, MSG_EVICTED);
+            assert!(frame.payload.is_empty());
+            let eof = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                protocol::read_frame_async(&mut reader),
+            )
+            .await
+            .expect("the daemon closes the evicted connection");
+            assert!(
+                matches!(eof, Ok(None) | Err(_)),
+                "the legacy incumbent then observes the historical EOF"
+            );
         }
     }
 }
