@@ -9,7 +9,16 @@ import { describe, it, expect } from "vitest";
 
 import type { PanelNode, TabContent, TerminalTab } from "@/types/terminal";
 
-import { collectTabs, minimalNodesEqual, reconcileNode, toMinimalNode } from "./layoutBridge";
+import {
+  collectTabs,
+  composeLayoutFromView,
+  type LayoutView,
+  minimalNodesEqual,
+  pruneDanglingTabs,
+  reconcileLayoutFromView,
+  reconcileNode,
+  toMinimalNode,
+} from "./layoutBridge";
 
 function tab(id: string, extra: Partial<TerminalTab> = {}): TerminalTab {
   return {
@@ -174,5 +183,73 @@ describe("layoutBridge — render-from-projection helpers (#2151 step 3)", () =>
     expect((viaMap as Extract<PanelNode, { type: "leaf" }>).tabs[0].title).toBe("Tab ghost");
     // Absent from both an empty tree index and an empty map → throws.
     expect(() => reconcileNode(projected, new Map(), {})).toThrow(/unknown tab ghost/);
+  });
+});
+
+describe("layoutBridge — dangling-tab reconcile (SM-024)", () => {
+  function view(root: PanelNode = tree()): LayoutView {
+    return {
+      groups: [{ id: "g1", name: "Main", root: toMinimalNode(root), activePanelId: "a" }],
+      activeGroupId: "g1",
+    };
+  }
+  const allContent = (): Record<string, TabContent> => ({
+    t1: content("t1"),
+    t2: content("t2"),
+    t3: content("t3"),
+  });
+
+  it("returns the same view object when every tab has content", () => {
+    const v = view();
+    const pruned = pruneDanglingTabs(v, allContent());
+    expect(pruned.view).toBe(v);
+    expect(pruned.droppedTabIds).toEqual([]);
+  });
+
+  it("drops dangling tabs and keeps panel ids and tree shape", () => {
+    const { t2: _drop, ...c } = allContent();
+    const pruned = pruneDanglingTabs(view(), c);
+    expect(pruned.droppedTabIds).toEqual(["t2"]);
+    const root = pruned.view.groups[0].root;
+    expect(root.type).toBe("split");
+    if (root.type !== "split") return;
+    expect(root.children.map((n) => n.id)).toEqual(["a", "b"]);
+    const a = root.children[0];
+    expect(a.type === "leaf" && a.tabs.map((t) => t.id)).toEqual(["t1"]);
+  });
+
+  it("repairs a leaf whose active tab was dropped (positional fallback)", () => {
+    const { t1: _drop, ...c } = allContent();
+    const a = pruneDanglingTabs(view(), c).view.groups[0].root;
+    const leafA = a.type === "split" ? a.children[0] : a;
+    expect(leafA.type === "leaf" && leafA.activeTabId).toBe("t2");
+  });
+
+  it("leaves an emptied leaf in place with no active tab", () => {
+    const { t3: _drop, ...c } = allContent();
+    const r = pruneDanglingTabs(view(), c).view.groups[0].root;
+    const leafB = r.type === "split" ? r.children[1] : r;
+    expect(leafB).toMatchObject({ type: "leaf", id: "b", tabs: [], activeTabId: null });
+  });
+
+  it("composes leniently where the strict compose returns null", () => {
+    const { t2: _drop, ...c } = allContent();
+    expect(composeLayoutFromView(view(), c, {})).toBeNull();
+    const reconciled = reconcileLayoutFromView(view(), c, {});
+    expect(reconciled?.droppedTabIds).toEqual(["t2"]);
+    expect(collectTabs(reconciled!.composed.rootPanel).has("t2")).toBe(false);
+    expect(collectTabs(reconciled!.composed.rootPanel).has("t1")).toBe(true);
+  });
+
+  it("is identical to the strict compose when nothing dangles", () => {
+    const strict = composeLayoutFromView(view(), allContent(), {});
+    const lenient = reconcileLayoutFromView(view(), allContent(), {});
+    expect(lenient?.droppedTabIds).toEqual([]);
+    expect(lenient?.composed).toEqual(strict);
+  });
+
+  it("returns null for an absent or group-less view", () => {
+    expect(reconcileLayoutFromView(undefined, allContent(), {})).toBeNull();
+    expect(reconcileLayoutFromView({ groups: [], activeGroupId: "" }, allContent(), {})).toBeNull();
   });
 });
