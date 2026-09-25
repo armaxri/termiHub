@@ -521,6 +521,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "nativePluginsEnabled",
+    label: "Enable Native (In-Process) Plugins",
+    description:
+      "Off by default: native plugins run in-process with full app privileges and no OS sandbox. Each must be trusted individually before it loads (SEC-002/PLG-006).",
+    category: "plugins",
+    keywords: [
+      "plugin",
+      "native",
+      "in-process",
+      "backend",
+      "security",
+      "trust",
+      "acknowledge",
+      "untrusted",
+      "sandbox",
+      "privileges",
+    ],
+  },
+  {
     id: "restoreLastSessionOnStartup",
     label: "Restore Last Session on Startup",
     description:
