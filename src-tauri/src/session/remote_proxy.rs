@@ -1112,10 +1112,8 @@ async fn drive_monitor_status<F>(
 
     // Honour a monitor that starts paused (the pause state survives a
     // re-subscribe on the provider).
-    if *paused_rx.borrow_and_update() {
-        if loop_state.pause().is_some() {
-            let _ = status_tx.send(loop_state.update()).await;
-        }
+    if *paused_rx.borrow_and_update() && loop_state.pause().is_some() {
+        let _ = status_tx.send(loop_state.update()).await;
     }
 
     loop {
@@ -1164,10 +1162,8 @@ async fn drive_monitor_status<F>(
                 if changed.is_err() {
                     break; // provider dropped
                 }
-                if *paused_rx.borrow_and_update() {
-                    if loop_state.pause().is_some() {
-                        let _ = status_tx.send(loop_state.update()).await;
-                    }
+                if *paused_rx.borrow_and_update() && loop_state.pause().is_some() {
+                    let _ = status_tx.send(loop_state.update()).await;
                 }
             }
             report = next_report(&mut reports_rx) => match report {
@@ -1234,12 +1230,13 @@ async fn drive_monitor_status<F>(
                         // the agent-connection layer is re-establishing it, so
                         // surface Reconnecting rather than leaving the numbers
                         // merely dimmed.
-                        if loop_state.should_begin_reconnect() && !alive {
-                            if loop_state.begin_reconnect().is_some() {
-                                // The agent transport itself is down (#3301).
-                                loop_state.attribute(MonitorStatusReason::Transport);
-                                let _ = status_tx.send(loop_state.update()).await;
-                            }
+                        if loop_state.should_begin_reconnect()
+                            && !alive
+                            && loop_state.begin_reconnect().is_some()
+                        {
+                            // The agent transport itself is down (#3301).
+                            loop_state.attribute(MonitorStatusReason::Transport);
+                            let _ = status_tx.send(loop_state.update()).await;
                         }
                     }
                     // Bounded Stale (#3321): with the transport up, an agent that
