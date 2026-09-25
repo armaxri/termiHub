@@ -101,6 +101,52 @@ export async function createConnection(
 }
 
 /**
+ * Test (validate) a connection configuration **without saving it or opening a
+ * live session** (UX-007). Establishes the connection to verify reachability +
+ * credentials, then tears it down immediately — nothing is persisted and no tab
+ * is opened.
+ *
+ * Resolves when the connection was successfully established (and torn down);
+ * rejects with the structured IPC error envelope on failure, whose machine
+ * `code` classifies the reason (`auth_failed`, `unreachable`, …) — decode it
+ * with {@link parseBackendError} / {@link backendErrorMessage}.
+ *
+ * Pass a UNIQUE per-attempt `connectId` (e.g. `test:${crypto.randomUUID()}`) to
+ * make a hung test abortable via {@link cancelConnecting} (#952).
+ */
+export async function testConnection(
+  typeId: string,
+  settings: Record<string, unknown>,
+  agentId?: string,
+  connectId?: string
+): Promise<void> {
+  await invoke("test_connection", {
+    typeId,
+    settings,
+    agentId: agentId ?? null,
+    connectId: connectId ?? null,
+  });
+}
+
+/**
+ * Test a {@link ConnectionConfig} without saving it — the {@link createTerminal}
+ * analogue for validation (UX-007). Routes an agent (`remote-session`) config to
+ * its `agentId` + `sessionType` exactly as {@link createTerminal} does; a direct
+ * config tests its `type` + `config`. See {@link testConnection}.
+ */
+export async function testTerminal(config: ConnectionConfig, connectId?: string): Promise<void> {
+  if (config.type === "remote-session") {
+    const { agentId, sessionType, ...rest } = config.config as {
+      agentId: string;
+      sessionType: string;
+      [key: string]: unknown;
+    };
+    return await testConnection(sessionType, rest, agentId, connectId);
+  }
+  return await testConnection(config.type, config.config, undefined, connectId);
+}
+
+/**
  * Cancel a session that is still connecting, identified by the `connectId`
  * passed to {@link createTerminal}. Aborts the in-flight handshake promptly
  * instead of waiting out the connect timeout (#952). No-op if the connect

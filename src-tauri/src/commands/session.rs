@@ -133,6 +133,47 @@ fn initial_connect_tab_id(connect_id: Option<&str>) -> Option<String> {
     (retry == "0" && !tab_id.is_empty()).then(|| tab_id.to_string())
 }
 
+/// Test (validate) a connection configuration **without saving it or leaving a
+/// live session** (UX-007).
+///
+/// Mirrors [`create_connection`]'s setup — resolving saved jump-host references
+/// and routing local vs agent (`agent_id`) connections — but only establishes
+/// the connection to verify it, then tears it down immediately. Nothing is
+/// persisted and no session is registered. A hung test can be aborted with
+/// [`cancel_connecting`] using the same `connect_id` (#952).
+///
+/// Returns `Ok(())` on a successful (and torn-down) connection, or a typed
+/// [`TerminalError`] whose stable machine code classifies the failure for the
+/// frontend — `auth_failed` (credentials rejected), `unreachable` (host
+/// unreachable / transport / timeout), or another category — via
+/// [`TerminalError::from_session_spawn`].
+#[tauri::command]
+pub async fn test_connection(
+    type_id: String,
+    mut settings: Value,
+    agent_id: Option<String>,
+    connect_id: Option<String>,
+    manager: State<'_, SessionManager>,
+    conn_manager: State<'_, ConnectionManager>,
+) -> Result<(), TerminalError> {
+    info!(type_id, agent_id = ?agent_id, "Testing connection");
+    // Expand any saved-connection jump-host references to inline hops before the
+    // settings reach core, exactly as create_connection does (#940).
+    conn_manager
+        .resolve_jump_host_refs(&mut settings, None)
+        .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
+
+    manager
+        .test_connection(
+            &type_id,
+            settings,
+            agent_id.as_deref(),
+            connect_id.as_deref(),
+        )
+        .await
+        .map_err(TerminalError::from_session_spawn)
+}
+
 /// Cancel an in-flight (still connecting) session by its `connect_id`.
 ///
 /// Fires the cancellation token registered by [`create_connection`] so a Stop /
