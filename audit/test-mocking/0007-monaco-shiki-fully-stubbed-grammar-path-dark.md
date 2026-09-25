@@ -10,8 +10,8 @@ evidence:
   - src/test/setup.ts:153
   - src/test/setup.ts:190
   - src/utils/monacoCustomLanguages.ts
-status: partial
-resolution: "develop — monaco custom-language registration branches now exercised+asserted (monacoCustomLanguages.test.ts, addresses TFE-009 ~2% branch); remaining: not run vs real monaco languages namespace, global test/setup.ts:171 still hard-codes monaco/shiki lang lists (upgrade drift)"
+status: fixed
+resolution: "#3263 — monaco custom-language registration now asserted against the REAL registration with all expected sets derived from source: extracted BUILTIN_LANGUAGE_DEFINITIONS/IDs single-source-of-truth in monacoCustomLanguages.ts, rewrote tests to assert verbatim registration + tokenizers, and added monacoCustomLanguages.setup-sync.test.ts guarding the test/setup.ts:171 mock list against the source (drift-verified). No more hard-coded literal drift"
 ---
 
 ## What

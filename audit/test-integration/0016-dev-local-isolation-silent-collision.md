@@ -10,7 +10,8 @@ evidence:
   - tests/system/termihub_harness/dev_local.py
   - docs/testing.md:718
   - docs/testing.md:802
-status: open
+status: fixed
+resolution: "#3265 — harness dev.local.json resolver no longer silently defaults on a missing/malformed config in a parallel tree: dev_local.py _load() raises (with a clear fix message) when a sibling dev*/termiHub checkout is detected AND no TERMIHUB_TEST_PORT_OFFSET isolation is set; escape hatches TERMIHUB_TEST_PORT_OFFSET / TERMIHUB_ALLOW_DEFAULT_DEV_LOCAL=1; + self-check that dev_name lines up with test_port_offset (Nx1000) and compose_project (termihub-test-N). Solo/CI single-checkout still defaults offset 0 with no error (unaffected). Conservative: doesn't enforce the non-formulaic dev_agent_port per #1536"
 ---
 
 ## What
