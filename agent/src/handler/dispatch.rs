@@ -2100,7 +2100,7 @@ fn register_agent_request_update(
         // Coordination is a courtesy, not a gate: every outcome proceeds. What
         // differs is only what we can report about the hosts we were waiting on.
         let apply = session_manager
-            .request_deferred_update(p.binary_path, p.version)
+            .request_deferred_update(p.binary_path, p.version, p.expected_sha256)
             .await
             .map_err(map_deferred_update_error)?;
 
@@ -2146,7 +2146,7 @@ fn register_agent_request_deferred_update(
                 .map_err(|e| invalid_params("agent.request_deferred_update", e))?;
 
             let outcome = session_manager
-                .request_deferred_update(p.binary_path, p.version)
+                .request_deferred_update(p.binary_path, p.version, p.expected_sha256)
                 .await
                 .map_err(map_deferred_update_error)?;
 
@@ -4839,6 +4839,7 @@ mod tests {
             &self,
             _binary_path: Option<String>,
             _version: Option<String>,
+            _expected_sha256: Option<String>,
         ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
             let active = self.sessions.lock().await.len() as u32;
             if active == 0 {

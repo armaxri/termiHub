@@ -683,6 +683,13 @@ pub struct AgentRequestDeferredUpdateParams {
     /// Optional target version label (bookkeeping only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Expected lowercase-hex SHA-256 digest of the binary at `binary_path`,
+    /// computed by the initiator (the desktop hashes the bytes it uploads). The
+    /// agent re-verifies the staged bytes against this immediately before the
+    /// swap (AGT-004). Sent whenever `binary_path` is; omitted for a self-staged
+    /// "Apply Now", where the agent uses the digest it recorded at download.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -713,6 +720,13 @@ pub struct AgentRequestUpdateParams {
     /// Optional target version label (bookkeeping only).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Expected lowercase-hex SHA-256 digest of the binary at `binary_path`,
+    /// computed by the initiator (the desktop hashes the bytes it uploads). The
+    /// agent re-verifies the staged bytes against this immediately before the
+    /// swap (AGT-004). Sent whenever `binary_path` is; omitted for a self-staged
+    /// "Apply Now", where the agent uses the digest it recorded at download.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_sha256: Option<String>,
     /// How long other hosts get to disconnect before the update proceeds
     /// anyway. Omit for the default 10 s
     /// (`ACK_TIMEOUT` in the agent's `update` module); tests use a short window
@@ -2643,15 +2657,17 @@ mod tests {
             serde_json::to_value(AgentRequestDeferredUpdateParams {
                 binary_path: Some("/tmp/agent".to_string()),
                 version: Some("0.4.0".to_string()),
+                expected_sha256: Some("a".repeat(64)),
             })
             .unwrap(),
-            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0" }),
+            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0", "expectedSha256": "a".repeat(64) }),
         );
         // Self-update "Apply Now": no staging inputs → `{}`.
         assert_eq!(
             serde_json::to_value(AgentRequestDeferredUpdateParams {
                 binary_path: None,
                 version: None,
+                expected_sha256: None,
             })
             .unwrap(),
             json!({}),
@@ -2666,15 +2682,17 @@ mod tests {
             serde_json::to_value(AgentRequestUpdateParams {
                 binary_path: Some("/tmp/agent".to_string()),
                 version: Some("0.4.0".to_string()),
+                expected_sha256: Some("b".repeat(64)),
                 ack_timeout_secs: None,
             })
             .unwrap(),
-            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0" }),
+            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0", "expectedSha256": "b".repeat(64) }),
         );
         assert_eq!(
             serde_json::to_value(AgentRequestUpdateParams {
                 binary_path: None,
                 version: None,
+                expected_sha256: None,
                 ack_timeout_secs: None,
             })
             .unwrap(),

@@ -147,8 +147,12 @@ impl TestPendingUpdate {
     /// #1551 startup prune has already run against the on-disk state — see the
     /// module docs.
     pub async fn seed(&self, session_manager: &SessionManager) {
+        // No expected digest is carried for the test-hook seed (the default
+        // binary path does not exist, so a real apply already fails closed at
+        // confinement; the missing digest is simply an additional fail-closed
+        // gate). The hook exists only to surface the banner / deferred RPC.
         session_manager
-            .stage_pending_update(self.binary_path.clone(), self.version.clone())
+            .stage_pending_update(self.binary_path.clone(), self.version.clone(), None)
             .await;
         info!(
             "TEST HOOK ({TEST_PENDING_UPDATE_ENV}): staged a pending update for version {} from {} \
@@ -271,6 +275,7 @@ mod tests {
             version: hook.version.clone(),
             binary_path: hook.binary_path.clone(),
             staged_at: "2026-07-17T09:00:00Z".to_string(),
+            expected_sha256: None,
         });
 
         let current_exe = std::env::current_exe().ok();

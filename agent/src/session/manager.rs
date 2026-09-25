@@ -92,6 +92,7 @@ pub trait SessionManagerApi: Send + Sync + 'static {
         &self,
         binary_path: Option<String>,
         version: Option<String>,
+        expected_sha256: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError>;
 
     /// Attach a client to an existing session.
@@ -1138,9 +1139,11 @@ impl SessionManager {
     /// already idle (#1352).
     ///
     /// When `binary_path` is `Some`, that binary is staged as the pending update
-    /// (persisted to `state.json`). When it is `None`, the already-staged pending
-    /// update is used — this is the "Apply Now" path for a self-update binary the
-    /// agent downloaded earlier.
+    /// (persisted to `state.json`) with the caller-supplied `expected_sha256`,
+    /// which the apply path re-verifies against before the swap (AGT-004). When
+    /// it is `None`, the already-staged pending update — with the digest it was
+    /// staged with — is used; this is the "Apply Now" path for a self-update
+    /// binary the agent downloaded earlier (`expected_sha256` is ignored there).
     ///
     /// The update is applied immediately **only** when there are zero active
     /// sessions; otherwise it is deferred until the last session disconnects
@@ -1149,6 +1152,7 @@ impl SessionManager {
         &self,
         binary_path: Option<String>,
         version: Option<String>,
+        expected_sha256: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
         // Stage a caller-supplied binary, or fall back to an existing pending
         // update.
@@ -1163,6 +1167,10 @@ impl SessionManager {
                 version: version.unwrap_or_default(),
                 binary_path: confined.to_string_lossy().into_owned(),
                 staged_at: Utc::now().to_rfc3339(),
+                // AGT-004: carry the initiator's expected digest so the apply
+                // path can re-verify the staged bytes before the swap. A missing
+                // digest here is persisted as `None` and fails closed at apply.
+                expected_sha256,
             };
             self.persist_state_delta(move |s| {
                 s.update.pending_update = Some(pending);
@@ -1210,11 +1218,21 @@ impl SessionManager {
     /// Used by the self-update timer when the connection's update strategy does
     /// not auto-apply on idle (coordinated), so a later coordinated apply — or
     /// an explicit `agent.request_deferred_update` — can consume it.
-    pub async fn stage_pending_update(&self, binary_path: String, version: String) {
+    ///
+    /// `expected_sha256` is the digest the download path verified the binary
+    /// against; it is recorded so the eventual apply re-verifies the staged
+    /// bytes before the swap (AGT-004).
+    pub async fn stage_pending_update(
+        &self,
+        binary_path: String,
+        version: String,
+        expected_sha256: Option<String>,
+    ) {
         let pending = PendingUpdate {
             version,
             binary_path,
             staged_at: Utc::now().to_rfc3339(),
+            expected_sha256,
         };
         self.persist_state_delta(move |s| {
             s.update.pending_update = Some(pending);
@@ -1466,8 +1484,9 @@ impl SessionManagerApi for SessionManager {
         &self,
         binary_path: Option<String>,
         version: Option<String>,
+        expected_sha256: Option<String>,
     ) -> Result<DeferredUpdateOutcome, DeferredUpdateError> {
-        SessionManager::request_deferred_update(self, binary_path, version).await
+        SessionManager::request_deferred_update(self, binary_path, version, expected_sha256).await
     }
 
     async fn attach(&self, session_id: &str) -> Result<(), String> {
@@ -1997,6 +2016,7 @@ mod tests {
                 version: "0.9.0".to_string(),
                 binary_path: path.to_string(),
                 staged_at: "2026-07-14T09:00:00Z".to_string(),
+                expected_sha256: None,
             }
         }
 
@@ -2072,6 +2092,7 @@ mod tests {
                 version: "0.0.1".to_string(),
                 binary_path: "/tmp/already-applied-agent".to_string(),
                 staged_at: "2026-07-17T09:00:00Z".to_string(),
+                expected_sha256: None,
             });
             seeded.save_to(&state_path);
 
@@ -2128,6 +2149,7 @@ mod tests {
                 version: "9.9.9".to_string(),
                 binary_path: staged.to_string_lossy().into_owned(),
                 staged_at: "2026-07-17T09:00:00Z".to_string(),
+                expected_sha256: None,
             });
             seeded.save_to(&state_path);
 
@@ -2191,6 +2213,7 @@ mod tests {
                 .request_deferred_update(
                     Some(bin.to_string_lossy().into_owned()),
                     Some("1.0.0".to_string()),
+                    Some("a".repeat(64)),
                 )
                 .await
                 .unwrap();
@@ -2206,9 +2229,15 @@ mod tests {
                 applied.lock().unwrap().is_empty(),
                 "must not apply while a session is active"
             );
-            assert!(
-                mgr.pending_update_for_test().await.is_some(),
-                "the pending update must be persisted for the last-disconnect apply"
+            // AGT-004: the caller-supplied expected digest is persisted on the
+            // pending update so the last-disconnect apply can re-verify it.
+            let pending = mgr
+                .pending_update_for_test()
+                .await
+                .expect("the pending update must be persisted for the last-disconnect apply");
+            assert_eq!(
+                pending.expected_sha256.as_deref(),
+                Some("a".repeat(64).as_str())
             );
         }
 
@@ -2222,7 +2251,7 @@ mod tests {
             std::fs::write(&bin, b"BIN").unwrap();
 
             let outcome = mgr
-                .request_deferred_update(Some(bin.to_string_lossy().into_owned()), None)
+                .request_deferred_update(Some(bin.to_string_lossy().into_owned()), None, None)
                 .await
                 .unwrap();
 
@@ -2243,7 +2272,7 @@ mod tests {
             mgr.seed_pending_update_for_test(fake_pending("/tmp/staged-agent"))
                 .await;
 
-            let outcome = mgr.request_deferred_update(None, None).await.unwrap();
+            let outcome = mgr.request_deferred_update(None, None, None).await.unwrap();
             assert!(matches!(outcome, DeferredUpdateOutcome::Applying));
             let log = applied.lock().unwrap();
             assert_eq!(log.len(), 1);
@@ -2253,7 +2282,10 @@ mod tests {
         #[tokio::test]
         async fn request_without_path_and_no_pending_errors() {
             let (mgr, _applied, _tmp) = manager_with_recording_applier();
-            let err = mgr.request_deferred_update(None, None).await.unwrap_err();
+            let err = mgr
+                .request_deferred_update(None, None, None)
+                .await
+                .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::NoPendingUpdate));
         }
 
@@ -2261,7 +2293,7 @@ mod tests {
         async fn request_with_missing_binary_errors() {
             let (mgr, _applied, _tmp) = manager_with_recording_applier();
             let err = mgr
-                .request_deferred_update(Some("/no/such/binary".to_string()), None)
+                .request_deferred_update(Some("/no/such/binary".to_string()), None, None)
                 .await
                 .unwrap_err();
             assert!(matches!(err, DeferredUpdateError::BinaryNotFound(_)));
@@ -2277,7 +2309,7 @@ mod tests {
             std::fs::write(&outside, b"EVIL").unwrap();
 
             let err = mgr
-                .request_deferred_update(Some(outside.to_string_lossy().into_owned()), None)
+                .request_deferred_update(Some(outside.to_string_lossy().into_owned()), None, None)
                 .await
                 .expect_err("a binary outside the staging dir must be rejected");
             assert!(

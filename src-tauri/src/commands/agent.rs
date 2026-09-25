@@ -309,6 +309,11 @@ pub async fn request_agent_deferred_update(
         let params = serde_json::to_value(AgentRequestDeferredUpdateParams {
             binary_path,
             version,
+            // This command is the banner's "Apply Now", which never carries a
+            // binary path — the agent applies the update it already staged (with
+            // the digest it recorded at download). A path pushed here without a
+            // digest would fail closed at the agent's apply-time check (AGT-004).
+            expected_sha256: None,
         })
         .map_err(|e| {
             TerminalError::RemoteError(format!(
@@ -322,11 +327,12 @@ pub async fn request_agent_deferred_update(
         )?;
         // Parse into the shared result DTO; a malformed reply degrades to the same
         // defaults the pre-migration `unwrap_or` used ("applied unknown → false").
-        let parsed = serde_json::from_value::<AgentRequestDeferredUpdateResult>(result)
-            .unwrap_or(AgentRequestDeferredUpdateResult {
+        let parsed = serde_json::from_value::<AgentRequestDeferredUpdateResult>(result).unwrap_or(
+            AgentRequestDeferredUpdateResult {
                 applied: false,
                 active_sessions: 0,
-            });
+            },
+        );
         Ok(DeferredUpdateResponse {
             applied: parsed.applied,
             active_sessions: parsed.active_sessions,
@@ -384,6 +390,9 @@ pub async fn request_agent_update(
         let params = serde_json::to_value(AgentRequestUpdateParams {
             binary_path,
             version,
+            // "Apply Now" for a coordinated self-staged update: no path, so no
+            // digest — the agent verifies against the digest it staged with.
+            expected_sha256: None,
             ack_timeout_secs: None,
         })
         .map_err(|e| {
@@ -1007,14 +1016,18 @@ async fn run_coordinated_update(
     };
 
     // 3. Unix: dispatch the coordinated RPC. The agent notifies other hosts,
-    //    waits out the window, then self-applies from the staged path.
+    //    waits out the window, then self-applies from the staged path. Carry the
+    //    SHA-256 the desktop computed for the uploaded bytes so the agent
+    //    re-verifies the staged binary before the swap (AGT-004).
     let rpc_agent = agent_id.clone();
     let rpc_manager = manager.clone();
     let version = env!("CARGO_PKG_VERSION").to_string();
+    let expected_sha256 = staged.expected_sha256;
     let rpc_result = tauri::async_runtime::spawn_blocking(move || {
         let params = serde_json::to_value(AgentRequestUpdateParams {
             binary_path: Some(binary_path),
             version: Some(version),
+            expected_sha256: Some(expected_sha256),
             ack_timeout_secs: None,
         })
         .map_err(|e| {

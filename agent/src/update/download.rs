@@ -41,14 +41,16 @@ async fn download_to_file(client: &reqwest::Client, url: &str, dest: &Path) -> R
 /// against its published `.sha256` sidecar.
 ///
 /// On success `dest` holds the verified binary and its sidecar sits next to it
-/// (`<dest>.sha256`). On any failure both files are removed and an error is
+/// (`<dest>.sha256`), and the verified lowercase-hex SHA-256 digest is returned
+/// so the caller can thread it to the apply path for re-verification before the
+/// swap (AGT-004). On any failure both files are removed and an error is
 /// returned. A release with no published checksum is rejected — self-update
 /// never installs an unverifiable binary.
 pub async fn download_and_verify(
     client: &reqwest::Client,
     urls: &AssetUrls,
     dest: &Path,
-) -> Result<()> {
+) -> Result<String> {
     let checksum_url = match urls.checksum_url.as_deref() {
         Some(url) => url,
         None => bail!(
@@ -71,13 +73,14 @@ pub async fn download_and_verify(
     result
 }
 
-/// Fetch the checksum sidecar and verify the downloaded binary against it.
+/// Fetch the checksum sidecar, verify the downloaded binary against it, and
+/// return the verified expected digest.
 async fn verify_downloaded(
     client: &reqwest::Client,
     checksum_url: &str,
     dest: &Path,
     sidecar: &Path,
-) -> Result<()> {
+) -> Result<String> {
     download_to_file(client, checksum_url, sidecar)
         .await
         .with_context(|| format!("failed to download published checksum from {checksum_url}"))?;
@@ -92,7 +95,7 @@ async fn verify_downloaded(
     })?;
     verify_file_checksum(dest, &expected)?;
     debug!("Verified downloaded agent binary at {}", dest.display());
-    Ok(())
+    Ok(expected)
 }
 
 #[cfg(test)]
@@ -138,12 +141,15 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().join("termihub-agent-linux-x64");
-        download_and_verify(&reqwest::Client::new(), &urls(&server, true), &dest)
+        let digest = download_and_verify(&reqwest::Client::new(), &urls(&server, true), &dest)
             .await
             .unwrap();
 
         assert_eq!(std::fs::read(&dest).unwrap(), b"abc");
         assert!(checksum_sidecar_path(&dest).is_file());
+        // The verified digest is returned so it can be threaded to the apply
+        // path for re-verification before the swap (AGT-004).
+        assert_eq!(digest, SHA256_OF_ABC);
     }
 
     #[tokio::test]

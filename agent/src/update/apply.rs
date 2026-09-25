@@ -286,7 +286,7 @@ pub struct SystemUpdateApplier;
 
 impl UpdateApplier for SystemUpdateApplier {
     fn apply(&self, pending: &PendingUpdate) -> anyhow::Result<()> {
-        apply_update_binary(&pending.binary_path)
+        apply_update_binary(&pending.binary_path, pending.expected_sha256.as_deref())
     }
 }
 
@@ -305,8 +305,8 @@ impl UpdateApplier for SystemUpdateApplier {
 /// replaces this process image and never returns; the freshly-started new agent
 /// removes the leftover backup at startup (see [`cleanup_stale_update_backup`]).
 #[cfg(unix)]
-fn apply_update_binary(binary_path: &str) -> anyhow::Result<()> {
-    apply_update_binary_confined(binary_path, &production_staging_roots())
+fn apply_update_binary(binary_path: &str, expected_sha256: Option<&str>) -> anyhow::Result<()> {
+    apply_update_binary_confined(binary_path, expected_sha256, &production_staging_roots())
 }
 
 /// The fixed remote path the desktop coordinated-push deploy uploads a staged
@@ -329,23 +329,38 @@ fn production_staging_roots() -> Vec<PathBuf> {
     ]
 }
 
-/// Swap-and-re-exec, but refuse a source outside `staging_roots` first (AGT-003
-/// defense-in-depth).
+/// Swap-and-re-exec, but refuse a source outside `staging_roots` (AGT-003
+/// defense-in-depth) **and** whose bytes do not match `expected_sha256`
+/// (AGT-004) first.
 ///
-/// This is the last gate before the running binary is replaced. Even though
-/// `request_deferred_update` already confined the path when the update was
-/// staged, the apply path re-asserts it here so a source outside the trusted
-/// staging locations is refused **before any copy or re-exec** — it must never
-/// rely solely on the upstream check. Fails closed on any confinement violation.
+/// This is the last gate before the running binary is replaced. Two guards run,
+/// in order, **before any copy or re-exec**:
+///
+/// 1. **Confinement (AGT-003, #3214).** Even though `request_deferred_update`
+///    already confined the path when the update was staged, the apply path
+///    re-asserts it here so a source outside the trusted staging locations is
+///    refused — it must never rely solely on the upstream check.
+/// 2. **Integrity (AGT-004).** The on-disk bytes at the confined path are
+///    SHA-256-hashed and compared to `expected_sha256`. A missing digest, a read
+///    error, or a mismatch all reject. This re-verification at apply time is what
+///    closes the stage-then-tamper TOCTOU: a binary verified at download/upload
+///    can still be swapped on disk before it is applied, so the bytes are
+///    re-hashed here, immediately before the swap.
+///
+/// Fails **closed** on any violation of either guard — the running binary is
+/// never touched.
 #[cfg(unix)]
 fn apply_update_binary_confined(
     binary_path: &str,
+    expected_sha256: Option<&str>,
     staging_roots: &[PathBuf],
 ) -> anyhow::Result<()> {
     use anyhow::Context;
 
-    let src = confine_to_staging(staging_roots, Path::new(binary_path))
-        .context("refuse to apply an agent update binary outside the trusted staging directory")?;
+    // Both guards run — confinement then digest — before the running binary is
+    // ever touched. Extracted into `confine_and_verify` so the tamper-vector
+    // tests can exercise the gate without driving the (destructive) swap+re-exec.
+    let src = confine_and_verify(binary_path, expected_sha256, staging_roots)?;
 
     let current = std::env::current_exe().context("resolve current agent executable")?;
     let backup = backup_path_for(&current);
@@ -397,6 +412,55 @@ fn apply_update_binary_confined(
             })
         }
     }
+}
+
+/// Run both apply-time guards — confinement (AGT-003) then integrity (AGT-004) —
+/// and return the confined, verified source path. Neither touches the running
+/// binary, so this is the non-destructive gate the swap depends on (and the seam
+/// the tamper-vector tests drive without a real swap+re-exec).
+///
+/// Order matters: confinement is FIRST so an out-of-staging path is rejected
+/// before its bytes are ever read. Fails **closed** on either guard.
+#[cfg(unix)]
+fn confine_and_verify(
+    binary_path: &str,
+    expected_sha256: Option<&str>,
+    staging_roots: &[PathBuf],
+) -> anyhow::Result<PathBuf> {
+    use anyhow::Context;
+
+    let src = confine_to_staging(staging_roots, Path::new(binary_path))
+        .context("refuse to apply an agent update binary outside the trusted staging directory")?;
+
+    verify_confined_digest(&src, expected_sha256)
+        .context("refuse to apply an agent update binary that failed integrity verification")?;
+
+    Ok(src)
+}
+
+/// Verify the confined update binary at `src` against its `expected_sha256`
+/// digest (AGT-004), failing **closed**.
+///
+/// Re-hashes the on-disk bytes at `src` and compares them to the digest the
+/// route that staged the update recorded. This runs immediately before the swap
+/// so a binary that was verified at download/upload but then swapped on disk is
+/// still caught (the stage-then-tamper TOCTOU).
+///
+/// Fails closed on all three failure modes:
+/// - **Missing digest** (`None`) — no route supplied one, so there is nothing to
+///   verify against; reject rather than skip.
+/// - **Read error** — the bytes cannot be hashed, so integrity cannot be proven.
+/// - **Mismatch** — the bytes are not the ones the initiator intended.
+#[cfg(unix)]
+fn verify_confined_digest(src: &Path, expected_sha256: Option<&str>) -> anyhow::Result<()> {
+    let expected = expected_sha256.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no expected SHA-256 digest was carried to the apply path for {} — refusing to \
+             apply an unverified agent binary (fail closed)",
+            src.display()
+        )
+    })?;
+    super::checksum::verify_file_checksum(src, expected)
 }
 
 /// Path of the sibling backup kept for the current agent binary during a
@@ -479,7 +543,7 @@ pub fn cleanup_stale_update_backup(_exe: &Path) {}
 /// running executable can be replaced in place. Returns an error so the caller
 /// surfaces it; keeps Windows/other builds compiling.
 #[cfg(not(unix))]
-fn apply_update_binary(_binary_path: &str) -> anyhow::Result<()> {
+fn apply_update_binary(_binary_path: &str, _expected_sha256: Option<&str>) -> anyhow::Result<()> {
     anyhow::bail!("deferred agent update apply is only supported on Unix platforms")
 }
 
@@ -600,6 +664,7 @@ mod tests {
             version: version.to_string(),
             binary_path: binary_path.to_string_lossy().into_owned(),
             staged_at: "2026-07-17T09:00:00Z".to_string(),
+            expected_sha256: None,
         }
     }
 
@@ -1083,12 +1148,147 @@ mod tests {
         let outside = dir.path().join("evil-agent");
         std::fs::write(&outside, b"EVIL").unwrap();
 
-        let err = apply_update_binary_confined(outside.to_str().unwrap(), &[staging])
-            .expect_err("apply must refuse a source outside the staging dir");
+        let err = apply_update_binary_confined(
+            outside.to_str().unwrap(),
+            Some(&sha256_hex(b"EVIL")),
+            &[staging],
+        )
+        .expect_err("apply must refuse a source outside the staging dir");
         let msg = format!("{err:#}");
         assert!(
             msg.contains("outside the trusted staging directory"),
             "the apply error must name the confinement reason, got: {msg}"
         );
+    }
+
+    // ── AGT-004: apply-time SHA-256 integrity verification ────────────────
+
+    #[cfg(unix)]
+    fn sha256_hex(bytes: &[u8]) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(bytes);
+        hex::encode(hasher.finalize())
+    }
+
+    /// Stage a valid binary inside a staging dir, returning
+    /// `(staging_root, staged_path, correct_digest)`.
+    #[cfg(unix)]
+    fn stage_valid_binary(dir: &Path, bytes: &[u8]) -> (PathBuf, PathBuf, String) {
+        let staging = dir.join("updates");
+        std::fs::create_dir_all(&staging).unwrap();
+        let bin = staging.join("termihub-agent-linux-x64");
+        std::fs::write(&bin, bytes).unwrap();
+        (staging, bin, sha256_hex(bytes))
+    }
+
+    // These drive `confine_and_verify` — the gate that runs before the swap — so
+    // they exercise the real reject/accept decision without a destructive
+    // swap+re-exec of the test binary.
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_rejects_a_binary_whose_bytes_do_not_match_the_expected_digest() {
+        // (a) The staged bytes do not match the expected digest — a tampered or
+        // corrupt binary. The gate must reject before any swap.
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, _good) = stage_valid_binary(tmp.path(), b"REAL-AGENT-BYTES");
+        let wrong_digest = sha256_hex(b"WHAT-THE-INITIATOR-INTENDED");
+
+        let err = confine_and_verify(
+            staged.to_str().unwrap(),
+            Some(&wrong_digest),
+            std::slice::from_ref(&staging),
+        )
+        .expect_err("a digest mismatch must be rejected");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.to_ascii_lowercase().contains("checksum") || msg.contains("integrity verification"),
+            "the apply error must name the integrity failure, got: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_rejects_a_binary_swapped_after_staging_toctou() {
+        // (b) TOCTOU: a good binary is staged and its digest recorded, then the
+        // file at the path is replaced with different bytes before apply. The
+        // gate re-hashes the on-disk bytes and rejects — the earlier
+        // download/upload verification is not sufficient.
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, good_digest) = stage_valid_binary(tmp.path(), b"GOOD-STAGED-BYTES");
+
+        // Attacker swaps the file at the confined path after staging.
+        std::fs::write(&staged, b"MALICIOUS-SWAPPED-BYTES").unwrap();
+
+        let err = confine_and_verify(
+            staged.to_str().unwrap(),
+            Some(&good_digest),
+            std::slice::from_ref(&staging),
+        )
+        .expect_err("bytes swapped after staging must be rejected at apply time");
+        let msg = format!("{err:#}").to_ascii_lowercase();
+        assert!(
+            msg.contains("checksum") || msg.contains("integrity"),
+            "the apply error must name the integrity failure, got: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_fails_closed_on_a_missing_expected_digest() {
+        // (c) No expected digest carried → fail closed (reject), never skip
+        // verification. A staged binary with no digest must not be applied.
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, _good) = stage_valid_binary(tmp.path(), b"UNVERIFIABLE-BYTES");
+
+        let err = confine_and_verify(
+            staged.to_str().unwrap(),
+            None,
+            std::slice::from_ref(&staging),
+        )
+        .expect_err("a missing expected digest must fail closed");
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("integrity verification") || msg.to_ascii_lowercase().contains("digest"),
+            "the apply error must name the missing-digest fail-closed reason, got: {msg}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn apply_gate_accepts_a_matching_confined_binary() {
+        // (d) The matching case: correct digest for the staged, confined bytes
+        // passes the gate and returns the canonical confined path. (The full
+        // swap+re-exec cannot run in-process; the swap itself is covered by the
+        // `replace_binary_*` tests.)
+        let tmp = tempfile::tempdir().unwrap();
+        let (staging, staged, good_digest) = stage_valid_binary(tmp.path(), b"CORRECT-AGENT-BYTES");
+
+        let confined = confine_and_verify(
+            staged.to_str().unwrap(),
+            Some(&good_digest),
+            std::slice::from_ref(&staging),
+        )
+        .expect("a matching, confined binary must pass the gate");
+        assert_eq!(confined, std::fs::canonicalize(&staged).unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verify_confined_digest_rejects_missing_mismatch_and_unreadable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("agent");
+        std::fs::write(&bin, b"AGENT-BYTES").unwrap();
+        let good = sha256_hex(b"AGENT-BYTES");
+
+        // Missing digest → fail closed.
+        assert!(verify_confined_digest(&bin, None).is_err());
+        // Mismatch → reject.
+        assert!(verify_confined_digest(&bin, Some(&sha256_hex(b"OTHER"))).is_err());
+        // Unreadable file → reject (cannot prove integrity).
+        assert!(verify_confined_digest(&tmp.path().join("does-not-exist"), Some(&good)).is_err());
+        // Match → OK.
+        assert!(verify_confined_digest(&bin, Some(&good)).is_ok());
     }
 }

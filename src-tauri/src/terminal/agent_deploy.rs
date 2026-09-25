@@ -209,6 +209,12 @@ pub struct StagedBinary {
     /// Remote temp path where the new binary was uploaded. `Some` on Unix (the
     /// value to pass as `binaryPath`); `None` on Windows.
     pub upload_path: Option<String>,
+    /// Lowercase-hex SHA-256 digest of the uploaded bytes, sent as the
+    /// `expectedSha256` on `agent.request_update` so the agent re-verifies the
+    /// staged binary before swapping it in (AGT-004). Empty on the Windows
+    /// no-upload path (the caller falls back to an immediate deploy and never
+    /// reads it).
+    pub expected_sha256: String,
 }
 
 /// Whether a coordinated desktop-push update can use the agent's self-swap path
@@ -574,6 +580,7 @@ pub fn stage_agent_binary(
             remote_os,
             is_windows: true,
             upload_path: None,
+            expected_sha256: String::new(),
         });
     }
 
@@ -646,6 +653,9 @@ pub fn stage_agent_binary(
     );
     let binary_bytes = std::fs::read(&binary_path)
         .map_err(|e| TerminalError::RemoteError(format!("Failed to read binary: {e}")))?;
+    // AGT-004: compute the SHA-256 of exactly the bytes we upload, so the agent
+    // can re-verify the staged binary against it immediately before the swap.
+    let expected_sha256 = agent_binary::sha256_hex_of_bytes(&binary_bytes);
     upload_bytes_via_sftp(&session, &binary_bytes, &plan.upload_path)?;
     if let Err(e) = bail_if_cancelled(cancel) {
         rollback_partial_upload(&session, &plan.upload_path);
@@ -667,6 +677,7 @@ pub fn stage_agent_binary(
     Ok(StagedBinary {
         remote_os,
         is_windows: false,
+        expected_sha256,
         upload_path: Some(plan.upload_path),
     })
 }

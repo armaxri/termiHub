@@ -395,13 +395,16 @@ async fn run_check_once(
 
     // When idle and we have a downloadable asset, stage a verified binary.
     let active_sessions = session_manager.active_count().await;
-    let mut staged_binary: Option<String> = None;
+    // The staged binary path together with the SHA-256 digest the download path
+    // verified it against — threaded to the apply path so the staged bytes are
+    // re-verified before the swap (AGT-004).
+    let mut staged_binary: Option<(String, String)> = None;
     if active_sessions == 0 {
         if let (Some(suffix), Some(urls)) = (config.asset_suffix.as_deref(), asset_urls.as_ref()) {
             let dest = config.staged_binary_path(suffix);
             match download::download_and_verify(client, urls, &dest).await {
-                Ok(()) => {
-                    staged_binary = Some(dest.to_string_lossy().into_owned());
+                Ok(digest) => {
+                    staged_binary = Some((dest.to_string_lossy().into_owned(), digest));
                     info!(
                         "Self-update: staged verified agent {} at {}",
                         available_version,
@@ -444,10 +447,14 @@ async fn run_check_once(
     // apply. Because we are idle, an eligible strategy applies immediately via
     // exec-replace; if a session raced in, `request_deferred_update` re-checks
     // and defers to the last-disconnect hook so active sessions are never cut.
-    if let Some(binary_path) = staged_binary {
+    if let Some((binary_path, expected_sha256)) = staged_binary {
         if config.update_strategy.auto_applies_when_idle() {
             match session_manager
-                .request_deferred_update(Some(binary_path), Some(available_version.clone()))
+                .request_deferred_update(
+                    Some(binary_path),
+                    Some(available_version.clone()),
+                    Some(expected_sha256),
+                )
                 .await
             {
                 Ok(outcome) => info!(
@@ -465,7 +472,11 @@ async fn run_check_once(
             }
         } else {
             session_manager
-                .stage_pending_update(binary_path, available_version.clone())
+                .stage_pending_update(
+                    binary_path,
+                    available_version.clone(),
+                    Some(expected_sha256),
+                )
                 .await;
             info!(
                 "Self-update: staged agent {} recorded; awaiting coordinated apply \
@@ -778,6 +789,9 @@ mod tests {
             let log = applied.lock().unwrap();
             assert_eq!(log.len(), 1, "staged self-update applied exactly once");
             assert_eq!(log[0].version, "0.3.0");
+            // AGT-004: the digest the download path verified is carried onto the
+            // pending update handed to apply (SHA-256 of the served `b"abc"`).
+            assert_eq!(log[0].expected_sha256.as_deref(), Some(SHA256_OF_ABC));
             // The staged path is confined + canonicalized before being recorded
             // (AGT-003), so compare against the canonical form of the staging path.
             assert_eq!(
@@ -834,6 +848,8 @@ mod tests {
                 .join("termihub-agent-linux-x64")
                 .to_string_lossy()
         );
+        // AGT-004: the verified digest is recorded for the later coordinated apply.
+        assert_eq!(pending.expected_sha256.as_deref(), Some(SHA256_OF_ABC));
     }
 
     #[tokio::test]
