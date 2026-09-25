@@ -250,6 +250,13 @@ ts-rs = "12"
 
 [features]
 default = []
+# Structured logging for the always-compiled core modules that emit diagnostics
+# (currently the transfer registry's illegal-transition warning, DUP-026). An
+# explicit feature — rather than the implicit one, which is suppressed because
+# other features reference `dep:tracing` — so a consumer that wants those logs
+# (the desktop) can opt in, while `cargo test -p termihub-core` (default) compiles
+# them out and stays tracing-free.
+tracing = ["dep:tracing"]
 # Embedded HTTP/FTP/TFTP file servers (#2192). Pulls the web-server stack
 # (`axum`/`tower-http` for HTTP, `libunftp`/`unftp-sbe-fs` for FTP) plus `chrono`
 # for status timestamps and `tracing` for lifecycle logs. Enabled by the desktop
