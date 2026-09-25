@@ -25,6 +25,14 @@
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+/// Chunk size for the remote-transfer copy loops (SFTP + FTP): large enough to
+/// amortise per-round-trip overhead, small enough that pause/cancel latency
+/// stays sub-second. This is the single source of truth for the 256 KiB value
+/// both transfer paths feed to [`run_chunked_copy`] as `chunk_size` (audit
+/// finding DUP-025); the loop itself stays chunk-size-agnostic so a caller can
+/// still pass a different size when it needs to.
+pub const CHUNK_SIZE: usize = 256 * 1024;
+
 /// Which I/O operation in the copy loop produced an error, so a caller can map
 /// each phase to its own transport-specific error variant and message text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +149,14 @@ mod tests {
 
     fn never_stop() -> Option<()> {
         None
+    }
+
+    #[test]
+    fn chunk_size_is_256_kib() {
+        // DUP-025: the single canonical transfer chunk size. Both the SFTP and
+        // FTP paths source their chunk size from here, so this pins the value
+        // that used to be duplicated as two separate `256 * 1024` literals.
+        assert_eq!(CHUNK_SIZE, 256 * 1024);
     }
 
     #[tokio::test]

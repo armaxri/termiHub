@@ -285,6 +285,15 @@ mod tests {
         assert_ne!(StopReason::Pause, StopReason::Cancel);
     }
 
+    /// DUP-025: the FTP chunk size is not an independent literal — it is the one
+    /// canonical `core::files::copy::CHUNK_SIZE`, so it can never silently drift
+    /// from the value the SFTP path uses.
+    #[test]
+    fn ftp_chunk_size_is_the_shared_core_constant() {
+        assert_eq!(FTP_CHUNK_SIZE, crate::files::copy::CHUNK_SIZE);
+        assert_eq!(FTP_CHUNK_SIZE, 256 * 1024);
+    }
+
     #[test]
     fn resume_offset_converts_typical_values_exactly() {
         assert_eq!(resume_offset_to_usize(0).unwrap(), 0);
