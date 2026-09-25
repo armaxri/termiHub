@@ -11,7 +11,7 @@ evidence:
   - src-tauri/src/files/transfer/scheduler.rs
   - src-tauri/src/files/transfer/retry.rs
 status: partial
-resolution: "develop — retry backoff now delegates to core util::backoff::capped_exponential_delay (files/transfer/retry.rs:37, resolves DUP-007 overlap); remaining in src-tauri not core: TransferState machine+MAX_RETRIES (state.rs:33), SessionScheduler (scheduler.rs:32), resume_offset/ThroughputMeter ETA (retry.rs:51/65) — no core::files::transfer yet"
+resolution: "#3275 — transfer domain -> core, sliced. Slice 1 #3275 MERGED: pure state machine + scheduler + retry moved to core::files::transfer (behavior-preserving, desktop re-exports, zero import churn). Slice 2 re-scoped (Option A) after finding executors reference registry+progress-model types: 2a (progress model + registry.rs incl. #3199 resume-relaunch logic + QUEUE_TEARDOWN -> core) in flight; 2b (executors, trivial TerminalError seam) follows. REMAINING desktop-only after cluster moves: app_progress_sink, legacy #1245 path, persist*.rs, relaunch.rs, command handlers. Enables agent-hosted transfers (#3242)"
 ---
 
 ## What
