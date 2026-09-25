@@ -156,6 +156,43 @@ jobs:
           test -f target/plugin-dist/solarized-night-1.0.0.termihub-plugin
           test -f target/plugin-dist/echo-backend-1.0.0.termihub-plugin
 
+  # Clippy on the Windows target (#3312). `rust-quality` above lints only on
+  # ubuntu, where every `#[cfg(windows)]` item (the WSL backend, the named-pipe
+  # IPC listener, the Windows clipboard/registry integration, ...) is compiled
+  # out — so Windows-only code was never linted, and lints such as a
+  # production `.expect()` (TOOL-010) merged undetected. `cargo test` on the
+  # Windows test leg compiles that code but does not lint it. This job closes
+  # the gap with the same `-D warnings` gate over the same workspace/target/
+  # feature set, so a lint in Windows-gated code fails the offending PR.
+  #
+  # fmt and the other ubuntu steps are platform-independent and are not
+  # repeated here; this job is clippy only.
+  rust-quality-windows:
+    name: Rust Code Quality (Windows)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      # Same pinned clippy toolchain as `rust-quality` (issue #2549): a floating
+      # `@stable` would let a new Rust release red this gate with no code change.
+      # Bump both pins together.
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0 branch
+        with:
+          components: clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # Same reader/writer split as `rust-quality`: only develop/main pushes
+          # save; PRs restore the develop cache and never write their own.
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Run Clippy on Windows (linter)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
   # RDP Sidecar Quality + Supply-Chain Checks (PKG-013)
   #
   # The RDP sidecar (`termihub-rdp-helper`, #1747) is a workspace-EXCLUDED crate

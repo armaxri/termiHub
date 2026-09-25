@@ -217,6 +217,18 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
+CI runs the same clippy command a second time on `windows-latest` (the **Rust Code
+Quality (Windows)** job), because `#[cfg(windows)]` code is compiled out on Linux and
+macOS and would otherwise never be linted. To check Windows-gated code from macOS/Linux
+before pushing, lint the library without the C-dependency-heavy features (the crypto and
+compression `-sys` crates need a Windows SDK to cross-compile):
+
+```bash
+rustup target add x86_64-pc-windows-msvc
+cargo clippy -p termihub-core --target x86_64-pc-windows-msvc \
+  --features local-shell,serial,docker,tracing,rdp-sidecar -- -D warnings
+```
+
 ### Test Environment
 
 **Quick dev testing** — The `examples/` directory provides a simple Docker-based test setup:
