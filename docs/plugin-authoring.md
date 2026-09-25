@@ -153,6 +153,14 @@ flowchart TD
 Registers a new connection type backed by a native dynamic library (see
 [Native backends](#native-backends-and-the-abi)).
 
+> **Default-off, trusted per plugin.** A native backend runs in-process with the
+> app's full privileges and no OS sandbox, so it does not load just because it is
+> installed and enabled. The user must turn on **Settings → Plugins → Native
+> Plugins (Advanced)** _and_ explicitly trust the plugin there. The trust
+> acknowledgement is bound to a SHA-256 hash of the library file, so rebuilding or
+> replacing the library requires trusting it again. Until both conditions hold,
+> the host refuses to load the backend.
+
 | Field            | Notes                                                                                                                                                    |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `connectionType` | The connection type this backend registers.                                                                                                              |
@@ -187,6 +195,15 @@ JavaScript extension points (`protocolParser` transforms terminal output;
 presence and executed by the shipped frontend plugin host — `protocolParser` and
 `statusBarWidget` run in the plugin sandbox (`src/plugins/sandbox/`) and render
 into the app (e.g. the status bar via `PluginStatusBarWidgets`).
+
+> **Experimental, default-off gate.** Frontend (JavaScript) plugins run inside the
+> main WebView with full IPC/command access and no per-plugin permission
+> enforcement — the manifest `permissions` are not applied to them (tracked in
+> #2001). Their code therefore only runs when the user turns on **Settings →
+> Plugins → Frontend Plugins (Experimental)**, which is off by default. With the
+> gate off, `protocolParser` and `statusBarWidget` entries are installed but never
+> loaded, and turning it off tears down running frontend plugins immediately.
+> Theme-only and native-backend plugins are unaffected by this setting.
 
 ## Native backends and the ABI
 
