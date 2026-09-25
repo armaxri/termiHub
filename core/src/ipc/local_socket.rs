@@ -517,16 +517,27 @@ mod windows_impl {
         /// defence-in-depth, mirroring the unix peer-uid check).
         pub async fn accept(&mut self) -> io::Result<(BoxedReader, BoxedWriter)> {
             loop {
-                let server = self
-                    .next
-                    .as_ref()
-                    .expect("listener always holds a pending pipe instance");
+                // The listener normally always holds a pending instance, but if
+                // staging a fresh one failed on a previous accept (the `?` below
+                // after `take()`), re-stage it here instead of panicking. The
+                // instance stays in `self.next` while awaiting `connect()`, so a
+                // cancelled accept future does not lose it.
+                let server = match &mut self.next {
+                    Some(server) => server,
+                    slot @ None => {
+                        slot.insert(create_instance(&self.name, self.security.as_ref(), false)?)
+                    }
+                };
                 server.connect().await?;
 
                 // Hand off the connected instance and stage a fresh one for the
                 // next client before serving this one, so no client races into a
                 // missing pipe.
-                let connected = self.next.take().expect("pending instance present");
+                let Some(connected) = self.next.take() else {
+                    return Err(io::Error::other(
+                        "named-pipe listener lost its pending instance",
+                    ));
+                };
                 self.next = Some(create_instance(&self.name, self.security.as_ref(), false)?);
 
                 if self.verify_peer_sid && !peer_is_current_user(connected.as_raw_handle()) {
