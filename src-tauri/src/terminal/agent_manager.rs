@@ -21,6 +21,7 @@ use tracing::{debug, error, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
+use termihub_core::protocol::methods::{ConnectionDefinition, FolderDefinition};
 
 use crate::agents_projection::projection::fold_agent_transition;
 use crate::agents_projection::store::AgentConnectionState;
@@ -1303,20 +1304,34 @@ impl<R: Runtime> AgentConnectionManager<R> {
             termihub_core::protocol::methods::CONNECTIONS_LIST,
             serde_json::json!({}),
         )?;
+        // Deserialize each entry into the shared `ConnectionDefinition` /
+        // `FolderDefinition` wire DTO (DUP-001) and convert to the frontend
+        // camelCase DTO. `filter_map(... .ok())` preserves the old hand-parser's
+        // tolerance: a malformed entry is dropped, not fatal to the whole list.
         let connections = result["connections"]
             .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(parse_agent_definition)
-            .collect();
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        serde_json::from_value::<ConnectionDefinition>(v.clone())
+                            .ok()
+                            .map(AgentDefinitionInfo::from)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         let folders = result["folders"]
             .as_array()
-            .cloned()
-            .unwrap_or_default()
-            .iter()
-            .filter_map(parse_agent_folder)
-            .collect();
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| {
+                        serde_json::from_value::<FolderDefinition>(v.clone())
+                            .ok()
+                            .map(AgentFolderInfo::from)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
         Ok(AgentConnectionsData {
             connections,
             folders,
@@ -1342,8 +1357,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
             termihub_core::protocol::methods::CONNECTIONS_CREATE,
             definition,
         )?;
-        parse_agent_definition(&result)
-            .ok_or_else(|| TerminalError::RemoteError("Failed to parse definition result".into()))
+        serde_json::from_value::<ConnectionDefinition>(result)
+            .map(AgentDefinitionInfo::from)
+            .map_err(|_| TerminalError::RemoteError("Failed to parse definition result".into()))
     }
 
     /// Update a saved connection definition on the agent.
@@ -1357,8 +1373,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
             termihub_core::protocol::methods::CONNECTIONS_UPDATE,
             params,
         )?;
-        parse_agent_definition(&result)
-            .ok_or_else(|| TerminalError::RemoteError("Failed to parse definition result".into()))
+        serde_json::from_value::<ConnectionDefinition>(result)
+            .map(AgentDefinitionInfo::from)
+            .map_err(|_| TerminalError::RemoteError("Failed to parse definition result".into()))
     }
 
     /// Delete a session definition on the agent.
@@ -1383,8 +1400,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
             termihub_core::protocol::methods::CONNECTIONS_FOLDERS_CREATE,
             serde_json::json!({ "name": name, "parent_id": parent_id }),
         )?;
-        parse_agent_folder(&result)
-            .ok_or_else(|| TerminalError::RemoteError("Failed to parse folder result".into()))
+        serde_json::from_value::<FolderDefinition>(result)
+            .map(AgentFolderInfo::from)
+            .map_err(|_| TerminalError::RemoteError("Failed to parse folder result".into()))
     }
 
     /// Update a folder on the agent.
@@ -1398,8 +1416,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
             termihub_core::protocol::methods::CONNECTIONS_FOLDERS_UPDATE,
             params,
         )?;
-        parse_agent_folder(&result)
-            .ok_or_else(|| TerminalError::RemoteError("Failed to parse folder result".into()))
+        serde_json::from_value::<FolderDefinition>(result)
+            .map(AgentFolderInfo::from)
+            .map_err(|_| TerminalError::RemoteError("Failed to parse folder result".into()))
     }
 
     /// Delete a folder on the agent.

@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use termihub_core::protocol::methods::{ConnectionDefinition, FolderDefinition};
 
 /// OBS-004: the agent reconnect-lifecycle log vocabulary must carry `agent_id`
 /// (and the failure `error`) as **structured `tracing` fields**, not
@@ -199,7 +200,24 @@ fn capabilities_round_trip_serialization() {
     assert_eq!(roundtripped.available_shells, vec!["/bin/sh"]);
 }
 
-/// Regression: parse_agent_definition reads snake_case fields from agent wire format.
+/// Helper mirroring the production path: deserialize the snake_case agent reply
+/// into the shared `ConnectionDefinition` wire DTO, then convert to the frontend
+/// `AgentDefinitionInfo` — exactly what `list_connections_and_folders` /
+/// `save_definition` do after the DUP-001 migration.
+fn definition_from_wire(v: serde_json::Value) -> Option<AgentDefinitionInfo> {
+    serde_json::from_value::<ConnectionDefinition>(v)
+        .ok()
+        .map(AgentDefinitionInfo::from)
+}
+
+fn folder_from_wire(v: serde_json::Value) -> Option<AgentFolderInfo> {
+    serde_json::from_value::<FolderDefinition>(v)
+        .ok()
+        .map(AgentFolderInfo::from)
+}
+
+/// Regression: the desktop deserializes snake_case connection fields from the
+/// agent wire format into the shared DTO (DUP-001).
 #[test]
 fn parse_definition_from_snake_case_wire_format() {
     let wire = json!({
@@ -210,7 +228,7 @@ fn parse_definition_from_snake_case_wire_format() {
         "persistent": true,
         "folder_id": "folder-1"
     });
-    let def = parse_agent_definition(&wire).unwrap();
+    let def = definition_from_wire(wire).unwrap();
     assert_eq!(def.id, "conn-abc");
     assert_eq!(def.name, "Build Shell");
     assert_eq!(def.session_type, "shell");
@@ -218,7 +236,7 @@ fn parse_definition_from_snake_case_wire_format() {
     assert_eq!(def.folder_id, Some("folder-1".to_string()));
 }
 
-/// parse_agent_definition handles missing optional fields.
+/// A minimal reply defaults the optional fields, as the old hand-parser did.
 #[test]
 fn parse_definition_minimal() {
     let wire = json!({
@@ -226,21 +244,22 @@ fn parse_definition_minimal() {
         "name": "Test",
         "session_type": "serial"
     });
-    let def = parse_agent_definition(&wire).unwrap();
+    let def = definition_from_wire(wire).unwrap();
     assert_eq!(def.id, "conn-1");
     assert!(!def.persistent);
     assert_eq!(def.folder_id, None);
     assert_eq!(def.config, Value::Null);
 }
 
-/// parse_agent_definition returns None for invalid input.
+/// A reply missing a required field is dropped (the typed equivalent of the old
+/// parser returning `None`).
 #[test]
 fn parse_definition_returns_none_for_missing_required() {
     let wire = json!({"id": "conn-1", "name": "Test"});
-    assert!(parse_agent_definition(&wire).is_none());
+    assert!(definition_from_wire(wire).is_none());
 }
 
-/// parse_agent_definition reads the source_file field for external connections.
+/// The desktop reads the `source_file` field for external connections.
 #[test]
 fn parse_definition_with_source_file() {
     let wire = json!({
@@ -249,7 +268,7 @@ fn parse_definition_with_source_file() {
         "session_type": "local",
         "source_file": "/home/pi/team-connections.json"
     });
-    let def = parse_agent_definition(&wire).unwrap();
+    let def = definition_from_wire(wire).unwrap();
     assert_eq!(
         def.source_file,
         Some("/home/pi/team-connections.json".to_string())
@@ -260,7 +279,7 @@ fn parse_definition_with_source_file() {
 #[test]
 fn parse_definition_without_source_file() {
     let wire = json!({"id": "conn-1", "name": "Shell", "session_type": "local"});
-    let def = parse_agent_definition(&wire).unwrap();
+    let def = definition_from_wire(wire).unwrap();
     assert_eq!(def.source_file, None);
 }
 
@@ -301,7 +320,8 @@ fn definition_info_source_file_camel_case() {
     assert!(v.get("source_file").is_none());
 }
 
-/// Regression: parse_agent_folder reads snake_case fields from agent wire format.
+/// Regression: the desktop deserializes snake_case folder fields from the agent
+/// wire format into the shared DTO (DUP-001).
 #[test]
 fn parse_folder_from_snake_case_wire_format() {
     let wire = json!({
@@ -310,18 +330,18 @@ fn parse_folder_from_snake_case_wire_format() {
         "parent_id": "folder-root",
         "is_expanded": true
     });
-    let folder = parse_agent_folder(&wire).unwrap();
+    let folder = folder_from_wire(wire).unwrap();
     assert_eq!(folder.id, "folder-abc");
     assert_eq!(folder.name, "Production");
     assert_eq!(folder.parent_id, Some("folder-root".to_string()));
     assert!(folder.is_expanded);
 }
 
-/// parse_agent_folder handles root-level folder (no parent).
+/// A root-level folder reply (no parent) parses with defaulted fields.
 #[test]
 fn parse_folder_root_level() {
     let wire = json!({"id": "folder-1", "name": "Root"});
-    let folder = parse_agent_folder(&wire).unwrap();
+    let folder = folder_from_wire(wire).unwrap();
     assert_eq!(folder.parent_id, None);
     assert!(!folder.is_expanded);
 }
