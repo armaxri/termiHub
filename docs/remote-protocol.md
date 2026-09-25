@@ -1167,13 +1167,26 @@ Create a new saved connection.
 }
 ```
 
-| Param        | Type      | Default      | Description                     |
-| ------------ | --------- | ------------ | ------------------------------- |
-| `name`       | `string`  | _(required)_ | Display name                    |
-| `type`       | `string`  | _(required)_ | Session type                    |
-| `config`     | `object`  | `{}`         | Type-specific configuration     |
-| `persistent` | `boolean` | `false`      | Whether sessions are persistent |
-| `folder_id`  | `string?` | `null`       | Parent folder ID                |
+| Param              | Type      | Default      | Description                     |
+| ------------------ | --------- | ------------ | ------------------------------- |
+| `name`             | `string`  | _(required)_ | Display name                    |
+| `type`             | `string`  | _(required)_ | Session type                    |
+| `config`           | `object`  | `{}`         | Type-specific configuration     |
+| `persistent`       | `boolean` | `false`      | Whether sessions are persistent |
+| `folder_id`        | `string?` | `null`       | Parent folder ID                |
+| `terminal_options` | `object?` | `null`       | Per-connection terminal options |
+| `icon`             | `string?` | `null`       | Icon name                       |
+
+> **Note:** the request key is `type`, but the stored definition in the response
+> (and in `connections.list`) reports it as `session_type`. The params for
+> `connections.create`, `connections.update` and `connections.folders.update` are
+> the shared `termihub-core` DTOs (`ConnectionCreateParams`,
+> `ConnectionUpdateParams`, `FolderUpdateParams`); the desktop decodes the
+> frontend's payload into them before sending and rejects a payload with an
+> unknown key (IPC error code `invalid_params`), and the frontend builds them
+> against their ts-rs-generated TypeScript types. A TS→Rust contract test
+> (`core/tests/agent_connection_params_contract.rs`) pins the wire shape
+> (AGT-028).
 
 ---
 
@@ -1198,14 +1211,16 @@ Update an existing connection's properties. Only provided fields are changed.
 
 **Response:** Same shape as `connections.create` response, with updated values.
 
-| Param        | Type       | Description                                                           |
-| ------------ | ---------- | --------------------------------------------------------------------- |
-| `id`         | `string`   | _(required)_ Connection ID to update                                  |
-| `name`       | `string?`  | New display name                                                      |
-| `type`       | `string?`  | New session type                                                      |
-| `config`     | `object?`  | New configuration                                                     |
-| `persistent` | `boolean?` | New persistent flag                                                   |
-| `folder_id`  | `value?`   | New folder ID. Explicit `null` moves to root; omit to leave unchanged |
+| Param              | Type       | Description                                                           |
+| ------------------ | ---------- | --------------------------------------------------------------------- |
+| `id`               | `string`   | _(required)_ Connection ID to update                                  |
+| `name`             | `string?`  | New display name                                                      |
+| `type`             | `string?`  | New session type                                                      |
+| `config`           | `object?`  | New configuration                                                     |
+| `persistent`       | `boolean?` | New persistent flag                                                   |
+| `folder_id`        | `value?`   | New folder ID. Explicit `null` moves to root; omit to leave unchanged |
+| `terminal_options` | `object?`  | New terminal options. Explicit `null` clears; omit to leave unchanged |
+| `icon`             | `value?`   | New icon name. Explicit `null` clears; omit to leave unchanged        |
 
 **Errors:**
 
