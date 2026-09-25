@@ -9,7 +9,8 @@ subsystem: .github/workflows
 evidence:
   - .github/workflows/code-quality.yml:216
   - .github/workflows/agent.yml:108
-status: open
+status: fixed
+resolution: "#3357,#3360 — two-phase rust test runner (timing-sensitive suites --test-threads=2), agent tests no docker probe, argon2 test cost cfg(test)"
 ---
 
 ## What
