@@ -10,7 +10,8 @@ evidence:
   - src/hooks/useSessionFileSystem.ts:286
   - src/hooks/useSessionFileSystem.ts:318
   - src-tauri/src/files/local.rs:38
-status: open
+status: fixed
+resolution: "#3245 — directory copy/paste to remote now recurses (was: each clipboard entry treated as a single file, folders silently skipped): same-session SFTP dir = single server-side recursive sessionCopy (#3201 primitive, no desktop round-trip); cross-session/byte-based/local->remote = recreate tree via sessionMkdir + recurse children through the transfer queue (#3237); same-session cut of a dir = recursive rename. Full same+cross-backend coverage; source session+SFTP capability resolved once per paste. 4 new tests"
 ---
 
 ## What
