@@ -95,7 +95,19 @@ impl LastSessionStorage {
             fs::read_to_string(&self.file_path).context("Failed to read last-session file")?;
 
         match load_versioned::<LastSession>(&data) {
-            LoadOutcome::Loaded { data, .. } => Ok(Some(data)),
+            LoadOutcome::Loaded { mut data, .. } => {
+                // Rewrite legacy plugin connection-type ids in inline tab configs
+                // to their stable namespaced form (PLG-007).
+                if let Some(config_dir) = self.file_path.parent() {
+                    let resolver = crate::connection::plugin_type_ids::legacy_resolver(config_dir);
+                    crate::connection::plugin_type_ids::migrate_tab_groups(
+                        &mut data.tab_groups,
+                        &resolver,
+                        "last session",
+                    );
+                }
+                Ok(Some(data))
+            }
             LoadOutcome::Newer(err) => {
                 tracing::warn!("Last-session file written by a newer version, ignoring it: {err}");
                 Ok(None)
@@ -446,5 +458,30 @@ mod tests {
             .unwrap();
 
         assert!(manager.load().unwrap().is_none());
+    }
+
+    /// PLG-007: a legacy plugin type id in the last session's inline tab config
+    /// is migrated to the namespaced id on load.
+    #[test]
+    fn load_migrates_legacy_plugin_type_ids() {
+        let dir = TempDir::new().unwrap();
+        crate::connection::plugin_type_ids::write_backend_plugin_manifest(
+            dir.path(),
+            "beta",
+            "k8s",
+        );
+        let storage = create_test_storage(&dir);
+        let raw = r#"{"version":"1","tabGroups":[{"name":"Main","layout":{"type":"leaf","tabs":[
+            {"inlineConfig":{"type":"k8s-beta","config":{}}}]}}]}"#;
+        fs::write(&storage.file_path, raw).unwrap();
+
+        let session = storage.load().unwrap().unwrap();
+        let WorkspaceLayoutNode::Leaf { tabs } = &session.tab_groups[0].layout else {
+            panic!("leaf expected");
+        };
+        assert_eq!(
+            tabs[0].inline_config.as_ref().unwrap()["type"],
+            "plugin:beta:k8s"
+        );
     }
 }

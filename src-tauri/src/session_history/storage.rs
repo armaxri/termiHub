@@ -40,8 +40,17 @@ impl SessionHistoryStorage {
     /// A current/older file is used as-is (or migrated forward), a **newer** file
     /// is left untouched and reported as a warning (never reset — PER-004), and
     /// only a genuinely unparseable file is backed up to `.bak` and reset.
+    ///
+    /// Legacy plugin connection-type ids in the loaded entries are rewritten to
+    /// their stable `plugin:<plugin-id>:<type>` form (PLG-007).
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<SessionHistoryStore>> {
-        load_store_with_recovery::<SessionHistoryStore>(&self.file_path, FILE_NAME)
+        let mut result =
+            load_store_with_recovery::<SessionHistoryStore>(&self.file_path, FILE_NAME)?;
+        if let Some(config_dir) = self.file_path.parent() {
+            let resolver = crate::connection::plugin_type_ids::legacy_resolver(config_dir);
+            migrate_entry_type_ids(&mut result.data, &resolver);
+        }
+        Ok(result)
     }
 
     /// Save the session-history store to disk (pretty-printed JSON).
@@ -70,6 +79,25 @@ impl SessionHistoryStorage {
     pub fn new_test(dir: &std::path::Path) -> Self {
         Self {
             file_path: dir.join(FILE_NAME),
+        }
+    }
+}
+
+/// Rewrite legacy plugin type ids in every history entry — its `connectionType`
+/// and its `config.type` — and re-derive the dedup key of an entry that changed,
+/// so a later session on the namespaced type collapses into it (PLG-007).
+fn migrate_entry_type_ids(
+    store: &mut SessionHistoryStore,
+    resolver: &termihub_core::connection::LegacyTypeIdResolver,
+) {
+    use crate::connection::plugin_type_ids::{migrate_config_value, migrate_type_id};
+    for entry in &mut store.entries {
+        let what = format!("session-history entry \"{}\"", entry.title);
+        let type_changed = migrate_type_id(&mut entry.connection_type, resolver, &what);
+        let config_changed = migrate_config_value(&mut entry.config, resolver, &what);
+        if type_changed || config_changed {
+            entry.dedup_key =
+                super::config::compute_dedup_key(&entry.connection_type, &entry.config);
         }
     }
 }
@@ -243,5 +271,50 @@ mod tests {
             "a failed save must leave the previous store fully intact"
         );
         serde_json::from_str::<SessionHistoryStore>(&after).expect("preserved store still parses");
+    }
+
+    /// PLG-007: legacy plugin type ids in history entries are migrated on load,
+    /// and the dedup key follows the new id.
+    #[test]
+    fn load_migrates_legacy_plugin_type_ids() {
+        let dir = tempfile::TempDir::new().unwrap();
+        crate::connection::plugin_type_ids::write_backend_plugin_manifest(
+            dir.path(),
+            "beta",
+            "k8s",
+        );
+        let storage = SessionHistoryStorage::new_test(dir.path());
+        let raw = serde_json::json!({
+            "version": "1",
+            "entries": [{
+                "dedupKey": "k8s-beta:{\"pod\":\"p\"}",
+                "title": "pod p",
+                "connectionType": "k8s-beta",
+                "config": { "type": "k8s-beta", "config": { "pod": "p" } },
+                "firstUsed": 1,
+                "lastUsed": 2
+            }, {
+                "dedupKey": "ssh:u@h:22",
+                "title": "u@h",
+                "connectionType": "ssh",
+                "config": { "type": "ssh", "config": { "host": "h", "username": "u" } },
+                "firstUsed": 1,
+                "lastUsed": 2
+            }]
+        });
+        fs::write(&storage.file_path, raw.to_string()).unwrap();
+
+        let store = storage.load_with_recovery().unwrap().data;
+        let plugin = &store.entries[0];
+        assert_eq!(plugin.connection_type, "plugin:beta:k8s");
+        assert_eq!(plugin.config["type"], "plugin:beta:k8s");
+        assert!(
+            plugin.dedup_key.starts_with("plugin:beta:k8s:"),
+            "{}",
+            plugin.dedup_key
+        );
+        let ssh = &store.entries[1];
+        assert_eq!(ssh.connection_type, "ssh");
+        assert_eq!(ssh.dedup_key, "ssh:u@h:22");
     }
 }

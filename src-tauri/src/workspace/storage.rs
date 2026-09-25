@@ -37,8 +37,23 @@ impl WorkspaceStorage {
     /// migrated forward), a **newer** file is left untouched and reported as a
     /// warning (never reset — PER-004), and only a genuinely unparseable file is
     /// backed up to `.bak` and reset to defaults.
+    ///
+    /// Legacy plugin connection-type ids in tabs' inline configs are rewritten to
+    /// their stable `plugin:<plugin-id>:<type>` form (PLG-007).
     pub fn load_with_recovery(&self) -> Result<RecoveryResult<WorkspaceStore>> {
-        load_store_with_recovery::<WorkspaceStore>(&self.file_path, FILE_NAME)
+        let mut result = load_store_with_recovery::<WorkspaceStore>(&self.file_path, FILE_NAME)?;
+        if let Some(config_dir) = self.file_path.parent() {
+            let resolver = crate::connection::plugin_type_ids::legacy_resolver(config_dir);
+            for ws in &mut result.data.workspaces {
+                let what = format!("workspace \"{}\"", ws.name);
+                crate::connection::plugin_type_ids::migrate_tab_groups(
+                    &mut ws.tab_groups,
+                    &resolver,
+                    &what,
+                );
+            }
+        }
+        Ok(result)
     }
 
     /// Save the workspace store to disk (pretty-printed JSON).
@@ -305,5 +320,43 @@ mod tests {
         );
         // And the preserved file must still be valid JSON.
         serde_json::from_str::<WorkspaceStore>(&after).expect("preserved store still parses");
+    }
+
+    /// PLG-007: a legacy plugin type id in a tab's inline config is migrated to
+    /// the namespaced id on load.
+    #[test]
+    fn load_migrates_legacy_plugin_type_ids_in_inline_configs() {
+        let dir = TempDir::new().unwrap();
+        crate::connection::plugin_type_ids::write_backend_plugin_manifest(
+            dir.path(),
+            "beta",
+            "k8s",
+        );
+        let storage = create_test_storage(&dir);
+        let raw = serde_json::json!({
+            "version": "1",
+            "workspaces": [{
+                "id": "w1",
+                "name": "K8s",
+                "tabGroups": [{
+                    "name": "Main",
+                    "layout": { "type": "leaf", "tabs": [
+                        { "inlineConfig": { "type": "k8s", "config": { "pod": "p" } } }
+                    ] }
+                }]
+            }]
+        });
+        fs::write(&storage.file_path, raw.to_string()).unwrap();
+
+        let store = storage.load_with_recovery().unwrap().data;
+        let crate::workspace::config::WorkspaceLayoutNode::Leaf { tabs } =
+            &store.workspaces[0].tab_groups[0].layout
+        else {
+            panic!("leaf expected");
+        };
+        assert_eq!(
+            tabs[0].inline_config.as_ref().unwrap()["type"],
+            "plugin:beta:k8s"
+        );
     }
 }
