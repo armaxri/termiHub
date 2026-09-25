@@ -21,6 +21,13 @@ name = "termihub_agent"
 path = "src/lib.rs"
 
 [features]
+# FTP / FTPS connection type on the agent (PARITY-003). Enabled by default so
+# the agent — like the desktop — can construct and connect FTP connections over
+# its transport, but kept as a toggle so the registry registration is gated
+# (`#[cfg(feature = "ftp")]`) and a build without it still compiles. Mirrors the
+# desktop's `ftp` feature (`src-tauri/Cargo.toml`); pulls the core `ftp` backend.
+default = ["ftp"]
+ftp = ["termihub-core/ftp"]
 # Compiles the env-gated self-update **test hook** (`src/update/test_hook.rs`,
 # #1546) into the binary. OFF by default so a shipping `cargo build --release`
 # never contains it: the hook lets whoever can set `TERMIHUB_AGENT_TEST_PENDING_UPDATE`

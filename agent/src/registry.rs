@@ -9,16 +9,44 @@ use termihub_core::connection::{register_core_backends, ConnectionTypeRegistry};
 /// Build a [`ConnectionTypeRegistry`] with all backends available on this
 /// platform.
 ///
-/// The agent registers exactly the shared core backends (local shell, serial,
-/// SSH, telnet, Docker, plus WSL on Windows) via
+/// The agent registers the shared core backends (local shell, serial, SSH,
+/// telnet, Docker, plus WSL on Windows) via
 /// [`register_core_backends`](termihub_core::connection::register_core_backends),
-/// the single source it and the desktop both draw from (DUP-013). The agent
-/// adds no host-specific types of its own — the SSH backend it registers is the
-/// same core one the desktop uses, so SSH agent forwarding (`forwardAgent`,
-/// #1699) is honored on the agent's SSH leg exactly as on the desktop (#1719).
+/// the single source it and the desktop both draw from (DUP-013). The SSH
+/// backend it registers is the same core one the desktop uses, so SSH agent
+/// forwarding (`forwardAgent`, #1699) is honored on the agent's SSH leg exactly
+/// as on the desktop (#1719).
+///
+/// On top of the shared set the agent adds **FTP** (gated behind the `ftp`
+/// feature, on by default) — mirroring the desktop registry
+/// (`src-tauri/src/session/registry.rs`) so an agent-hosted FTP connection is no
+/// longer a strict subset gap (PARITY-003). The desktop's remaining additions —
+/// the graphical remote-desktop types (`mock-remote-desktop`, `vnc`, `rdp`) —
+/// are deliberately NOT registered here: the agent has no graphical/frame
+/// session transport (its session manager forwards only byte output via
+/// `subscribe_output` and never touches [`ConnectionType::graphical`]), so
+/// hosting a graphical type would need a frame-forwarding transport that does
+/// not yet exist.
+///
+/// [`ConnectionType::graphical`]: termihub_core::connection::ConnectionType::graphical
 pub fn build_registry() -> ConnectionTypeRegistry {
     let mut registry = ConnectionTypeRegistry::new();
+
+    // Backends shared with the desktop (local/serial/ssh/telnet/docker + WSL on
+    // Windows).
     register_core_backends(&mut registry);
+
+    // FTP / FTPS (gated behind the `ftp` feature; enabled by default) — parity
+    // with the desktop registry (PARITY-003). The agent can construct and
+    // connect it over its transport; the same core backend the desktop uses.
+    #[cfg(feature = "ftp")]
+    registry.register(
+        "ftp",
+        "FTP",
+        "network",
+        Box::new(|| Box::new(termihub_core::backends::ftp::Ftp::new())),
+    );
+
     registry
 }
 
@@ -44,11 +72,23 @@ mod tests {
         #[cfg(not(windows))]
         assert!(!registry.has_type("wsl"));
 
-        // Verify total count.
-        #[cfg(windows)]
-        assert_eq!(types.len(), 6);
-        #[cfg(not(windows))]
-        assert_eq!(types.len(), 5);
+        // FTP when the `ftp` feature is enabled (PARITY-003) — parity with the
+        // desktop registry.
+        #[cfg(feature = "ftp")]
+        assert!(registry.has_type("ftp"));
+        #[cfg(not(feature = "ftp"))]
+        assert!(!registry.has_type("ftp"));
+
+        // Graphical backends (mock-remote-desktop / vnc / rdp) are deliberately
+        // NOT hosted on the agent: it has no graphical/frame session transport.
+        assert!(!registry.has_type("mock-remote-desktop"));
+        assert!(!registry.has_type("vnc"));
+        assert!(!registry.has_type("rdp"));
+
+        // 5 always-on backends (local/serial/ssh/telnet/docker), plus WSL on
+        // Windows and FTP when the `ftp` feature is enabled.
+        let expected = 5 + cfg!(windows) as usize + cfg!(feature = "ftp") as usize;
+        assert_eq!(types.len(), expected);
     }
 
     #[test]
@@ -69,5 +109,20 @@ mod tests {
 
         let conn = registry.create("docker").unwrap();
         assert_eq!(conn.type_id(), "docker");
+    }
+
+    /// The agent can construct an FTP connection through the registry (PARITY-003),
+    /// so an agent-hosted FTP connection is no longer a strict subset gap versus
+    /// the desktop. Constructing does not connect — it only proves the factory is
+    /// wired and the core `ftp` backend is compiled into the agent.
+    #[cfg(feature = "ftp")]
+    #[test]
+    fn registry_constructs_ftp_backend() {
+        let registry = build_registry();
+        assert!(registry.has_type("ftp"));
+        let conn = registry
+            .create("ftp")
+            .expect("ftp backend should be registered");
+        assert_eq!(conn.type_id(), "ftp");
     }
 }
