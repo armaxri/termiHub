@@ -26,7 +26,9 @@
 #                      (default: agent/keys/update-signing.pub.pem).
 #   --repo <o/n>       Repository for the secret (default: armaxri/termiHub).
 #   --force            Overwrite a public-key file that already holds a real key
-#                      (key rotation / compromise; see the docs first).
+#                      (compromise response only -- agents built with the old key
+#                      then refuse new updates; a planned rotation needs an
+#                      overlap, see the docs first).
 #   --help, -h         Show this help.
 #
 # Requires: OpenSSL 3.x, and (unless --dry-run) an authenticated `gh` CLI with
@@ -45,7 +47,7 @@ DRY_RUN=false
 FORCE=false
 
 usage() {
-    sed -n '3,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    sed -n '3,35p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
 }
 
 die() {

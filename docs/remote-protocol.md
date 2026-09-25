@@ -950,11 +950,13 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
 }
 ```
 
-| Param            | Type      | Required | Description                                                                                                                  |
-| ---------------- | --------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `binaryPath`     | `string`  | No       | Absolute path (on the agent host) to the new agent binary to stage. Omit to apply an update the agent already staged itself. |
-| `version`        | `string`  | No       | Target version label (bookkeeping only)                                                                                      |
-| `ackTimeoutSecs` | `integer` | No       | How long other hosts get to disconnect. Defaults to `10`.                                                                    |
+| Param            | Type      | Required | Description                                                                                                                                               |
+| ---------------- | --------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `binaryPath`     | `string`  | No       | Absolute path (on the agent host) to the new agent binary to stage. Omit to apply an update the agent already staged itself.                              |
+| `version`        | `string`  | No       | Target version label (bookkeeping only)                                                                                                                   |
+| `expectedSha256` | `string`  | No       | Lowercase-hex SHA-256 of the binary at `binaryPath`; re-verified immediately before the swap (AGT-004). Required with `binaryPath`.                       |
+| `signature`      | `string`  | No       | Base64 Ed25519 signature (the published `<binary>.sig`) over the SHA-256 — see [Update signatures](#update-signatures). Required by release-built agents. |
+| `ackTimeoutSecs` | `integer` | No       | How long other hosts get to disconnect. Defaults to `10`.                                                                                                 |
 
 **Response:**
 
@@ -981,11 +983,32 @@ Coordination is best-effort and never blocks the update. If the host-wide regist
 
 **Errors:** identical to [`agent.request_deferred_update`](#agentrequest_deferred_update) — the two share one apply path.
 
-| Code     | When                                                            |
-| -------- | --------------------------------------------------------------- |
-| `-32007` | Agent not initialized                                           |
-| `-32602` | `binaryPath` does not exist, or no update is staged to apply    |
-| `-32016` | The update failed to apply (binary swap / re-exec, or non-Unix) |
+| Code     | When                                                                       |
+| -------- | -------------------------------------------------------------------------- |
+| `-32007` | Agent not initialized                                                      |
+| `-32602` | `binaryPath` does not exist, or no update is staged to apply               |
+| `-32016` | The update failed to apply (binary swap / re-exec, or non-Unix)            |
+| `-32021` | The update's signature is missing, malformed, or does not verify (AGT-005) |
+
+#### Update signatures
+
+Both update methods, and the agent's own GitHub self-update, apply a binary only after three
+guards pass immediately before the swap: the path is confined to the agent's staging
+locations (AGT-003), its bytes match `expectedSha256` (AGT-004), and — AGT-005, #3213 — a
+detached Ed25519 signature verifies against a public key compiled into the agent:
+
+```text
+message   = "termihub-agent-update-v1" || 0x00 || SHA-256(binary)   (raw 32-byte digest)
+signature = Ed25519-sign(termiHub release key, message)             (64 bytes, base64 on the wire)
+```
+
+Release assets publish it as `<asset>.sig` next to `<asset>.sha256`; the desktop forwards its
+contents as `signature`, and the self-updater downloads it itself. A signature supplied with
+`binaryPath` is checked before the update is staged, so a refused update fails the call with
+`-32021` instead of being deferred. A **release-built** agent refuses a missing signature
+and, while built from the placeholder key file, every update. A **debug** agent tolerates a
+_missing_ signature with a loud warning (dev loop only). See
+[contributing → Agent Update Signing Key](contributing.md#agent-update-signing-key).
 
 ---
 
@@ -1009,10 +1032,12 @@ Applying swaps the on-disk agent binary with the staged one and re-execs it (Uni
 }
 ```
 
-| Param        | Type     | Required | Description                                                                                                                  |
-| ------------ | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `binaryPath` | `string` | No       | Absolute path (on the agent host) to the new agent binary to stage. Omit to apply an update the agent already staged itself. |
-| `version`    | `string` | No       | Target version label (bookkeeping only)                                                                                      |
+| Param            | Type     | Required | Description                                                                                                                         |
+| ---------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `binaryPath`     | `string` | No       | Absolute path (on the agent host) to the new agent binary to stage. Omit to apply an update the agent already staged itself.        |
+| `version`        | `string` | No       | Target version label (bookkeeping only)                                                                                             |
+| `expectedSha256` | `string` | No       | Lowercase-hex SHA-256 of the binary at `binaryPath`; re-verified immediately before the swap (AGT-004). Required with `binaryPath`. |
+| `signature`      | `string` | No       | Base64 Ed25519 signature over the SHA-256 — see [Update signatures](#update-signatures). Required by release-built agents.          |
 
 **Response:**
 
@@ -1034,11 +1059,12 @@ Applying swaps the on-disk agent binary with the staged one and re-execs it (Uni
 
 **Errors:**
 
-| Code     | When                                                            |
-| -------- | --------------------------------------------------------------- |
-| `-32007` | Agent not initialized                                           |
-| `-32602` | `binaryPath` does not exist, or no update is staged to apply    |
-| `-32016` | The update failed to apply (binary swap / re-exec, or non-Unix) |
+| Code     | When                                                                       |
+| -------- | -------------------------------------------------------------------------- |
+| `-32007` | Agent not initialized                                                      |
+| `-32602` | `binaryPath` does not exist, or no update is staged to apply               |
+| `-32016` | The update failed to apply (binary swap / re-exec, or non-Unix)            |
+| `-32021` | The update's signature is missing, malformed, or does not verify (AGT-005) |
 
 ---
 
@@ -2431,6 +2457,7 @@ For serial sessions:
 | `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)             |
 | `-32017` | Tunnel start failed         | An agent-hosted SSH tunnel failed to start (SSH connect or bind error)                   |
 | `-32018` | Service start failed        | An agent-hosted embedded server failed to start (bad config, port bind, or unknown type) |
+| `-32021` | Update signature rejected   | An agent update's Ed25519 signature is missing, malformed, or does not verify (AGT-005)  |
 
 ---
 
