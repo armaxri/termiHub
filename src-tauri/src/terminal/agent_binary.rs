@@ -167,6 +167,17 @@ pub fn sha256_hex_of_file(path: &Path) -> Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Compute the lowercase-hex SHA-256 digest of an in-memory byte slice.
+///
+/// Used by the coordinated update path to hash exactly the bytes it uploads to
+/// the agent, so it can send the agent the `expectedSha256` to re-verify the
+/// staged binary against before the swap (AGT-004).
+pub fn sha256_hex_of_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    hex::encode(hasher.finalize())
+}
+
 /// Parse the expected SHA-256 digest out of a checksum sidecar's contents.
 ///
 /// Accepts both a bare 64-char hex digest and the standard `sha256sum` output

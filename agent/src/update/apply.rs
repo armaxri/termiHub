@@ -441,13 +441,26 @@ fn confine_and_verify(
 /// Verify the confined update binary at `src` against its `expected_sha256`
 /// digest (AGT-004), failing **closed**.
 ///
-/// PLACEHOLDER (test commit): not yet enforced — the tamper-vector tests are red
-/// against this no-op. The fix commit hashes `src` and compares it to
-/// `expected_sha256`, rejecting a missing digest, a read error, or a mismatch.
+/// Re-hashes the on-disk bytes at `src` and compares them to the digest the
+/// route that staged the update recorded. This runs immediately before the swap
+/// so a binary that was verified at download/upload but then swapped on disk is
+/// still caught (the stage-then-tamper TOCTOU).
+///
+/// Fails closed on all three failure modes:
+/// - **Missing digest** (`None`) — no route supplied one, so there is nothing to
+///   verify against; reject rather than skip.
+/// - **Read error** — the bytes cannot be hashed, so integrity cannot be proven.
+/// - **Mismatch** — the bytes are not the ones the initiator intended.
 #[cfg(unix)]
-fn verify_confined_digest(_src: &Path, _expected_sha256: Option<&str>) -> anyhow::Result<()> {
-    // TODO(AGT-004): implemented in the following fix commit.
-    Ok(())
+fn verify_confined_digest(src: &Path, expected_sha256: Option<&str>) -> anyhow::Result<()> {
+    let expected = expected_sha256.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no expected SHA-256 digest was carried to the apply path for {} — refusing to \
+             apply an unverified agent binary (fail closed)",
+            src.display()
+        )
+    })?;
+    super::checksum::verify_file_checksum(src, expected)
 }
 
 /// Path of the sibling backup kept for the current agent binary during a

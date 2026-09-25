@@ -209,6 +209,15 @@ impl LiveAgent {
             .join("state.json")
     }
 
+    /// The agent-owned staging dir a pushed update binary may legitimately live
+    /// in — the same `<config>/updates` the apply-path confinement trusts.
+    fn staging_dir(&self) -> PathBuf {
+        self.config_home
+            .path()
+            .join("termihub-agent")
+            .join("updates")
+    }
+
     /// The agent's persisted `state.json`, or `Null` before it is first written.
     fn state(&self) -> Value {
         match std::fs::read_to_string(self.state_json_path()) {
@@ -349,9 +358,16 @@ impl Client {
     /// Stage `binary_path` as a deferred update and ask the agent to apply it —
     /// the `agent.request_deferred_update` RPC (#1352). Returns the raw response.
     fn request_deferred_update(&mut self, binary_path: &Path, version: &str) -> Value {
+        // AGT-004: the apply path re-verifies the staged bytes against this
+        // digest before the swap, so a coordinated/pushed update must carry it.
+        let expected_sha256 = sha256_hex_of_file(binary_path);
         self.rpc(
             "agent.request_deferred_update",
-            json!({"binaryPath": binary_path, "version": version}),
+            json!({
+                "binaryPath": binary_path,
+                "version": version,
+                "expectedSha256": expected_sha256,
+            }),
         )
     }
 
@@ -371,12 +387,13 @@ impl Client {
 
 // ── Staged binary ──────────────────────────────────────────────────────────────
 
-/// Stage a real, launchable "newer" agent binary: a copy of the agent's own
-/// bytes, marked executable, that the deferred apply can swap in and re-exec.
-/// Kept in its own `TempDir` (returned to the caller so it outlives the test).
-fn stage_newer_binary() -> (TempDir, PathBuf) {
-    let dir = TempDir::new().expect("staged binary dir");
-    let staged = dir.path().join("termihub-agent-newer");
+/// Stage a real, launchable "newer" agent binary into `staging_dir`: a copy of
+/// the agent's own bytes, marked executable, that the deferred apply can swap in
+/// and re-exec. Staged inside the agent's trusted `<config>/updates` dir so the
+/// apply-path confinement (AGT-003) accepts it.
+fn stage_newer_binary(staging_dir: &Path) -> PathBuf {
+    std::fs::create_dir_all(staging_dir).expect("create staging dir");
+    let staged = staging_dir.join("termihub-agent-newer");
 
     // Copy + chmod under the fork lock: a sibling thread forking mid-copy would
     // inherit our write fd and could ETXTBSY its own execve (#1597).
@@ -386,7 +403,18 @@ fn stage_newer_binary() -> (TempDir, PathBuf) {
         .expect("chmod staged binary");
     drop(fork_guard);
 
-    (dir, staged)
+    staged
+}
+
+/// Lowercase-hex SHA-256 of a file's contents (mirrors the agent's
+/// `update::checksum::sha256_hex_of_file`), used to send the AGT-004
+/// `expectedSha256` the apply path re-verifies against.
+fn sha256_hex_of_file(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    let bytes = std::fs::read(path).expect("read staged binary for checksum");
+    let mut hasher = Sha256::new();
+    hasher.update(&bytes);
+    hex::encode(hasher.finalize())
 }
 
 // ── Test ───────────────────────────────────────────────────────────────────────
@@ -409,9 +437,11 @@ async fn deferred_update_applies_on_last_docker_disconnect() {
     // Pre-pull so the container starts fast enough for the session to activate.
     pull_image();
 
-    let (_staged_dir, staged_bin) = stage_newer_binary();
-
     let agent = LiveAgent::spawn();
+    // Stage the newer binary inside the agent's trusted staging dir so the
+    // apply-path confinement (AGT-003, #3214) accepts it; the harness sends its
+    // SHA-256 so the AGT-004 integrity gate accepts it too.
+    let staged_bin = stage_newer_binary(&agent.staging_dir());
     let mut client = Client::connect(&agent.addr, Duration::from_secs(30))
         .unwrap_or_else(|| panic!("agent never came up.\n{}", agent.stderr()));
 
