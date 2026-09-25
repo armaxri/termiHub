@@ -9,7 +9,8 @@ subsystem: src (whole frontend)
 evidence:
   - package.json
   - src/components
-status: open
+status: deferred
+resolution: "maintainer-decision 2026-09-25 — MAINTAINER DECIDED (2026-09-25): i18n deferred post-v0.1.0 — English-only beta, no i18n framework/message-catalog adopted now. The English-substring LOGIC bugs (I18N-002/ERR-003) are already fixed via the error-code envelope; this finding is purely UI-string translatability, deferred for the beta"
 ---
 
 ## What

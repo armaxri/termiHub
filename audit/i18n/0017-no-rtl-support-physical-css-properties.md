@@ -9,7 +9,8 @@ subsystem: src/styles, src/components (CSS)
 evidence:
   - src/styles
   - src/components/Settings/SettingsPanel.css:270
-status: open
+status: deferred
+resolution: "maintainer-decision 2026-09-25 — RTL readiness deferred with the i18n decision (2026-09-25): English-only LTR beta; no logical-CSS-property migration now. Revisit if/when i18n is adopted post-v0.1.0"
 ---
 
 ## What
