@@ -64,6 +64,21 @@ write_checksum() {
     )
 }
 
+# Write (or clear) the "<binary>.sig" update-signature sidecar (AGT-005, #3213).
+# With --sign-key, sign via scripts/internal/agent-update-signing.sh (the same
+# pipeline release.yml uses; the key must match agent/keys/update-signing.pub.pem).
+# Without it, remove any stale .sig so an old signature is never paired with
+# freshly built bytes. Local builds are normally unsigned: a debug agent accepts
+# unsigned updates with a warning, a release agent refuses them.
+write_signature() {
+    local binary="$1"
+    if [ -n "$SIGN_KEY" ]; then
+        scripts/internal/agent-update-signing.sh sign --key "$SIGN_KEY" "$binary"
+    else
+        rm -f "$binary.sig"
+    fi
+}
+
 # True if the current host is Windows (Git Bash / MSYS / Cygwin).
 host_is_windows() {
     case "$(uname -s)" in
@@ -83,6 +98,7 @@ SEQUENTIAL=false
 NATIVE=false
 DEV=false
 FEATURES=""
+SIGN_KEY=""
 
 # --- Argument parsing ---
 while [[ $# -gt 0 ]]; do
@@ -109,6 +125,11 @@ while [[ $# -gt 0 ]]; do
             FEATURES="$1"
             shift
             ;;
+        --sign-key)
+            shift
+            SIGN_KEY="$1"
+            shift
+            ;;
         --help|-h)
             cat <<'USAGE'
 Usage: build-agents.sh [OPTIONS]
@@ -130,6 +151,9 @@ Options:
                      `--features <list>`). Used by the system-test harness to build a
                      release agent that still carries the env-gated update test hook
                      (`--features test-hooks`); OFF for every real release build.
+  --sign-key <pem>   Also write a <binary>.sig update signature with this Ed25519
+                     private key (must match agent/keys/update-signing.pub.pem;
+                     AGT-005). Without it any stale .sig next to the binary is removed.
   --help, -h         Show this help message
 
 Linux targets (cross-rs mode, require setup-agent-cross.sh):
@@ -334,7 +358,13 @@ if [ "$SEQUENTIAL" = true ] || [ "${#SELECTED_TARGETS[@]}" -le 1 ]; then
             if [ -f "$binary" ]; then
                 size=$(du -h "$binary" | cut -f1)
                 write_checksum "$binary" || true
-                results+=("  OK    $target  ($size)")
+                if write_signature "$binary"; then
+                    results+=("  OK    $target  ($size)")
+                else
+                    results+=("  FAIL  $target  (signing failed)")
+                    failed=$((failed + 1))
+                    built=$((built - 1))
+                fi
                 echo "  -> $binary ($size)"
                 built=$((built + 1))
             else
@@ -450,7 +480,13 @@ else
                 cp "$src_binary" "$dst_binary"
                 size=$(du -h "$dst_binary" | cut -f1)
                 write_checksum "$dst_binary" || true
-                results+=("  OK    $target  ($size)")
+                if write_signature "$dst_binary"; then
+                    results+=("  OK    $target  ($size)")
+                else
+                    results+=("  FAIL  $target  (signing failed)")
+                    failed=$((failed + 1))
+                    built=$((built - 1))
+                fi
                 echo "  -> $dst_binary ($size)"
                 built=$((built + 1))
             else
