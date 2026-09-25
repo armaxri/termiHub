@@ -134,7 +134,13 @@ impl TransferHandle {
                 next
             }
             Err(e) => {
+                // Diagnostic only; logged when the consumer opts into the core
+                // `tracing` feature (the desktop does), compiled out otherwise so
+                // always-compiled core stays tracing-free (DUP-026 slice 2a).
+                #[cfg(feature = "tracing")]
                 tracing::warn!(transfer_id = %self.transfer_id, %e, "ignored illegal transition");
+                #[cfg(not(feature = "tracing"))]
+                let _ = &e;
                 c.state
             }
         }
