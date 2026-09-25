@@ -45,6 +45,22 @@ pub enum MonitorStatus {
     Paused,
 }
 
+/// Why a collector loop left `Live` — the kind of the failure run behind a
+/// `Stale`, `Reconnecting`, or `Offline` status (#3300, #3321).
+///
+/// Carried on the `connection.monitoring.status` notification so the desktop
+/// can tell a dead transport apart from a remote that answers with unreadable
+/// output. Serialised in `camelCase` (`"transport"`, `"parse"`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MonitorStatusReason {
+    /// The transport failed: a collect timed out or errored, or a re-dial
+    /// failed until the reconnect budget ran out.
+    Transport,
+    /// The transport answered, but its output could not be parsed.
+    Parse,
+}
+
 /// Async sender for [`MonitorStatus`] updates (used by collector loops).
 pub type MonitorStatusSender = tokio::sync::mpsc::Sender<MonitorStatus>;
 
@@ -99,6 +115,46 @@ pub const BACKOFF_CAP: Duration = Duration::from_secs(30);
 /// probing before giving up — long enough to ride out a transient drop, short
 /// enough to resolve to `Offline` in bounded time (audit gap G2).
 pub const DEFAULT_MAX_RECONNECT_ATTEMPTS: u32 = 8;
+
+/// Maximum time a single collect may take before it is treated as a failure.
+///
+/// Bounds a stalled collect (half-dropped TCP, unresponsive remote) so a loop
+/// returns to its `select!` — where cancellation is honoured — instead of
+/// awaiting the collect forever (#1228, gap G3). The agent's collect loop uses
+/// it directly; the desktop uses it to size [`agent_recovery_budget`].
+pub const DEFAULT_COLLECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Worst-case wall-clock time an agent's collect loop (with the default
+/// constants) can go without streaming a sample and *without* having resolved
+/// to a terminal status, measured from its last sample (#3321).
+///
+/// The agent's loop, at collection `interval`, can spend at most:
+///
+/// 1. `DEFAULT_STALE_THRESHOLD` failed collects reaching `Stale`, each up to
+///    `interval + DEFAULT_COLLECT_TIMEOUT`;
+/// 2. the full reconnect backoff — the sum of every [`BackoffSchedule`] delay
+///    (`1+2+4+8+16+30+30+30 = 121 s` by default);
+/// 3. after a re-dial that succeeds, `pre_live_failure_limit` failed collects
+///    (`DEFAULT_STALE_THRESHOLD × PRE_LIVE_FAILURE_LIMIT_FACTOR`), each up to
+///    `interval + DEFAULT_COLLECT_TIMEOUT`, before resolving `Offline` (#3300).
+///
+/// At the default 2 s interval that is `2×12 + 121 + 6×12 = 217 s`. It excludes
+/// the SSH connect time of the re-dials themselves (bounded by the SSH layer,
+/// not by the loop); a sample arriving after the desktop gave up still recovers
+/// the monitor to `Live`, so the budget only has to cover the common case.
+///
+/// The desktop uses it to bound a `Stale` agent-hosted monitor whose agent
+/// transport stays up but whose samples stopped: an agent that stopped
+/// streaming either recovered or resolved `Offline` within this budget, so the
+/// desktop can resolve `Offline` too instead of showing `Stale` forever.
+pub fn agent_recovery_budget(interval: Duration) -> Duration {
+    let per_collect = interval.saturating_add(DEFAULT_COLLECT_TIMEOUT);
+    let collects = DEFAULT_STALE_THRESHOLD
+        .saturating_add(DEFAULT_STALE_THRESHOLD.saturating_mul(PRE_LIVE_FAILURE_LIMIT_FACTOR));
+    per_collect
+        .saturating_mul(collects)
+        .saturating_add(BackoffSchedule::default().total_delay())
+}
 
 /// Capped exponential-backoff schedule for reconnect attempts.
 ///
@@ -188,6 +244,19 @@ impl BackoffSchedule {
         }
     }
 
+    /// Sum of every remaining delay the schedule would yield before its
+    /// attempt budget is exhausted (a fresh schedule: the whole budget).
+    ///
+    /// Does not advance `self` — it walks a clone.
+    pub fn total_delay(&self) -> Duration {
+        let mut walk = self.clone();
+        let mut total = Duration::ZERO;
+        while let Some(delay) = walk.next_delay() {
+            total = total.saturating_add(delay);
+        }
+        total
+    }
+
     /// Reset the schedule so the next attempt starts again from `base`.
     ///
     /// Called after a successful reconnect so a later drop gets a fresh budget.
@@ -243,6 +312,8 @@ pub struct CollectLoopState {
     /// Consecutive *parse* failures; a transport failure breaks the run.
     consecutive_parse_failures: u32,
     stale_threshold: u32,
+    /// Kind of the most recent failure behind a non-`Live` status (#3321).
+    reason: Option<MonitorStatusReason>,
 }
 
 impl CollectLoopState {
@@ -259,6 +330,7 @@ impl CollectLoopState {
             consecutive_failures: 0,
             consecutive_parse_failures: 0,
             stale_threshold: stale_threshold.max(1),
+            reason: None,
         }
     }
 
@@ -291,6 +363,43 @@ impl CollectLoopState {
         self.status
     }
 
+    /// Why the loop is not `Live`: the kind of the failure run that drove the
+    /// current `Stale` / `Reconnecting` / `Offline` status (#3321).
+    ///
+    /// `None` while `Connecting` with no failure yet, `Live`, or `Paused`.
+    pub fn reason(&self) -> Option<MonitorStatusReason> {
+        match self.status {
+            MonitorStatus::Live | MonitorStatus::Paused => None,
+            _ => self.reason,
+        }
+    }
+
+    /// Adopt a status reported by the loop's authoritative owner (#3321).
+    ///
+    /// The desktop mirrors an agent-hosted loop: when the agent reports its own
+    /// status over `connection.monitoring.status`, that report replaces the
+    /// desktop's inference. Sets the status and reason, resets both failure runs
+    /// (the report is fresher than any missed-sample count), and returns
+    /// `Some(status)` only when the status changed. A `Paused` loop ignores
+    /// reports — pause is owned by the local side (SM-013).
+    pub fn apply_reported(
+        &mut self,
+        status: MonitorStatus,
+        reason: Option<MonitorStatusReason>,
+    ) -> Option<MonitorStatus> {
+        if self.status == MonitorStatus::Paused {
+            return None;
+        }
+        self.reset_failures();
+        self.reason = reason;
+        if self.status != status {
+            self.status = status;
+            Some(status)
+        } else {
+            None
+        }
+    }
+
     /// Record a successful collect.
     ///
     /// Resets the failure run and, if the loop was not already `Live`,
@@ -302,6 +411,7 @@ impl CollectLoopState {
             return None;
         }
         self.reset_failures();
+        self.reason = None;
         if self.status != MonitorStatus::Live {
             self.status = MonitorStatus::Live;
             Some(MonitorStatus::Live)
@@ -334,6 +444,7 @@ impl CollectLoopState {
         if self.status == MonitorStatus::Paused {
             self.status = MonitorStatus::Live;
             self.reset_failures();
+            self.reason = None;
             Some(MonitorStatus::Live)
         } else {
             None
@@ -366,6 +477,7 @@ impl CollectLoopState {
             MonitorStatus::Connecting | MonitorStatus::Reconnecting => {
                 self.consecutive_failures = self.consecutive_failures.saturating_add(1);
                 self.consecutive_parse_failures = 0;
+                self.reason = Some(MonitorStatusReason::Transport);
                 if self.consecutive_failures >= self.pre_live_failure_limit() {
                     self.resolve_offline()
                 } else {
@@ -375,6 +487,7 @@ impl CollectLoopState {
             MonitorStatus::Live | MonitorStatus::Stale => {
                 self.consecutive_failures = self.consecutive_failures.saturating_add(1);
                 self.consecutive_parse_failures = 0;
+                self.reason = Some(MonitorStatusReason::Transport);
                 if self.status == MonitorStatus::Live
                     && self.consecutive_failures >= self.stale_threshold
                 {
@@ -415,6 +528,7 @@ impl CollectLoopState {
             MonitorStatus::Connecting | MonitorStatus::Reconnecting => {
                 self.consecutive_failures = self.consecutive_failures.saturating_add(1);
                 self.consecutive_parse_failures = self.consecutive_parse_failures.saturating_add(1);
+                self.reason = Some(MonitorStatusReason::Parse);
                 if self.consecutive_parse_failures >= self.stale_threshold
                     || self.consecutive_failures >= self.pre_live_failure_limit()
                 {
@@ -424,7 +538,11 @@ impl CollectLoopState {
                 }
             }
             MonitorStatus::Paused | MonitorStatus::Offline => None,
-            MonitorStatus::Live | MonitorStatus::Stale => self.on_failure(),
+            MonitorStatus::Live | MonitorStatus::Stale => {
+                let status = self.on_failure();
+                self.reason = Some(MonitorStatusReason::Parse);
+                status
+            }
         }
     }
 
@@ -467,6 +585,9 @@ impl CollectLoopState {
     /// [`BackoffSchedule`] yields no further delay (audit gap G2).
     pub fn exhaust_reconnect(&mut self) -> Option<MonitorStatus> {
         if self.status != MonitorStatus::Offline {
+            // Every re-dial failed: whatever drove the drop, the loop gave up
+            // because the transport could not be re-established.
+            self.reason = Some(MonitorStatusReason::Transport);
             self.resolve_offline()
         } else {
             None
@@ -483,6 +604,141 @@ impl Default for CollectLoopState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Status reason + reported status + recovery budget (#3321) ─────────
+
+    #[test]
+    fn reason_tracks_the_failure_kind_behind_stale() {
+        let mut state = CollectLoopState::new();
+        assert_eq!(
+            state.reason(),
+            None,
+            "Connecting with no failure has no reason"
+        );
+        state.on_success();
+        state.on_failure();
+        assert_eq!(state.on_failure(), Some(MonitorStatus::Stale));
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Transport));
+
+        let mut state = CollectLoopState::new();
+        state.on_success();
+        state.on_parse_failure();
+        assert_eq!(state.on_parse_failure(), Some(MonitorStatus::Stale));
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Parse));
+
+        // A success clears it.
+        state.on_success();
+        assert_eq!(state.reason(), None);
+    }
+
+    #[test]
+    fn reason_types_pre_live_offline_as_parse_or_transport() {
+        let mut state = CollectLoopState::new();
+        state.on_parse_failure();
+        assert_eq!(state.on_parse_failure(), Some(MonitorStatus::Offline));
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Parse));
+
+        let mut state = CollectLoopState::new();
+        let mut last = None;
+        for _ in 0..state.pre_live_failure_limit() {
+            last = state.on_failure();
+        }
+        assert_eq!(last, Some(MonitorStatus::Offline));
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Transport));
+    }
+
+    #[test]
+    fn exhausted_reconnect_is_a_transport_reason_even_after_parse_stale() {
+        let mut state = CollectLoopState::new();
+        state.on_success();
+        state.on_parse_failure();
+        state.on_parse_failure();
+        state.begin_reconnect();
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Parse));
+        assert_eq!(state.exhaust_reconnect(), Some(MonitorStatus::Offline));
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Transport));
+    }
+
+    #[test]
+    fn apply_reported_adopts_status_and_emits_only_on_change() {
+        let mut state = CollectLoopState::new();
+        assert_eq!(
+            state.apply_reported(MonitorStatus::Live, None),
+            Some(MonitorStatus::Live)
+        );
+        assert_eq!(state.apply_reported(MonitorStatus::Live, None), None);
+        assert_eq!(
+            state.apply_reported(MonitorStatus::Offline, Some(MonitorStatusReason::Parse)),
+            Some(MonitorStatus::Offline)
+        );
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Parse));
+        // A late sample still recovers an adopted Offline.
+        assert_eq!(state.on_success(), Some(MonitorStatus::Live));
+    }
+
+    #[test]
+    fn apply_reported_resets_the_failure_run() {
+        let mut state = CollectLoopState::new();
+        state.on_success();
+        state.on_failure(); // one miss toward Stale
+        state.apply_reported(MonitorStatus::Live, None);
+        // The earlier miss no longer counts: one more is not enough for Stale.
+        assert_eq!(state.on_failure(), None);
+        assert_eq!(state.status(), MonitorStatus::Live);
+    }
+
+    #[test]
+    fn apply_reported_is_ignored_while_paused() {
+        let mut state = CollectLoopState::new();
+        state.pause();
+        assert_eq!(state.apply_reported(MonitorStatus::Offline, None), None);
+        assert!(state.is_paused());
+    }
+
+    #[test]
+    fn reason_serializes_camel_case() {
+        assert_eq!(
+            serde_json::to_value(MonitorStatusReason::Transport).unwrap(),
+            serde_json::json!("transport")
+        );
+        assert_eq!(
+            serde_json::to_value(MonitorStatusReason::Parse).unwrap(),
+            serde_json::json!("parse")
+        );
+    }
+
+    #[test]
+    fn default_backoff_total_delay_is_121s() {
+        assert_eq!(
+            BackoffSchedule::default().total_delay(),
+            Duration::from_secs(1 + 2 + 4 + 8 + 16 + 30 + 30 + 30)
+        );
+    }
+
+    #[test]
+    fn total_delay_does_not_advance_the_schedule() {
+        let mut schedule = BackoffSchedule::default();
+        let _ = schedule.total_delay();
+        assert_eq!(schedule.next_delay(), Some(DEFAULT_BACKOFF_BASE));
+    }
+
+    #[test]
+    fn agent_recovery_budget_at_default_interval_is_217s() {
+        // 2 stale collects + 6 pre-Live collects at (2 s + 10 s), plus 121 s of
+        // reconnect backoff.
+        assert_eq!(
+            agent_recovery_budget(Duration::from_secs(2)),
+            Duration::from_secs(2 * 12 + 121 + 6 * 12)
+        );
+    }
+
+    #[test]
+    fn agent_recovery_budget_grows_with_the_interval() {
+        assert!(
+            agent_recovery_budget(Duration::from_secs(10))
+                > agent_recovery_budget(Duration::from_secs(2))
+        );
+    }
 
     #[test]
     fn monitor_status_serialises_camel_case() {
