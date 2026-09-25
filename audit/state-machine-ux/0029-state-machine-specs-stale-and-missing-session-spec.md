@@ -10,8 +10,8 @@ evidence:
   - docs/audits/remote-agent-lifecycle-state-machine.md:1
   - docs/audits/workspace-save-restore-state-machine.md:1
   - docs/audits/http-monitor-state-machine.md:1
-status: partial
-resolution: "develop — half done: all 8 docs/audits/*state-machine*.md now carry Historical/Superseded banner (:3). Residual: recommended new session/connection-lifecycle reference spec still not written (only remote-agent-lifecycle exists)"
+status: fixed
+resolution: "#3267 — current session-lifecycle reference doc written: docs/session-lifecycle-state-machine.md derived from the authoritative session_projection/store.rs SessionLifecycleStore (7 SessionStatus variants), session.* intent triggers, backend-source folds (SM-005 auth, transient agent break, agent recovered/lost/unconfirmed/failed), reconnect/backoff sub-machine (reconnect_backoff.rs DEFAULT_BACKOFF + ReconnectTimerDriver), 2 Mermaid diagrams, file:line citations, marked current + cross-refs the 8 Historical-bannered audit snapshots. render-verified"
 ---
 
 ## What

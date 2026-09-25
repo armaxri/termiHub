@@ -9,8 +9,8 @@ subsystem: src/components/SshHostKeyPrompt
 evidence:
   - src/components/SshHostKeyPrompt/SshHostKeyPrompt.tsx:123
   - src/components/SshHostKeyPrompt/SshHostKeyPrompt.tsx:104
-status: in-progress
-resolution: "#2823 — copyable fingerprint done (SSH+RDP); old-vs-new comparison deferred → #2822 (prior fingerprint not plumbed to frontend)"
+status: fixed
+resolution: "#3268 — host-key trust prompt now shows old-vs-new fingerprint on a CHANGED key: previous_fingerprints plumbed from SshTrustStore (fingerprints_for, only on TrustLookup::Changed) into SshHostKeyPromptEvent (ts-rs regenerated), SshHostKeyPrompt.tsx renders 'Previously trusted' vs 'New' labeled copyable fingerprints; first-contact/known-hosts-only cases unchanged (null prior). Copyable fingerprint (SSH+RDP) was already done earlier"
 ---
 
 ## What
