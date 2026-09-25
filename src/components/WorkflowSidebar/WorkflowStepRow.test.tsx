@@ -255,4 +255,88 @@ describe("WorkflowStepRow", () => {
       });
     });
   });
+
+  describe("loop step", () => {
+    it("renders an iteration count field for a count loop and patches it", () => {
+      const h = render({
+        step: { kind: "loop", loop: { kind: "count", count: 3 }, body: [] },
+      });
+      const field = query("workflow-editor-loop-count-0") as HTMLInputElement;
+      expect(field.value).toBe("3");
+      typeInto(field, "7");
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "loop",
+        loop: { kind: "count", count: 7 },
+        body: [],
+      });
+    });
+
+    it("renders the while-condition builder and the body container", () => {
+      render({
+        step: {
+          kind: "loop",
+          loop: { kind: "while", condition: { left: "${iteration}", op: "lt", right: "5" } },
+          body: [{ kind: "send-command", command: "go" }],
+        },
+      });
+      expect((query("workflow-editor-cond-left-0-loop") as HTMLInputElement).value).toBe(
+        "${iteration}"
+      );
+      expect((query("workflow-editor-cond-right-0-loop") as HTMLInputElement).value).toBe("5");
+      // No count field is shown in while mode.
+      expect(query("workflow-editor-loop-count-0")).toBeNull();
+      expect(query("workflow-editor-branch-0-body")?.textContent).toContain("Do (1)");
+    });
+
+    it("edits a body sub-step's command through its own detail editor", () => {
+      const h = render({
+        step: {
+          kind: "loop",
+          loop: { kind: "count", count: 2 },
+          body: [{ kind: "send-command", command: "old" }],
+        },
+      });
+      const field = query("workflow-editor-step-command-0-body-0") as HTMLInputElement;
+      expect(field.value).toBe("old");
+      typeInto(field, "new");
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "loop",
+        loop: { kind: "count", count: 2 },
+        body: [{ kind: "send-command", command: "new" }],
+      });
+    });
+  });
+
+  describe("wait-for-output step", () => {
+    it("renders the pattern field and patches it", () => {
+      const h = render({ step: { kind: "wait-for-output", pattern: "login:" } });
+      const field = query("workflow-editor-wfo-pattern-0") as HTMLInputElement;
+      expect(field.value).toBe("login:");
+      typeInto(field, "ready>");
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "wait-for-output",
+        pattern: "ready>",
+      });
+    });
+
+    it("toggles the regex flag on and back off", () => {
+      const h = render({ step: { kind: "wait-for-output", pattern: "x" } });
+      act(() => query("workflow-editor-wfo-regex-0")?.click());
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "wait-for-output",
+        pattern: "x",
+        isRegex: true,
+      });
+    });
+
+    it("patches the optional timeout", () => {
+      const h = render({ step: { kind: "wait-for-output", pattern: "x" } });
+      typeInto(query("workflow-editor-wfo-timeout-0"), "5000");
+      expect(h.onChange).toHaveBeenLastCalledWith("u1", {
+        kind: "wait-for-output",
+        pattern: "x",
+        timeoutMs: 5000,
+      });
+    });
+  });
 });

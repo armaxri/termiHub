@@ -19,13 +19,19 @@ import {
   resolveStepParams,
   interpolateParams,
   evaluateCondition,
+  matchesOutput,
   MAX_CONDITIONAL_DEPTH,
+  MAX_LOOP_DEPTH,
+  MAX_LOOP_ITERATIONS,
+  WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS,
   type WorkflowRunnerDeps,
   type WorkflowSendSeam,
   type WorkflowRunMacroSeam,
   type WorkflowWaitSeam,
   type WorkflowReadFileSeam,
   type WorkflowRunLocalProcessSeam,
+  type WorkflowWaitForOutputSeam,
+  type WaitForOutputResult,
   type WorkflowParamValues,
 } from "./workflowRunner";
 import { MAX_STEP_DELAY_MS } from "./macroPlayback";
@@ -774,5 +780,247 @@ describe("runWorkflow with conditional steps", () => {
       then: [sendCommand("ssh ${host}")], // sub-steps left for their own pass
       else: [sendCommand("bye ${host}")],
     });
+  });
+});
+
+describe("executeStep loop", () => {
+  const countLoop = (count: number, body: WorkflowStep[]): WorkflowStep => ({
+    kind: "loop",
+    loop: { kind: "count", count },
+    body,
+  });
+  const whileLoop = (condition: WorkflowCondition, body: WorkflowStep[]): WorkflowStep => ({
+    kind: "loop",
+    loop: { kind: "while", condition },
+    body,
+  });
+
+  it("runs a count loop body exactly N times", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const outcome = await executeStep(countLoop(3, [sendCommand("tick")]), deps({ send }));
+    expect(outcome).toEqual({ ok: true });
+    expect(send.mock.calls.map((c) => c[0])).toEqual(["tick\n", "tick\n", "tick\n"]);
+  });
+
+  it("a zero count loop runs the body zero times", async () => {
+    const send = vi.fn(async () => true);
+    const outcome = await executeStep(countLoop(0, [sendCommand("tick")]), deps({ send }));
+    expect(outcome).toEqual({ ok: true });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("exposes the reserved ${iteration} value to body steps", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const outcome = await executeStep(
+      countLoop(3, [sendCommand("echo ${iteration}")]),
+      deps({ send })
+    );
+    expect(outcome).toEqual({ ok: true });
+    expect(send.mock.calls.map((c) => c[0])).toEqual(["echo 0\n", "echo 1\n", "echo 2\n"]);
+  });
+
+  it("clamps a count loop above the safety cap to the cap", async () => {
+    const send = vi.fn(async () => true);
+    const outcome = await executeStep(
+      countLoop(MAX_LOOP_ITERATIONS + 50, [sendCommand("x")]),
+      deps({ send })
+    );
+    expect(outcome).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledTimes(MAX_LOOP_ITERATIONS);
+  });
+
+  it("a while loop stops when the condition becomes false", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    // `${iteration} lt 3` is true for i = 0,1,2 then false at i = 3.
+    const outcome = await executeStep(
+      whileLoop(cond("${iteration}", "lt", "3"), [sendCommand("run")]),
+      deps({ send })
+    );
+    expect(outcome).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("a never-false while loop fails when it hits the safety cap", async () => {
+    const send = vi.fn(async () => true);
+    const outcome = await executeStep(
+      whileLoop(cond("1", "eq", "1"), [sendCommand("x")]),
+      deps({ send })
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain(String(MAX_LOOP_ITERATIONS));
+    // The body ran exactly the cap number of times before the run failed.
+    expect(send).toHaveBeenCalledTimes(MAX_LOOP_ITERATIONS);
+  });
+
+  it("a while loop whose condition starts false never runs the body", async () => {
+    const send = vi.fn(async () => true);
+    const outcome = await executeStep(
+      whileLoop(cond("${iteration}", "lt", "0"), [sendCommand("x")]),
+      deps({ send })
+    );
+    expect(outcome).toEqual({ ok: true });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("a real ${param} operand is honoured in the while condition", async () => {
+    const send = vi.fn(async () => true);
+    const values: WorkflowParamValues = { max: "2" };
+    const outcome = await executeStep(
+      whileLoop(cond("${iteration}", "lt", "${max}"), [sendCommand("x")]),
+      deps({ send }),
+      undefined,
+      values
+    );
+    expect(outcome).toEqual({ ok: true });
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  it("propagates a body-step failure as the loop's failure", async () => {
+    const send = vi.fn(async () => false); // session gone
+    const outcome = await executeStep(countLoop(3, [sendCommand("boom")]), deps({ send }));
+    expect(outcome.ok).toBe(false);
+    expect(send).toHaveBeenCalledTimes(1); // stops at the first failing iteration
+  });
+
+  it("stops the body when cancelled between sub-steps", async () => {
+    let calls = 0;
+    const send = vi.fn(async () => {
+      calls++;
+      return true;
+    });
+    const signal = { isCancelled: () => calls >= 1 };
+    const outcome = await executeStep(
+      countLoop(5, [sendCommand("one"), sendCommand("two")]),
+      deps({ send }),
+      signal
+    );
+    expect(outcome).toEqual({ ok: true, cancelled: true });
+    expect(calls).toBe(1);
+  });
+
+  it("fails when loop nesting exceeds the maximum depth", async () => {
+    const send = vi.fn(async () => true);
+    let step: WorkflowStep = sendCommand("leaf");
+    for (let i = 0; i <= MAX_LOOP_DEPTH; i++) {
+      step = countLoop(1, [step]);
+    }
+    const outcome = await executeStep(step, deps({ send }));
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain("depth");
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("counts a loop as one completed top-level step", async () => {
+    const send = vi.fn(async (_data: string) => true);
+    const progress: number[] = [];
+    const steps: WorkflowStep[] = [countLoop(3, [sendCommand("x")]), sendCommand("after")];
+    const result = await runWorkflow(steps, deps({ send }), {
+      onProgress: (completed) => progress.push(completed),
+    }).done;
+    expect(result).toEqual({ status: "completed", stepsCompleted: 2 });
+    expect(progress).toEqual([1, 2]);
+  });
+});
+
+describe("matchesOutput", () => {
+  it("substring matcher tests literal containment", () => {
+    expect(matchesOutput("user@host:~$ ", { pattern: "$ ", isRegex: false })).toBe(true);
+    expect(matchesOutput("still booting", { pattern: "login:", isRegex: false })).toBe(false);
+  });
+
+  it("regex matcher tests the pattern", () => {
+    expect(matchesOutput("exit code 0", { pattern: "code \\d+", isRegex: true })).toBe(true);
+    expect(matchesOutput("no digits", { pattern: "code \\d+", isRegex: true })).toBe(false);
+  });
+
+  it("treats an invalid regex as a non-match (defensive)", () => {
+    expect(matchesOutput("anything", { pattern: "(", isRegex: true })).toBe(false);
+  });
+});
+
+describe("executeStep wait-for-output", () => {
+  const waitStep = (over: Partial<Extract<WorkflowStep, { kind: "wait-for-output" }>> = {}) =>
+    ({ kind: "wait-for-output", pattern: "ready", ...over }) as WorkflowStep;
+
+  it("fails loudly when no wait-for-output seam is provided", async () => {
+    const outcome = await executeStep(waitStep(), deps());
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain("seam");
+  });
+
+  it("succeeds when the seam reports a match", async () => {
+    const waitForOutput: WorkflowWaitForOutputSeam = vi.fn(
+      async (): Promise<WaitForOutputResult> => ({
+        matched: true,
+        timedOut: false,
+        cancelled: false,
+      })
+    );
+    const outcome = await executeStep(waitStep(), deps({ waitForOutput }));
+    expect(outcome).toEqual({ ok: true });
+  });
+
+  it("fails when the seam reports a timeout", async () => {
+    const waitForOutput: WorkflowWaitForOutputSeam = vi.fn(
+      async (): Promise<WaitForOutputResult> => ({
+        matched: false,
+        timedOut: true,
+        cancelled: false,
+      })
+    );
+    const outcome = await executeStep(waitStep(), deps({ waitForOutput }));
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain("timed out");
+  });
+
+  it("ends the run as cancelled when the seam reports cancellation", async () => {
+    const waitForOutput: WorkflowWaitForOutputSeam = vi.fn(
+      async (): Promise<WaitForOutputResult> => ({
+        matched: false,
+        timedOut: false,
+        cancelled: true,
+      })
+    );
+    const outcome = await executeStep(waitStep(), deps({ waitForOutput }));
+    expect(outcome).toEqual({ ok: true, cancelled: true });
+  });
+
+  it("passes the resolved matcher and clamped default timeout to the seam", async () => {
+    const waitForOutput = vi.fn(
+      async (): Promise<WaitForOutputResult> => ({
+        matched: true,
+        timedOut: false,
+        cancelled: false,
+      })
+    );
+    const values: WorkflowParamValues = { token: "PROMPT" };
+    await executeStep(
+      waitStep({ pattern: "${token}>" }),
+      deps({ waitForOutput }),
+      undefined,
+      values
+    );
+    expect(waitForOutput).toHaveBeenCalledWith(
+      { pattern: "PROMPT>", isRegex: false },
+      WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS,
+      expect.anything()
+    );
+  });
+
+  it("rejects an invalid regex before ever calling the seam", async () => {
+    const waitForOutput = vi.fn(
+      async (): Promise<WaitForOutputResult> => ({
+        matched: true,
+        timedOut: false,
+        cancelled: false,
+      })
+    );
+    const outcome = await executeStep(
+      waitStep({ pattern: "(unterminated", isRegex: true }),
+      deps({ waitForOutput })
+    );
+    expect(outcome.ok).toBe(false);
+    if (!outcome.ok) expect(outcome.error).toContain("invalid regular expression");
+    expect(waitForOutput).not.toHaveBeenCalled();
   });
 });
