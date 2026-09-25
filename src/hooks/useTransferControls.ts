@@ -11,9 +11,9 @@ import { frontendLog } from "@/utils/frontendLog";
  *
  * Each handler drives a backend transfer command and gives honest feedback
  * (audit FEC-004 / UX-016): the command resolves `true` only when the transfer
- * really changed state, so a `false` resolution is a silent backend no-op — an
- * unknown/finished id, or a legacy SFTP transfer whose pause/resume/retry the
- * queue does not implement — and must surface an *info* toast, never a success.
+ * really changed state, so a `false` resolution is a silent backend no-op — for
+ * example an unknown or already-finished id — and must surface an *info* toast,
+ * never a success.
  * A rejection surfaces an error toast rather than failing silently.
  */
 export interface TransferControlHandlers {

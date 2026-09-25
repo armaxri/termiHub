@@ -222,9 +222,10 @@ describe("FileBrowser — in-browser transfer footer is region-backed (UX-020 / 
     expect(container.querySelector('[data-testid="file-browser-transfer"]')).toBeNull();
   });
 
-  it("hides Pause for a non-pausable (SSH/SFTP) footer transfer while keeping Cancel", async () => {
+  // #3304: SFTP transfers support pause/resume/retry since PROD-0012.
+  it("shows Pause for an SSH/SFTP footer transfer alongside Cancel", async () => {
     await renderSessionWithTransfers([activeTransfer()]);
-    expect(container.querySelector('[data-testid="transfer-pause"]')).toBeNull();
+    expect(container.querySelector('[data-testid="transfer-pause"]')).toBeTruthy();
     expect(container.querySelector('[data-testid="transfer-cancel"]')).toBeTruthy();
   });
 });

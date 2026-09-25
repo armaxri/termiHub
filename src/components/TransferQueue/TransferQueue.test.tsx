@@ -80,8 +80,8 @@ function seed(entries: TransferEntry[], minimized = false) {
 
 /**
  * Seed a single live tab owning `sessionId` with the given `connectionType`, so
- * the panel can resolve a transfer's pausability (audit PROD-009): only an
- * `ftp`-typed session's transfer shows Pause/Resume/Retry.
+ * a test can pin that transfer controls render the same for every session
+ * type (#3304).
  */
 function seedLiveTab(connectionType: string, sessionId = "sess-a") {
   const tab: TerminalTab = {
@@ -223,9 +223,9 @@ describe("TransferQueue panel", () => {
   // the real backend outcome — success only on a true state change, an accurate
   // message on a silent no-op, and an error toast on a rejection.
   function renderPanel(entries: TransferEntry[]) {
-    // These honest-control tests exercise Pause/Resume/Retry, which only render
-    // for a pausable (FTP) transfer (audit PROD-009), so seed an FTP session.
-    seedLiveTab("ftp");
+    // An SSH (SFTP) session: its queued transfers support Pause/Resume/Retry
+    // since PROD-0012 (#3304), so the honest-control tests run against it.
+    seedLiveTab("ssh");
     seed(entries);
     act(() =>
       root.render(
@@ -308,24 +308,15 @@ describe("TransferQueue panel", () => {
     expect(toast.info).toHaveBeenCalledWith("Transfer already finished");
   });
 
-  // PROD-009: an SFTP-session (non-FTP) transfer can't pause/resume/retry, so
-  // those inert controls are hidden while Cancel stays available.
-  it("hides Pause for an SFTP-session transfer but keeps Cancel; FTP shows Pause", () => {
-    seedLiveTab("ssh"); // legacy SFTP file browsing rides on an ssh session
-    seed([entry({ id: "t1", state: "active" })]);
-    act(() =>
-      root.render(
-        <TooltipProvider>
-          <TransferQueue />
-        </TooltipProvider>
-      )
-    );
-    expect(query("transfer-pause")).toBeNull();
-    expect(query("transfer-cancel")).not.toBeNull();
-
-    act(() => root.unmount());
-    seedLiveTab("ftp");
-    root = createRoot(container);
+  // #3304: SFTP transfers run on the same queue as FTP (PROD-0012) and honour
+  // pause/resume/retry, so an SSH-session row shows the same controls as FTP.
+  it.each(["ssh", "ftp"])("shows Pause, Resume and Retry for a %s-session transfer", (type) => {
+    seedLiveTab(type);
+    seed([
+      entry({ id: "a", state: "active" }),
+      entry({ id: "p", state: "paused" }),
+      entry({ id: "f", state: "failed" }),
+    ]);
     act(() =>
       root.render(
         <TooltipProvider>
@@ -334,6 +325,8 @@ describe("TransferQueue panel", () => {
       )
     );
     expect(query("transfer-pause")).not.toBeNull();
+    expect(query("transfer-resume")).not.toBeNull();
+    expect(query("transfer-retry")).not.toBeNull();
     expect(query("transfer-cancel")).not.toBeNull();
   });
 });

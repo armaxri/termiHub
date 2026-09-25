@@ -39,8 +39,7 @@ import {
   Eye,
   EyeOff,
 } from "lucide-react";
-import { useShallow } from "zustand/react/shallow";
-import { useAppStore, getActiveTab, collectLiveTabs } from "@/store/appStore";
+import { useAppStore, getActiveTab } from "@/store/appStore";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
@@ -48,7 +47,6 @@ import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import { Button, Tooltip, Input, SearchInput, Spinner, EmptyState, toast } from "@/components/ui";
 import { TransferEntryRow } from "@/components/TransferQueue";
-import { isPausableTransferConnectionType } from "@/types/transfer";
 import { useFileBrowser } from "@/hooks/useFileBrowser";
 import { useTransferControls } from "@/hooks/useTransferControls";
 import { onVscodeEditComplete } from "@/services/events";
@@ -1028,19 +1026,6 @@ export function FileBrowser() {
   const { queue: transferQueue } = useProjectedTransfers();
   const { handlePause, handleResume, handleCancel, handleRetry } = useTransferControls();
   const removeTransfer = useAppStore((s) => s.removeTransfer);
-  // Map each live tab's session id → connection type so a footer row can tell
-  // whether its executor supports pause/resume/retry (audit PROD-009); only the
-  // FTP rich-queue executor does. `useShallow` keeps this stable across progress
-  // ticks. Mirrors the Transfer Queue panel exactly.
-  const sessionConnectionTypes = useAppStore(
-    useShallow((s) => {
-      const map: Record<string, string> = {};
-      for (const tab of collectLiveTabs(s)) {
-        if (tab.sessionId) map[tab.sessionId] = tab.connectionType;
-      }
-      return map;
-    })
-  );
   const vscodeAvailable = useAppStore((s) => s.vscodeAvailable);
   // Render cut (#2228): the copy-cut clipboard is sourced from the projected
   // client-scoped file-browser region (mirror-gated, falls back to appStore).
@@ -2017,7 +2002,6 @@ export function FileBrowser() {
               <TransferEntryRow
                 entry={t}
                 compact
-                pausable={isPausableTransferConnectionType(sessionConnectionTypes[t.sessionId])}
                 onPause={handlePause}
                 onResume={handleResume}
                 onCancel={handleCancel}
