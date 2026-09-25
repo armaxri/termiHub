@@ -381,39 +381,86 @@ pub struct HealthCheckResult {
 }
 
 // ── connections.create ──────────────────────────────────────────────
+//
+// The `connections.*` / `connections.folders.*` params below are the single typed
+// contract for the connection-management verbs (AGT-028): the agent deserializes
+// them, the desktop (`src-tauri/src/commands/agent.rs`) decodes the frontend's
+// payload into them at the command boundary and re-serializes them onto the wire,
+// and the frontend builds them against the ts-rs-generated TypeScript types in
+// `src/types/generated/`. The wire shape is snake_case (no `rename_all`) and must
+// stay byte-compatible with agents already in the field — see the round-trip tests
+// in this module and the TS→Rust contract fixture
+// `core/tests/fixtures/contract/agent_connection_params.json`.
 
-#[derive(Debug, Clone, Deserialize)]
+/// Params for `connections.create`.
+///
+/// Every field is always serialized (optional ones as `null`), so the canonical
+/// wire form carries every key and a decode → re-encode round trip is exact.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct ConnectionCreateParams {
     pub name: String,
     #[serde(rename = "type")]
     pub session_type: String,
     #[serde(default)]
+    #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub config: serde_json::Value,
     #[serde(default)]
     pub persistent: bool,
     pub folder_id: Option<String>,
+    #[cfg_attr(test, ts(type = "unknown"))]
     pub terminal_options: Option<serde_json::Value>,
     pub icon: Option<String>,
 }
 
 // ── connections.update ─────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+/// Params for `connections.update` — a partial patch keyed by `id`.
+///
+/// Absent fields are left unchanged, so every `None` is omitted on the wire. The
+/// three tri-state fields keep "omitted" (`None`) distinct from an explicit JSON
+/// `null` (`Some(Value::Null)`), which clears / moves to root.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct ConnectionUpdateParams {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub name: Option<String>,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub session_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "Record<string, unknown>"))]
     pub config: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub persistent: Option<bool>,
     /// Use JSON `null` to move to root, omit to leave unchanged.
-    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
     pub folder_id: Option<serde_json::Value>,
     /// Use JSON `null` to clear, omit to leave unchanged.
-    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(optional, type = "unknown"))]
     pub terminal_options: Option<serde_json::Value>,
     /// Use JSON `null` to clear, omit to leave unchanged.
-    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
     pub icon: Option<serde_json::Value>,
 }
 
@@ -434,13 +481,28 @@ pub struct FolderCreateParams {
 
 // ── connections.folders.update ──────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+/// Params for `connections.folders.update` — a partial patch keyed by `id`.
+///
+/// Absent fields are left unchanged (every `None` is omitted on the wire);
+/// `parent_id` keeps "omitted" distinct from an explicit JSON `null` (move to root).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 pub struct FolderUpdateParams {
     pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub name: Option<String>,
     /// Use JSON `null` to move to root, omit to leave unchanged.
-    #[serde(default, deserialize_with = "deserialize_optional_nullable")]
+    #[serde(
+        default,
+        deserialize_with = "deserialize_optional_nullable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(test, ts(as = "Option<String>", optional = nullable))]
     pub parent_id: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
     pub is_expanded: Option<bool>,
 }
 
