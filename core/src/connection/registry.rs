@@ -293,6 +293,7 @@ mod tests {
                 resize: true,
                 persistent: false,
                 terminal: true,
+                tunneling: false,
             }
         }
         async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
@@ -452,6 +453,7 @@ mod tests {
                 resize: true,
                 persistent: false,
                 terminal: true,
+                tunneling: true,
             },
         };
         let json = serde_json::to_string(&info).unwrap();
@@ -459,6 +461,7 @@ mod tests {
         assert_eq!(deserialized.type_id, "ssh");
         assert_eq!(deserialized.display_name, "SSH");
         assert!(deserialized.capabilities.monitoring);
+        assert!(deserialized.capabilities.tunneling);
     }
 
     #[test]

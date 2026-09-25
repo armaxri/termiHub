@@ -545,6 +545,7 @@ impl ConnectionType for SidecarRdp {
             resize: false,
             persistent: false,
             terminal: false,
+            tunneling: false,
         }
     }
 

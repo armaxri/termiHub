@@ -363,6 +363,8 @@ impl ConnectionType for Telnet {
             resize: false,
             persistent: false,
             terminal: true,
+            // Telnet has no port-forwarding mechanism.
+            tunneling: false,
         }
     }
 

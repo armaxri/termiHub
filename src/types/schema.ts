@@ -105,4 +105,12 @@ export interface Capabilities {
    * browser-only tab. Decide with `graphical === true` (#1680).
    */
   graphical?: boolean;
+  /**
+   * Whether this connection type can host SSH-style port forwards (tunnels).
+   * Optional to match the wire reality (`#[serde(default)]` → absent means not
+   * tunnel-capable). Only SSH advertises it today; the tunnel manager gates
+   * tunnel hosting on this capability rather than a hardcoded type id
+   * (PARITY-001). Decide with `tunneling === true`.
+   */
+  tunneling?: boolean;
 }

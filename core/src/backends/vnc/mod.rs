@@ -524,6 +524,7 @@ impl ConnectionType for Vnc {
             resize: false,
             persistent: false,
             terminal: false,
+            tunneling: false,
         }
     }
 

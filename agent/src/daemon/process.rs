@@ -908,6 +908,7 @@ mod tests {
                     resize: true,
                     persistent: true,
                     terminal: true,
+                    tunneling: false,
                 }
             }
             async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {

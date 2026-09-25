@@ -101,6 +101,9 @@ impl RemoteProxy {
                 resize: true,
                 persistent: false,
                 terminal: true,
+                // Placeholder until the agent reports; the remote's real
+                // capabilities (incl. tunneling) replace these on connect.
+                tunneling: false,
             }),
             std_output_rx: Mutex::new(None),
             connected: AtomicBool::new(false),
@@ -157,6 +160,9 @@ impl RemoteProxy {
                 resize: true,
                 persistent: true,
                 terminal: true,
+                // Placeholder until the agent reports; the remote's real
+                // capabilities (incl. tunneling) replace these on connect.
+                tunneling: false,
             }),
             std_output_rx: Mutex::new(Some(std_rx)),
             connected: AtomicBool::new(true),
@@ -195,6 +201,7 @@ impl ConnectionType for RemoteProxy {
                 resize: true,
                 persistent: false,
                 terminal: true,
+                tunneling: false,
             })
     }
 

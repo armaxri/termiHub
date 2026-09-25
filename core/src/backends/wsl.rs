@@ -900,6 +900,8 @@ impl ConnectionType for Wsl {
             resize: true,
             persistent: true,
             terminal: true,
+            // WSL has no port-forwarding mechanism.
+            tunneling: false,
         }
     }
 

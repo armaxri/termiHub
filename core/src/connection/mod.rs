@@ -93,6 +93,20 @@ pub struct Capabilities {
     /// this without per-type special-casing.
     #[serde(default = "default_terminal")]
     pub terminal: bool,
+    /// Whether this connection type can host SSH-style port forwards (tunnels).
+    ///
+    /// Replaces the old hardcoded `type_id == "ssh"` gate in the tunnel manager
+    /// (PARITY-001): a backend that can build a port forward advertises this, so
+    /// the gate is capability-driven rather than a brittle name comparison. Only
+    /// SSH sets it today — the forward is built on an SSH session, and agent-hosted
+    /// tunnels relocate *where* that SSH forward runs but still require an SSH
+    /// connection. Backends with no forwarding mechanism (serial, telnet, docker,
+    /// VNC, RDP, FTP, local, WSL) leave it `false`.
+    ///
+    /// Defaults to `false` (via `#[serde(default)]`) so capabilities serialized
+    /// before this field existed deserialize as non-tunnel-capable.
+    #[serde(default)]
+    pub tunneling: bool,
 }
 
 /// Unified trait for all connection backends.
@@ -266,6 +280,7 @@ mod tests {
             resize: true,
             persistent: false,
             terminal: true,
+            tunneling: true,
         };
         let json = serde_json::to_value(&caps).unwrap();
         assert_eq!(json["monitoring"], true);
@@ -274,6 +289,7 @@ mod tests {
         assert_eq!(json["resize"], true);
         assert_eq!(json["persistent"], false);
         assert_eq!(json["terminal"], true);
+        assert_eq!(json["tunneling"], true);
 
         let deserialized: Capabilities = serde_json::from_value(json).unwrap();
         assert!(deserialized.monitoring);
@@ -282,6 +298,27 @@ mod tests {
         assert!(deserialized.resize);
         assert!(!deserialized.persistent);
         assert!(deserialized.terminal);
+        assert!(deserialized.tunneling);
+    }
+
+    #[test]
+    fn capabilities_tunneling_defaults_false_when_absent() {
+        // Backward compatibility: capabilities serialized before the `tunneling`
+        // field existed omit it on the wire. Such payloads must deserialize as
+        // non-tunnel-capable so an older agent never appears able to host a
+        // port forward it cannot build.
+        let legacy = serde_json::json!({
+            "monitoring": false,
+            "fileBrowser": false,
+            "resize": true,
+            "persistent": false,
+            "terminal": true,
+        });
+        let deserialized: Capabilities = serde_json::from_value(legacy).unwrap();
+        assert!(
+            !deserialized.tunneling,
+            "missing `tunneling` must default to false (not tunnel-capable)"
+        );
     }
 
     #[test]
@@ -314,6 +351,7 @@ mod tests {
             resize: false,
             persistent: false,
             terminal: false,
+            tunneling: false,
         };
         let json = serde_json::to_value(&caps).unwrap();
         assert_eq!(json["terminal"], false);
@@ -330,6 +368,7 @@ mod tests {
             resize: false,
             persistent: false,
             terminal: true,
+            tunneling: false,
         };
         let json = serde_json::to_value(&caps).unwrap();
         let obj = json.as_object().unwrap();
@@ -339,6 +378,7 @@ mod tests {
         assert!(obj.contains_key("resize"));
         assert!(obj.contains_key("persistent"));
         assert!(obj.contains_key("terminal"));
+        assert!(obj.contains_key("tunneling"));
         // Ensure snake_case keys are NOT present.
         assert!(!obj.contains_key("file_browser"));
     }
