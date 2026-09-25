@@ -289,13 +289,6 @@ impl PluginManifest {
     pub fn api_compatibility(&self) -> ApiCompatibility {
         check_api_compatibility(&self.api_version)
     }
-
-    /// The declared `apiVersion` as an [`AbiVersion`], or `None` when it is not
-    /// canonical `major.minor` (which [`validate`](Self::validate) rejects).
-    #[must_use]
-    pub fn abi_version(&self) -> Option<AbiVersion> {
-        AbiVersion::parse(&self.api_version)
-    }
 }
 
 /// The outcome of an API-version compatibility check — a distinct result from
