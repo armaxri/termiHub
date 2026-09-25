@@ -40,10 +40,21 @@ pub mod persist;
 pub mod persist_manager;
 pub mod persist_storage;
 pub(crate) mod relaunch;
-pub mod sftp;
+
+// The FTP/SFTP transfer executors moved to `termihub-core` (DUP-026 slice 2b):
+// `run_ftp_transfer`, `run_sftp_transfer`, `run_sftp_remote_copy`, plus SFTP's
+// `ResumeMode` / `DEFAULT_RESUME_MODE`. Re-export them under their original
+// `transfer::sftp::*` / `transfer::ftp::*` submodule paths so every desktop call
+// site (`commands::session`, `commands::transfer`, `relaunch`, the
+// `sftp_transfer` integration test) resolves unchanged.
+pub mod sftp {
+    pub use termihub_core::files::transfer::sftp::*;
+}
 
 #[cfg(feature = "ftp")]
-pub mod ftp;
+pub mod ftp {
+    pub use termihub_core::files::transfer::ftp::*;
+}
 
 // The pure, backend-agnostic transfer machinery moved to `termihub-core`
 // (DUP-026): the state machine / scheduler / retry math (slice 1), and the
