@@ -1,0 +1,55 @@
+---
+id: DUP-030
+title: Rust↔TypeScript DTOs are hand-mirrored across the whole IPC surface (no codegen)
+angle: code-duplication
+severity: medium
+category: reliability
+is_workaround: false
+subsystem: src/types/* + src/services/api.ts vs core + src-tauri Rust types
+evidence:
+  - src/types/connection.ts:698
+  - core/src/files/mod.rs:16
+  - src/types/embeddedServer.ts:2
+  - src/services/api.ts:1197
+status: partial
+resolution: "#3087 — ts-rs codegen ADOPTED (maintainer decision). PR-1 infra + 7 dependency-closed connection DTOs generate from Rust (ConnectionFolder/AgentSettings/SavedRemoteAgent/ConnectionConfig/RemoteAgentConfig/ExternalAgentFile/UpdateStrategy) → src/types/generated/, hand-written interfaces replaced by re-exports (233 import sites unchanged), CI staleness gate in code-quality.yml rust-quality job, ts-rs=dev-dep under cfg(test) so release binary is codegen-free (cargo tree verified). serde-fidelity: #[ts(type=..)] literal-unions + #[ts(as=Option<..>,optional)] for skip_serializing_if. Removed obsolete ConnectionConfig drift-guard. PR-2 (#3259): ImportPreview + ImportResult DTOs generated (sibling store types ConnectionStore/ExternalConnectionStore/EncryptedConnectionExport embed ConnectionTreeNode, blocked on the DUP-008 enum-shape design decision). PR-3 (#3261): session event payloads TerminalOutputEvent/TerminalExitEvent/PersistentSessionStateEvent generated (Vec<u8> data overridden #[ts(type=string)] to match base64 wire). REMAINING clusters are now all either DUP-008-blocked (ConnectionTreeNode + the 3 store types) or intentionally-divergent/not-cleanly-generatable (TerminalOptions has a frontend-only nested ConnectionHighlightingConfig; core config TS mirrors are deliberate open-bag views; JumpHostConfig port:number|; generic JSON-RPC framing) → tracked #3088, several need design calls. Also partially addresses MOCK-005 (hand-mirror machinery) — MOCK-005/MOCK-010/AGT-028 stay open pending #3088 rollout"
+---
+
+## What
+
+Every type crossing the Tauri IPC boundary is declared once in Rust and hand-re-declared in
+TypeScript, kept in sync manually across the serde/camelCase boundary. This is a systemic,
+cross-cutting duplication, not a single site. Representative mirrors:
+
+- `FileEntry` — `core/src/files/mod.rs:16` ↔ `src/types/connection.ts:698`.
+- `SavedConnection`/`ConnectionFolder` — `src-tauri/src/connection/config.rs` ↔
+  `src/types/connection.ts:37/48` (also the agent, DUP-008).
+- Embedded-server config/status — `core/src/embedded_servers/config.rs` ↔
+  `src/types/embeddedServer.ts:2-41`, with TS-only constants (`DEFAULT_PORTS`, `PROTOCOL_LABELS`) that
+  have no Rust counterpart.
+- Transfer types — `src-tauri/src/files/transfer/*` ↔ `src/services/api.ts:1175-1226` +
+  `src/types/connection.ts:19`.
+- Tunnel, monitoring, network, workflow, spawn types — each has a `src/types/*.ts` mirror.
+
+## Why it matters
+
+Medium and pervasive. A renamed/added field or a camelCase mismatch silently breaks
+decoding at runtime with no compiler or test signal (unless a hand-written test happens to cover
+it). The additive #1336 transfer fields already show the drift pressure (many `Option`/`?` fields
+kept in sync by hand). Some constants exist on only one side (`DEFAULT_PORTS` in TS only), so the
+two layers can disagree on defaults.
+
+## Evidence
+
+- `core/src/files/mod.rs:16` ↔ `src/types/connection.ts:698` (`FileEntry`).
+- `src/types/embeddedServer.ts:2-41` (+ TS-only `DEFAULT_PORTS` :44, `PROTOCOL_LABELS` :51).
+- `src/services/api.ts:1197` (`TransferProgress`), `:1226` (`TransferSnapshot`), `:1181`
+  (`TransferQueueState`).
+
+## Recommendation
+
+Adopt Rust→TS type generation (`ts-rs` or `typeshare`) for the IPC DTOs so the TypeScript types are
+generated from the Rust source of truth instead of hand-mirrored, and move shared defaults
+(`DEFAULT_PORTS`, monitoring interval, network-tool defaults) to the Rust side and generate/emit
+them. This is the frontend↔backend analog of the app↔agent DTO problem (DUP-001) and the single
+highest-leverage fix for cross-language drift.
