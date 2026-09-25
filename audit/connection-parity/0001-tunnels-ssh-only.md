@@ -9,7 +9,8 @@ subsystem: src-tauri/src/tunnel
 evidence:
   - src-tauri/src/tunnel/tunnel_manager.rs:1512
   - core/src/tunnel/config.rs:9
-status: open
+status: fixed
+resolution: "#3247 — tunnel hosting no longer gated by a hardcoded `type_id == "ssh"` string: added a `tunneling` flag to the Capabilities model (serde-default for wire back-compat, SSH=true, all others=false across ~24 literals) and TunnelManager now gates on the capability via available_types() (pure type_supports_tunneling helper, unit-tested). Correctness/de-brittle refactor — only SSH can actually forward, so no new user-facing behavior; brittle string check eliminated"
 ---
 
 ## What
