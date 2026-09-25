@@ -236,6 +236,8 @@ pub struct EncryptedConnectionExport {
 
 /// Summary of an import file before the user confirms the import.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ImportPreview {
     pub connection_count: usize,
@@ -246,6 +248,8 @@ pub struct ImportPreview {
 
 /// Result of a completed import operation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ImportResult {
     pub connections_imported: usize,

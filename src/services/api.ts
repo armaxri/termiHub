@@ -18,6 +18,8 @@ import type { KillSignal, ProcessInfo } from "@/types/monitoring";
 import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
+import type { ImportPreview } from "@/types/generated/ImportPreview";
+import type { ImportResult } from "@/types/generated/ImportResult";
 import type { ContainerRuntime, SpawnTarget } from "@/types/spawn";
 import type {
   TabHandoffRecord,
@@ -1049,19 +1051,11 @@ export async function importConnections(json: string): Promise<number> {
   return await invoke<number>("import_connections", { json });
 }
 
-/** Preview of an import file before the user confirms. */
-export interface ImportPreview {
-  connectionCount: number;
-  folderCount: number;
-  agentCount: number;
-  hasEncryptedCredentials: boolean;
-}
-
-/** Result of a completed import operation. */
-export interface ImportResult {
-  connectionsImported: number;
-  credentialsImported: number;
-}
+// `ImportPreview` (import-file summary) and `ImportResult` (completed-import
+// counts) are generated from their Rust source of truth
+// (`connection::config::ImportPreview` / `ImportResult`) via ts-rs and re-exported
+// here so existing consumers keep importing them from `@/services/api` (DUP-030).
+export type { ImportPreview, ImportResult };
 
 /**
  * Structured failure from {@link importConnectionsWithCredentials}, mirroring
