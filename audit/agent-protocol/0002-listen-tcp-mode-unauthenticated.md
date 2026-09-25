@@ -11,7 +11,8 @@ evidence:
   - agent/src/io/tcp.rs:96
   - agent/src/io/tcp.rs:126
   - agent/src/main.rs:155
-status: open
+status: fixed
+resolution: "#3297 — --listen requires per-instance token handshake (owner-only token file, fail-closed, constant-time compare) — maintainer decision 2026-09-25"
 ---
 
 ## What

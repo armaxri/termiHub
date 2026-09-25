@@ -11,7 +11,8 @@ evidence:
   - agent/src/io/tcp.rs:106
   - agent/src/main.rs:25
   - agent/src/main.rs:155
-status: open
+status: fixed
+resolution: "#3297 — --listen TCP authenticated via per-instance token handshake"
 ---
 
 ## What

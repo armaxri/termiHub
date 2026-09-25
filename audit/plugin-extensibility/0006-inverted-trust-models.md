@@ -11,8 +11,8 @@ evidence:
   - core/src/plugin/security.rs:329
   - src/components/Settings/FrontendPluginGateSettings.tsx:22
   - core/src/plugin/host.rs:258
-status: deferred
-resolution: "maintainer-decision — plugin trust model"
+status: fixed
+resolution: "#3296 — native default-off + per-plugin trust ack (maintainer decision 2026-09-25)"
 ---
 
 ## What

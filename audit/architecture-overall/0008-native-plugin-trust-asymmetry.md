@@ -10,7 +10,8 @@ evidence:
   - core/src/plugin/host.rs:258
   - core/src/plugin/capabilities.rs:12
   - src/plugins/sandbox/pluginSandboxWorker.ts:1
-status: open
+status: fixed
+resolution: "#3296 — native plugins default-off + per-plugin hash-bound trust ack; trust models no longer asymmetric"
 ---
 
 ## What
