@@ -47,6 +47,10 @@ use termihub_core::monitoring::{
     MonitoringSender, MonitoringSubscription, ProcessError, ProcessInfo, ProcessManager,
     DEFAULT_STALE_THRESHOLD,
 };
+use termihub_core::protocol::methods::{
+    ConnectionTypesResult, FilesListResult, FilesReadResult, MonitoringSubscribeParams,
+    MonitoringUnsubscribeParams, ProcessesListResult,
+};
 
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::terminal::backend::OUTPUT_CHANNEL_CAPACITY;
@@ -501,65 +505,59 @@ impl RemoteProxy {
         })
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?;
+        // Parse the reply into the shared `ConnectionTypesResult` DTO (DUP-001)
+        // and pick this session type's typed `Capabilities` — replacing the
+        // hand-rolled `get("types")`/`get("typeId")`/`get("capabilities")`
+        // indexing. A malformed reply leaves the defaults in place.
         if let Ok(caps_result) = caps_result {
-            if let Some(types) = caps_result.get("types").and_then(|v| v.as_array()) {
-                for type_info in types {
-                    if type_info.get("typeId").and_then(|v| v.as_str()) == Some(&session_type) {
-                        if let Some(caps) = type_info.get("capabilities") {
-                            if let Ok(parsed) = serde_json::from_value::<Capabilities>(caps.clone())
-                            {
-                                if let Ok(mut c) = self.remote_capabilities.lock() {
-                                    *c = parsed.clone();
-                                }
-                                // Set up file browser proxy if supported.
-                                if parsed.file_browser {
-                                    self.file_browser_proxy = Some(RemoteFileBrowserProxy {
-                                        agent_id: self.agent_id.clone(),
-                                        remote_session_id: remote_sid.clone(),
-                                        agent_manager: self.agent_manager.clone(),
-                                    });
-                                }
-                                // Set up monitoring proxy if supported.
-                                if parsed.monitoring {
-                                    // Local sessions are monitored on the agent host itself
-                                    // via the "self" sentinel; SSH sessions use the session ID.
-                                    let monitoring_host = if session_type == "local" {
-                                        "self".to_string()
-                                    } else {
-                                        remote_sid.clone()
-                                    };
-                                    self.monitoring_proxy = Some(Arc::new(RemoteMonitoringProxy {
-                                        agent_id: self.agent_id.clone(),
-                                        monitoring_host,
-                                        agent_manager: self.agent_manager.clone(),
-                                        interval_ms: Arc::new(AtomicU64::new(
-                                            DEFAULT_MONITORING_INTERVAL_MS,
-                                        )),
-                                        paused_tx: tokio::sync::watch::channel(false).0,
-                                    }));
-                                    // A host that can be monitored can also have
-                                    // its processes listed/killed (PROD-0028).
-                                    // For a local agent session the "self"-hosted
-                                    // manager runs on the agent; the agent scopes
-                                    // by the connection id it receives (None for
-                                    // local). Agent-hosted SSH/Docker/WSL process
-                                    // support is a follow-up — the agent returns
-                                    // NotSupported for those today.
-                                    let process_connection_id = if session_type == "local" {
-                                        None
-                                    } else {
-                                        Some(remote_sid.clone())
-                                    };
-                                    self.process_proxy = Some(Arc::new(RemoteProcessProxy {
-                                        agent_id: self.agent_id.clone(),
-                                        connection_id: process_connection_id,
-                                        agent_manager: self.agent_manager.clone(),
-                                    }));
-                                }
-                            }
-                        }
-                        break;
-                    }
+            let type_info = serde_json::from_value::<ConnectionTypesResult>(caps_result)
+                .ok()
+                .and_then(|r| r.types.into_iter().find(|t| t.type_id == session_type));
+            if let Some(type_info) = type_info {
+                let parsed = type_info.capabilities;
+                if let Ok(mut c) = self.remote_capabilities.lock() {
+                    *c = parsed.clone();
+                }
+                // Set up file browser proxy if supported.
+                if parsed.file_browser {
+                    self.file_browser_proxy = Some(RemoteFileBrowserProxy {
+                        agent_id: self.agent_id.clone(),
+                        remote_session_id: remote_sid.clone(),
+                        agent_manager: self.agent_manager.clone(),
+                    });
+                }
+                // Set up monitoring proxy if supported.
+                if parsed.monitoring {
+                    // Local sessions are monitored on the agent host itself
+                    // via the "self" sentinel; SSH sessions use the session ID.
+                    let monitoring_host = if session_type == "local" {
+                        "self".to_string()
+                    } else {
+                        remote_sid.clone()
+                    };
+                    self.monitoring_proxy = Some(Arc::new(RemoteMonitoringProxy {
+                        agent_id: self.agent_id.clone(),
+                        monitoring_host,
+                        agent_manager: self.agent_manager.clone(),
+                        interval_ms: Arc::new(AtomicU64::new(DEFAULT_MONITORING_INTERVAL_MS)),
+                        paused_tx: tokio::sync::watch::channel(false).0,
+                    }));
+                    // A host that can be monitored can also have its processes
+                    // listed/killed (PROD-0028). For a local agent session the
+                    // "self"-hosted manager runs on the agent; the agent scopes
+                    // by the connection id it receives (None for local).
+                    // Agent-hosted SSH/Docker/WSL process support is a follow-up —
+                    // the agent returns NotSupported for those today.
+                    let process_connection_id = if session_type == "local" {
+                        None
+                    } else {
+                        Some(remote_sid.clone())
+                    };
+                    self.process_proxy = Some(Arc::new(RemoteProcessProxy {
+                        agent_id: self.agent_id.clone(),
+                        connection_id: process_connection_id,
+                        agent_manager: self.agent_manager.clone(),
+                    }));
                 }
             }
         }
@@ -587,7 +585,15 @@ pub struct RemoteFileBrowserProxy {
 impl RemoteFileBrowserProxy {
     /// Run a sync `send_request` on the blocking thread pool so its internal
     /// `oneshot::Receiver::blocking_recv` does not park a tokio worker thread.
-    async fn rpc(&self, method: &'static str, params: Value) -> Result<Value, FileError> {
+    async fn rpc(
+        &self,
+        method: &'static str,
+        params: impl serde::Serialize,
+    ) -> Result<Value, FileError> {
+        // Serialize the shared param DTO into the RPC `Value` here so every
+        // call site stays a one-liner (DUP-001).
+        let params =
+            serde_json::to_value(&params).map_err(|e| FileError::OperationFailed(e.to_string()))?;
         let mgr = self.agent_manager.clone();
         let agent_id = self.agent_id.clone();
         tokio::task::spawn_blocking(move || mgr.send_request(&agent_id, method, params))
@@ -600,84 +606,129 @@ impl RemoteFileBrowserProxy {
 /// Builders for the `connection.files.*` JSON-RPC request params.
 ///
 /// These are factored out of the [`FileBrowser`] impl below as pure functions
-/// so a per-PR contract test can round-trip each one through the agent's real
-/// parameter structs (`agent/src/protocol/methods.rs`) — see the `tests`
-/// module. The desktop and the agent share no protocol DTO crate, so the field
-/// names here are hand-mirrored against the agent's structs and can silently
-/// drift; the round-trip test is the guard that keeps them aligned in per-PR CI
-/// (audit findings AGT-001, AGT-009, TBE-009).
+/// that return the shared `core::protocol::methods` param DTOs (DUP-001): the
+/// desktop and the agent share one definition of each request wire shape, so the
+/// field names can no longer silently drift. Callers serialize the returned DTO
+/// (`RemoteFileBrowserProxy::rpc` takes `impl Serialize`). The wire bytes are
+/// pinned byte-for-byte against the pre-migration `json!` in the `wire_contract`
+/// tests (audit findings AGT-001, AGT-009, TBE-009).
 ///
-/// The agent is the server contract: field names below match the agent's
-/// structs exactly, NOT necessarily each other. `delete` is the notable
-/// asymmetry — `FilesDeleteParams` is the only files DTO with
-/// `#[serde(rename_all = "camelCase")]`, so it uses `connectionId`/`isDirectory`
-/// while its five siblings use snake_case.
+/// `delete` is the notable asymmetry — `FilesDeleteParams` is the only files DTO
+/// with `#[serde(rename_all = "camelCase")]`, so it serializes to
+/// `connectionId`/`isDirectory` while its siblings use snake_case.
 mod files_params {
-    use serde_json::{json, Value};
+    use termihub_core::protocol::methods::{
+        FilesCopyParams, FilesCreateSymlinkParams, FilesDeleteParams, FilesListParams,
+        FilesMkdirParams, FilesReadParams, FilesRenameParams, FilesSetOwnerParams,
+        FilesSetPermissionsParams, FilesStatParams, FilesWriteParams,
+    };
 
-    pub(super) fn list(connection_id: &str, path: &str) -> Value {
-        json!({ "connection_id": connection_id, "path": path })
+    pub(super) fn list(connection_id: &str, path: &str) -> FilesListParams {
+        FilesListParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
+        }
     }
 
-    pub(super) fn read(connection_id: &str, path: &str) -> Value {
-        json!({ "connection_id": connection_id, "path": path })
+    pub(super) fn read(connection_id: &str, path: &str) -> FilesReadParams {
+        FilesReadParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
+        }
     }
 
-    pub(super) fn write(connection_id: &str, path: &str, data_b64: &str) -> Value {
-        json!({ "connection_id": connection_id, "path": path, "data": data_b64 })
+    pub(super) fn write(connection_id: &str, path: &str, data_b64: &str) -> FilesWriteParams {
+        FilesWriteParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
+            data: data_b64.to_string(),
+        }
     }
 
-    /// `FilesDeleteParams` uses `#[serde(rename_all = "camelCase")]`, so the
-    /// agent requires `connectionId` and a required `isDirectory` bool.
+    /// `FilesDeleteParams` serializes to `connectionId`/`isDirectory` (camelCase).
     /// `isDirectory` is advisory: the agent self-detects the entry kind via
     /// `stat` and discards this hint (`agent/src/handler/dispatch.rs`), but the
-    /// field must be present for `params.parse()` to succeed. The
+    /// field must be present for the agent's `params.parse()` to succeed. The
     /// [`FileBrowser::delete`] trait carries no directory flag to forward here,
     /// so a benign `false` is sent purely to satisfy the required field.
-    pub(super) fn delete(connection_id: &str, path: &str) -> Value {
-        json!({ "connectionId": connection_id, "path": path, "isDirectory": false })
+    pub(super) fn delete(connection_id: &str, path: &str) -> FilesDeleteParams {
+        FilesDeleteParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
+            is_directory: false,
+        }
     }
 
-    /// `FilesRenameParams` requires snake_case `old_path`/`new_path` (no serde
-    /// alias), so the trait's `from`/`to` map onto those names here.
-    pub(super) fn rename(connection_id: &str, from: &str, to: &str) -> Value {
-        json!({ "connection_id": connection_id, "old_path": from, "new_path": to })
+    /// The trait's `from`/`to` map onto the agent's `old_path`/`new_path`.
+    pub(super) fn rename(connection_id: &str, from: &str, to: &str) -> FilesRenameParams {
+        FilesRenameParams {
+            connection_id: Some(connection_id.to_string()),
+            old_path: from.to_string(),
+            new_path: to.to_string(),
+        }
     }
 
-    pub(super) fn stat(connection_id: &str, path: &str) -> Value {
-        json!({ "connection_id": connection_id, "path": path })
+    pub(super) fn stat(connection_id: &str, path: &str) -> FilesStatParams {
+        FilesStatParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
+        }
     }
 
-    pub(super) fn mkdir(connection_id: &str, path: &str) -> Value {
-        json!({ "connection_id": connection_id, "path": path })
+    pub(super) fn mkdir(connection_id: &str, path: &str) -> FilesMkdirParams {
+        FilesMkdirParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
+        }
     }
 
-    /// `FilesSetPermissionsParams` requires snake_case `connection_id`/`path`
-    /// plus the numeric `mode` (the low 12 mode bits).
-    pub(super) fn set_permissions(connection_id: &str, path: &str, mode: u32) -> Value {
-        json!({ "connection_id": connection_id, "path": path, "mode": mode })
+    /// `mode` carries the low 12 mode bits.
+    pub(super) fn set_permissions(
+        connection_id: &str,
+        path: &str,
+        mode: u32,
+    ) -> FilesSetPermissionsParams {
+        FilesSetPermissionsParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
+            mode,
+        }
     }
 
-    /// `FilesSetOwnerParams` requires snake_case `connection_id`/`path` plus the
-    /// optional numeric `uid`/`gid` (a `null`/absent side is left unchanged).
+    /// A `None` `uid`/`gid` side serializes as JSON `null` and leaves that owner
+    /// component unchanged on the agent.
     pub(super) fn set_owner(
         connection_id: &str,
         path: &str,
         uid: Option<u32>,
         gid: Option<u32>,
-    ) -> Value {
-        json!({ "connection_id": connection_id, "path": path, "uid": uid, "gid": gid })
+    ) -> FilesSetOwnerParams {
+        FilesSetOwnerParams {
+            connection_id: Some(connection_id.to_string()),
+            path: path.to_string(),
+            uid,
+            gid,
+        }
     }
 
-    /// `FilesCreateSymlinkParams` requires snake_case `connection_id`/`target`/
-    /// `link_path`.
-    pub(super) fn create_symlink(connection_id: &str, target: &str, link_path: &str) -> Value {
-        json!({ "connection_id": connection_id, "target": target, "link_path": link_path })
+    pub(super) fn create_symlink(
+        connection_id: &str,
+        target: &str,
+        link_path: &str,
+    ) -> FilesCreateSymlinkParams {
+        FilesCreateSymlinkParams {
+            connection_id: Some(connection_id.to_string()),
+            target: target.to_string(),
+            link_path: link_path.to_string(),
+        }
     }
 
-    /// `FilesCopyParams` requires snake_case `connection_id`/`src`/`dest`.
-    pub(super) fn copy(connection_id: &str, src: &str, dest: &str) -> Value {
-        json!({ "connection_id": connection_id, "src": src, "dest": dest })
+    pub(super) fn copy(connection_id: &str, src: &str, dest: &str) -> FilesCopyParams {
+        FilesCopyParams {
+            connection_id: Some(connection_id.to_string()),
+            src: src.to_string(),
+            dest: dest.to_string(),
+        }
     }
 }
 
@@ -691,11 +742,10 @@ impl FileBrowser for RemoteFileBrowserProxy {
             )
             .await?;
 
-        let entries = result
-            .get("entries")
-            .cloned()
-            .unwrap_or(Value::Array(vec![]));
-        serde_json::from_value(entries).map_err(|e| FileError::OperationFailed(e.to_string()))
+        // Parse the reply into the shared `FilesListResult` DTO (DUP-001).
+        serde_json::from_value::<FilesListResult>(result)
+            .map(|r| r.entries)
+            .map_err(|e| FileError::OperationFailed(e.to_string()))
     }
 
     async fn read_file(&self, path: &str) -> Result<Vec<u8>, FileError> {
@@ -706,8 +756,10 @@ impl FileBrowser for RemoteFileBrowserProxy {
             )
             .await?;
 
-        let data_b64 = result.get("data").and_then(|v| v.as_str()).unwrap_or("");
-        base64_decode(data_b64)
+        // Parse the reply into the shared `FilesReadResult` DTO (DUP-001).
+        let parsed = serde_json::from_value::<FilesReadResult>(result)
+            .map_err(|e| FileError::OperationFailed(e.to_string()))?;
+        base64_decode(&parsed.data)
     }
 
     async fn write_file(&self, path: &str, data: &[u8]) -> Result<(), FileError> {
@@ -815,21 +867,31 @@ pub struct RemoteProcessProxy {
 
 /// Builders for the `connection.processes.*` JSON-RPC request params.
 ///
-/// Hand-mirrored against the agent's `ProcessesListParams` / `ProcessKillParams`
-/// (the desktop and agent share no DTO crate); the `wire_contract` tests
-/// round-trip each one through the agent structs so a drift fails in per-PR CI.
-/// Both use snake_case defaults; `signal` serializes as the camelCase
-/// `KillSignal` (`"term"` / `"kill"`).
+/// Return the shared `core::protocol::methods` param DTOs (DUP-001), so the
+/// desktop and agent share one definition of each `connection.processes.*`
+/// request shape; the `wire_contract` tests pin the bytes. Both use snake_case
+/// defaults; `signal` serializes as the camelCase `KillSignal` (`"term"` /
+/// `"kill"`).
 mod processes_params {
-    use serde_json::{json, Value};
     use termihub_core::monitoring::KillSignal;
+    use termihub_core::protocol::methods::{ProcessKillParams, ProcessesListParams};
 
-    pub(super) fn list(connection_id: Option<&str>) -> Value {
-        json!({ "connection_id": connection_id })
+    pub(super) fn list(connection_id: Option<&str>) -> ProcessesListParams {
+        ProcessesListParams {
+            connection_id: connection_id.map(str::to_string),
+        }
     }
 
-    pub(super) fn kill(connection_id: Option<&str>, pid: u32, signal: KillSignal) -> Value {
-        json!({ "connection_id": connection_id, "pid": pid, "signal": signal })
+    pub(super) fn kill(
+        connection_id: Option<&str>,
+        pid: u32,
+        signal: KillSignal,
+    ) -> ProcessKillParams {
+        ProcessKillParams {
+            connection_id: connection_id.map(str::to_string),
+            pid,
+            signal,
+        }
     }
 }
 
@@ -844,9 +906,11 @@ impl RemoteProcessProxy {
     async fn rpc(
         &self,
         method: &'static str,
-        params: Value,
+        params: impl serde::Serialize,
         pid: Option<u32>,
     ) -> Result<Value, ProcessError> {
+        let params =
+            serde_json::to_value(&params).map_err(|e| ProcessError::ListFailed(e.to_string()))?;
         let mgr = self.agent_manager.clone();
         let agent_id = self.agent_id.clone();
         let result =
@@ -878,11 +942,10 @@ impl ProcessManager for RemoteProcessProxy {
                 None,
             )
             .await?;
-        let processes = result
-            .get("processes")
-            .cloned()
-            .unwrap_or(Value::Array(vec![]));
-        serde_json::from_value(processes).map_err(|e| ProcessError::ListFailed(e.to_string()))
+        // Parse the reply into the shared `ProcessesListResult` DTO (DUP-001).
+        serde_json::from_value::<ProcessesListResult>(result)
+            .map(|r| r.processes)
+            .map_err(|e| ProcessError::ListFailed(e.to_string()))
     }
 
     async fn kill_process(&self, pid: u32, signal: KillSignal) -> Result<(), ProcessError> {
@@ -944,7 +1007,12 @@ impl RemoteMonitoringProxy {
 
     /// Run a sync `send_request` on the blocking thread pool so its internal
     /// `oneshot::Receiver::blocking_recv` does not park a tokio worker thread.
-    async fn rpc(&self, method: &'static str, params: Value) -> Result<Value, CoreError> {
+    async fn rpc(
+        &self,
+        method: &'static str,
+        params: impl serde::Serialize,
+    ) -> Result<Value, CoreError> {
+        let params = serde_json::to_value(&params).map_err(|e| CoreError::Other(e.to_string()))?;
         let mgr = self.agent_manager.clone();
         let agent_id = self.agent_id.clone();
         tokio::task::spawn_blocking(move || mgr.send_request(&agent_id, method, params))
@@ -1094,10 +1162,10 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         // (#1233); the frontend may later change it via `set_interval`.
         self.rpc(
             termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
-            serde_json::json!({
-                "host": self.monitoring_host,
-                "interval_ms": self.interval_ms.load(Ordering::SeqCst),
-            }),
+            MonitoringSubscribeParams {
+                host: self.monitoring_host.clone(),
+                interval_ms: Some(self.interval_ms.load(Ordering::SeqCst)),
+            },
         )
         .await?;
 
@@ -1139,9 +1207,9 @@ impl MonitoringProvider for RemoteMonitoringProxy {
 
         self.rpc(
             termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
-            serde_json::json!({
-                "host": self.monitoring_host,
-            }),
+            MonitoringUnsubscribeParams {
+                host: self.monitoring_host.clone(),
+            },
         )
         .await?;
         Ok(())
@@ -1156,10 +1224,10 @@ impl MonitoringProvider for RemoteMonitoringProxy {
         if let Err(e) = self
             .rpc(
                 termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
-                serde_json::json!({
-                    "host": self.monitoring_host,
-                    "interval_ms": ms,
-                }),
+                MonitoringSubscribeParams {
+                    host: self.monitoring_host.clone(),
+                    interval_ms: Some(ms),
+                },
             )
             .await
         {
@@ -1188,7 +1256,9 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             if let Err(e) = self
                 .rpc(
                     termihub_core::protocol::methods::CONNECTION_MONITORING_UNSUBSCRIBE,
-                    serde_json::json!({ "host": self.monitoring_host }),
+                    MonitoringUnsubscribeParams {
+                        host: self.monitoring_host.clone(),
+                    },
                 )
                 .await
             {
@@ -1206,10 +1276,10 @@ impl MonitoringProvider for RemoteMonitoringProxy {
             if let Err(e) = self
                 .rpc(
                     termihub_core::protocol::methods::CONNECTION_MONITORING_SUBSCRIBE,
-                    serde_json::json!({
-                        "host": self.monitoring_host,
-                        "interval_ms": self.interval_ms.load(Ordering::SeqCst),
-                    }),
+                    MonitoringSubscribeParams {
+                        host: self.monitoring_host.clone(),
+                        interval_ms: Some(self.interval_ms.load(Ordering::SeqCst)),
+                    },
                 )
                 .await
             {
@@ -2433,128 +2503,121 @@ mod tests {
     // expects `connectionId` (AGT-001, AGT-009).
     mod wire_contract {
         use super::super::{files_params, processes_params};
-        use termihub_agent::protocol::methods as agent;
+        use serde_json::json;
         use termihub_core::monitoring::KillSignal;
 
         const CONN: &str = "session-42";
         const PATH: &str = "/home/user/file.txt";
 
-        #[test]
-        fn processes_list_params_deserialize_into_agent_struct() {
-            let parsed: agent::ProcessesListParams = serde_json::from_value(
-                processes_params::list(Some(CONN)),
-            )
-            .expect("desktop processes.list params must match the agent's ProcessesListParams");
-            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
-
-            // The local (`None`) scope must round-trip to `None`, not a string.
-            let parsed_local: agent::ProcessesListParams =
-                serde_json::from_value(processes_params::list(None))
-                    .expect("local-scope processes.list params must match the agent struct");
-            assert_eq!(parsed_local.connection_id, None);
-        }
+        // DUP-001: the builders return the shared `core::protocol::methods` param
+        // DTOs (the agent deserializes the same types). Each test pins the wire by
+        // comparing `to_value(<builder>)` with the exact pre-migration hand-built
+        // `json!` — a change is a WIRE BREAK.
 
         #[test]
-        fn process_kill_params_deserialize_into_agent_struct() {
-            let parsed: agent::ProcessKillParams =
-                serde_json::from_value(processes_params::kill(Some(CONN), 4321, KillSignal::Kill))
-                    .expect(
-                        "desktop processes.kill params must match the agent's ProcessKillParams",
-                    );
-            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
-            assert_eq!(parsed.pid, 4321);
-            assert_eq!(parsed.signal, KillSignal::Kill);
-        }
-
-        #[test]
-        fn rename_params_deserialize_into_agent_struct() {
-            let params = files_params::rename(CONN, "/old/name.txt", "/new/name.txt");
-            let parsed: agent::FilesRenameParams = serde_json::from_value(params)
-                .expect("desktop rename params must match the agent's FilesRenameParams contract");
-            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
-            assert_eq!(parsed.old_path, "/old/name.txt");
-            assert_eq!(parsed.new_path, "/new/name.txt");
-        }
-
-        #[test]
-        fn delete_params_deserialize_into_agent_struct() {
-            let params = files_params::delete(CONN, PATH);
-            let parsed: agent::FilesDeleteParams = serde_json::from_value(params)
-                .expect("desktop delete params must match the agent's FilesDeleteParams contract");
-            // `connectionId` (camelCase) must reach the scope field, not fall to `None`.
-            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
-            assert_eq!(parsed.path, PATH);
-            // Required by the agent contract; advisory (discarded server-side).
-            let _ = parsed.is_directory;
-        }
-
-        #[test]
-        fn list_read_write_stat_mkdir_params_deserialize_into_agent_structs() {
-            serde_json::from_value::<agent::FilesListParams>(files_params::list(CONN, PATH))
-                .expect("list params must match agent FilesListParams");
-            serde_json::from_value::<agent::FilesReadParams>(files_params::read(CONN, PATH))
-                .expect("read params must match agent FilesReadParams");
-            serde_json::from_value::<agent::FilesWriteParams>(files_params::write(
-                CONN, PATH, "ZGF0YQ==",
-            ))
-            .expect("write params must match agent FilesWriteParams");
-            serde_json::from_value::<agent::FilesStatParams>(files_params::stat(CONN, PATH))
-                .expect("stat params must match agent FilesStatParams");
-            serde_json::from_value::<agent::FilesMkdirParams>(files_params::mkdir(CONN, PATH))
-                .expect("mkdir params must match agent FilesMkdirParams");
-        }
-
-        #[test]
-        fn set_permissions_params_deserialize_into_agent_struct() {
-            let params = files_params::set_permissions(CONN, PATH, 0o755);
-            let parsed: agent::FilesSetPermissionsParams = serde_json::from_value(params).expect(
-                "desktop set_permissions params must match the agent's \
-                 FilesSetPermissionsParams contract",
+        fn processes_list_params_match_hand_built_json() {
+            assert_eq!(
+                serde_json::to_value(processes_params::list(Some(CONN))).unwrap(),
+                json!({ "connection_id": CONN }),
             );
-            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
-            assert_eq!(parsed.path, PATH);
-            assert_eq!(parsed.mode, 0o755);
-        }
-
-        #[test]
-        fn set_owner_params_deserialize_into_agent_struct() {
-            let params = files_params::set_owner(CONN, PATH, Some(1000), Some(50));
-            let parsed: agent::FilesSetOwnerParams = serde_json::from_value(params).expect(
-                "desktop set_owner params must match the agent's FilesSetOwnerParams contract",
+            // The local (`None`) scope stays a JSON `null`, not a string.
+            assert_eq!(
+                serde_json::to_value(processes_params::list(None)).unwrap(),
+                json!({ "connection_id": null }),
             );
-            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
-            assert_eq!(parsed.path, PATH);
-            assert_eq!(parsed.uid, Some(1000));
-            assert_eq!(parsed.gid, Some(50));
-
-            // A `None` side must serialize as JSON `null` and parse back to `None`.
-            let parsed_none: agent::FilesSetOwnerParams =
-                serde_json::from_value(files_params::set_owner(CONN, PATH, None, Some(50)))
-                    .expect("partial set_owner params must still match the agent contract");
-            assert_eq!(parsed_none.uid, None);
-            assert_eq!(parsed_none.gid, Some(50));
         }
 
         #[test]
-        fn create_symlink_params_deserialize_into_agent_struct() {
-            let params = files_params::create_symlink(CONN, "/real", "/link");
-            let parsed: agent::FilesCreateSymlinkParams = serde_json::from_value(params).expect(
-                "desktop create_symlink params must match the agent's \
-                 FilesCreateSymlinkParams contract",
+        fn process_kill_params_match_hand_built_json() {
+            assert_eq!(
+                serde_json::to_value(processes_params::kill(Some(CONN), 4321, KillSignal::Kill))
+                    .unwrap(),
+                json!({ "connection_id": CONN, "pid": 4321, "signal": "kill" }),
             );
-            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
-            assert_eq!(parsed.target, "/real");
-            assert_eq!(parsed.link_path, "/link");
         }
 
         #[test]
-        fn copy_params_deserialize_into_agent_struct() {
-            let params = files_params::copy(CONN, "/a", "/b");
-            let parsed: agent::FilesCopyParams = serde_json::from_value(params)
-                .expect("desktop copy params must match the agent's FilesCopyParams contract");
-            assert_eq!(parsed.connection_id.as_deref(), Some(CONN));
-            assert_eq!(parsed.src, "/a");
-            assert_eq!(parsed.dest, "/b");
+        fn rename_params_match_hand_built_json() {
+            assert_eq!(
+                serde_json::to_value(files_params::rename(CONN, "/old/name.txt", "/new/name.txt"))
+                    .unwrap(),
+                json!({
+                    "connection_id": CONN,
+                    "old_path": "/old/name.txt",
+                    "new_path": "/new/name.txt",
+                }),
+            );
+        }
+
+        #[test]
+        fn delete_params_match_hand_built_json() {
+            // `FilesDeleteParams` is the camelCase outlier: connectionId/isDirectory.
+            assert_eq!(
+                serde_json::to_value(files_params::delete(CONN, PATH)).unwrap(),
+                json!({ "connectionId": CONN, "path": PATH, "isDirectory": false }),
+            );
+        }
+
+        #[test]
+        fn list_read_write_stat_mkdir_params_match_hand_built_json() {
+            assert_eq!(
+                serde_json::to_value(files_params::list(CONN, PATH)).unwrap(),
+                json!({ "connection_id": CONN, "path": PATH }),
+            );
+            assert_eq!(
+                serde_json::to_value(files_params::read(CONN, PATH)).unwrap(),
+                json!({ "connection_id": CONN, "path": PATH }),
+            );
+            assert_eq!(
+                serde_json::to_value(files_params::write(CONN, PATH, "ZGF0YQ==")).unwrap(),
+                json!({ "connection_id": CONN, "path": PATH, "data": "ZGF0YQ==" }),
+            );
+            assert_eq!(
+                serde_json::to_value(files_params::stat(CONN, PATH)).unwrap(),
+                json!({ "connection_id": CONN, "path": PATH }),
+            );
+            assert_eq!(
+                serde_json::to_value(files_params::mkdir(CONN, PATH)).unwrap(),
+                json!({ "connection_id": CONN, "path": PATH }),
+            );
+        }
+
+        #[test]
+        fn set_permissions_params_match_hand_built_json() {
+            assert_eq!(
+                serde_json::to_value(files_params::set_permissions(CONN, PATH, 0o755)).unwrap(),
+                json!({ "connection_id": CONN, "path": PATH, "mode": 0o755 }),
+            );
+        }
+
+        #[test]
+        fn set_owner_params_match_hand_built_json() {
+            assert_eq!(
+                serde_json::to_value(files_params::set_owner(CONN, PATH, Some(1000), Some(50)))
+                    .unwrap(),
+                json!({ "connection_id": CONN, "path": PATH, "uid": 1000, "gid": 50 }),
+            );
+            // A `None` side stays a JSON `null` (owner component left unchanged).
+            assert_eq!(
+                serde_json::to_value(files_params::set_owner(CONN, PATH, None, Some(50))).unwrap(),
+                json!({ "connection_id": CONN, "path": PATH, "uid": null, "gid": 50 }),
+            );
+        }
+
+        #[test]
+        fn create_symlink_params_match_hand_built_json() {
+            assert_eq!(
+                serde_json::to_value(files_params::create_symlink(CONN, "/real", "/link")).unwrap(),
+                json!({ "connection_id": CONN, "target": "/real", "link_path": "/link" }),
+            );
+        }
+
+        #[test]
+        fn copy_params_match_hand_built_json() {
+            assert_eq!(
+                serde_json::to_value(files_params::copy(CONN, "/a", "/b")).unwrap(),
+                json!({ "connection_id": CONN, "src": "/a", "dest": "/b" }),
+            );
         }
     }
 

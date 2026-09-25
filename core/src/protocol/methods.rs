@@ -213,7 +213,7 @@ pub struct InitializeResult {
 
 /// Result of `agent.list_connections`: a snapshot of every client currently
 /// connected to this agent process (see [`ConnectionInfo`]).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionListResult {
     pub connections: Vec<ConnectionInfo>,
 }
@@ -221,7 +221,7 @@ pub struct ConnectionListResult {
 /// A single client connected to this agent process, as reported by
 /// `agent.list_connections`. Mirrors the agent's internal `ConnectedClient`,
 /// with the timestamp rendered as an ISO 8601 (RFC 3339) string for the wire.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionInfo {
     /// Agent-assigned id for this client connection.
     pub client_id: String,
@@ -245,28 +245,29 @@ pub struct AgentSettingsUpdateParams {
 // ── connection.types ────────────────────────────────────────────────
 
 /// Result for the `connection.types` method.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionTypesResult {
     pub types: Vec<ConnectionTypeInfo>,
 }
 
 // ── session.create ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCreateParams {
     #[serde(rename = "type")]
     pub session_type: String,
     #[serde(default)]
     pub config: serde_json::Value,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
     /// ID of the saved connection definition this session was created from, if any.
     /// Lets clients re-link an active session to its source definition after
     /// tab close, agent restart, or desktop restart.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub definition_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCreateResult {
     pub session_id: String,
     pub title: String,
@@ -280,12 +281,12 @@ pub struct SessionCreateResult {
 
 // ── session.list ────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionListResult {
     pub sessions: Vec<SessionListEntry>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionListEntry {
     pub session_id: String,
     pub title: String,
@@ -301,28 +302,28 @@ pub struct SessionListEntry {
 
 // ── session.close ───────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionCloseParams {
     pub session_id: String,
 }
 
 // ── session.attach ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionAttachParams {
     pub session_id: String,
 }
 
 // ── session.detach ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionDetachParams {
     pub session_id: String,
 }
 
 // ── session.input ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInputParams {
     pub session_id: String,
     /// Base64-encoded data.
@@ -333,7 +334,7 @@ pub struct SessionInputParams {
 
 /// Desktop → agent: reply bytes from the operator's local ssh-agent, tagged
 /// with the forwarded stream they belong to.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentForwardDataParams {
     pub stream_id: String,
     /// Base64-encoded ssh-agent-protocol bytes.
@@ -342,14 +343,14 @@ pub struct AgentForwardDataParams {
 
 /// Desktop → agent: a forwarded ssh-agent stream the desktop closed (its local
 /// agent went away, or the conversation finished).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentForwardCloseParams {
     pub stream_id: String,
 }
 
 // ── session.resize ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionResizeParams {
     pub session_id: String,
     pub cols: u16,
@@ -418,14 +419,14 @@ pub struct ConnectionUpdateParams {
 
 // ── connections.delete ─────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionDeleteParams {
     pub id: String,
 }
 
 // ── connections.folders.create ──────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FolderCreateParams {
     pub name: String,
     pub parent_id: Option<String>,
@@ -445,7 +446,7 @@ pub struct FolderUpdateParams {
 
 // ── connections.folders.delete ──────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FolderDeleteParams {
     pub id: String,
 }
@@ -522,32 +523,32 @@ where
     Ok(Some(serde_json::Value::deserialize(deserializer)?))
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesListParams {
     /// Connection to scope the operation to. If absent, use local filesystem.
     pub connection_id: Option<String>,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesListResult {
     pub entries: Vec<FileEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesReadParams {
     pub connection_id: Option<String>,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesReadResult {
     /// Base64-encoded file content.
     pub data: String,
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesWriteParams {
     pub connection_id: Option<String>,
     pub path: String,
@@ -555,7 +556,7 @@ pub struct FilesWriteParams {
     pub data: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilesDeleteParams {
     pub connection_id: Option<String>,
@@ -563,26 +564,26 @@ pub struct FilesDeleteParams {
     pub is_directory: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesRenameParams {
     pub connection_id: Option<String>,
     pub old_path: String,
     pub new_path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesStatParams {
     pub connection_id: Option<String>,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesMkdirParams {
     pub connection_id: Option<String>,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesSetPermissionsParams {
     pub connection_id: Option<String>,
     pub path: String,
@@ -590,7 +591,7 @@ pub struct FilesSetPermissionsParams {
     pub mode: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesSetOwnerParams {
     pub connection_id: Option<String>,
     pub path: String,
@@ -602,7 +603,7 @@ pub struct FilesSetOwnerParams {
     pub gid: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesCreateSymlinkParams {
     pub connection_id: Option<String>,
     /// The path the link points at (stored verbatim; may be relative/dangling).
@@ -611,7 +612,7 @@ pub struct FilesCreateSymlinkParams {
     pub link_path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesCopyParams {
     pub connection_id: Option<String>,
     /// Source path (same backend as `dest`).
@@ -627,7 +628,7 @@ pub type FilesStatResult = FileEntry;
 // ── connection.processes.* (PROD-0028) ──────────────────────────────
 
 /// Params for `connection.processes.list`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessesListParams {
     /// Connection/session to scope the operation to. `None` = the agent's own
     /// host (local sessions).
@@ -635,7 +636,7 @@ pub struct ProcessesListParams {
 }
 
 /// Result of `connection.processes.list`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessesListResult {
     pub processes: Vec<ProcessInfo>,
 }
@@ -644,7 +645,7 @@ pub struct ProcessesListResult {
 ///
 /// Targets the exact numeric `pid` — never a name match — with one of the two
 /// supported signals ([`KillSignal`], serialized `"term"` / `"kill"`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessKillParams {
     /// Connection/session to scope the operation to. `None` = the agent's own
     /// host (local sessions).
@@ -657,14 +658,14 @@ pub struct ProcessKillParams {
 
 // ── agent.shutdown ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentShutdownParams {
     /// Optional reason: "update", "user", etc.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentShutdownResult {
     /// Number of sessions that were detached (left running in daemons).
     pub detached_sessions: u32,
@@ -672,19 +673,19 @@ pub struct AgentShutdownResult {
 
 // ── agent.request_deferred_update ───────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestDeferredUpdateParams {
     /// Absolute path (on the agent host) to the new agent binary to stage.
     /// Omit to apply an update the agent already staged itself (self-update).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary_path: Option<String>,
     /// Optional target version label (bookkeeping only).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestDeferredUpdateResult {
     /// `true` if the update was applied immediately (agent was idle); `false`
@@ -702,21 +703,21 @@ pub struct AgentRequestDeferredUpdateResult {
 /// binary swap itself *is* the deferred path: coordination decides when it is
 /// polite to apply, not how. What this adds is the courtesy window — every other
 /// host is told first and given a chance to leave cleanly.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestUpdateParams {
     /// Absolute path (on the agent host) to the new agent binary to stage.
     /// Omit to apply an update the agent already staged itself (self-update).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub binary_path: Option<String>,
     /// Optional target version label (bookkeeping only).
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     /// How long other hosts get to disconnect before the update proceeds
     /// anyway. Omit for the default 10 s
     /// (`ACK_TIMEOUT` in the agent's `update` module); tests use a short window
     /// so they need not sit through it.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ack_timeout_secs: Option<u64>,
 }
 
@@ -726,7 +727,7 @@ pub struct AgentRequestUpdateParams {
 /// initiating desktop can say *"3 hosts were notified, 1 was still connected"*
 /// rather than only "done". `allAcked: false` is not an error — the update
 /// proceeded — it means someone got the hard cut.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentRequestUpdateResult {
     /// `true` if the update was applied immediately (agent was idle); `false`
@@ -860,7 +861,7 @@ fn default_wol_port() -> u16 {
 
 // ── monitoring.subscribe ────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringSubscribeParams {
     /// `"self"` for the agent's own host, or a connection ID for a jump target.
     pub host: String,
@@ -870,7 +871,7 @@ pub struct MonitoringSubscribeParams {
 
 // ── monitoring.unsubscribe ──────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringUnsubscribeParams {
     pub host: String,
 }
@@ -2476,6 +2477,363 @@ mod tests {
                 "status": "running",
                 "created_at": "2026-02-14T10:30:00Z"
             })
+        );
+    }
+
+    // ── agent_manager request/response wire (DUP-001) ───────────────────
+    //
+    // The desktop's `agent_manager` builds these requests and parses these
+    // replies. Each request test compares `to_value(<Params>)` byte-for-byte with
+    // the exact `serde_json::json!` the module built before the migration — a
+    // change here is a WIRE BREAK, since the agent deserializes the params. Each
+    // reply test proves the shared result DTO deserializes the exact agent reply.
+    //
+    // The wire carries a JSON object, whose key order is not significant; the RPC
+    // client serializes the params `Value` on the way out. So each test compares
+    // `to_value(<Params>)` with the legacy `json!` `Value` (both maps), which pins
+    // the key set and every value while staying order-independent.
+
+    #[test]
+    fn session_create_params_serialize_matches_hand_built_json() {
+        // Both optionals present — the desktop sends `title` + `definition_id`.
+        let legacy = json!({
+            "type": "shell",
+            "config": { "shell": "/bin/bash" },
+            "title": "Build",
+            "definition_id": "def-1",
+        });
+        let typed = SessionCreateParams {
+            session_type: "shell".to_string(),
+            config: json!({ "shell": "/bin/bash" }),
+            title: Some("Build".to_string()),
+            definition_id: Some("def-1".to_string()),
+        };
+        assert_eq!(serde_json::to_value(&typed).unwrap(), legacy);
+
+        // Both optionals absent — the old builder omitted the keys entirely, so
+        // `skip_serializing_if` must keep them out (a `null` key would be a break).
+        let legacy_min = json!({ "type": "serial", "config": {} });
+        let typed_min = SessionCreateParams {
+            session_type: "serial".to_string(),
+            config: json!({}),
+            title: None,
+            definition_id: None,
+        };
+        assert_eq!(serde_json::to_value(&typed_min).unwrap(), legacy_min);
+    }
+
+    #[test]
+    fn session_lifecycle_params_serialize_matches_hand_built_json() {
+        let legacy = json!({ "session_id": "s-1" });
+        assert_eq!(
+            serde_json::to_value(SessionAttachParams {
+                session_id: "s-1".to_string()
+            })
+            .unwrap(),
+            legacy,
+        );
+        assert_eq!(
+            serde_json::to_value(SessionDetachParams {
+                session_id: "s-1".to_string()
+            })
+            .unwrap(),
+            legacy,
+        );
+        assert_eq!(
+            serde_json::to_value(SessionCloseParams {
+                session_id: "s-1".to_string()
+            })
+            .unwrap(),
+            legacy,
+        );
+    }
+
+    #[test]
+    fn agent_shutdown_params_serialize_matches_hand_built_json() {
+        // Absent reason → `{}` (the old builder started from `json!({})` and only
+        // inserted `reason` when present).
+        assert_eq!(
+            serde_json::to_value(AgentShutdownParams { reason: None }).unwrap(),
+            json!({}),
+        );
+        assert_eq!(
+            serde_json::to_value(AgentShutdownParams {
+                reason: Some("update".to_string())
+            })
+            .unwrap(),
+            json!({ "reason": "update" }),
+        );
+    }
+
+    #[test]
+    fn agent_shutdown_result_parses_agent_reply() {
+        let reply = json!({ "detached_sessions": 3 });
+        let parsed: AgentShutdownResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.detached_sessions, 3);
+    }
+
+    #[test]
+    fn session_create_result_parses_agent_reply() {
+        let reply = json!({
+            "session_id": "s-9",
+            "title": "Build",
+            "type": "shell",
+            "status": "running",
+            "created_at": "2026-02-14T10:30:00Z",
+            "definition_id": "def-1",
+        });
+        let parsed: SessionCreateResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.session_id, "s-9");
+        assert_eq!(parsed.session_type, "shell");
+        assert_eq!(parsed.status, "running");
+        assert_eq!(parsed.definition_id.as_deref(), Some("def-1"));
+    }
+
+    #[test]
+    fn session_list_result_parses_agent_reply() {
+        let reply = json!({
+            "sessions": [{
+                "session_id": "s-1",
+                "title": "Build",
+                "type": "shell",
+                "status": "running",
+                "created_at": "2026-02-14T10:30:00Z",
+                "last_activity": "2026-02-14T12:00:00Z",
+                "attached": true,
+            }],
+        });
+        let parsed: SessionListResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.sessions.len(), 1);
+        assert_eq!(parsed.sessions[0].session_id, "s-1");
+        assert!(parsed.sessions[0].attached);
+        assert_eq!(parsed.sessions[0].definition_id, None);
+    }
+
+    #[test]
+    fn connection_list_result_parses_agent_reply() {
+        let reply = json!({
+            "connections": [{
+                "client_id": "c-1",
+                "client": "termihub-desktop",
+                "client_version": "0.1.0",
+                "connected_since": "2026-02-14T10:30:00Z",
+            }],
+        });
+        let parsed: ConnectionListResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.connections.len(), 1);
+        assert_eq!(parsed.connections[0].client_id, "c-1");
+        assert_eq!(parsed.connections[0].client, "termihub-desktop");
+        assert_eq!(parsed.connections[0].client_version, "0.1.0");
+        assert_eq!(
+            parsed.connections[0].connected_since,
+            "2026-02-14T10:30:00Z"
+        );
+    }
+
+    // ── agent-update request/response wire (DUP-001) ────────────────────
+    //
+    // The desktop commands (request_agent_update / request_agent_deferred_update /
+    // the coordinated-deploy path) build these requests and parse these replies.
+    // The old builders inserted `binaryPath`/`version` only when present, so the
+    // params must omit the absent keys (skip_serializing_if) to stay byte-identical.
+
+    #[test]
+    fn request_deferred_update_params_serialize_matches_hand_built_json() {
+        assert_eq!(
+            serde_json::to_value(AgentRequestDeferredUpdateParams {
+                binary_path: Some("/tmp/agent".to_string()),
+                version: Some("0.4.0".to_string()),
+            })
+            .unwrap(),
+            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0" }),
+        );
+        // Self-update "Apply Now": no staging inputs → `{}`.
+        assert_eq!(
+            serde_json::to_value(AgentRequestDeferredUpdateParams {
+                binary_path: None,
+                version: None,
+            })
+            .unwrap(),
+            json!({}),
+        );
+    }
+
+    #[test]
+    fn request_update_params_serialize_matches_hand_built_json() {
+        // The desktop only ever sends `binaryPath`/`version`; `ackTimeoutSecs`
+        // stays absent, so it must not appear on the wire.
+        assert_eq!(
+            serde_json::to_value(AgentRequestUpdateParams {
+                binary_path: Some("/tmp/agent".to_string()),
+                version: Some("0.4.0".to_string()),
+                ack_timeout_secs: None,
+            })
+            .unwrap(),
+            json!({ "binaryPath": "/tmp/agent", "version": "0.4.0" }),
+        );
+        assert_eq!(
+            serde_json::to_value(AgentRequestUpdateParams {
+                binary_path: None,
+                version: None,
+                ack_timeout_secs: None,
+            })
+            .unwrap(),
+            json!({}),
+        );
+    }
+
+    #[test]
+    fn request_deferred_update_result_parses_agent_reply() {
+        let reply = json!({ "applied": false, "activeSessions": 2 });
+        let parsed: AgentRequestDeferredUpdateResult = serde_json::from_value(reply).unwrap();
+        assert!(!parsed.applied);
+        assert_eq!(parsed.active_sessions, 2);
+    }
+
+    #[test]
+    fn request_update_result_parses_agent_reply() {
+        let reply = json!({
+            "applied": false,
+            "activeSessions": 1,
+            "notifiedClients": 3,
+            "allAcked": false,
+            "remainingClients": ["host-b"],
+        });
+        let parsed: AgentRequestUpdateResult = serde_json::from_value(reply).unwrap();
+        assert!(!parsed.applied);
+        assert_eq!(parsed.active_sessions, 1);
+        assert_eq!(parsed.notified_clients, 3);
+        assert!(!parsed.all_acked);
+        assert_eq!(parsed.remaining_clients, vec!["host-b".to_string()]);
+
+        // The happy path omits `remainingClients`; `#[serde(default)]` fills it.
+        let happy = json!({
+            "applied": true,
+            "activeSessions": 0,
+            "notifiedClients": 0,
+            "allAcked": true,
+        });
+        let parsed: AgentRequestUpdateResult = serde_json::from_value(happy).unwrap();
+        assert!(parsed.remaining_clients.is_empty());
+    }
+
+    // ── remote_proxy reply DTOs (DUP-001) ───────────────────────────────
+    //
+    // The desktop's remote_proxy parses these agent replies into the shared
+    // result DTOs. Each test proves the DTO deserializes the exact wire the agent
+    // serializes (round-tripping through the agent-side `Serialize`).
+
+    #[test]
+    fn files_list_result_parses_agent_reply() {
+        let reply = json!({
+            "entries": [{
+                "name": "dir",
+                "path": "/dir",
+                "isDirectory": true,
+                "size": 4096,
+                "modified": "2026-01-01T00:00:00Z",
+                "permissions": "rwxr-xr-x",
+                "isSymlink": false,
+            }],
+        });
+        let parsed: FilesListResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0].name, "dir");
+        assert!(parsed.entries[0].is_directory);
+    }
+
+    #[test]
+    fn files_read_result_parses_agent_reply() {
+        let reply = json!({ "data": "ZGF0YQ==", "size": 4 });
+        let parsed: FilesReadResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.data, "ZGF0YQ==");
+        assert_eq!(parsed.size, 4);
+    }
+
+    #[test]
+    fn processes_list_result_parses_agent_reply() {
+        // Round-trip through the agent-side Serialize so the fixture matches the
+        // exact `ProcessInfo` wire without hand-writing its field set.
+        let wire = serde_json::to_value(ProcessesListResult { processes: vec![] }).unwrap();
+        assert_eq!(wire, json!({ "processes": [] }));
+        let parsed: ProcessesListResult = serde_json::from_value(wire).unwrap();
+        assert!(parsed.processes.is_empty());
+    }
+
+    // ── agent_manager I/O-task + definition/folder builders (DUP-001) ────
+    //
+    // The desktop I/O task builds the session.* / agent.forward.* write requests,
+    // and the manager builds the connections.* delete / folders.create+delete
+    // requests. Each test pins the wire byte-for-byte against the old json!.
+
+    #[test]
+    fn session_write_resize_forward_params_match_hand_built_json() {
+        assert_eq!(
+            serde_json::to_value(SessionInputParams {
+                session_id: "s-1".to_string(),
+                data: "aGk=".to_string(),
+            })
+            .unwrap(),
+            json!({ "session_id": "s-1", "data": "aGk=" }),
+        );
+        assert_eq!(
+            serde_json::to_value(SessionResizeParams {
+                session_id: "s-1".to_string(),
+                cols: 120,
+                rows: 40,
+            })
+            .unwrap(),
+            json!({ "session_id": "s-1", "cols": 120, "rows": 40 }),
+        );
+        assert_eq!(
+            serde_json::to_value(AgentForwardDataParams {
+                stream_id: "str-1".to_string(),
+                data: "aGk=".to_string(),
+            })
+            .unwrap(),
+            json!({ "stream_id": "str-1", "data": "aGk=" }),
+        );
+        assert_eq!(
+            serde_json::to_value(AgentForwardCloseParams {
+                stream_id: "str-1".to_string(),
+            })
+            .unwrap(),
+            json!({ "stream_id": "str-1" }),
+        );
+    }
+
+    #[test]
+    fn definition_folder_builder_params_match_hand_built_json() {
+        assert_eq!(
+            serde_json::to_value(ConnectionDeleteParams {
+                id: "def-1".to_string()
+            })
+            .unwrap(),
+            json!({ "id": "def-1" }),
+        );
+        assert_eq!(
+            serde_json::to_value(FolderDeleteParams {
+                id: "f-1".to_string()
+            })
+            .unwrap(),
+            json!({ "id": "f-1" }),
+        );
+        // `parent_id` stays a JSON `null` when absent (root folder).
+        assert_eq!(
+            serde_json::to_value(FolderCreateParams {
+                name: "Prod".to_string(),
+                parent_id: None,
+            })
+            .unwrap(),
+            json!({ "name": "Prod", "parent_id": null }),
+        );
+        assert_eq!(
+            serde_json::to_value(FolderCreateParams {
+                name: "Prod".to_string(),
+                parent_id: Some("root".to_string()),
+            })
+            .unwrap(),
+            json!({ "name": "Prod", "parent_id": "root" }),
         );
     }
 }

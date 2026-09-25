@@ -21,6 +21,10 @@ use crate::terminal::agent_manager::{
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
 use crate::terminal::backend::{RemoteAgentConfig, UpdateStrategy};
 use crate::utils::errors::TerminalError;
+use termihub_core::protocol::methods::{
+    AgentRequestDeferredUpdateParams, AgentRequestDeferredUpdateResult, AgentRequestUpdateParams,
+    AgentRequestUpdateResult,
+};
 
 // ── Structured IPC error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ────
 //
@@ -302,27 +306,30 @@ pub async fn request_agent_deferred_update(
     info!(agent_id, "Requesting deferred agent update");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut params = serde_json::Map::new();
-        if let Some(path) = binary_path {
-            params.insert("binaryPath".to_string(), Value::String(path));
-        }
-        if let Some(v) = version {
-            params.insert("version".to_string(), Value::String(v));
-        }
+        let params = serde_json::to_value(AgentRequestDeferredUpdateParams {
+            binary_path,
+            version,
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!(
+                "Failed to build agent.request_deferred_update params: {e}"
+            ))
+        })?;
         let result = manager.send_request(
             &agent_id,
             termihub_core::protocol::methods::AGENT_REQUEST_DEFERRED_UPDATE,
-            Value::Object(params),
+            params,
         )?;
+        // Parse into the shared result DTO; a malformed reply degrades to the same
+        // defaults the pre-migration `unwrap_or` used ("applied unknown → false").
+        let parsed = serde_json::from_value::<AgentRequestDeferredUpdateResult>(result)
+            .unwrap_or(AgentRequestDeferredUpdateResult {
+                applied: false,
+                active_sessions: 0,
+            });
         Ok(DeferredUpdateResponse {
-            applied: result
-                .get("applied")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            active_sessions: result
-                .get("activeSessions")
-                .and_then(Value::as_u64)
-                .unwrap_or(0) as u32,
+            applied: parsed.applied,
+            active_sessions: parsed.active_sessions,
         })
     })
     .await
@@ -374,45 +381,20 @@ pub async fn request_agent_update(
     info!(agent_id, "Requesting coordinated agent update");
     let manager = agent_manager.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let mut params = serde_json::Map::new();
-        if let Some(path) = binary_path {
-            params.insert("binaryPath".to_string(), Value::String(path));
-        }
-        if let Some(v) = version {
-            params.insert("version".to_string(), Value::String(v));
-        }
+        let params = serde_json::to_value(AgentRequestUpdateParams {
+            binary_path,
+            version,
+            ack_timeout_secs: None,
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build agent.request_update params: {e}"))
+        })?;
         let result = manager.send_request(
             &agent_id,
             termihub_core::protocol::methods::AGENT_REQUEST_UPDATE,
-            Value::Object(params),
+            params,
         )?;
-        Ok(CoordinatedUpdateResponse {
-            applied: result
-                .get("applied")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            active_sessions: result
-                .get("activeSessions")
-                .and_then(Value::as_u64)
-                .unwrap_or(0) as u32,
-            notified_clients: result
-                .get("notifiedClients")
-                .and_then(Value::as_u64)
-                .unwrap_or(0) as u32,
-            all_acked: result
-                .get("allAcked")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-            remaining_clients: result
-                .get("remainingClients")
-                .and_then(Value::as_array)
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|v| v.as_str().map(str::to_string))
-                        .collect()
-                })
-                .unwrap_or_default(),
-        })
+        Ok(coordinated_update_response(&result))
     })
     .await
     .unwrap_or_else(|e| Err(blocking_join_error(e)))
@@ -1030,13 +1012,18 @@ async fn run_coordinated_update(
     let rpc_manager = manager.clone();
     let version = env!("CARGO_PKG_VERSION").to_string();
     let rpc_result = tauri::async_runtime::spawn_blocking(move || {
-        let mut params = serde_json::Map::new();
-        params.insert("binaryPath".to_string(), Value::String(binary_path));
-        params.insert("version".to_string(), Value::String(version));
+        let params = serde_json::to_value(AgentRequestUpdateParams {
+            binary_path: Some(binary_path),
+            version: Some(version),
+            ack_timeout_secs: None,
+        })
+        .map_err(|e| {
+            TerminalError::RemoteError(format!("Failed to build agent.request_update params: {e}"))
+        })?;
         rpc_manager.send_request(
             &rpc_agent,
             termihub_core::protocol::methods::AGENT_REQUEST_UPDATE,
-            Value::Object(params),
+            params,
         )
     })
     .await
@@ -1074,33 +1061,55 @@ async fn run_coordinated_update(
 /// JSON-RPC result (#1616). Mirrors the field extraction in
 /// [`request_agent_update`]'s [`CoordinatedUpdateResponse`].
 fn coordinated_deploy_result(value: &Value) -> AgentDeployResult {
+    let AgentRequestUpdateResult {
+        applied,
+        active_sessions,
+        notified_clients,
+        all_acked,
+        remaining_clients,
+    } = parse_request_update_result(value);
     AgentDeployResult::Coordinated {
-        applied: value
-            .get("applied")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        active_sessions: value
-            .get("activeSessions")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
-        notified_clients: value
-            .get("notifiedClients")
-            .and_then(Value::as_u64)
-            .unwrap_or(0) as u32,
-        all_acked: value
-            .get("allAcked")
-            .and_then(Value::as_bool)
-            .unwrap_or(false),
-        remaining_clients: value
-            .get("remainingClients")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default(),
+        applied,
+        active_sessions,
+        notified_clients,
+        all_acked,
+        remaining_clients,
     }
+}
+
+/// Parse an `agent.request_update` reply into the [`CoordinatedUpdateResponse`]
+/// returned to the frontend (DUP-001). Shares the typed [`AgentRequestUpdateResult`]
+/// parse with [`coordinated_deploy_result`].
+fn coordinated_update_response(value: &Value) -> CoordinatedUpdateResponse {
+    let AgentRequestUpdateResult {
+        applied,
+        active_sessions,
+        notified_clients,
+        all_acked,
+        remaining_clients,
+    } = parse_request_update_result(value);
+    CoordinatedUpdateResponse {
+        applied,
+        active_sessions,
+        notified_clients,
+        all_acked,
+        remaining_clients,
+    }
+}
+
+/// Deserialize an `agent.request_update` reply into the shared
+/// [`AgentRequestUpdateResult`] DTO (DUP-001). A malformed reply degrades to the
+/// all-default outcome the pre-migration hand-parser's `unwrap_or` produced.
+fn parse_request_update_result(value: &Value) -> AgentRequestUpdateResult {
+    serde_json::from_value::<AgentRequestUpdateResult>(value.clone()).unwrap_or(
+        AgentRequestUpdateResult {
+            applied: false,
+            active_sessions: 0,
+            notified_clients: 0,
+            all_acked: false,
+            remaining_clients: Vec::new(),
+        },
+    )
 }
 
 /// Whether an error from `agent.request_update` is the expected transport drop
