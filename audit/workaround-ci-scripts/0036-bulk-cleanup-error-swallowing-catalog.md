@@ -11,7 +11,8 @@ evidence:
   - scripts/dev.sh:50
   - scripts/build-agents.sh:302
   - .github/workflows/agent-cleanup.yml:25
-status: open
+status: fixed
+resolution: "#3341 — write_checksum fatal + verify_checksum_sidecars end check"
 ---
 
 ## What

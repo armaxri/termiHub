@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/release.yml:24
   - scripts/release-check.sh:16
   - scripts/internal/check-tauri-version-drift.mjs
-status: open
+status: fixed
+resolution: "#3341 — verify-version job gates create-release via release-check --versions-only --expect-version"
 ---
 
 ## What

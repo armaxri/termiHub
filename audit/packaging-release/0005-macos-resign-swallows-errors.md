@@ -9,7 +9,8 @@ subsystem: .github/workflows/release.yml
 evidence:
   - .github/workflows/release.yml:234
   - .github/workflows/release.yml:241
-status: open
+status: fixed
+resolution: "#3341 — codesign failures fatal + codesign --verify --deep --strict; spctl advisory but logged (release + dev-build)"
 ---
 
 ## What
