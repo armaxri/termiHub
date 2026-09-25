@@ -12,6 +12,7 @@
     feature = "telnet",
     feature = "ssh",
     feature = "docker",
+    all(feature = "wsl", windows),
     feature = "ftp",
     feature = "mock-remote-desktop",
     feature = "vnc",
