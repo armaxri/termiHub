@@ -133,7 +133,7 @@ class FakeSessionTransport implements Transport {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-/** Create a plain-SSH terminal tab; `resilient` toggles the reconnect opt-in. */
+/** Create a plain-SSH terminal tab; `resilient` sets the per-connection `autoReconnect`. */
 function makeSshTab(resilient: boolean, sessionId: string | null = "sess-1"): string {
   return useAppStore.getState().addTab(
     "web01",
@@ -143,7 +143,7 @@ function makeSshTab(resilient: boolean, sessionId: string | null = "sess-1"): st
       config: {
         host: "web01.example.com",
         username: "deploy",
-        resilientReconnect: resilient,
+        autoReconnect: resilient,
       },
     },
     { contentType: "terminal", sessionId }

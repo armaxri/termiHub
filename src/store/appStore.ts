@@ -47,6 +47,7 @@ import {
   getRecoveryWarnings,
 } from "@/services/storage";
 import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
+import { isAutoReconnectEnabled } from "@/utils/autoReconnect";
 import {
   sessionGetCapabilities,
   listAvailableShells,
@@ -1733,20 +1734,21 @@ export function collectLiveTabs(state: LayoutViewState): TerminalTab[] {
  * Whether a tab is eligible for resilient reconnect. Two distinct populations,
  * both excluding persistent sessions (those have their own continuity machinery):
  *
- * - **Agentless direct SSH (#1962):** a plain SSH terminal whose saved connection
- *   opted in via the "Resilient Reconnect" setting. Client-driven backoff loop.
+ * - **Agentless direct SSH (#1962):** a plain SSH terminal whose connection has the
+ *   unified "Auto-Reconnect" setting enabled — on by default (PARITY-008), so only
+ *   an explicit opt-out excludes it. Backend-driven backoff loop.
  * - **Agent-hosted (#2476):** a shell session on a remote agent — always
  *   resilient. The agent reconnect is backend-driven (park + retry + new-sessionId
  *   re-attach), and backend-reattach is now unconditional (#2560), so every
  *   agent-hosted tab is eligible.
  *
- * Reads the opt-in / agent marker from the tab's connection config.
+ * Reads the auto-reconnect setting / agent marker from the tab's connection config.
  */
 function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
   if (!tab) return false;
   if (tab.contentType !== "terminal") return false;
   if (tab.persistentConnectionId) return false;
-  const cfg = tab.config?.config as { resilientReconnect?: unknown; agentId?: unknown } | undefined;
+  const cfg = tab.config?.config as Record<string, unknown> | undefined;
   if (!cfg) return false;
   if (cfg.agentId) {
     // Agent-hosted tab (#2476): always resilient — the backend redrive is the sole
@@ -1754,7 +1756,7 @@ function isResilientReconnectTab(tab: TerminalTab | undefined): boolean {
     return true;
   }
   if (tab.connectionType !== "ssh") return false;
-  return cfg.resilientReconnect === true;
+  return isAutoReconnectEnabled(cfg);
 }
 
 /**

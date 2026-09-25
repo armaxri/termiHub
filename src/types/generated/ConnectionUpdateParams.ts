@@ -7,7 +7,11 @@
  * three tri-state fields keep "omitted" (`None`) distinct from an explicit JSON
  * `null` (`Some(Value::Null)`), which clears / moves to root.
  */
-export type ConnectionUpdateParams = { id: string, name?: string, type?: string, config?: Record<string, unknown>, persistent?: boolean, 
+export type ConnectionUpdateParams = { id: string, name?: string, type?: string, 
+/**
+ * Settings bag; accepts the legacy `resilientReconnect` key on read (PARITY-008).
+ */
+config?: Record<string, unknown>, persistent?: boolean, 
 /**
  * Use JSON `null` to move to root, omit to leave unchanged.
  */

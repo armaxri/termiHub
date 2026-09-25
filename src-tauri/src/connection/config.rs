@@ -210,11 +210,50 @@ impl crate::utils::migrate::VersionedStore for ConnectionStore {
     /// bump is what makes that downgrade-safe: an older build sees a newer schema
     /// and refuses to overwrite the file instead of mangling ids it cannot read.
     ///
-    /// v1/v2 → v3 is structurally the identity (the default `migrate`). Rewriting
-    /// legacy plugin type ids needs the installed plugins' manifests, so it runs
-    /// as the post-load pass in [`crate::connection::plugin_type_ids`] — on every
-    /// load, so an id whose plugin is installed later still heals.
-    const CURRENT_VERSION: u32 = 3;
+    /// v1/v2 → v3 is structurally the identity. Rewriting legacy plugin type ids
+    /// needs the installed plugins' manifests, so it runs as the post-load pass in
+    /// [`crate::connection::plugin_type_ids`] — on every load, so an id whose
+    /// plugin is installed later still heals.
+    ///
+    /// v4 (PARITY-008) unifies the reconnect setting: the SSH-only
+    /// `resilientReconnect` key (default off) becomes the shared `autoReconnect`
+    /// key (default **on**). The step renames the key in every saved connection,
+    /// preserving the user's explicit value; a connection without either key now
+    /// means "on". The bump makes it downgrade-safe: an older build refuses to
+    /// overwrite a v4 file instead of silently dropping the renamed setting.
+    const CURRENT_VERSION: u32 = 4;
+
+    fn migrate(
+        mut value: serde_json::Value,
+        from_version: u32,
+    ) -> anyhow::Result<serde_json::Value> {
+        if from_version < 4 {
+            if let Some(children) = value.get_mut("children") {
+                migrate_auto_reconnect_nodes(children);
+            }
+        }
+        Ok(value)
+    }
+}
+
+/// v3 → v4 step: rewrite the legacy `resilientReconnect` key to `autoReconnect`
+/// in every saved connection's settings bag, recursing through folders.
+///
+/// Operates on raw JSON so it runs before the typed parse; anything that is not
+/// shaped like a tree node is left untouched for the typed parse / recovery path
+/// to judge.
+fn migrate_auto_reconnect_nodes(nodes: &mut serde_json::Value) {
+    let Some(nodes) = nodes.as_array_mut() else {
+        return;
+    };
+    for node in nodes {
+        if let Some(settings) = node.get_mut("config").and_then(|c| c.get_mut("config")) {
+            termihub_core::connection::normalize_auto_reconnect(settings);
+        }
+        if let Some(children) = node.get_mut("children") {
+            migrate_auto_reconnect_nodes(children);
+        }
+    }
 }
 
 /// Schema for external connection files. Same nested format with an optional `name`.
@@ -432,11 +471,32 @@ mod tests {
         assert!(deserialized.agents.is_empty());
     }
 
+    /// PARITY-008: every typed read of a connection config (external files,
+    /// imports, inline tab configs, IPC) accepts the legacy `resilientReconnect`
+    /// key under the unified `autoReconnect` key and writes only the new key.
+    #[test]
+    fn connection_config_accepts_legacy_resilient_reconnect_key() {
+        let cfg: ConnectionConfig = serde_json::from_value(serde_json::json!({
+            "type": "ssh",
+            "config": { "host": "h", "resilientReconnect": false }
+        }))
+        .unwrap();
+        assert_eq!(
+            cfg.settings,
+            serde_json::json!({ "host": "h", "autoReconnect": false })
+        );
+        let out = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(
+            out,
+            serde_json::json!({ "type": "ssh", "config": { "host": "h", "autoReconnect": false } })
+        );
+    }
+
     #[test]
     fn connection_store_default_is_current_version() {
         let store = ConnectionStore::default();
-        // v3: plugin connection types persist namespaced (PLG-007).
-        assert_eq!(store.version, "3");
+        // v4: the reconnect setting is unified under `autoReconnect` (PARITY-008).
+        assert_eq!(store.version, "4");
         assert!(store.children.is_empty());
         assert!(store.agents.is_empty());
     }

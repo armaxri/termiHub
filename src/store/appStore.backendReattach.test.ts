@@ -160,7 +160,7 @@ function makeSshTab(): string {
     "ssh",
     {
       type: "ssh",
-      config: { host: "web01.example.com", username: "deploy", resilientReconnect: true },
+      config: { host: "web01.example.com", username: "deploy", autoReconnect: true },
     },
     { contentType: "terminal", sessionId: "sess-1" }
   );
