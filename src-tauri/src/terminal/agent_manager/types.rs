@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use termihub_core::protocol::methods::{ConnectionDefinition, FolderDefinition};
 
 /// Capabilities returned by the agent after initialization.
 ///
@@ -101,33 +102,36 @@ pub struct AgentConnectionsData {
     pub folders: Vec<AgentFolderInfo>,
 }
 
-/// Parse an agent connection from the wire format (snake_case JSON).
-pub(crate) fn parse_agent_definition(v: &Value) -> Option<AgentDefinitionInfo> {
-    Some(AgentDefinitionInfo {
-        id: v["id"].as_str()?.to_string(),
-        name: v["name"].as_str()?.to_string(),
-        session_type: v["session_type"].as_str()?.to_string(),
-        config: v.get("config").cloned().unwrap_or(Value::Null),
-        persistent: v["persistent"].as_bool().unwrap_or(false),
-        folder_id: v["folder_id"].as_str().map(|s| s.to_string()),
-        terminal_options: v.get("terminal_options").and_then(|t| {
-            if t.is_null() {
-                None
-            } else {
-                Some(t.clone())
-            }
-        }),
-        icon: v["icon"].as_str().map(|s| s.to_string()),
-        source_file: v["source_file"].as_str().map(|s| s.to_string()),
-    })
+// The agent replies (`connections.list` / `.create` / `.update` and the
+// `.folders.*` twins) are deserialized into the shared wire DTOs
+// [`ConnectionDefinition`] / [`FolderDefinition`] (DUP-001 — one definition of
+// the snake_case wire, shared with the agent that emits it) and re-serialized to
+// the desktop's camelCase Tauri→frontend DTOs via these `From` conversions. This
+// replaces the old hand-written `serde_json::Value` field indexing.
+
+impl From<ConnectionDefinition> for AgentDefinitionInfo {
+    fn from(d: ConnectionDefinition) -> Self {
+        AgentDefinitionInfo {
+            id: d.id,
+            name: d.name,
+            session_type: d.session_type,
+            config: d.config,
+            persistent: d.persistent,
+            folder_id: d.folder_id,
+            terminal_options: d.terminal_options,
+            icon: d.icon,
+            source_file: d.source_file,
+        }
+    }
 }
 
-/// Parse an agent folder from the wire format (snake_case JSON).
-pub(crate) fn parse_agent_folder(v: &Value) -> Option<AgentFolderInfo> {
-    Some(AgentFolderInfo {
-        id: v["id"].as_str()?.to_string(),
-        name: v["name"].as_str()?.to_string(),
-        parent_id: v["parent_id"].as_str().map(|s| s.to_string()),
-        is_expanded: v["is_expanded"].as_bool().unwrap_or(false),
-    })
+impl From<FolderDefinition> for AgentFolderInfo {
+    fn from(f: FolderDefinition) -> Self {
+        AgentFolderInfo {
+            id: f.id,
+            name: f.name,
+            parent_id: f.parent_id,
+            is_expanded: f.is_expanded,
+        }
+    }
 }
