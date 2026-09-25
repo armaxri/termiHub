@@ -16,7 +16,7 @@ vi.mock("@/components/ui", async () => {
   const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
   return {
     ...actual,
-    toast: { success: vi.fn(), error: vi.fn() },
+    toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
   };
 });
 
@@ -87,7 +87,12 @@ describe("SecuritySettings", () => {
 
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "switch_credential_store") {
-        return Promise.resolve({ migratedCount: 0, warnings: [] });
+        return Promise.resolve({
+          status: "success",
+          migratedCount: 0,
+          failedCount: 0,
+          warnings: [],
+        });
       }
       return Promise.resolve(undefined);
     });
@@ -198,7 +203,12 @@ describe("SecuritySettings", () => {
 
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "switch_credential_store") {
-        return Promise.resolve({ migrated: 0, warnings: [] });
+        return Promise.resolve({
+          status: "success",
+          migratedCount: 0,
+          failedCount: 0,
+          warnings: [],
+        });
       }
       return Promise.resolve(undefined);
     });
@@ -250,7 +260,12 @@ describe("SecuritySettings", () => {
 
     mockedInvoke.mockImplementation((cmd) => {
       if (cmd === "switch_credential_store") {
-        return Promise.resolve({ migratedCount: 2, warnings: [] });
+        return Promise.resolve({
+          status: "success",
+          migratedCount: 2,
+          failedCount: 0,
+          warnings: [],
+        });
       }
       return Promise.resolve(undefined);
     });
@@ -572,6 +587,82 @@ describe("SecuritySettings", () => {
       });
 
       expect(currentSettingsView().workflowLocalProcessAllowlist).toEqual(["notify-send"]);
+    });
+  });
+
+  // #2839: the switch flow must distinguish a clean migration from a partial or
+  // failed one using the backend's structured `status`, never the warnings.
+  describe("migration status", () => {
+    async function switchFromMasterPasswordToKeychain(result: unknown) {
+      useAppStore.setState({
+        credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      });
+      mockedInvoke.mockImplementation((cmd) => {
+        if (cmd === "switch_credential_store") return Promise.resolve(result);
+        return Promise.resolve(undefined);
+      });
+      render();
+      await act(async () => {
+        (query("storage-mode-os-keychain") as HTMLElement).click();
+      });
+      await act(async () => {
+        (query("confirm-switch-confirm-btn") as HTMLElement).click();
+      });
+    }
+
+    it("reports a clean success with a success toast and no warnings", async () => {
+      await switchFromMasterPasswordToKeychain({
+        status: "success",
+        migratedCount: 3,
+        failedCount: 0,
+        warnings: [],
+      });
+
+      const panel = query("migration-result") as HTMLElement;
+      expect(panel.dataset.status).toBe("success");
+      expect(panel.textContent).toContain("3 credentials migrated");
+      expect(query("migration-warnings")).toBeNull();
+      expect(mockedToast.success).toHaveBeenCalledTimes(1);
+      expect(mockedToast.info).not.toHaveBeenCalled();
+      expect(mockedToast.error).not.toHaveBeenCalled();
+    });
+
+    it("reports a partial migration as informational and lists what failed", async () => {
+      await switchFromMasterPasswordToKeychain({
+        status: "partial",
+        migratedCount: 2,
+        failedCount: 1,
+        warnings: ["Failed to migrate conn-1:password: denied"],
+      });
+
+      const panel = query("migration-result") as HTMLElement;
+      expect(panel.dataset.status).toBe("partial");
+      expect(panel.textContent).toContain("2 of 3 credentials migrated");
+      expect(panel.textContent).toContain("1 credential could not be moved");
+      expect(panel.textContent).not.toContain("successfully");
+      expect(query("migration-warnings")?.textContent).toContain("conn-1:password");
+      expect(mockedToast.info).toHaveBeenCalledTimes(1);
+      expect(mockedToast.success).not.toHaveBeenCalled();
+      expect(mockedToast.error).not.toHaveBeenCalled();
+    });
+
+    it("reports a total failure without claiming success", async () => {
+      await switchFromMasterPasswordToKeychain({
+        status: "failed",
+        migratedCount: 0,
+        failedCount: 2,
+        warnings: ["Failed to migrate a:password: denied", "Failed to migrate b:password: denied"],
+      });
+
+      const panel = query("migration-result") as HTMLElement;
+      expect(panel.dataset.status).toBe("failed");
+      expect(panel.getAttribute("role")).toBe("alert");
+      expect(panel.textContent).toContain("none of your 2 credentials could be migrated");
+      expect(panel.textContent).toContain("switch back");
+      expect(panel.textContent).not.toContain("successfully");
+      expect(query("migration-warnings")?.querySelectorAll("li")).toHaveLength(2);
+      expect(mockedToast.error).toHaveBeenCalledTimes(1);
+      expect(mockedToast.success).not.toHaveBeenCalled();
     });
   });
 });
