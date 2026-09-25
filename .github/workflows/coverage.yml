@@ -14,11 +14,16 @@ name: Coverage (unified, advisory)
 # PR — the same ratchet philosophy as the vitest thresholds (#2066) and the
 # cargo-deny/audit gates. Do NOT make it blocking before a baseline exists.
 
+# POST-MERGE ONLY (#3325): being advisory, it never gated a PR, yet it cost a
+# ~21-minute Ubuntu runner on every PR push. It now runs on every push to
+# develop/main (the coverage trend lives on develop's runs) and on demand. The
+# blocking vitest coverage floors (#2066) still gate every frontend PR via the
+# Ubuntu "Run Tests" leg in code-quality.yml. When the ratchet above lands, move
+# it back onto PRs (or compare the PR against develop's stored baseline).
 on:
-  pull_request:
-    branches: [ main, develop ]
   push:
     branches: [ main, develop ]
+  workflow_dispatch:
 
 concurrency:
   group: coverage-${{ github.ref }}

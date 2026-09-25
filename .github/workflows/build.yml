@@ -16,30 +16,53 @@ permissions:
   contents: read
 
 jobs:
-  # PR builds verify the app *compiles* on each platform. They intentionally do
-  # NOT bundle installers (`--no-bundle`) — packaging (NSIS/MSI/DMG/AppImage)
-  # rarely breaks, is the slowest tail (esp. Windows), and full installers are
-  # produced by the Dev Build workflow on every push to develop/main. The PR
-  # matrix is also trimmed to one arch per OS (x64 Linux, arm64 macOS, x64
-  # Windows); the dropped arches (macOS x64, Linux arm64) are still built in full
-  # by dev-build.yml post-merge.
+  # Changed-area detection (#3325) — same classifier as code-quality.yml.
+  # Fail-open: if this job fails, `build` still runs (gates on `!= 'false'`).
+  changes:
+    name: Detect Changed Areas
+    runs-on: ubuntu-latest
+    outputs:
+      rust: ${{ steps.detect.outputs.rust }}
+      frontend: ${{ steps.detect.outputs.frontend }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 2
+
+      - name: Classify changed files
+        id: detect
+        uses: ./.github/actions/detect-changes
+
+  # ONE fast release-compile smoke per PR (#3325), on Linux only, and only when
+  # Rust or frontend code changed. It is kept because it is the only pre-merge
+  # exercise of the `tauri build` wiring the tests never touch: the production
+  # `pnpm build` (Vite bundling, beforeBuildCommand), `frontendDist`, the
+  # release profile and `custom-protocol` feature. It does NOT bundle
+  # installers (`--no-bundle`).
+  #
+  # The macOS and Windows release compiles moved POST-MERGE: dev-build.yml builds
+  # full installers for every platform/arch (macOS arm64+x64, Windows x64, Linux
+  # x64+arm64) on every push to develop/main, which strictly covers the old PR
+  # legs. Per-platform *Rust* breakage is still caught on the PR by the Windows
+  # "Run Tests" leg (code-quality.yml) whenever Rust changes.
   build:
     name: Build on ${{ matrix.platform }}
     runs-on: ${{ matrix.os }}
+    needs: changes
+    if: >-
+      ${{ !cancelled() && (needs.changes.outputs.rust != 'false' ||
+      needs.changes.outputs.frontend != 'false') }}
 
     strategy:
       fail-fast: false
       matrix:
+        # Kept as a one-entry matrix so the check name stays "Build on ubuntu-latest".
         include:
-          - platform: 'macos-latest-arm'
-            os: macos-latest
-            rust_target: 'aarch64-apple-darwin'
           - platform: 'ubuntu-latest'
             os: ubuntu-latest
             rust_target: 'x86_64-unknown-linux-gnu'
-          - platform: 'windows-latest'
-            os: windows-latest
-            rust_target: 'x86_64-pc-windows-msvc'
 
     steps:
       - name: Checkout code
