@@ -3431,3 +3431,216 @@ async fn monitoring_provider_call_does_not_hold_sessions_lock() {
         .expect("stop task should not panic")
         .expect("stop_session_monitoring should succeed");
 }
+
+// ── test_connection: validate without persisting or leaving a session (UX-007) ──
+
+/// A connection whose connect is rejected because the host is **unreachable** —
+/// returns the typed `SessionError::ConnectionFailed` (the transport/timeout
+/// discriminant), so `test_connection` can classify it distinctly from an auth
+/// rejection (I18N-002 / ERR-003).
+struct UnreachableConnect;
+
+#[async_trait::async_trait]
+impl ConnectionType for UnreachableConnect {
+    fn type_id(&self) -> &str {
+        "unreachable"
+    }
+    fn display_name(&self) -> &str {
+        "Unreachable"
+    }
+    fn settings_schema(&self) -> SettingsSchema {
+        SettingsSchema { groups: vec![] }
+    }
+    fn capabilities(&self) -> Capabilities {
+        Capabilities {
+            monitoring: false,
+            file_browser: false,
+            graphical: false,
+            resize: true,
+            persistent: false,
+            terminal: true,
+            tunneling: false,
+        }
+    }
+    async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+        Err(SessionError::ConnectionFailed(
+            "no route to host".to_string(),
+        ))
+    }
+    async fn connect_cancellable(
+        &mut self,
+        _settings: serde_json::Value,
+        _cancel: Option<CancellationToken>,
+    ) -> Result<(), SessionError> {
+        Err(SessionError::ConnectionFailed(
+            "no route to host".to_string(),
+        ))
+    }
+    async fn disconnect(&mut self) -> Result<(), SessionError> {
+        Ok(())
+    }
+    fn is_connected(&self) -> bool {
+        false
+    }
+    fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+        Ok(())
+    }
+    fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+        Ok(())
+    }
+    fn subscribe_output(&self) -> OutputReceiver {
+        let (_tx, rx) = tokio::sync::mpsc::channel(1);
+        rx
+    }
+    fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+        None
+    }
+    fn file_browser(&self) -> Option<&dyn FileBrowser> {
+        None
+    }
+}
+
+/// A reachable connection validates successfully, is **torn down immediately**
+/// (never left live), and leaves **nothing** in the `sessions` map — the core
+/// validate-and-teardown contract of `test_connection` (UX-007).
+#[tokio::test]
+async fn test_connection_succeeds_tears_down_and_leaves_no_session() {
+    let disconnected = Arc::new(AtomicBool::new(false));
+    let flag = disconnected.clone();
+    let mut registry = ConnectionTypeRegistry::new();
+    registry.register(
+        "spy",
+        "Spy",
+        "mock",
+        Box::new(move || Box::new(DisconnectSpy::new(flag.clone()))),
+    );
+    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+
+    let result = manager
+        .test_connection("spy", serde_json::json!({}), None, Some("test-1:0"))
+        .await;
+
+    assert!(
+        result.is_ok(),
+        "a reachable connection must validate: {result:?}"
+    );
+    assert!(
+        disconnected.load(Ordering::SeqCst),
+        "the probe connection must be disconnected (never left live)"
+    );
+    assert!(
+        manager.sessions.lock().await.is_empty(),
+        "test_connection must not register a session"
+    );
+    // The RAII guard cleared the connect token, so nothing is left in flight.
+    assert!(!manager.cancel_connecting("test-1:0"));
+}
+
+/// A genuine **auth rejection** surfaces as the typed `SessionError::AuthFailed`,
+/// which the command layer maps to `TerminalError::AuthFailed` (the `auth_failed`
+/// machine code) — and no session is left behind.
+#[tokio::test]
+async fn test_connection_classifies_auth_failure() {
+    let mut registry = ConnectionTypeRegistry::new();
+    registry.register(
+        "auth-failing",
+        "AuthFailing",
+        "mock",
+        Box::new(|| Box::new(AuthFailConnect)),
+    );
+    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+
+    let result = manager
+        .test_connection("auth-failing", serde_json::json!({}), None, None)
+        .await;
+
+    assert!(
+        matches!(result, Err(SessionError::AuthFailed)),
+        "an auth rejection must surface as the typed AuthFailed, got {result:?}"
+    );
+    // End-to-end: the command layer classifies it as the IPC AuthFailed variant.
+    let ipc = TerminalError::from_session_spawn(result.unwrap_err());
+    assert!(matches!(ipc, TerminalError::AuthFailed(_)));
+    assert!(
+        manager.sessions.lock().await.is_empty(),
+        "a failed test must not register a session"
+    );
+}
+
+/// An **unreachable host** surfaces as the typed `SessionError::ConnectionFailed`,
+/// which the command layer maps to the coded `TerminalError::unreachable` — a
+/// distinct classification from an auth failure — and leaves no session.
+#[tokio::test]
+async fn test_connection_classifies_unreachable_host() {
+    let mut registry = ConnectionTypeRegistry::new();
+    registry.register(
+        "unreachable",
+        "Unreachable",
+        "mock",
+        Box::new(|| Box::new(UnreachableConnect)),
+    );
+    let manager = SessionManager::new(registry, Arc::new(NullAgent));
+
+    let result = manager
+        .test_connection("unreachable", serde_json::json!({}), None, None)
+        .await;
+
+    assert!(
+        matches!(result, Err(SessionError::ConnectionFailed(_))),
+        "an unreachable host must surface as the typed ConnectionFailed, got {result:?}"
+    );
+    let ipc = TerminalError::from_session_spawn(result.unwrap_err());
+    assert!(
+        matches!(ipc, TerminalError::ConnectionFailed(_)),
+        "unreachable must map to the ConnectionFailed IPC variant"
+    );
+    assert!(
+        manager.sessions.lock().await.is_empty(),
+        "a failed test must not register a session"
+    );
+}
+
+/// A hung test connect is abortable via `cancel_connecting` (the same #952
+/// token map a real connect uses), so a test can never hang un-cancellably —
+/// and the aborted probe leaves no session.
+#[tokio::test]
+async fn test_connection_is_cancellable_when_the_connect_hangs() {
+    let mut registry = ConnectionTypeRegistry::new();
+    registry.register(
+        "blocking",
+        "Blocking",
+        "mock",
+        Box::new(|| Box::new(BlockingConnect)),
+    );
+    let manager = Arc::new(SessionManager::new(registry, Arc::new(NullAgent)));
+
+    let spawned = manager.clone();
+    let join = tokio::spawn(async move {
+        spawned
+            .test_connection("blocking", serde_json::json!({}), None, Some("test-c:0"))
+            .await
+    });
+
+    // Poll until the probe registers its token, then fire the cancel.
+    let mut cancelled = false;
+    for _ in 0..200 {
+        if manager.cancel_connecting("test-c:0") {
+            cancelled = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    assert!(cancelled, "the connecting test probe should be cancellable");
+
+    let result = join.await.expect("join");
+    assert!(
+        result.is_err(),
+        "a cancelled test connect must return an error"
+    );
+    assert!(
+        manager.sessions.lock().await.is_empty(),
+        "a cancelled test must not register a session"
+    );
+    // The RAII guard cleared the entry, so a second cancel finds nothing.
+    assert!(!manager.cancel_connecting("test-c:0"));
+}
