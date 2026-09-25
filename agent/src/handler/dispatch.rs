@@ -2350,9 +2350,15 @@ async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
     }
 }
 
-/// Whether [`DOCKER_PROBE_SKIP_ENV`] opts out of the Docker probe.
+/// Whether the Docker probe is skipped: always in this crate's unit tests, else
+/// when [`DOCKER_PROBE_SKIP_ENV`] opts out.
+///
+/// Unit tests skip unconditionally (CI-013, #3350): ~100 dispatch tests call
+/// `initialize`, and on a host with Docker each spawned `docker info` plus
+/// `docker images`, oversubscribing CI runners. No unit test depends on the
+/// real probe; `probe_docker_available` is tested directly against shims.
 fn docker_probe_skipped() -> bool {
-    docker_probe_skip_from(std::env::var(DOCKER_PROBE_SKIP_ENV).ok().as_deref())
+    cfg!(test) || docker_probe_skip_from(std::env::var(DOCKER_PROBE_SKIP_ENV).ok().as_deref())
 }
 
 /// Whether a [`DOCKER_PROBE_SKIP_ENV`] value opts out of the Docker probe.
@@ -2493,6 +2499,17 @@ mod tests {
         assert!(!docker_probe_skip_from(Some("0")));
         assert!(!docker_probe_skip_from(Some("false")));
         assert!(!docker_probe_skip_from(Some("")));
+    }
+
+    /// Unit tests never spawn a real `docker info` / `docker images` child
+    /// (CI-013, #3350): ~100 dispatch tests call `initialize`, and on a runner
+    /// with Docker installed each one spawned two docker CLI processes,
+    /// oversubscribing the cores. The probe itself stays covered by the shim
+    /// tests below, which call `probe_docker_available` directly.
+    #[tokio::test]
+    async fn docker_probe_is_skipped_in_unit_tests() {
+        assert!(docker_probe_skipped());
+        assert!(!detect_docker_available().await);
     }
 
     /// Write an executable shim script under a unique temp path and return it.
