@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import {
   Plus,
   Columns2,
@@ -30,7 +30,6 @@ import { countLiveSessions } from "@/utils/tabLiveSession";
 import { Button, Tooltip } from "@/components/ui";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
-import { TestBridge } from "@/testbridge/TestBridge";
 import { Terminal } from "./Terminal";
 import { applyAgentReconnecting } from "./agentStateHandlers";
 import { TabGroupChips } from "./TabGroupChips";
@@ -48,6 +47,25 @@ import {
 import { frontendLog } from "@/utils/frontendLog";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import "./TerminalView.css";
+
+/**
+ * The in-app test bridge, included ONLY in test/E2E builds (TIN-003).
+ *
+ * `import.meta.env.VITE_TEST_BRIDGE` is a build-time constant: Vite inlines it,
+ * so in a production build (no `VITE_TEST_BRIDGE=1`) this ternary folds to a
+ * literal `false ? … : null` and Rollup tree-shakes the guarded dynamic
+ * `import()` — the entire `@/testbridge/*` dispatcher is dropped from the
+ * shipped bundle rather than merely dormant. The backend `test-bridge` cargo
+ * feature gates the same surface out of release binaries; the harness build
+ * (`scripts/test-system-py.sh`) sets `VITE_TEST_BRIDGE=1`, which restores it.
+ *
+ * A runtime `if` would NOT tree-shake — the guard must be this build-time
+ * constant around a dynamic import for the module to be statically eliminated.
+ */
+const LazyTestBridge =
+  import.meta.env.VITE_TEST_BRIDGE === "1"
+    ? lazy(() => import("@/testbridge/TestBridge").then((m) => ({ default: m.TestBridge })))
+    : null;
 
 export function TerminalView() {
   // Initialize the singleton event dispatcher once.
@@ -431,7 +449,11 @@ export function TerminalView() {
   return (
     <TerminalPortalProvider>
       <TerminalCommandBridge />
-      <TestBridge />
+      {LazyTestBridge && (
+        <Suspense fallback={null}>
+          <LazyTestBridge />
+        </Suspense>
+      )}
       <div className="terminal-view">
         <div className="terminal-view__toolbar">
           <TabGroupChips />
