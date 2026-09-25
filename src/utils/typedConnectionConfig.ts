@@ -92,6 +92,14 @@ export interface TelnetConnectionConfigFields {
 /** Built-in Docker config fields (Rust `DockerConfig`, `type: "docker"`). */
 export interface DockerConnectionConfigFields {
   [key: string]: unknown;
+  /**
+   * How the session gets its container: `"new"` (default) creates and runs a
+   * fresh container from `image`; `"existing"` execs into the already-running
+   * container named by `existingContainer` (PROD-016).
+   */
+  containerMode?: "new" | "existing";
+  /** Name or ID of the running container to exec into when `containerMode` is `"existing"`. */
+  existingContainer?: string;
   image?: string;
   shell?: string;
   runtime?: string;
