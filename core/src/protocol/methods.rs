@@ -323,7 +323,7 @@ pub struct SessionDetachParams {
 
 // ── session.input ──────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionInputParams {
     pub session_id: String,
     /// Base64-encoded data.
@@ -334,7 +334,7 @@ pub struct SessionInputParams {
 
 /// Desktop → agent: reply bytes from the operator's local ssh-agent, tagged
 /// with the forwarded stream they belong to.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentForwardDataParams {
     pub stream_id: String,
     /// Base64-encoded ssh-agent-protocol bytes.
@@ -343,14 +343,14 @@ pub struct AgentForwardDataParams {
 
 /// Desktop → agent: a forwarded ssh-agent stream the desktop closed (its local
 /// agent went away, or the conversation finished).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentForwardCloseParams {
     pub stream_id: String,
 }
 
 // ── session.resize ─────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionResizeParams {
     pub session_id: String,
     pub cols: u16,
@@ -419,14 +419,14 @@ pub struct ConnectionUpdateParams {
 
 // ── connections.delete ─────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionDeleteParams {
     pub id: String,
 }
 
 // ── connections.folders.create ──────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FolderCreateParams {
     pub name: String,
     pub parent_id: Option<String>,
@@ -446,7 +446,7 @@ pub struct FolderUpdateParams {
 
 // ── connections.folders.delete ──────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FolderDeleteParams {
     pub id: String,
 }
@@ -2758,5 +2758,82 @@ mod tests {
         assert_eq!(wire, json!({ "processes": [] }));
         let parsed: ProcessesListResult = serde_json::from_value(wire).unwrap();
         assert!(parsed.processes.is_empty());
+    }
+
+    // ── agent_manager I/O-task + definition/folder builders (DUP-001) ────
+    //
+    // The desktop I/O task builds the session.* / agent.forward.* write requests,
+    // and the manager builds the connections.* delete / folders.create+delete
+    // requests. Each test pins the wire byte-for-byte against the old json!.
+
+    #[test]
+    fn session_write_resize_forward_params_match_hand_built_json() {
+        assert_eq!(
+            serde_json::to_value(SessionInputParams {
+                session_id: "s-1".to_string(),
+                data: "aGk=".to_string(),
+            })
+            .unwrap(),
+            json!({ "session_id": "s-1", "data": "aGk=" }),
+        );
+        assert_eq!(
+            serde_json::to_value(SessionResizeParams {
+                session_id: "s-1".to_string(),
+                cols: 120,
+                rows: 40,
+            })
+            .unwrap(),
+            json!({ "session_id": "s-1", "cols": 120, "rows": 40 }),
+        );
+        assert_eq!(
+            serde_json::to_value(AgentForwardDataParams {
+                stream_id: "str-1".to_string(),
+                data: "aGk=".to_string(),
+            })
+            .unwrap(),
+            json!({ "stream_id": "str-1", "data": "aGk=" }),
+        );
+        assert_eq!(
+            serde_json::to_value(AgentForwardCloseParams {
+                stream_id: "str-1".to_string(),
+            })
+            .unwrap(),
+            json!({ "stream_id": "str-1" }),
+        );
+    }
+
+    #[test]
+    fn definition_folder_builder_params_match_hand_built_json() {
+        assert_eq!(
+            serde_json::to_value(ConnectionDeleteParams {
+                id: "def-1".to_string()
+            })
+            .unwrap(),
+            json!({ "id": "def-1" }),
+        );
+        assert_eq!(
+            serde_json::to_value(FolderDeleteParams {
+                id: "f-1".to_string()
+            })
+            .unwrap(),
+            json!({ "id": "f-1" }),
+        );
+        // `parent_id` stays a JSON `null` when absent (root folder).
+        assert_eq!(
+            serde_json::to_value(FolderCreateParams {
+                name: "Prod".to_string(),
+                parent_id: None,
+            })
+            .unwrap(),
+            json!({ "name": "Prod", "parent_id": null }),
+        );
+        assert_eq!(
+            serde_json::to_value(FolderCreateParams {
+                name: "Prod".to_string(),
+                parent_id: Some("root".to_string()),
+            })
+            .unwrap(),
+            json!({ "name": "Prod", "parent_id": "root" }),
+        );
     }
 }
