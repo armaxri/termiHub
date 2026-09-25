@@ -9,7 +9,8 @@ subsystem: src-tauri/src/commands/agent.rs, agent/src/protocol/methods.rs
 evidence:
   - src-tauri/src/commands/agent.rs:478
   - agent/src/protocol/methods.rs:277
-status: open
+status: fixed
+resolution: "#3351 — desktop decodes connections.* params into core DTOs (ts-rs exported), invalid_params error; TS-to-agent contract fixture test; fixed type/session_type drift bug"
 ---
 
 ## What
