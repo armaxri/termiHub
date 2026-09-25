@@ -9,7 +9,8 @@ subsystem: core/src/connection
 evidence:
   - core/src/connection/mod.rs:151
   - core/src/backends/ssh/mod.rs:567
-status: open
+status: fixed
+resolution: "#3229 — responsive connect cancellation for ALL non-SSH backends: connect_cancellable now honors the CancellationToken in Docker (races runtime-connect + image-pull, cleans up any half-created container on cancel), FTP/telnet/VNC/RDP/local/serial/WSL/mock (race connect future vs token via core::backends::race_connect, returning SSH's exact cancellation error). Was SSH-only (UI Cancel was a no-op-until-timeout elsewhere). 18 offline tests. (RDP negotiation completes in the out-of-process sidecar after connect returns — outside this method's window)"
 ---
 
 ## What

@@ -10,8 +10,8 @@ evidence:
   - src-tauri/src/files/transfer/mod.rs:251
   - src-tauri/src/files/transfer/mod.rs:50
   - core/src/backends/ftp/transfer.rs:27
-status: deferred
-resolution: "#2940 — SFTP/FTP chunked reader->writer copy loop still duplicated; out of scope of #2939, follow-up filed"
+status: fixed
+resolution: "#2954 — shared chunked reader->writer copy loop extracted to core::files::copy::run_chunked_copy, used by BOTH the SFTP transfer path and FTP (#2954); the residual duplicated 256 KiB constant unified to a single core::files::copy::CHUNK_SIZE sourced by both (#3233). No more parallel copy loops or duplicated chunk const"
 ---
 
 ## What
