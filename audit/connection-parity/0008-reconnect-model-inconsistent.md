@@ -11,7 +11,8 @@ evidence:
   - core/src/connection/graphical.rs:148
   - core/src/backends/ftp/mod.rs:135
   - core/src/connection/graphical.rs:423
-status: open
+status: fixed
+resolution: "#3365 — single autoReconnect (default on, maintainer decision) for SSH + graphical; connections.json v4 migration; legacy key read on desktop and agent; graphical engine gap tracked #3364"
 ---
 
 ## What
