@@ -80,8 +80,8 @@ import { errorMessage } from "@/utils/errorMessage";
 type EditorCategory = "connection" | "terminal" | "appearance" | "agent";
 
 /**
- * Thrown from `handleSaveAndConnect` when the user dismisses a credential prompt
- * (password or store-unlock). The Save & Connect Button suppresses its default
+ * Thrown from `handleSaveAndConnect` / `handleTest` when the user dismisses a
+ * credential prompt (password or store-unlock). Both Buttons suppress their default
  * error toast (`errorToast={false}`), so this rejection lands the Button back at
  * idle — no false success flash — while the handler surfaces its own recoverable
  * `toast.info`. See #1344.
@@ -1150,13 +1150,43 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     // Build the connect config from the live form WITHOUT persisting it — the
     // same routing Save & Connect uses (agent-definition → remote-session; a
     // direct connection → its type + config), minus any save.
-    const config: ConnectionConfig =
+    let config: ConnectionConfig =
       isAgentDefinitionMode && existingAgent
         ? {
             type: "remote-session",
             config: { agentId: existingAgent.id, sessionType: selectedType, ...connSettings },
           }
         : { type: selectedType, config: connSettings };
+
+    // Resolve a stored credential / key passphrase the form does not carry,
+    // exactly as Save & Connect does — but in a non-persisting mode (#3284):
+    // nothing is saved, a prompt-entered secret is never stored (the prompt's
+    // Save box is ignored), and the secret goes only into this in-memory probe
+    // config — never into form state, so it is neither dirty-tracked nor
+    // persisted on a later Save. Agent-definition sessions resolve credentials
+    // agent-side, as Save & Connect does. An unsaved (create-flow) connection
+    // has no persisted id to key the vault, so no stored credential can exist
+    // (names are unique per folder) and the user is prompted directly.
+    if (!isAgentDefinitionMode) {
+      const secret = await resolveConnectSecret({
+        schema: isAgentTransportMode ? AGENT_SCHEMA : currentTypeInfo?.schema,
+        settings: connSettings,
+        connectionId: existingConnection?.id ?? existingAgent?.id ?? null,
+        requestPassword,
+      });
+      if (secret.status === "canceled") {
+        // Cancel cleanly: no probe ran, so no auth-failure toast. Rethrow so the
+        // async Button returns to idle rather than flashing success.
+        toast.info("Connection test canceled.");
+        throw new PromptCanceledError();
+      }
+      if (secret.status === "resolved") {
+        config = {
+          ...config,
+          config: { ...config.config, [secret.passwordKey]: secret.secret },
+        };
+      }
+    }
 
     const connectId = `test:${newId("test")}`;
     testCanceledRef.current = false;
@@ -1185,7 +1215,11 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     canSave,
     focusFirstInvalidField,
     isAgentDefinitionMode,
+    isAgentTransportMode,
     existingAgent,
+    existingConnection,
+    currentTypeInfo,
+    requestPassword,
     selectedType,
     connSettings,
     name,
