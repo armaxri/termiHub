@@ -12,7 +12,7 @@ evidence:
   - agent/src/io/tcp.rs:126
   - agent/src/main.rs:155
 status: fixed
-resolution: "#3297 — --listen requires per-instance token handshake (owner-only token file, fail-closed, constant-time compare) — maintainer decision 2026-09-25"
+resolution: "#3297 — --listen TCP mode now authenticated: per-instance 32-byte token (uuid v4), owner-only token file written pre-bind, fail-closed handshake with constant-time compare (SHA-256 digest + black_box XOR fold), NO new dep (Cargo.lock untouched). maintainer decision 2026-09-25: require token handshake"
 ---
 
 ## What

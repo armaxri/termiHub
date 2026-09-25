@@ -12,7 +12,7 @@ evidence:
   - agent/src/main.rs:25
   - agent/src/main.rs:155
 status: fixed
-resolution: "#3297 — --listen TCP authenticated via per-instance token handshake"
+resolution: "#3297 — agent TCP listener no longer unauthenticated: same per-instance token handshake as AGT-002 (new agent/src/io/auth.rs), fail-closed"
 ---
 
 ## What

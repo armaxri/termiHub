@@ -11,7 +11,7 @@ evidence:
   - core/src/plugin/capabilities.rs:12
   - src/plugins/sandbox/pluginSandboxWorker.ts:1
 status: fixed
-resolution: "#3296 — native plugins default-off + per-plugin hash-bound trust ack; trust models no longer asymmetric"
+resolution: "#3296 — native-plugin trust asymmetry resolved: same default-off + per-plugin hash-bound ack store gates the privileged native backend (SEC-002/PLG-006 companion)"
 ---
 
 ## What

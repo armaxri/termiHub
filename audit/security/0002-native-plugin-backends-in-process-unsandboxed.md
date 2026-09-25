@@ -12,7 +12,7 @@ evidence:
   - core/src/plugin/capabilities.rs:15
   - src/plugins/frontendPlugins.ts:107
 status: partial
-resolution: "#3296 — native plugin backends default-off + per-plugin hash-bound ack; OS-level sandbox for native backends is pre-v1.0 by maintainer decision 2026-09-25"
+resolution: "#3296 — native plugin backends default-off + per-plugin hash-bound ack (NativeTrustStore: default-OFF global + per-plugin ack keyed by plugin id + SHA-256 library hash, fails closed). OS-level sandbox for the native backend deferred pre-v1.0 (maintainer decision 2026-09-25) -> partial"
 ---
 
 ## What
