@@ -39,11 +39,10 @@ use tracing::{debug, warn};
 
 use crate::errors::CoreError;
 use crate::monitoring::{
-    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatus,
-    MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
-    MonitoringSubscription, NetDeltaTracker, PerCoreCpuTracker, SystemStats, BACKOFF_CAP,
-    DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
-    DEFAULT_STALE_THRESHOLD,
+    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
+    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
+    NetDeltaTracker, PerCoreCpuTracker, SystemStats, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
+    DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
 };
 
 /// Default polling interval for collecting stats.
@@ -504,7 +503,7 @@ impl MonitoringProvider for ExecMonitoringProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::monitoring::MonitorStatusReceiver;
+    use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
     use std::sync::atomic::AtomicUsize;
 
     /// A captured `MONITORING_COMMAND` sample as a container/distro would emit it:

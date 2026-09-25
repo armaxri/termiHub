@@ -21,9 +21,9 @@ use tracing::{debug, warn};
 use crate::config::SshConfig;
 use crate::errors::CoreError;
 use crate::monitoring::{
-    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatus,
-    MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
-    MonitoringSubscription, NetDeltaTracker, PerCoreCpuTracker, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
+    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
+    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
+    NetDeltaTracker, PerCoreCpuTracker, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
     DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
     MONITORING_COMMAND,
 };
@@ -530,7 +530,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::monitoring::MonitorStatusReceiver;
+    use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
     use std::sync::atomic::AtomicUsize;
 
     /// A valid `MONITORING_COMMAND` output that `parse_stats` accepts, so the

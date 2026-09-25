@@ -25,10 +25,10 @@ use tracing::debug;
 
 use crate::errors::CoreError;
 use crate::monitoring::{
-    BackoffSchedule, CollectLoopState, MonitorStatus, MonitorStatusSender, MonitoringProvider,
-    MonitoringReceiver, MonitoringSender, MonitoringSubscription, StatsCollector, SystemStats,
-    BACKOFF_CAP, DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS,
-    DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
+    BackoffSchedule, CollectLoopState, MonitorStatusSender, MonitoringProvider, MonitoringReceiver,
+    MonitoringSender, MonitoringSubscription, StatsCollector, SystemStats, BACKOFF_CAP,
+    DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
+    DEFAULT_STALE_THRESHOLD,
 };
 
 use super::local_collector::LocalCollector;
@@ -451,7 +451,7 @@ impl MonitoringProvider for LocalMonitoringProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::monitoring::MonitorStatusReceiver;
+    use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
     use std::sync::atomic::AtomicUsize;
 
     fn sample_stats() -> SystemStats {
