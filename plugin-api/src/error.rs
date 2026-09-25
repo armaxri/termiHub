@@ -33,12 +33,12 @@ pub enum PluginError {
     Io(String),
 
     /// The plugin was built against an incompatible ABI version.
-    #[error("plugin API version mismatch: host supports {expected}, plugin built against {found}")]
+    #[error("plugin ABI version mismatch: host supports {expected}, plugin built for {found}")]
     VersionMismatch {
-        /// ABI version the host supports ([`crate::CURRENT_PLUGIN_API_VERSION`]).
-        expected: u32,
-        /// ABI version the plugin reported.
-        found: u32,
+        /// ABI version the host supports ([`crate::CURRENT_PLUGIN_ABI_VERSION`]).
+        expected: crate::AbiVersion,
+        /// ABI version the plugin reported (`0.0` when unknown).
+        found: crate::AbiVersion,
     },
 
     /// The plugin unwound (panicked) across the FFI boundary; the safe wrappers
@@ -102,10 +102,11 @@ pub enum PluginStatus {
     /// Maps to [`PluginError::ResourceLimit`]: the host refused a mediated
     /// capability because a resource ceiling (e.g. the session's
     /// concurrent-connection limit) was reached, not because a permission is
-    /// missing. Added in #2030; its host-returnable value is what forced the ABI
-    /// bump to version 4 (the exact-match gate rejects older plugins that could
-    /// not decode this discriminant).
+    /// missing. Added in #2030 (pre-freeze); part of ABI 1.0.
     ResourceLimit = 9,
+    // Append-only (ABI 1.x): new variants take the next discriminant, are
+    // listed in `since`, and are never handed to an older-minor plugin — see
+    // `for_peer`. Existing discriminants never change within a major.
 }
 
 impl PluginStatus {
@@ -141,6 +142,44 @@ impl PluginStatus {
         matches!(self, Self::Ok)
     }
 
+    /// The ABI version that introduced this variant. Every variant that exists
+    /// at the 1.0 freeze reports `1.0`; a variant appended in a later minor
+    /// reports that minor.
+    #[must_use]
+    pub const fn since(self) -> crate::AbiVersion {
+        match self {
+            Self::Ok
+            | Self::ChannelClosed
+            | Self::NotAlive
+            | Self::InvalidConfig
+            | Self::Io
+            | Self::VersionMismatch
+            | Self::Panic
+            | Self::PermissionDenied
+            | Self::Other
+            | Self::ResourceLimit => crate::AbiVersion::new(1, 0),
+        }
+    }
+
+    /// The status to hand a plugin built for ABI `peer`: `self` when the peer
+    /// knows this variant, otherwise [`Other`](Self::Other).
+    ///
+    /// A plugin built against an older minor cannot decode a discriminant that
+    /// was appended after it was compiled — for a Rust `#[repr(i32)]` enum an
+    /// unknown value is undefined behavior, not just an unknown code. So every
+    /// status the **host** returns to a plugin (capability-bridge callbacks)
+    /// must go through this downgrade once a minor adds a variant. This is what
+    /// lets an enum grow in a minor without breaking older plugins (the reason
+    /// #2030 had to be a breaking bump under the old exact-match scheme).
+    #[must_use]
+    pub const fn for_peer(self, peer: crate::AbiVersion) -> Self {
+        if peer.supports(self.since()) {
+            self
+        } else {
+            Self::Other
+        }
+    }
+
     /// Expand a status code back into a `Result<(), PluginError>`.
     ///
     /// Because the code carries no payload, the reconstructed error uses a
@@ -153,8 +192,8 @@ impl PluginStatus {
             Self::InvalidConfig => Err(PluginError::InvalidConfig("reported by plugin".to_owned())),
             Self::Io => Err(PluginError::Io("reported by plugin".to_owned())),
             Self::VersionMismatch => Err(PluginError::VersionMismatch {
-                expected: crate::CURRENT_PLUGIN_API_VERSION,
-                found: 0,
+                expected: crate::CURRENT_PLUGIN_ABI_VERSION,
+                found: crate::AbiVersion::new(0, 0),
             }),
             Self::Panic => Err(PluginError::Panicked),
             Self::PermissionDenied => Err(PluginError::PermissionDenied),
