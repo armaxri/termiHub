@@ -47,6 +47,7 @@ use termihub_core::backends::rdp_sidecar::protocol::{
 };
 use termihub_core::connection::{
     CursorShape, CursorUpdate, DirtyRect, FrameUpdate, GraphicalState, InputEvent,
+    MAX_FRAMEBUFFER_DIMENSION,
 };
 
 use crate::audio::RdpAudioBackend;
@@ -570,6 +571,17 @@ where
             }
         };
 
+    // The server negotiates the desktop size; refuse an absurd one before `drive`
+    // allocates a `width * height * 4` decode image from it (MOCK-011).
+    if let Err(e) = check_desktop_size(result.desktop_size.width, result.desktop_size.height) {
+        let _ = write_message(
+            ipc_out,
+            &SidecarMessage::State(GraphicalState::ConnectFailed),
+        )
+        .await;
+        return Err(e);
+    }
+
     write_message(ipc_out, &SidecarMessage::State(GraphicalState::Active))
         .await
         .context("failed to write state")?;
@@ -966,6 +978,24 @@ where
     drain_clipboard_events(clipboard_rx, stage, transport, ipc_out, local_clipboard).await
 }
 
+/// Refuse a server-negotiated desktop size outside `1..=MAX_FRAMEBUFFER_DIMENSION`
+/// **before** a `width * height * 4` [`DecodedImage`] is allocated from it.
+///
+/// The RDP server picks the final desktop size (a `u16` pair, so up to
+/// 65535x65535 = ~17 GB of RGBA). This applies the shared, all-backend bound
+/// ([`MAX_FRAMEBUFFER_DIMENSION`]) that the desktop's frame pump also enforces
+/// (MOCK-011), so the sidecar never allocates a framebuffer the host would
+/// reject anyway.
+fn check_desktop_size(width: u16, height: u16) -> Result<()> {
+    let (w, h) = (u32::from(width), u32::from(height));
+    if w == 0 || h == 0 || w > MAX_FRAMEBUFFER_DIMENSION || h > MAX_FRAMEBUFFER_DIMENSION {
+        return Err(anyhow!(
+            "server desktop size {w}x{h} is outside the supported 1..={MAX_FRAMEBUFFER_DIMENSION} range"
+        ));
+    }
+    Ok(())
+}
+
 /// Run the [Deactivation-Reactivation Sequence] after a server Deactivate All
 /// PDU (the mechanism by which a Display Control resize takes effect): re-run the
 /// capability exchange, then re-point the active stage and decoded image at the
@@ -994,6 +1024,7 @@ async fn reactivate(
             pointer_software_rendering,
         } = activation.connection_activation_state()
         {
+            check_desktop_size(desktop_size.width, desktop_size.height)?;
             *image =
                 DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
             // The server may reassign the share id and pointer settings; rebuild
@@ -1421,5 +1452,26 @@ mod tests {
             .await
             .unwrap()
             .expect("stray input must be skipped, then accept proceeds");
+    }
+
+    #[test]
+    fn desktop_size_within_shared_bound_is_accepted() {
+        assert!(check_desktop_size(1024, 768).is_ok());
+        let max = MAX_FRAMEBUFFER_DIMENSION as u16;
+        assert!(check_desktop_size(max, max).is_ok());
+    }
+
+    #[test]
+    fn hostile_desktop_size_is_refused_before_allocation() {
+        let over = MAX_FRAMEBUFFER_DIMENSION as u16 + 1;
+        for (w, h) in [
+            (over, 768),
+            (1024, over),
+            (u16::MAX, u16::MAX),
+            (0, 768),
+            (1024, 0),
+        ] {
+            assert!(check_desktop_size(w, h).is_err(), "{w}x{h} must be refused");
+        }
     }
 }
