@@ -235,6 +235,67 @@ describe("E2 — region is the sole writer of appStore's layout", () => {
   });
 });
 
+describe("SM-027 — a rejected layout.* intent rolls back coupled non-layout fields too", () => {
+  // The optimistic apply commits the panel-tree structure AND the coupled
+  // non-layout fields a reducer returns (`tabContent`, `zoomedTabId`, the per-tab
+  // maps) before the backend acks. A rejection must revert BOTH together — leaving
+  // `appStore` exactly as before the apply — not just the structure.
+
+  it("a rejected addTab restores tabContent to its pre-apply value (map field)", async () => {
+    transport.reject = true;
+    const beforeContentIds = Object.keys(useAppStore.getState().tabContent).sort();
+    const beforeTreeIds = tabIds(layoutState().rootPanel);
+
+    const newId = useAppStore.getState().addTab("New", "local", { type: "local", config: {} });
+    await flush();
+
+    // Structure reverted (the existing overlay rollback): the new tab is gone.
+    expect(tabIds(layoutState().rootPanel)).toEqual(beforeTreeIds);
+    // Coupled field reverted (SM-027): no stale `tabContent` entry lingers for the
+    // rejected tab — the by-id map matches its pre-apply keys exactly.
+    expect(useAppStore.getState().tabContent[newId]).toBeUndefined();
+    expect(Object.keys(useAppStore.getState().tabContent).sort()).toEqual(beforeContentIds);
+  });
+
+  it("a rejected setActivePanel restores zoomedTabId to its pre-apply value (scalar field)", async () => {
+    // Zoom a tab in panel `a` (t1). Focusing panel `b` follows the zoom overlay to
+    // b's active tab (t3) as a coupled non-layout write.
+    useAppStore.setState({ zoomedTabId: "t1" });
+    transport.reject = true;
+
+    useAppStore.getState().setActivePanel("b");
+    await flush();
+
+    // Structure reverted: focus is back on the pre-apply panel.
+    expect(layoutState().activePanelId).toBe("a");
+    // Coupled field reverted (SM-027): the zoom overlay still targets t1, not b's
+    // t3 — it does not strand a tab that is no longer in the focused panel.
+    expect(useAppStore.getState().zoomedTabId).toBe("t1");
+  });
+
+  it("a successful addTab keeps the new tab's content (happy path unchanged)", async () => {
+    const beforeContentCount = Object.keys(useAppStore.getState().tabContent).length;
+
+    const newId = useAppStore.getState().addTab("New", "local", { type: "local", config: {} });
+    await flush();
+
+    expect(tabIds(layoutState().rootPanel)).toContain(newId);
+    expect(useAppStore.getState().tabContent[newId]).toBeDefined();
+    expect(Object.keys(useAppStore.getState().tabContent).length).toBe(beforeContentCount + 1);
+  });
+
+  it("a successful setActivePanel commits the zoom-follow (happy path unchanged)", async () => {
+    useAppStore.setState({ zoomedTabId: "t1" });
+
+    useAppStore.getState().setActivePanel("b");
+    await flush();
+
+    expect(layoutState().activePanelId).toBe("b");
+    // The zoom overlay followed the focus switch to panel b's active tab.
+    expect(useAppStore.getState().zoomedTabId).toBe("t3");
+  });
+});
+
 describe("E2 — every listed op routes its granular intent", () => {
   const cases: { name: string; run: () => void; kind: string }[] = [
     {
