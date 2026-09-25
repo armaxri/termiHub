@@ -10,7 +10,8 @@ evidence:
   - src/utils/experimentalTypes.ts:6
   - src-tauri/Cargo.toml:18
   - README.md
-status: open
+status: fixed
+resolution: "README — RDP/VNC documented as experimental with opt-in path (README.md:86,198)"
 ---
 
 ## What

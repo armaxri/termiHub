@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/lib.rs:1322
   - src/services/api.ts:1
   - src-tauri/src/projection/mod.rs:15
-status: open
+status: fixed
+resolution: "884928a8 — ADR-14 (PR #3155)"
 ---
 
 ## What

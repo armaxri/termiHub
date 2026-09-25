@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: vitest.config.ts
 evidence:
   - vitest.config.ts
-status: open
+status: wontfix
+resolution: "accept — keep 15s per finding"
 ---
 
 ## What

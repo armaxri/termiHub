@@ -9,7 +9,8 @@ subsystem: core/files, src/components/Sidebar/FileBrowser
 evidence:
   - core/src/files/mod.rs:33
   - src/components/Sidebar/FileBrowser.tsx:371
-status: open
+status: fixed
+resolution: "a458f4a2 — sftp symlink-create + SymlinkDialog"
 ---
 
 ## What

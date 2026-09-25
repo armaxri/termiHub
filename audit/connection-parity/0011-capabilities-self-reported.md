@@ -10,7 +10,8 @@ evidence:
   - core/src/connection/mod.rs:59
   - core/src/connection/mod.rs:115
   - core/src/connection/graphical.rs:580
-status: open
+status: wontfix
+resolution: "accept — architecture observation, no action"
 ---
 
 ## What

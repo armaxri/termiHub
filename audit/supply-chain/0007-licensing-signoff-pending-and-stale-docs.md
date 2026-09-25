@@ -11,7 +11,8 @@ evidence:
   - docs/licensing.md:50
   - THIRD_PARTY_LICENSES.md:42
   - src-tauri/Cargo.toml:167
-status: open
+status: fixed
+resolution: "f3a721c4 — licensing.md reconciled (DOC-002); counsel sign-off is maintainer-only"
 ---
 
 ## What

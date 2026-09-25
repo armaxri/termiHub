@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: .cargo
 evidence:
   - .cargo/config.toml
-status: open
+status: wontfix
+resolution: "accept — keep; re-test HTTP/2 later"
 ---
 
 ## What

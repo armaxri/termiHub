@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: .github/workflows
 evidence:
   - .github/workflows/cargo-update-lockfile.yml:94
-status: open
+status: wontfix
+resolution: "accept — finding: no action"
 ---
 
 ## What

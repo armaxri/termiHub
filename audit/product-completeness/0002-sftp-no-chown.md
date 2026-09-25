@@ -9,7 +9,8 @@ subsystem: core/files
 evidence:
   - core/src/files/mod.rs:16
   - core/src/files/browser.rs:27
-status: open
+status: fixed
+resolution: "a458f4a2 — sftp chown + OwnerDialog"
 ---
 
 ## What

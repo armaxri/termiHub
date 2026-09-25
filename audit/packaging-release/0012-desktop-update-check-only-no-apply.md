@@ -9,7 +9,8 @@ subsystem: src-tauri/src/commands/update.rs
 evidence:
   - src-tauri/src/commands/update.rs:178
   - docs/release-plan-0.1.0.md:518
-status: open
+status: fixed
+resolution: "UpdateNotification — check-only update UX says Open Downloads Page"
 ---
 
 ## What

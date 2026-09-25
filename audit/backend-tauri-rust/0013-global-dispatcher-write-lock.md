@@ -9,7 +9,8 @@ subsystem: projection
 evidence:
   - src-tauri/src/projection/mod.rs:344
   - src-tauri/src/projection/mod.rs:360
-status: open
+status: wontfix
+resolution: "accept — finding: no action for release"
 ---
 
 ## What

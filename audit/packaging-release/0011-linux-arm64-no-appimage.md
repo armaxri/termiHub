@@ -9,7 +9,8 @@ subsystem: .github/workflows/release.yml
 evidence:
   - .github/workflows/release.yml:134
   - .github/workflows/release.yml:139
-status: open
+status: fixed
+resolution: "README — ARM64 deb-only documented (README.md:58); docs/architecture.md:836,844 leftover"
 ---
 
 ## What

@@ -10,7 +10,8 @@ evidence:
   - .github/actions/setup-pnpm/action.yml:11
   - .github/actions/setup-pnpm/action.yml:15
   - .github/actions/setup-pnpm/action.yml:21
-status: open
+status: wontfix
+resolution: "accept — finding's own recommendation is keep"
 ---
 
 ## What

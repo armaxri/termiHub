@@ -9,7 +9,8 @@ subsystem: .github/workflows
 evidence:
   - .github/workflows/code-quality.yml:268
   - .github/workflows/code-quality.yml:269
-status: open
+status: wontfix
+resolution: "accept — keep advisory per finding"
 ---
 
 ## What

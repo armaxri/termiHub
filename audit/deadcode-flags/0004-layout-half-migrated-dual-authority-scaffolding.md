@@ -11,7 +11,8 @@ evidence:
   - src/store/layoutBridge.ts:431
   - src/store/appStore.ts:2458
   - src-tauri/src/layout/mod.rs:11
-status: open
+status: fixed
+resolution: "#2562 — layout region is sole writer; frontend dispatches layout.* intents (stale doc comment in src-tauri/src/layout/mod.rs:11-22 to tidy)"
 ---
 
 ## What

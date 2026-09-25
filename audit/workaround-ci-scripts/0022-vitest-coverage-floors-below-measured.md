@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: vitest.config.ts
 evidence:
   - vitest.config.ts
-status: open
+status: fixed
+resolution: "vitest.config.ts — tsx included in coverage; ratchet continues"
 ---
 
 ## What
