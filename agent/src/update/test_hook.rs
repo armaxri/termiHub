@@ -152,7 +152,7 @@ impl TestPendingUpdate {
         // confinement; the missing digest is simply an additional fail-closed
         // gate). The hook exists only to surface the banner / deferred RPC.
         session_manager
-            .stage_pending_update(self.binary_path.clone(), self.version.clone(), None)
+            .stage_pending_update(self.binary_path.clone(), self.version.clone(), None, None)
             .await;
         info!(
             "TEST HOOK ({TEST_PENDING_UPDATE_ENV}): staged a pending update for version {} from {} \
@@ -276,6 +276,7 @@ mod tests {
             binary_path: hook.binary_path.clone(),
             staged_at: "2026-07-17T09:00:00Z".to_string(),
             expected_sha256: None,
+            signature: None,
         });
 
         let current_exe = std::env::current_exe().ok();

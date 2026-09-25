@@ -133,6 +133,7 @@ impl SignaturePolicy {
     /// A strict policy trusting exactly `trusted_keys` — the release-build rule,
     /// independent of how the current binary was compiled. Used by tests to
     /// exercise the production behaviour from a debug test binary.
+    #[cfg(test)]
     pub fn strict(trusted_keys: Vec<VerifyingKey>) -> Self {
         Self {
             trusted_keys,
