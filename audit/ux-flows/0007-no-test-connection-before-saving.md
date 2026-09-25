@@ -9,7 +9,8 @@ subsystem: src/components/ConnectionEditor
 evidence:
   - src/components/ConnectionEditor/ConnectionEditor.tsx:902
   - src/components/ConnectionEditor/ConnectionEditor.tsx:937
-status: open
+status: fixed
+resolution: "#3283 — Test Connection added: SessionManager::test_connection reuses the cancellable connect path (connect_cancellable, direct or agent RemoteProxy), disconnects immediately on success, never persists/inserts a session; test_connection Tauri command maps typed failures (auth/unreachable) via the structured envelope; ConnectionEditor 'Test' + 'Cancel Test' buttons show pending->success/classified-error toast without saving. Follow-up #3284 = vaulted-credential resolution for unsaved connections (password/unencrypted-key test fully today)"
 ---
 
 ## What
