@@ -147,10 +147,13 @@ jobs:
 
       # Release channel (PKG-014): there is no `latest` git tag — clients (the
       # desktop update check and the agent self-updater) follow GitHub's own
-      # "Latest release" marker via the releases/latest API. A semver prerelease
-      # tag (vX.Y.Z-beta.1, vX.Y.Z-rc.1, …) is published as a GitHub prerelease,
-      # which GitHub never marks latest. The TERMIHUB_PRERELEASE repository
-      # variable ("true") forces a plain vX.Y.Z tag to a prerelease as well.
+      # "Latest release" marker via the releases/latest API. Safe by default:
+      # every release is a GitHub prerelease (never marked latest, so no update
+      # check or agent self-update picks it up) — v0.x ships as an unsigned
+      # public beta. A plain vX.Y.Z tag becomes a stable release only when the
+      # maintainer opts in with the TERMIHUB_STABLE_RELEASE repository variable
+      # ("true"). A semver prerelease tag (vX.Y.Z-beta.1, vX.Y.Z-rc.1, …) is
+      # always a prerelease, even with the variable set.
       # Every release is created with --latest=false; mark-latest promotes a
       # stable release to "Latest" only after verify-release has passed, so no
       # client can pick up a half-uploaded release.
@@ -158,13 +161,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.get_version.outputs.version }}
-          TERMIHUB_PRERELEASE: ${{ vars.TERMIHUB_PRERELEASE }}
+          TERMIHUB_STABLE_RELEASE: ${{ vars.TERMIHUB_STABLE_RELEASE }}
         run: |
           set -euo pipefail
-          prerelease_flag=()
-          if [[ "$VERSION" == *-* || "${TERMIHUB_PRERELEASE}" == "true" ]]; then
+          prerelease_flag=(--prerelease)
+          if [[ "$VERSION" != *-* && "${TERMIHUB_STABLE_RELEASE}" == "true" ]]; then
+            echo "TERMIHUB_STABLE_RELEASE=true: publishing v${VERSION} as a stable release."
+            prerelease_flag=()
+          else
             echo "Publishing v${VERSION} as a prerelease (never marked latest)."
-            prerelease_flag=(--prerelease)
           fi
           gh release create "v${VERSION}" \
             --title "termiHub v${VERSION} — Public Beta" \

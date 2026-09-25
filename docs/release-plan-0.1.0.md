@@ -630,14 +630,10 @@ laptop and check back later with `gh run list`.
 - `v0.1.0`: Simpler. Mark as "Pre-release" in GitHub Release UI.
 
 **Recommendation**: Use `v0.1.0` as the tag (matches the version in all
-config files) and mark the GitHub Release as a **pre-release** by setting the
-`TERMIHUB_PRERELEASE` repository variable to `true` before pushing the tag (the release
-workflow then creates it with `--prerelease`; see the release runbook in
-[contributing.md](contributing.md)), or afterwards with:
-
-```bash
-gh release edit v0.1.0 --prerelease
-```
+config files). The release workflow publishes every release as a GitHub
+**pre-release** by default, so nothing extra is needed — just leave the
+`TERMIHUB_STABLE_RELEASE` repository variable unset (see the release runbook in
+[contributing.md](contributing.md)).
 
 This avoids version string mismatches between the tag and the binary.
 

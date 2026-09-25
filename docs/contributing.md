@@ -1095,11 +1095,13 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
 
 There is no `latest` git tag. The desktop update check and the agent self-updater
 follow GitHub's own "Latest release" marker through the `releases/latest` API, as do
-`releases/latest/download/…` links. A tag with a semver prerelease suffix
-(`vX.Y.Z-beta.1`, `vX.Y.Z-rc.1`) is published as a GitHub **prerelease**, which is never
-marked latest and is not offered as an update. To publish a plain `vX.Y.Z` tag as a
-prerelease as well, set the `TERMIHUB_PRERELEASE` repository variable to `true` before
-pushing the tag (and clear it afterwards).
+`releases/latest/download/…` links. **Every release is a GitHub prerelease by default**
+— never marked latest and never offered as an update (v0.x ships as an unsigned public
+beta). To publish a plain `vX.Y.Z` tag as a **stable** release that `mark-latest` promotes
+to "Latest" (and that desktop update checks and agent self-updates then pick up), set the
+`TERMIHUB_STABLE_RELEASE` repository variable to `true` before pushing the tag (and clear
+it afterwards). A tag with a semver prerelease suffix (`vX.Y.Z-beta.1`, `vX.Y.Z-rc.1`) is
+always a prerelease, even with the variable set.
 
 ### Post-Release Verification
 
