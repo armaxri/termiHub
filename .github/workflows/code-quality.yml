@@ -554,9 +554,27 @@ jobs:
             libayatana-appindicator3-dev \
             librsvg2-dev
 
+      # Split Rust test run (CI-013, #3350). A plain `cargo test --workspace`
+      # ran the contention-sensitive suites (PTY shells, embedded russh server,
+      # reconnect redrive, remote-forward relays) alongside ~4800 other tests —
+      # incl. CPU-bound Argon2 KDF tests — at one thread per core, so on the
+      # 4-core Windows runner they were starved and a random one timed out.
+      # The script runs everything else first at default parallelism, then only
+      # those suites with --test-threads capped, one filter list for both halves
+      # so every test runs exactly once (`ci-rust-tests.sh list` proves it).
+      # Windows also pins the live-agent cold-start gate explicitly (its
+      # platform default); elsewhere the empty value keeps the default.
       - name: Run Rust tests
         if: needs.changes.outputs.rust != 'false'
-        run: cargo test --workspace --all-features
+        shell: bash
+        env:
+          TERMIHUB_AGENT_TEST_MAX_CONCURRENT: ${{ matrix.os == 'windows-latest' && '2' || '' }}
+        run: ./scripts/internal/ci-rust-tests.sh bulk --workspace
+
+      - name: Run Rust tests (contention-sensitive suites, capped threads)
+        if: ${{ !cancelled() && needs.changes.outputs.rust != 'false' }}
+        shell: bash
+        run: ./scripts/internal/ci-rust-tests.sh heavy --workspace
 
       # Run coverage-gated tests once (Ubuntu) to enforce the vitest coverage
       # floors from vitest.config.ts (#2066). Coverage is computed from the

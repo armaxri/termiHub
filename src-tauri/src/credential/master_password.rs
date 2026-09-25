@@ -824,9 +824,7 @@ mod tests {
 
     #[test]
     fn unlock_uses_stored_kdf_params_and_round_trips() {
-        use crate::credential::crypto::{
-            encrypt_with_cost, Argon2Cost, ARGON2_MEMORY_COST, ARGON2_PARALLELISM, ARGON2_TIME_COST,
-        };
+        use crate::credential::crypto::{encrypt_with_cost, Argon2Cost};
 
         let dir = tempfile::tempdir().unwrap();
         let store = make_store(dir.path());
@@ -835,10 +833,10 @@ mod tests {
         // the compiled-in constants — as a build with a strengthened KDF would
         // write. Unlock must derive from these stored params, not `ARGON2_*`
         // (#2362); before the fix this failed with a wrong-password error.
+        // Cheap-but-distinct params keep this fast (#3355).
         let cost = Argon2Cost {
-            memory_cost: ARGON2_MEMORY_COST,
-            time_cost: ARGON2_TIME_COST + 2,
-            parallelism: ARGON2_PARALLELISM,
+            time_cost: Argon2Cost::current().time_cost + 2,
+            ..Argon2Cost::current()
         };
         let empty: HashMap<String, String> = HashMap::new();
         let plaintext = serde_json::to_vec(&empty).unwrap();

@@ -45,6 +45,7 @@ ALLOWLIST=(
   "scripts/internal/screenshot-mockup.sh"   # headless-Chrome concept renderer
   "scripts/internal/check-script-parity.sh"   # this parity checker (CI-only bash gate)
   "scripts/internal/check-script-headless.sh" # headless-exec checker (CI-only bash gate)
+  "scripts/internal/ci-rust-tests.sh"         # CI test runner (bash on every runner, CI-013)
   # Agent update signing (AGT-005, #3213): OpenSSL-3 pipelines run by release CI
   # on Ubuntu, and a one-time maintainer tool (Git Bash works on Windows).
   "scripts/internal/agent-update-signing.sh"     # CI-only sign/verify/check-key helper

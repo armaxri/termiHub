@@ -137,8 +137,16 @@ jobs:
         with:
           key: ${{ matrix.target }}
 
+      # Same bulk + capped-heavy split as code-quality.yml's test leg (CI-013,
+      # #3350), so the PTY / remote-forward suites don't contend with the rest.
       - name: Run agent/core tests
-        run: cargo test -p termihub-agent -p termihub-core --all-features
+        shell: bash
+        run: ./scripts/internal/ci-rust-tests.sh bulk -p termihub-agent -p termihub-core
+
+      - name: Run agent/core tests (contention-sensitive suites, capped threads)
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: ./scripts/internal/ci-rust-tests.sh heavy -p termihub-agent -p termihub-core
 
       - name: Build
         env:

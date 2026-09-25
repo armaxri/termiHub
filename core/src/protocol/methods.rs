@@ -13,7 +13,7 @@
 
 use crate::config::{DockerConfig, EnvVar, SerialConfig, SshConfig, VolumeMount};
 pub use crate::connection::ConnectionTypeInfo;
-use crate::monitoring::{KillSignal, ProcessInfo, SystemStats};
+use crate::monitoring::{KillSignal, MonitorStatus, MonitorStatusReason, ProcessInfo, SystemStats};
 use crate::service::ServiceStatus;
 #[cfg(feature = "ssh")]
 use crate::tunnel::config::{
@@ -139,6 +139,9 @@ pub const CONNECTION_EXIT: &str = "connection.exit";
 /// Append-only: an older desktop ignores the unknown notification.
 pub const CONNECTION_EVICTED: &str = "connection.evicted";
 pub const CONNECTION_MONITORING_DATA: &str = "connection.monitoring.data";
+/// A monitored host's collect-loop status changed (#3321). Optional: older
+/// agents never send it, older desktops ignore it.
+pub const CONNECTION_MONITORING_STATUS: &str = "connection.monitoring.status";
 
 // ── initialize ──────────────────────────────────────────────────────
 
@@ -423,7 +426,9 @@ pub struct ConnectionCreateParams {
     pub name: String,
     #[serde(rename = "type")]
     pub session_type: String,
-    #[serde(default)]
+    /// Settings bag. The legacy `resilientReconnect` key is accepted on read and
+    /// rewritten to `autoReconnect` (PARITY-008) so an older desktop interoperates.
+    #[serde(default, with = "crate::connection::auto_reconnect::settings_bag")]
     #[cfg_attr(test, ts(type = "Record<string, unknown>"))]
     pub config: serde_json::Value,
     #[serde(default)]
@@ -452,7 +457,12 @@ pub struct ConnectionUpdateParams {
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub session_type: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Settings bag; accepts the legacy `resilientReconnect` key on read (PARITY-008).
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "crate::connection::auto_reconnect::optional_settings_bag"
+    )]
     #[cfg_attr(test, ts(optional, type = "Record<string, unknown>"))]
     pub config: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -559,7 +569,10 @@ pub struct ConnectionDefinition {
     /// Session type: "shell", "serial", "docker", "ssh", "local", etc.
     pub session_type: String,
     /// Session-specific configuration (shell path, serial params, etc.).
-    #[serde(default)]
+    ///
+    /// The legacy `resilientReconnect` key an older agent may still report is
+    /// accepted on read and rewritten to `autoReconnect` (PARITY-008).
+    #[serde(default, with = "crate::connection::auto_reconnect::settings_bag")]
     pub config: Value,
     /// Whether sessions created from this definition are persistent.
     #[serde(default)]
@@ -1027,6 +1040,30 @@ impl MonitoringData {
     }
 }
 
+// ── monitoring.status (notification payload) ────────────────────────
+
+/// A monitored host's collect-loop status transition, sent as a
+/// `connection.monitoring.status` notification (#3321).
+///
+/// The agent emits one on every [`CollectLoopState`](crate::monitoring::CollectLoopState)
+/// transition (`live`, `stale`, `reconnecting`, `offline`), so the desktop can
+/// mirror the agent's own status instead of inferring it from missing samples.
+/// Backward compatible in both directions: an older desktop drops the unknown
+/// notification, and a newer desktop talking to an older agent (which never
+/// sends it) falls back to inference.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitoringStatusNotification {
+    /// `"self"` or connection ID identifying the monitored host.
+    pub host: String,
+    /// The loop's new status.
+    pub status: MonitorStatus,
+    /// Why the loop is not `live` (`"transport"` or `"parse"`); absent for
+    /// `live` and when no failure caused the transition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<MonitorStatusReason>,
+}
+
 // ── agent.update_available (notification payload) ───────────────────
 
 /// JSON-RPC method name for the agent self-update notification (#1355).
@@ -1256,6 +1293,41 @@ pub struct ServiceStatusResult {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// PARITY-008: every connection-definition DTO accepts the legacy
+    /// `resilientReconnect` key on read (explicit value preserved) and carries
+    /// only the unified `autoReconnect` key afterwards, so a mixed-version
+    /// desktop/agent pair interoperates in both directions.
+    #[test]
+    fn connection_dtos_accept_legacy_resilient_reconnect_key() {
+        let def: ConnectionDefinition = serde_json::from_value(json!({
+            "id": "c1", "name": "n", "session_type": "ssh",
+            "config": { "host": "h", "resilientReconnect": false }
+        }))
+        .unwrap();
+        assert_eq!(def.config, json!({ "host": "h", "autoReconnect": false }));
+
+        let create: ConnectionCreateParams = serde_json::from_value(json!({
+            "name": "n", "type": "ssh",
+            "config": { "resilientReconnect": true },
+            "folder_id": null, "terminal_options": null, "icon": null
+        }))
+        .unwrap();
+        assert_eq!(create.config, json!({ "autoReconnect": true }));
+
+        let update: ConnectionUpdateParams = serde_json::from_value(json!({
+            "id": "c1", "config": { "resilientReconnect": false }
+        }))
+        .unwrap();
+        assert_eq!(update.config, Some(json!({ "autoReconnect": false })));
+
+        // Absent config stays absent / null config stays None.
+        let update: ConnectionUpdateParams = serde_json::from_value(json!({ "id": "c1" })).unwrap();
+        assert_eq!(update.config, None);
+        let update: ConnectionUpdateParams =
+            serde_json::from_value(json!({ "id": "c1", "config": null })).unwrap();
+        assert_eq!(update.config, None);
+    }
 
     /// Locks the `tunnel.start` wire contract against desktop/agent drift
     /// (#2185): the desktop builds this exact JSON — `forward` is the
@@ -2505,6 +2577,42 @@ mod tests {
     }
 
     #[test]
+    fn monitoring_status_notification_wire_shape() {
+        let n = MonitoringStatusNotification {
+            host: "self".to_string(),
+            status: MonitorStatus::Offline,
+            reason: Some(MonitorStatusReason::Parse),
+        };
+        assert_eq!(
+            serde_json::to_value(&n).unwrap(),
+            json!({"host": "self", "status": "offline", "reason": "parse"})
+        );
+        let live = MonitoringStatusNotification {
+            host: "conn-1".to_string(),
+            status: MonitorStatus::Live,
+            reason: None,
+        };
+        assert_eq!(
+            serde_json::to_value(&live).unwrap(),
+            json!({"host": "conn-1", "status": "live"}),
+            "an absent reason is omitted from the wire"
+        );
+        let back: MonitoringStatusNotification =
+            serde_json::from_value(json!({"host": "conn-1", "status": "live"})).unwrap();
+        assert_eq!(back, live);
+    }
+
+    #[test]
+    fn monitoring_status_notification_rejects_unknown_status() {
+        // A future status value must fail to parse (the desktop then ignores the
+        // notification and keeps inferring) rather than being misread.
+        assert!(serde_json::from_value::<MonitoringStatusNotification>(
+            json!({"host": "self", "status": "warpSpeed"})
+        )
+        .is_err());
+    }
+
+    #[test]
     fn monitoring_data_serializes_camel_case() {
         // Built from a core `SystemStats` (DUP-015): the flattened stats must
         // still serialize as a flat camelCase object identical to the previous
@@ -2667,6 +2775,7 @@ mod tests {
         assert_eq!(CONNECTION_EXIT, "connection.exit");
         assert_eq!(CONNECTION_EVICTED, "connection.evicted");
         assert_eq!(CONNECTION_MONITORING_DATA, "connection.monitoring.data");
+        assert_eq!(CONNECTION_MONITORING_STATUS, "connection.monitoring.status");
         assert_eq!(AGENT_UPDATE_PENDING, "agent.update_pending");
         assert_eq!(AGENT_UPDATE_AVAILABLE, "agent.update_available");
     }

@@ -2436,6 +2436,34 @@ Periodic system statistics for a monitored host. Sent at the interval specified 
 | `diskUsedPercent`   | `number`   | Disk usage 0–100                             |
 | `osInfo`            | `string`   | OS name and version (e.g., `"Linux 5.15.0"`) |
 
+### `connection.monitoring.status`
+
+A monitored host's collect-loop status changed (#3321). The agent sends one on every transition of its collect loop — not on every tick — and sends `live` _before_ the first `connection.monitoring.data` sample of a recovery.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.monitoring.status",
+  "params": {
+    "host": "conn-abc123",
+    "status": "offline",
+    "reason": "parse"
+  }
+}
+```
+
+| Param    | Type     | Description                                                                                                                                                              |
+| -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `host`   | `string` | `"self"` or connection ID                                                                                                                                                |
+| `status` | `string` | `"live"`, `"stale"` (collects failing), `"reconnecting"` (re-dialling the monitored host), or `"offline"` (terminal: the agent stopped this monitor's loop)              |
+| `reason` | `string` | Optional; omitted for `"live"`. `"transport"` (collect timed out/errored, or every re-dial failed) or `"parse"` (the host answered with output that could not be parsed) |
+
+**Compatibility.** The notification is optional and additive:
+
+- An older desktop ignores it (unknown notification methods are dropped).
+- A newer desktop applies it in preference to inferring status from the sample flow. Against an older agent, which never sends it, the desktop keeps inferring: missed samples mark the monitor `stale`, and a `stale` monitor whose agent transport stays up resolves `offline` once the agent's worst-case recovery budget has passed (217 s at the default 2 s interval: 2 failed collects to `stale` plus 6 failed collects after a re-dial, each up to `interval + 10 s` collect timeout, plus the 121 s reconnect backoff `1+2+4+8+16+30+30+30`). A later sample still recovers the monitor to `live`.
+- A desktop must ignore a `status` or `reason` value it does not recognize rather than fail.
+
 ---
 
 ### `agent.update_pending`

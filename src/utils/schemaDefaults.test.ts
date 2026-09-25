@@ -7,6 +7,7 @@ import {
   findKeyPassphrasePromptInfo,
   filterRuntimeOptions,
   filterCredentialFields,
+  withSchemaDefaults,
 } from "./schemaDefaults";
 
 function textField(key: string, opts: Partial<SettingsField> = {}): SettingsField {
@@ -456,5 +457,41 @@ describe("filterRuntimeOptions", () => {
     const result = filterRuntimeOptions(RUNTIME_SCHEMA, true, false);
     const imageField = result.groups[0].fields.find((f) => f.key === "image");
     expect(imageField).toEqual(RUNTIME_SCHEMA.groups[0].fields[0]);
+  });
+});
+
+describe("withSchemaDefaults", () => {
+  const schema: SettingsSchema = {
+    groups: [
+      {
+        key: "g",
+        label: "G",
+        fields: [
+          {
+            key: "autoReconnect",
+            label: "Auto-Reconnect",
+            fieldType: { type: "boolean" },
+            required: false,
+            default: true,
+          },
+          textField("host"),
+        ],
+      },
+    ],
+  };
+
+  it("fills an omitted key with its schema default", () => {
+    expect(withSchemaDefaults(schema, { host: "h" })).toEqual({ autoReconnect: true, host: "h" });
+  });
+
+  it("keeps an explicit value over the default, but not an undefined one", () => {
+    expect(withSchemaDefaults(schema, { autoReconnect: false })).toEqual({ autoReconnect: false });
+    expect(withSchemaDefaults(schema, { autoReconnect: undefined })).toEqual({
+      autoReconnect: true,
+    });
+  });
+
+  it("tolerates undefined settings", () => {
+    expect(withSchemaDefaults(schema, undefined)).toEqual({ autoReconnect: true });
   });
 });

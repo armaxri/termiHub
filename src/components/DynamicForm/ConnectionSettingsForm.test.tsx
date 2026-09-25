@@ -280,6 +280,43 @@ describe("ConnectionSettingsForm", () => {
     expect(query("dynamic-field-password")).toBeNull();
   });
 
+  describe("visibleWhen against a default-on toggle (PARITY-008)", () => {
+    const RECONNECT_SCHEMA: SettingsSchema = {
+      groups: [
+        {
+          key: "advanced",
+          label: "Advanced",
+          fields: [
+            {
+              key: "autoReconnect",
+              label: "Auto-Reconnect",
+              fieldType: { type: "boolean" },
+              required: false,
+              default: true,
+            },
+            {
+              key: "onReconnectCommand",
+              label: "On-reconnect Command",
+              fieldType: { type: "text" },
+              required: false,
+              visibleWhen: { field: "autoReconnect", equals: true },
+            },
+          ],
+        },
+      ],
+    };
+
+    it("shows the gated field when the saved config omits the default-on key", () => {
+      renderForm(RECONNECT_SCHEMA, { host: "h" }, vi.fn());
+      expect(query("dynamic-field-onReconnectCommand")).toBeTruthy();
+    });
+
+    it("hides the gated field when the key is explicitly off", () => {
+      renderForm(RECONNECT_SCHEMA, { autoReconnect: false }, vi.fn());
+      expect(query("dynamic-field-onReconnectCommand")).toBeNull();
+    });
+  });
+
   it("hides entire group when all fields are hidden", () => {
     // Create a schema where the only group has all fields conditional
     const schema: SettingsSchema = {

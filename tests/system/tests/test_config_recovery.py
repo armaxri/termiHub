@@ -73,8 +73,9 @@ class TestConfigRecovery(SidebarUi, ConnectionsUi, ConfigRecoveryUi, SystemTest)
     # ── MT-RECOVERY-06: fresh start writes the v2 nested format ──────────────────
     def test_fresh_start_uses_v2_nested_format(self):
         # Runs first, against a clean config dir: a created connection must land on
-        # disk in the nested tree schema (v3 since PLG-007 namespaced plugin type
-        # ids) the recovery loader expects.
+        # disk in the nested tree schema (v4 since PARITY-008 unified the
+        # reconnect setting; v3 was PLG-007's namespaced plugin type ids) the
+        # recovery loader expects.
         name = unique_name("recovery-v2")
         self.switch_to_connections_sidebar()
         self.create_local_connection(name)
@@ -88,7 +89,7 @@ class TestConfigRecovery(SidebarUi, ConnectionsUi, ConfigRecoveryUi, SystemTest)
                 doc = json.loads(self.read_config(CONNECTIONS))
             except (FileNotFoundError, json.JSONDecodeError):
                 return None
-            if doc.get("version") != "3" or not isinstance(doc.get("children"), list):
+            if doc.get("version") != "4" or not isinstance(doc.get("children"), list):
                 return None
             return next((c for c in doc["children"] if c.get("name") == name), None)
 

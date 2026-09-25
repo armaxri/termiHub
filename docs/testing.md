@@ -279,6 +279,18 @@ cargo test -- --nocapture
 cargo test -- --test-threads=4
 ```
 
+#### How CI runs the Rust tests
+
+The _Run Tests_ legs do not run a single `cargo test --workspace`. They call
+[`scripts/internal/ci-rust-tests.sh`](../scripts/internal/ci-rust-tests.sh), which splits
+the run in two (CI-013): a **bulk** phase at default parallelism (plus doc-tests), then a
+**heavy** phase with `--test-threads=2` that runs only the contention-sensitive suites
+(PTY shells, the embedded russh reconnect tests, the reconnect redrive, remote-forward
+relays). One filter list drives both phases, so every test runs exactly once. If a
+suite flakes only under load, add its module path to `HEAVY_FILTERS` in the script,
+then run `scripts/internal/ci-rust-tests.sh list` to confirm the partition is still
+exact.
+
 ## 4. Visual Regression Testing (Optional)
 
 **What it does**: Detects unintended UI changes

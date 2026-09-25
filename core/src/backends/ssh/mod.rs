@@ -610,18 +610,19 @@ impl ConnectionType for Ssh {
                             visible_when: None,
                         },
                         SettingsField {
-                            key: "resilientReconnect".to_string(),
-                            label: "Resilient Reconnect".to_string(),
+                            key: crate::connection::AUTO_RECONNECT_KEY.to_string(),
+                            label: "Auto-Reconnect".to_string(),
                             description: Some(
                                 "Auto-reconnect a dropped link with backoff into the same tab"
                                     .to_string(),
                             ),
                             help_text: Some(concat!(
-                                "For flaky links (cellular, spotty Wi-Fi), termiHub automatically ",
-                                "re-establishes a dropped SSH connection with an exponential backoff ",
-                                "instead of showing the manual reconnect prompt. It reattaches to the ",
-                                "same tab and keeps the local scrollback visible while it retries; a ",
-                                "Cancel control lets you stop and browse the scrollback.\n\n",
+                                "On by default. For flaky links (cellular, spotty Wi-Fi), termiHub ",
+                                "automatically re-establishes a dropped SSH connection with an ",
+                                "exponential backoff instead of showing the manual reconnect prompt. ",
+                                "It reattaches to the same tab and keeps the local scrollback visible ",
+                                "while it retries; a Cancel control lets you stop and browse the ",
+                                "scrollback.\n\n",
                                 "Without a remote agent, server-side shell state (running commands, a ",
                                 "half-typed line, the working directory) is NOT preserved — the ",
                                 "reconnect opens a fresh remote shell. Deploy an agent for full ",
@@ -629,7 +630,9 @@ impl ConnectionType for Ssh {
                             ).to_string()),
                             field_type: FieldType::Boolean,
                             required: false,
-                            default: Some(serde_json::json!(false)),
+                            default: Some(serde_json::json!(
+                                crate::connection::AUTO_RECONNECT_DEFAULT
+                            )),
                             placeholder: None,
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,
@@ -639,16 +642,16 @@ impl ConnectionType for Ssh {
                             key: "onReconnectCommand".to_string(),
                             label: "On-reconnect Command".to_string(),
                             description: Some(
-                                "Command to run once after an automatic resilient reconnect"
+                                "Command to run once after an automatic reconnect"
                                     .to_string(),
                             ),
                             help_text: Some(concat!(
-                                "When resilient reconnect re-establishes a dropped SSH connection, ",
+                                "When auto-reconnect re-establishes a dropped SSH connection, ",
                                 "termiHub can run a single command in the fresh remote shell to help ",
                                 "you recover some server-side context — for example `tmux attach`, ",
                                 "`screen -r`, or `cd \"$LAST_DIR\"`.\n\n",
                                 "The command runs only after an *automatic* reconnect (never on the ",
-                                "first manual connect) and only while Resilient Reconnect is enabled. ",
+                                "first manual connect) and only while Auto-Reconnect is enabled. ",
                                 "Leave empty to run nothing.",
                             ).to_string()),
                             field_type: FieldType::Text,
@@ -658,7 +661,7 @@ impl ConnectionType for Ssh {
                             supports_env_expansion: false,
                             supports_tilde_expansion: false,
                             visible_when: Some(Condition {
-                                field: "resilientReconnect".to_string(),
+                                field: crate::connection::AUTO_RECONNECT_KEY.to_string(),
                                 equals: serde_json::json!(true),
                             }),
                         },
@@ -1158,14 +1161,36 @@ mod tests {
                 "keepaliveMaxCount",
                 "env",
                 "shellIntegration",
-                "resilientReconnect",
+                "autoReconnect",
                 "onReconnectCommand"
             ]
         );
     }
 
     #[test]
-    fn schema_on_reconnect_command_is_gated_on_resilient_reconnect() {
+    fn schema_auto_reconnect_is_unified_and_defaults_on() {
+        // PARITY-008: SSH shares the graphical `autoReconnect` key, label and
+        // default-on policy (it was `resilientReconnect`, default off).
+        let ssh = Ssh::new();
+        let schema = ssh.settings_schema();
+        let field = schema
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter())
+            .find(|f| f.key == crate::connection::AUTO_RECONNECT_KEY)
+            .expect("autoReconnect field present");
+        assert_eq!(field.label, "Auto-Reconnect");
+        assert_eq!(field.default, Some(serde_json::json!(true)));
+        assert!(matches!(field.field_type, FieldType::Boolean));
+        assert!(!schema
+            .groups
+            .iter()
+            .flat_map(|g| g.fields.iter())
+            .any(|f| f.key == crate::connection::LEGACY_RESILIENT_RECONNECT_KEY));
+    }
+
+    #[test]
+    fn schema_on_reconnect_command_is_gated_on_auto_reconnect() {
         let ssh = Ssh::new();
         let schema = ssh.settings_schema();
         let group = &schema.groups[2];
@@ -1178,7 +1203,7 @@ mod tests {
             .visible_when
             .as_ref()
             .expect("onReconnectCommand is conditionally visible");
-        assert_eq!(condition.field, "resilientReconnect");
+        assert_eq!(condition.field, "autoReconnect");
         assert_eq!(condition.equals, serde_json::json!(true));
     }
 
