@@ -731,6 +731,100 @@ impl SessionManager {
         }
     }
 
+    /// Validate a connection configuration **without persisting it or leaving a
+    /// live session** (UX-007).
+    ///
+    /// Establishes the connection with the same cancellable connect path as
+    /// [`create_connection`](Self::create_connection) — a local backend from the
+    /// registry, or an agent-mediated [`RemoteProxy`] when `agent_id` is `Some` —
+    /// then **immediately disconnects** on success. Nothing is inserted into the
+    /// `sessions` map, no output is subscribed, no config is written, and no
+    /// title/log/reconnect state is created: it is a pure validate-and-teardown
+    /// probe.
+    ///
+    /// A hung probe is abortable: when a `connect_id` is supplied it registers a
+    /// [`CancellationToken`] in the same `connecting` map a real connect uses, so
+    /// [`cancel_connecting`](Self::cancel_connecting) fires it and the underlying
+    /// [`connect_cancellable`](termihub_core::connection::ConnectionType::connect_cancellable)
+    /// aborts the in-flight handshake promptly instead of waiting out the timeout
+    /// (#952) — no un-cancellable hang on the connect path.
+    ///
+    /// Returns `Ok(())` when the connection was established (and then torn down),
+    /// or a typed [`SessionError`] classifying the failure — [`AuthFailed`] when
+    /// credentials were rejected, [`ConnectionFailed`] when the host was
+    /// unreachable / a transport failed / the connect timed out, or another
+    /// variant — so the caller can present a classified reason. Mapping to the
+    /// IPC [`TerminalError`] envelope (and its machine code) is done by the
+    /// command layer via [`TerminalError::from_session_spawn`].
+    ///
+    /// [`AuthFailed`]: termihub_core::errors::SessionError::AuthFailed
+    /// [`ConnectionFailed`]: termihub_core::errors::SessionError::ConnectionFailed
+    #[tracing::instrument(
+        skip_all,
+        fields(type_id = %type_id, agent_id = agent_id.unwrap_or("direct"))
+    )]
+    pub async fn test_connection(
+        &self,
+        type_id: &str,
+        settings: serde_json::Value,
+        agent_id: Option<&str>,
+        connect_id: Option<&str>,
+    ) -> Result<(), termihub_core::errors::SessionError> {
+        // Register a cancellation token so a hung test connect is abortable via
+        // `cancel_connecting` (#952) — reuses the same `connecting` map a real
+        // connect uses. The RAII guard clears the entry on every exit path,
+        // including an early `?` return.
+        let (cancel_token, _connecting_guard) = match connect_id {
+            Some(cid) => {
+                let token = CancellationToken::new();
+                if let Ok(mut map) = self.connecting.lock() {
+                    map.insert(cid.to_string(), token.clone());
+                }
+                (
+                    Some(token),
+                    Some(ConnectingGuard {
+                        map: self.connecting.clone(),
+                        id: cid.to_string(),
+                    }),
+                )
+            }
+            None => (None, None),
+        };
+
+        // Establish the connection exactly as a real connect would, but never
+        // record it: no `sessions` insert, no output subscription, no logging.
+        let mut connection: Box<dyn ConnectionType> = if let Some(aid) = agent_id {
+            let mut proxy = RemoteProxy::new(aid.to_string(), self.agent_manager.clone());
+            let remote_settings = serde_json::json!({
+                "type": type_id,
+                "config": settings,
+            });
+            proxy
+                .connect_cancellable(remote_settings, cancel_token.clone())
+                .await?;
+            Box::new(proxy)
+        } else {
+            let mut conn = {
+                let registry = self.registry.lock().unwrap_or_else(|e| e.into_inner());
+                registry
+                    .create(type_id)
+                    .map_err(|e| termihub_core::errors::SessionError::SpawnFailed(e.to_string()))?
+            };
+            conn.connect_cancellable(settings, cancel_token.clone())
+                .await?;
+            conn
+        };
+
+        // Validate-and-teardown: the probe must never leave a live session. The
+        // test's verdict is the *connect* result, so a best-effort teardown error
+        // is logged but does not turn a successful validation into a failure (the
+        // probe connection is dropped immediately after regardless).
+        if let Err(e) = connection.disconnect().await {
+            warn!(error = %e, "test_connection: error tearing down the probe connection");
+        }
+        Ok(())
+    }
+
     /// Create a new connection session.
     ///
     /// If `agent_id` is `Some`, creates a [`RemoteProxy`] that forwards

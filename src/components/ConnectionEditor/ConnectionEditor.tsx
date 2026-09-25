@@ -30,7 +30,10 @@ import {
   resolveCredential,
   storeCredential,
   isSshKeyEncrypted,
+  testTerminal,
+  cancelConnecting,
 } from "@/services/api";
+import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
@@ -1158,6 +1161,73 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     focusFirstInvalidField,
   ]);
 
+  // ── Test Connection (UX-007) ─────────────────────────────────────
+  // Validate the current form's connection without saving it or opening a tab:
+  // establish it, confirm reachability + credentials, then tear it down. The
+  // in-flight `connectId` (null when idle) both drives the Cancel affordance and
+  // lets a hung test be aborted via `cancelConnecting` (#952) — no un-cancellable
+  // hang. `testCanceledRef` distinguishes a user-initiated cancel (info toast)
+  // from a genuine failure (error toast) in the shared catch.
+  const [testConnectId, setTestConnectId] = useState<string | null>(null);
+  const testCanceledRef = useRef(false);
+
+  const handleTest = useCallback(async () => {
+    if (!canSave) {
+      focusFirstInvalidField();
+      return;
+    }
+    // Build the connect config from the live form WITHOUT persisting it — the
+    // same routing Save & Connect uses (agent-definition → remote-session; a
+    // direct connection → its type + config), minus any save.
+    const config: ConnectionConfig =
+      isAgentDefinitionMode && existingAgent
+        ? {
+            type: "remote-session",
+            config: { agentId: existingAgent.id, sessionType: selectedType, ...connSettings },
+          }
+        : { type: selectedType, config: connSettings };
+
+    const connectId = `test:${newId("test")}`;
+    testCanceledRef.current = false;
+    setTestConnectId(connectId);
+    try {
+      await testTerminal(config, connectId);
+      toast.success("Connection successful", {
+        description: `Reached ${name.trim() || "the target"} — nothing was saved.`,
+      });
+    } catch (err) {
+      if (testCanceledRef.current) {
+        toast.info("Connection test canceled.");
+      } else if (isAuthFailure(err)) {
+        toast.error("Authentication failed", { description: backendErrorMessage(err) });
+      } else {
+        toast.error("Connection failed", { description: backendErrorMessage(err) });
+      }
+      // Rethrow so the async Button leaves its pending state to idle rather than
+      // flashing success on a failed or canceled test (its own error toast is
+      // suppressed via errorToast={false} — this handler owns the messaging).
+      throw err;
+    } finally {
+      setTestConnectId(null);
+    }
+  }, [
+    canSave,
+    focusFirstInvalidField,
+    isAgentDefinitionMode,
+    existingAgent,
+    selectedType,
+    connSettings,
+    name,
+  ]);
+
+  const handleCancelTest = useCallback(async () => {
+    if (!testConnectId) return;
+    testCanceledRef.current = true;
+    await cancelConnecting(testConnectId).catch((err) =>
+      frontendLog("connection_editor", `Failed to cancel connection test: ${err}`)
+    );
+  }, [testConnectId]);
+
   // Cancel dismisses the editor through the same unsaved-changes guard as the
   // Escape key and tab close (TabBar): when the form is dirty, open the
   // confirmation dialog via pendingCloseRequest; otherwise close immediately.
@@ -1561,16 +1631,38 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           Cancel
         </Button>
         {!isAgentTransportMode && (
-          <Button
-            variant="primary"
-            onClick={handleSaveAndConnect}
-            errorToast={false}
-            aria-disabled={!canSave}
-            data-invalid={!canSave || undefined}
-            data-testid="connection-editor-save-connect"
-          >
-            Save &amp; Connect
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              onClick={handleTest}
+              errorToast={false}
+              aria-disabled={!canSave}
+              data-invalid={!canSave || undefined}
+              pendingLabel="Testing…"
+              data-testid="connection-editor-test"
+            >
+              Test
+            </Button>
+            {testConnectId && (
+              <Button
+                variant="ghost"
+                onClick={handleCancelTest}
+                data-testid="connection-editor-test-cancel"
+              >
+                Cancel Test
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              onClick={handleSaveAndConnect}
+              errorToast={false}
+              aria-disabled={!canSave}
+              data-invalid={!canSave || undefined}
+              data-testid="connection-editor-save-connect"
+            >
+              Save &amp; Connect
+            </Button>
+          </>
         )}
         <Button
           variant="primary"
