@@ -68,9 +68,11 @@ pub(crate) fn is_queue_teardown() -> bool {
     QUEUE_TEARDOWN.load(Ordering::SeqCst)
 }
 
-/// Chunk size for the copy loop. Large enough to keep round-trips amortised,
-/// small enough that cancel latency stays sub-second.
-const CHUNK_SIZE: usize = 256 * 1024;
+/// Chunk size for the copy loop. Sourced from the single canonical
+/// [`termihub_core::files::copy::CHUNK_SIZE`] so the SFTP and FTP transfer paths
+/// share one 256 KiB tuning value (audit finding DUP-025) rather than each
+/// declaring their own.
+const CHUNK_SIZE: usize = termihub_core::files::copy::CHUNK_SIZE;
 
 /// Minimum interval between two `transfer-progress` emits, to avoid flooding
 /// the event bus (~10 Hz).
