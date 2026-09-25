@@ -25,6 +25,16 @@ pub enum CoreError {
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
 
+    /// The remote answered, but its output could not be parsed — e.g. a
+    /// monitoring collect whose output is not the expected `/proc` layout.
+    ///
+    /// A typed discriminant so a collect loop can tell "reachable but
+    /// unusable" (terminal before the first sample, #3252) apart from a
+    /// transport failure (timeout, exec error) without matching on message
+    /// text (#3300). Displays the bare message, like [`CoreError::Other`].
+    #[error("{0}")]
+    Unparseable(String),
+
     /// Catch-all for errors that don't fit other categories.
     #[error("{0}")]
     Other(String),

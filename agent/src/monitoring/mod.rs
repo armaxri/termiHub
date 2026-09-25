@@ -16,6 +16,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
+use termihub_core::errors::CoreError;
 use termihub_core::monitoring::{
     BackoffSchedule, CollectLoopState, MonitorStatus, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
     DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
@@ -244,6 +245,8 @@ enum CollectOutcome {
     Sample(Box<termihub_core::monitoring::SystemStats>),
     /// The collect failed (error, timeout, or panic) — no fresh sample.
     Failed,
+    /// The transport answered, but its output could not be parsed (#3300).
+    Unparseable,
 }
 
 /// Run one bounded collect against the shared collector.
@@ -267,6 +270,10 @@ async fn collect_tick(
     // from ever re-checking cancellation (#1228, G3).
     match tokio::time::timeout(COLLECT_TIMEOUT, collect).await {
         Ok(Ok(Ok(stats))) => CollectOutcome::Sample(Box::new(stats)),
+        Ok(Ok(Err(CoreError::Unparseable(e)))) => {
+            warn!("Monitoring output unparseable for '{host}': {e}");
+            CollectOutcome::Unparseable
+        }
         Ok(Ok(Err(e))) => {
             warn!("Monitoring collection failed for '{host}': {e}");
             CollectOutcome::Failed
@@ -363,6 +370,21 @@ async fn monitoring_task(
                             debug!("Monitoring status for '{host}': {status:?}");
                         }
                     }
+                    CollectOutcome::Unparseable => {
+                        if let Some(status) = loop_state.on_parse_failure() {
+                            debug!("Monitoring status for '{host}': {status:?}");
+                        }
+                    }
+                }
+
+                // No sample since (re)connecting within the bounded pre-Live
+                // failure run (parse: `stale_threshold`; transport: the more
+                // generous `pre_live_failure_limit`): `Offline` is terminal, so
+                // stop streaming. The desktop infers the same bound from the
+                // missing samples (#3300).
+                if loop_state.is_offline() {
+                    warn!("Monitoring for '{host}' never produced a sample: Offline");
+                    break;
                 }
 
                 // A sustained drop triggers a bounded reconnect campaign that
@@ -462,7 +484,6 @@ mod tests {
     // ── Reconnect behavior (#1230, gap G2) ─────────────────────────────
 
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    use termihub_core::errors::CoreError;
     use termihub_core::monitoring::SystemStats;
 
     fn sample_stats() -> SystemStats {
@@ -620,6 +641,158 @@ mod tests {
         assert!(
             redial_calls.load(Ordering::SeqCst) >= 1,
             "at least one re-dial must be attempted before giving up"
+        );
+    }
+
+    // ── Bounded pre-Live resolution (#3300) ────────────────────────────
+
+    /// A collector whose every collect fails with a caller-chosen error,
+    /// counting its calls.
+    struct AlwaysFailingCollector {
+        calls: Arc<AtomicUsize>,
+        unparseable: bool,
+    }
+
+    impl StatsCollector for AlwaysFailingCollector {
+        fn collect(&mut self, _host_label: &str) -> Result<SystemStats, CoreError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.unparseable {
+                Err(CoreError::Unparseable("too few lines".into()))
+            } else {
+                Err(CoreError::Other("exec failed".into()))
+            }
+        }
+    }
+
+    /// A factory that counts re-dials and hands out always-failing collectors.
+    fn counting_failing_factory(
+        redials: Arc<AtomicUsize>,
+        calls: Arc<AtomicUsize>,
+        unparseable: bool,
+    ) -> CollectorFactory {
+        Arc::new(move || {
+            redials.fetch_add(1, Ordering::SeqCst);
+            Ok(Box::new(AlwaysFailingCollector {
+                calls: calls.clone(),
+                unparseable,
+            }) as Box<dyn StatsCollector>)
+        })
+    }
+
+    /// Run `monitoring_task` over `first` and wait for it to end on its own.
+    async fn run_until_task_ends(
+        first: Box<dyn StatsCollector>,
+        factory: CollectorFactory,
+    ) -> tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification> {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let handle = tokio::spawn(monitoring_task(
+            "fake".into(),
+            first,
+            factory,
+            Duration::from_millis(20),
+            BackoffSchedule::new(Duration::from_millis(5), Duration::from_millis(20), 8),
+            tx,
+            CancellationToken::new(),
+        ));
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("the task must resolve Offline and stop on its own")
+            .expect("the task must not panic");
+        rx
+    }
+
+    /// A collector that connects but whose every collect fails at the transport
+    /// level must not poll forever in `Connecting`: after `pre_live_failure_limit`
+    /// collects the task resolves `Offline` and stops, without a re-dial.
+    #[tokio::test]
+    async fn monitoring_task_stops_when_no_first_sample_ever_arrives() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let redials = Arc::new(AtomicUsize::new(0));
+        let first = Box::new(AlwaysFailingCollector {
+            calls: calls.clone(),
+            unparseable: false,
+        }) as Box<dyn StatsCollector>;
+
+        let mut rx = run_until_task_ends(
+            first,
+            counting_failing_factory(redials.clone(), calls.clone(), false),
+        )
+        .await;
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            CollectLoopState::new().pre_live_failure_limit() as usize,
+            "transport failures use the generous pre-Live bound"
+        );
+        assert_eq!(redials.load(Ordering::SeqCst), 0, "no re-dial before Live");
+        assert!(rx.try_recv().is_err(), "no sample was ever streamed");
+    }
+
+    /// Persistently unparseable output is typed apart from a transport failure
+    /// and resolves on the strict parse bound (`stale_threshold` collects).
+    #[tokio::test]
+    async fn monitoring_task_stops_on_persistently_unparseable_output() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let redials = Arc::new(AtomicUsize::new(0));
+        let first = Box::new(AlwaysFailingCollector {
+            calls: calls.clone(),
+            unparseable: true,
+        }) as Box<dyn StatsCollector>;
+
+        let mut rx = run_until_task_ends(
+            first,
+            counting_failing_factory(redials.clone(), calls.clone(), true),
+        )
+        .await;
+
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            termihub_core::monitoring::DEFAULT_STALE_THRESHOLD as usize,
+            "unparseable output uses the strict parse bound, not the transport one"
+        );
+        assert_eq!(redials.load(Ordering::SeqCst), 0, "no re-dial before Live");
+        assert!(rx.try_recv().is_err(), "no sample was ever streamed");
+    }
+
+    /// After a mid-stream drop the re-dial succeeds but the fresh collector
+    /// never samples: the task must not sit in `Reconnecting` forever.
+    #[tokio::test]
+    async fn monitoring_task_stops_when_re_dialled_collector_never_samples() {
+        let fail = Arc::new(AtomicBool::new(false));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let redials = Arc::new(AtomicUsize::new(0));
+        let first = Box::new(FakeCollector { fail: fail.clone() }) as Box<dyn StatsCollector>;
+
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let handle = tokio::spawn(monitoring_task(
+            "fake".into(),
+            first,
+            counting_failing_factory(redials.clone(), calls.clone(), false),
+            Duration::from_millis(20),
+            BackoffSchedule::new(Duration::from_millis(5), Duration::from_millis(20), 8),
+            tx,
+            CancellationToken::new(),
+        ));
+
+        let first_sample = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("first live sample before timeout");
+        assert!(first_sample.is_some(), "a live sample must be sent");
+        fail.store(true, Ordering::SeqCst);
+
+        tokio::time::timeout(Duration::from_secs(10), handle)
+            .await
+            .expect("the task must resolve Offline after a never-sampling re-dial")
+            .expect("the task must not panic");
+        assert_eq!(
+            redials.load(Ordering::SeqCst),
+            1,
+            "the one re-dial succeeded"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            CollectLoopState::new().pre_live_failure_limit() as usize,
+            "the re-dialled collector gets the generous pre-Live bound"
         );
     }
 }
