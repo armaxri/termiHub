@@ -23,9 +23,10 @@ use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 
 use super::establish;
 
-/// Chunk size for the copy loop — large enough to amortise round-trips, small
-/// enough that pause/cancel latency stays sub-second.
-pub const FTP_CHUNK_SIZE: usize = 256 * 1024;
+/// Chunk size for the FTP copy loop. Sourced from the single canonical
+/// [`crate::files::copy::CHUNK_SIZE`] so the SFTP and FTP paths share one 256 KiB
+/// tuning value (audit finding DUP-025) rather than each declaring their own.
+pub const FTP_CHUNK_SIZE: usize = crate::files::copy::CHUNK_SIZE;
 
 /// Direction of an FTP transfer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
