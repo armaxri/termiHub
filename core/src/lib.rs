@@ -1,3 +1,11 @@
+// TOOL-010: enforce the "no `.unwrap()`/`.expect()`/`panic!` in production Rust"
+// policy (see `.claude/CLAUDE.md` → Rust). Denied for non-test builds; test code
+// (`#[cfg(test)]` modules and `tests/` crates) is exempt via `not(test)`.
+#![cfg_attr(
+    not(test),
+    deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
+)]
+
 #[cfg(any(
     feature = "local-shell",
     feature = "serial",
