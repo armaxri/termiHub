@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { BUILTIN_PACKAGE_IDS } from "./monacoLanguagePackages";
 
 // This suite drives the real registration logic in `monacoCustomLanguages.ts`
 // against LOCAL recording stubs for `monaco-editor`, `shiki`, and
@@ -111,44 +112,53 @@ describe("registerCustomMonacoLanguages", () => {
     vi.clearAllMocks();
   });
 
-  it("registers the four built-in languages with their editor configurations", async () => {
-    const { registerCustomMonacoLanguages } = await freshModule();
+  it("registers every built-in language with its editor configuration", async () => {
+    const { registerCustomMonacoLanguages, BUILTIN_LANGUAGE_IDS } = await freshModule();
     await registerCustomMonacoLanguages();
 
-    for (const id of ["cmake", "toml", "nginx", "nix"]) {
+    // Derived from the module's own source-of-truth export, not a hard-coded
+    // literal, so adding/removing a built-in language cannot silently drift.
+    for (const id of BUILTIN_LANGUAGE_IDS) {
       expect(findLang(id)).toBeDefined();
       expect(rec.languageConfigs[id]).toBeDefined();
     }
+  });
 
-    // cmake registration details.
-    expect(findLang("cmake")).toMatchObject({
-      id: "cmake",
-      aliases: ["CMake", "cmake"],
-      extensions: [".cmake"],
-      filenames: ["CMakeLists.txt"],
-    });
-    // nginx is filename-matched (no extension), toml/nix are extension-matched.
-    expect(findLang("nginx")).toMatchObject({ filenames: ["nginx.conf"] });
-    expect(findLang("toml")).toMatchObject({ extensions: [".toml"] });
-    expect(findLang("nix")).toMatchObject({ extensions: [".nix"] });
+  it("registers exactly the source-defined built-in languages, verbatim", async () => {
+    const { registerCustomMonacoLanguages, BUILTIN_LANGUAGE_DEFINITIONS, BUILTIN_LANGUAGE_IDS } =
+      await freshModule();
+    await registerCustomMonacoLanguages();
 
-    // A configuration carries comment + bracket rules.
-    expect(rec.languageConfigs.cmake).toMatchObject({ comments: { lineComment: "#" } });
-    expect(rec.languageConfigs.nix).toMatchObject({
-      comments: { lineComment: "#", blockComment: ["/*", "*/"] },
-    });
+    // The REAL registration must match the source definitions verbatim — both the
+    // Monaco language registration and its editor configuration — for every entry.
+    for (const { language, configuration } of BUILTIN_LANGUAGE_DEFINITIONS) {
+      expect(findLang(language.id)).toEqual(language);
+      expect(rec.languageConfigs[language.id]).toEqual(configuration);
+    }
+
+    // No built-in language outside the source set was registered, and none is missing.
+    const registeredBuiltinIds = rec.registeredLanguages
+      .map((l) => l.id)
+      .filter((id) => BUILTIN_LANGUAGE_IDS.includes(id));
+    expect(new Set(registeredBuiltinIds)).toEqual(new Set(BUILTIN_LANGUAGE_IDS));
   });
 
   it("creates one Shiki highlighter with both themes and the built-in grammar set", async () => {
-    const { registerCustomMonacoLanguages, MONACO_DARK_THEME, MONACO_LIGHT_THEME } =
-      await freshModule();
+    const {
+      registerCustomMonacoLanguages,
+      BUILTIN_LANGUAGE_IDS,
+      MONACO_DARK_THEME,
+      MONACO_LIGHT_THEME,
+    } = await freshModule();
     await registerCustomMonacoLanguages();
 
     expect(rec.createdHighlighters).toHaveLength(1);
     const opts = rec.createdHighlighters[0].opts;
     expect(opts.themes).toEqual([MONACO_DARK_THEME, MONACO_LIGHT_THEME]);
-    // nginx depends on lua for embedded Lua blocks — it must be loaded too.
-    expect(opts.langs).toEqual(expect.arrayContaining(["cmake", "toml", "nginx", "nix", "lua"]));
+    // The grammar-load set is derived from the built-in language IDs plus lua
+    // (nginx's embedded-Lua dependency); it must equal the source package-id set.
+    expect(new Set(opts.langs)).toEqual(new Set([...BUILTIN_LANGUAGE_IDS, "lua"]));
+    expect(new Set(opts.langs)).toEqual(new Set(BUILTIN_PACKAGE_IDS));
   });
 
   it("wires the Shiki tokenizers into Monaco and applies the current theme", async () => {
@@ -169,13 +179,11 @@ describe("registerCustomMonacoLanguages", () => {
     expect(rec.registeredLanguages.filter((l) => l.id === "cmake")).toHaveLength(1);
   });
 
-  it("exposes the built-in package ids via getLoadedLanguagePackageIds", async () => {
+  it("exposes exactly the built-in package ids via getLoadedLanguagePackageIds", async () => {
     const { registerCustomMonacoLanguages, getLoadedLanguagePackageIds } = await freshModule();
     await registerCustomMonacoLanguages();
-    const ids = getLoadedLanguagePackageIds();
-    for (const id of ["cmake", "toml", "nginx", "nix", "lua"]) {
-      expect(ids.has(id)).toBe(true);
-    }
+    // Derived from the source-of-truth package-id set — no hard-coded literal.
+    expect(new Set(getLoadedLanguagePackageIds())).toEqual(new Set(BUILTIN_PACKAGE_IDS));
   });
 });
 
