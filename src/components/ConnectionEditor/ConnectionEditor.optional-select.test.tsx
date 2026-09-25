@@ -1,7 +1,6 @@
 import { setupSettingsRegion } from "@/test/settingsRegionTestHarness";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
-import React from "react";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
 import { useAppStore } from "@/store/appStore";
