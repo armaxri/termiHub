@@ -64,7 +64,7 @@ import type {
   Transport,
 } from "@/services/transport";
 
-import { useAppStore } from "./appStore";
+import { isResilientReconnectTabId, useAppStore } from "./appStore";
 import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import {
   currentSessionView,
@@ -150,7 +150,7 @@ class FakeTransport implements Transport {
 
 const flush = () => new Promise((r) => setTimeout(r, 0));
 
-/** Create a plain-SSH terminal tab; `resilient` toggles the per-connection opt-in. */
+/** Create a plain-SSH terminal tab; `resilient` sets the per-connection `autoReconnect`. */
 function makeSshTab(
   resilient: boolean,
   sessionId: string | null = "sess-1",
@@ -164,7 +164,7 @@ function makeSshTab(
       config: {
         host: "web01.example.com",
         username: "deploy",
-        resilientReconnect: resilient,
+        autoReconnect: resilient,
         ...(onReconnectCommand !== undefined ? { onReconnectCommand } : {}),
       },
     },
@@ -363,5 +363,36 @@ describe("appStore — on-reconnect command (#1978 / #2205 PR-B)", () => {
     const { onReconnectCommandForTabId } = await import("./appStore");
     const tabId = makeSshTab(true, "sess-1", "tmux attach");
     expect(onReconnectCommandForTabId(tabId)).toBe("tmux attach");
+  });
+});
+
+describe("appStore — unified autoReconnect eligibility (PARITY-008)", () => {
+  beforeEach(() => {
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  function addSsh(config: Record<string, unknown>): string {
+    return useAppStore
+      .getState()
+      .addTab(
+        "web01",
+        "ssh",
+        { type: "ssh", config: { host: "web01.example.com", ...config } },
+        { contentType: "terminal", sessionId: "sess-1" }
+      );
+  }
+
+  it("treats an SSH tab without the setting as auto-reconnecting (default on)", () => {
+    expect(isResilientReconnectTabId(addSsh({}))).toBe(true);
+  });
+
+  it("honours an explicit autoReconnect opt-out", () => {
+    expect(isResilientReconnectTabId(addSsh({ autoReconnect: false }))).toBe(false);
+    expect(isResilientReconnectTabId(addSsh({ autoReconnect: true }))).toBe(true);
+  });
+
+  it("still honours the legacy resilientReconnect key on an unmigrated config", () => {
+    expect(isResilientReconnectTabId(addSsh({ resilientReconnect: false }))).toBe(false);
+    expect(isResilientReconnectTabId(addSsh({ resilientReconnect: true }))).toBe(true);
   });
 });
