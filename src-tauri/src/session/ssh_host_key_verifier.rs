@@ -37,6 +37,13 @@ use super::ssh_trust_store::{SshTrustStore, TrustLookup};
 /// for a previously-trusted host (`true`) — the possible-MITM case the dialog
 /// warns about prominently. `prompt_id` correlates the reply
 /// (`ssh_host_key_decision`) back to the blocked handshake.
+///
+/// `previous_fingerprints` carries the fingerprint(s) termiHub had remembered for
+/// this host when the presented key *changed* relative to termiHub's own trust
+/// store, so the prompt can show the previously-trusted key beside the new one
+/// for comparison (UX-034). It is `null` for first contact, and for a key that
+/// only changed relative to the user's `~/.ssh/known_hosts` (that file's recorded
+/// fingerprint is not available at this point).
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
@@ -47,6 +54,7 @@ pub struct SshHostKeyPromptEvent {
     pub key_type: String,
     pub fingerprint: String,
     pub changed: bool,
+    pub previous_fingerprints: Option<Vec<String>>,
 }
 
 /// Abstracts frontend event delivery so the verifier is unit-testable without a
@@ -135,7 +143,16 @@ impl SshHostKeyVerifier {
 
     /// Emit a prompt and await the verdict, returning `false` if the waiting side
     /// is dropped before a reply (e.g. the connect timed out).
-    async fn prompt(&self, info: &HostKeyInfo, changed: bool) -> Decision {
+    ///
+    /// `previous_fingerprints` are the keys termiHub had trusted for this host
+    /// when the presented key is a *changed* one (UX-034); `None` for first
+    /// contact.
+    async fn prompt(
+        &self,
+        info: &HostKeyInfo,
+        changed: bool,
+        previous_fingerprints: Option<Vec<String>>,
+    ) -> Decision {
         let prompt_id = uuid::Uuid::new_v4().to_string();
         let (tx, rx) = oneshot::channel();
         self.pending
@@ -165,6 +182,7 @@ impl SshHostKeyVerifier {
             key_type: info.key_type.clone(),
             fingerprint: info.fingerprint.clone(),
             changed,
+            previous_fingerprints,
         });
 
         let decision = rx.await.unwrap_or(Decision {
@@ -189,18 +207,29 @@ impl HostKeyVerifier for SshHostKeyVerifier {
         }
 
         let host_port = info.host_port();
-        let changed = match self.trust_store.lookup(&host_port, &info.fingerprint) {
-            // Already trusted → accept without prompting.
-            TrustLookup::Trusted => return true,
-            // Unknown to termiHub's own store, but if the key is *changed*
-            // relative to the user's `~/.ssh/known_hosts` this is the possible-
-            // MITM case, so warn as a changed key rather than first contact
-            // (#1969 — this previously showed a first-contact prompt).
-            TrustLookup::Unknown => info.known_hosts == KnownHostsStatus::Changed,
-            TrustLookup::Changed => true,
-        };
+        // `previous_fingerprints` carries what termiHub had trusted so the prompt
+        // can show it beside the new key on a changed key (UX-034); it is only
+        // available when termiHub's own store is what flagged the change.
+        let (changed, previous_fingerprints) =
+            match self.trust_store.lookup(&host_port, &info.fingerprint) {
+                // Already trusted → accept without prompting.
+                TrustLookup::Trusted => return true,
+                // Unknown to termiHub's own store, but if the key is *changed*
+                // relative to the user's `~/.ssh/known_hosts` this is the
+                // possible-MITM case, so warn as a changed key rather than first
+                // contact (#1969 — this previously showed a first-contact prompt).
+                // The prior key lives in the user's own file, not this store, so
+                // no previously-trusted fingerprint is available to show here.
+                TrustLookup::Unknown => (info.known_hosts == KnownHostsStatus::Changed, None),
+                // Remembered here with a different key: surface the remembered
+                // fingerprint(s) so the user can compare old vs new.
+                TrustLookup::Changed => {
+                    let prior = self.trust_store.fingerprints_for(&host_port);
+                    (true, (!prior.is_empty()).then_some(prior))
+                }
+            };
 
-        let decision = self.prompt(info, changed).await;
+        let decision = self.prompt(info, changed, previous_fingerprints).await;
         if decision.accept && decision.remember {
             self.trust_store.remember(&host_port, &info.fingerprint);
         }
@@ -301,6 +330,10 @@ mod tests {
         let prompt = sink.prompts.lock().unwrap()[0].clone();
         assert!(!prompt.changed, "first contact is not a changed-key prompt");
         assert_eq!(prompt.fingerprint, "SHA256:BB");
+        assert!(
+            prompt.previous_fingerprints.is_none(),
+            "first contact has no previously-trusted fingerprint to show"
+        );
         // Remembered: a second verify is silent.
         assert_eq!(store.lookup("h:22", "SHA256:BB"), TrustLookup::Trusted);
         assert!(verifier.verify(&info("h", 22, "SHA256:BB")).await);
@@ -330,6 +363,11 @@ mod tests {
         );
         let prompt = sink.prompts.lock().unwrap()[0].clone();
         assert!(prompt.changed, "a changed key must flag the MITM warning");
+        assert_eq!(
+            prompt.previous_fingerprints,
+            Some(vec!["SHA256:AA".to_string()]),
+            "a changed key must carry the previously-trusted fingerprint for comparison"
+        );
         // The impostor key was not remembered; the original trust stands.
         assert_eq!(store.lookup("h:22", "SHA256:EVIL"), TrustLookup::Changed);
         assert_eq!(store.lookup("h:22", "SHA256:AA"), TrustLookup::Trusted);
@@ -395,6 +433,34 @@ mod tests {
         assert!(
             prompt.changed,
             "a key changed in ~/.ssh/known_hosts must flag the MITM warning"
+        );
+        assert!(
+            prompt.previous_fingerprints.is_none(),
+            "a key changed only in ~/.ssh/known_hosts has no termiHub-stored prior to show"
+        );
+    }
+
+    /// A changed key with several remembered fingerprints (a rotated host)
+    /// surfaces every previously-trusted fingerprint for comparison (UX-034).
+    #[tokio::test]
+    async fn changed_key_carries_all_remembered_fingerprints() {
+        let store = Arc::new(SshTrustStore::in_memory());
+        store.remember("h:22", "SHA256:AA");
+        store.remember("h:22", "SHA256:BB");
+        let sink = Arc::new(RecordingSink::default());
+        let verifier = Arc::new(SshHostKeyVerifier::new(store, sink.clone()));
+
+        let v = verifier.clone();
+        let handle = tokio::spawn(async move { v.verify(&info("h", 22, "SHA256:EVIL")).await });
+        resolve_when_ready(&verifier, &sink, false, false).await;
+
+        assert!(!handle.await.unwrap(), "rejecting a changed key aborts");
+        let prompt = sink.prompts.lock().unwrap()[0].clone();
+        assert!(prompt.changed);
+        assert_eq!(
+            prompt.previous_fingerprints,
+            Some(vec!["SHA256:AA".to_string(), "SHA256:BB".to_string()]),
+            "all remembered fingerprints must be shown for a rotated host"
         );
     }
 

@@ -112,6 +112,19 @@ impl SshTrustStore {
         self.persist();
     }
 
+    /// The fingerprints currently trusted for `host`, in stored order (empty
+    /// when the host has none remembered). Used to surface the previously-trusted
+    /// key alongside a *changed* one in the host-key prompt so the user can
+    /// compare what changed (UX-034).
+    pub fn fingerprints_for(&self, host: &str) -> Vec<String> {
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(host)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Snapshot every remembered host and its trusted fingerprints, for the
     /// trust-management settings UI. Cloned so callers never hold the lock; the
     /// store is tiny.
@@ -336,6 +349,19 @@ mod tests {
             &vec![FP_A.to_string(), FP_B.to_string()]
         );
         assert_eq!(entries.get("b:22").unwrap(), &vec![FP_A.to_string()]);
+    }
+
+    #[test]
+    fn fingerprints_for_returns_stored_keys_or_empty() {
+        let store = SshTrustStore::in_memory();
+        store.remember("a:22", FP_A);
+        store.remember("a:22", FP_B);
+        assert_eq!(
+            store.fingerprints_for("a:22"),
+            vec![FP_A.to_string(), FP_B.to_string()]
+        );
+        // A host with nothing remembered has no prior fingerprints.
+        assert!(store.fingerprints_for("missing:22").is_empty());
     }
 
     #[test]

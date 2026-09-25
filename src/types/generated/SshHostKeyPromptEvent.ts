@@ -8,5 +8,12 @@
  * for a previously-trusted host (`true`) — the possible-MITM case the dialog
  * warns about prominently. `prompt_id` correlates the reply
  * (`ssh_host_key_decision`) back to the blocked handshake.
+ *
+ * `previous_fingerprints` carries the fingerprint(s) termiHub had remembered for
+ * this host when the presented key *changed* relative to termiHub's own trust
+ * store, so the prompt can show the previously-trusted key beside the new one
+ * for comparison (UX-034). It is `null` for first contact, and for a key that
+ * only changed relative to the user's `~/.ssh/known_hosts` (that file's recorded
+ * fingerprint is not available at this point).
  */
-export type SshHostKeyPromptEvent = { prompt_id: string, host: string, port: number, key_type: string, fingerprint: string, changed: boolean, };
+export type SshHostKeyPromptEvent = { prompt_id: string, host: string, port: number, key_type: string, fingerprint: string, changed: boolean, previous_fingerprints: Array<string> | null, };
