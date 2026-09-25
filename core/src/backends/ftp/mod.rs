@@ -42,6 +42,7 @@ use crate::connection::{
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
+use tokio_util::sync::CancellationToken;
 
 /// Password sent for anonymous logins (a conventional email-style placeholder).
 const ANONYMOUS_PASSWORD: &str = "anonymous@termihub";
@@ -763,6 +764,38 @@ mod tests {
             .connect(serde_json::json!({ "host": "ftp.example.com", "anonymous": false }))
             .await;
         assert!(matches!(result, Err(SessionError::InvalidConfig(_))));
+    }
+
+    /// A pre-cancelled token aborts the connect before any TCP/TLS/login I/O is
+    /// attempted (the config points at a would-be-real server) and surfaces the
+    /// shared cancellation error, leaving the backend disconnected (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_connecting() {
+        let mut ftp = Ftp::new();
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = ftp
+            .connect_cancellable(
+                serde_json::json!({ "host": "ftp.example.com", "username": "u" }),
+                Some(token),
+            )
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!ftp.is_connected());
+    }
+
+    /// With no token the cancellable path behaves exactly as `connect`: the same
+    /// invalid config fails the same way.
+    #[tokio::test]
+    async fn connect_cancellable_none_matches_connect() {
+        let settings = serde_json::json!({ "host": "", "username": "u" });
+        let plain = Ftp::new().connect(settings.clone()).await;
+        let cancellable = Ftp::new().connect_cancellable(settings, None).await;
+        assert!(matches!(plain, Err(SessionError::InvalidConfig(_))));
+        assert!(matches!(cancellable, Err(SessionError::InvalidConfig(_))));
     }
 
     #[tokio::test]

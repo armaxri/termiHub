@@ -23,6 +23,7 @@ use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use tokio_util::sync::CancellationToken;
 
 /// Read timeout for the reader thread (allows periodic alive checks).
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
@@ -860,6 +861,39 @@ mod tests {
         });
         let result = telnet.connect(settings).await;
         assert!(result.is_err());
+    }
+
+    /// A pre-cancelled token aborts the (blocking) DNS-resolve + TCP-connect
+    /// before it is even started — no socket work happens — and surfaces the
+    /// shared cancellation error, leaving the backend disconnected (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_connecting() {
+        let mut telnet = Telnet::new();
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = telnet
+            .connect_cancellable(
+                serde_json::json!({ "host": "telnet.example.com", "port": 23 }),
+                Some(token),
+            )
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!telnet.is_connected());
+    }
+
+    /// With no token the cancellable path behaves exactly as `connect`: an empty
+    /// host fails the same way, before any TCP work.
+    #[tokio::test]
+    async fn connect_cancellable_none_matches_connect() {
+        let settings = serde_json::json!({ "host": "", "port": 23 });
+        let plain = Telnet::new().connect(settings.clone()).await;
+        let cancellable = Telnet::new().connect_cancellable(settings, None).await;
+        assert!(plain.is_err());
+        assert!(cancellable.is_err());
+        assert!(!Telnet::new().is_connected());
     }
 
     #[tokio::test]

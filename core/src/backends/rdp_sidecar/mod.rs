@@ -1051,6 +1051,40 @@ mod tests {
         assert!(!r.is_connected());
     }
 
+    /// A pre-cancelled token aborts the connect before the sidecar helper is
+    /// launched and surfaces the shared cancellation error, leaving the backend
+    /// disconnected (PARITY-007). The config is otherwise valid, so only the
+    /// token stops it.
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_spawn() {
+        let mut r = SidecarRdp::new();
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = r
+            .connect_cancellable(
+                serde_json::json!({ "host": "rdp.example.com", "port": 3389 }),
+                Some(token),
+            )
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!r.is_connected());
+    }
+
+    /// With no token the cancellable path behaves exactly as `connect`: a
+    /// missing host fails the same way, with no child spawned.
+    #[tokio::test]
+    async fn connect_cancellable_none_matches_connect() {
+        let plain = SidecarRdp::new().connect(serde_json::json!({})).await;
+        let cancellable = SidecarRdp::new()
+            .connect_cancellable(serde_json::json!({}), None)
+            .await;
+        assert!(matches!(plain, Err(SessionError::InvalidConfig(_))));
+        assert!(matches!(cancellable, Err(SessionError::InvalidConfig(_))));
+    }
+
     #[tokio::test]
     async fn connect_rejects_malformed_settings() {
         let mut r = SidecarRdp::new();

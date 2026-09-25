@@ -26,6 +26,7 @@ use crate::session::shell::{
 use crate::session::traits::{LocalShellSpawner, SpawnedShell};
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
+use tokio_util::sync::CancellationToken;
 
 /// Parse the `envVars` key-value list from connection settings into a map of
 /// environment variables to apply to the spawned shell.
@@ -1175,6 +1176,37 @@ mod tests {
         let result = shell.connect(valid_settings()).await;
         assert!(result.is_err(), "second connect should fail");
 
+        shell.disconnect().await.ok();
+    }
+
+    /// A pre-cancelled token short-circuits before the shell is spawned and
+    /// surfaces the shared cancellation error, leaving the backend disconnected
+    /// (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_spawn() {
+        let mut shell = LocalShell::with_spawner(MockLocalShellSpawner::new());
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = shell
+            .connect_cancellable(valid_settings(), Some(token))
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!shell.is_connected());
+    }
+
+    /// With a live (uncancelled) token — or none — the cancellable path connects
+    /// exactly as `connect` does.
+    #[tokio::test]
+    async fn connect_cancellable_none_connects_normally() {
+        let mut shell = LocalShell::with_spawner(MockLocalShellSpawner::new());
+        shell
+            .connect_cancellable(valid_settings(), None)
+            .await
+            .expect("connect should succeed");
+        assert!(shell.is_connected());
         shell.disconnect().await.ok();
     }
 

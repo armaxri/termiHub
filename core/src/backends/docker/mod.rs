@@ -20,6 +20,7 @@ use bollard::image::CreateImageOptions;
 use bollard::models::HostConfig;
 use futures_util::StreamExt;
 use tokio::io::AsyncWriteExt;
+use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 
 use crate::config::{ContainerRuntime, DockerConfig, VolumeMount};
@@ -1718,6 +1719,36 @@ mod tests {
         });
         let result = docker.connect(settings).await;
         assert!(result.is_err());
+    }
+
+    /// A pre-cancelled token aborts the connect at its first step — before the
+    /// runtime is even contacted, so no Docker daemon is required — and surfaces
+    /// the shared cancellation error, leaving the backend disconnected. The
+    /// config is otherwise valid, so only the token stops it (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts_before_runtime() {
+        let mut docker = Docker::new();
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = docker
+            .connect_cancellable(serde_json::json!({ "image": "ubuntu:22.04" }), Some(token))
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(m)) if m.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!docker.is_connected());
+    }
+
+    /// With no token the cancellable path behaves exactly as `connect`: an empty
+    /// image fails validation the same way, before any runtime contact.
+    #[tokio::test]
+    async fn connect_cancellable_none_matches_connect() {
+        let settings = serde_json::json!({ "image": "" });
+        let plain = Docker::new().connect(settings.clone()).await;
+        let cancellable = Docker::new().connect_cancellable(settings, None).await;
+        assert!(plain.is_err());
+        assert!(cancellable.is_err());
     }
 
     /// Manual, host-dependent diagnostic for #1600. Requires a live host where

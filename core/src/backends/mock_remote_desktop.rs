@@ -520,6 +520,34 @@ mod tests {
         assert!(!m.is_connected());
     }
 
+    /// A pre-cancelled token aborts the (instant) connect and surfaces the
+    /// shared cancellation error, leaving the backend disconnected (PARITY-007).
+    #[tokio::test]
+    async fn connect_cancellable_precancelled_aborts() {
+        let mut m = connected();
+        let token = CancellationToken::new();
+        token.cancel();
+        let result = m
+            .connect_cancellable(serde_json::json!({ "host": "x" }), Some(token))
+            .await;
+        assert!(
+            matches!(&result, Err(SessionError::SpawnFailed(msg)) if msg.contains("cancelled")),
+            "expected cancellation error, got {result:?}"
+        );
+        assert!(!m.is_connected());
+    }
+
+    /// With no token the cancellable path connects exactly as `connect` does.
+    #[tokio::test]
+    async fn connect_cancellable_none_connects_normally() {
+        let mut m = connected();
+        m.connect_cancellable(serde_json::json!({ "host": "x" }), None)
+            .await
+            .unwrap();
+        assert!(m.is_connected());
+        m.disconnect().await.unwrap();
+    }
+
     #[tokio::test]
     async fn resize_changes_frame_dimensions() {
         let mut m = connected();
