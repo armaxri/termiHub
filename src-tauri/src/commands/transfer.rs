@@ -61,7 +61,7 @@ pub async fn transfer_resume(
 }
 
 /// Cancel an in-flight transfer (queued, active, or paused). Works for both
-/// legacy SFTP and rich FTP transfers. Returns `true` when a live transfer was
+/// SFTP and FTP transfers. Returns `true` when a live transfer was
 /// cancelled, `false` for an unknown/already-finished id.
 #[tauri::command]
 pub fn transfer_cancel(transfer_id: String, registry: State<'_, TransferRegistry>) -> bool {

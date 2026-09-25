@@ -28,8 +28,7 @@ use termihub_lib::files::sftp::Writability;
 use termihub_lib::files::transfer::sftp::{run_sftp_remote_copy, run_sftp_transfer, ResumeMode};
 use termihub_lib::files::transfer::state::TransferStateTag;
 use termihub_lib::files::transfer::{
-    run_download, ProgressSink, TransferContext, TransferDirection, TransferPhase,
-    TransferProgress, TransferRegistry,
+    ProgressSink, TransferDirection, TransferPhase, TransferProgress, TransferRegistry,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -232,14 +231,13 @@ async fn cancel_mid_transfer_cleans_up_partial_file() {
     require_sftp_stress!(port);
 
     let session = connect().await;
-    let dedicated = open_dedicated(session).await;
 
     let dest = std::env::temp_dir().join(format!("termihub-cancel-{}.bin", uuid::Uuid::new_v4()));
     let dest_str = dest.to_string_lossy().to_string();
 
     let registry = TransferRegistry::new();
     let transfer_id = "cancel-test".to_string();
-    let token = registry.register(
+    let handle = registry.enqueue(
         &transfer_id,
         "s",
         TransferDirection::Download,
@@ -248,31 +246,26 @@ async fn cancel_mid_transfer_cleans_up_partial_file() {
         100 * 1024 * 1024,
     );
     let sink = RecordingSink::default();
-    let ctx = TransferContext {
-        transfer_id: transfer_id.clone(),
-        session_id: "s".to_string(),
-        direction: TransferDirection::Download,
-        file_name: "100mb.bin".to_string(),
-        path: "/home/testuser/sftp-test/large-files/100mb.bin".to_string(),
-        total: 100 * 1024 * 1024,
-    };
 
     // Cancel almost immediately so the copy stops after an early chunk boundary
     // with the destination only partially written.
-    let cancel_token = token.clone();
+    let cancel_reg = registry.clone();
+    let cancel_id = transfer_id.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_millis(20)).await;
-        cancel_token.cancel();
+        cancel_reg.cancel(&cancel_id);
     });
 
-    run_download(
-        dedicated,
+    run_sftp_transfer(
+        session,
+        TransferDirection::Download,
         "/home/testuser/sftp-test/large-files/100mb.bin".to_string(),
         dest_str.clone(),
-        ctx,
-        token,
+        handle,
         registry.clone(),
         sink.as_sink(),
+        ResumeMode::Resume,
+        0,
     )
     .await;
 
@@ -361,13 +354,12 @@ async fn browsing_stays_live_during_transfer() {
     require_sftp_stress!(port);
 
     let session = connect().await;
-    let dedicated = open_dedicated(session.clone()).await;
 
     let dest = std::env::temp_dir().join(format!("termihub-live-{}.bin", uuid::Uuid::new_v4()));
     let dest_str = dest.to_string_lossy().to_string();
 
     let registry = TransferRegistry::new();
-    let token = registry.register(
+    let handle = registry.enqueue(
         "live-test",
         "s",
         TransferDirection::Download,
@@ -376,27 +368,25 @@ async fn browsing_stays_live_during_transfer() {
         100 * 1024 * 1024,
     );
     let sink = RecordingSink::default();
-    let ctx = TransferContext {
-        transfer_id: "live-test".to_string(),
-        session_id: "s".to_string(),
-        direction: TransferDirection::Download,
-        file_name: "100mb.bin".to_string(),
-        path: "/home/testuser/sftp-test/large-files/100mb.bin".to_string(),
-        total: 100 * 1024 * 1024,
-    };
 
-    // Start the large transfer in the background on the dedicated channel.
-    let transfer = tokio::spawn(async move {
-        run_download(
-            dedicated,
-            "/home/testuser/sftp-test/large-files/100mb.bin".to_string(),
-            dest_str,
-            ctx,
-            token,
-            registry,
-            sink.as_sink(),
-        )
-        .await;
+    // Start the large transfer in the background; the executor copies on its
+    // own dedicated channel, never the browsing session's.
+    let transfer = tokio::spawn({
+        let session = session.clone();
+        async move {
+            run_sftp_transfer(
+                session,
+                TransferDirection::Download,
+                "/home/testuser/sftp-test/large-files/100mb.bin".to_string(),
+                dest_str,
+                handle,
+                registry,
+                sink.as_sink(),
+                ResumeMode::Resume,
+                0,
+            )
+            .await;
+        }
     });
 
     // While it runs, a directory listing on the browsing session must complete
