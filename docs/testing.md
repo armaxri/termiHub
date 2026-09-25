@@ -3588,9 +3588,13 @@ routes execution end-to-end, which per-PR CI cannot (it needs a live agent).
 3. Run the tool against a host reachable from the agent's network → confirm the
    result reflects the **agent's** vantage (e.g. a host only the agent can reach
    resolves/pings), and the control keeps showing the agent.
-4. Open the **HTTP monitor**, **Ping sweep**, and **Open ports** tools → confirm
-   the "Run on" control is present but offers **only This computer** (desktop-only,
-   Open Design Decision #4).
+4. Open **Ping sweep** and **Open ports**, pick the agent, and run them → the
+   sweep lists hosts on the **agent's** subnet, and Open ports lists the **agent
+   host's** listening ports (PROD-033). Switching Open ports' "Run on" clears the
+   list until you press **Refresh**.
+5. Open the **HTTP monitor** tool → confirm the tab-level "Run on" control offers
+   **only This computer** and shows a hint pointing at the monitor's own
+   **"Run on"** field (where a monitor can be hosted on an agent).
 
 **Embedded server hosted on the agent.**
 
