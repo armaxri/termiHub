@@ -14,8 +14,6 @@ import {
   ConnectionEditorMeta,
   TunnelEditorMeta,
   WorkspaceEditorMeta,
-  EditorStatus,
-  EditorActions,
   NetworkDiagnosticMeta,
   PluginDetailMeta,
   NetworkTool,
@@ -50,7 +48,6 @@ import {
 } from "@/services/storage";
 import { deriveTabStatus, type TabStatusMaps } from "@/utils/tabStatus";
 import {
-  vscodeAvailable as checkVscode,
   sessionGetCapabilities,
   listAvailableShells,
   getDefaultShell,
@@ -131,6 +128,7 @@ import { createWorkflowsSlice, WorkflowsSlice } from "./slices/workflowsSlice";
 import { createCredentialStoreSlice, CredentialStoreSlice } from "./slices/credentialStoreSlice";
 import { createUpdateCheckerSlice, UpdateCheckerSlice } from "./slices/updateCheckerSlice";
 import { createPortableModeSlice, PortableModeSlice } from "./slices/portableModeSlice";
+import { createEditorSlice, EditorSlice } from "./slices/editorSlice";
 
 export type { MacroPlaybackState, PlayMacroOptions } from "./slices/macrosSlice";
 export type {
@@ -397,7 +395,8 @@ export interface AppState
     WorkspacesSlice,
     CredentialStoreSlice,
     UpdateCheckerSlice,
-    PortableModeSlice {
+    PortableModeSlice,
+    EditorSlice {
   // Connection type registry (loaded from backend at startup)
   connectionTypes: ConnectionTypeInfo[];
 
@@ -1161,15 +1160,9 @@ export interface AppState
   // (ARCH-001/FES-011, the first cut of the god-module split). The view itself is
   // region-authoritative (#2283).
 
-  // VS Code availability
-  vscodeAvailable: boolean;
-  checkVscodeAvailability: () => Promise<void>;
-
-  // Editor status bar
-  editorStatus: EditorStatus | null;
-  setEditorStatus: (status: EditorStatus | null) => void;
-  editorActions: EditorActions | null;
-  setEditorActions: (actions: EditorActions | null) => void;
+  // VS Code availability + editor status bar — `vscodeAvailable` /
+  // `checkVscodeAvailability` and the editor status/actions handles live in
+  // EditorSlice (ARCH-001/FES-011, appStore god-module split via #2881).
 
   // Monitoring — the session-monitoring lifecycle actions (connect/disconnect/
   // pause/interval/cancel/clearError) plus the per-session `sessionCapabilities`
@@ -5909,22 +5902,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // region-authoritative (#2283); the slice only dispatches `fileBrowser.*`
     // intents and holds the per-client session pointer.
 
-    // VS Code availability
-    vscodeAvailable: false,
-    checkVscodeAvailability: async () => {
-      try {
-        const available = await checkVscode();
-        set({ vscodeAvailable: available });
-      } catch (err) {
-        frontendLog("app_store", `Failed to check VS Code availability: ${errorMessage(err)}`);
-      }
-    },
-
-    // Editor status bar
-    editorStatus: null,
-    setEditorStatus: (status) => set({ editorStatus: status }),
-    editorActions: null,
-    setEditorActions: (actions) => set({ editorActions: actions }),
+    // VS Code availability + editor status bar — provided by createEditorSlice
+    // (ARCH-001/FES-011, appStore god-module split via #2881).
+    ...createEditorSlice(set, get, store),
 
     // Monitoring — the session-monitoring lifecycle actions and the per-session
     // `sessionCapabilities` probe are provided by createMonitoringSlice
