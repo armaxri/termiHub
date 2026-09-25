@@ -165,18 +165,38 @@ fi
 echo ""
 echo "=== TODO/FIXME/HACK Scan ==="
 
-MARKERS=$(grep -rn --include='*.ts' --include='*.tsx' --include='*.rs' \
-    -E '\bTODO\b|\bFIXME\b|\bHACK\b' src/ src-tauri/src/ core/src/ agent/src/ 2>/dev/null || true)
+# FIXME and HACK mark known-broken code or workarounds and BLOCK a release
+# (WA-CI-030). TODO marks follow-up work and stays a warning. The blocking scan
+# only matches a marker that opens a comment (`// FIXME`, `/* HACK`, `* FIXME`,
+# `//! HACK`, ...): a bare-word match would also hit string literals and test
+# fixtures that merely mention the words (e.g. highlight-rule patterns such as
+# "\\b(?:TODO|FIXME)\\b"), which are not markers.
+MARKER_DIRS=(src/ src-tauri/src/ core/src/ agent/src/)
+MARKER_GLOBS=(--include='*.ts' --include='*.tsx' --include='*.rs')
 
-if [ -n "$MARKERS" ]; then
-    MARKER_COUNT=$(echo "$MARKERS" | wc -l | tr -d ' ')
-    warn "Found $MARKER_COUNT TODO/FIXME/HACK markers in source code"
-    echo "$MARKERS" | head -20
-    if [ "$MARKER_COUNT" -gt 20 ]; then
-        echo "  ... and $((MARKER_COUNT - 20)) more"
+BLOCKING_MARKERS=$(grep -rnE "${MARKER_GLOBS[@]}" \
+    '(//|/\*|^[[:space:]]*\*)[/!*]*[[:space:]]*(FIXME|HACK)\b' \
+    "${MARKER_DIRS[@]}" 2>/dev/null || true)
+
+if [ -n "$BLOCKING_MARKERS" ]; then
+    BLOCKING_COUNT=$(echo "$BLOCKING_MARKERS" | wc -l | tr -d ' ')
+    fail "Found $BLOCKING_COUNT FIXME/HACK markers in source code"
+    echo "$BLOCKING_MARKERS" | sed 's/^/    /'
+else
+    pass "No FIXME/HACK markers found"
+fi
+
+TODO_MARKERS=$(grep -rnE "${MARKER_GLOBS[@]}" '\bTODO\b' "${MARKER_DIRS[@]}" 2>/dev/null || true)
+
+if [ -n "$TODO_MARKERS" ]; then
+    TODO_COUNT=$(echo "$TODO_MARKERS" | wc -l | tr -d ' ')
+    warn "Found $TODO_COUNT TODO markers in source code"
+    echo "$TODO_MARKERS" | head -20
+    if [ "$TODO_COUNT" -gt 20 ]; then
+        echo "  ... and $((TODO_COUNT - 20)) more"
     fi
 else
-    pass "No TODO/FIXME/HACK markers found"
+    pass "No TODO markers found"
 fi
 
 # ---------------------------------------------------------------------------
