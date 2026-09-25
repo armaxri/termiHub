@@ -40,6 +40,27 @@ function collectFieldDefaults(fields: SettingsField[], out: Record<string, unkno
 }
 
 /**
+ * Overlay the current settings on the schema defaults, so a key the saved
+ * config omits reads as its schema default — the same effective value the field
+ * itself renders (e.g. a Boolean toggle shows `value ?? default`).
+ *
+ * Used for `visibleWhen` evaluation: without it a field gated on a default-on
+ * toggle (e.g. SSH `onReconnectCommand` on `autoReconnect`, PARITY-008) would
+ * stay hidden for a connection saved before that toggle existed, even though
+ * the toggle is shown as on. `undefined` values do not mask a default.
+ */
+export function withSchemaDefaults(
+  schema: SettingsSchema,
+  settings: Record<string, unknown> | undefined
+): Record<string, unknown> {
+  const result = buildDefaults(schema);
+  for (const [key, value] of Object.entries(settings ?? {})) {
+    if (value !== undefined) result[key] = value;
+  }
+  return result;
+}
+
+/**
  * Evaluate whether a field should be visible given the current settings values.
  *
  * Returns `true` if the field has no `visibleWhen` condition, or if the

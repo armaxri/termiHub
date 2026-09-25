@@ -3,7 +3,7 @@ import { useForm, useWatch, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ChevronRight } from "lucide-react";
 import type { SettingsSchema, SettingsGroup } from "@/types/schema";
-import { isFieldVisible } from "@/utils/schemaDefaults";
+import { isFieldVisible, withSchemaDefaults } from "@/utils/schemaDefaults";
 import { parseHostPort } from "@/utils/parseHostPort";
 import { ftpPortForTlsMode } from "@/utils/ftpSecurity";
 import { vncPortForDisplay } from "@/utils/vncDisplayPort";
@@ -192,8 +192,14 @@ export function ConnectionSettingsForm({
     return () => subscription.unsubscribe();
   }, [watch, onChange]);
 
-  // Live form values used for visibleWhen evaluation.
+  // Live form values; `visibilityValues` overlays them on the schema defaults so
+  // a key the saved config omits evaluates `visibleWhen` as its default (the
+  // value the field itself renders).
   const watchedValues = useWatch({ control });
+  const visibilityValues = useMemo(
+    () => withSchemaDefaults(schema, watchedValues),
+    [schema, watchedValues]
+  );
 
   // Port auto-adjust special-case (FTP): the schema `Condition` is `equals`-only
   // and cannot mutate a value, so when the user switches TLS Mode we snap the
@@ -234,13 +240,13 @@ export function ConnectionSettingsForm({
     const visibleErrors: Record<string, string> = {};
     for (const group of schema.groups) {
       for (const field of group.fields) {
-        if (isFieldVisible(field, watchedValues) && errorMap[field.key]) {
+        if (isFieldVisible(field, visibilityValues) && errorMap[field.key]) {
           visibleErrors[field.key] = errorMap[field.key];
         }
       }
     }
     return { valid: Object.keys(visibleErrors).length === 0, errors: visibleErrors };
-  }, [zodSchema, watchedValues, schema]);
+  }, [zodSchema, watchedValues, visibilityValues, schema]);
 
   // Only propagate when the reported validity actually changes, so typing more
   // characters into an already-valid (or already-invalid, same-errors) field
@@ -256,7 +262,7 @@ export function ConnectionSettingsForm({
   return (
     <div data-testid="connection-settings-form">
       {schema.groups.map((group) => {
-        const visibleFields = group.fields.filter((f) => isFieldVisible(f, watchedValues));
+        const visibleFields = group.fields.filter((f) => isFieldVisible(f, visibilityValues));
         if (visibleFields.length === 0) return null;
         return (
           <FormGroupSection key={group.key} group={group}>
