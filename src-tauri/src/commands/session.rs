@@ -627,15 +627,166 @@ pub async fn session_has_exec_capability(
     manager.session_has_exec_capability(&session_id).await
 }
 
-/// Start a download (remote → local) over a session's SFTP connection.
+/// The concrete executor backing a session-based queued transfer, resolved from
+/// the live session so credentials never cross into the frontend (PROD-010).
+enum SessionTransferTarget {
+    /// SFTP-backed session (SSH): runs on a cloned browser that shares the SFTP
+    /// connection, driving a dedicated per-transfer channel.
+    Sftp(std::sync::Arc<termihub_core::backends::ssh::SftpFileBrowser>),
+    /// FTP-backed session: runs on its own connection built from the
+    /// server-resolved [`FtpConfig`](termihub_core::config::FtpConfig).
+    #[cfg(feature = "ftp")]
+    Ftp(termihub_core::config::FtpConfig),
+}
+
+/// Resolve how a session's queued transfer should run: SFTP (dedicated channel)
+/// or FTP (server-resolved settings, credentials never leaving the backend).
+///
+/// Tries the SFTP browser first (the fast, unchanged path); an SFTP-incapable
+/// session then tries the FTP config. A byte-based backend (Docker / remote-agent)
+/// supports neither and surfaces the SFTP "not supported" error, so the queue
+/// path stays reserved for backends that can actually drive it (PROD-010).
+async fn resolve_session_transfer_target(
+    manager: &SessionManager,
+    session_id: &str,
+) -> Result<SessionTransferTarget, TerminalError> {
+    match manager.sftp_transfer_browser(session_id).await {
+        Ok(browser) => Ok(SessionTransferTarget::Sftp(browser)),
+        Err(sftp_err) => {
+            #[cfg(feature = "ftp")]
+            {
+                match manager.ftp_transfer_config(session_id).await {
+                    Ok(config) => Ok(SessionTransferTarget::Ftp(config)),
+                    // Neither SFTP- nor FTP-backed: preserve the SFTP
+                    // "not supported" error shape the callers expect.
+                    Err(_) => Err(sftp_err),
+                }
+            }
+            #[cfg(not(feature = "ftp"))]
+            {
+                Err(sftp_err)
+            }
+        }
+    }
+}
+
+/// Spawn the background executor for a resolved transfer target, driving the
+/// shared [`TransferHandle`] the same way for SFTP and FTP.
+fn spawn_session_transfer(
+    target: SessionTransferTarget,
+    direction: TransferDirection,
+    remote_path: String,
+    local_path: String,
+    handle: std::sync::Arc<transfer::registry::TransferHandle>,
+    registry: TransferRegistry,
+    sink: transfer::ProgressSink,
+) {
+    match target {
+        SessionTransferTarget::Sftp(browser) => {
+            tauri::async_runtime::spawn(async move {
+                transfer::sftp::run_sftp_transfer(
+                    browser,
+                    direction,
+                    remote_path,
+                    local_path,
+                    handle,
+                    registry,
+                    sink,
+                    transfer::sftp::DEFAULT_RESUME_MODE,
+                    0,
+                )
+                .await;
+            });
+        }
+        #[cfg(feature = "ftp")]
+        SessionTransferTarget::Ftp(config) => {
+            use termihub_core::backends::ftp::FtpDirection;
+            let ftp_direction = match direction {
+                TransferDirection::Download => FtpDirection::Download,
+                TransferDirection::Upload => FtpDirection::Upload,
+            };
+            tauri::async_runtime::spawn(async move {
+                transfer::ftp::run_ftp_transfer(
+                    config,
+                    ftp_direction,
+                    remote_path,
+                    local_path,
+                    handle,
+                    registry,
+                    sink,
+                )
+                .await;
+            });
+        }
+    }
+}
+
+/// Enqueue a session-based queued transfer, persist its metadata, and spawn its
+/// background executor, returning the `transfer_id` immediately.
+///
+/// The shared body of [`session_download`] / [`session_upload`]: it resolves the
+/// SFTP-or-FTP executor up front (so an unsupported / unreachable session errors
+/// here rather than silently on the queue), enqueues on the rich queue model,
+/// records durable metadata (paths and references only — never credentials,
+/// PROD-0011), and hands off to [`spawn_session_transfer`]. The copy does not
+/// hold the session lock, so listing / navigating stays live during the transfer
+/// (#1245), and the generic `transfer_pause`/`resume`/`retry` commands apply.
+async fn start_session_transfer(
+    session_id: String,
+    remote_path: String,
+    local_path: String,
+    direction: TransferDirection,
+    manager: State<'_, SessionManager>,
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, TerminalError> {
+    let target = resolve_session_transfer_target(&manager, &session_id).await?;
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    let file_name = file_name_of(&remote_path);
+    let handle = registry.enqueue(
+        &transfer_id,
+        &session_id,
+        direction,
+        &file_name,
+        &remote_path,
+        0,
+    );
+    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
+        pm.record_registration(
+            &transfer_id,
+            &session_id,
+            direction,
+            &file_name,
+            &remote_path,
+            Some(local_path.clone()),
+            0,
+        );
+    }
+    let registry = (*registry).clone();
+    let sink = transfer::app_progress_sink(app_handle);
+    spawn_session_transfer(
+        target,
+        direction,
+        remote_path,
+        local_path,
+        handle,
+        registry,
+        sink,
+    );
+    Ok(transfer_id)
+}
+
+/// Start a download (remote → local) over a session's file connection.
 ///
 /// Enqueues a `transfer_id` on the **rich** transfer-queue model and runs it in
-/// the background on a dedicated SFTP channel, returning the id immediately —
+/// the background on its own channel/connection, returning the id immediately —
 /// the copy does not hold the session lock, so listing / navigating the same
 /// session stays live during the transfer (#1245). Progress and completion are
-/// reported via `transfer-progress` events. Because it rides the rich model, the
-/// generic `transfer_pause`/`resume`/`retry` commands now work for SFTP, with
-/// byte-verified offset resume (PROD-0012).
+/// reported via `transfer-progress` events. Supports SFTP (dedicated channel)
+/// and FTP (server-resolved settings, credentials never crossing into the
+/// frontend — PROD-010); pause/resume/retry work via the generic `transfer_*`
+/// commands, with byte-verified offset resume for SFTP (PROD-0012).
 #[tauri::command]
 pub async fn session_download(
     session_id: String,
@@ -645,60 +796,25 @@ pub async fn session_download(
     registry: State<'_, TransferRegistry>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, TerminalError> {
-    debug!(session_id, remote_path, local_path, "Session SFTP download");
-    // Resolve (and validate) the SFTP browser up front so an unsupported /
-    // unreachable session errors here rather than silently on the queue.
-    let browser = manager.sftp_transfer_browser(&session_id).await?;
-
-    let transfer_id = uuid::Uuid::new_v4().to_string();
-    let file_name = file_name_of(&remote_path);
-    let handle = registry.enqueue(
-        &transfer_id,
-        &session_id,
+    debug!(session_id, remote_path, local_path, "Session download");
+    start_session_transfer(
+        session_id,
+        remote_path,
+        local_path,
         TransferDirection::Download,
-        &file_name,
-        &remote_path,
-        0,
-    );
-    // Durable queue (PROD-0011): persist this transfer's metadata (paths and
-    // references only — never credentials) so a restart can rehydrate it as
-    // paused. Best-effort; skipped if persistence is unavailable.
-    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
-        pm.record_registration(
-            &transfer_id,
-            &session_id,
-            TransferDirection::Download,
-            &file_name,
-            &remote_path,
-            Some(local_path.clone()),
-            0,
-        );
-    }
-    let registry = (*registry).clone();
-    let sink = transfer::app_progress_sink(app_handle);
-    tauri::async_runtime::spawn(async move {
-        transfer::sftp::run_sftp_transfer(
-            browser,
-            TransferDirection::Download,
-            remote_path,
-            local_path,
-            handle,
-            registry,
-            sink,
-            transfer::sftp::DEFAULT_RESUME_MODE,
-            0,
-        )
-        .await;
-    });
-    Ok(transfer_id)
+        manager,
+        registry,
+        app_handle,
+    )
+    .await
 }
 
-/// Start an upload (local → remote) over a session's SFTP connection.
+/// Start an upload (local → remote) over a session's file connection.
 ///
 /// Enqueues a `transfer_id` on the rich transfer-queue model and runs it in the
-/// background on a dedicated SFTP channel, returning the id immediately (#1245).
-/// Mirrors [`session_download`]; pause/resume/retry work via the generic
-/// `transfer_*` commands with byte-verified offset resume (PROD-0012).
+/// background on its own channel/connection, returning the id immediately
+/// (#1245). Mirrors [`session_download`]: SFTP uses a dedicated channel and FTP a
+/// server-resolved connection (credentials never leaving the backend — PROD-010).
 #[tauri::command]
 pub async fn session_upload(
     session_id: String,
@@ -708,49 +824,36 @@ pub async fn session_upload(
     registry: State<'_, TransferRegistry>,
     app_handle: tauri::AppHandle,
 ) -> Result<String, TerminalError> {
-    debug!(session_id, local_path, remote_path, "Session SFTP upload");
-    let browser = manager.sftp_transfer_browser(&session_id).await?;
-
-    let transfer_id = uuid::Uuid::new_v4().to_string();
-    let file_name = file_name_of(&remote_path);
-    let handle = registry.enqueue(
-        &transfer_id,
-        &session_id,
+    debug!(session_id, local_path, remote_path, "Session upload");
+    start_session_transfer(
+        session_id,
+        remote_path,
+        local_path,
         TransferDirection::Upload,
-        &file_name,
-        &remote_path,
-        0,
-    );
-    // Durable queue (PROD-0011): persist metadata only (paths/references, never
-    // credentials) so a restart can rehydrate this upload as paused.
-    if let Some(pm) = app_handle.try_state::<TransferPersistenceManager>() {
-        pm.record_registration(
-            &transfer_id,
-            &session_id,
-            TransferDirection::Upload,
-            &file_name,
-            &remote_path,
-            Some(local_path.clone()),
-            0,
-        );
-    }
-    let registry = (*registry).clone();
-    let sink = transfer::app_progress_sink(app_handle);
-    tauri::async_runtime::spawn(async move {
-        transfer::sftp::run_sftp_transfer(
-            browser,
-            TransferDirection::Upload,
-            remote_path,
-            local_path,
-            handle,
-            registry,
-            sink,
-            transfer::sftp::DEFAULT_RESUME_MODE,
-            0,
-        )
-        .await;
-    });
-    Ok(transfer_id)
+        manager,
+        registry,
+        app_handle,
+    )
+    .await
+}
+
+/// Report whether a session can drive the rich transfer-queue model — i.e.
+/// whether [`session_download`] / [`session_upload`] will register a tracked,
+/// pausable/resumable transfer for it rather than the frontend's blocking
+/// byte-based fallback.
+///
+/// Returns `true` for an SFTP-backed (SSH) or FTP-backed session and `false` for
+/// a byte-based backend (Docker / remote-agent) or an unknown session. The
+/// frontend uses this to route FTP transfers through the queue exactly like SFTP
+/// while leaving Docker/agent on the byte-based path (PROD-010).
+#[tauri::command]
+pub async fn session_supports_transfer_queue(
+    session_id: String,
+    manager: State<'_, SessionManager>,
+) -> Result<bool, TerminalError> {
+    Ok(resolve_session_transfer_target(&manager, &session_id)
+        .await
+        .is_ok())
 }
 
 /// Open a remote file in VS Code over a session's SFTP connection: download,

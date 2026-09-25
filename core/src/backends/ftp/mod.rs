@@ -47,6 +47,21 @@ use tokio_util::sync::CancellationToken;
 /// Password sent for anonymous logins (a conventional email-style placeholder).
 const ANONYMOUS_PASSWORD: &str = "anonymous@termihub";
 
+/// Recover the [`FtpConfig`] backing a `&dyn FileBrowser`, if it is an FTP
+/// browser; `None` for any other backend.
+///
+/// Lets a session-scoped caller holding only a `&dyn FileBrowser` resolve the
+/// connection settings needed to launch a queued FTP transfer — server-side, so
+/// credentials are never round-tripped through the frontend — without the
+/// concrete [`FtpFileBrowser`] type leaving this crate (PROD-010). Mirrors how
+/// the SFTP path downcasts a `&dyn FileBrowser` to reach its transfer handle.
+pub fn ftp_config_of(browser: &dyn FileBrowser) -> Option<FtpConfig> {
+    browser
+        .as_any()?
+        .downcast_ref::<FtpFileBrowser>()
+        .map(FtpFileBrowser::config)
+}
+
 /// FTP / FTPS backend, implementing [`ConnectionType`].
 ///
 /// # Lifecycle

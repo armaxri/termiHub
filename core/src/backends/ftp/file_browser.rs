@@ -18,6 +18,7 @@
 //! data-channel fallback one step (extended passive → passive), so a server that
 //! rejects `EPSV` degrades gracefully to classic `PASV`.
 
+use std::any::Any;
 use std::future::Future;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -71,6 +72,18 @@ impl FtpFileBrowser {
     /// A clone of the shared control-connection handle, for the keep-alive task.
     pub(crate) fn shared_client(&self) -> Arc<Mutex<Option<AsyncRustlsFtpStream>>> {
         self.client.clone()
+    }
+
+    /// The connection settings backing this browser, cloned.
+    ///
+    /// Lets a session-scoped caller (holding only a `&dyn FileBrowser`, via
+    /// [`ftp_config_of`](super::ftp_config_of)) recover the settings needed to
+    /// launch a queued FTP transfer on its own connection — mirroring how the
+    /// SFTP path clones its browser to run a transfer without holding the session
+    /// lock. The settings never leave the backend: they are resolved server-side
+    /// so credentials are never round-tripped through the frontend (PROD-010).
+    pub(crate) fn config(&self) -> FtpConfig {
+        self.config.clone()
     }
 
     /// Test-only: forcibly tear the live control connection down to simulate a
@@ -321,6 +334,14 @@ impl FileBrowser for FtpFileBrowser {
     /// FTP has no server-side copy command, so same-backend copy is unsupported.
     async fn copy(&self, _src: &str, _dest: &str) -> Result<(), FileError> {
         Err(FileError::NotSupported)
+    }
+
+    /// Expose the concrete browser so a session-scoped caller holding only a
+    /// `&dyn FileBrowser` can recover the [`FtpConfig`] (via
+    /// [`ftp_config_of`](super::ftp_config_of)) needed to launch a queued FTP
+    /// transfer, mirroring the SFTP browser's downcast hook (PROD-010).
+    fn as_any(&self) -> Option<&dyn Any> {
+        Some(self)
     }
 }
 

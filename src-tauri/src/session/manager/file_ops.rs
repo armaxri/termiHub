@@ -201,4 +201,19 @@ impl SessionManager {
     ) -> Result<Arc<SftpFileBrowser>, TerminalError> {
         self.file_ops().sftp_browser(session_id).await
     }
+
+    /// Resolve the [`FtpConfig`](termihub_core::config::FtpConfig) backing an
+    /// FTP session so a background transfer can run on its own connection,
+    /// mirroring [`sftp_transfer_browser`](Self::sftp_transfer_browser).
+    ///
+    /// The settings are resolved server-side from the live session's file
+    /// browser, so FTP credentials are never round-tripped through the frontend
+    /// (PROD-010). See [`FileOps::ftp_transfer_config`](crate::session::file_ops).
+    #[cfg(feature = "ftp")]
+    pub async fn ftp_transfer_config(
+        &self,
+        session_id: &str,
+    ) -> Result<termihub_core::config::FtpConfig, TerminalError> {
+        self.file_ops().ftp_transfer_config(session_id).await
+    }
 }
