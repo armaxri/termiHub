@@ -9,7 +9,8 @@ subsystem: .github/workflows/release.yml
 evidence:
   - .github/workflows/release.yml:550
   - .github/workflows/release.yml:567
-status: open
+status: fixed
+resolution: "#3362 — latest git tag + notify job removed (maintainer decision); prerelease by default, TERMIHUB_STABLE_RELEASE opt-in, mark-latest after verify-release"
 ---
 
 ## What
