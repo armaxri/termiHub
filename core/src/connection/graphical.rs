@@ -381,13 +381,14 @@ impl FrameUpdate {
             return Err(FrameViolation::Oversize { width, height });
         }
         let mut dropped = Vec::new();
-        self.rects.retain(|rect| match rect.check_within(width, height) {
-            Ok(()) => true,
-            Err(violation) => {
-                dropped.push(violation);
-                false
-            }
-        });
+        self.rects
+            .retain(|rect| match rect.check_within(width, height) {
+                Ok(()) => true,
+                Err(violation) => {
+                    dropped.push(violation);
+                    false
+                }
+            });
         Ok(SanitizedFrame {
             frame: self,
             dropped,
