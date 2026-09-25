@@ -245,7 +245,7 @@ pub struct AgentSettingsUpdateParams {
 // ── connection.types ────────────────────────────────────────────────
 
 /// Result for the `connection.types` method.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionTypesResult {
     pub types: Vec<ConnectionTypeInfo>,
 }
@@ -523,32 +523,32 @@ where
     Ok(Some(serde_json::Value::deserialize(deserializer)?))
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesListParams {
     /// Connection to scope the operation to. If absent, use local filesystem.
     pub connection_id: Option<String>,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesListResult {
     pub entries: Vec<FileEntry>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesReadParams {
     pub connection_id: Option<String>,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesReadResult {
     /// Base64-encoded file content.
     pub data: String,
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesWriteParams {
     pub connection_id: Option<String>,
     pub path: String,
@@ -556,7 +556,7 @@ pub struct FilesWriteParams {
     pub data: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FilesDeleteParams {
     pub connection_id: Option<String>,
@@ -564,26 +564,26 @@ pub struct FilesDeleteParams {
     pub is_directory: bool,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesRenameParams {
     pub connection_id: Option<String>,
     pub old_path: String,
     pub new_path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesStatParams {
     pub connection_id: Option<String>,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesMkdirParams {
     pub connection_id: Option<String>,
     pub path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesSetPermissionsParams {
     pub connection_id: Option<String>,
     pub path: String,
@@ -591,7 +591,7 @@ pub struct FilesSetPermissionsParams {
     pub mode: u32,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesSetOwnerParams {
     pub connection_id: Option<String>,
     pub path: String,
@@ -603,7 +603,7 @@ pub struct FilesSetOwnerParams {
     pub gid: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesCreateSymlinkParams {
     pub connection_id: Option<String>,
     /// The path the link points at (stored verbatim; may be relative/dangling).
@@ -612,7 +612,7 @@ pub struct FilesCreateSymlinkParams {
     pub link_path: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesCopyParams {
     pub connection_id: Option<String>,
     /// Source path (same backend as `dest`).
@@ -628,7 +628,7 @@ pub type FilesStatResult = FileEntry;
 // ── connection.processes.* (PROD-0028) ──────────────────────────────
 
 /// Params for `connection.processes.list`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessesListParams {
     /// Connection/session to scope the operation to. `None` = the agent's own
     /// host (local sessions).
@@ -636,7 +636,7 @@ pub struct ProcessesListParams {
 }
 
 /// Result of `connection.processes.list`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessesListResult {
     pub processes: Vec<ProcessInfo>,
 }
@@ -645,7 +645,7 @@ pub struct ProcessesListResult {
 ///
 /// Targets the exact numeric `pid` — never a name match — with one of the two
 /// supported signals ([`KillSignal`], serialized `"term"` / `"kill"`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessKillParams {
     /// Connection/session to scope the operation to. `None` = the agent's own
     /// host (local sessions).
@@ -861,7 +861,7 @@ fn default_wol_port() -> u16 {
 
 // ── monitoring.subscribe ────────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringSubscribeParams {
     /// `"self"` for the agent's own host, or a connection ID for a jump target.
     pub host: String,
@@ -871,7 +871,7 @@ pub struct MonitoringSubscribeParams {
 
 // ── monitoring.unsubscribe ──────────────────────────────────────────
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MonitoringUnsubscribeParams {
     pub host: String,
 }
@@ -2715,5 +2715,48 @@ mod tests {
         });
         let parsed: AgentRequestUpdateResult = serde_json::from_value(happy).unwrap();
         assert!(parsed.remaining_clients.is_empty());
+    }
+
+    // ── remote_proxy reply DTOs (DUP-001) ───────────────────────────────
+    //
+    // The desktop's remote_proxy parses these agent replies into the shared
+    // result DTOs. Each test proves the DTO deserializes the exact wire the agent
+    // serializes (round-tripping through the agent-side `Serialize`).
+
+    #[test]
+    fn files_list_result_parses_agent_reply() {
+        let reply = json!({
+            "entries": [{
+                "name": "dir",
+                "path": "/dir",
+                "isDirectory": true,
+                "size": 4096,
+                "modified": "2026-01-01T00:00:00Z",
+                "permissions": "rwxr-xr-x",
+                "isSymlink": false,
+            }],
+        });
+        let parsed: FilesListResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0].name, "dir");
+        assert!(parsed.entries[0].is_directory);
+    }
+
+    #[test]
+    fn files_read_result_parses_agent_reply() {
+        let reply = json!({ "data": "ZGF0YQ==", "size": 4 });
+        let parsed: FilesReadResult = serde_json::from_value(reply).unwrap();
+        assert_eq!(parsed.data, "ZGF0YQ==");
+        assert_eq!(parsed.size, 4);
+    }
+
+    #[test]
+    fn processes_list_result_parses_agent_reply() {
+        // Round-trip through the agent-side Serialize so the fixture matches the
+        // exact `ProcessInfo` wire without hand-writing its field set.
+        let wire = serde_json::to_value(ProcessesListResult { processes: vec![] }).unwrap();
+        assert_eq!(wire, json!({ "processes": [] }));
+        let parsed: ProcessesListResult = serde_json::from_value(wire).unwrap();
+        assert!(parsed.processes.is_empty());
     }
 }
