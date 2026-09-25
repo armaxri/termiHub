@@ -215,6 +215,12 @@ pub struct StagedBinary {
     /// no-upload path (the caller falls back to an immediate deploy and never
     /// reads it).
     pub expected_sha256: String,
+    /// Base64 Ed25519 signature of the uploaded binary, read from the `.sig`
+    /// sidecar next to the resolved binary and sent as the `signature` on
+    /// `agent.request_update` (AGT-005, #3213). `None` when the binary is
+    /// unsigned (local/dev builds) — a release-built agent then refuses the
+    /// update with `UPDATE_SIGNATURE_REJECTED`.
+    pub signature: Option<String>,
 }
 
 /// Whether a coordinated desktop-push update can use the agent's self-swap path
@@ -581,6 +587,7 @@ pub fn stage_agent_binary(
             is_windows: true,
             upload_path: None,
             expected_sha256: String::new(),
+            signature: None,
         });
     }
 
@@ -656,6 +663,9 @@ pub fn stage_agent_binary(
     // AGT-004: compute the SHA-256 of exactly the bytes we upload, so the agent
     // can re-verify the staged binary against it immediately before the swap.
     let expected_sha256 = agent_binary::sha256_hex_of_bytes(&binary_bytes);
+    // AGT-005: forward the published signature of these bytes, if any; the
+    // agent verifies it against its compiled-in release key before the swap.
+    let signature = agent_binary::read_signature_sidecar(&binary_path);
     upload_bytes_via_sftp(&session, &binary_bytes, &plan.upload_path)?;
     if let Err(e) = bail_if_cancelled(cancel) {
         rollback_partial_upload(&session, &plan.upload_path);
@@ -678,6 +688,7 @@ pub fn stage_agent_binary(
         remote_os,
         is_windows: false,
         expected_sha256,
+        signature,
         upload_path: Some(plan.upload_path),
     })
 }
