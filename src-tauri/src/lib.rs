@@ -610,6 +610,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::set_session_line_ending,
             commands::session::resize_terminal,
             commands::session::close_terminal,
+            commands::session::reclaim_session,
             commands::session::list_local_sessions,
             commands::session::list_available_shells,
             commands::session::get_default_shell,
