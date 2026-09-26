@@ -873,6 +873,40 @@ describe("useSessionFileSystem — mutation + clipboard wiring", () => {
     expect(currentFileBrowsersView().clipboard).toBeNull();
   });
 
+  it("pasteEntry with an explicit clipboard + destDir renames into that folder and keeps the user clipboard", async () => {
+    const api = await mountHook("/remote/dir");
+    useAppStore.getState().setFileClipboard(null);
+    await act(async () => {
+      await api.pasteEntry({
+        clipboard: {
+          entries: [
+            {
+              name: "a.txt",
+              path: "/remote/dir/a.txt",
+              isDirectory: false,
+              size: 1,
+              modified: "",
+              permissions: null,
+              writable: null,
+            },
+          ],
+          operation: "cut",
+          sourceMode: "session",
+          sourcePath: "/remote/dir",
+          terminalSessionId: "ssh-1",
+        },
+        destDir: "/remote/dir/sub",
+        verb: "Move",
+      });
+    });
+    expect(vi.mocked(sessionRenameFile)).toHaveBeenCalledWith(
+      "ssh-1",
+      "/remote/dir/a.txt",
+      "/remote/dir/sub/a.txt"
+    );
+    expect(currentFileBrowsersView().clipboard).toBeNull();
+  });
+
   it("pasteEntry uploads a local→session clipboard over the SFTP channel", async () => {
     const api = await mountHook("/remote/dir");
     useAppStore.getState().setFileClipboard({

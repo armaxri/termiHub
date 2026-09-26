@@ -493,6 +493,53 @@ describe("useLocalFileSystem — action wiring", () => {
     expect(currentFileBrowsersView().clipboard).toBeNull();
   });
 
+  it("pasteEntry with an explicit clipboard + destDir moves there and keeps the user clipboard", async () => {
+    const api = await mountHook("/home/user");
+    const userClip = {
+      entries: [
+        {
+          name: "keep.txt",
+          path: "/else/keep.txt",
+          isDirectory: false,
+          size: 1,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "cut" as const,
+      sourceMode: "local" as const,
+      sourcePath: "/else",
+    };
+    act(() => {
+      useAppStore.getState().setFileClipboard(userClip);
+    });
+    await act(async () => {
+      await api.pasteEntry({
+        clipboard: {
+          entries: [
+            {
+              name: "dir",
+              path: "/home/user/dir",
+              isDirectory: true,
+              size: 0,
+              modified: "",
+              permissions: null,
+              writable: null,
+            },
+          ],
+          operation: "cut",
+          sourceMode: "local",
+          sourcePath: "/home/user",
+        },
+        destDir: "/home/user/target/",
+      });
+    });
+    expect(vi.mocked(localRename)).toHaveBeenCalledWith("/home/user/dir", "/home/user/target/dir");
+    // The one-shot drag clipboard never clears the user's own cut clipboard.
+    expect(currentFileBrowsersView().clipboard?.entries[0].name).toBe("keep.txt");
+  });
+
   it("pasteEntry is a no-op with an empty clipboard", async () => {
     const api = await mountHook();
     act(() => {
