@@ -155,6 +155,24 @@ export function flattenPnpmLicenses(report) {
 }
 
 /**
+ * Find workflow pins of cargo-about that differ from {@link CARGO_ABOUT_VERSION}.
+ *
+ * @param {Record<string, string>} workflows - workflow file name -> contents.
+ * @returns {string[]} human-readable problems (empty when every pin matches).
+ */
+export function cargoAboutPinProblems(workflows) {
+  const problems = [];
+  for (const [file, text] of Object.entries(workflows)) {
+    for (const match of text.matchAll(/cargo-about@([^\s'"]+)/g)) {
+      if (match[1] !== CARGO_ABOUT_VERSION) {
+        problems.push(`${file} pins cargo-about@${match[1]}, expected ${CARGO_ABOUT_VERSION}`);
+      }
+    }
+  }
+  return problems;
+}
+
+/**
  * Compare about.toml's accepted list with the cargo-deny allowlists.
  *
  * @param {{about: string, deny: string, sidecarDeny: string | null}} files - config texts.
@@ -216,6 +234,15 @@ export function runCheck(root) {
   }
   if (!existsSync(path.join(root, "THIRD_PARTY_LICENSES.md")))
     problems.push("missing THIRD_PARTY_LICENSES.md");
+  const workflowDir = path.join(root, ".github", "workflows");
+  if (existsSync(workflowDir)) {
+    const workflows = Object.fromEntries(
+      readdirSync(workflowDir)
+        .filter((name) => name.endsWith(".yml"))
+        .map((name) => [name, readFileSync(path.join(workflowDir, name), "utf8")])
+    );
+    problems.push(...cargoAboutPinProblems(workflows));
+  }
 
   const allowed = new Set(tomlStringArray(readText(root, "deny.toml"), "allow", "licenses") ?? []);
   const packages = loadPnpmLicenses(root);

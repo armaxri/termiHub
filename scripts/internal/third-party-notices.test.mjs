@@ -10,6 +10,8 @@ import {
   wrapList,
 } from "./third-party-notices-model.mjs";
 import {
+  CARGO_ABOUT_VERSION,
+  cargoAboutPinProblems,
   configProblems,
   externalNoticeBody,
   flattenPnpmLicenses,
@@ -107,6 +109,20 @@ describe("configProblems", () => {
         sidecarDeny: read("rdp-sidecar/deny.toml"),
       })
     ).toEqual([]);
+  });
+});
+
+describe("cargoAboutPinProblems", () => {
+  it("accepts workflows pinning the generator's version", () => {
+    expect(
+      cargoAboutPinProblems({ "a.yml": `tool: cargo-about@${CARGO_ABOUT_VERSION}\n` })
+    ).toEqual([]);
+  });
+
+  it("flags a drifted pin", () => {
+    expect(cargoAboutPinProblems({ "a.yml": "tool: cargo-about@0.1.0" })).toEqual([
+      `a.yml pins cargo-about@0.1.0, expected ${CARGO_ABOUT_VERSION}`,
+    ]);
   });
 });
 
