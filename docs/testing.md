@@ -1123,6 +1123,17 @@ scripts\smoke-test.cmd src-tauri\target\release\termihub.exe
 - **Linux/Windows without tauri-driver**: Falls back to process-based checks — verifies app launches, stays alive, and exits cleanly. UI interaction checks (3-6) are skipped.
 - **macOS**: Uses `osascript` for window verification. UI interaction checks (3-6) are skipped because tauri-driver does not support macOS (no WKWebView driver). See [E2E platform constraint](testing.md#platform-support).
 
+### Release Install Smokes (CI)
+
+Every published release is install- and launch-smoked on hosted runners by four
+workflows that fire after the Release workflow: Linux x64 and arm64 (which run this
+script or `--version`), plus macOS arm64 + Intel (DMG) and Windows x64 (MSI). The
+macOS and Windows smokes do not use this script — they launch the installed app and
+wait for its frontend's first IPC call to reach the backend in the durable app log,
+which works without WebDriver or System Events access. See
+[Post-Release Install Smokes](contributing.md#post-release-install-smokes) for what
+each one asserts.
+
 ## Related Documentation
 
 - [Contributing](contributing.md) — Development setup, building, workflow, coding standards, and performance profiling
