@@ -9,8 +9,8 @@ subsystem: core/backends/serial, core/backends/telnet
 evidence:
   - core/src/backends/serial.rs:337
   - core/src/backends/telnet.rs:249
-status: fixed
-resolution: "#3398 — telnet NAWS negotiation + resize (serial has no in-band resize by nature)"
+status: partial
+resolution: "#3398 — telnet NAWS negotiation + resize done; serial half not yet verified/addressed"
 ---
 
 ## What
