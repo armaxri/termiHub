@@ -5,6 +5,8 @@ import { TooltipProvider } from "@/components/ui";
 import type { ShellEntry } from "@/types/connection";
 import { ShellIntegrationEntryEditor } from "./ShellIntegrationEntryEditor";
 import { createEntry } from "./shellIntegrationEntries";
+import { flushAsync } from "@/test/flushAsync";
+import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -112,5 +114,20 @@ describe("ShellIntegrationEntryEditor — container preference fields (#1447)", 
     const saved = onSave.mock.calls[0][0] as ShellEntry;
     expect(saved.containerImage).toBeUndefined();
     expect(saved.containerMount).toBeUndefined();
+  });
+
+  it("saves the renamed connection's new id (#3603)", async () => {
+    const events = installConnectionIdChangesHarness();
+    const onSave = vi.fn();
+    await renderEditor({ ...createEntry(), name: "Prod", connectionId: "Work/prod" }, onSave);
+    await flushAsync();
+
+    events.emit([{ oldId: "Work/prod", newId: "Job/prod" }]);
+    await act(async () => {
+      byTestId("shell-integration-entry-save")?.click();
+    });
+
+    expect(onSave).toHaveBeenCalledTimes(1);
+    expect((onSave.mock.calls[0][0] as ShellEntry).connectionId).toBe("Job/prod");
   });
 });
