@@ -20,16 +20,6 @@ pub fn sftp_cancel_transfer(transfer_id: String, registry: State<'_, TransferReg
 
 // --- Local filesystem commands ---
 
-/// Copy a file or directory on the local filesystem.
-#[tauri::command]
-pub fn local_copy(
-    src_path: String,
-    dest_path: String,
-    is_directory: bool,
-) -> Result<(), TerminalError> {
-    crate::files::local::copy_file(&src_path, &dest_path, is_directory)
-}
-
 /// Start a user-visible local copy, through the transfer queue when it is big
 /// enough to be worth tracking (PARITY-004, #3567).
 ///
@@ -39,7 +29,7 @@ pub fn local_copy(
 /// [`LOCAL_TRANSFER_SESSION`](crate::files::transfer::local::LOCAL_TRANSFER_SESSION)
 /// and copied in the background with progress, pause/resume, cancel and retry;
 /// the returned `transfer_id` identifies its queue row. A smaller file or a
-/// directory is copied directly (as [`local_copy`] does) and `None` is returned
+/// directory is copied directly (recursively, via `files::local::copy_file`) and `None` is returned
 /// once it has finished. WSL paths reach this as their host `\\wsl$` UNC
 /// paths, so a local ↔ WSL copy takes the same route.
 #[tauri::command]

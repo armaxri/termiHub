@@ -185,8 +185,8 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
     await renderLocal();
     setClipboard("x.txt", "/src", "copy");
     await clickPaste();
-    expect(calls("local_copy")).toEqual([
-      { srcPath: "/src/x.txt", destPath: "/home/x.txt", isDirectory: false },
+    expect(calls("local_copy_start")).toEqual([
+      { srcPath: "/src/x.txt", destPath: "/home/x.txt" },
     ]);
     expect(toastSuccess).toHaveBeenCalledWith(
       'Pasted "x.txt" to /home',
@@ -219,7 +219,7 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
   });
 
   it("shows an error toast for a failed local copy-paste", async () => {
-    failing = { local_copy: "No space left on device" };
+    failing = { local_copy_start: "No space left on device" };
     await renderLocal();
     setClipboard("x.txt", "/src", "copy");
     await clickPaste();
@@ -236,13 +236,13 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
     expect(q("file-move-conflict-dialog")).toBeTruthy();
     expect(q("file-move-conflict-dialog").textContent).toContain("Paste and Replace?");
     expect(q("file-move-conflict-dialog").textContent).toContain('"a.txt" already exists');
-    expect(calls("local_copy")).toEqual([]);
+    expect(calls("local_copy_start")).toEqual([]);
     await act(async () => {
       q("file-move-conflict-confirm").click();
     });
     await flushAsync();
-    expect(calls("local_copy")).toEqual([
-      { srcPath: "/src/a.txt", destPath: "/home/a.txt", isDirectory: false },
+    expect(calls("local_copy_start")).toEqual([
+      { srcPath: "/src/a.txt", destPath: "/home/a.txt" },
     ]);
     expect(toastSuccess).toHaveBeenCalledTimes(1);
   });

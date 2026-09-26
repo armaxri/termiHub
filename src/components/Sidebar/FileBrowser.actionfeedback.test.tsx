@@ -361,10 +361,9 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await renderLocal();
     await invokeContextAction("report.pdf", "context-file-download");
 
-    expect(mockedInvoke).toHaveBeenCalledWith("local_copy", {
+    expect(mockedInvoke).toHaveBeenCalledWith("local_copy_start", {
       srcPath: "/home/report.pdf",
       destPath: "/downloads/report.pdf",
-      isDirectory: false,
     });
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expect(String(toastSuccess.mock.calls[0][0])).toContain("report.pdf");
@@ -374,7 +373,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
   it("shows an error toast when a local download (Save-as) fails", async () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === "local_list_dir") return Promise.resolve(entries);
-      if (cmd === "local_copy") return Promise.reject(new Error("permission denied"));
+      if (cmd === "local_copy_start") return Promise.reject(new Error("permission denied"));
       return Promise.resolve(undefined);
     });
     await renderLocal();
@@ -390,7 +389,7 @@ describe("FileBrowser — mutating/clipboard action feedback (#1399)", () => {
     await renderLocal();
     await invokeContextAction("report.pdf", "context-file-download");
 
-    expect(mockedInvoke).not.toHaveBeenCalledWith("local_copy", expect.anything());
+    expect(mockedInvoke).not.toHaveBeenCalledWith("local_copy_start", expect.anything());
     expect(toastSuccess).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
   });

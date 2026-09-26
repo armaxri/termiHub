@@ -215,7 +215,7 @@ describe("FileBrowser — drag-to-move (PROD-006)", () => {
     expect(calls("local_rename")).toEqual([
       { oldPath: "/home/a.txt", newPath: "/home/docs/a.txt" },
     ]);
-    expect(calls("local_copy")).toEqual([]);
+    expect(calls("local_copy_start")).toEqual([]);
     expect(toastSuccess).toHaveBeenCalledWith(
       'Moved "a.txt" to /home/docs',
       expect.objectContaining({ id: "toast-id" })
@@ -225,8 +225,8 @@ describe("FileBrowser — drag-to-move (PROD-006)", () => {
   it("copies instead when Alt/Option is held", async () => {
     await renderLocal();
     await drop("/home/a.txt", "dir:/home/docs", true);
-    expect(calls("local_copy")).toEqual([
-      { srcPath: "/home/a.txt", destPath: "/home/docs/a.txt", isDirectory: false },
+    expect(calls("local_copy_start")).toEqual([
+      { srcPath: "/home/a.txt", destPath: "/home/docs/a.txt" },
     ]);
     expect(calls("local_rename")).toEqual([]);
   });
@@ -326,7 +326,7 @@ describe("FileBrowser — drag-to-move (PROD-006)", () => {
       q("move-to-submit").click();
     });
     await flushAsync();
-    expect(calls("local_copy")).toHaveLength(2);
+    expect(calls("local_copy_start")).toHaveLength(2);
     expect(calls("local_rename")).toEqual([]);
   });
 });
