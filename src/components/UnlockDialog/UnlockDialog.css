@@ -15,3 +15,15 @@
   justify-content: flex-start;
   margin-top: var(--spacing-xs);
 }
+
+.unlock-dialog__biometric-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.unlock-dialog__biometric-or {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}

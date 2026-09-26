@@ -1,5 +1,12 @@
-import { useState, useCallback, useEffect } from "react";
-import { unlockCredentialStore, resetCredentialStore } from "@/services/api";
+import { useState, useCallback, useEffect, useRef } from "react";
+import { Fingerprint } from "lucide-react";
+import {
+  unlockCredentialStore,
+  unlockCredentialStoreBiometric,
+  resetCredentialStore,
+  isBiometricUnlockError,
+} from "@/services/api";
+import { useOsAuthInfo } from "@/hooks/useOsAuthInfo";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, ConfirmDialog, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
@@ -33,6 +40,11 @@ function isCorruptStoreError(err: unknown): boolean {
  * password?" affordance opens a destructive, clearly-worded confirm before
  * wiping the store, so a forgotten password is a guarded reset rather than a
  * dead-end.
+ *
+ * When biometric unlock is turned on (PROD-064) the dialog offers it first:
+ * the Touch ID / Windows Hello prompt opens automatically once per opening,
+ * and the master password field stays available as the fallback (cancelling
+ * the OS prompt, or choosing "Use Master Password" in it, lands there).
  */
 export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
   const [password, setPassword] = useState("");
@@ -41,6 +53,12 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
   const [loading, setLoading] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [biometricPending, setBiometricPending] = useState(false);
+  const autoAttempted = useRef(false);
+  const { info: osAuth, refresh: refreshOsAuth } = useOsAuthInfo();
+  const biometric = osAuth?.biometricUnlock;
+  const biometricAvailable = Boolean(biometric?.supported && biometric.enabled);
+  const biometricLabel = biometric?.methodLabel ?? "biometrics";
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -51,8 +69,47 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
       setLoading(false);
       setResetting(false);
       setConfirmReset(false);
+      setBiometricPending(false);
     }
+    autoAttempted.current = false;
   }, [open]);
+
+  const handleBiometricUnlock = useCallback(async () => {
+    if (biometricPending) return;
+    setBiometricPending(true);
+    setError("");
+    try {
+      await unlockCredentialStoreBiometric();
+      toast.success("Credential store unlocked");
+      onOpenChange(false);
+    } catch (err) {
+      if (isBiometricUnlockError(err)) {
+        if (err.kind === "cancelled") {
+          // The user chose the master password (or dismissed the prompt).
+          setError("");
+        } else if (err.kind === "storeCorrupted") {
+          setCorrupt(true);
+          setError(err.message);
+        } else {
+          frontendLog("credential", `Biometric unlock failed (${err.kind})`);
+          setError(err.message);
+        }
+        if (err.kind === "invalidated" || err.kind === "notEnabled") void refreshOsAuth();
+      } else {
+        setError(errorMessage(err));
+      }
+    } finally {
+      setBiometricPending(false);
+    }
+  }, [biometricPending, onOpenChange, refreshOsAuth]);
+
+  // Offer biometrics first: prompt automatically once per opening.
+  useEffect(() => {
+    if (open && biometricAvailable && !autoAttempted.current) {
+      autoAttempted.current = true;
+      void handleBiometricUnlock();
+    }
+  }, [open, biometricAvailable, handleBiometricUnlock]);
 
   const handleUnlock = useCallback(async () => {
     if (!password || loading) return;
@@ -141,13 +198,27 @@ export function UnlockDialog({ open, onOpenChange }: UnlockDialogProps) {
       <p className="unlock-dialog__description">
         termiHub has saved credentials that are encrypted with your master password.
       </p>
+      {biometricAvailable && !corrupt && (
+        <div className="unlock-dialog__biometric-row">
+          <Button
+            variant="secondary"
+            icon={<Fingerprint size={14} />}
+            onClick={() => void handleBiometricUnlock()}
+            disabled={biometricPending}
+            data-testid="unlock-dialog-biometric"
+          >
+            {biometricPending ? `Waiting for ${biometricLabel}…` : `Unlock with ${biometricLabel}`}
+          </Button>
+          <span className="unlock-dialog__biometric-or">or enter your master password</span>
+        </div>
+      )}
       <PasswordInput
         className="ui-input"
         value={password}
         onChange={(e) => setPassword(e.target.value)}
         onKeyDown={handleKeyDown}
         placeholder="Master password"
-        autoFocus
+        autoFocus={!biometricAvailable}
         data-testid="unlock-dialog-input"
       />
       {error && (
