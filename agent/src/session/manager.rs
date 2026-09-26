@@ -2558,26 +2558,12 @@ mod tests {
             );
 
             // Another desktop opens it (its own plain, recovery-intent adoption).
-            // Retried like the real adoption: the daemon processes this worker's
-            // detach asynchronously.
+            // No retry: `detach` returns only once the daemon has released this
+            // worker's connection (#3410), so the session is free right now.
             let (peer_tx, mut peer_rx) = tokio::sync::mpsc::unbounded_channel();
-            let mut peer = None;
-            for _ in 0..40 {
-                match DaemonClient::connect_for_recovery(
-                    id.clone(),
-                    endpoint.clone(),
-                    peer_tx.clone(),
-                )
+            let peer = DaemonClient::connect_for_recovery(id.clone(), endpoint.clone(), peer_tx)
                 .await
-                {
-                    Ok(client) => {
-                        peer = Some(client);
-                        break;
-                    }
-                    Err(_) => tokio::time::sleep(std::time::Duration::from_millis(25)).await,
-                }
-            }
-            let peer = peer.expect("the other desktop opens the unheld session");
+                .expect("the other desktop opens the unheld session");
 
             // Re-opening it here is refused rather than a silent takeover.
             let err = mgr
@@ -2627,12 +2613,19 @@ mod tests {
             let tmp = tempfile::tempdir().unwrap();
             let (mgr, _rx) = manager_with_session(tmp.path(), &id, &endpoint);
             mgr.attach(&id).await.expect("open");
+            // Repeated so a detach that returns before the daemon processed it
+            // (#3410: the probe then still sees this worker as the holder) cannot
+            // slip through on a lucky schedule.
+            for round in 0..5 {
+                mgr.detach(&id).await.expect("detach");
+                assert_eq!(
+                    DaemonClient::probe_holder(&id, &endpoint).await.unwrap(),
+                    ProbeOutcome::Free,
+                    "a detached session is held by nobody (round {round})"
+                );
+                mgr.attach(&id).await.expect("re-open re-attaches");
+            }
             mgr.detach(&id).await.expect("detach");
-            assert_eq!(
-                DaemonClient::probe_holder(&id, &endpoint).await.unwrap(),
-                ProbeOutcome::Free,
-                "a detached session is held by nobody"
-            );
 
             mgr.attach(&id).await.expect("re-open re-attaches");
             assert_eq!(
