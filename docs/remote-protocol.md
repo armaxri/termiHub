@@ -284,34 +284,39 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                                                                                 |
-| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
-| 0.10.0          | 0.10.0        | Yes                                                                                                         |
-| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)    |
-| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                              |
-| 0.9.0           | 0.9.0         | Yes                                                                                                         |
-| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`) |
-| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                      |
-| 0.8.0           | 0.8.0         | Yes                                                                                                         |
-| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)              |
-| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                   |
-| 0.7.0           | 0.7.0         | Yes                                                                                                         |
-| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                    |
-| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                   |
-| 0.6.0           | 0.6.0         | Yes                                                                                                         |
-| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                        |
-| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                   |
-| 0.5.0           | 0.5.0         | Yes                                                                                                         |
-| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                           |
-| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                   |
-| 0.4.0           | 0.4.0         | Yes                                                                                                         |
-| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                             |
-| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                     |
-| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                         |
-| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                            |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                  |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                        |
-| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                         |
+| Desktop Version | Agent Version | Compatible?                                                                                                                   |
+| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| 0.11.0          | 0.11.0        | Yes                                                                                                                           |
+| 0.11.0          | 0.10.0        | Yes (no `embeddedServerActivity` — an agent-hosted server's panel says the access log is not supported by this agent version) |
+| 0.10.0          | 0.11.0        | Yes (new methods / capability ignored)                                                                                        |
+| 0.10.0          | 0.10.0        | Yes                                                                                                                           |
+| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)                      |
+| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                                                |
+| 0.9.0           | 0.9.0         | Yes                                                                                                                           |
+| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`)                   |
+| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                                        |
+| 0.8.0           | 0.8.0         | Yes                                                                                                                           |
+| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)                                |
+| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                                     |
+| 0.7.0           | 0.7.0         | Yes                                                                                                                           |
+| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                                      |
+| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                                     |
+| 0.6.0           | 0.6.0         | Yes                                                                                                                           |
+| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                                          |
+| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                                     |
+| 0.5.0           | 0.5.0         | Yes                                                                                                                           |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                                             |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                                     |
+| 0.4.0           | 0.4.0         | Yes                                                                                                                           |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                                               |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                                       |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                                           |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                                              |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                                    |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                                          |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                                           |
+
+**0.11.0 (additive, minor)** — adds the access log of agent-hosted embedded servers (#3453): the [`embedded_server.activity`](#embedded_serveractivity) / [`embedded_server.clear_activity`](#embedded_serverclear_activity) methods and the `capabilities.embeddedServerActivity` flag in the `initialize` result. Negotiation is by **capability**: the desktop calls the methods only when the hosting agent advertises `embeddedServerActivity: true`. Backwards compatible in both directions: a pre-0.11.0 agent never advertises the flag, so the desktop reads no log for its hosted servers (`get_embedded_server_activity` returns `null`) and the UI says the access log is not supported by this agent version; a `-32601` reply is treated the same way. A pre-0.11.0 desktop never calls the methods.
 
 **0.10.0 (additive, minor)** — adds the SSH keyboard-interactive prompt relay (#3375): the `clientCapabilities` object in the `initialize` **params**, the `capabilities.keyboardInteractivePrompts` flag in its result, the [`ssh.keyboard_interactive.prompt`](#sshkeyboard_interactiveprompt) / [`ssh.keyboard_interactive.closed`](#sshkeyboard_interactiveclosed) notifications, the [`ssh.keyboard_interactive.respond`](#sshkeyboard_interactiverespond) method, and the `-32024` / `-32025` error codes. Negotiation is by **capability** in the other direction from `toolStreaming`: the agent relays prompts only to a desktop that sent `clientCapabilities.keyboardInteractivePrompts: true`. Backwards compatible in both directions: an older desktop sends no `clientCapabilities`, so the agent keeps the pre-0.10.0 behaviour (auto-answer a lone password prompt, fail any OTP prompt with a clear error); an older agent ignores the member and never sends the notifications.
 
@@ -397,19 +402,20 @@ Handshake that establishes the protocol version and exchanges capabilities.
 
 On a successful `initialize`, the agent records the client (`client`, `client_version`, an agent-assigned `client_id`, and a `connected_since` timestamp) in its per-process `ConnectionRegistry` and clears it when the connection drops (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Because each `--stdio` process serves one client, the registry holds exactly one entry in the SSH-tunnelled deployment.
 
-| Result Field                              | Type                   | Description                                                                                                     |
-| ----------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `protocol_version`                        | `string`               | Negotiated protocol version                                                                                     |
-| `agent_version`                           | `string`               | Agent binary version                                                                                            |
-| `client_id`                               | `string`               | Agent-assigned id for this client (0.3.0+)                                                                      |
-| `capabilities.connectionTypes`            | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                                                    |
-| `capabilities.maxSessions`                | `integer`              | Maximum concurrent sessions                                                                                     |
-| `capabilities.availableShells`            | `string[]`             | Available shell paths                                                                                           |
-| `capabilities.availableSerialPorts`       | `string[]`             | Available serial port paths                                                                                     |
-| `capabilities.dockerAvailable`            | `boolean`              | Whether Docker is available                                                                                     |
-| `capabilities.availableDockerImages`      | `string[]`             | Available Docker image names                                                                                    |
-| `capabilities.toolStreaming`              | `boolean`              | Streaming tool runs supported — [`tool.start`](#toolstart) (0.9.0+; absent = `false`)                           |
-| `capabilities.keyboardInteractivePrompts` | `boolean`              | The agent relays SSH keyboard-interactive prompts to a desktop that advertised them (0.10.0+; absent = `false`) |
+| Result Field                              | Type                   | Description                                                                                                                                        |
+| ----------------------------------------- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocol_version`                        | `string`               | Negotiated protocol version                                                                                                                        |
+| `agent_version`                           | `string`               | Agent binary version                                                                                                                               |
+| `client_id`                               | `string`               | Agent-assigned id for this client (0.3.0+)                                                                                                         |
+| `capabilities.connectionTypes`            | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                                                                                       |
+| `capabilities.maxSessions`                | `integer`              | Maximum concurrent sessions                                                                                                                        |
+| `capabilities.availableShells`            | `string[]`             | Available shell paths                                                                                                                              |
+| `capabilities.availableSerialPorts`       | `string[]`             | Available serial port paths                                                                                                                        |
+| `capabilities.dockerAvailable`            | `boolean`              | Whether Docker is available                                                                                                                        |
+| `capabilities.availableDockerImages`      | `string[]`             | Available Docker image names                                                                                                                       |
+| `capabilities.toolStreaming`              | `boolean`              | Streaming tool runs supported — [`tool.start`](#toolstart) (0.9.0+; absent = `false`)                                                              |
+| `capabilities.keyboardInteractivePrompts` | `boolean`              | The agent relays SSH keyboard-interactive prompts to a desktop that advertised them (0.10.0+; absent = `false`)                                    |
+| `capabilities.embeddedServerActivity`     | `boolean`              | The agent serves an agent-hosted embedded server's access log — [`embedded_server.activity`](#embedded_serveractivity) (0.11.0+; absent = `false`) |
 
 > **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
 > (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
@@ -2445,6 +2451,98 @@ Report whether an agent-hosted embedded server is currently running. Reading the
 | `running`    | `boolean` | Whether the instance is currently hosted on this agent                                                                                 |
 | `status`     | `object?` | The service's lifecycle status (present only when running)                                                                             |
 | `state`      | `object?` | The latest status payload streamed on the event channel (present only when running, and only once at least one event has been emitted) |
+
+### `embedded_server.activity`
+
+Read the access log and detailed statistics of an embedded server hosted on this agent (#3453, protocol 0.11.0). Offered only by an agent whose `initialize` result carries `capabilities.embeddedServerActivity: true`. The log lives on the agent — each hosted server keeps the same bounded ring (1000 entries) and counters as a desktop-hosted one — and the desktop polls it incrementally while the server's activity panel is open.
+
+The snapshot is the same `ActivitySnapshot` the desktop returns for a server it hosts itself, so the **secrets policy is identical**: an entry never carries a password, an `Authorization` header or an HTTP query string — only the URL path, the FTP login name and the accepted Basic-auth username.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "embedded_server.activity",
+  "params": { "serverId": "srv-1730000000000-a1b2", "sinceSeq": 41 },
+  "id": 54
+}
+```
+
+| Param      | Type       | Description                                                                |
+| ---------- | ---------- | -------------------------------------------------------------------------- |
+| `serverId` | `string`   | The hosted server's `instanceId` (the one passed to `service.start`)       |
+| `sinceSeq` | `integer?` | Return only entries with a larger `seq`; all retained entries when omitted |
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "activity": {
+      "entries": [
+        {
+          "seq": 42,
+          "timestamp": "2026-09-26T10:00:00.000Z",
+          "client": "10.0.0.5",
+          "method": "GET",
+          "path": "/firmware.bin",
+          "status": "200",
+          "success": true,
+          "bytes": 2048,
+          "durationMs": 12
+        }
+      ],
+      "latestSeq": 42,
+      "epoch": 1,
+      "dropped": 0,
+      "capacity": 1000,
+      "stats": {
+        "activeConnections": 0,
+        "totalConnections": 7,
+        "bytesSent": 14336,
+        "bytesReceived": 0,
+        "totalRequests": 42,
+        "errors": 3,
+        "topPaths": [{ "key": "/firmware.bin", "count": 30 }],
+        "topClients": [{ "key": "10.0.0.5", "count": 40 }],
+        "currentTransfers": []
+      }
+    }
+  },
+  "id": 54
+}
+```
+
+| Result Field | Type      | Description                                                                                                                                                                                                                                                                          |
+| ------------ | --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `activity`   | `object?` | The server's `ActivitySnapshot`: `entries` newer than `sinceSeq` (oldest first), `latestSeq` (the next cursor), `epoch` (bumped on every clear), `dropped`, `capacity` and detailed `stats`; `null` when no such server is hosted on this agent (or the hosted service keeps no log) |
+
+### `embedded_server.clear_activity`
+
+Clear an agent-hosted embedded server's access log and its request / error / top-path / top-client counters (#3453, protocol 0.11.0). The log's `epoch` is bumped, so a reader holding buffered entries discards them. Clearing an unknown server is not an error.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "embedded_server.clear_activity",
+  "params": { "serverId": "srv-1730000000000-a1b2" },
+  "id": 55
+}
+```
+
+**Response:**
+
+```json
+{ "jsonrpc": "2.0", "result": { "cleared": true }, "id": 55 }
+```
+
+| Result Field | Type      | Description                                                        |
+| ------------ | --------- | ------------------------------------------------------------------ |
+| `cleared`    | `boolean` | Whether a hosted server with that id was found and its log cleared |
 
 ---
 
