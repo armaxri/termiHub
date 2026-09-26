@@ -17,7 +17,6 @@ import {
 } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import {
-  applyTheme,
   createCustomTheme,
   customThemeId,
   customThemeSetting,
@@ -33,6 +32,8 @@ import type { ThemeDefinition, ThemeImportResult } from "@/themes";
 import { ThemeEditor } from "@/components/ThemeEditor/ThemeEditor";
 import { ThemePreview } from "./ThemePreview";
 import { SettingsField } from "./SettingsField";
+import { WorkspaceOverrideNotice } from "./WorkspaceOverrideNotice";
+import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import "./AppearanceSettings.css";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -92,7 +93,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
   const closeEditor = () => {
     setEditing(null);
     // The editor previewed unsaved edits live; restore the persisted theme.
-    applyTheme(settings.theme, settings.customThemes);
+    applyEffectiveTheme(settings);
   };
 
   const handleSaveTheme = (theme: ThemeDefinition) => {
@@ -185,6 +186,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
       <h3 className="settings-panel__category-title">Appearance</h3>
       {show("theme") && (
         <>
+          <WorkspaceOverrideNotice settingKey="theme" label="Theme" />
           <SettingsField label="Theme" hint="Application color theme.">
             {/* Local provider so each option can reveal a hover preview even when
                 this panel renders outside the app-root TooltipProvider. */}
@@ -293,6 +295,9 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
         />
       )}
       {show("fontFamily") && (
+        <WorkspaceOverrideNotice settingKey="fontFamily" label="Font family" />
+      )}
+      {show("fontFamily") && (
         <SettingsField
           label="Font Family"
           hint="Terminal font family. Leave empty to use the default Nerd Font chain."
@@ -304,6 +309,7 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           />
         </SettingsField>
       )}
+      {show("fontSize") && <WorkspaceOverrideNotice settingKey="fontSize" label="Font size" />}
       {show("fontSize") && (
         <SettingsField label="Font Size" hint="Terminal font size in pixels (8–32).">
           <NumberInput

@@ -32,7 +32,7 @@ use termihub_core::connection::{
 };
 use termihub_core::errors::SessionError;
 
-use crate::session::frame_guard::{FrameGuard, FrameVerdict};
+use crate::session::frame_guard::{CursorGuard, FrameGuard, FrameVerdict};
 use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
@@ -849,12 +849,20 @@ pub(crate) async fn frame_pump<S: GraphicalEventSink>(
 }
 
 /// Pump cursor updates from the backend to `remote-desktop-cursor` events.
+///
+/// Every update passes the shared [`CursorGuard`] first (#3333): a cursor
+/// bitmap that is oversize, zero-sized, has its hotspot outside the image or a
+/// byte length other than `width * height * 4` is stripped (and logged), so no
+/// backend can hand the frontend an image sized from untrusted dimensions. The
+/// position / visibility part of the update is still emitted.
 pub(crate) async fn cursor_pump<S: GraphicalEventSink>(
     session_id: String,
     mut cursors: termihub_core::connection::CursorReceiver,
     sink: S,
 ) {
+    let mut guard = CursorGuard::new();
     while let Some(cursor) = cursors.recv().await {
+        let cursor = guard.admit(&session_id, cursor);
         sink.emit_cursor(&RemoteDesktopCursorEvent {
             session_id: session_id.clone(),
             cursor,
@@ -931,12 +939,15 @@ mod frame_pump_tests {
     use super::*;
     use crate::session::frame_guard::MAX_CONSECUTIVE_REJECTED_FRAMES;
     use std::sync::Mutex as StdMutex;
-    use termihub_core::connection::{DirtyRect, MAX_FRAMEBUFFER_DIMENSION};
+    use termihub_core::connection::{
+        CursorShape, DirtyRect, MAX_CURSOR_DIMENSION, MAX_FRAMEBUFFER_DIMENSION,
+    };
     use tokio::sync::mpsc;
 
     #[derive(Clone, Default)]
     struct Sink {
         frames: Arc<StdMutex<Vec<FrameUpdate>>>,
+        cursors: Arc<StdMutex<Vec<CursorUpdate>>>,
         states: Arc<StdMutex<Vec<RemoteDesktopStateEvent>>>,
     }
 
@@ -944,7 +955,9 @@ mod frame_pump_tests {
         fn emit_frame(&self, event: &RemoteDesktopFrameEvent) {
             self.frames.lock().unwrap().push(event.frame.clone());
         }
-        fn emit_cursor(&self, _: &RemoteDesktopCursorEvent) {}
+        fn emit_cursor(&self, event: &RemoteDesktopCursorEvent) {
+            self.cursors.lock().unwrap().push(event.cursor.clone());
+        }
         fn emit_clipboard(&self, _: &RemoteDesktopClipboardEvent) {}
         fn emit_state(&self, event: &RemoteDesktopStateEvent) {
             self.states.lock().unwrap().push(event.clone());
@@ -1017,6 +1030,61 @@ mod frame_pump_tests {
             }
         );
         assert!(sink.states.lock().unwrap().is_empty());
+    }
+
+    fn cursor(x: u32, shape: Option<CursorShape>) -> CursorUpdate {
+        CursorUpdate {
+            x,
+            y: 1,
+            visible: true,
+            shape,
+        }
+    }
+
+    fn cursor_shape(w: u32, h: u32, hx: u32, hy: u32, len: usize) -> CursorShape {
+        CursorShape {
+            width: w,
+            height: h,
+            hotspot_x: hx,
+            hotspot_y: hy,
+            data: vec![9u8; len],
+        }
+    }
+
+    #[tokio::test]
+    async fn hostile_cursor_shapes_never_reach_the_frontend() {
+        let good = cursor_shape(2, 2, 1, 1, 16);
+        let stream = vec![
+            // Oversize (RFB u16 max) and overflow-inducing dimensions.
+            cursor(1, Some(cursor_shape(65_535, 65_535, 0, 0, 0))),
+            cursor(2, Some(cursor_shape(u32::MAX, u32::MAX, 0, 0, 0))),
+            cursor(3, Some(cursor_shape(MAX_CURSOR_DIMENSION + 1, 1, 0, 0, 0))),
+            // Zero-sized, hotspot outside, byte length mismatch.
+            cursor(4, Some(cursor_shape(0, 4, 0, 0, 0))),
+            cursor(5, Some(cursor_shape(2, 2, 2, 0, 16))),
+            cursor(6, Some(cursor_shape(2, 2, 0, 0, 15))),
+            // Valid shape and a plain position update pass through.
+            cursor(7, Some(good.clone())),
+            cursor(8, None),
+        ];
+        let (tx, rx) = mpsc::channel(stream.len());
+        for c in stream {
+            tx.send(c).await.unwrap();
+        }
+        drop(tx);
+        let sink = Sink::default();
+        cursor_pump("s1".into(), rx, sink.clone()).await;
+        let cursors = sink.cursors.lock().unwrap();
+        // Every update still arrives (position/visibility kept, in order), but
+        // only the valid bitmap survives.
+        let expected: Vec<_> = (1..=8)
+            .map(|x| cursor(x, (x == 7).then(|| good.clone())))
+            .collect();
+        assert_eq!(*cursors, expected);
+        assert!(cursors
+            .iter()
+            .filter_map(|c| c.shape.as_ref())
+            .all(|s| s.check().is_ok()));
     }
 
     #[tokio::test]

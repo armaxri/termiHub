@@ -12,7 +12,10 @@ use tokio::{
 use tokio_util::compat::*;
 use tracing::*;
 
+use super::event_queue::{event_queue, EventReceiver, EventSender, MAX_QUEUED_EVENT_BYTES};
 use crate::{codec, PixelFormat, Rect, VncEncoding, VncError, VncEvent, X11Event};
+/// Count bound of the internal queues. The decoded-event queue is additionally
+/// bounded by bytes ([`MAX_QUEUED_EVENT_BYTES`], termiHub fork #3511).
 const CHANNEL_SIZE: usize = 4096;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -67,7 +70,7 @@ const MAX_DESKTOP_NAME_BYTES: u32 = 4096;
 /// #3473). A panic in the decoder must never take the host down silently: it is
 /// caught here, logged, and reported to the consumer as [`VncEvent::Error`] so
 /// the session ends cleanly like any other protocol error.
-async fn run_guarded<Fut>(task: &'static str, fut: Fut, report: Option<Sender<VncEvent>>)
+async fn run_guarded<Fut>(task: &'static str, fut: Fut, report: Option<EventSender>)
 where
     Fut: Future<Output = ()>,
 {
@@ -93,7 +96,7 @@ struct VncInner {
     name: String,
     screen: (u16, u16),
     input_ch: Sender<ClientMsg>,
-    output_ch: Receiver<VncEvent>,
+    output_ch: EventReceiver,
     decoding_stop: Option<oneshot::Sender<()>>,
     net_conn_stop: Option<oneshot::Sender<()>>,
     closed: bool,
@@ -107,13 +110,14 @@ impl VncInner {
         shared: bool,
         mut pixel_format: Option<PixelFormat>,
         encodings: Vec<VncEncoding>,
+        event_budget: usize,
     ) -> Result<Self, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let (conn_ch_tx, conn_ch_rx) = channel(CHANNEL_SIZE);
         let (input_ch_tx, input_ch_rx) = channel(CHANNEL_SIZE);
-        let (output_ch_tx, output_ch_rx) = channel(CHANNEL_SIZE);
+        let (output_ch_tx, output_ch_rx) = event_queue(CHANNEL_SIZE, event_budget);
         let (decoding_stop_tx, decoding_stop_rx) = oneshot::channel();
         let (net_conn_stop_tx, net_conn_stop_rx) = oneshot::channel();
 
@@ -290,6 +294,8 @@ impl VncInner {
             let decoding_stop = self.decoding_stop.take().unwrap();
             let _ = decoding_stop.send(());
         }
+        // termiHub fork (#3511): release a decoder parked on the byte budget.
+        self.output_ch.close();
         self.closed = true;
         Ok(())
     }
@@ -318,9 +324,41 @@ impl VncClient {
     {
         Ok(Self {
             inner: Arc::new(Mutex::new(
-                VncInner::new(stream, shared, pixel_format, encodings).await?,
+                VncInner::new(
+                    stream,
+                    shared,
+                    pixel_format,
+                    encodings,
+                    MAX_QUEUED_EVENT_BYTES,
+                )
+                .await?,
             )),
         })
+    }
+
+    /// [`VncClient::new`] with an explicit decoded-event byte budget, so tests
+    /// can exercise the budget without allocating hundreds of MiB.
+    #[cfg(test)]
+    pub(super) async fn with_event_budget<S>(
+        stream: S,
+        pixel_format: Option<PixelFormat>,
+        encodings: Vec<VncEncoding>,
+        event_budget: usize,
+    ) -> Result<Self, VncError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        Ok(Self {
+            inner: Arc::new(Mutex::new(
+                VncInner::new(stream, false, pixel_format, encodings, event_budget).await?,
+            )),
+        })
+    }
+
+    /// Decoded bytes currently waiting in the event queue (termiHub fork, #3511).
+    #[cfg(test)]
+    pub(super) async fn queued_event_bytes(&self) -> usize {
+        self.inner.lock().await.output_ch.queued_bytes()
     }
 
     /// Input a `X11Event` from the frontend
@@ -459,7 +497,7 @@ where
 /// decoder task parked on a consumer that stopped draining.
 async fn report_decoder_error(
     error: VncError,
-    output: &Sender<VncEvent>,
+    output: &EventSender,
     stop: &mut oneshot::Receiver<()>,
 ) {
     if let VncError::IoError(e) = &error {
@@ -702,7 +740,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_panicking_task_reports_an_error_event_instead_of_dying_silently() {
-        let (tx, mut rx) = channel(4);
+        let (tx, mut rx) = event_queue(4, 1024);
         run_guarded(
             "decoder",
             async {
@@ -722,7 +760,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_well_behaved_task_reports_nothing() {
-        let (tx, mut rx) = channel(4);
+        let (tx, mut rx) = event_queue(4, 1024);
         run_guarded("decoder", async {}, Some(tx)).await;
         assert!(rx.recv().await.is_none());
     }

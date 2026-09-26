@@ -4,6 +4,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import {
+  ActiveWorkspaceInfo,
   WorkspaceDefinition,
   WorkspaceImportPreview,
   WorkspaceImportResult,
@@ -23,6 +24,19 @@ export async function loadWorkspace(workspaceId: string): Promise<WorkspaceDefin
 /** Save (add or update) a workspace definition. */
 export async function saveWorkspace(definition: WorkspaceDefinition): Promise<void> {
   await invoke("save_workspace", { definition });
+}
+
+/**
+ * Mark a workspace as active so its settings overrides (PROD-052) apply to new
+ * sessions on the backend; `null` clears it.
+ */
+export async function setActiveWorkspace(workspaceId: string | null): Promise<void> {
+  await invoke("set_active_workspace", { workspaceId });
+}
+
+/** The active workspace whose overrides are in effect, or `null` (PROD-052). */
+export async function getActiveWorkspace(): Promise<ActiveWorkspaceInfo | null> {
+  return await invoke<ActiveWorkspaceInfo | null>("get_active_workspace");
 }
 
 /** Delete a workspace by ID. */

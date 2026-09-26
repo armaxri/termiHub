@@ -78,6 +78,16 @@ fn read_section(
         ))
     })?;
     let mut data = data;
+    if read_version(&data).unwrap_or(1) < spec.current_version {
+        // The file predates this build's schema (the store has not re-saved it
+        // since an upgrade). Back it up already migrated through the store's own
+        // forward migration, so a backup made by this build restores on this
+        // build as current rather than as "migrated". A file the store cannot
+        // read is kept verbatim and reported on restore instead.
+        if let Ok(migrated) = spec.normalize(data.clone()) {
+            data = migrated;
+        }
+    }
     if spec.shape == Shape::Connections {
         sections::strip_connection_passwords(&mut data);
     }

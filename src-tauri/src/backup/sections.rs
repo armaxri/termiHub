@@ -76,7 +76,9 @@ pub struct SectionSpec {
     pub description: &'static str,
     /// The store's file name in the config directory.
     pub file_name: &'static str,
-    /// The schema version this build reads and writes.
+    /// The schema version this build reads and writes. Always the owning
+    /// store's own `CURRENT_VERSION` constant — never a literal here — so a
+    /// store's version bump reaches the backup automatically.
     pub current_version: u32,
     pub shape: Shape,
     /// The store holds secrets in its own file (e.g. embedded-server
@@ -147,19 +149,43 @@ fn normalize_versioned<T: VersionedStore + Serialize>(
     }
 }
 
-/// Normalize a store that has no migration layer (schema version 1): refuse a
-/// newer `version`, otherwise validate through the typed model.
-fn normalize_plain<T: DeserializeOwned + Serialize>(data: Value) -> Result<Value, NormalizeError> {
+/// A store without a migration layer. Its schema version is the store's own
+/// `CURRENT_VERSION` constant — the backup never repeats it as a literal.
+trait PlainStore: DeserializeOwned + Serialize {
+    const CURRENT_VERSION: u32;
+}
+
+macro_rules! plain_store {
+    ($($store:ty),* $(,)?) => {
+        $(impl PlainStore for $store {
+            const CURRENT_VERSION: u32 = <$store>::CURRENT_VERSION;
+        })*
+    };
+}
+
+plain_store!(
+    MacroStore,
+    TunnelStore,
+    EmbeddedServerStore,
+    WolDevicesFile,
+    HttpMonitorsFile,
+);
+
+/// Normalize a store that has no migration layer: refuse a `version` newer
+/// than the store's `CURRENT_VERSION`, otherwise validate through the typed
+/// model. The document's `version` is left as-is — such a store's own loader
+/// owns any upgrade of an older file.
+fn normalize_plain<T: PlainStore>(data: Value) -> Result<Value, NormalizeError> {
     if !data.is_object() {
         return Err(NormalizeError::Invalid(
             "expected a JSON object".to_string(),
         ));
     }
     if let Some(found) = read_version(&data) {
-        if found > 1 {
+        if found > T::CURRENT_VERSION {
             return Err(NormalizeError::Newer {
                 found,
-                supported: 1,
+                supported: T::CURRENT_VERSION,
             });
         }
     }
@@ -250,7 +276,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Macros",
         description: "Terminal macros.",
         file_name: "macros.json",
-        current_version: 1,
+        current_version: MacroStore::CURRENT_VERSION,
         shape: Shape::List { field: "macros" },
         contains_secrets: false,
         normalize: normalize_plain::<MacroStore>,
@@ -283,7 +309,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Tunnels",
         description: "SSH tunnel definitions.",
         file_name: "tunnels.json",
-        current_version: 1,
+        current_version: TunnelStore::CURRENT_VERSION,
         shape: Shape::List { field: "tunnels" },
         contains_secrets: false,
         normalize: normalize_plain::<TunnelStore>,
@@ -294,7 +320,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Embedded servers",
         description: "Embedded HTTP/FTP/TFTP server definitions (includes their passwords).",
         file_name: "embedded_servers.json",
-        current_version: 1,
+        current_version: EmbeddedServerStore::CURRENT_VERSION,
         shape: Shape::List { field: "servers" },
         contains_secrets: true,
         normalize: normalize_plain::<EmbeddedServerStore>,
@@ -305,7 +331,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Wake-on-LAN devices",
         description: "Saved Wake-on-LAN devices.",
         file_name: "wol-devices.json",
-        current_version: 1,
+        current_version: WolDevicesFile::CURRENT_VERSION,
         shape: Shape::List { field: "devices" },
         contains_secrets: false,
         normalize: normalize_plain::<WolDevicesFile>,
@@ -316,7 +342,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "HTTP monitors",
         description: "HTTP monitor definitions.",
         file_name: "http-monitors.json",
-        current_version: 1,
+        current_version: HttpMonitorsFile::CURRENT_VERSION,
         shape: Shape::List { field: "monitors" },
         contains_secrets: false,
         normalize: normalize_plain::<HttpMonitorsFile>,

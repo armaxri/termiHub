@@ -24,6 +24,13 @@ pub(crate) struct HttpMonitorsFile {
     pub(crate) monitors: Vec<HttpMonitorConfig>,
 }
 
+impl HttpMonitorsFile {
+    /// The file's schema version. It carries no `version` field yet, so it is
+    /// schema v1; the unified backup (PROD-068) takes the version from here.
+    /// Add a `version` field and bump this together if the shape ever changes.
+    pub(crate) const CURRENT_VERSION: u32 = 1;
+}
+
 /// Resolve the path to the HTTP monitors file.
 fn monitors_path(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join(HTTP_MONITORS_FILE)

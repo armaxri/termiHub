@@ -3,6 +3,14 @@
 Vendored fork of [`vnc-rs`](https://github.com/HsuJv/vnc-rs) `0.5.3`, an async
 client-side implementation of the VNC/RFB protocol.
 
+**Fork base:** upstream `0.5.3`, commit
+[`f8ac0ee4915e8e1e1adb8880a0716761b91281f6`](https://github.com/HsuJv/vnc-rs/commit/f8ac0ee4915e8e1e1adb8880a0716761b91281f6)
+(the version-bump commit; upstream publishes no tags). The fork is registered in
+[`vendor/vendored-forks.json`](../vendored-forks.json), and a weekly CI job
+reports upstream releases, commits and advisories that the fork does not have
+yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing or
+reviewing upstream again (the reviewed state is below).
+
 ## Why this is vendored
 
 Upstream `0.5.3` (and its `main`) cannot negotiate **VeNCrypt** (RFB security
@@ -111,8 +119,7 @@ desktops), zero-sized rectangles stay legal, the 16 MiB skip-not-fail
 `ServerCutText` bound, and `MAX_ENCODED_BYTES`. Upstream's run-length /
 palette-index / zlib-slot fixes (`129e7c9`) were already covered by #3473.
 The event-queue size stays 4096 (upstream: 2) because termiHub's driver drains
-it on a 30 ms tick; bounding it by memory is follow-up
-[#3511](https://github.com/armaxri/termiHub/issues/3511).
+it on a 30 ms tick; it is bounded by memory as well since #3511 (below).
 
 Not ported (features or tooling): desktop resizing (`cc4472d`, `6528704`,
 `46934f4`), exposing the desktop name (`f2dcc3c`), the cargo-fuzz harness
@@ -120,6 +127,29 @@ Not ported (features or tooling): desktop resizing (`cc4472d`, `6528704`,
 parsers), version/author/CI bumps and merge commits. Regression tests are in
 `src/client/upstream_060_tests.rs`, `hostile_server_tests.rs`,
 `connection.rs`, `config.rs` and `codec/mod.rs`.
+
+## Decoded-event queue bounded by bytes (#3511)
+
+The decoder-to-consumer queue was bounded only by count (4096 events), while a
+single `VncEvent::RawImage` can be 256 MiB and Tight fill / ZRLE / TRLE
+rectangles decode from a few wire bytes, so a hostile server could make the
+client hold far more decoded memory than it sent. `src/client/event_queue.rs`
+charges every queued event its payload size against a byte budget
+(`MAX_QUEUED_EVENT_BYTES`, 256 MiB, one maximum-size image) until the consumer
+takes it:
+
+- Over budget, the decoder **waits** (it never drops an update, since later
+  incremental rectangles depend on earlier ones). A parked decoder stops reading
+  the network bridge, so the connection task stops reading the socket and TCP
+  flow control pushes back on the server.
+- An event larger than the whole budget is charged the whole budget and is
+  delivered alone.
+- `close()` closes the budget, so a decoder parked on it is released and the
+  stop / input deadlock fixes above still hold.
+
+Tests: `src/client/event_queue.rs` (accounting, backpressure, close) and
+`src/client/event_budget_tests.rs` (a Tight-fill decompression flood through the
+real client stays under budget, drains completely, and does not block `close`).
 
 Everything else is upstream `0.5.3`, under the original MIT/Apache-2.0 licenses
 (`LICENSE-MIT`, `LICENSE-APACHE`).

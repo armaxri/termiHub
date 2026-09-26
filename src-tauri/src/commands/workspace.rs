@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tauri::State;
+use tauri::{Emitter, State};
 use tauri_plugin_cli::CliExt;
 
 use crate::connection::manager::ConnectionManager;
@@ -10,6 +10,7 @@ use crate::workspace::config::{
 };
 use crate::workspace::last_session::{LastSession, LastSessionManager};
 use crate::workspace::manager::WorkspaceManager;
+use crate::workspace::settings::{ActiveWorkspaceInfo, ACTIVE_WORKSPACE_CHANGED_EVENT};
 
 /// Get all workspace summaries for sidebar display.
 #[tauri::command]
@@ -29,21 +30,67 @@ pub fn load_workspace(
 }
 
 /// Save (add or update) a workspace definition.
+///
+/// Saving the **active** workspace re-broadcasts its overrides so every window
+/// applies an edited theme/font immediately (PROD-052).
 #[tauri::command]
 pub fn save_workspace(
     definition: WorkspaceDefinition,
+    app_handle: tauri::AppHandle,
     manager: State<'_, WorkspaceManager>,
 ) -> Result<(), TerminalError> {
-    manager.save_workspace(definition)
+    let id = definition.id.clone();
+    manager.save_workspace(definition)?;
+    if manager.is_active(&id) {
+        broadcast_active_workspace(&app_handle, &manager);
+    }
+    Ok(())
+}
+
+/// Emit the current active workspace (or `null`) to every window.
+fn broadcast_active_workspace(app_handle: &tauri::AppHandle, manager: &WorkspaceManager) {
+    let info = manager.active_workspace_info();
+    if let Err(e) = app_handle.emit(ACTIVE_WORKSPACE_CHANGED_EVENT, info) {
+        tracing::warn!("Failed to emit {ACTIVE_WORKSPACE_CHANGED_EVENT}: {e}");
+    }
+}
+
+/// The active workspace whose settings overrides are in effect, if any
+/// (PROD-052). A newly opened window reads this once at startup.
+#[tauri::command]
+pub fn get_active_workspace(
+    manager: State<'_, WorkspaceManager>,
+) -> Result<Option<ActiveWorkspaceInfo>, TerminalError> {
+    Ok(manager.active_workspace_info())
+}
+
+/// Mark a workspace as active so its settings overrides (PROD-052) apply to new
+/// sessions; `None` clears it. Called by the frontend when a workspace is
+/// launched or saved from the current layout.
+#[tauri::command]
+pub fn set_active_workspace(
+    workspace_id: Option<String>,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, WorkspaceManager>,
+) -> Result<(), TerminalError> {
+    manager.set_active_workspace(workspace_id)?;
+    broadcast_active_workspace(&app_handle, &manager);
+    Ok(())
 }
 
 /// Delete a workspace by ID.
 #[tauri::command]
 pub fn delete_workspace(
     workspace_id: String,
+    app_handle: tauri::AppHandle,
     manager: State<'_, WorkspaceManager>,
 ) -> Result<(), TerminalError> {
-    manager.delete_workspace(&workspace_id)
+    let was_active = manager.is_active(&workspace_id);
+    manager.delete_workspace(&workspace_id)?;
+    if was_active {
+        broadcast_active_workspace(&app_handle, &manager);
+    }
+    Ok(())
 }
 
 /// Duplicate a workspace by ID, returning the new workspace's ID.

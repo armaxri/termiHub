@@ -187,7 +187,12 @@ import {
   type ConnectTimeoutKind,
 } from "@/utils/connectTimeout";
 import { onPersistentSessionStateChanged } from "@/services/events";
-import { applyTheme, onThemeChange } from "@/themes";
+import { onThemeChange } from "@/themes";
+import {
+  activateWorkspace,
+  applyEffectiveTheme,
+  loadExistingWorkspaceSettings,
+} from "@/services/workspaceSettings";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import { fireAndForget, frontendError, frontendLog } from "@/utils/frontendLog";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
@@ -4941,7 +4946,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           sidebarView,
           sidebarCollapsed,
         });
-        applyTheme(settings.theme, settings.customThemes);
+        applyEffectiveTheme(settings);
         void get().loadSessionHistory();
         if (settings.keybindingOverrides) {
           setKeybindingOverrides(settings.keybindingOverrides);
@@ -5083,7 +5088,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
           oldSettings.theme !== newSettings.theme ||
           oldSettings.customThemes !== newSettings.customThemes
         ) {
-          applyTheme(newSettings.theme, newSettings.customThemes);
+          applyEffectiveTheme(newSettings);
         }
 
         // Side-effects when global defaults are toggled off.
@@ -6555,6 +6560,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
           return;
         }
         const firstGroup = builtGroups[0];
+        // PROD-052: make this the active workspace BEFORE its tabs connect, so the
+        // backend merges its default directory / env into the new local shells
+        // and every window applies its theme / font overrides live.
+        await activateWorkspace(definition.id);
         // GAP G1 (#1146): tear down the currently-open live sessions BEFORE the
         // `set` replaces the layout, otherwise their PTY/SSH/agent sessions are
         // dropped from the store and orphaned into the Open Connections panel.
@@ -6626,15 +6635,20 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // Reuse the caller-provided id to overwrite an existing same-named
         // workspace in place (UX-027); otherwise mint a fresh one.
         const id = overwriteId ?? newId("ws");
+        // Overwriting in place re-captures only the layout: keep the workspace's
+        // settings overrides (PROD-052) instead of silently dropping them.
+        const settings = overwriteId ? await loadExistingWorkspaceSettings(overwriteId) : undefined;
         await apiSaveWorkspace({
           id,
           name,
           description,
           tabGroups: stampedGroups,
           ...(windows ? { windows } : {}),
+          ...(settings ? { settings } : {}),
         });
         await get().loadWorkspaces();
         set({ activeWorkspaceName: name });
+        await activateWorkspace(id);
       } catch (err) {
         frontendLog(
           "app_store",

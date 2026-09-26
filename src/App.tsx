@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { initActiveWorkspaceSync } from "@/services/workspaceSettings";
 import { ActivityBar } from "@/components/ActivityBar";
 import { Sidebar } from "@/components/Sidebar";
 import { StatusBar } from "@/components/StatusBar";
@@ -220,6 +221,15 @@ function App() {
     const unlistenPromise = listen<void>("connections-changed", () => {
       useAppStore.getState().reloadConnectionsFromBackend();
     });
+    return () => {
+      void unlistenPromise.then((fn) => fn());
+    };
+  }, []);
+
+  // Per-workspace settings (PROD-052): follow the backend's active workspace so a
+  // workspace switch (from any window) applies its theme / font overrides live.
+  useEffect(() => {
+    const unlistenPromise = initActiveWorkspaceSync();
     return () => {
       void unlistenPromise.then((fn) => fn());
     };
