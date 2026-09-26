@@ -131,6 +131,7 @@ impl TransferPersistenceManager {
             created_at_ms: now,
             updated_at_ms: now,
             docker: None,
+            group_id: None,
         };
         let mut store = self.lock();
         store.upsert(entry);
@@ -150,6 +151,42 @@ impl TransferPersistenceManager {
         });
         store.upsert(entry);
         self.schedule_write(&store);
+    }
+
+    /// Attach a local folder copy's cancel group to a registered transfer
+    /// (#3613), so a relaunch after a restart can rebuild the folder's group.
+    /// A no-op for an unknown id (never fabricates a record).
+    pub fn record_group(&self, transfer_id: &str, group_id: &str) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.group_id = Some(group_id.to_string());
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// The ids of every persisted transfer in the cancel group `group_id`
+    /// (#3613), in persisted order. Settled files are already pruned, so this
+    /// is the folder's still-unfinished rest.
+    pub fn group_members(&self, group_id: &str) -> Vec<String> {
+        self.lock()
+            .transfers
+            .iter()
+            .filter(|t| t.group_id.as_deref() == Some(group_id))
+            .map(|t| t.transfer_id.clone())
+            .collect()
+    }
+
+    /// Remove and return a transfer's persisted record in one step (#3613).
+    /// Used to cancel a rehydrated row with no live handle: exactly one caller
+    /// wins the record, so two racing cancels never both report it.
+    pub fn take_record(&self, transfer_id: &str) -> Option<PersistedTransfer> {
+        let mut store = self.lock();
+        let record = store.get(transfer_id).cloned()?;
+        store.remove(transfer_id);
+        self.schedule_write(&store);
+        Some(record)
     }
 
     /// Fold a lifecycle/progress update for a transfer into the persisted queue.
@@ -443,6 +480,46 @@ mod tests {
         );
 
         assert!(m.get_record("ghost").is_none(), "unknown id yields None");
+    }
+
+    /// A folder's cancel group (#3613) survives progress and rehydration, and
+    /// only its own members are listed; attaching one to an unknown id never
+    /// fabricates a record.
+    #[test]
+    fn group_survives_rehydration_and_lists_only_its_members() {
+        let (_d, m) = mgr();
+        for id in ["a", "b", "other"] {
+            register(&m, id);
+        }
+        m.record_group("a", "g1");
+        m.record_group("b", "g1");
+        m.record_group("ghost", "g1");
+        m.note_progress(
+            "a",
+            PersistedTransferStatus::Active,
+            CHECKPOINT_BYTES + 1,
+            2048,
+            false,
+        );
+
+        assert_eq!(m.group_members("g1"), vec!["a", "b"]);
+        assert!(m.group_members("g2").is_empty());
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated.len(), 3, "no record fabricated for `ghost`");
+        assert_eq!(rehydrated[0].group_id.as_deref(), Some("g1"));
+        assert_eq!(rehydrated[2].group_id, None);
+    }
+
+    #[test]
+    fn take_record_removes_it_exactly_once() {
+        let (_d, m) = mgr();
+        register(&m, "t1");
+        assert_eq!(
+            m.take_record("t1").map(|r| r.transfer_id).as_deref(),
+            Some("t1")
+        );
+        assert!(m.take_record("t1").is_none(), "a second take gets nothing");
+        assert!(m.load_incomplete_as_paused().is_empty());
     }
 
     #[test]

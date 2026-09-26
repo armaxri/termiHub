@@ -51,8 +51,30 @@
 //! an honest Failed state rather than a half-working resume (follow-up tracked
 //! separately). Queued **local-disk copies** (PARITY-004, #3567) need no session
 //! and always relaunch from their temp file.
+//!
+//! # Local folder copies keep their cancel group (#3613)
+//!
+//! Each large file of a local folder copy (#3605) is its own Transfer Queue
+//! row, and cancelling one cancels the folder's rest. The group id is persisted
+//! with every row, so after a restart:
+//!
+//! - resuming a row relaunches it inside its **rebuilt** group (every persisted
+//!   row sharing its group id), so cancelling it cancels the siblings — the
+//!   relaunched ones through the registry, the ones still waiting as rehydrated
+//!   paused rows by pruning their record and moving them to Cancelled;
+//! - cancelling a rehydrated row that was never resumed ([`cancel_rehydrated`])
+//!   cancels it and its group the same way (a rehydrated row of any kind is now
+//!   cancellable, rather than a silent no-op).
+//!
+//! What the UI shows: the rows stay individual Transfer Queue rows, exactly as
+//! before the restart. The folder-level promise the copy's caller awaited
+//! (`localCopyStart`) did not survive the restart, so there is no folder-level
+//! completion toast afterwards; each row reports its own outcome through the
+//! queue's event path, and the group only governs cancellation.
 
 use tauri::{AppHandle, Manager};
+
+use std::sync::Arc;
 
 use super::persist::PersistedTransfer;
 use super::persist_manager::TransferPersistenceManager;
@@ -93,6 +115,8 @@ pub(crate) enum RelaunchPlan {
         dest_path: String,
         offset: u64,
         total: u64,
+        /// The folder copy's cancel group (#3613), absent for a single file.
+        group_id: Option<String>,
     },
     /// The transfer cannot be relaunched from its persisted metadata alone; the
     /// row must move to a Failed state carrying `reason`.
@@ -127,6 +151,7 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
                 dest_path: dest_path.clone(),
                 offset: record.resume_offset,
                 total: record.total,
+                group_id: record.group_id.clone(),
             }
         }
         (Some(local_path), Some(docker)) => RelaunchPlan::Docker {
@@ -162,6 +187,22 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
 /// Fed through the same store fold the transfer engine uses, so the Failed row is
 /// indistinguishable from any other failed transfer.
 fn failed_progress(record: &PersistedTransfer, message: String) -> TransferProgress {
+    settled_progress(record, TransferPhase::Error, Some(message))
+}
+
+/// The synthetic `cancelled` progress event that moves a rehydrated row with no
+/// live handle to Cancelled (#3613). Metadata only, like [`failed_progress`].
+fn cancelled_progress(record: &PersistedTransfer) -> TransferProgress {
+    settled_progress(record, TransferPhase::Cancelled, None)
+}
+
+/// A terminal progress event for a rehydrated row, built from its persisted
+/// metadata only.
+fn settled_progress(
+    record: &PersistedTransfer,
+    phase: TransferPhase,
+    message: Option<String>,
+) -> TransferProgress {
     TransferProgress {
         transfer_id: record.transfer_id.clone(),
         session_id: record.session_id.clone(),
@@ -170,9 +211,9 @@ fn failed_progress(record: &PersistedTransfer, message: String) -> TransferProgr
         path: record.remote_path.clone(),
         transferred: record.transferred,
         total: record.total,
-        phase: TransferPhase::Error,
-        message: Some(message),
-        state: TransferStateTag::Failed,
+        phase,
+        message,
+        state: phase.state_tag(),
         speed: 0,
         total_bytes: record.total,
         eta_secs: None,
@@ -334,8 +375,14 @@ async fn relaunch_record(
             dest_path,
             offset,
             total,
+            group_id,
         } => {
+            let group = group_id.as_deref().and_then(|group_id| {
+                let persist = app_handle.try_state::<TransferPersistenceManager>()?;
+                rebuild_group(&persist, group_id)
+            });
             let spawn_src = src_path.clone();
+            let app = app_handle.clone();
             spawn_relaunch(
                 &record,
                 TransferDirection::Download,
@@ -344,8 +391,22 @@ async fn relaunch_record(
                 registry,
                 app_handle,
                 move |handle, registry, sink| async move {
-                    super::local::run_local_transfer(
-                        spawn_src, dest_path, handle, registry, sink, offset,
+                    run_local_relaunch(
+                        spawn_src,
+                        dest_path,
+                        handle,
+                        registry,
+                        sink,
+                        offset,
+                        group,
+                        |registry, group, own_id| {
+                            if let Some(persist) = app.try_state::<TransferPersistenceManager>() {
+                                for sibling in cancel_group_rest(registry, &persist, group, own_id)
+                                {
+                                    cancel_row(&app, &sibling);
+                                }
+                            }
+                        },
                     )
                     .await;
                 },
@@ -357,6 +418,120 @@ async fn relaunch_record(
             true
         }
     }
+}
+
+/// The cancel group `group_id` rebuilt from the persisted queue (#3613): every
+/// still-unfinished row of the folder copy, the relaunching one included.
+/// `None` when no row carries it any more.
+fn rebuild_group(persist: &TransferPersistenceManager, group_id: &str) -> Option<Arc<[String]>> {
+    let members = persist.group_members(group_id);
+    (!members.is_empty()).then(|| members.into())
+}
+
+/// Run a relaunched local copy from `offset` — inside its rebuilt folder
+/// `group` when it has one (#3613).
+///
+/// A grouped file runs through
+/// [`run_local_transfer_in_group`](termihub_core::files::transfer::local_folder::run_local_transfer_in_group),
+/// which cancels the siblings that are live again. Siblings still waiting as
+/// rehydrated rows have no handle to cancel, so when this file ends cancelled
+/// (by the user, not the quit teardown) `cancel_rest` is handed the registry,
+/// the group and this file's id to cancel them too.
+#[allow(clippy::too_many_arguments)]
+async fn run_local_relaunch(
+    src: String,
+    dest: String,
+    handle: Arc<super::registry::TransferHandle>,
+    registry: TransferRegistry,
+    sink: ProgressSink,
+    offset: u64,
+    group: Option<Arc<[String]>>,
+    cancel_rest: impl FnOnce(&TransferRegistry, &[String], &str),
+) {
+    let Some(group) = group else {
+        super::local::run_local_transfer(src, dest, handle, registry, sink, offset).await;
+        return;
+    };
+    termihub_core::files::transfer::local_folder::run_local_transfer_in_group(
+        src,
+        dest,
+        handle.clone(),
+        registry.clone(),
+        sink,
+        group.clone(),
+        offset,
+    )
+    .await;
+    if handle.state().tag() == TransferStateTag::Cancelled && !super::is_queue_teardown() {
+        cancel_rest(&registry, &group, &handle.transfer_id);
+    }
+}
+
+/// Cancel every row of `group` except `own_id` (#3613): a live one through the
+/// registry, a rehydrated one (no live handle) by taking its persisted record so
+/// it does not come back on the next launch. Returns the taken records, whose
+/// rows the caller moves to Cancelled. Settled rows are already gone from both,
+/// so they are skipped.
+pub(crate) fn cancel_group_rest(
+    registry: &TransferRegistry,
+    persist: &TransferPersistenceManager,
+    group: &[String],
+    own_id: &str,
+) -> Vec<PersistedTransfer> {
+    let mut taken = Vec::new();
+    for id in group.iter().filter(|id| id.as_str() != own_id) {
+        if registry.cancel(id) {
+            continue;
+        }
+        if let Some(record) = persist.take_record(id) {
+            // A resume racing this cancel may have just registered it.
+            registry.cancel(id);
+            taken.push(record);
+        }
+    }
+    taken
+}
+
+/// Cancel the rehydrated row `transfer_id` (no live handle) and, when it is a
+/// file of a local folder copy, the rest of its group (#3613). Returns every
+/// taken record whose row must move to Cancelled — empty when `transfer_id` has
+/// no persisted record (an unknown or already-finished id).
+pub(crate) fn cancel_rehydrated_in(
+    transfer_id: &str,
+    registry: &TransferRegistry,
+    persist: &TransferPersistenceManager,
+) -> Vec<PersistedTransfer> {
+    let Some(record) = persist.take_record(transfer_id) else {
+        return Vec::new();
+    };
+    // A resume racing this cancel may have just registered it.
+    registry.cancel(transfer_id);
+    let group = record
+        .group_id
+        .as_deref()
+        .map(|group_id| persist.group_members(group_id))
+        .unwrap_or_default();
+    let mut cancelled = vec![record];
+    cancelled.extend(cancel_group_rest(registry, persist, &group, transfer_id));
+    cancelled
+}
+
+/// Cancel a rehydrated row with no live handle — pruning its persisted record
+/// and moving it (and, for a local folder copy, its group) to Cancelled
+/// (#3613). Returns `false` when there is nothing to cancel.
+pub(crate) fn cancel_rehydrated(
+    transfer_id: &str,
+    registry: &TransferRegistry,
+    app_handle: &AppHandle,
+) -> bool {
+    let Some(persist) = app_handle.try_state::<TransferPersistenceManager>() else {
+        return false;
+    };
+    let cancelled = cancel_rehydrated_in(transfer_id, registry, &persist);
+    for record in &cancelled {
+        cancel_row(app_handle, record);
+    }
+    !cancelled.is_empty()
 }
 
 /// Re-enqueue a rehydrated transfer and spawn its executor (`run`), which
@@ -403,8 +578,17 @@ fn spawn_relaunch<F, Fut>(
 /// subscriber sees the diff). The persisted record is left intact so the user can
 /// reconnect the session and retry.
 fn fail_row(app_handle: &AppHandle, record: &PersistedTransfer, message: String) {
-    let progress = failed_progress(record, message);
-    if let Ok(value) = serde_json::to_value(&progress) {
+    fold_row(app_handle, &failed_progress(record, message));
+}
+
+/// Move a rehydrated row whose record was already taken to Cancelled (#3613).
+fn cancel_row(app_handle: &AppHandle, record: &PersistedTransfer) {
+    fold_row(app_handle, &cancelled_progress(record));
+}
+
+/// Fold a synthetic progress event through the shared transfers store.
+fn fold_row(app_handle: &AppHandle, progress: &TransferProgress) {
+    if let Ok(value) = serde_json::to_value(progress) {
         crate::transfers_projection::projection::fold_transfer_progress(app_handle, &value);
     }
 }
@@ -429,6 +613,7 @@ mod tests {
             created_at_ms: 1_000,
             updated_at_ms: 2_000,
             docker: None,
+            group_id: None,
         }
     }
 
@@ -474,8 +659,21 @@ mod tests {
                 local_path: "/home/user/data.csv".to_string(),
                 offset: 4096,
                 total: 8192,
+                group_id: None,
             }
         );
+    }
+
+    /// A local folder file (#3613) plans its relaunch with its cancel group.
+    #[test]
+    fn plan_for_a_grouped_local_copy_carries_its_group() {
+        let mut rec = record("t3", Some("/backup/data.csv"));
+        rec.session_id = crate::files::transfer::local::LOCAL_TRANSFER_SESSION.to_string();
+        rec.group_id = Some("folder-1".to_string());
+        assert!(matches!(
+            plan_from_record(&rec),
+            RelaunchPlan::Local { group_id: Some(ref g), .. } if g == "folder-1"
+        ));
     }
 
     #[test]
@@ -642,5 +840,241 @@ mod tests {
             decide_resume("ghost", &registry, &persist),
             ResumeDecision::Unknown
         ));
+    }
+
+    // --- local folder cancel groups after a relaunch (#3613) -----------------
+
+    use crate::files::transfer::local::LOCAL_TRANSFER_SESSION;
+    use crate::files::transfer::registry::TransferHandle;
+    use std::path::Path;
+
+    /// Persist a queued local copy of `src` → `dest` in `group`.
+    fn persist_local(persist: &TransferPersistenceManager, id: &str, group: Option<&str>) {
+        persist.record_registration(
+            id,
+            LOCAL_TRANSFER_SESSION,
+            TransferDirection::Download,
+            "f.bin",
+            &format!("/src/{id}"),
+            Some(format!("/dest/{id}")),
+            8192,
+        );
+        if let Some(group) = group {
+            persist.record_group(id, group);
+        }
+    }
+
+    /// A source big enough to hold the copy at a chunk boundary while paused.
+    fn write_big(path: &Path) {
+        let chunk = termihub_core::files::transfer::CHUNK_SIZE;
+        std::fs::write(path, vec![7u8; chunk * 4]).expect("write");
+    }
+
+    fn quiet_sink() -> ProgressSink {
+        Arc::new(|_: &TransferProgress| {})
+    }
+
+    async fn wait_for(cond: impl Fn() -> bool) {
+        for _ in 0..20_000 {
+            if cond() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+        panic!("condition not reached");
+    }
+
+    /// Relaunch `id` (a paused handle, held at its first chunk) inside `group`,
+    /// with the rehydrated-sibling cancel wired to `persist`.
+    fn relaunch_in_group(
+        dir: &Path,
+        id: &str,
+        registry: &TransferRegistry,
+        persist: &Arc<TransferPersistenceManager>,
+        group: Option<Arc<[String]>>,
+    ) -> (Arc<TransferHandle>, tokio::task::JoinHandle<Vec<String>>) {
+        let src = dir.join(format!("{id}.src"));
+        write_big(&src);
+        let dest = dir.join(format!("{id}.bin"));
+        let handle = registry.enqueue(
+            id,
+            LOCAL_TRANSFER_SESSION,
+            TransferDirection::Download,
+            "f.bin",
+            &src.to_string_lossy(),
+            0,
+        );
+        assert!(registry.pause(id));
+        let (registry, persist, task_handle) = (registry.clone(), persist.clone(), handle.clone());
+        let task = tokio::spawn(async move {
+            let mut taken = Vec::new();
+            run_local_relaunch(
+                src.to_string_lossy().into_owned(),
+                dest.to_string_lossy().into_owned(),
+                task_handle,
+                registry,
+                quiet_sink(),
+                0,
+                group,
+                |registry, group, own_id| {
+                    taken = cancel_group_rest(registry, &persist, group, own_id)
+                        .into_iter()
+                        .map(|r| r.transfer_id)
+                        .collect();
+                },
+            )
+            .await;
+            taken
+        });
+        (handle, task)
+    }
+
+    #[test]
+    fn relaunch_rebuilds_the_group_from_its_persisted_siblings() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist = TransferPersistenceManager::new_test(dir.path());
+        persist_local(&persist, "a", Some("folder-1"));
+        persist_local(&persist, "b", Some("folder-1"));
+        persist_local(&persist, "other", Some("folder-2"));
+        persist_local(&persist, "single", None);
+
+        let group = rebuild_group(&persist, "folder-1").expect("group");
+        assert_eq!(&*group, &["a".to_string(), "b".to_string()]);
+        assert!(rebuild_group(&persist, "gone").is_none());
+    }
+
+    /// Both files of a folder resumed after a relaunch: cancelling one cancels
+    /// the other.
+    #[tokio::test]
+    async fn cancelling_one_relaunched_file_cancels_its_relaunched_sibling() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist = Arc::new(TransferPersistenceManager::new_test(dir.path()));
+        persist_local(&persist, "a", Some("folder-1"));
+        persist_local(&persist, "b", Some("folder-1"));
+        let registry = TransferRegistry::new();
+        let group = rebuild_group(&persist, "folder-1");
+
+        let (a, task_a) = relaunch_in_group(dir.path(), "a", &registry, &persist, group.clone());
+        let (b, task_b) = relaunch_in_group(dir.path(), "b", &registry, &persist, group);
+        wait_for(|| {
+            [&a, &b]
+                .iter()
+                .all(|h| h.state().tag() == TransferStateTag::Paused)
+        })
+        .await;
+
+        assert!(registry.cancel("a"));
+        task_a.await.expect("join a");
+        task_b.await.expect("join b");
+
+        assert_eq!(a.state().tag(), TransferStateTag::Cancelled);
+        assert_eq!(b.state().tag(), TransferStateTag::Cancelled);
+    }
+
+    /// One file resumed, its sibling still a rehydrated paused row: cancelling
+    /// the resumed one cancels the waiting sibling too (its record is taken so
+    /// it does not come back on the next launch). A file of another folder is
+    /// left alone.
+    #[tokio::test]
+    async fn cancelling_a_relaunched_file_cancels_its_still_rehydrated_sibling() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist = Arc::new(TransferPersistenceManager::new_test(dir.path()));
+        persist_local(&persist, "a", Some("folder-1"));
+        persist_local(&persist, "b", Some("folder-1"));
+        persist_local(&persist, "other", Some("folder-2"));
+        let registry = TransferRegistry::new();
+        let group = rebuild_group(&persist, "folder-1");
+
+        let (a, task_a) = relaunch_in_group(dir.path(), "a", &registry, &persist, group);
+        wait_for(|| a.state().tag() == TransferStateTag::Paused).await;
+        assert!(registry.cancel("a"));
+        let taken = task_a.await.expect("join a");
+
+        assert_eq!(a.state().tag(), TransferStateTag::Cancelled);
+        assert_eq!(taken, vec!["b".to_string()]);
+        assert!(
+            persist.get_record("b").is_none(),
+            "b will not rehydrate again"
+        );
+        assert!(persist.get_record("other").is_some());
+    }
+
+    /// A file of a folder that ends normally does not cancel its siblings.
+    #[tokio::test]
+    async fn a_completed_relaunched_file_leaves_its_siblings_alone() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist = Arc::new(TransferPersistenceManager::new_test(dir.path()));
+        persist_local(&persist, "a", Some("folder-1"));
+        persist_local(&persist, "b", Some("folder-1"));
+        let registry = TransferRegistry::new();
+        let group = rebuild_group(&persist, "folder-1");
+
+        let (a, task_a) = relaunch_in_group(dir.path(), "a", &registry, &persist, group);
+        wait_for(|| a.state().tag() == TransferStateTag::Paused).await;
+        assert!(registry.resume("a"));
+        let taken = task_a.await.expect("join a");
+
+        assert_eq!(a.state().tag(), TransferStateTag::Completed);
+        assert!(taken.is_empty());
+        assert!(persist.get_record("b").is_some());
+    }
+
+    /// Cancelling a rehydrated row that was never resumed cancels it and its
+    /// folder's rest: a resumed (live) sibling through the registry, a still
+    /// rehydrated one by taking its record.
+    #[test]
+    fn cancelling_a_rehydrated_file_cancels_its_whole_group() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist = TransferPersistenceManager::new_test(dir.path());
+        for id in ["a", "b", "c"] {
+            persist_local(&persist, id, Some("folder-1"));
+        }
+        persist_local(&persist, "other", None);
+        let registry = TransferRegistry::new();
+        let live_b = registry.enqueue(
+            "b",
+            LOCAL_TRANSFER_SESSION,
+            TransferDirection::Download,
+            "f.bin",
+            "/src/b",
+            0,
+        );
+
+        let cancelled: Vec<String> = cancel_rehydrated_in("a", &registry, &persist)
+            .into_iter()
+            .map(|r| r.transfer_id)
+            .collect();
+
+        assert_eq!(cancelled, vec!["a".to_string(), "c".to_string()]);
+        assert!(live_b.is_cancelled(), "the live sibling is cancelled");
+        assert!(persist.get_record("a").is_none());
+        assert!(persist.get_record("c").is_none());
+        assert!(persist.get_record("other").is_some());
+        assert!(
+            cancel_rehydrated_in("a", &registry, &persist).is_empty(),
+            "an already-cancelled row is a no-op"
+        );
+    }
+
+    /// An ungrouped rehydrated row cancels on its own; an unknown id is a no-op.
+    #[test]
+    fn cancelling_an_ungrouped_rehydrated_row_cancels_only_it() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let persist = TransferPersistenceManager::new_test(dir.path());
+        persist_local(&persist, "a", None);
+        persist_local(&persist, "b", None);
+        let registry = TransferRegistry::new();
+
+        assert_eq!(cancel_rehydrated_in("a", &registry, &persist).len(), 1);
+        assert!(persist.get_record("b").is_some());
+        assert!(cancel_rehydrated_in("ghost", &registry, &persist).is_empty());
+    }
+
+    #[test]
+    fn cancelled_progress_moves_the_row_to_cancelled() {
+        let progress = cancelled_progress(&record("t1", Some("/l")));
+        assert_eq!(progress.state, TransferStateTag::Cancelled);
+        assert_eq!(progress.phase, TransferPhase::Cancelled);
+        assert_eq!(progress.message, None);
     }
 }

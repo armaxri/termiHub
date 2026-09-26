@@ -115,6 +115,13 @@ pub struct PersistedTransfer {
     /// restart (the owning session id does not survive one).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub docker: Option<PersistedDockerTarget>,
+    /// The cancel group a queued file of a local folder copy belongs to (#3613):
+    /// every file of one folder copy shares it, so cancelling one file cancels
+    /// the folder's rest — also after a relaunch. Absent for every other
+    /// transfer and for records written before it existed. An opaque id, not a
+    /// secret.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group_id: Option<String>,
 }
 
 /// The persisted identity of a Docker transfer's container (#3585).
@@ -250,6 +257,7 @@ mod tests {
             created_at_ms: 1_000,
             updated_at_ms: 2_000,
             docker: None,
+            group_id: None,
         }
     }
 
