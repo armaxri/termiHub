@@ -45,6 +45,7 @@ describe("credential vault api", () => {
   it("isVaultError recognises only structured vault errors", () => {
     expect(isVaultError({ kind: "wrongPassphrase", message: "m" })).toBe(true);
     expect(isVaultError({ kind: "storeLocked", message: "m" })).toBe(true);
+    expect(isVaultError({ kind: "reauthUnavailable", message: "m" })).toBe(true);
     expect(isVaultError({ kind: "wrongPassword", message: "m" })).toBe(false);
     expect(isVaultError("oops")).toBe(false);
     expect(isVaultError(null)).toBe(false);

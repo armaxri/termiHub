@@ -2670,6 +2670,7 @@ const VAULT_ERROR_KINDS: ReadonlySet<string> = new Set<VaultError["kind"]>([
   "storeUnavailable",
   "storeLocked",
   "wrongMasterPassword",
+  "reauthUnavailable",
   "other",
 ]);
 
@@ -2683,8 +2684,9 @@ export function isVaultError(err: unknown): err is VaultError {
 /**
  * Export every saved credential as an encrypted vault file and return its text.
  *
- * `masterPassword` re-authenticates a master-password store (pass `null` in OS
- * keychain mode). `exportPassphrase` seals the file. Rejects with a
+ * `masterPassword` re-authenticates a master-password store. Export is refused
+ * in OS-keychain mode (`reauthUnavailable`) until OS-level auth lands (#3433).
+ * `exportPassphrase` seals the file. Rejects with a
  * {@link VaultError}.
  */
 export async function exportCredentialVault(

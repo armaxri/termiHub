@@ -23,6 +23,13 @@ function unavailableReason(mode: CredentialStorageMode, status: string | undefin
 }
 
 /**
+ * Why export is refused in OS-keychain mode. Mirrors the backend
+ * `KEYCHAIN_EXPORT_BLOCKED_MESSAGE`; the backend enforces it independently.
+ */
+export const KEYCHAIN_EXPORT_BLOCKED_REASON =
+  "Export from the OS keychain requires system authentication — not yet available (tracked in #3433).";
+
+/**
  * Settings → Security section for exporting and importing the encrypted
  * credential vault (PROD-063). A locked master-password store is unlocked via
  * the shared unlock flow before either dialog opens.
@@ -36,6 +43,8 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
   const mode: CredentialStorageMode = credentialStoreStatus?.mode ?? "none";
   const status = credentialStoreStatus?.status;
   const reason = unavailableReason(mode, status);
+  // Import into the keychain is fine; export has no re-auth there yet (#3433).
+  const exportReason = reason ?? (mode === "os_keychain" ? KEYCHAIN_EXPORT_BLOCKED_REASON : null);
 
   const ensureUnlocked = useCallback(async (): Promise<boolean> => {
     if (mode === "master_password" && status === "locked") {
@@ -64,12 +73,18 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
           {reason}
         </p>
       )}
+      {!reason && exportReason && (
+        <p className="settings-panel__description" data-testid="credential-vault-export-blocked">
+          {exportReason}
+        </p>
+      )}
       <div className="credential-vault__actions">
         <Button
           variant="secondary"
           size="sm"
           icon={<Download size={14} />}
-          disabled={reason !== null}
+          disabled={exportReason !== null}
+          title={exportReason ?? undefined}
           onClick={() => void openExport()}
           data-testid="credential-vault-export-btn"
         >

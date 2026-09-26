@@ -4,7 +4,7 @@ import { createRoot, Root } from "react-dom/client";
 import { open as openFileDialog, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
-import { CredentialVaultBackup } from "./CredentialVaultBackup";
+import { CredentialVaultBackup, KEYCHAIN_EXPORT_BLOCKED_REASON } from "./CredentialVaultBackup";
 import { importSummary } from "./CredentialVaultImportDialog";
 
 vi.mock("@/services/api", async () => {
@@ -100,6 +100,27 @@ describe("CredentialVaultBackup", () => {
     expect(query("credential-vault-unavailable")).not.toBeNull();
   });
 
+  it("disables export (with the reason) but keeps import in OS keychain mode", async () => {
+    render("os_keychain");
+
+    const exportBtn = query("credential-vault-export-btn") as HTMLButtonElement;
+    expect(exportBtn.disabled).toBe(true);
+    expect(query("credential-vault-export-blocked")?.textContent).toBe(
+      KEYCHAIN_EXPORT_BLOCKED_REASON
+    );
+    expect(KEYCHAIN_EXPORT_BLOCKED_REASON).toContain("#3433");
+
+    // A click on the disabled button must not open the dialog or call the backend.
+    await click("credential-vault-export-btn");
+    expect(query("vault-export-title")).toBeNull();
+    expect(mockedExport).not.toHaveBeenCalled();
+
+    const importBtn = query("credential-vault-import-btn") as HTMLButtonElement;
+    expect(importBtn.disabled).toBe(false);
+    await click("credential-vault-import-btn");
+    expect(query("vault-import-title")).not.toBeNull();
+  });
+
   it("unlocks a locked store before opening the export dialog", async () => {
     const requestUnlock = vi.fn().mockResolvedValue(false);
     useAppStore.setState({ requestUnlock });
@@ -140,7 +161,7 @@ describe("CredentialVaultBackup", () => {
     });
 
     it("shows a strength hint while typing", async () => {
-      render("os_keychain");
+      render("master_password");
       await click("credential-vault-export-btn");
 
       setInputValue("vault-export-passphrase", "short");
@@ -168,19 +189,18 @@ describe("CredentialVaultBackup", () => {
       expect(query("vault-export-title")).toBeNull();
     });
 
-    it("sends no master password in OS keychain mode and writes nothing when cancelled", async () => {
+    it("writes nothing when the save dialog is cancelled", async () => {
       mockedExport.mockResolvedValue(VAULT_JSON);
       mockedSave.mockResolvedValue(null);
-      render("os_keychain");
+      render("master_password");
       await click("credential-vault-export-btn");
-      expect(query("vault-export-master-password")).toBeNull();
-      expect(query("vault-export-keychain-note")).not.toBeNull();
 
+      setInputValue("vault-export-master-password", "master-pw");
       setInputValue("vault-export-passphrase", PASSPHRASE);
       setInputValue("vault-export-confirm", PASSPHRASE);
       await click("vault-export-submit");
 
-      expect(mockedExport).toHaveBeenCalledWith(null, PASSPHRASE);
+      expect(mockedExport).toHaveBeenCalledWith("master-pw", PASSPHRASE);
       expect(mockedWrite).not.toHaveBeenCalled();
       expect(mockedToast.info).toHaveBeenCalled();
     });

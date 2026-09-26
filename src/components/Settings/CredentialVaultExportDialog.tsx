@@ -131,12 +131,6 @@ export function CredentialVaultExportDialog({
           read them — store it somewhere safe. If you forget the passphrase, the file cannot be
           recovered.
         </p>
-        {mode === "os_keychain" && (
-          <p className="credential-vault__note" data-testid="vault-export-keychain-note">
-            Credentials for your saved connections and agents are included. Your operating system
-            may ask you to allow access to them.
-          </p>
-        )}
         {mode === "master_password" && (
           <PasswordInput
             className="ui-input"
