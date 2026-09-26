@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:2
-status: open
+status: fixed
+resolution: "#3442 — inline images via @xterm/addon-image (sixel + iTerm2 OSC 1337), lazy-loaded, capped memory limits, setting"
 ---
 
 ## What
