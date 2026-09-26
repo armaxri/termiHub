@@ -500,7 +500,7 @@ mod tests {
                 .with_writer(log.clone())
                 .with_filter(filter),
         );
-        tracing::subscriber::with_default(subscriber, || {
+        crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
             tracing::debug!(target: "russh", "packet cipher internals");
         });
 
@@ -612,7 +612,7 @@ mod tests {
                 .with_writer(log.clone())
                 .with_filter(env_filter_for_level("debug").unwrap()),
         );
-        tracing::subscriber::with_default(subscriber, || {
+        crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
             tracing::debug!(target: "termihub_lib::session", "app debug detail");
             tracing::debug!(target: "russh", "packet cipher internals");
         });
@@ -642,7 +642,7 @@ mod tests {
                 .with_writer(log.clone())
                 .with_filter(filter),
         );
-        tracing::subscriber::with_default(subscriber, || {
+        crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
             tracing::debug!(target: "termihub_lib::session", "app debug detail");
         });
         read(&dir.path().join("termihub.log")).contains("app debug detail")
@@ -672,6 +672,9 @@ mod tests {
         // Validates the `FileLogReloadHandle` alias (S = Registry) and the live
         // reload path the `set_file_log_level` command drives. `_layer` must stay
         // alive so the handle's shared state is not dropped before the reload.
+        // A successful reload rebuilds the global interest cache; pin the
+        // registry so that rebuild cannot silence other tests' capture.
+        crate::utils::log_capture::test_support::pin_multi_dispatcher_registry();
         let (_layer, handle): (_, FileLogReloadHandle) =
             reload::Layer::new(env_filter_for_level("info").unwrap());
         assert!(
@@ -703,7 +706,7 @@ mod tests {
                 .with_writer(log.clone())
                 .with_filter(file_env_filter_with(None)),
         );
-        tracing::subscriber::with_default(subscriber, || {
+        crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
             tracing::info!(target: "termihub_lib::session", "session opened");
             tracing::debug!(target: "termihub_lib::session", "per-keystroke noise");
         });

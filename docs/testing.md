@@ -3888,6 +3888,34 @@ evidence exists on disk after the process is gone. Referenced by PR #1578.
    enough churn `termihub.2.log` is the oldest kept — `termihub.3.log` must
    **never** appear and the directory must stay under ~15 MiB.
 
+### Scheduled workflows and macros (#3523, PROD-043)
+
+The timing, missed-run, overlap, pause and confirmation rules are unit-tested
+(`src-tauri/src/schedules/*_tests.rs`, `src/store/appStore.workflowRun.test.ts`);
+this checks the real app end to end. Enable **Settings → General → Allow
+Experimental Features** first.
+
+**Launch the app** (`./scripts/dev.sh` — never `pnpm tauri dev`) and connect to
+the dev-agent (or any saved) connection so one terminal is open and connected.
+
+1. Workflows panel → create a workflow with one `send-command` step `date`.
+   Click its **Schedule…** action: the editor opens with the workflow
+   pre-selected. Name it, tick the connected connection, set **Minutes**
+   to 1, Save. Expected: toast says it is disabled; the Schedules list
+   shows it as **Disabled**; no status-bar pill yet.
+2. Flip its toggle. Expected: a confirmation lists the connection's name;
+   **Enable schedule** enables it, the list shows **Next: today HH:MM**, and the
+   status bar shows **1 schedule active**.
+3. Wait for the next minute. Expected: `date` is typed into that terminal only
+   (not into another open ad-hoc tab), a "Scheduled run" toast appears, the run
+   history shows it with `scheduled`, and the schedule's **Last** line reads
+   `completed`.
+4. Disconnect the terminal and wait a minute. Expected: nothing is typed; the
+   **Last** line reads `skipped — None of the target connections is connected`.
+5. Turn on **Pause all**. Expected: the status bar reads **Schedules paused** and
+   no run fires; turning it off resumes from the next slot without replaying
+   the paused ones.
+
 ### Workflow editor menus are clickable inside the modal (#1868)
 
 The workflow editor is a modal Radix `Dialog`, which sets `pointer-events: none`

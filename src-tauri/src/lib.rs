@@ -88,6 +88,8 @@ pub mod projection;
 /// (reducer removal) — see [`restore_cohort_projection`].
 mod restore_cohort_projection;
 pub mod run_location;
+/// Scheduled workflows and macros (PROD-043): the backend-owned scheduler.
+mod schedules;
 mod session;
 mod session_history;
 /// Session-lifecycle authority (#2152, Phase 4 step 1 of #2139): the
@@ -592,6 +594,8 @@ pub fn run() -> anyhow::Result<()> {
             // Plugin management layer (#1992)
             commands::plugin::list_plugins,
             commands::plugin::validate_plugin,
+            commands::plugin::preview_plugin,
+            commands::plugin::get_plugin_host_platform,
             commands::plugin::install_plugin,
             commands::plugin::uninstall_plugin,
             commands::plugin::enable_plugin,
@@ -846,6 +850,15 @@ pub fn run() -> anyhow::Result<()> {
             commands::workflows::list_workflow_runs,
             commands::workflows::record_workflow_run,
             commands::workflows::clear_workflow_run_history,
+            // Scheduled runs (PROD-043)
+            commands::schedules::list_schedules,
+            commands::schedules::save_schedule,
+            commands::schedules::delete_schedule,
+            commands::schedules::set_schedule_enabled,
+            commands::schedules::set_schedules_paused,
+            commands::schedules::report_schedule_run,
+            commands::schedules::register_schedule_window,
+            commands::schedules::ack_schedule_run,
             commands::local_process::run_local_process,
             commands::local_process::cancel_local_process,
             // Network diagnostics

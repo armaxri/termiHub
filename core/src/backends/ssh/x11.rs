@@ -752,10 +752,9 @@ mod tests {
         let open_addr = listener.local_addr().expect("local addr");
         assert!(probe_tcp_x_server_at(open_addr, Duration::from_millis(500)));
 
-        // A refused (closed) port is not detected.
-        let probe = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-        let closed_addr = probe.local_addr().expect("local addr");
-        drop(probe);
+        // A refused (closed) port is not detected. The held, never-listening
+        // socket keeps the port refusing for the whole assertion.
+        let (_refusing, closed_addr) = crate::util::test_net::unconnectable_tcp_addr();
         assert!(!probe_tcp_x_server_at(
             closed_addr,
             Duration::from_millis(200)

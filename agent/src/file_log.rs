@@ -274,6 +274,30 @@ mod tests {
         fs::read_to_string(path).unwrap_or_default()
     }
 
+    /// Run `f` under a thread-scoped `subscriber`, deterministically.
+    ///
+    /// `tracing-core` caches callsite interest globally and, while at most one
+    /// dispatcher is registered, computes it lock-free from the registering
+    /// thread's default only — so a parallel test can cache a shared callsite
+    /// (e.g. the one in `russh_debug_reaches_file`) as `never` for another
+    /// test's subscriber. Two never-dropped no-op dispatchers keep the registry
+    /// off that fast path. Mirrors `termihub_lib`'s `log_capture::test_support`.
+    fn with_scoped_subscriber<S, T>(subscriber: S, f: impl FnOnce() -> T) -> T
+    where
+        S: tracing::Subscriber + Send + Sync + 'static,
+    {
+        use tracing::subscriber::NoSubscriber;
+        use tracing::Dispatch;
+        static PINNED: std::sync::OnceLock<[Dispatch; 2]> = std::sync::OnceLock::new();
+        PINNED.get_or_init(|| {
+            [
+                Dispatch::new(NoSubscriber::default()),
+                Dispatch::new(NoSubscriber::default()),
+            ]
+        });
+        tracing::subscriber::with_default(subscriber, f)
+    }
+
     #[test]
     fn writes_land_in_the_live_file() {
         let dir = tempfile::tempdir().unwrap();
@@ -425,7 +449,7 @@ mod tests {
                 .with_writer(log.clone())
                 .with_filter(filter),
         );
-        tracing::subscriber::with_default(subscriber, || {
+        with_scoped_subscriber(subscriber, || {
             tracing::debug!(target: "russh", "packet cipher internals");
         });
 
@@ -505,7 +529,7 @@ mod tests {
                 .with_writer(log.clone())
                 .with_filter(filter),
         );
-        tracing::subscriber::with_default(subscriber, || {
+        with_scoped_subscriber(subscriber, || {
             tracing::info!(target: "termihub_agent::session", "session opened");
             tracing::debug!(target: "termihub_agent::session", "per-event noise");
         });

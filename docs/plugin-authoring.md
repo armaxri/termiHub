@@ -469,8 +469,14 @@ ships for (Windows uses `x86_64-pc-windows-msvc`, not `-gnu`):
   exact bytes before loading. Trusting a plugin on one platform never authorizes
   another platform's binary.
 - A package whose map has no entry for the host's triple is refused at install
-  (and in the install preview) with _"plugin `…` is not available for this
-  platform (…)"_, listing the platforms it does ship. Nothing is extracted.
+  with _"plugin `…` is not available for this platform (…)"_, listing the
+  platforms it does ship. Nothing is extracted. The install dialog explains this
+  up front: it says the package is not available for this computer and lists the
+  platforms it does support, with no install action.
+- The install dialog and the plugin detail panel list a multi-platform package's
+  **Supported Platforms** by friendly name (_macOS (Apple Silicon)_, _Windows x64_,
+  _Linux ARM64_, …; any other triple is shown as-is) and mark _This computer_.
+  A legacy package shows _Current platform only (legacy package)_.
 - A package **without** a `libraries` map is a legacy single-platform package:
   its one library sits flat in `backend/` and is found by the OS's
   dynamic-library extension, exactly as before.

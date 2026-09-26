@@ -508,4 +508,126 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
       expect(onClose).toHaveBeenCalled();
     });
   });
+
+  describe("supported platforms (#3507)", () => {
+    const LIBS = {
+      "aarch64-apple-darwin": "backend/aarch64-apple-darwin/libk8s.dylib",
+      "x86_64-pc-windows-msvc": "backend/x86_64-pc-windows-msvc/k8s.dll",
+      "x86_64-unknown-linux-gnu": "backend/x86_64-unknown-linux-gnu/libk8s.so",
+    };
+
+    function multiPlatform(libraries: Record<string, string> = LIBS): PluginManifest {
+      return manifest({
+        extensions: {
+          terminalBackend: {
+            connectionType: "k8s-exec",
+            displayName: "Kubernetes Exec",
+            configSchema: {},
+            libraries,
+          },
+        },
+      });
+    }
+
+    function renderWithPlatform(
+      m: PluginManifest,
+      hostPlatform: string | null,
+      platformSupported = true
+    ) {
+      act(() =>
+        root.render(
+          withTooltip(
+            React.createElement(PluginInstallDialog, {
+              filePath: "/tmp/k8s.termihub-plugin",
+              manifest: m,
+              trust: trust(),
+              hostPlatform,
+              platformSupported,
+              onClose,
+            })
+          )
+        )
+      );
+    }
+
+    const q = (id: string) => document.querySelector(`[data-testid="${id}"]`);
+
+    it("lists every shipped platform by friendly name and marks this computer", () => {
+      renderWithPlatform(multiPlatform(), "aarch64-apple-darwin");
+      const items = Array.from(
+        document.querySelectorAll('[data-testid="plugin-install-platforms"] li')
+      ).map((li) => li.getAttribute("data-testid"));
+      expect(items).toEqual([
+        "plugin-install-platform-x86_64-unknown-linux-gnu",
+        "plugin-install-platform-aarch64-apple-darwin",
+        "plugin-install-platform-x86_64-pc-windows-msvc",
+      ]);
+      const mac = q("plugin-install-platform-aarch64-apple-darwin")!;
+      expect(mac.textContent).toContain("macOS (Apple Silicon)");
+      expect(mac.textContent).toContain("This computer");
+      expect(q("plugin-install-platform-x86_64-pc-windows-msvc")?.textContent).toContain(
+        "Windows x64"
+      );
+      expect(
+        document.querySelectorAll('[data-testid="plugin-install-platform-current"]')
+      ).toHaveLength(1);
+      expect(q("plugin-install-platform-unavailable")).toBeNull();
+      expect(q("plugin-install-confirm")).not.toBeNull();
+    });
+
+    it("shows an unknown triple raw and marks nothing when the host is unknown", () => {
+      renderWithPlatform(
+        multiPlatform({ "riscv64gc-unknown-linux-gnu": "backend/riscv/libk8s.so" }),
+        null
+      );
+      expect(q("plugin-install-platform-riscv64gc-unknown-linux-gnu")?.textContent).toContain(
+        "riscv64gc-unknown-linux-gnu"
+      );
+      expect(q("plugin-install-platform-current")).toBeNull();
+    });
+
+    it("labels a legacy single-platform package as current platform only", () => {
+      renderWithPlatform(manifest(), "aarch64-apple-darwin");
+      expect(q("plugin-install-platforms-legacy")?.textContent).toBe(
+        "Current platform only (legacy package)"
+      );
+    });
+
+    it("shows no platform list for a non-native plugin", () => {
+      renderWithPlatform(
+        manifest({ extensions: { theme: { themes: [{ id: "t", name: "T", file: "t.json" }] } } }),
+        "aarch64-apple-darwin"
+      );
+      expect(q("plugin-install-platforms")).toBeNull();
+    });
+
+    it("explains a package that does not support this computer and offers no install", () => {
+      renderWithPlatform(
+        multiPlatform({
+          "x86_64-pc-windows-msvc": LIBS["x86_64-pc-windows-msvc"],
+          "x86_64-unknown-linux-gnu": LIBS["x86_64-unknown-linux-gnu"],
+        }),
+        "aarch64-apple-darwin",
+        false
+      );
+      const banner = q("plugin-install-platform-unavailable")!;
+      expect(banner.textContent).toContain("Not available for this computer");
+      expect(banner.textContent).toContain("not for macOS (Apple Silicon)");
+      expect(q("plugin-install-platform-x86_64-pc-windows-msvc")?.textContent).toContain(
+        "Windows x64"
+      );
+      expect(q("plugin-install-platform-x86_64-unknown-linux-gnu")?.textContent).toContain(
+        "Linux x64"
+      );
+      expect(q("plugin-install-platform-current")).toBeNull();
+      // Neither the install action nor the trust banner / native warning are offered.
+      expect(q("plugin-install-confirm")).toBeNull();
+      expect(q("plugin-install-trust-untrusted")).toBeNull();
+      expect(q("plugin-install-native-warning")).toBeNull();
+      act(() => {
+        q("plugin-install-close")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
 });

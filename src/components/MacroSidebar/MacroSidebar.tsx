@@ -39,6 +39,11 @@ export function MacroSidebar() {
   const deleteMacroFromBackend = useAppStore((s) => s.deleteMacroFromBackend);
   const importMacros = useAppStore((s) => s.importMacros);
   const playMacro = useAppStore((s) => s.playMacro);
+  const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
+  const handleSchedule = useCallback(
+    (macroId: string) => openScheduleEditor({ action: { kind: "macro", macroId } }),
+    [openScheduleEditor]
+  );
   const startMacroRecording = useAppStore((s) => s.startMacroRecording);
 
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -291,6 +296,7 @@ export function MacroSidebar() {
                 macro={macro}
                 onPlay={handlePlay}
                 onEdit={handleEdit}
+                onSchedule={handleSchedule}
                 onDuplicate={handleDuplicate}
                 onExport={handleExportOne}
                 onDelete={handleDelete}

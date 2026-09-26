@@ -13,6 +13,7 @@ import {
   type MacroTimingMode,
   type MacroInjector,
   type MacroPlaybackHandle,
+  type MacroPlaybackStatus,
 } from "@/services/macroPlayback";
 import { Macro, MacroStep } from "@/types/macro";
 import { frontendLog } from "@/utils/frontendLog";
@@ -153,9 +154,10 @@ export interface MacrosSlice {
    * finishes (completed, cancelled, or errored). Only one playback runs at a
    * time — a fresh call cancels any in-flight playback first. Surfaces a
    * recoverable toast when the macro is missing/empty or the target terminal is
-   * not connected.
+   * not connected. Resolves with the playback's final status, or `null` when
+   * playback never started (a scheduled run reports it, PROD-043).
    */
-  playMacro: (macroId: string, opts?: PlayMacroOptions) => Promise<void>;
+  playMacro: (macroId: string, opts?: PlayMacroOptions) => Promise<MacroPlaybackStatus | null>;
   /** Cancel the in-flight macro playback, if any. Idempotent. */
   cancelMacroPlayback: () => void;
 }
@@ -172,16 +174,16 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
     macro: Macro,
     requested: string[],
     opts: PlayMacroOptions | undefined
-  ): Promise<void> => {
+  ): Promise<MacroPlaybackStatus | null> => {
     const targets = filterConnectedTerminalTabIds(get(), requested);
     const skipped = requested.length - targets.length;
     if (targets.length === 0) {
       toast.error("None of the selected terminals are connected");
-      return;
+      return null;
     }
     if (macro.steps.length === 0) {
       toast.info(`Macro "${macro.name}" has no steps to play`);
-      return;
+      return null;
     }
     if (activeMacroPlayback) {
       activeMacroPlayback.cancel();
@@ -251,6 +253,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       totalSteps: total,
     });
     toast[summary.kind](summary.message, { id: toastId, description: summary.description });
+    return result.status;
   };
 
   return {
@@ -403,19 +406,18 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       const macro = state.macros.find((m) => m.id === macroId);
       if (!macro) {
         toast.error("Macro not found");
-        return;
+        return null;
       }
 
       const requested = opts?.targetTabIds?.length ? [...new Set(opts.targetTabIds)] : null;
       if (requested && requested.length > 1) {
-        await playMacroOnTargets(macro, requested, opts);
-        return;
+        return await playMacroOnTargets(macro, requested, opts);
       }
 
       const targetTabId = requested?.[0] ?? opts?.targetTabId ?? getActiveTab(state)?.id ?? null;
       if (!targetTabId) {
         toast.error("No active terminal to play the macro into");
-        return;
+        return null;
       }
 
       // Guard: only inject into a connected, non-exited terminal session.
@@ -429,12 +431,12 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
         regionExited(currentSessionView()[targetTabId])
       ) {
         toast.error("The target terminal is not connected");
-        return;
+        return null;
       }
 
       if (macro.steps.length === 0) {
         toast.info(`Macro "${macro.name}" has no steps to play`);
-        return;
+        return null;
       }
 
       // Only one playback at a time — cancel any in-flight run first.
@@ -510,6 +512,7 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           id: toastId,
         });
       }
+      return result.status;
     },
 
     cancelMacroPlayback: () => {

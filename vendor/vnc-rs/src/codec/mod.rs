@@ -20,7 +20,7 @@ use crate::{PixelFormat, Rect, VncError};
 /// Bounding the *area* (not each side) keeps very wide but short strips legal.
 pub(crate) const MAX_RECT_PIXELS: usize = 8192 * 8192;
 
-/// Largest length-prefixed compressed payload (ZRLE / TRLE `u32` length)
+/// Largest length-prefixed compressed payload (ZRLE `u32` length)
 /// accepted from the server (termiHub fork, #3473): a maximal rectangle's raw
 /// size plus deflate's worst-case expansion headroom.
 pub(crate) const MAX_ENCODED_BYTES: usize = MAX_RECT_PIXELS * 4 + (1 << 20);

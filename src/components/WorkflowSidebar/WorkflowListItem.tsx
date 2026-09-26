@@ -1,5 +1,15 @@
 import type React from "react";
-import { Play, Pencil, Copy, Download, Trash2, Zap, Square, ListChecks } from "lucide-react";
+import {
+  Play,
+  Pencil,
+  Copy,
+  Download,
+  Trash2,
+  Zap,
+  Square,
+  ListChecks,
+  CalendarClock,
+} from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Workflow } from "@/types/workflow";
@@ -23,6 +33,8 @@ interface WorkflowListItemProps {
   /** Stop one target's run by id, leaving its siblings running (#3418). */
   onCancelRun?: (runId: string) => void;
   onEdit: (workflowId: string) => void;
+  /** Open the schedule editor for this workflow (PROD-043). */
+  onSchedule?: (workflowId: string) => void;
   onDuplicate: (workflowId: string) => void;
   onExport: (workflowId: string) => void;
   onDelete: (workflowId: string) => void;
@@ -53,6 +65,7 @@ export function WorkflowListItem({
   runs,
   onCancelRun,
   onEdit,
+  onSchedule,
   onDuplicate,
   onExport,
   onDelete,
@@ -135,6 +148,22 @@ export function WorkflowListItem({
               }}
             />
           </Tooltip>
+          {onSchedule ? (
+            <Tooltip content="Schedule…" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Schedule"
+                data-testid={`workflow-schedule-${workflow.id}`}
+                icon={<CalendarClock size={12} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSchedule(workflow.id);
+                }}
+              />
+            </Tooltip>
+          ) : null}
           <Tooltip content="Duplicate" side="top">
             <Button
               variant="ghost"

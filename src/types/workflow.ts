@@ -262,7 +262,7 @@ export interface WorkflowParameter {
 export type WorkflowRunHistoryStatus = "completed" | "cancelled" | "failed";
 
 /** What launched a run. Mirrors the Rust `WorkflowRunTrigger` enum. */
-export type WorkflowRunTrigger = "manual" | "on-connect" | "hotkey";
+export type WorkflowRunTrigger = "manual" | "on-connect" | "hotkey" | "scheduled";
 
 /**
  * A persisted, **metadata-only** record of a finished workflow run (PROD-0046).

@@ -552,3 +552,63 @@
   flex: 0 0 auto;
   color: var(--accent-color);
 }
+
+/* ── Supported platforms (multi-platform native packages, #3507) ── */
+
+.plugin-platforms {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 var(--spacing-md);
+  padding: 0;
+  list-style: none;
+  max-width: 560px;
+}
+
+.plugin-platforms__item {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 5px 10px;
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-md);
+  background: var(--bg-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-platforms__item--current {
+  border-color: var(--color-success);
+}
+
+.plugin-platforms__icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--text-secondary);
+}
+
+.plugin-platforms__item--current .plugin-platforms__icon {
+  color: var(--color-success);
+}
+
+.plugin-platforms__label {
+  font-weight: 600;
+}
+
+.plugin-platforms__triple {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.plugin-platforms__current {
+  margin-left: auto;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--color-success);
+}
+
+.plugin-platforms__legacy {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
