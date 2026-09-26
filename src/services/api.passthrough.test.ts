@@ -122,6 +122,8 @@ import {
   listTrustedPublishers,
   revokeTrustedPublisher,
   uninstallPlugin,
+  checkPluginUpdates,
+  downloadPluginUpdate,
   enablePlugin,
   disablePlugin,
   // misc
@@ -1280,6 +1282,25 @@ describe("api pass-through wrappers (#2975)", () => {
       await disablePlugin("p1");
 
       expect(mockedInvoke).toHaveBeenCalledWith("disable_plugin", { pluginId: "p1" });
+    });
+
+    it("checkPluginUpdates checks every plugin, or only the given one (PROD-051)", async () => {
+      mockedInvoke.mockResolvedValue([]);
+
+      await checkPluginUpdates();
+      expect(mockedInvoke).toHaveBeenCalledWith("check_plugin_updates", { pluginId: null });
+
+      await checkPluginUpdates("p1");
+      expect(mockedInvoke).toHaveBeenCalledWith("check_plugin_updates", { pluginId: "p1" });
+    });
+
+    it("downloadPluginUpdate forwards the plugin id and returns the package path", async () => {
+      mockedInvoke.mockResolvedValue("/cache/plugin-updates/p1-1.1.0.termihub-plugin");
+
+      await expect(downloadPluginUpdate("p1")).resolves.toBe(
+        "/cache/plugin-updates/p1-1.1.0.termihub-plugin"
+      );
+      expect(mockedInvoke).toHaveBeenCalledWith("download_plugin_update", { pluginId: "p1" });
     });
   });
 

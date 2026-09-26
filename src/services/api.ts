@@ -45,6 +45,7 @@ import type {
   NativePluginTrust,
   PluginManifest,
   PluginTrustInfo,
+  PluginUpdateCheckResult,
   TrustedPublisher,
 } from "@/types/plugin";
 import {
@@ -2892,6 +2893,25 @@ export async function installPlugin(
     trustPublisher,
     confirmVersionChange,
   });
+}
+
+/**
+ * Check installed plugins that declare an `updateUrl` (or only `pluginId`) for a
+ * newer version (PROD-051). Never downloads or installs anything.
+ */
+export async function checkPluginUpdates(pluginId?: string): Promise<PluginUpdateCheckResult[]> {
+  return await invoke<PluginUpdateCheckResult[]>("check_plugin_updates", {
+    pluginId: pluginId ?? null,
+  });
+}
+
+/**
+ * Download the update offered for `pluginId`, verify its SHA-256, id and
+ * version, and return the local package path. It is **not** installed: pass the
+ * path through the normal install flow (validate → trust → confirm).
+ */
+export async function downloadPluginUpdate(pluginId: string): Promise<string> {
+  return await invoke<string>("download_plugin_update", { pluginId });
 }
 
 /** List every trusted publisher key (bundled and user-pinned). */
