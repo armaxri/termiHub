@@ -98,6 +98,13 @@ export interface ConfirmDialogProps {
    * set `false` when the caller's `onConfirm` reports the failure itself.
    */
   confirmErrorToast?: boolean;
+  /**
+   * Whether pressing Enter anywhere in the dialog confirms (defaults to `true`;
+   * Enter on the focused Cancel button still cancels). Set `false` for a
+   * high-stakes confirmation that must take a deliberate activation of the
+   * confirm button — Enter then never confirms from the dialog body.
+   */
+  confirmOnEnter?: boolean;
   /** When provided, renders a "don't ask again" opt-out checkbox. */
   dontAskAgain?: ConfirmDontAskAgain;
   /**
@@ -146,6 +153,7 @@ export function ConfirmDialog({
   confirmIcon,
   confirmDisabled,
   confirmErrorToast,
+  confirmOnEnter = true,
   dontAskAgain,
   testIdBase = "confirm-dialog",
   onConfirm,
@@ -189,6 +197,7 @@ export function ConfirmDialog({
       data-testid={rest["data-testid"]}
       onKeyDown={(e) => {
         if (e.key === "Enter") {
+          if (!confirmOnEnter) return;
           if (document.activeElement === cancelBtnRef.current) return;
           e.preventDefault();
           onConfirm();

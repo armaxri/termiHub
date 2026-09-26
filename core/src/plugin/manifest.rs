@@ -22,6 +22,8 @@ use thiserror::Error;
 
 use termihub_plugin_api::{AbiVersion, CURRENT_PLUGIN_ABI_VERSION};
 
+use super::platform::{is_valid_library_path, is_valid_target_triple, MAX_TARGET_TRIPLE_LEN};
+
 /// Maximum length of a plugin `id`. Ids become on-disk directory names
 /// (`<app-data>/plugins/<id>/`), so they are kept short and slug-like.
 const MAX_PLUGIN_ID_LEN: usize = 64;
@@ -124,6 +126,15 @@ pub struct TerminalBackendExtension {
     /// JSON Schema describing the backend's connection config. Opaque to this
     /// crate — later issues drive the schema-based config form.
     pub config_schema: serde_json::Value,
+    /// Multi-platform native libraries (PLG-011): Rust target triple → the
+    /// library's `/`-separated path inside the package (under `backend/`,
+    /// conventionally `backend/<triple>/<lib>`). The host loads only the entry
+    /// for its own triple (see [`super::platform`]).
+    ///
+    /// Empty (the key absent) for a **legacy single-platform** package whose
+    /// library sits flat in `backend/` and is picked by file extension.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub libraries: BTreeMap<String, String>,
 }
 
 /// A protocol-parser extension point.
@@ -289,6 +300,7 @@ impl PluginManifest {
         }
         if let Some(backend) = &self.extensions.terminal_backend {
             validate_connection_type(&backend.connection_type)?;
+            validate_libraries(&backend.libraries)?;
         }
         if let Some(url) = &self.update_url {
             super::update_check::validate_https_url(url)
@@ -376,6 +388,38 @@ pub enum ManifestValidationError {
     /// `updateUrl` is not an acceptable HTTPS URL (PROD-051).
     #[error("plugin manifest `updateUrl` `{0}` is invalid: {1}")]
     InvalidUpdateUrl(String, String),
+    /// A `terminalBackend.libraries` key is not a well-formed Rust target triple
+    /// (PLG-011).
+    #[error(
+        "plugin manifest `terminalBackend.libraries` key `{0}` is not a valid target triple \
+         (1-{MAX_TARGET_TRIPLE_LEN} characters of lowercase letters, digits, `_`, `.` or `-`)"
+    )]
+    InvalidTargetTriple(String),
+    /// A `terminalBackend.libraries` value is not a safe relative path under
+    /// `backend/` (PLG-011).
+    #[error(
+        "plugin manifest `terminalBackend.libraries[{triple}]` path `{path}` must be a relative \
+         `/`-separated path under `backend/`"
+    )]
+    InvalidLibraryPath {
+        /// The target triple whose entry is invalid.
+        triple: String,
+        /// The offending path.
+        path: String,
+    },
+    /// Two `terminalBackend.libraries` entries point at the same file (PLG-011):
+    /// each platform must carry its own library.
+    #[error(
+        "plugin manifest `terminalBackend.libraries` maps both `{first}` and `{second}` to `{path}`"
+    )]
+    DuplicateLibraryPath {
+        /// The first triple mapping to the path.
+        first: String,
+        /// The second triple mapping to the same path.
+        second: String,
+        /// The shared path.
+        path: String,
+    },
 }
 
 fn require_non_empty(field: &'static str, value: &str) -> Result<(), ManifestValidationError> {
@@ -393,6 +437,32 @@ fn require_non_empty(field: &'static str, value: &str) -> Result<(), ManifestVal
 /// characters that would let it escape `plugins/<id>/`.
 pub(crate) fn is_valid_plugin_id(id: &str) -> bool {
     validate_plugin_id(id).is_ok()
+}
+
+/// Validate a `terminalBackend.libraries` map (PLG-011): every key a well-formed
+/// target triple, every value a safe relative path under `backend/`, and no two
+/// platforms sharing one file.
+fn validate_libraries(libraries: &BTreeMap<String, String>) -> Result<(), ManifestValidationError> {
+    let mut seen: BTreeMap<&str, &str> = BTreeMap::new();
+    for (triple, path) in libraries {
+        if !is_valid_target_triple(triple) {
+            return Err(ManifestValidationError::InvalidTargetTriple(triple.clone()));
+        }
+        if !is_valid_library_path(path) {
+            return Err(ManifestValidationError::InvalidLibraryPath {
+                triple: triple.clone(),
+                path: path.clone(),
+            });
+        }
+        if let Some(first) = seen.insert(path.as_str(), triple.as_str()) {
+            return Err(ManifestValidationError::DuplicateLibraryPath {
+                first: first.to_owned(),
+                second: triple.clone(),
+                path: path.clone(),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Maximum length of a declared `terminalBackend.connectionType`.
@@ -648,6 +718,96 @@ mod tests {
                 "connectionType {bad:?} should be rejected"
             );
         }
+    }
+
+    /// `valid_manifest_json` with a `libraries` map spliced into its terminal
+    /// backend (PLG-011).
+    fn with_libraries(map_json: &str) -> String {
+        valid_manifest_json().replace(
+            "\"connectionType\": \"k8s-exec\",",
+            &format!("\"connectionType\": \"k8s-exec\", \"libraries\": {map_json},"),
+        )
+    }
+
+    #[test]
+    fn multi_platform_libraries_parse_validate_and_round_trip() {
+        let json = with_libraries(
+            r#"{
+                "x86_64-unknown-linux-gnu": "backend/x86_64-unknown-linux-gnu/libk8s.so",
+                "aarch64-apple-darwin": "backend/aarch64-apple-darwin/libk8s.dylib",
+                "x86_64-pc-windows-msvc": "backend/x86_64-pc-windows-msvc/k8s.dll"
+            }"#,
+        );
+        let manifest = parse_manifest(&json).expect("multi-platform manifest parses");
+        manifest
+            .validate()
+            .expect("multi-platform manifest validates");
+        let libs = &manifest
+            .extensions
+            .terminal_backend
+            .as_ref()
+            .unwrap()
+            .libraries;
+        assert_eq!(libs.len(), 3);
+        assert_eq!(
+            libs["aarch64-apple-darwin"],
+            "backend/aarch64-apple-darwin/libk8s.dylib"
+        );
+        let reparsed = parse_manifest(&serde_json::to_string(&manifest).unwrap()).unwrap();
+        assert_eq!(manifest, reparsed);
+    }
+
+    #[test]
+    fn legacy_manifest_has_no_libraries_and_serializes_without_the_key() {
+        let manifest = parse_manifest(valid_manifest_json()).unwrap();
+        let backend = manifest.extensions.terminal_backend.as_ref().unwrap();
+        assert!(backend.libraries.is_empty());
+        let json = serde_json::to_string(&manifest).unwrap();
+        assert!(
+            !json.contains("libraries"),
+            "an empty map is omitted: {json}"
+        );
+    }
+
+    #[test]
+    fn validate_rejects_bad_library_triples_and_paths() {
+        let bad_triple = parse_manifest(&with_libraries(r#"{ "Linux": "backend/Linux/l.so" }"#))
+            .unwrap()
+            .validate();
+        assert!(matches!(
+            bad_triple,
+            Err(ManifestValidationError::InvalidTargetTriple(t)) if t == "Linux"
+        ));
+
+        for bad_path in [
+            "backend/../escape.so",
+            "/abs/backend/l.so",
+            "frontend/l.so",
+            "backend",
+            "backend\\\\l.so",
+        ] {
+            let json = with_libraries(&format!(
+                r#"{{ "x86_64-unknown-linux-gnu": "{bad_path}" }}"#
+            ));
+            let result = parse_manifest(&json).unwrap().validate();
+            assert!(
+                matches!(
+                    result,
+                    Err(ManifestValidationError::InvalidLibraryPath { .. })
+                ),
+                "{bad_path:?} should be rejected, got {result:?}"
+            );
+        }
+
+        let dup = parse_manifest(&with_libraries(
+            r#"{ "x86_64-unknown-linux-gnu": "backend/l.so", "aarch64-unknown-linux-gnu": "backend/l.so" }"#,
+        ))
+        .unwrap()
+        .validate();
+        assert!(matches!(
+            dup,
+            Err(ManifestValidationError::DuplicateLibraryPath { .. })
+        ));
     }
 
     #[test]

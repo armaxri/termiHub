@@ -18,7 +18,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
     native_library_hash, InstallOptions, InstalledPlugin, NativeTrustStore, PluginHost,
-    PluginManager, PluginManagerError, PluginManifest, TrustAssessment, TrustLevel,
+    PluginManager, PluginManagerError, PluginManifest, SignerChange, TrustAssessment, TrustLevel,
     TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
 };
 
@@ -125,6 +125,18 @@ pub enum InstallPluginResult {
         /// Both versions and the kind of change, for the confirm dialog.
         change: VersionChange,
     },
+    /// Nothing was changed: the package is signed by a different key than the
+    /// installed copy, is unsigned where the installed copy was signed, or the
+    /// installed copy's signer is unknown (#3489). Re-issue the install with
+    /// `confirm_signer_change` — and, when `version` is present, also
+    /// `confirm_version_change` — once the user has explicitly agreed.
+    SignerConfirmationRequired {
+        /// Both signer fingerprints and the kind of change.
+        signer: SignerChange,
+        /// A version change for the same install that also still needs
+        /// confirmation, so both can be asked in one prompt.
+        version: Option<VersionChange>,
+    },
 }
 
 /// Map the manager's install result onto the command result: an unconfirmed
@@ -139,6 +151,12 @@ fn install_outcome(
         }),
         Err(PluginManagerError::VersionChangeUnconfirmed(change)) => {
             Ok(InstallPluginResult::ConfirmationRequired { change: *change })
+        }
+        Err(PluginManagerError::SignerChangeUnconfirmed { signer, version }) => {
+            Ok(InstallPluginResult::SignerConfirmationRequired {
+                signer: *signer,
+                version: version.map(|v| *v),
+            })
         }
         Err(e) => Err(e.to_string()),
     }
@@ -157,12 +175,18 @@ fn install_outcome(
 /// older version, a different build of the same version, or an uncomparable
 /// version returns [`InstallPluginResult::ConfirmationRequired`] (nothing
 /// changed) unless `confirm_version_change` is `true`.
+///
+/// And it is signer-gated (#3489): replacing a plugin signed by one key with a
+/// package signed by another, or with an unsigned package, returns
+/// [`InstallPluginResult::SignerConfirmationRequired`] (nothing changed) unless
+/// `confirm_signer_change` is `true`.
 #[tauri::command]
 pub fn install_plugin(
     path: String,
     accept_untrusted: bool,
     trust_publisher: bool,
     confirm_version_change: Option<bool>,
+    confirm_signer_change: Option<bool>,
     app: AppHandle,
     manager: State<'_, PluginManager>,
 ) -> Result<InstallPluginResult, String> {
@@ -172,6 +196,7 @@ pub fn install_plugin(
             accept_untrusted,
             trust_publisher,
             confirm_version_change: confirm_version_change.unwrap_or(false),
+            confirm_signer_change: confirm_signer_change.unwrap_or(false),
         },
     ))?;
     if matches!(result, InstallPluginResult::Installed { .. }) {
@@ -402,7 +427,7 @@ pub fn read_plugin_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use termihub_core::plugin::VersionChangeKind;
+    use termihub_core::plugin::{SignerChangeKind, VersionChangeKind};
 
     fn downgrade() -> VersionChange {
         VersionChange {
@@ -464,6 +489,7 @@ mod tests {
             accept_untrusted: true,
             trust_publisher: false,
             confirm_version_change: confirm,
+            confirm_signer_change: false,
         };
 
         let first = install_outcome(mgr.install_with(&make("1.4.0"), opts(false))).unwrap();
@@ -480,5 +506,91 @@ mod tests {
         let confirmed = install_outcome(mgr.install_with(&older, opts(true))).unwrap();
         assert!(matches!(confirmed, InstallPluginResult::Installed { .. }));
         assert_eq!(mgr.get("acme-tool").unwrap().manifest.version, "1.2.0");
+    }
+
+    fn key_changed() -> SignerChange {
+        SignerChange {
+            plugin_id: "acme-tool".into(),
+            plugin_name: "Acme Tool".into(),
+            installed_key_id: Some("sha256:aaaa".into()),
+            incoming_key_id: Some("sha256:bbbb".into()),
+            kind: SignerChangeKind::KeyChanged,
+        }
+    }
+
+    #[test]
+    fn unconfirmed_signer_change_is_a_typed_result_carrying_both_changes() {
+        let result = install_outcome(Err(PluginManagerError::SignerChangeUnconfirmed {
+            signer: Box::new(key_changed()),
+            version: Some(Box::new(downgrade())),
+        }))
+        .unwrap();
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["status"], "signerConfirmationRequired");
+        assert_eq!(json["signer"]["kind"], "keyChanged");
+        assert_eq!(json["signer"]["installedKeyId"], "sha256:aaaa");
+        assert_eq!(json["signer"]["incomingKeyId"], "sha256:bbbb");
+        assert_eq!(json["version"]["kind"], "downgrade");
+
+        let signer_only = install_outcome(Err(PluginManagerError::SignerChangeUnconfirmed {
+            signer: Box::new(key_changed()),
+            version: None,
+        }))
+        .unwrap();
+        let json = serde_json::to_value(&signer_only).unwrap();
+        assert!(json["version"].is_null());
+    }
+
+    #[test]
+    fn signed_then_different_key_round_trips_through_the_command_mapping() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mgr = PluginManager::new(tmp.path().join("plugins"));
+        let make = |version: &str, key: &termihub_core::plugin::SigningKeyFile| {
+            let src = tmp.path().join(format!("src-{version}"));
+            std::fs::create_dir_all(src.join("themes")).unwrap();
+            std::fs::write(src.join("themes/dark.json"), "{}").unwrap();
+            let manifest = serde_json::json!({
+                "id": "acme-tool", "name": "Acme Tool", "version": version,
+                "author": "t", "description": "d", "license": "MIT", "apiVersion": "1.0",
+                "platforms": ["linux", "macos", "windows"], "permissions": [],
+                "extensions": { "theme": { "themes": [
+                    { "id": "dark", "name": "Dark", "file": "themes/dark.json" }
+                ] } }
+            });
+            std::fs::write(src.join("manifest.json"), manifest.to_string()).unwrap();
+            let out = tmp.path().join(format!("out-{version}"));
+            std::fs::create_dir_all(&out).unwrap();
+            let pkg = termihub_core::plugin::pack_plugin(&src, &out).unwrap();
+            termihub_core::plugin::sign_package(&pkg, key).unwrap();
+            pkg
+        };
+        let key_a = termihub_core::plugin::generate_keypair("A");
+        let key_b = termihub_core::plugin::generate_keypair("B");
+        let opts = |confirm_signer| InstallOptions {
+            accept_untrusted: false,
+            trust_publisher: false,
+            confirm_version_change: false,
+            confirm_signer_change: confirm_signer,
+        };
+
+        let first = install_outcome(mgr.install_with(&make("1.0.0", &key_a), opts(false)));
+        assert!(matches!(first, Ok(InstallPluginResult::Installed { .. })));
+
+        let other = make("1.1.0", &key_b);
+        let refused = install_outcome(mgr.install_with(&other, opts(false))).unwrap();
+        let InstallPluginResult::SignerConfirmationRequired { signer, version } = &refused else {
+            panic!("expected SignerConfirmationRequired, got {refused:?}");
+        };
+        assert_eq!(signer.kind, SignerChangeKind::KeyChanged);
+        assert_eq!(
+            signer.installed_key_id.as_deref(),
+            Some(key_a.key_id.as_str())
+        );
+        assert!(version.is_none());
+        assert_eq!(mgr.get("acme-tool").unwrap().manifest.version, "1.0.0");
+
+        let confirmed = install_outcome(mgr.install_with(&other, opts(true))).unwrap();
+        assert!(matches!(confirmed, InstallPluginResult::Installed { .. }));
+        assert_eq!(mgr.get("acme-tool").unwrap().manifest.version, "1.1.0");
     }
 }

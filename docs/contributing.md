@@ -194,6 +194,7 @@ each job runs only if the PR can affect it:
 | Security Audit                                            | a dependency manifest/lockfile changed                    |
 | Vendored Forks Consistency                                | `vendor/**`, a lockfile or `docs/supply-chain.md` changed |
 | Agent — Linux musl cross-builds                           | `agent/`, `core/` or `Cargo.toml` changed                 |
+| Plugin Packaging (ubuntu + windows, merge)                | the plugin surface changed (API, host, packer, examples)  |
 | Lint Commit Messages                                      | always                                                    |
 
 A skipped check reports as **skipped**, which is a pass. The classifier is
@@ -209,7 +210,8 @@ coverage floors pass (on Linux); the app release-compiles and Vite-bundles on Li
 **macOS**; vitest on **Windows**; release compiles/installers on macOS, Windows
 and Linux arm64 (Dev Build); the Windows and macOS agent builds; the workspace
 `cargo audit`/`cargo deny`/`pnpm audit` gate for PRs that do not touch
-dependencies; unified coverage; bundle size; the Windows serial grade (#2495).
+dependencies; unified coverage; bundle size; the Windows serial grade (#2495);
+the macOS leg of plugin package-then-load (PLG-011).
 
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security

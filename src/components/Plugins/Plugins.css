@@ -465,6 +465,47 @@
   color: var(--text-secondary);
 }
 
+/* ── Signer-change (publisher key changed) confirmation (#3489) ────────── */
+.plugin-signer-change__message {
+  margin: 0 0 var(--spacing-md);
+  line-height: 1.45;
+}
+
+.plugin-signer-change__keys {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px var(--spacing-md);
+  align-items: baseline;
+  padding: 10px var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  border: 1px solid var(--color-error);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-error) 10%, transparent);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-signer-change__keys code {
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
+.plugin-signer-change__version {
+  padding: 10px var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  border: 1px solid var(--color-warning);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--color-warning) 12%, transparent);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.plugin-signer-change__version-title {
+  font-weight: 600;
+  color: var(--color-warning);
+}
+
 /* ── Detail panel — update check (PROD-051) ───────────────────────────── */
 .plugin-update__line {
   display: flex;

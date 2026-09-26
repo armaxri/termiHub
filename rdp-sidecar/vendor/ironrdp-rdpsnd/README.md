@@ -16,9 +16,11 @@ mirroring how `vendor/vnc-rs` is patched into the main app.
 of [IronRDP](https://github.com/Devolutions/IronRDP). The fork is registered in
 [`vendor/vendored-forks.json`](../../../vendor/vendored-forks.json), and a weekly CI
 job reports upstream releases, commits and advisories that the fork does not have
-yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing.
+yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing or
+reviewing upstream again.
 
-There are **two functional changes**, both in `src/client.rs`.
+There are **two functional changes** of our own plus **upstream fixes ported
+from after 0.9.0** (see below), all in `src/client.rs`.
 
 ### 1. `wave` receives the concrete `AudioFormat` ([#1773])
 
@@ -39,7 +41,7 @@ Multi-rate PCM negotiates fine by structural equality because PCM formats are
 canonical (the client can reproduce the server's exact `AudioFormat`). Compressed
 formats cannot: the server picks the block layout (`n_block_align`,
 `wSamplesPerBlock`, and — for MS-ADPCM — the coefficient `data`), which the client
-cannot predict, so the exact-equality intersection can *never* select an ADPCM
+cannot predict, so the exact-equality intersection can _never_ select an ADPCM
 format however many the handler advertises.
 
 - This fork adds `RdpsndClientHandler::accepts_format(&self, &AudioFormat) -> bool`
@@ -52,12 +54,39 @@ format however many the handler advertises.
   returned list is also now deterministic (server order) where the `HashSet`
   intersection was not.
 
+### 3. Upstream fixes ported after 0.9.0 ([#3499])
+
+Reviewed upstream `crates/ironrdp-rdpsnd` up to IronRDP
+[`160752fc`](https://github.com/Devolutions/IronRDP/commit/160752fcf3293889f1ce1bdd3d2e7afc790a9cd2)
+(2026-08-31); the fork base stays 0.9.0 (tag `ironrdp-rdpsnd-v0.9.0`, `11a0810cf`).
+
+- **Malformed PDUs are ignored** (upstream `c87ab68e`, "isolate malformed
+  encrypted waves"): a server audio PDU that fails to decode is logged and
+  dropped, keeping the channel state, instead of returning the decode error —
+  which the session treats as fatal, so one bad RDPSND PDU ended the whole
+  desktop connection.
+- **Unsupported optional PDUs keep the channel alive** (from upstream
+  `2d9a9bf1`): `CryptKey` / `WaveEncrypt` in the Ready state are logged and
+  ignored instead of stopping audio for the rest of the session.
+- **`get_format(format_no)` indexes the negotiated client list** (from upstream
+  `2d9a9bf1`), matching MS-RDPEA; 0.9.0 indexed the server's list.
+
+Deliberately **not** ported: pre-v8 `WaveInfo` + bare `Wave` playback (feature,
+upstream `2d9a9bf1`; follow-up [#3510]), upstream's own
+client-format ordering (superseded by change 2 above), quality-mode selection
+(`14ef4fd4`), error byte offsets (`8607ac5d`, needs a newer `ironrdp-core`),
+the AUDIO_INPUT helper (`50fa88b2`), server-side wave timestamps/confirms
+(`160752fc`, server only) and the toolchain bump (`0aeea76e`). Regression tests
+live in `rdp-sidecar/src/rdpsnd_fork_tests.rs` (this crate builds with
+`test = false`).
+
 `pdu.rs`, `server.rs` and `lib.rs` are byte-for-byte upstream 0.9.0. The intended
-upstream contribution is exactly these two changes. Sibling `ironrdp-*` deps
+upstream contribution is changes 1 and 2. Sibling `ironrdp-*` deps
 remain registry versions so nothing else forks.
 
 [#1773]: https://github.com/armaxri/termiHub/issues/1773
 [#1812]: https://github.com/armaxri/termiHub/issues/1812
-
+[#3499]: https://github.com/armaxri/termiHub/issues/3499
+[#3510]: https://github.com/armaxri/termiHub/issues/3510
 [IronRDP]: https://github.com/Devolutions/IronRDP
 [MS-RDPEA]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpea/bea2d5cf-e3b9-4419-92e5-0e074ff9bc5b

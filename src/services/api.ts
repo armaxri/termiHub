@@ -2962,18 +2962,24 @@ export async function assessPluginTrust(filePath: string): Promise<PluginTrustIn
  * Replacing an installed plugin with an older version, a different build of the
  * same version, or an uncomparable version resolves to `confirmationRequired`
  * (nothing changed) unless `confirmVersionChange` is set (PLG-012).
+ *
+ * Replacing a plugin signed by one key with a package signed by another, or
+ * with an unsigned package, resolves to `signerConfirmationRequired` (nothing
+ * changed) unless `confirmSignerChange` is set (#3489).
  */
 export async function installPlugin(
   filePath: string,
   acceptUntrusted: boolean,
   trustPublisher: boolean,
-  confirmVersionChange = false
+  confirmVersionChange = false,
+  confirmSignerChange = false
 ): Promise<InstallPluginResult> {
   return await invoke<InstallPluginResult>("install_plugin", {
     path: filePath,
     acceptUntrusted,
     trustPublisher,
     confirmVersionChange,
+    confirmSignerChange,
   });
 }
 

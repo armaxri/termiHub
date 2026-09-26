@@ -62,6 +62,39 @@ pub(crate) fn validate_image_rect(rect: &Rect) -> Result<(), VncError> {
     Ok(())
 }
 
+/// Largest framebuffer side accepted from `ServerInit` / `DesktopSize`
+/// (termiHub fork, #3499 — upstream 0.6.0 bounds it at 8192 too). Matches
+/// termiHub's `MAX_FRAMEBUFFER_DIMENSION`. Upstream 0.6.0 additionally caps the
+/// area at 3840 x 2160 and rejects zero sizes; termiHub keeps its 8192 x 8192
+/// area bound ([`MAX_RECT_PIXELS`]) so 5K/8K desktops still connect.
+pub(crate) const MAX_SCREEN_DIMENSION: u16 = 8192;
+
+/// Validate a server-announced framebuffer size.
+pub(crate) fn validate_screen(width: u16, height: u16) -> Result<(), VncError> {
+    if width > MAX_SCREEN_DIMENSION || height > MAX_SCREEN_DIMENSION {
+        return Err(VncError::Protocol(format!(
+            "server framebuffer {width}x{height} exceeds the {MAX_SCREEN_DIMENSION}-pixel side limit"
+        )));
+    }
+    Ok(())
+}
+
+/// Require a pixel-carrying rectangle to lie inside the current framebuffer
+/// (termiHub fork, #3499 — ported from upstream 0.6.0 `623b894`). RFB only
+/// defines updates for framebuffer pixels; anything outside is a protocol
+/// violation that consumers would otherwise have to clip.
+pub(crate) fn validate_rect_on_screen(rect: &Rect, screen: (u16, u16)) -> Result<(), VncError> {
+    if u32::from(rect.x) + u32::from(rect.width) > u32::from(screen.0)
+        || u32::from(rect.y) + u32::from(rect.height) > u32::from(screen.1)
+    {
+        return Err(VncError::Protocol(format!(
+            "server rectangle at ({}, {}) size {}x{} lies outside the {}x{} framebuffer",
+            rect.x, rect.y, rect.width, rect.height, screen.0, screen.1
+        )));
+    }
+    Ok(())
+}
+
 /// Read a server `u32` length prefix for a compressed payload and bound it by
 /// [`MAX_ENCODED_BYTES`].
 pub(crate) fn encoded_len(len: u32) -> Result<usize, VncError> {
@@ -129,6 +162,21 @@ mod tests {
     fn validate_rejects_oversize_area_but_allows_wide_strips() {
         assert!(validate_image_rect(&rect(0, 0, u16::MAX, u16::MAX)).is_err());
         assert!(validate_image_rect(&rect(0, 0, 60_000, 64)).is_ok());
+    }
+
+    #[test]
+    fn rect_must_lie_inside_the_framebuffer() {
+        assert!(validate_rect_on_screen(&rect(0, 0, 640, 480), (640, 480)).is_ok());
+        assert!(validate_rect_on_screen(&rect(1, 0, 640, 480), (640, 480)).is_err());
+        assert!(validate_rect_on_screen(&rect(0, 480, 1, 1), (640, 480)).is_err());
+        assert!(validate_rect_on_screen(&rect(640, 480, 0, 0), (640, 480)).is_ok());
+    }
+
+    #[test]
+    fn screen_sides_are_bounded() {
+        assert!(validate_screen(8192, 8192).is_ok());
+        assert!(validate_screen(8193, 1).is_err());
+        assert!(validate_screen(1, u16::MAX).is_err());
     }
 
     #[test]
