@@ -47,6 +47,7 @@ import { installBroadcastHarness } from "@/test/broadcastHarness";
 import {
   connecting,
   disconnected,
+  evicted,
   installSessionLifecycleHarness,
 } from "@/test/sessionLifecycleRegionTestHarness";
 import type { LeafPanel, TerminalTab, TabContentType } from "@/types/terminal";
@@ -182,6 +183,15 @@ describe("appStore — broadcast input actions (#1955, region-authoritative #220
 
       const result = useAppStore.getState().getBroadcastTargetTabIds().sort();
       expect(result).toEqual(["src", "t2"]);
+    });
+
+    it("never fans input out to a tab another desktop took over (SM-003)", async () => {
+      seedTabs([makeTab({ id: "src" }), makeTab({ id: "t2" }), makeTab({ id: "t3" })]);
+      await ensureSessionSubscribed();
+      sessionHarness.transport.setSession("t3", evicted());
+      useAppStore.getState().startBroadcast("all", "src", ["t2", "t3"]);
+
+      expect(useAppStore.getState().getBroadcastTargetTabIds().sort()).toEqual(["src", "t2"]);
     });
 
     it("drops a target whose tab no longer exists", () => {

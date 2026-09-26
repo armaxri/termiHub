@@ -44,6 +44,7 @@ Serialized `lowercase` on the wire, except the two `#[serde(rename)]` cases note
 | `Failed`       | `failed`       | Terminal failure: the initial connect errored, or the reconnect loop exhausted its attempts. `error` carries the message; the user may manually reconnect.                                               | terminal        |
 | `AuthFailed`   | `authFailed`   | Terminal, **non-retryable** failure (SM-005): the connect was rejected by authentication. The loop is never armed / is stopped immediately. The user must fix credentials and reconnect.                 | terminal        |
 | `SessionLost`  | `sessionLost`  | Terminal (#2512): a resilient **agent** tab re-established its transport, but the live agent session could not be recovered. The frontend shows a "session lost" notice with a manual "start new shell". | terminal        |
+| `Evicted`      | `evicted`      | Sticky (SM-003, single-attach): the session is **alive**, but another desktop/window took control of it. No input is sent; nothing auto-reconnects. Left only by an explicit Reclaim or a user action.   | until user      |
 
 `SessionLifecycle` additionally carries: `reconnect` (the composed
 `ReconnectState`), `end_reason`, `error`, `reconnect_error` (the "why we are
@@ -119,7 +120,24 @@ stateDiagram-v2
     AuthFailed --> [*] : session.remove
     SessionLost --> [*] : session.remove
     Connected --> [*] : session.remove
+
+    Connected --> Evicted : connection.evicted<br/>(SM-003, backend source)
+    Reconnecting --> Evicted : connection.evicted<br/>(heldByPeer at recovery)
+    Evicted --> Connected : Reclaim<br/>(reclaim_session, takeover attach)
+    Evicted --> Disconnected : session.disconnect / cancelReconnect
+    Evicted --> Connecting : session.connect (fresh)
+    Evicted --> [*] : session.remove
 ```
+
+**Single-attach / `Evicted` (SM-003).** The region is keyed per desktop tab, so
+two desktops attached to the same daemon session do **not** converge on one
+status — the maintainer decision (2026-09-26) is single-attach: the daemon evicts
+the previous owner when another desktop attaches, and the evicted desktop folds
+the sticky `Evicted` state. Every **automatic** fold is a no-op from `Evicted`
+(`connected`, `dropped`, `reconnect`, `agent_transport_reconnecting`,
+`session_lost`, `connect_failed`) — an auto-reconnect would re-attach (a
+takeover) and ping-pong control. Only the explicit Reclaim (`reclaimed`), a fresh
+`connect`, a user `disconnect` / `cancelReconnect`, or `remove` leave it.
 
 `Failed`, `AuthFailed`, `SessionLost`, and idle `Disconnected` are the resting
 states. From any of them a fresh `session.connect` (a new connect / manual
@@ -214,6 +232,8 @@ transitions that **converge** with the client's same-event dispatch.
 | `fold_agent_session_lost`           | `SessionLost`                             | Transport back, but the hosted session is confirmed gone (#2564).                                                                                                 |
 | `fold_agent_session_unconfirmed`    | `SessionLost`                             | Transport back, but `connection.list` never answered (SM-001) — session cannot be confirmed.                                                                      |
 | `fold_agent_reconnect_failed`       | `Failed`                                  | The agent's own in-task reconnect loop exhausted its budget (#2612/#2564).                                                                                        |
+| `fold_agent_session_evicted`        | `Evicted` (loop idle, `sessionId` kept)   | The agent reported `connection.evicted`: another desktop took the session over (SM-003).                                                                          |
+| `fold_agent_session_reclaimed`      | `Evicted` → `Connected`                   | The user's explicit Reclaim (`reclaim_session`) takeover attach succeeded (SM-003).                                                                               |
 
 Because the transient-break fold leaves the engine **idle**, the timer reconcile
 cancels rather than arms — the agent I/O task is the single owner of that reconnect,

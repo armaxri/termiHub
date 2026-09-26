@@ -415,13 +415,16 @@ describe("resolveBackendRedriveOutcome", () => {
       { kind: "giveup" },
       { kind: "sessionLost", error: "e" },
       { kind: "sessionLost" },
+      { kind: "evicted" },
       { kind: "canceled" },
     ];
     for (const outcome of outcomes) {
       for (const isCanceled of [false, true]) {
         it(`outcome=${outcome.kind}(err=${"error" in outcome ? outcome.error : "-"}), isCanceled=${isCanceled}`, () => {
           const action = resolveBackendRedriveOutcome({ outcome, isCanceled });
-          if (isCanceled || outcome.kind === "canceled") {
+          if (isCanceled || outcome.kind === "canceled" || outcome.kind === "evicted") {
+            // SM-003: a tab taken over by another desktop rests in `evicted`
+            // awaiting an explicit Reclaim — the client drives nothing.
             expect(action).toEqual<BackendRedriveAction>({ kind: "abandon" });
           } else if (outcome.kind === "giveup") {
             expect(action).toEqual<BackendRedriveAction>({

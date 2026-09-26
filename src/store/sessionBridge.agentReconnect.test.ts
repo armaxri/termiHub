@@ -234,4 +234,17 @@ describe("waitForBackendAgentReconnectOutcome", () => {
     const outcome = await waitForBackendAgentReconnectOutcome("tab-9", "agent-old", never);
     expect(outcome).toEqual({ kind: "sessionLost", error: undefined });
   });
+
+  it("settles as evicted (never a reattach/give-up) when another desktop takes over (SM-003)", async () => {
+    const pending = waitForBackendAgentReconnectOutcome("tab-10", "agent-old", never);
+    await flush();
+    transport.setSession("tab-10", reconnecting());
+    await flush();
+    transport.setSession("tab-10", {
+      status: "evicted",
+      reconnect: { phase: "idle", attempt: 0, delayMs: 0 },
+      error: "This session was taken over by another desktop.",
+    });
+    expect(await pending).toEqual({ kind: "evicted" });
+  });
 });

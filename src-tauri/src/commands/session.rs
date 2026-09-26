@@ -293,6 +293,26 @@ pub async fn close_terminal(
     result
 }
 
+/// Explicit **Reclaim** of a tab whose agent session another desktop took over
+/// (SM-003, single-attach). Sends a takeover attach so this desktop controls the
+/// session again (the other desktop is evicted in turn), then folds the tab's
+/// region entry `Evicted → Connected`. On failure the tab stays `Evicted` and the
+/// error is returned for the frontend to surface; nothing retries automatically.
+#[tauri::command]
+pub async fn reclaim_session(
+    tab_id: String,
+    app_handle: tauri::AppHandle,
+    manager: State<'_, SessionManager>,
+) -> Result<(), TerminalError> {
+    info!(
+        tab_id,
+        "Reclaiming session taken over by another desktop (SM-003)"
+    );
+    manager.reclaim_session(&tab_id).await?;
+    crate::session_projection::projection::fold_agent_session_reclaimed(&app_handle, &tab_id);
+    Ok(())
+}
+
 /// The frontend `tab_id` to fold a `session.disconnect` for when a session is
 /// closed, or `None` when no fold should happen (#2439).
 ///

@@ -76,6 +76,16 @@ pub enum SessionStatus {
     /// shell" action. Serialised as `sessionLost` for the frontend to key on.
     #[serde(rename = "sessionLost")]
     SessionLost,
+    /// A distinct state (SM-003, maintainer decision 2026-09-26: single-attach):
+    /// the session is **alive** but another desktop (or window) took control of
+    /// it, so this tab no longer does. Only one client controls a session at a
+    /// time; the daemon evicts the previous owner when another attaches with
+    /// takeover intent. Terminal **until user action**: it is never left by an
+    /// automatic transition (an auto-reconnect would re-take control and
+    /// ping-pong ownership between two desktops) — only an explicit **Reclaim**
+    /// (which evicts the other side in turn), a fresh user connect, a user
+    /// disconnect, or closing the tab. Serialised as `evicted`.
+    Evicted,
 }
 
 use crate::connection::graphical::GraphicalState;
@@ -159,6 +169,7 @@ mod tests {
             (SessionStatus::Failed, "\"failed\""),
             (SessionStatus::AuthFailed, "\"authFailed\""),
             (SessionStatus::SessionLost, "\"sessionLost\""),
+            (SessionStatus::Evicted, "\"evicted\""),
         ];
         for (variant, expected) in cases {
             assert_eq!(serde_json::to_string(&variant).unwrap(), expected);

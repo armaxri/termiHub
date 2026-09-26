@@ -58,7 +58,12 @@ import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
-import { currentSessionView, waitForBackendAgentReconnectOutcome } from "@/store/sessionBridge";
+import {
+  currentSessionView,
+  isTabEvicted,
+  onSessionView,
+  waitForBackendAgentReconnectOutcome,
+} from "@/store/sessionBridge";
 import {
   resolveEstablishmentPlan,
   resolveAgentSpawnAction,
@@ -1055,6 +1060,9 @@ export function Terminal({
 
         // Send user input to backend
         const onDataDisposable = xterm.onData((data) => {
+          // SM-003 (single-attach): another desktop/window controls this session
+          // — never send it input until the user explicitly reclaims it.
+          if (isTabEvicted(tabId)) return;
           lastInputTimeRef.current = Date.now();
           const store = useAppStore.getState();
           // Broadcast fan-out (#1955): when this terminal is the active
@@ -1099,6 +1107,20 @@ export function Terminal({
             frontendLog("terminal", `resize → PTY ${cols}×${rows} tab=${tabId}`);
             resizeTerminal(sessionIdRef.current, cols, rows);
           }
+        });
+
+        // SM-003: after an explicit Reclaim (region `evicted → connected`) the PTY
+        // still has the size the other desktop gave it — re-assert this
+        // terminal's dimensions so the replayed + live output lays out correctly.
+        let wasEvicted = isTabEvicted(tabId);
+        const offReclaimResize = onSessionView((next) => {
+          const status = next[tabId]?.status;
+          if (wasEvicted && status === "connected" && sessionIdRef.current) {
+            lastSentCols = xterm.cols;
+            lastSentRows = xterm.rows;
+            resizeTerminal(sessionIdRef.current, xterm.cols, xterm.rows);
+          }
+          wasEvicted = status === "evicted";
         });
 
         // Initial resize after connection.  The ResizeObserver may have
@@ -1155,6 +1177,7 @@ export function Terminal({
           discardSandboxSession(sessionId);
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
+          offReclaimResize();
           if (sessionIdRef.current) {
             // Session torn down while still live (tab closed/reconnecting) —
             // the exit handler never fired, so notify parsers here (#1998).

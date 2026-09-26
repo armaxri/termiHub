@@ -34,6 +34,18 @@ describe("deriveTabStatus", () => {
     expect(deriveTabStatus(maps, "a")).toBe("failed");
   });
 
+  it("returns 'evicted' when another desktop took the session over (SM-003)", () => {
+    // Evicted wins over every other flag: the session is alive but not ours, so it
+    // must never read as connected (and input fan-out must skip it).
+    const maps = makeMaps({
+      terminalEvicted: { a: true },
+      terminalConnecting: { a: true },
+      terminalExitedTabs: { a: true },
+    });
+    expect(deriveTabStatus(maps, "a")).toBe("evicted");
+    expect(deriveTabStatus(makeMaps({ terminalEvicted: { b: true } }), "a")).toBe("connected");
+  });
+
   it("returns 'disconnected' when the terminal session has exited without an error", () => {
     const maps = makeMaps({ terminalExitedTabs: { a: true } });
     expect(deriveTabStatus(maps, "a")).toBe("disconnected");

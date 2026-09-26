@@ -26,6 +26,7 @@ import {
   LoaderCircle,
   TriangleAlert,
   Unplug,
+  MonitorX,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
@@ -41,6 +42,7 @@ const STATUS_LABELS: Record<TabStatus, string> = {
   connected: "Connected",
   failed: "Connection failed",
   disconnected: "Disconnected",
+  evicted: "Taken over by another desktop",
 };
 
 /**
@@ -56,6 +58,7 @@ const STATUS_ICON: Record<TabStatus, LucideIcon> = {
   connected: Circle,
   failed: TriangleAlert,
   disconnected: Unplug,
+  evicted: MonitorX,
 };
 
 interface TabProps {
