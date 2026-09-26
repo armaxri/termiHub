@@ -716,8 +716,9 @@ jobs:
 
   # Windows live-agent-TCP tests, serial + isolated (#2495, #3615). BLOCKING.
   #
-  # The 16 `live_agent_tcp_*` tests (agent/tests/local_agent_integration.rs and
-  # tcp_listener_readiness.rs) each cold-start a real `termihub-agent --listen`
+  # The `live_agent_tcp_*` tests (agent/tests/local_agent_integration.rs and
+  # tcp_listener_readiness.rs; 10 compile on Windows, the other 6 of the 16 are
+  # unix-only) each cold-start a real `termihub-agent --listen`
   # and drive it over TCP. In the shared parallel Windows leg — many agents
   # cold-starting at once, alongside the whole workspace suite — they
   # oversubscribed the runner and timed out on a random test (10060), so they
@@ -731,8 +732,8 @@ jobs:
   # agent/, core/, plugin-api/, vendor/, workspace manifests/toolchain, the test
   # driver script) and on every push to develop/main. A skipped job reports
   # success, so requiring this check does not block unrelated PRs. The script's
-  # `serial` phase fails if fewer than the expected 16 tests ran or any was
-  # ignored, so the filter can never go green by selecting nothing.
+  # `serial` phase fails if fewer than the expected count ran (10 on Windows)
+  # or any was ignored, so the filter can never go green by selecting nothing.
   agent-live-windows:
     name: Agent Live Tests (Windows, serial)
     runs-on: windows-latest
