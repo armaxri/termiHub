@@ -344,8 +344,21 @@ impl WindowManager {
         self.may_control(session_id, window_label)
     }
 
-    /// The single control rule behind [`Self::may_resize`] and
-    /// [`Self::may_send_input`]: unclaimed → any window; claimed → owner only.
+    /// Whether closing `window_label`'s tab may **tear down** `session_id`
+    /// (#3401) — close/kill a terminal, disconnect a graphical session.
+    ///
+    /// Same rule as [`Self::may_send_input`]: an unclaimed session may be torn
+    /// down from any window (single-window / pre-claim), a claimed one only from
+    /// its owner. A window another window has taken the session over from is
+    /// *evicted* and owns nothing, so closing its stale tab only drops that
+    /// window's view; the session the owning window is using stays alive.
+    pub fn may_close(&self, session_id: &str, window_label: &str) -> bool {
+        self.may_control(session_id, window_label)
+    }
+
+    /// The single control rule behind [`Self::may_resize`],
+    /// [`Self::may_send_input`] and [`Self::may_close`]: unclaimed → any window;
+    /// claimed → owner only.
     /// Read under the same lock [`Self::claim`] writes, so a takeover is observed
     /// atomically — there is no moment in which two windows both pass.
     fn may_control(&self, session_id: &str, window_label: &str) -> bool {
@@ -642,6 +655,25 @@ mod tests {
         assert!(
             !wm.may_send_input("s1", "win-1"),
             "a non-owning window's input is rejected"
+        );
+    }
+
+    #[test]
+    fn may_close_allows_unclaimed_and_owner_only() {
+        // #3401: closing an evicted window's tab must not tear the session down.
+        let wm = WindowManager::new();
+        assert!(wm.may_close("s1", "main") && wm.may_close("s1", "win-1"));
+        wm.claim("s1", "main");
+        wm.claim("s1", "win-1");
+        assert!(
+            !wm.may_close("s1", "main"),
+            "evicted main keeps its hands off"
+        );
+        assert!(wm.may_close("s1", "win-1"), "the owner closes as before");
+        wm.release("s1", "win-1");
+        assert!(
+            wm.may_close("s1", "main"),
+            "released → unclaimed → any window"
         );
     }
 

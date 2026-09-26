@@ -221,11 +221,50 @@ pub async fn rdp_trust_forget(
 }
 
 /// Disconnect a graphical session and release its resources.
+///
+/// Only the controlling window tears the session down (#3401): the call from a
+/// window another window has taken the session over from (its tab shows "Taken
+/// over by another window") is a stale view closing, so it is a no-op and the
+/// owning window keeps its live desktop. See [`WindowManager::may_close`].
 #[tauri::command]
 pub async fn remote_desktop_disconnect(
     session_id: String,
+    window: tauri::WebviewWindow,
     app_handle: tauri::AppHandle,
     manager: State<'_, GraphicalSessionManager>,
+    window_manager: State<'_, crate::window::WindowManager>,
 ) -> Result<(), TerminalError> {
-    manager.disconnect(&session_id, app_handle).await
+    gated_disconnect(
+        &manager,
+        &window_manager,
+        window.label(),
+        &session_id,
+        app_handle,
+    )
+    .await
+    .map(|_| ())
 }
+
+/// The owner-gated body of [`remote_desktop_disconnect`] (#3401). Returns
+/// whether the session was disconnected (`false` = kept for the owning window).
+pub(crate) async fn gated_disconnect(
+    manager: &GraphicalSessionManager,
+    window_manager: &crate::window::WindowManager,
+    window_label: &str,
+    session_id: &str,
+    sink: impl crate::session::graphical_manager::GraphicalEventSink,
+) -> Result<bool, TerminalError> {
+    if !window_manager.may_close(session_id, window_label) {
+        tracing::info!(
+            session_id,
+            window = window_label,
+            "Graphical tab closed in a non-owning window; keeping the session (#3401)"
+        );
+        return Ok(false);
+    }
+    manager.disconnect(session_id, sink).await.map(|()| true)
+}
+
+#[cfg(all(test, feature = "mock-remote-desktop"))]
+#[path = "remote_desktop_close_tests.rs"]
+mod close_tests;
