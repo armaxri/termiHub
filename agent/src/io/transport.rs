@@ -3,7 +3,13 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
+use std::collections::VecDeque;
+
+use termihub_core::protocol::methods::SSH_KEYBOARD_INTERACTIVE_RESPOND;
+use zeroize::Zeroize;
+
 use crate::handler::dispatch::AgentHandler;
+use crate::ki_prompt::is_secret_bearing_request;
 use crate::protocol::messages::JsonRpcNotification;
 
 /// Maximum message size: 1 MiB as defined by the protocol spec.
@@ -22,6 +28,10 @@ pub type NotificationSender = tokio::sync::mpsc::UnboundedSender<JsonRpcNotifica
 /// responses to `writer`. Backend notifications are interleaved via
 /// `tokio::select!`. The loop exits when the reader reaches EOF,
 /// the cancellation token is triggered, or an I/O error occurs.
+///
+/// Equivalent to [`run_transport_loop_with_priority`] with no priority
+/// channel.
+#[cfg_attr(not(test), allow(dead_code))]
 pub async fn run_transport_loop<R, W>(
     reader: &mut R,
     writer: &mut W,
@@ -33,20 +43,82 @@ where
     R: AsyncBufReadExt + Unpin,
     W: AsyncWriteExt + Unpin,
 {
+    let (_priority_tx, mut priority_rx) = tokio::sync::mpsc::unbounded_channel();
+    run_transport_loop_with_priority(
+        reader,
+        writer,
+        handler,
+        notification_rx,
+        &mut priority_rx,
+        shutdown,
+    )
+    .await
+}
+
+/// Maximum number of request lines read ahead (and held in order) while a
+/// request is in flight. Past it the loop stops reading until the in-flight
+/// request finishes, exactly as before read-ahead existed.
+const MAX_READ_AHEAD: usize = 256;
+
+/// [`run_transport_loop`] plus a **priority** notification channel.
+///
+/// Requests are served one at a time, in order, and ordinary notifications are
+/// held back while a request is in flight — the long-standing contract. A
+/// request can however block on the *desktop*: an SSH connect the agent
+/// performs may need the user to answer a keyboard-interactive (OTP / 2FA)
+/// prompt (#3375). So while a request is in flight the loop also:
+///
+/// - writes `priority_rx` notifications (the `ssh.keyboard_interactive.prompt`
+///   / `.closed` notifications) immediately, and
+/// - keeps reading requests: an `ssh.keyboard_interactive.respond` is
+///   dispatched at once (it only resolves a waiting prompt), every other line is
+///   queued and served in arrival order after the in-flight request.
+///
+/// Respond requests carry secrets: they are never logged and their line
+/// buffers are zeroized once dispatched.
+pub async fn run_transport_loop_with_priority<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    handler: &AgentHandler,
+    notification_rx: &mut tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>,
+    priority_rx: &mut tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>,
+    shutdown: CancellationToken,
+) -> anyhow::Result<()>
+where
+    R: AsyncBufReadExt + Unpin,
+    W: AsyncWriteExt + Unpin,
+{
     // Bytes of a not-yet-complete NDJSON line, carried across loop iterations.
     // Because it lives *outside* the `select!` future, it survives that future
     // being dropped when the notification branch wins the race — see
     // [`termihub_core::ipc::read_line_resumable`] for why that matters (#1559).
-    let mut pending: Vec<u8> = Vec::new();
+    let mut io = LoopIo {
+        pending: Vec::new(),
+        read_ahead: VecDeque::new(),
+        reader_eof: false,
+    };
 
     loop {
+        // Serve requests read ahead during an earlier in-flight request first,
+        // preserving arrival order.
+        if let Some(line) = io.read_ahead.pop_front() {
+            if dispatch_line(line, reader, writer, handler, priority_rx, &mut io).await? {
+                break;
+            }
+            continue;
+        }
+        if io.reader_eof {
+            debug!("Reader closed (EOF), exiting transport loop");
+            break;
+        }
+
         tokio::select! {
             _ = shutdown.cancelled() => {
                 debug!("Shutdown signal received, exiting transport loop");
                 break;
             }
 
-            result = read_line_resumable(reader, &mut pending, MAX_LINE_SIZE) => {
+            result = read_line_resumable(reader, &mut io.pending, MAX_LINE_SIZE) => {
                 let line = match result? {
                     LineOutcome::Eof => {
                         debug!("Reader closed (EOF), exiting transport loop");
@@ -59,33 +131,119 @@ where
                     }
                     LineOutcome::Line(line) => line,
                 };
-
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                debug!("Received: {}", trimmed);
-
-                let (response, should_shutdown) = handler.call_raw(trimmed).await;
-                debug!("Sending: {}", response);
-                write_line(writer, &response).await?;
-
-                if should_shutdown {
-                    debug!("agent.shutdown handled, exiting transport loop");
+                if dispatch_line(line, reader, writer, handler, priority_rx, &mut io).await? {
                     break;
                 }
             }
 
+            Some(notification) = priority_rx.recv() => {
+                write_notification(writer, &notification).await?;
+            }
+
             Some(notification) = notification_rx.recv() => {
-                let json = serde_json::to_string(&notification)?;
-                debug!("Sending notification: {}", json);
-                write_line(writer, &json).await?;
+                write_notification(writer, &notification).await?;
             }
         }
     }
 
     Ok(())
+}
+
+/// Per-loop read state shared by the loop and [`dispatch_line`].
+struct LoopIo {
+    pending: Vec<u8>,
+    read_ahead: VecDeque<String>,
+    reader_eof: bool,
+}
+
+/// Log a received line — redacted when it carries prompt answers.
+fn log_received(line: &str) {
+    if is_secret_bearing_request(line) {
+        debug!("Received: <redacted {}>", SSH_KEYBOARD_INTERACTIVE_RESPOND);
+    } else {
+        debug!("Received: {}", line);
+    }
+}
+
+/// Dispatch one request line and write its response, pumping priority
+/// notifications and respond requests while it is in flight. Returns whether
+/// the loop must stop (`agent.shutdown`).
+async fn dispatch_line<R, W>(
+    mut line: String,
+    reader: &mut R,
+    writer: &mut W,
+    handler: &AgentHandler,
+    priority_rx: &mut tokio::sync::mpsc::UnboundedReceiver<JsonRpcNotification>,
+    io: &mut LoopIo,
+) -> anyhow::Result<bool>
+where
+    R: AsyncBufReadExt + Unpin,
+    W: AsyncWriteExt + Unpin,
+{
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return Ok(false);
+    }
+    log_received(trimmed);
+    let secret = is_secret_bearing_request(trimmed);
+
+    let (response, should_shutdown) = {
+        let call = handler.call_raw(trimmed);
+        tokio::pin!(call);
+        loop {
+            tokio::select! {
+                biased;
+
+                result = &mut call => break result,
+
+                Some(notification) = priority_rx.recv() => {
+                    write_notification(writer, &notification).await?;
+                }
+
+                result = read_line_resumable(reader, &mut io.pending, MAX_LINE_SIZE),
+                    if !io.reader_eof && io.read_ahead.len() < MAX_READ_AHEAD =>
+                {
+                    match result? {
+                        LineOutcome::Eof => io.reader_eof = true,
+                        LineOutcome::TooLarge => {
+                            warn!("Message exceeds {} byte limit; rejecting", MAX_LINE_SIZE);
+                            write_line(writer, SIZE_LIMIT_ERROR).await?;
+                        }
+                        LineOutcome::Line(mut next) => {
+                            if is_secret_bearing_request(next.trim()) {
+                                log_received(next.trim());
+                                let (resp, _) = handler.call_raw(next.trim()).await;
+                                next.zeroize();
+                                write_line(writer, &resp).await?;
+                            } else {
+                                io.read_ahead.push_back(next);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    };
+    if secret {
+        line.zeroize();
+    }
+    debug!("Sending: {}", response);
+    write_line(writer, &response).await?;
+
+    if should_shutdown {
+        debug!("agent.shutdown handled, exiting transport loop");
+    }
+    Ok(should_shutdown)
+}
+
+/// Serialise and write one notification line.
+async fn write_notification<W: AsyncWriteExt + Unpin>(
+    writer: &mut W,
+    notification: &JsonRpcNotification,
+) -> anyhow::Result<()> {
+    let json = serde_json::to_string(notification)?;
+    debug!("Sending notification: {}", json);
+    write_line(writer, &json).await
 }
 
 /// Write a pre-serialised JSON string as an NDJSON line to the writer.

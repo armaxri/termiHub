@@ -154,8 +154,8 @@ pub async fn connect_for_recovery(endpoint: &str) -> io::Result<(BoxedReader, Bo
 
 #[cfg(unix)]
 pub use unix_impl::{
-    agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, open_daemon_log,
-    open_registry_log, registry_endpoint, remove_session_files, session_endpoint,
+    agent_forward_endpoint, endpoint_alive, ensure_agent_forward_dir, ki_prompt_endpoint,
+    open_daemon_log, open_registry_log, registry_endpoint, remove_session_files, session_endpoint,
 };
 // allow(unused_imports): `agent_forward_endpoint` has only unix-side consumers
 // in some builds; kept to mirror the unix surface. There is no windows
@@ -166,8 +166,8 @@ pub use unix_impl::{
 #[cfg(windows)]
 #[allow(unused_imports)]
 pub use windows_impl::{
-    agent_forward_endpoint, endpoint_alive, registry_endpoint, remove_session_files,
-    session_endpoint,
+    agent_forward_endpoint, endpoint_alive, ki_prompt_endpoint, registry_endpoint,
+    remove_session_files, session_endpoint,
 };
 
 // ── Unix session-path helpers ───────────────────────────────────────
@@ -194,6 +194,16 @@ mod unix_impl {
     pub fn agent_forward_endpoint(session_id: &str) -> String {
         socket_dir()
             .join(format!("session-{session_id}-agent.sock"))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Compute the keyboard-interactive prompt-relay socket path for a session
+    /// (#3375): a sibling of the daemon socket through which the session daemon
+    /// asks the worker (→ the desktop) to answer OTP / 2FA prompts.
+    pub fn ki_prompt_endpoint(session_id: &str) -> String {
+        socket_dir()
+            .join(format!("session-{session_id}-ki.sock"))
             .to_string_lossy()
             .into_owned()
     }
@@ -246,6 +256,7 @@ mod unix_impl {
     pub fn remove_session_files(session_id: &str) {
         let _ = std::fs::remove_file(session_endpoint(session_id));
         let _ = std::fs::remove_file(agent_forward_endpoint(session_id));
+        let _ = std::fs::remove_file(ki_prompt_endpoint(session_id));
         let _ = std::fs::remove_file(session_log_path(session_id));
     }
 
@@ -331,6 +342,12 @@ mod windows_impl {
     /// of the unix `SSH_AUTH_SOCK` relay socket (#1727).
     pub fn agent_forward_endpoint(session_id: &str) -> String {
         format!(r"\\.\pipe\termihub-agent-forward-{session_id}")
+    }
+
+    /// Compute the keyboard-interactive prompt-relay pipe name for a session
+    /// (#3375) — the Windows analog of the unix `session-<id>-ki.sock`.
+    pub fn ki_prompt_endpoint(session_id: &str) -> String {
+        format!(r"\\.\pipe\termihub-ki-prompt-{session_id}")
     }
 
     /// Compute the pipe name for the host-wide registry daemon (ADR-11).

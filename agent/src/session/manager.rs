@@ -15,9 +15,13 @@ use std::time::Duration;
 
 use chrono::Utc;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use crate::io::transport::NotificationSender;
+use crate::ki_prompt::relay::{
+    KiConnectFailure, KiFailureKind, KiRelaySession, KI_PROMPT_ENDPOINT_ENV,
+};
+use crate::ki_prompt::{KiPromptHub, PromptActivity};
 use crate::session::agent_forward::AgentForwardRelay;
 use crate::session::types::{
     HostSessionSnapshot, SessionBackend, SessionHolder, SessionInfo, SessionSnapshot, SessionStatus,
@@ -163,6 +167,26 @@ pub enum SessionCreateError {
     InvalidConfig(String),
     /// The backend failed to start.
     BackendFailed(String),
+    /// The user cancelled an SSH keyboard-interactive prompt (#3375).
+    AuthCancelled(String),
+    /// A user-typed later SSH factor (one-time code) was rejected after an
+    /// earlier factor was accepted (#3375, #3376).
+    SecondFactorFailed(String),
+}
+
+impl SessionCreateError {
+    /// Classify a backend bring-up failure, keeping the typed prompt outcomes.
+    fn from_backend(e: anyhow::Error) -> Self {
+        match e.downcast_ref::<KiConnectFailure>() {
+            Some(KiConnectFailure(KiFailureKind::AuthCancelled)) => {
+                Self::AuthCancelled(e.to_string())
+            }
+            Some(KiConnectFailure(KiFailureKind::SecondFactorFailed)) => {
+                Self::SecondFactorFailed(e.to_string())
+            }
+            None => Self::BackendFailed(e.to_string()),
+        }
+    }
 }
 
 impl fmt::Display for SessionCreateError {
@@ -171,6 +195,7 @@ impl fmt::Display for SessionCreateError {
             Self::LimitReached => write!(f, "Session limit reached (max {MAX_SESSIONS})"),
             Self::InvalidConfig(msg) => write!(f, "Invalid configuration: {msg}"),
             Self::BackendFailed(msg) => write!(f, "Backend failed: {msg}"),
+            Self::AuthCancelled(msg) | Self::SecondFactorFailed(msg) => write!(f, "{msg}"),
         }
     }
 }
@@ -254,11 +279,8 @@ fn map_apply_error(e: anyhow::Error) -> DeferredUpdateError {
 pub trait DaemonLauncher: Send + Sync + 'static {
     /// Spawn a daemon for the given session and return the connected backend.
     ///
-    /// `ssh_auth_sock`, when set, is the per-session relay endpoint exported to
-    /// the daemon so its core SSH agent-forwarding bridge reaches the desktop's
-    /// agent instead of the agent host's own agent — as `SSH_AUTH_SOCK` for the
-    /// unix relay socket (#1727) or the dedicated pipe-name variable for the
-    /// Windows relay pipe (#2038).
+    /// `extras` carries the per-session relay endpoints exported to the daemon;
+    /// see [`LaunchExtras`].
     async fn launch(
         &self,
         session_id: &str,
@@ -266,8 +288,30 @@ pub trait DaemonLauncher: Send + Sync + 'static {
         settings: &serde_json::Value,
         notification_tx: NotificationSender,
         buffer_size_bytes: usize,
-        ssh_auth_sock: Option<String>,
+        extras: LaunchExtras,
     ) -> Result<SessionBackend, anyhow::Error>;
+}
+
+/// Per-session relay endpoints a daemon launch exports to the daemon.
+#[derive(Default, Clone)]
+pub struct LaunchExtras {
+    /// The per-session ssh-agent relay endpoint, so the daemon's core SSH
+    /// agent-forwarding bridge reaches the desktop's agent instead of the agent
+    /// host's own agent — as `SSH_AUTH_SOCK` for the unix relay socket (#1727)
+    /// or the dedicated pipe-name variable for the Windows relay pipe (#2038).
+    pub ssh_auth_sock: Option<String>,
+    /// The per-session keyboard-interactive prompt relay (#3375): its endpoint
+    /// is exported as [`KI_PROMPT_ENDPOINT_ENV`], and its activity tracker keeps
+    /// the launch's connect wait from timing out while the user answers a
+    /// one-time-code prompt.
+    pub ki_prompt: Option<KiPromptLaunch>,
+}
+
+/// The keyboard-interactive relay half of [`LaunchExtras`].
+#[derive(Clone)]
+pub struct KiPromptLaunch {
+    pub endpoint: String,
+    pub activity: Arc<PromptActivity>,
 }
 
 /// Open the per-session daemon log, where the platform provides one.
@@ -303,6 +347,7 @@ fn build_daemon_command(
     endpoint: &str,
     buffer_size_bytes: usize,
     ssh_auth_sock: Option<&str>,
+    ki_prompt_endpoint: Option<&str>,
 ) -> std::process::Command {
     let mut command = std::process::Command::new(agent_exe);
     command
@@ -330,6 +375,12 @@ fn build_daemon_command(
         #[cfg(not(windows))]
         command.env("SSH_AUTH_SOCK", endpoint);
     }
+    // The keyboard-interactive prompt relay (#3375): a non-secret endpoint the
+    // daemon's SSH auth sends OTP / 2FA rounds to. Absent → no prompter, i.e.
+    // the pre-#3375 auto-answer-only behavior.
+    if let Some(endpoint) = ki_prompt_endpoint {
+        command.env(KI_PROMPT_ENDPOINT_ENV, endpoint);
+    }
     command
 }
 
@@ -345,7 +396,7 @@ impl DaemonLauncher for SystemDaemonLauncher {
         settings: &serde_json::Value,
         notification_tx: NotificationSender,
         buffer_size_bytes: usize,
-        ssh_auth_sock: Option<String>,
+        extras: LaunchExtras,
     ) -> Result<SessionBackend, anyhow::Error> {
         let endpoint = session_endpoint(session_id);
         let settings_json = serde_json::to_string(settings)?;
@@ -357,7 +408,8 @@ impl DaemonLauncher for SystemDaemonLauncher {
             type_id,
             &endpoint,
             buffer_size_bytes,
-            ssh_auth_sock.as_deref(),
+            extras.ssh_auth_sock.as_deref(),
+            extras.ki_prompt.as_ref().map(|k| k.endpoint.as_str()),
         );
         crate::daemon::spawn::configure_detached_stderr(&mut command, daemon_log(session_id));
         crate::daemon::spawn::configure_detachment(&mut command);
@@ -388,13 +440,37 @@ impl DaemonLauncher for SystemDaemonLauncher {
         // a daemon that dies before binding (e.g. its shell failed to spawn)
         // fails fast with its real exit status instead of retrying a phantom
         // "endpoint not found" for the whole connect timeout (#847).
-        let connect = DaemonClient::connect(session_id.to_string(), endpoint, notification_tx);
-        let client = match connect_or_daemon_exit(session_id, connect, || match child.try_wait() {
-            Ok(Some(status)) => Some(status.to_string()),
-            _ => None,
-        })
-        .await
-        {
+        //
+        // The daemon binds its endpoint only after its SSH connect finishes, and
+        // that connect may wait on the user answering a one-time-code prompt
+        // (#3375). Time spent on a prompt must not count against the connect
+        // timeout (the core connect clock pauses the same way), so a timed-out
+        // attempt that saw prompt activity simply waits again; a daemon that
+        // gives up exits, which still fails the wait fast.
+        let prompt_activity = extras.ki_prompt.as_ref().map(|k| k.activity.clone());
+        let connected = loop {
+            let attempt_started = std::time::Instant::now();
+            let connect = DaemonClient::connect(
+                session_id.to_string(),
+                endpoint.clone(),
+                notification_tx.clone(),
+            );
+            let result = connect_or_daemon_exit(session_id, connect, || match child.try_wait() {
+                Ok(Some(status)) => Some(status.to_string()),
+                _ => None,
+            })
+            .await;
+            let retry = result.is_err()
+                && prompt_activity
+                    .as_ref()
+                    .is_some_and(|a| a.active_since(attempt_started))
+                && matches!(child.try_wait(), Ok(None));
+            if !retry {
+                break result;
+            }
+            debug!("Daemon for session {session_id} is waiting on a keyboard-interactive prompt; still waiting");
+        };
+        let client = match connected {
             Ok(client) => {
                 // The daemon is detached (setsid) but not reparented to init, so
                 // the worker stays its parent. Hand the child to a reaper so it
@@ -533,6 +609,10 @@ pub struct SessionManager {
     /// over the JSON-RPC transport (#1727). Shared with the dispatch handlers so
     /// desktop-supplied reply bytes route back to the right forwarded stream.
     agent_forward: Arc<AgentForwardRelay>,
+    /// Routes SSH keyboard-interactive prompts of daemon-backed sessions to the
+    /// attached desktop (#3375). The process-wide hub in production; a private
+    /// one in unit tests.
+    ki_hub: Arc<KiPromptHub>,
     /// Weak self-reference, set once the manager is wrapped in its owning `Arc`
     /// via [`SessionManager::into_arc`].
     ///
@@ -555,6 +635,14 @@ impl SessionManager {
             default_state_path(),
             Arc::new(SystemUpdateApplier),
         )
+        .with_ki_prompt_hub(KiPromptHub::global())
+    }
+
+    /// Route daemon sessions' SSH keyboard-interactive prompts through `hub`
+    /// (#3375). Production uses the process-wide hub; tests inject their own.
+    pub fn with_ki_prompt_hub(mut self, hub: Arc<KiPromptHub>) -> Self {
+        self.ki_hub = hub;
+        self
     }
 
     /// Create a session manager with a custom daemon launcher (for testing).
@@ -641,6 +729,7 @@ impl SessionManager {
             update_applier,
             persistent_buffer_size: Arc::new(AtomicUsize::new(DEFAULT_PERSISTENT_BUFFER_SIZE)),
             agent_forward,
+            ki_hub: KiPromptHub::new(),
             self_ref: OnceLock::new(),
         }
     }
@@ -710,7 +799,7 @@ impl SessionManager {
                 // Release the reservation so a failed create never leaks a slot
                 // or blocks a retry.
                 self.pending_creates.lock().await.remove(&id);
-                return Err(SessionCreateError::BackendFailed(e.to_string()));
+                return Err(SessionCreateError::from_backend(e));
             }
         };
 
@@ -804,7 +893,12 @@ impl SessionManager {
             .start_agent_forward(session_id, type_id, settings)
             .await;
 
-        let result = self
+        // Relay the daemon's SSH keyboard-interactive (OTP / 2FA) prompts to the
+        // desktop when it can show them (#3375). Held only for the launch: the
+        // daemon's SSH auth is over once it accepts connections.
+        let ki_relay = self.start_ki_relay(session_id, type_id).await;
+
+        let mut result = self
             .launcher
             .launch(
                 session_id,
@@ -812,9 +906,24 @@ impl SessionManager {
                 settings,
                 self.notification_tx.clone(),
                 buffer_size,
-                ssh_auth_sock.clone(),
+                LaunchExtras {
+                    ssh_auth_sock: ssh_auth_sock.clone(),
+                    ki_prompt: ki_relay.as_ref().map(|r| KiPromptLaunch {
+                        endpoint: r.endpoint().to_string(),
+                        activity: r.activity(),
+                    }),
+                },
             )
             .await;
+
+        // A cancelled prompt or a rejected one-time code must reach the desktop
+        // typed, not as an opaque "daemon exited" (#3375).
+        if result.is_err() {
+            if let Some(kind) = ki_relay.as_ref().and_then(|r| r.failure()) {
+                result = Err(anyhow::Error::new(KiConnectFailure(kind)));
+            }
+        }
+        drop(ki_relay);
 
         // Install the natural-exit deferred-update hook on the daemon client so a
         // self-terminating daemon-backed session promptly applies a staged
@@ -831,6 +940,23 @@ impl SessionManager {
             self.agent_forward.stop_listener(session_id).await;
         }
         result
+    }
+
+    /// Start the keyboard-interactive prompt relay for an SSH session daemon
+    /// when a prompt-capable desktop is attached (#3375). `None` keeps the
+    /// daemon on the auto-answer-only behavior.
+    async fn start_ki_relay(&self, session_id: &str, type_id: &str) -> Option<KiRelaySession> {
+        if type_id != "ssh" || !self.ki_hub.is_available() {
+            return None;
+        }
+        let endpoint = crate::daemon::transport::ki_prompt_endpoint(session_id);
+        match KiRelaySession::start(self.ki_hub.clone(), session_id, endpoint).await {
+            Ok(relay) => Some(relay),
+            Err(e) => {
+                warn!("failed to start keyboard-interactive prompt relay for {session_id}: {e}");
+                None
+            }
+        }
     }
 
     /// Start the desktop ssh-agent relay for a session when it applies, returning
@@ -894,10 +1020,13 @@ impl SessionManager {
             .create(type_id)
             .map_err(|e| anyhow::anyhow!("{e}"))?;
 
-        connection
-            .connect(settings.clone())
-            .await
-            .map_err(|e| anyhow::anyhow!("Connection failed: {e}"))?;
+        connection.connect(settings.clone()).await.map_err(|e| {
+            // Keep a cancelled prompt / rejected one-time code typed (#3375).
+            match KiFailureKind::from_session_error(&e) {
+                Some(kind) => anyhow::Error::new(KiConnectFailure(kind)),
+                None => anyhow::anyhow!("Connection failed: {e}"),
+            }
+        })?;
 
         let output_rx = connection.subscribe_output();
         let alive = Arc::new(AtomicBool::new(true));
@@ -2174,6 +2303,7 @@ mod tests {
             "/tmp/sess-1.sock",
             65536,
             Some("/tmp/agent.sock"),
+            Some("/tmp/ki.sock"),
         );
 
         for (key, value) in command.get_envs() {
@@ -3938,7 +4068,7 @@ mod tests {
                 _settings: &serde_json::Value,
                 _notification_tx: NotificationSender,
                 _buffer_size_bytes: usize,
-                _ssh_auth_sock: Option<String>,
+                _extras: LaunchExtras,
             ) -> Result<SessionBackend, anyhow::Error> {
                 if self.should_fail {
                     return Err(anyhow::anyhow!("mock: daemon spawn failed"));
@@ -4103,7 +4233,7 @@ mod tests {
                 _settings: &serde_json::Value,
                 _notification_tx: NotificationSender,
                 _buffer_size_bytes: usize,
-                _ssh_auth_sock: Option<String>,
+                _extras: LaunchExtras,
             ) -> Result<SessionBackend, anyhow::Error> {
                 let _ = self.entered_tx.send(());
                 self.release.notified().await;

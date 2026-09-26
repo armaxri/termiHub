@@ -7,7 +7,8 @@ use tracing::{info, warn};
 
 use crate::handler::dispatch::AgentHandler;
 use crate::io::auth::{authenticate_connection, AuthOutcome, ListenAuthToken};
-use crate::io::transport::run_transport_loop;
+use crate::io::transport::run_transport_loop_with_priority;
+use crate::ki_prompt::KiPromptHub;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
 use crate::registry::build_registry;
@@ -36,6 +37,9 @@ pub async fn run_tcp_listener(
     update_strategy: crate::update::UpdateStrategy,
 ) -> anyhow::Result<()> {
     let (notification_tx, mut notification_rx) =
+        tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
+    // SSH keyboard-interactive prompts (#3375), drained even mid-request.
+    let (priority_tx, mut priority_rx) =
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
     let registry = Arc::new(build_registry());
     let session_manager = SessionManager::new(notification_tx.clone(), registry).into_arc();
@@ -170,6 +174,7 @@ pub async fn run_tcp_listener(
                 // Buffered data is preserved in serial ring buffers and
                 // replayed on attach, so these are not needed.
                 while notification_rx.try_recv().is_ok() {}
+                while priority_rx.try_recv().is_ok() {}
 
                 // Test-only (#1546): re-announce the staged update to the client
                 // that just attached. This has to sit AFTER the drain above —
@@ -189,18 +194,20 @@ pub async fn run_tcp_listener(
                 ) {
                     Ok(handler) => handler
                         .with_registry_client(registry_client.clone())
-                        .with_notification_sender(tool_tx.clone()),
+                        .with_notification_sender(tool_tx.clone())
+                        .with_ki_prompt_relay(KiPromptHub::global(), priority_tx.clone()),
                     Err(e) => {
                         warn!("failed to build handler for {}, dropping client: {}", peer, e);
                         continue;
                     }
                 };
 
-                let result = run_transport_loop(
+                let result = run_transport_loop_with_priority(
                     &mut reader,
                     &mut writer_half,
                     &handler,
                     &mut notification_rx,
+                    &mut priority_rx,
                     shutdown.child_token(),
                 )
                 .await;
