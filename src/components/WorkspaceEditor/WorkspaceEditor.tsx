@@ -3,12 +3,20 @@ import { Plus, X } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useLayoutRenderTree } from "@/store/layoutSelectors";
 import { WorkspaceEditorMeta } from "@/types/terminal";
-import { WorkspaceDefinition, WorkspaceLayoutNode, WorkspaceTabGroupDef } from "@/types/workspace";
+import {
+  WorkspaceDefinition,
+  WorkspaceLayoutNode,
+  WorkspaceSettings,
+  WorkspaceTabGroupDef,
+  WorkspaceWindowDef,
+} from "@/types/workspace";
 import { loadWorkspace } from "@/services/workspaceApi";
 import { getWorkspaceLeaves, countWorkspaceTabs } from "@/utils/workspaceLayout";
 import { Button, Input, Field, Tooltip } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { LayoutDesigner } from "./LayoutDesigner";
+import { WorkspaceSettingsSection } from "./WorkspaceSettingsSection";
+import { normalizeWorkspaceSettings } from "@/services/workspaceSettings";
 import { newId } from "@/services/transport/ids";
 import "./WorkspaceEditor.css";
 
@@ -39,6 +47,9 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
   const [loading, setLoading] = useState(!!meta.workspaceId);
   const [renamingGroupIndex, setRenamingGroupIndex] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [settings, setSettings] = useState<WorkspaceSettings>({});
+  // Carried through unchanged so editing a multi-window workspace keeps its windows.
+  const [windows, setWindows] = useState<WorkspaceWindowDef[] | undefined>(undefined);
 
   useEffect(() => {
     if (meta.workspaceId) {
@@ -47,6 +58,8 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
         .then((ws) => {
           setName(ws.name);
           setDescription(ws.description ?? "");
+          setSettings(ws.settings ?? {});
+          setWindows(ws.windows);
           setTabGroupDefs(
             ws.tabGroups.length > 0
               ? ws.tabGroups
@@ -111,11 +124,15 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
   );
 
   const handleSave = useCallback(async () => {
+    // Throws a user-facing message on an invalid override; the async Button toasts it.
+    const normalizedSettings = normalizeWorkspaceSettings(settings);
     const definition: WorkspaceDefinition = {
       id: meta.workspaceId ?? newId("ws"),
       name: name || "Untitled Workspace",
       description: description || undefined,
       tabGroups: tabGroupDefs,
+      ...(windows ? { windows } : {}),
+      ...(normalizedSettings ? { settings: normalizedSettings } : {}),
     };
 
     try {
@@ -135,6 +152,8 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
     name,
     description,
     tabGroupDefs,
+    settings,
+    windows,
     saveWorkspace,
     closeTab,
     rootPanel,
@@ -289,6 +308,8 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
 
           <LayoutDesigner layout={activeGroup.layout} onChange={updateActiveGroupLayout} />
         </div>
+
+        <WorkspaceSettingsSection value={settings} onChange={setSettings} />
       </div>
 
       <div className="workspace-editor__actions">

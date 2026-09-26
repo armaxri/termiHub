@@ -328,6 +328,31 @@ describe("RemoteDesktopCanvas", () => {
     expect(canvasStub.contextFor(canvasEl()).arc).not.toHaveBeenCalled();
   });
 
+  // #3333: the backend cursor pump strips invalid shapes, but the canvas must
+  // not trust the wire either.
+  it("keeps the cursor position when its shape is hostile", () => {
+    render({ scaleMode: "pixel" });
+    emitFrame(makeFrame(100, 50));
+    emitCursor({
+      session_id: SESSION,
+      x: 10,
+      y: 20,
+      visible: true,
+      shape: { width: 65_535, height: 65_535, hotspotX: 0, hotspotY: 0, data: [] },
+    });
+    emitFrame(makeFrame(100, 50));
+    expect(canvasStub.contextFor(canvasEl()).arc).toHaveBeenCalledWith(10, 20, 4, 0, Math.PI * 2);
+  });
+
+  it("ignores a cursor update with a non-integral or negative position", () => {
+    render({ scaleMode: "pixel" });
+    emitFrame(makeFrame(100, 50));
+    emitCursor({ session_id: SESSION, x: -1, y: 20, visible: true });
+    emitCursor({ session_id: SESSION, x: Number.NaN, y: 20, visible: true });
+    emitFrame(makeFrame(100, 50));
+    expect(canvasStub.contextFor(canvasEl()).arc).not.toHaveBeenCalled();
+  });
+
   it("forwards a reverse-scaled pointer event", () => {
     const { onInput } = render({ scaleMode: "pixel" });
     emitFrame(makeFrame(100, 50));

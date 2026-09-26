@@ -1,5 +1,5 @@
-import { MAX_FRAMEBUFFER_DIMENSION } from "@/types/remoteDesktop";
-import type { DirtyRect } from "@/types/remoteDesktop";
+import { MAX_CURSOR_DIMENSION, MAX_FRAMEBUFFER_DIMENSION } from "@/types/remoteDesktop";
+import type { CursorShape, DirtyRect } from "@/types/remoteDesktop";
 
 /**
  * Whether a framebuffer size is safe to allocate an offscreen canvas for:
@@ -23,4 +23,19 @@ export function isDirtyRectValid(rect: DirtyRect, fbWidth: number, fbHeight: num
   if (width === 0 || height === 0) return false;
   if (x + width > fbWidth || y + height > fbHeight) return false;
   return rect.data.length === width * height * 4;
+}
+
+/**
+ * Whether a cursor bitmap is safe to keep: integral, non-zero and within
+ * `MAX_CURSOR_DIMENSION` on both axes, hotspot inside the image, and exactly
+ * `width * height * 4` bytes (mirrors Rust `CursorShape::check`, #3333).
+ */
+export function isCursorShapeValid(shape: CursorShape): boolean {
+  const { width, height, hotspotX, hotspotY } = shape;
+  if (![width, height].every((v) => Number.isInteger(v) && v > 0 && v <= MAX_CURSOR_DIMENSION)) {
+    return false;
+  }
+  if (![hotspotX, hotspotY].every((v) => Number.isInteger(v) && v >= 0)) return false;
+  if (hotspotX >= width || hotspotY >= height) return false;
+  return Array.isArray(shape.data) && shape.data.length === width * height * 4;
 }

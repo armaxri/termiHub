@@ -13,6 +13,7 @@ use std::time::Duration;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use tracing::{debug, info, warn};
 
+use super::wsl_exec::{distro_sh_args, CREATE_NO_WINDOW};
 use super::wsl_init_script::{
     choose_delivery, distro_create_args, init_script_contents, source_line, InitDelivery,
 };
@@ -570,10 +571,6 @@ fn write_and_flush(w: &mut dyn Write, data: &[u8]) -> std::io::Result<()> {
     w.flush()
 }
 
-/// Windows `CREATE_NO_WINDOW` process-creation flag: keeps the short-lived
-/// `wsl.exe` that creates the init script from flashing a console window.
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-
 /// Upper bound on the distro-side init-script create. On expiry the child is
 /// killed and the setup falls back (see [`choose_delivery`]).
 const DISTRO_CREATE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -757,7 +754,8 @@ impl Wsl {
 }
 
 /// A [`ProcStatsSource`] that runs the monitoring command inside a WSL
-/// distribution via `wsl.exe -d <distro>` (#3182).
+/// distribution via `wsl.exe -d <distro> --exec sh -c …` (#3182), spawned with
+/// `CREATE_NO_WINDOW` so the periodic poll never flashes a console (#3313).
 ///
 /// A WSL distribution is Linux with `/proc`, so its stats are gathered with the
 /// exact same [`MONITORING_COMMAND`] + [`parse_stats`](crate::monitoring::parse_stats)
@@ -777,8 +775,10 @@ impl ProcStatsSource for WslProcStatsSource {
         // produced yields more metrics than failing on a non-zero exit. `wsl.exe`
         // passes the Linux command's stdout through as raw bytes.
         let output = tokio::task::spawn_blocking(move || {
+            use std::os::windows::process::CommandExt;
             std::process::Command::new("wsl.exe")
-                .args(["-d", &distribution, "--", "sh", "-c", MONITORING_COMMAND])
+                .args(distro_sh_args(&distribution, MONITORING_COMMAND, &[]))
+                .creation_flags(CREATE_NO_WINDOW)
                 .output()
         })
         .await
@@ -789,7 +789,8 @@ impl ProcStatsSource for WslProcStatsSource {
 }
 
 /// A [`ProcessExecSource`] that runs process commands (`ps` / `kill`) inside a
-/// WSL distribution via `wsl.exe -d <distro>` (PROD-0028).
+/// WSL distribution via `wsl.exe -d <distro> --exec sh -c …` (PROD-0028),
+/// spawned with `CREATE_NO_WINDOW` (#3313).
 ///
 /// Unlike monitoring (stdout only), a kill needs stderr and the exit status, so
 /// all three are captured. `wsl.exe` is a blocking child, so the exec runs on a
@@ -804,8 +805,10 @@ impl ProcessExecSource for WslProcessExecSource {
         let distribution = self.distribution.clone();
         let command = command.to_string();
         let output = tokio::task::spawn_blocking(move || {
+            use std::os::windows::process::CommandExt;
             std::process::Command::new("wsl.exe")
-                .args(["-d", &distribution, "--", "sh", "-c", &command])
+                .args(distro_sh_args(&distribution, &command, &[]))
+                .creation_flags(CREATE_NO_WINDOW)
                 .output()
         })
         .await

@@ -17,6 +17,13 @@ export const MAX_RECONNECT_ATTEMPTS = 3;
  */
 export const MAX_FRAMEBUFFER_DIMENSION = 8192;
 
+/**
+ * Upper bound on either cursor-bitmap dimension, in pixels (mirrors Rust
+ * `MAX_CURSOR_DIMENSION`, #3333). The backend cursor pump already strips shapes
+ * above it; the canvas re-checks before keeping a shape.
+ */
+export const MAX_CURSOR_DIMENSION = 256;
+
 /** How the remote framebuffer fills the tab. */
 export type ScaleMode = "fit" | "pixel" | "match";
 

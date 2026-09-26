@@ -9,6 +9,7 @@ use super::config::{
     WorkspaceImportPreview, WorkspaceImportResult, WorkspaceLayoutNode, WorkspaceStore,
     WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
 };
+use super::settings::{ActiveWorkspaceInfo, WorkspaceSettings};
 use super::storage::WorkspaceStorage;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
@@ -18,6 +19,22 @@ pub struct WorkspaceManager {
     store: Mutex<WorkspaceStore>,
     storage: WorkspaceStorage,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
+    /// Id of the workspace whose settings overrides are currently in effect
+    /// (PROD-052). Runtime-only: set by the frontend when a workspace is
+    /// launched/saved and cleared when it is deleted.
+    active_id: Mutex<Option<String>>,
+}
+
+/// Normalize a definition's settings overrides before storing: validate them
+/// and drop an all-empty record so it is not persisted.
+fn normalize_settings(definition: &mut WorkspaceDefinition) -> Result<(), TerminalError> {
+    if let Some(settings) = &definition.settings {
+        settings.validate().map_err(TerminalError::WorkspaceError)?;
+        if settings.is_empty() {
+            definition.settings = None;
+        }
+    }
+    Ok(())
 }
 
 impl WorkspaceManager {
@@ -33,7 +50,60 @@ impl WorkspaceManager {
             store: Mutex::new(result.data),
             storage,
             recovery_warnings: Mutex::new(result.warnings),
+            active_id: Mutex::new(None),
         })
+    }
+
+    /// Mark `id` as the active workspace whose overrides apply to new sessions
+    /// (`None` clears it). An unknown id is rejected.
+    pub fn set_active_workspace(&self, id: Option<String>) -> Result<(), TerminalError> {
+        if let Some(id) = &id {
+            let store = self
+                .store
+                .lock()
+                .map_err(|e| TerminalError::WorkspaceError(e.to_string()))?;
+            if !store.workspaces.iter().any(|ws| &ws.id == id) {
+                return Err(TerminalError::WorkspaceError(format!(
+                    "Workspace not found: {id}"
+                )));
+            }
+        }
+        let mut active = self
+            .active_id
+            .lock()
+            .map_err(|e| TerminalError::WorkspaceError(e.to_string()))?;
+        *active = id;
+        Ok(())
+    }
+
+    /// The active workspace (id, name, overrides), if one is active.
+    pub fn active_workspace_info(&self) -> Option<ActiveWorkspaceInfo> {
+        let active = self.active_id.lock().ok()?.clone()?;
+        let store = self.store.lock().ok()?;
+        store
+            .workspaces
+            .iter()
+            .find(|ws| ws.id == active)
+            .map(|ws| ActiveWorkspaceInfo {
+                id: ws.id.clone(),
+                name: ws.name.clone(),
+                settings: ws.settings.clone(),
+            })
+    }
+
+    /// Whether `id` is the active workspace.
+    pub fn is_active(&self, id: &str) -> bool {
+        self.active_id
+            .lock()
+            .map(|a| a.as_deref() == Some(id))
+            .unwrap_or(false)
+    }
+
+    /// The settings overrides of the active workspace, if one is active and it
+    /// carries any. Read at session-creation time so an edit to the active
+    /// workspace applies to the next new session without a relaunch.
+    pub fn active_settings(&self) -> Option<WorkspaceSettings> {
+        self.active_workspace_info()?.settings
     }
 
     /// Take ownership of any recovery warnings (only the first call returns them).
@@ -68,7 +138,8 @@ impl WorkspaceManager {
     }
 
     /// Save (add or update) a workspace definition.
-    pub fn save_workspace(&self, definition: WorkspaceDefinition) -> Result<(), TerminalError> {
+    pub fn save_workspace(&self, mut definition: WorkspaceDefinition) -> Result<(), TerminalError> {
+        normalize_settings(&mut definition)?;
         let mut store = self
             .store
             .lock()
@@ -104,6 +175,11 @@ impl WorkspaceManager {
                 "Workspace not found: {id}"
             )));
         }
+        if let Ok(mut active) = self.active_id.lock() {
+            if active.as_deref() == Some(id) {
+                *active = None;
+            }
+        }
 
         self.storage
             .save(&store)
@@ -136,6 +212,7 @@ impl WorkspaceManager {
             description: original.description,
             tab_groups: original.tab_groups,
             windows: original.windows,
+            settings: original.settings,
         };
 
         store.workspaces.push(duplicate);
@@ -175,6 +252,7 @@ impl WorkspaceManager {
                     })
                     .collect(),
                 windows: ws.windows.clone(),
+                settings: ws.settings.clone(),
             })
             .collect();
 
@@ -245,7 +323,17 @@ impl WorkspaceManager {
                     })
                     .collect(),
                 windows: entry.windows,
+                settings: entry.settings,
             };
+            if normalize_settings(&mut definition).is_err() {
+                // An imported file is untrusted input: keep the layout, drop only
+                // the invalid settings overrides, and tell the user (PROD-052).
+                definition.settings = None;
+                warnings.push(format!(
+                    "Workspace \"{}\": its settings overrides were invalid and were not imported",
+                    definition.name
+                ));
+            }
             if let Some(resolver) = &resolver {
                 let what = format!("imported workspace \"{}\"", definition.name);
                 crate::connection::plugin_type_ids::migrate_tab_groups(
@@ -446,7 +534,162 @@ mod tests {
             store: Mutex::new(store),
             storage,
             recovery_warnings: Mutex::new(Vec::new()),
+            active_id: Mutex::new(None),
         }
+    }
+
+    fn with_settings(
+        mut def: WorkspaceDefinition,
+        settings: WorkspaceSettings,
+    ) -> WorkspaceDefinition {
+        def.settings = Some(settings);
+        def
+    }
+
+    fn env(key: &str, value: &str) -> crate::workspace::settings::WorkspaceEnvVar {
+        crate::workspace::settings::WorkspaceEnvVar {
+            key: key.to_string(),
+            value: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn save_rejects_invalid_settings() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let def = with_settings(
+            sample_definition("ws-1", "Bad"),
+            WorkspaceSettings {
+                env_vars: vec![env("1BAD", "x")],
+                ..Default::default()
+            },
+        );
+        assert!(mgr.save_workspace(def).is_err());
+        assert!(mgr.get_workspaces().unwrap().is_empty());
+    }
+
+    #[test]
+    fn save_drops_empty_settings_record() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let def = with_settings(
+            sample_definition("ws-1", "Empty"),
+            WorkspaceSettings::default(),
+        );
+        mgr.save_workspace(def).unwrap();
+        assert!(mgr.load_workspace("ws-1").unwrap().settings.is_none());
+    }
+
+    #[test]
+    fn active_settings_follow_active_workspace() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let settings = WorkspaceSettings {
+            default_working_directory: Some("/srv".into()),
+            ..Default::default()
+        };
+        mgr.save_workspace(with_settings(
+            sample_definition("ws-1", "A"),
+            settings.clone(),
+        ))
+        .unwrap();
+        mgr.save_workspace(sample_definition("ws-2", "B")).unwrap();
+
+        assert!(mgr.active_settings().is_none(), "nothing active initially");
+        mgr.set_active_workspace(Some("ws-1".into())).unwrap();
+        assert_eq!(mgr.active_settings(), Some(settings));
+
+        // Editing the active workspace is seen by the next lookup (no relaunch).
+        let edited = WorkspaceSettings {
+            default_working_directory: Some("/other".into()),
+            ..Default::default()
+        };
+        mgr.save_workspace(with_settings(
+            sample_definition("ws-1", "A"),
+            edited.clone(),
+        ))
+        .unwrap();
+        assert_eq!(mgr.active_settings(), Some(edited));
+
+        // Switching to a workspace without overrides yields none.
+        mgr.set_active_workspace(Some("ws-2".into())).unwrap();
+        assert!(mgr.active_settings().is_none());
+
+        let info = mgr.active_workspace_info().unwrap();
+        assert_eq!((info.id.as_str(), info.name.as_str()), ("ws-2", "B"));
+        assert!(mgr.is_active("ws-2") && !mgr.is_active("ws-1"));
+
+        assert!(mgr.set_active_workspace(Some("missing".into())).is_err());
+        mgr.set_active_workspace(None).unwrap();
+        assert!(mgr.active_settings().is_none());
+    }
+
+    #[test]
+    fn deleting_active_workspace_clears_it() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let settings = WorkspaceSettings {
+            theme: Some("light".into()),
+            ..Default::default()
+        };
+        mgr.save_workspace(with_settings(sample_definition("ws-1", "A"), settings))
+            .unwrap();
+        mgr.set_active_workspace(Some("ws-1".into())).unwrap();
+        mgr.delete_workspace("ws-1").unwrap();
+        assert!(mgr.active_settings().is_none());
+    }
+
+    #[test]
+    fn settings_survive_duplicate_and_export_import() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let settings = WorkspaceSettings {
+            theme: Some("light".into()),
+            env_vars: vec![env("STAGE", "dev")],
+            ..Default::default()
+        };
+        mgr.save_workspace(with_settings(
+            sample_definition("ws-1", "A"),
+            settings.clone(),
+        ))
+        .unwrap();
+        let dup = mgr.duplicate_workspace("ws-1").unwrap();
+        assert_eq!(
+            mgr.load_workspace(&dup).unwrap().settings,
+            Some(settings.clone())
+        );
+
+        let json = mgr.export_json(&HashMap::new()).unwrap();
+        let dir2 = TempDir::new().unwrap();
+        let mgr2 = create_test_manager(&dir2);
+        let result = mgr2.import_json(&json, &HashMap::new()).unwrap();
+        assert_eq!(result.imported_count, 2);
+        let imported = mgr2.get_workspaces().unwrap();
+        let first = mgr2.load_workspace(&imported[0].id).unwrap();
+        assert_eq!(first.settings, Some(settings));
+    }
+
+    #[test]
+    fn import_drops_invalid_settings_with_warning() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        let json = serde_json::json!({
+            "version": "1",
+            "workspaces": [{
+                "name": "Imported",
+                "tabGroups": [{ "name": "Main", "layout": { "type": "leaf", "tabs": [] } }],
+                "settings": { "envVars": [{ "key": "NOT VALID", "value": "x" }] }
+            }]
+        })
+        .to_string();
+        let result = mgr.import_json(&json, &HashMap::new()).unwrap();
+        assert_eq!(result.imported_count, 1);
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("settings overrides")));
+        let id = mgr.get_workspaces().unwrap()[0].id.clone();
+        assert!(mgr.load_workspace(&id).unwrap().settings.is_none());
     }
 
     fn sample_definition(id: &str, name: &str) -> WorkspaceDefinition {
@@ -455,6 +698,7 @@ mod tests {
             name: name.to_string(),
             description: None,
             windows: None,
+            settings: None,
             tab_groups: vec![WorkspaceTabGroupDef {
                 name: "Main".to_string(),
                 color: None,
@@ -478,6 +722,7 @@ mod tests {
             name: name.to_string(),
             description: None,
             windows: None,
+            settings: None,
             tab_groups: vec![
                 WorkspaceTabGroupDef {
                     name: "Dev".to_string(),
@@ -560,6 +805,7 @@ mod tests {
             name: "Test".to_string(),
             description: Some("desc".to_string()),
             windows: None,
+            settings: None,
             tab_groups: vec![WorkspaceTabGroupDef {
                 name: "Main".to_string(),
                 color: None,

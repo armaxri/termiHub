@@ -1113,6 +1113,46 @@ flowchart LR
 
 The theme engine writes CSS custom properties directly to `:root` via JavaScript — no separate CSS files per theme. When "System" is selected, a `matchMedia` listener auto-switches between Dark and Light when the OS preference changes. The activity bar stays dark in all themes (VS Code convention).
 
+### Per-Workspace Settings (PROD-052)
+
+A saved workspace may override a curated subset of the global settings while it is
+active: the **theme**, the terminal **font family / size**, a **default working
+directory** and extra **environment variables** for new local shells. Precedence is
+`global < workspace < connection` — a connection's own starting directory, an env var of
+the same name, or a per-connection terminal font always wins.
+
+- **Storage.** The overrides live in the workspace record (`settings` on
+  `WorkspaceDefinition`, `src-tauri/src/workspace/settings.rs`) inside `workspaces.json`,
+  so export/import, duplicate and the unified backup carry them. The store moved to schema
+  **v2**; the v1 → v2 step is additive, and the bump makes it downgrade-safe (an older
+  build refuses to overwrite a v2 file instead of dropping the overrides, PER-004).
+  Unknown override keys round-trip verbatim.
+- **Active workspace.** Launching a workspace (or saving the current layout as one)
+  marks it active on the backend (`set_active_workspace`). The backend broadcasts
+  `active-workspace-changed` to every window, including when the active workspace is
+  edited or deleted; a newly opened window reads `get_active_workspace`.
+- **Session defaults.** `create_connection` merges the active workspace's directory and
+  env vars into the settings of a **new direct `local`** session only
+  (`apply_session_defaults`). Running sessions, agent sessions and other connection
+  types are never changed.
+- **Display settings.** The frontend never writes overrides into the global settings
+  document. `src/services/workspaceSettings.ts` layers them over it
+  (`useEffectiveSettings`), re-applies the theme live on a switch, and Settings shows an
+  "Overridden in workspace X" notice with a per-key **Reset to global**.
+
+```mermaid
+sequenceDiagram
+    participant UI as Window (frontend)
+    participant WM as WorkspaceManager
+    participant SM as create_connection
+    UI->>WM: set_active_workspace(id)
+    WM-->>UI: active-workspace-changed {id, name, settings} (all windows)
+    UI->>UI: apply theme / font overrides live
+    UI->>SM: create_connection("local", settings)
+    SM->>WM: active_settings()
+    SM->>SM: fill startingDirectory / prepend envVars (connection wins)
+```
+
 ### Schema-Driven Connection Settings
 
 Connection types declare their configuration fields as a `SettingsSchema` — groups of typed fields with labels, defaults, validation rules, and conditional visibility. The frontend renders these schemas generically using the `DynamicField` component, requiring zero knowledge of any specific connection type.

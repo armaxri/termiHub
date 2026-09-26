@@ -1,0 +1,106 @@
+{
+  "$comment": [
+    "Register of in-tree forks of third-party crates (SUP-005). A path / [patch] fork is invisible",
+    "to cargo update, Dependabot, cargo-audit and cargo-deny, so this file is what lets CI watch the",
+    "upstream crate instead: scripts/internal/vendored-fork-drift.mjs (weekly, Vendored Forks",
+    "workflow) compares each entry against crates.io, the upstream repo and OSV/RustSec, and",
+    "scripts/internal/check-vendored-forks.mjs keeps this file in sync with the vendored dirs.",
+    "See docs/supply-chain.md -> 'Vendored forks'.",
+    "",
+    "base_*     = the upstream release/commit the fork was copied from. Only changes on a re-base.",
+    "reviewed_* = how far upstream has been reviewed. After reading new upstream commits/releases",
+    "             (and porting any fix that matters), bump these to acknowledge them; the drift job",
+    "             only reports what lies beyond. Default: equal to base_*.",
+    "acknowledged_advisories = advisory ids (RUSTSEC-/GHSA-) against the upstream base version that",
+    "             were checked and do not apply to the fork (fixed locally, code path removed). Each",
+    "             entry carries a reason."
+  ],
+  "forks": [
+    {
+      "path": "vendor/vnc-rs",
+      "crate": "vnc-rs",
+      "consumed_by": "core/Cargo.toml path dependency (workspace member)",
+      "parses": "RFB/VNC server messages and framebuffer encodings (Raw, CopyRect, Tight, ZRLE, TRLE, cursor)",
+      "upstream_repo": "https://github.com/HsuJv/vnc-rs",
+      "upstream_branch": "main",
+      "upstream_path": "",
+      "base_version": "0.5.3",
+      "base_commit": "f8ac0ee4915e8e1e1adb8880a0716761b91281f6",
+      "base_commit_note": "upstream publishes no git tags; this is the commit that bumped Cargo.toml to 0.5.3",
+      "reviewed_version": "0.6.0",
+      "reviewed_commit": "99ed1a28553c7594212adf30b9517d57fe46558d",
+      "deltas": [
+        {
+          "summary": "VeNCrypt 0.2 (RFB security type 19) negotiation over rustls behind the vencrypt feature",
+          "refs": ["https://github.com/armaxri/termiHub/issues/1714"]
+        },
+        {
+          "summary": "Encoding-correct, bounded RFB cut-text (Latin-1/UTF-8, 16 MiB ServerCutText cap)",
+          "refs": ["https://github.com/armaxri/termiHub/pull/3474"]
+        },
+        {
+          "summary": "Hostile-server hardening: no server-reachable panics, bounded allocations, catch_unwind task boundary, seeded fuzz tests",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/3473",
+            "https://github.com/armaxri/termiHub/pull/3480"
+          ]
+        },
+        {
+          "summary": "VncEvent::Error carries the typed Arc<VncError> instead of rendered text",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/3479",
+            "https://github.com/armaxri/termiHub/pull/3496"
+          ]
+        },
+        {
+          "summary": "Upstream 0.6.0 security/robustness fixes ported onto the 0.5.3 base: checked SecurityResult/SecurityType handshake, PixelFormat validation, rects bound to negotiated encodings and the framebuffer, cancellable decoder/bridge I/O, non-deadlocking input()",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/3499",
+            "https://github.com/armaxri/termiHub/pull/3512"
+          ]
+        }
+      ],
+      "watch": {
+        "crates_io": "vnc-rs",
+        "osv_ecosystem": "crates.io"
+      },
+      "acknowledged_advisories": []
+    },
+    {
+      "path": "rdp-sidecar/vendor/ironrdp-rdpsnd",
+      "crate": "ironrdp-rdpsnd",
+      "consumed_by": "rdp-sidecar/Cargo.toml [patch.crates-io]",
+      "parses": "RDP audio output virtual channel PDUs (MS-RDPEA)",
+      "upstream_repo": "https://github.com/Devolutions/IronRDP",
+      "upstream_branch": "master",
+      "upstream_path": "crates/ironrdp-rdpsnd",
+      "base_version": "0.9.0",
+      "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
+      "base_commit_note": "upstream tag ironrdp-rdpsnd-v0.9.0",
+      "reviewed_version": "0.9.0",
+      "reviewed_commit": "160752fcf3293889f1ce1bdd3d2e7afc790a9cd2",
+      "deltas": [
+        {
+          "summary": "RdpsndClientHandler::wave receives the concrete negotiated AudioFormat instead of an index",
+          "refs": ["https://github.com/armaxri/termiHub/issues/1773"]
+        },
+        {
+          "summary": "accepts_format hook: echo server-chosen compressed formats (ADPCM/Opus) verbatim, deterministic order",
+          "refs": ["https://github.com/armaxri/termiHub/issues/1812"]
+        },
+        {
+          "summary": "Upstream fixes ported after 0.9.0: malformed server PDUs (incl. encrypted waves) are dropped instead of ending the session, CryptKey/WaveEncrypt keep the channel alive, get_format indexes the client list",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/3499",
+            "https://github.com/armaxri/termiHub/pull/3512"
+          ]
+        }
+      ],
+      "watch": {
+        "crates_io": "ironrdp-rdpsnd",
+        "osv_ecosystem": "crates.io"
+      },
+      "acknowledged_advisories": []
+    }
+  ]
+}

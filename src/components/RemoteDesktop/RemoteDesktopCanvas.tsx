@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import { onRemoteDesktopFrame, onRemoteDesktopCursor } from "@/services/events";
-import type { RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
+import type { CursorShape, RemoteDesktopInput, ScaleMode } from "@/types/remoteDesktop";
 import { useDebouncedCallback } from "@/hooks/useDebounce";
-import { isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
+import { isCursorShapeValid, isDirtyRectValid, isFramebufferSizeValid } from "./frameBounds";
 
 interface RemoteDesktopCanvasProps {
   /** Backend graphical session id; the canvas filters events by it. */
@@ -74,7 +74,10 @@ export function RemoteDesktopCanvas({
     scaleX: 1,
     scaleY: 1,
   });
-  const cursorRef = useRef<{ x: number; y: number; visible: boolean }>({
+  // `shape` is the last *validated* cursor bitmap (#3333). The renderer still
+  // draws a synthetic marker; the shape is kept only once it passed the shared
+  // bound so a future bitmap renderer never sizes an image from untrusted dims.
+  const cursorRef = useRef<{ x: number; y: number; visible: boolean; shape?: CursorShape }>({
     x: 0,
     y: 0,
     visible: false,
@@ -210,7 +213,14 @@ export function RemoteDesktopCanvas({
 
     void onRemoteDesktopCursor((payload) => {
       if (disposed || payload.session_id !== sessionId) return;
-      cursorRef.current = { x: payload.x, y: payload.y, visible: payload.visible };
+      // Defensive re-check (the backend cursor pump already enforces this):
+      // ignore a non-integral / negative position outright, and never keep a
+      // shape outside the shared bound — an absent or invalid shape keeps the
+      // current cursor image.
+      if (![payload.x, payload.y].every((v) => Number.isInteger(v) && v >= 0)) return;
+      const prev = cursorRef.current.shape;
+      const shape = payload.shape && isCursorShapeValid(payload.shape) ? payload.shape : prev;
+      cursorRef.current = { x: payload.x, y: payload.y, visible: payload.visible, shape };
     }).then((un) => (disposed ? un() : unlisteners.push(un)));
 
     return () => {

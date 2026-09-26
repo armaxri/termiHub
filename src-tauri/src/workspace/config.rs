@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use super::settings::WorkspaceSettings;
+
 /// Reference to a remote agent connection definition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -109,6 +111,11 @@ pub struct WorkspaceDefinition {
     /// restore entirely into the main window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub windows: Option<Vec<WorkspaceWindowDef>>,
+    /// Per-workspace settings overrides (PROD-052): theme, terminal font, and
+    /// defaults for new local shells. Absent → the workspace inherits every
+    /// global setting. Added in schema v2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<WorkspaceSettings>,
 }
 
 /// Summary of a workspace for list display (without full layout details).
@@ -169,7 +176,24 @@ pub struct WorkspaceStore {
 
 impl crate::utils::migrate::VersionedStore for WorkspaceStore {
     const STORE_NAME: &'static str = "workspaces.json";
-    const CURRENT_VERSION: u32 = 1;
+    /// v2 (PROD-052) adds the optional per-workspace `settings` overrides. The
+    /// v1 → v2 step is additive (a v1 record simply has no overrides), but the
+    /// bump is what makes the change downgrade-safe: an older build refuses to
+    /// overwrite a v2 file (PER-004) instead of silently dropping every
+    /// workspace's `settings` on its next save.
+    const CURRENT_VERSION: u32 = 2;
+
+    fn migrate(
+        mut value: serde_json::Value,
+        from_version: u32,
+    ) -> anyhow::Result<serde_json::Value> {
+        if from_version < 2 {
+            if let Some(obj) = value.as_object_mut() {
+                obj.insert("version".to_string(), serde_json::json!("2"));
+            }
+        }
+        Ok(value)
+    }
 
     /// Per-entry salvage (PER-004): drop only the individually-corrupt workspace
     /// definitions instead of resetting every saved workspace.
@@ -203,6 +227,9 @@ pub struct WorkspaceExportEntry {
     /// Window ids are logical (`"main"`/synthetic) and portable across machines.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub windows: Option<Vec<WorkspaceWindowDef>>,
+    /// Per-workspace settings overrides (PROD-052); portable as-is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<WorkspaceSettings>,
 }
 
 /// Preview of a workspace import file.
@@ -232,7 +259,7 @@ pub struct WorkspaceImportResult {
 impl Default for WorkspaceStore {
     fn default() -> Self {
         Self {
-            version: "1".to_string(),
+            version: <Self as crate::utils::migrate::VersionedStore>::CURRENT_VERSION.to_string(),
             workspaces: Vec::new(),
             extra: serde_json::Map::new(),
         }
@@ -266,6 +293,7 @@ mod tests {
             name: "Dev Setup".to_string(),
             description: Some("My daily dev layout".to_string()),
             windows: None,
+            settings: None,
             tab_groups: vec![
                 WorkspaceTabGroupDef {
                     name: "Dev".to_string(),
@@ -472,6 +500,7 @@ mod tests {
             description: None,
             tab_groups: vec![sample_tab_group("Main", "conn-1")],
             windows: None,
+            settings: None,
         };
         let summary = ws.to_summary();
         assert_eq!(summary.id, "ws-1");
@@ -508,7 +537,7 @@ mod tests {
     #[test]
     fn workspace_store_default_is_empty() {
         let store = WorkspaceStore::default();
-        assert_eq!(store.version, "1");
+        assert_eq!(store.version, "2");
         assert!(store.workspaces.is_empty());
     }
 
@@ -587,6 +616,7 @@ mod tests {
             description: None,
             tab_groups: vec![sample_tab_group("Main", "conn-1")],
             windows: None,
+            settings: None,
         };
         let json = serde_json::to_string(&ws).unwrap();
         assert!(!json.contains("description"));

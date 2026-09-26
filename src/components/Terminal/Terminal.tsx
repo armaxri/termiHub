@@ -32,7 +32,7 @@ import {
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
-import { useProjectedSettings } from "@/store/useProjectedSettings";
+import { currentEffectiveSettings, useEffectiveSettings } from "@/services/workspaceSettings";
 import { getXtermTheme } from "@/themes";
 import {
   processKeyEvent,
@@ -1376,7 +1376,7 @@ export function Terminal({
     // Park the element so xterm.open() has a DOM parent
     parkingRef.current?.appendChild(el);
 
-    const appSettings = currentSettingsView();
+    const appSettings = currentEffectiveSettings();
     const tabOpts = useAppStore.getState().tabTerminalOptions[tabId];
     const baseFontSize = tabOpts?.fontSize ?? appSettings.fontSize ?? DEFAULT_FONT_SIZE;
     const xterm = new XTerm({
@@ -1974,7 +1974,8 @@ export function Terminal({
   }, [horizontalScrolling, tabId]);
 
   // React to settings changes on live terminals (per-tab overrides take precedence)
-  const projectedSettings = useProjectedSettings();
+  // Effective = global settings + active workspace overrides (PROD-052).
+  const projectedSettings = useEffectiveSettings();
   const theme = projectedSettings.theme;
   const fontFamily = projectedSettings.fontFamily;
   const fontSize = projectedSettings.fontSize;
