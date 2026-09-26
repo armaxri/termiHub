@@ -58,6 +58,7 @@ import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { getRenderedCellWidth } from "./xtermDimensions";
 import {
   CommandMarkTracker,
+  type CommandMarksSnapshot,
   COMMAND_MARK_ACTIONS,
   OSC_133,
   registerCommandMarkTracker,
@@ -339,6 +340,10 @@ export function Terminal({
   // scrollback the disconnect overlay promises survives — and, if the reconnect
   // itself fails, is still visible under the "Reconnect failed" overlay (#1126).
   const scrollbackSnapshotRef = useRef<string | null>(null);
+  // OSC 133 command marks captured alongside `scrollbackSnapshotRef`: the
+  // serialized snapshot cannot carry OSC 133, so the marks are exported from the
+  // tracker at teardown and rebuilt after the snapshot is replayed (#3420).
+  const commandMarksSnapshotRef = useRef<CommandMarksSnapshot | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   // The set of connect ids (`${tabId}:${retryCount}`) whose backend handshake is
   // currently in flight, so teardown can abort them (#952). Tracked PER attempt
@@ -634,6 +639,10 @@ export function Terminal({
                   "terminal",
                   `DEBUG/reattach buffer=${buffer.length}B writing at xterm=${xterm.cols}x${xterm.rows} el=${terminalElRef.current?.offsetWidth ?? 0}x${terminalElRef.current?.offsetHeight ?? 0}`
                 );
+                // xterm.reset() keeps markers on the old buffer alive; drop the
+                // tracked command marks so the OSC 133 in the replayed raw
+                // buffer rebuilds them without duplicates (#3420).
+                commandMarksRef.current?.reset();
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
                 // NOTE: clearPendingOutput is intentionally deferred to right
@@ -669,6 +678,10 @@ export function Terminal({
                 useAppStore.getState().setTerminalReattaching(tabId, false);
                 await waitForUsableDimensions(xterm, fitAddon, terminalElRef.current, isCanceled);
                 if (isCanceled()) return;
+                // xterm.reset() keeps markers on the old buffer alive; drop the
+                // tracked command marks so the OSC 133 in the replayed raw
+                // buffer rebuilds them without duplicates (#3420).
+                commandMarksRef.current?.reset();
                 xterm.reset();
                 await new Promise<void>((resolve) => xterm.write(buffer, resolve));
               }
@@ -1152,6 +1165,9 @@ export function Terminal({
           replaySessionScrollback(sid)
             .then((buffer) => {
               if (isCanceled() || sessionIdRef.current !== sid || buffer.length === 0) return;
+              // The raw ring buffer carries the OSC 133 marks: reset the tracker
+              // with the terminal so they are rebuilt, not duplicated (#3420).
+              commandMarksRef.current?.reset();
               xterm.reset();
               xterm.write(buffer);
             })
@@ -1495,11 +1511,24 @@ export function Terminal({
     // (`MSG_BUFFER_REPLAY`) — so it must skip the local replay too, otherwise the
     // recovered scrollback renders twice (compounding across reconnect attempts).
     // Always clear the ref so an unrelated re-run starts empty.
+    //
+    // The serialized snapshot drops OSC 133, so the command marks captured with
+    // it are rebuilt once the replay is parsed (#3420). The write callback runs
+    // before any later (live) write is parsed, so the cursor still sits where
+    // the snapshot left it. When the server supplies the buffer instead, its raw
+    // bytes carry the OSC 133 marks and the handler rebuilds them.
+    const commandMarks = new CommandMarkTracker(xterm, {
+      decorations: currentSettingsView().terminalCommandDecorations !== false,
+    });
+    const savedCommandMarks = commandMarksSnapshotRef.current;
+    commandMarksSnapshotRef.current = null;
     if (scrollbackSnapshotRef.current) {
       const serverWillSupplyBuffer =
         !!persistentConnectionIdRef.current || isBackendDrivenAgentReconnectTabId(tabId);
       if (!serverWillSupplyBuffer) {
-        xterm.write(scrollbackSnapshotRef.current);
+        xterm.write(scrollbackSnapshotRef.current, () =>
+          commandMarks.restoreSnapshot(savedCommandMarks)
+        );
       }
       scrollbackSnapshotRef.current = null;
     }
@@ -1509,10 +1538,6 @@ export function Terminal({
     // whether or not horizontal scrolling is active.
     const scrollbar = createTerminalScrollbar({ xterm, gutter, thumb });
     scrollbarRef.current = scrollbar;
-
-    const commandMarks = new CommandMarkTracker(xterm, {
-      decorations: currentSettingsView().terminalCommandDecorations !== false,
-    });
 
     // Intercept application shortcuts before xterm processes them
     xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
@@ -1611,6 +1636,13 @@ export function Terminal({
     // command-output selection and the exit-status gutter. Inert when the shell
     // never emits OSC 133.
     const osc133Disposable = xterm.parser.registerOscHandler(OSC_133, commandMarks.handleOsc);
+    // A shell-issued full reset (RIS, `ESC c` — e.g. the `reset` command) swaps in
+    // a fresh buffer without disposing markers: forget the marks with it. Returns
+    // false so xterm's own reset still runs.
+    const risDisposable = xterm.parser.registerEscHandler({ final: "c" }, () => {
+      commandMarks.reset();
+      return false;
+    });
     const unregisterCommandMarks = registerCommandMarkTracker(tabId, commandMarks);
     commandMarksRef.current = commandMarks;
 
@@ -1761,7 +1793,14 @@ export function Terminal({
       osc7Disposable.dispose();
       osc9Disposable.dispose();
       osc133Disposable.dispose();
+      risDisposable.dispose();
       unregisterCommandMarks();
+      // Capture the marks for the scrollback snapshot taken below (#3420).
+      try {
+        commandMarksSnapshotRef.current = commandMarks.exportSnapshot();
+      } catch {
+        commandMarksSnapshotRef.current = null;
+      }
       commandMarks.dispose();
       if (commandMarksRef.current === commandMarks) commandMarksRef.current = null;
       unregister(tabId);

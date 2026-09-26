@@ -24,7 +24,9 @@ import {
   clearWorkflowOutputContent,
   currentWorkflowOutputContent,
   currentWorkflowRunView,
+  dispatchWorkflowRunSettled,
   dispatchWorkflowRunStarted,
+  dispatchWorkflowStepAdvanced,
   onWorkflowOutputContent,
   openWorkflowOutputContent,
   setWorkflowOutputProcessResult,
@@ -32,7 +34,7 @@ import {
   stopWorkflowSubscription,
   workflowRunRegion,
   type WorkflowRunOutputContent,
-  type WorkflowRunView,
+  type WorkflowRunViewInput,
 } from "./workflowRunBridge";
 
 /** A transport double that records dispatched intents and can be told to reject. */
@@ -89,6 +91,7 @@ describe("workflowRunRegion", () => {
 describe("reliable workflow.* dispatch", () => {
   it("submits the intent as the authoritative write", async () => {
     await dispatchWorkflowRunStarted({
+      runId: "r1",
       workflowId: "w1",
       workflowName: "Deploy",
       tabId: "tab-1",
@@ -96,13 +99,24 @@ describe("reliable workflow.* dispatch", () => {
     });
     const started = transport.dispatched.filter((i) => i.kind === "workflow.runStarted");
     expect(started).toHaveLength(1);
-    expect(started[0].payload).toMatchObject({ workflowId: "w1", tabId: "tab-1", total: 3 });
+    expect(started[0].payload).toMatchObject({
+      runId: "r1",
+      workflowId: "w1",
+      tabId: "tab-1",
+      total: 3,
+    });
   });
 
   it("logs but never throws when the transport rejects (a run must not crash)", async () => {
     transport.rejectNext = true;
     await expect(
-      dispatchWorkflowRunStarted({ workflowId: "w1", workflowName: "d", tabId: "t", total: 1 })
+      dispatchWorkflowRunStarted({
+        runId: "r1",
+        workflowId: "w1",
+        workflowName: "d",
+        tabId: "t",
+        total: 1,
+      })
     ).resolves.toBeUndefined();
     expect(transport.dispatched).toHaveLength(1);
   });
@@ -110,15 +124,28 @@ describe("reliable workflow.* dispatch", () => {
   it("logs but never throws when the ack is rejected", async () => {
     transport.ackStatus = "rejected";
     await expect(
-      dispatchWorkflowRunStarted({ workflowId: "w1", workflowName: "d", tabId: "t", total: 1 })
+      dispatchWorkflowRunStarted({
+        runId: "r1",
+        workflowId: "w1",
+        workflowName: "d",
+        tabId: "t",
+        total: 1,
+      })
     ).resolves.toBeUndefined();
   });
 });
 
 describe("version guard (FES-006)", () => {
   it("applies the first snapshot, then a newer one, and drops a stale older one", () => {
-    const run = (completed: number): WorkflowRunView => ({
-      run: { workflowId: "w1", workflowName: "Deploy", tabId: "t", total: 3, completed },
+    const run = (completed: number): WorkflowRunViewInput => ({
+      run: {
+        runId: "r1",
+        workflowId: "w1",
+        workflowName: "Deploy",
+        tabId: "t",
+        total: 3,
+        completed,
+      },
       output: null,
     });
 
@@ -191,5 +218,67 @@ describe("frontend-owned streamed content store", () => {
     // A second clear is a no-op (already null) — no throw.
     clearWorkflowOutputContent();
     off();
+  });
+});
+
+describe("keyed concurrent runs (#3418)", () => {
+  const run = (runId: string, completed: number) => ({
+    runId,
+    workflowId: "w1",
+    workflowName: "Deploy",
+    tabId: `t-${runId}`,
+    total: 3,
+    completed,
+  });
+
+  it("lifts a pre-#3418 view carrying only `run` into a one-entry `runs`", () => {
+    __emitWorkflowRunViewForTest({ run: run("r1", 1), output: null }, 1);
+    expect(currentWorkflowRunView().runs).toEqual([run("r1", 1)]);
+  });
+
+  it("keeps every keyed run and derives `run` from the last when absent", () => {
+    __emitWorkflowRunViewForTest(
+      { runs: [run("r1", 1), run("r2", 2)], output: null } as unknown as WorkflowRunViewInput,
+      1
+    );
+    expect(currentWorkflowRunView().runs).toHaveLength(2);
+    expect(currentWorkflowRunView().run?.runId).toBe("r2");
+  });
+
+  it("carries the run id on progress and settle intents", async () => {
+    await dispatchWorkflowStepAdvanced({ runId: "r7", workflowId: "w1", tabId: "t", completed: 2 });
+    await dispatchWorkflowRunSettled("r7", "failed", "boom");
+    await dispatchWorkflowRunSettled("r8", "cancelled");
+    const payloads = transport.dispatched.map((i) => [i.kind, i.payload]);
+    expect(payloads).toEqual([
+      ["workflow.stepAdvanced", { runId: "r7", workflowId: "w1", tabId: "t", completed: 2 }],
+      ["workflow.runFailed", { runId: "r7", error: "boom" }],
+      ["workflow.runCancelled", { runId: "r8" }],
+    ]);
+  });
+
+  it("only sends preserveOutput / label when set", async () => {
+    await dispatchWorkflowRunStarted({
+      runId: "r1",
+      workflowId: "w1",
+      workflowName: "D",
+      tabId: "t",
+      total: 1,
+      label: "web-1",
+      preserveOutput: true,
+    });
+    expect(transport.dispatched[0].payload).toMatchObject({ label: "web-1", preserveOutput: true });
+  });
+
+  it("drops streamed writes tagged with another run's id", () => {
+    openWorkflowOutputContent("w1", "r1");
+    appendWorkflowOutputLine({ id: 0, stream: "stdout", text: "mine" }, "r1");
+    appendWorkflowOutputLine({ id: 1, stream: "stdout", text: "sibling" }, "r2");
+    setWorkflowOutputProcessResult(9, false, "r2");
+    const content = currentWorkflowOutputContent();
+    expect(content?.lines.map((l) => l.text)).toEqual(["mine"]);
+    expect(content?.exitCode).toBeNull();
+    setWorkflowOutputProcessResult(0, false, "r1");
+    expect(currentWorkflowOutputContent()?.exitCode).toBe(0);
   });
 });

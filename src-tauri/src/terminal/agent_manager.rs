@@ -94,12 +94,21 @@ impl From<String> for AgentRpcFailure {
 impl AgentRpcFailure {
     /// The typed desktop error for this failure. A plain attach refused because
     /// another desktop holds the session (`SESSION_HELD_BY_OTHER`, SM-003) maps
-    /// to [`TerminalError::SessionHeldByPeer`]; everything else stays a generic
-    /// [`TerminalError::RemoteError`].
+    /// to [`TerminalError::SessionHeldByPeer`]; an agent lacking the capability
+    /// (`METHOD_NOT_FOUND` from an older agent, or `PROCESS_NOT_SUPPORTED`) maps
+    /// to [`TerminalError::AgentUnsupported`] (#3408); everything else stays a
+    /// generic [`TerminalError::RemoteError`].
+    ///
+    /// No message-text fallback is needed for the "unsupported" case: every
+    /// agent build answers an unknown method with the standard JSON-RPC
+    /// `-32601` code (the dispatcher has done so since it was introduced), and
+    /// `PROCESS_NOT_SUPPORTED` shipped together with the process methods.
     pub(crate) fn into_terminal_error(self) -> TerminalError {
+        use termihub_core::protocol::errors;
         match self.code {
-            Some(termihub_core::protocol::errors::SESSION_HELD_BY_OTHER) => {
-                TerminalError::SessionHeldByPeer(self.message)
+            Some(errors::SESSION_HELD_BY_OTHER) => TerminalError::SessionHeldByPeer(self.message),
+            Some(errors::METHOD_NOT_FOUND | errors::PROCESS_NOT_SUPPORTED) => {
+                TerminalError::AgentUnsupported(self.message)
             }
             _ => TerminalError::RemoteError(self.message),
         }
@@ -1166,7 +1175,9 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     // A concurrent redrive won the connect race and already
                     // re-established the transport — treat that as success, not a
                     // failure to fold.
-                    Err(TerminalError::RemoteError(msg)) if msg.contains("already connected") => {
+                    // Matched by the structured `already_connected` code, not by
+                    // message text (#3408).
+                    Err(e) if e.code() == crate::utils::errors::IpcErrorCode::AlreadyConnected => {
                         Ok(())
                     }
                     Err(e) => Err(e),

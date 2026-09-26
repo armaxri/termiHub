@@ -238,8 +238,10 @@ pub struct AgentHostSessionsResult {
 }
 
 /// Decode a `connection.list_host_sessions` reply (#3369). An older agent's
-/// "method not found" error maps to `supported: false`; any other error is
-/// returned as-is. Malformed entries are dropped, not fatal to the whole list.
+/// JSON-RPC `METHOD_NOT_FOUND` (-32601) reply — surfaced by `send_request` as
+/// [`TerminalError::AgentUnsupported`](crate::utils::errors::TerminalError::AgentUnsupported),
+/// classified by code, never by message text (#3408) — maps to
+/// `supported: false`; any other error is returned as-is. Malformed entries are dropped, not fatal to the whole list.
 pub fn parse_host_sessions_reply(
     reply: Result<Value, crate::utils::errors::TerminalError>,
 ) -> Result<AgentHostSessionsResult, crate::utils::errors::TerminalError> {
@@ -262,9 +264,7 @@ pub fn parse_host_sessions_reply(
                 sessions,
             })
         }
-        Err(crate::utils::errors::TerminalError::RemoteError(msg))
-            if msg.to_ascii_lowercase().contains("method not found") =>
-        {
+        Err(crate::utils::errors::TerminalError::AgentUnsupported(_)) => {
             Ok(AgentHostSessionsResult {
                 supported: false,
                 sessions: Vec::new(),

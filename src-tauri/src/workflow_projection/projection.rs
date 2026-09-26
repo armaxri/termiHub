@@ -18,25 +18,36 @@
 //!
 //! ```json
 //! {
-//!   "run": { "workflowId": "…", "workflowName": "…", "tabId": "…",
-//!            "total": N, "completed": N } | null,
-//!   "output": { "workflowId": "…", "workflowName": "…", "program": "…",
-//!               "args": ["…"], "status": "running" | "completed"
-//!                 | "cancelled" | "failed", "error": "…"? } | null
+//!   "runs": [ { "runId": "…", "workflowId": "…", "workflowName": "…",
+//!               "tabId": "…", "label": "…" | null,
+//!               "total": N, "completed": N } ],
+//!   "run": <the most recently started entry of `runs`> | null,
+//!   "output": { "runId": "…" | null, "workflowId": "…", "workflowName": "…",
+//!               "program": "…", "args": ["…"], "status": "running"
+//!                 | "completed" | "cancelled" | "failed", "error": "…"? } | null
 //! }
 //! ```
+//!
+//! `runs` (#3418) lists every in-flight run in start order — a concurrent
+//! "Run on…" fan-out has one per target. `run` is kept append-only for
+//! single-run consumers.
 //!
 //! # Intents
 //!
 //! | kind                     | payload                                                    | effect                                          |
 //! | ------------------------ | ---------------------------------------------------------- | ----------------------------------------------- |
-//! | `workflow.runStarted`    | `{ workflowId, workflowName, tabId, total }`               | begin a run at `completed == 0`; clear panel    |
-//! | `workflow.stepAdvanced`  | `{ workflowId, tabId, completed }`                         | update progress if the ids match the active run |
-//! | `workflow.outputOpened`  | `{ workflowId, workflowName, program, args }`              | open the run-output panel in `running` status   |
-//! | `workflow.runCompleted`  | `{}`                                                       | settle the run as completed                     |
-//! | `workflow.runCancelled`  | `{}`                                                       | settle the run as cancelled                     |
-//! | `workflow.runFailed`     | `{ error? }`                                               | settle the run as failed; stamp panel error     |
+//! | `workflow.runStarted`    | `{ runId?, workflowId, workflowName, tabId, label?, total, preserveOutput? }` | begin a run at `completed == 0`; clear panel unless `preserveOutput` |
+//! | `workflow.stepAdvanced`  | `{ runId? \| (workflowId, tabId), completed }`             | update the matching run's progress               |
+//! | `workflow.outputOpened`  | `{ runId?, workflowId, workflowName, program, args }`      | open the run-output panel in `running` status   |
+//! | `workflow.runCompleted`  | `{ runId? }`                                               | settle the run as completed                     |
+//! | `workflow.runCancelled`  | `{ runId? }`                                               | settle the run as cancelled                     |
+//! | `workflow.runFailed`     | `{ runId?, error? }`                                       | settle the run as failed; stamp panel error     |
 //! | `workflow.dismissOutput` | `{}`                                                       | dismiss the run-output panel                    |
+//!
+//! Without a `runId` every intent keeps the pre-#3418 single-run semantics: a
+//! start supersedes every in-flight run, a settle settles all of them, and
+//! progress matches by `workflowId` + `tabId`. With a `runId` the intent targets
+//! that one run, so several runs progress and settle independently.
 //!
 //! `outputOpened` models the panel's *status* seam only: the streamed
 //! stdout/stderr lines, the process exit code, and the timeout flag stay
@@ -56,12 +67,13 @@
 
 use std::sync::Arc;
 
+use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
 use crate::projection::{
     optional_str, required_str, required_usize, HandlerRegistry, Intent, ProducedRegion, Projector,
 };
-use crate::workflow_projection::store::WorkflowRunStore;
+use crate::workflow_projection::store::{RunStart, WorkflowRunStore};
 
 /// The projection region id for a client's workflow run
 /// (`workflow-run@<clientId>`).
@@ -84,86 +96,109 @@ pub fn publish_workflow_run(
     }
 }
 
+/// Every `workflow.*` intent kind the region serves (the routes
+/// [`register_workflow_intents`] installs, each applied by
+/// [`apply_workflow_intent`]).
+pub const WORKFLOW_INTENT_KINDS: [&str; 7] = [
+    "workflow.runStarted",
+    "workflow.stepAdvanced",
+    "workflow.outputOpened",
+    "workflow.runCompleted",
+    "workflow.runCancelled",
+    "workflow.runFailed",
+    "workflow.dismissOutput",
+];
+
 /// Register the `workflow.*` intents on a handler registry.
 ///
 /// Each route resolves the managed [`WorkflowRunStore`] lazily (so it rejects
 /// gracefully rather than panicking if the store is somehow absent), mutates
-/// the dispatching client's run via [`intent.client_id`](Intent::client_id),
-/// and publishes that client's region. All transitions are pure/fast map edits,
-/// so they run inline on the dispatcher's single writer.
+/// the dispatching client's runs via [`intent.client_id`](Intent::client_id)
+/// through [`apply_workflow_intent`], and publishes that client's region. All
+/// transitions are pure/fast map edits, so they run inline on the dispatcher's
+/// single writer.
 pub fn register_workflow_intents(registry: &mut HandlerRegistry, app_handle: AppHandle) {
-    let handle = app_handle.clone();
-    registry.route("workflow.runStarted", move |intent, projector| {
-        let store = store_of(&handle)?;
-        let workflow_id = required_str(intent, "workflowId")?;
-        let workflow_name = required_str(intent, "workflowName")?;
-        let tab_id = required_str(intent, "tabId")?;
-        let total = required_usize(intent, "total")?;
-        store.run_started(
-            &intent.client_id,
-            &workflow_id,
-            &workflow_name,
-            &tab_id,
-            total,
-        );
-        Ok(publish_workflow_run(projector, &store, &intent.client_id))
-    });
+    for kind in WORKFLOW_INTENT_KINDS {
+        let handle = app_handle.clone();
+        registry.route(kind, move |intent, projector| {
+            let store = store_of(&handle)?;
+            apply_workflow_intent(&store, intent)?;
+            Ok(publish_workflow_run(projector, &store, &intent.client_id))
+        });
+    }
+}
 
-    let handle = app_handle.clone();
-    registry.route("workflow.stepAdvanced", move |intent, projector| {
-        let store = store_of(&handle)?;
-        let workflow_id = required_str(intent, "workflowId")?;
-        let tab_id = required_str(intent, "tabId")?;
-        let completed = required_usize(intent, "completed")?;
-        store.step_advanced(&intent.client_id, &workflow_id, &tab_id, completed);
-        Ok(publish_workflow_run(projector, &store, &intent.client_id))
-    });
-
-    let handle = app_handle.clone();
-    registry.route("workflow.outputOpened", move |intent, projector| {
-        let store = store_of(&handle)?;
-        let workflow_id = required_str(intent, "workflowId")?;
-        let workflow_name = required_str(intent, "workflowName")?;
-        let program = required_str(intent, "program")?;
-        let args = optional_str_array(intent, "args")?;
-        store.output_opened(
-            &intent.client_id,
-            &workflow_id,
-            &workflow_name,
-            &program,
-            &args,
-        );
-        Ok(publish_workflow_run(projector, &store, &intent.client_id))
-    });
-
-    let handle = app_handle.clone();
-    registry.route("workflow.runCompleted", move |intent, projector| {
-        let store = store_of(&handle)?;
-        store.run_completed(&intent.client_id);
-        Ok(publish_workflow_run(projector, &store, &intent.client_id))
-    });
-
-    let handle = app_handle.clone();
-    registry.route("workflow.runCancelled", move |intent, projector| {
-        let store = store_of(&handle)?;
-        store.run_cancelled(&intent.client_id);
-        Ok(publish_workflow_run(projector, &store, &intent.client_id))
-    });
-
-    let handle = app_handle.clone();
-    registry.route("workflow.runFailed", move |intent, projector| {
-        let store = store_of(&handle)?;
-        let error = optional_str(intent, "error");
-        store.run_failed(&intent.client_id, error);
-        Ok(publish_workflow_run(projector, &store, &intent.client_id))
-    });
-
-    let handle = app_handle;
-    registry.route("workflow.dismissOutput", move |intent, projector| {
-        let store = store_of(&handle)?;
-        store.dismiss_output(&intent.client_id);
-        Ok(publish_workflow_run(projector, &store, &intent.client_id))
-    });
+/// Parse a `workflow.*` intent's payload and apply it to the store — the
+/// shared parse → mutate half of every route (the tests drive the identical
+/// path against an injected store). A malformed payload is rejected with
+/// `bad_payload` and mutates nothing.
+///
+/// `runId` is optional on every run intent (#3418): present, the intent
+/// targets that one run of several concurrent ones; absent, it keeps the
+/// pre-#3418 single-run semantics (a start supersedes every run, a settle
+/// settles every run, progress matches by `workflowId` + `tabId`).
+pub fn apply_workflow_intent(
+    store: &WorkflowRunStore,
+    intent: &Intent,
+) -> Result<(), (String, String)> {
+    let client = intent.client_id.as_str();
+    let run_id = optional_str(intent, "runId");
+    match intent.kind.as_str() {
+        "workflow.runStarted" => {
+            let start = RunStart {
+                run_id,
+                workflow_id: required_str(intent, "workflowId")?,
+                workflow_name: required_str(intent, "workflowName")?,
+                tab_id: required_str(intent, "tabId")?,
+                label: optional_str(intent, "label"),
+                total: required_usize(intent, "total")?,
+                preserve_output: intent
+                    .payload
+                    .get("preserveOutput")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            };
+            store.start_run(client, start);
+        }
+        "workflow.stepAdvanced" => {
+            let completed = required_usize(intent, "completed")?;
+            match run_id {
+                Some(id) => store.run_step_advanced(client, &id, completed),
+                None => {
+                    let workflow_id = required_str(intent, "workflowId")?;
+                    let tab_id = required_str(intent, "tabId")?;
+                    store.step_advanced(client, &workflow_id, &tab_id, completed);
+                }
+            }
+        }
+        "workflow.outputOpened" => {
+            let workflow_id = required_str(intent, "workflowId")?;
+            let workflow_name = required_str(intent, "workflowName")?;
+            let program = required_str(intent, "program")?;
+            let args = optional_str_array(intent, "args")?;
+            store.output_opened(
+                client,
+                run_id.as_deref(),
+                &workflow_id,
+                &workflow_name,
+                &program,
+                &args,
+            );
+        }
+        "workflow.runCompleted" => store.run_completed(client, run_id.as_deref()),
+        "workflow.runCancelled" => store.run_cancelled(client, run_id.as_deref()),
+        "workflow.runFailed" => {
+            store.run_failed(client, run_id.as_deref(), optional_str(intent, "error"));
+        }
+        "workflow.dismissOutput" => store.dismiss_output(client),
+        other => {
+            return Err((
+                "unknown_intent".to_string(),
+                format!("unsupported workflow intent '{other}'"),
+            ))
+        }
+    }
+    Ok(())
 }
 
 /// Resolve the managed workflow-run store, or a rejectable error if absent.

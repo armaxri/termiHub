@@ -184,6 +184,25 @@ describe("Terminal OSC 133 command marks (#3415)", () => {
     expect(getCommandMarkTracker("tab-1")).toBeUndefined();
   });
 
+  it("resets the tracker on a shell RIS (ESC c) and lets xterm reset too (#3420)", () => {
+    const xterm = renderTerminal();
+    const calls = xterm.parser.registerEscHandler.mock.calls as unknown as Array<
+      [{ final: string }, () => boolean]
+    >;
+    const index = calls.findIndex(([id]) => id.final === "c");
+    expect(index).toBeGreaterThanOrEqual(0);
+    const reset = vi.spyOn(getCommandMarkTracker("tab-1")!, "reset");
+    // false = not consumed: xterm's own full reset still runs.
+    expect(calls[index][1]()).toBe(false);
+    expect(reset).toHaveBeenCalledTimes(1);
+
+    const results = xterm.parser.registerEscHandler.mock.results as Array<{
+      value: { dispose: ReturnType<typeof vi.fn> };
+    }>;
+    unmountOnce();
+    expect(results[index].value.dispose).toHaveBeenCalled();
+  });
+
   it("lets prompt-navigation keys reach the shell when it emits no OSC 133", () => {
     const xterm = renderTerminal();
     h.action = () => "jump-prev-prompt";

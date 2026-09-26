@@ -75,9 +75,11 @@ export function WorkflowSidebar() {
   const importWorkflows = useAppStore((s) => s.importWorkflows);
   const runWorkflow = useAppStore((s) => s.runWorkflow);
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
+  const cancelAllWorkflowRuns = useCallback(() => cancelWorkflowRun(), [cancelWorkflowRun]);
   // The per-workflow "running" badge reads run progress from the authoritative
   // projected `workflow-run` region (#2206 reducer-removal).
-  const { workflowRun } = useProjectedWorkflowRun();
+  // Several runs may be in flight at once — a concurrent fan-out (#3418).
+  const { workflowRuns } = useProjectedWorkflowRun();
 
   // The workflow being edited: an existing one (isNew=false) or a fresh draft.
   const [editing, setEditing] = useState<{ workflow: Workflow; isNew: boolean } | null>(null);
@@ -370,10 +372,12 @@ export function WorkflowSidebar() {
               <WorkflowListItem
                 key={workflow.id}
                 workflow={workflow}
-                running={workflowRun?.workflowId === workflow.id}
+                running={workflowRuns.some((r) => r.workflowId === workflow.id)}
+                runs={workflowRuns.filter((r) => r.workflowId === workflow.id)}
+                onCancelRun={cancelWorkflowRun}
                 onRun={handleRun}
                 onRunOn={openRunTargets}
-                onCancel={cancelWorkflowRun}
+                onCancel={cancelAllWorkflowRuns}
                 onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
                 onExport={handleExportOne}
@@ -407,8 +411,13 @@ export function WorkflowSidebar() {
         onOpenChange={(open) => {
           if (!open) setRunTargets(null);
         }}
-        onRun={(tabIds) => {
-          if (runTargets) void runWorkflow(runTargets.workflow.id, { targetTabIds: tabIds });
+        onRun={(tabIds, { parallel }) => {
+          if (runTargets) {
+            void runWorkflow(runTargets.workflow.id, {
+              targetTabIds: tabIds,
+              ...(parallel ? {} : { concurrency: 1 }),
+            });
+          }
         }}
       />
       <ConfirmDeleteDialog

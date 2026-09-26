@@ -22,21 +22,34 @@ import { errorMessage } from "@/utils/errorMessage";
 
 import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
 import { getActiveTab, type AppState } from "../appStore";
-import { resolveConnectedTargets, toastFanoutSummary, type FanoutOutcome } from "./workflowFanout";
 import {
-  cancelActiveWorkflowRun,
+  clampFanoutConcurrency,
+  describeFanoutProgress,
+  resolveConnectedTargets,
+  runWithConcurrency,
+  toastFanoutSummary,
+  type FanoutOutcome,
+  type FanoutTargetStatus,
+} from "./workflowFanout";
+import {
+  cancelAllWorkflowRuns,
+  cancelWorkflowRunById,
   replaceActiveWorkflowRun,
   runWorkflowOnTarget,
 } from "./workflowRunOnTarget";
 
 /** UI-facing metadata describing an in-flight workflow run (#1852). */
 export interface WorkflowRunState {
+  /** The run's id (#3418: several runs may be in flight at once). */
+  runId: string;
   /** The workflow being run. */
   workflowId: string;
   /** The workflow's name, for the progress indicator. */
   workflowName: string;
   /** The terminal tab the workflow is running against. */
   tabId: string;
+  /** A human-readable name for the target terminal, when known. */
+  label?: string | null;
   /** Total number of steps in the workflow. */
   total: number;
   /** Steps completed so far. */
@@ -93,11 +106,18 @@ export interface RunWorkflowOptions {
   /** Tab to run against; defaults to the active terminal tab. */
   targetTabId?: string;
   /**
-   * Run against this set of tabs instead, one after another (PROD-047). Takes
-   * precedence over {@link targetTabId}. Tabs that are not connected are
+   * Run against this set of tabs instead (PROD-047). Takes precedence over
+   * {@link targetTabId}. The targets run concurrently, at most
+   * {@link concurrency} at a time (#3418). Tabs that are not connected are
    * skipped and reported; each target gets its own run-history record.
    */
   targetTabIds?: string[];
+  /**
+   * How many targets of a multi-target run execute at the same time (#3418),
+   * clamped to `1..WORKFLOW_FANOUT_CONCURRENCY`. Defaults to the cap; `1` runs
+   * them one after another.
+   */
+  concurrency?: number;
   /**
    * What launched the run, recorded in the persisted run history (PROD-0046).
    * Defaults to `"manual"` (palette / sidebar / toolbar); on-connect and hotkey
@@ -143,7 +163,7 @@ export interface LocalProcessPromptState {
 
 /** Cancellation flag of the in-flight multi-target run (PROD-047). */
 interface FanoutState {
-  /** Set when the fan-out was cancelled or superseded by a newer run. */
+  /** Set when the fan-out was cancelled or superseded; no queued target starts. */
   cancelled: boolean;
 }
 
@@ -199,14 +219,20 @@ export interface WorkflowsSlice {
   /**
    * Run a stored workflow's steps against a target terminal, dispatching each
    * step through the shared `send_input` seam and surfacing live progress.
-   * Defaults the target to the active terminal tab. Only one run happens at a
-   * time — a fresh call cancels any in-flight run first. Surfaces a recoverable
+   * Defaults the target to the active terminal tab; `targetTabIds` fans out
+   * across several terminals concurrently (#3418). A fresh call cancels any
+   * in-flight run (or fan-out) first. Surfaces a recoverable
    * toast when the workflow is missing/empty, the target terminal is not
    * connected, or a step fails.
    */
   runWorkflow: (workflowId: string, opts?: RunWorkflowOptions) => Promise<void>;
-  /** Cancel the in-flight workflow run, if any. Idempotent. */
-  cancelWorkflowRun: () => void;
+  /**
+   * Cancel in-flight workflow runs. With no `runId`, cancels everything — every
+   * running target of a fan-out, and no queued target starts (#3418). With a
+   * `runId`, cancels just that one target's run; its siblings keep going.
+   * Idempotent.
+   */
+  cancelWorkflowRun: (runId?: string) => void;
   /** Dismiss the inline run-output surface (clears the projected panel + streamed
    * content). The panel's live state is projected — see {@link
    * import("@/store/useProjectedWorkflowRun").useProjectedWorkflowRun}. */
@@ -352,7 +378,7 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       paramValues = collected;
     }
 
-    // Only one run at a time — cancel any in-flight run (and fan-out) first.
+    // A fresh run supersedes any in-flight run (and fan-out): cancel them first.
     if (activeFanout) activeFanout.cancelled = true;
     replaceActiveWorkflowRun();
 
@@ -369,32 +395,69 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       return;
     }
 
-    // Fan-out (PROD-047): run the targets one after another under one shared
-    // toast. Each target is an ordinary run (own history record); a failure on
-    // one target does not stop the next. Cancel stops the whole fan-out.
+    // Fan-out (PROD-047, #3418): run the targets concurrently — at most
+    // `concurrency` at a time, the rest queued — under one shared per-target
+    // status toast. Each target is an ordinary run (own run id, own history
+    // record); a failure on one target never stops the others. Cancel-all stops
+    // every running target and starts no queued one; a single target can be
+    // cancelled on its own.
     const fanout: FanoutState = { cancelled: false };
     activeFanout = fanout;
     const toastId = `workflow-run-${workflowId}-fanout`;
+    const statuses: FanoutTargetStatus[] = targets.map(() => "queued");
+    const authDecisions = new Map<string, Promise<boolean>>();
+    const title = `Running workflow "${workflow.name}" on ${targets.length} terminals…`;
+    const renderProgress = (note?: string) => {
+      const line = describeFanoutProgress(statuses);
+      toast.loading(title, { id: toastId, description: note ? `${line} — ${note}` : line });
+    };
+    // One clean output panel for the whole fan-out; targets then preserve it.
+    clearWorkflowOutputContent();
+    void dispatchWorkflowDismissOutput();
+    renderProgress();
+
+    const results = await runWithConcurrency(
+      targets,
+      clampFanoutConcurrency(opts?.concurrency),
+      async (target, index) => {
+        statuses[index] = "running";
+        renderProgress();
+        const result = await runWorkflowOnTarget({
+          ...base,
+          targetTabId: target.id,
+          targetSessionId: target.sessionId,
+          targetLabel: target.title,
+          fanout: {
+            authDecisions,
+            // A target whose run went live after cancel-all is stopped at once.
+            onStart: (_runId, cancel) => {
+              if (fanout.cancelled) cancel();
+            },
+            onProgress: (_completed, retryNote) =>
+              renderProgress(retryNote ? `${target.title}: ${retryNote}` : undefined),
+          },
+        });
+        statuses[index] = result.status;
+        renderProgress();
+        return result;
+      },
+      () => fanout.cancelled
+    );
     const outcomes: FanoutOutcome[] = [];
-    for (let index = 0; index < targets.length; index++) {
-      if (fanout.cancelled) break;
-      const target = targets[index];
-      const result = await runWorkflowOnTarget({
-        ...base,
-        targetTabId: target.id,
-        targetSessionId: target.sessionId,
-        fanout: { index, total: targets.length, toastId },
-      });
-      outcomes.push({ title: target.title, result });
-      if (result.status === "cancelled") break;
-    }
+    results.forEach((result, index) => {
+      if (result) outcomes.push({ title: targets[index].title, result });
+    });
     if (activeFanout === fanout) activeFanout = null;
     toastFanoutSummary(workflow.name, outcomes, targets.length, skipped, toastId);
   },
 
-  cancelWorkflowRun: () => {
+  cancelWorkflowRun: (runId) => {
+    if (runId !== undefined) {
+      cancelWorkflowRunById(runId);
+      return;
+    }
     if (activeFanout) activeFanout.cancelled = true;
-    cancelActiveWorkflowRun();
+    cancelAllWorkflowRuns();
   },
 
   dismissWorkflowRunOutput: () => {

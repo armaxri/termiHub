@@ -219,6 +219,7 @@ describe("WorkflowSidebar", () => {
     // The running badge is projected — drive it through the region view.
     setWorkflowRunViewForTest({
       run: {
+        runId: "r1",
         workflowId: "workflow-1",
         workflowName: "Prod login",
         tabId: "tab-1",
@@ -232,6 +233,56 @@ describe("WorkflowSidebar", () => {
     expect(query("workflow-run-workflow-1")).toBeNull();
     act(() => (query("workflow-stop-workflow-1") as HTMLButtonElement).click());
     expect(cancelWorkflowRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("lists each concurrent target's progress with its own stop (#3418)", () => {
+    const cancelWorkflowRun = vi.fn();
+    useAppStore.setState({ workflows: sampleWorkflows, cancelWorkflowRun });
+    const target = (runId: string, label: string, completed: number) => ({
+      runId,
+      workflowId: "workflow-1",
+      workflowName: "Prod login",
+      tabId: `tab-${runId}`,
+      label,
+      total: 3,
+      completed,
+    });
+    setWorkflowRunViewForTest({
+      run: target("r2", "db-2", 2),
+      runs: [target("r1", "web-1", 1), target("r2", "db-2", 2)],
+      output: null,
+    });
+    render();
+    const list = query("workflow-targets-workflow-1");
+    expect(list).not.toBeNull();
+    expect(query("workflow-target-r1")?.textContent).toContain("web-1");
+    expect(query("workflow-target-r1")?.textContent).toContain("1 / 3");
+    expect(query("workflow-target-r2")?.textContent).toContain("db-2");
+    expect(query("workflow-target-r2")?.textContent).toContain("2 / 3");
+    expect(query("workflow-stop-workflow-1")?.getAttribute("aria-label")).toBe("Stop all");
+
+    act(() => (query("workflow-target-stop-r2") as HTMLButtonElement).click());
+    expect(cancelWorkflowRun).toHaveBeenLastCalledWith("r2");
+    act(() => (query("workflow-stop-workflow-1") as HTMLButtonElement).click());
+    expect(cancelWorkflowRun).toHaveBeenLastCalledWith();
+  });
+
+  it("shows no per-target list for a single run", () => {
+    useAppStore.setState({ workflows: sampleWorkflows });
+    setWorkflowRunViewForTest({
+      run: {
+        runId: "r1",
+        workflowId: "workflow-1",
+        workflowName: "Prod login",
+        tabId: "tab-1",
+        total: 1,
+        completed: 0,
+      },
+      output: null,
+    });
+    render();
+    expect(query("workflow-stop-workflow-1")).not.toBeNull();
+    expect(query("workflow-targets-workflow-1")).toBeNull();
   });
 
   it("duplicates a workflow through the backend and reports success", async () => {

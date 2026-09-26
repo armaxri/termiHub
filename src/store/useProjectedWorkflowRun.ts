@@ -33,10 +33,12 @@ import {
   type WorkflowRunView,
 } from "@/store/workflowRunBridge";
 
-/** The effective workflow-run slice for rendering: `workflowRun` (run progress) +
- * `workflowRunOutput` (the run-output panel). */
+/** The effective workflow-run slice for rendering: `workflowRuns` (every in-flight
+ * run's progress, #3418), `workflowRun` (the most recently started one, kept for
+ * single-run consumers) + `workflowRunOutput` (the run-output panel). */
 export interface ProjectedWorkflowRunSlice {
   workflowRun: WorkflowRunState | null;
+  workflowRuns: WorkflowRunState[];
   workflowRunOutput: WorkflowRunOutputState | null;
 }
 
@@ -84,13 +86,17 @@ export function useProjectedWorkflowRun(): ProjectedWorkflowRunSlice {
 
   return useMemo(() => {
     const workflowRun: WorkflowRunState | null = view.run;
+    const workflowRuns: WorkflowRunState[] = view.runs;
     const output = view.output;
     if (!output) {
-      return { workflowRun, workflowRunOutput: null };
+      return { workflowRun, workflowRuns, workflowRunOutput: null };
     }
     // Merge the projected identity/status with the frontend-owned streamed content
-    // (matched by workflowId; empty defaults until the content buffer opens).
-    const streamed = content && content.workflowId === output.workflowId ? content : null;
+    // (matched by workflowId, and by runId when both carry one; empty defaults
+    // until the content buffer opens).
+    const sameRun = !output.runId || !content?.runId || content.runId === output.runId;
+    const streamed =
+      content && content.workflowId === output.workflowId && sameRun ? content : null;
     const workflowRunOutput: WorkflowRunOutputState = {
       workflowId: output.workflowId,
       workflowName: output.workflowName,
@@ -102,6 +108,6 @@ export function useProjectedWorkflowRun(): ProjectedWorkflowRunSlice {
       exitCode: streamed?.exitCode ?? null,
       timedOut: streamed?.timedOut ?? false,
     };
-    return { workflowRun, workflowRunOutput };
+    return { workflowRun, workflowRuns, workflowRunOutput };
   }, [view, content]);
 }
