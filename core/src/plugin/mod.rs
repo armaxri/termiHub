@@ -68,9 +68,11 @@ mod native_trust;
 mod pack;
 mod package;
 mod security;
+mod settings_migration;
 mod signature;
 mod signer_change;
 mod trust_store;
+mod update_check;
 mod version_change;
 
 pub use capabilities::{
@@ -105,6 +107,7 @@ pub use security::{
     assess_trust, FilesystemScope, PermissionError, PermissionSet, RecoveryAction, RecoveryState,
     RestartTracker, TrustAssessment, TrustLevel, MAX_RESTART_ATTEMPTS,
 };
+pub use settings_migration::{migrate_settings, SettingsMigration};
 pub use signature::{
     generate_keypair, key_id_from_public_key, sha256_digest, sign_digests, signing_key_from_base64,
     signing_payload, verify as verify_signature, verify_reader, verify_signed_archive,
@@ -118,6 +121,11 @@ pub use signer_change::{
 /// The one authoritative plugin version: the native plugin ABI (PLG-002).
 pub use termihub_plugin_api::{AbiIncompatibility, AbiVersion, CURRENT_PLUGIN_ABI_VERSION};
 pub use trust_store::{TrustSource, TrustStore, TrustStoreError, TrustedPublisher};
+pub use update_check::{
+    evaluate_update, parse_update_document, validate_https_url, verify_package_sha256,
+    UpdateCheckError, UpdateCheckOutcome, UpdateDocument, UpdateStatus, MAX_UPDATE_DOCUMENT_BYTES,
+    MAX_UPDATE_URL_LEN,
+};
 pub use version_change::{
     classify_version_change, InstalledSnapshot, VersionChange, VersionChangeKind,
 };

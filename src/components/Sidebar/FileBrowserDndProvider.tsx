@@ -13,6 +13,7 @@ import {
 import { Copy, MoveRight } from "lucide-react";
 import type { FileEntry } from "@/types/connection";
 import { describeEntries, type FileTransferOperation } from "@/utils/fileDragMove";
+import { isOutsideViewport } from "@/utils/fileDragOut";
 import { asFileDragData, asFileDropData } from "./fileBrowserDnd";
 
 interface FileBrowserDndProviderProps {
@@ -26,7 +27,32 @@ interface FileBrowserDndProviderProps {
     operation: FileTransferOperation,
     destEntry?: FileEntry
   ) => void;
+  /**
+   * Called once per drag when the pointer leaves the window while row(s) are
+   * being dragged — the hand-off to a native OS drag-out (#3457). The in-app
+   * drag stays live until `control.cancelInAppDrag()` is called, so a pointer
+   * that comes back can still drop into a folder.
+   */
+  onDragOut?: (entries: FileEntry[], control: DragOutControl) => void;
   children: React.ReactNode;
+}
+
+/** Lets a drag-out handler inspect and end the in-app drag it took over. */
+export interface DragOutControl {
+  /** Whether the in-app drag that left the window is still held. */
+  isStillDragging: () => boolean;
+  /** End the in-app drag (as cancelling it would) so the native OS drag takes over. */
+  cancelInAppDrag: () => void;
+}
+
+/**
+ * End the active dnd-kit pointer drag. Its PointerSensor cancels on a window
+ * `visibilitychange`; that event is used rather than a synthetic Escape keydown
+ * because app-wide Escape handlers (terminal zoom, tree selection) would also
+ * react to — and the zoom one swallow — an Escape.
+ */
+function cancelActivePointerDrag(): void {
+  window.dispatchEvent(new Event("visibilitychange"));
 }
 
 /** Whether a pointer/keyboard event carries the copy modifier (Alt / Option). */
@@ -62,13 +88,27 @@ function announcements(copy: () => boolean): Announcements {
  * breadcrumb moves the entries there; holding Alt/Option copies instead. The
  * floating chip follows the pointer and says which of the two will happen.
  */
-export function FileBrowserDndProvider({ onDrop, children }: FileBrowserDndProviderProps) {
+export function FileBrowserDndProvider({
+  onDrop,
+  onDragOut,
+  children,
+}: FileBrowserDndProviderProps) {
   // An 8px activation distance keeps plain clicks, double-clicks and the
   // right-click context menu working on rows.
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
   const [dragging, setDragging] = useState<FileEntry[] | null>(null);
   const [copyMode, setCopyMode] = useState(false);
   const copyRef = useRef(false);
+  const draggingRef = useRef<FileEntry[] | null>(null);
+  const draggedOutRef = useRef(false);
+  const onDragOutRef = useRef(onDragOut);
+  onDragOutRef.current = onDragOut;
+
+  const setActiveDrag = useCallback((entries: FileEntry[] | null) => {
+    draggingRef.current = entries;
+    draggedOutRef.current = false;
+    setDragging(entries);
+  }, []);
 
   const updateCopy = useCallback((next: boolean) => {
     copyRef.current = next;
@@ -90,25 +130,46 @@ export function FileBrowserDndProvider({ onDrop, children }: FileBrowserDndProvi
     };
   }, [dragging, updateCopy]);
 
+  // Drag-out (#3457): the first pointer move outside the window hands the
+  // dragged rows to `onDragOut`, which starts the native OS drag.
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: PointerEvent) => {
+      const entries = draggingRef.current;
+      const handler = onDragOutRef.current;
+      if (!entries || !handler || draggedOutRef.current) return;
+      if (!isOutsideViewport(e.clientX, e.clientY, window.innerWidth, window.innerHeight)) return;
+      draggedOutRef.current = true;
+      handler(entries, {
+        isStillDragging: () => draggingRef.current === entries,
+        cancelInAppDrag: () => {
+          if (draggingRef.current === entries) cancelActivePointerDrag();
+        },
+      });
+    };
+    window.addEventListener("pointermove", onMove);
+    return () => window.removeEventListener("pointermove", onMove);
+  }, [dragging]);
+
   const handleDragStart = useCallback(
     (event: DragStartEvent) => {
       const drag = asFileDragData(event.active.data.current);
       if (!drag) return;
       updateCopy(hasCopyModifier(event.activatorEvent));
-      setDragging(drag.entries);
+      setActiveDrag(drag.entries);
     },
-    [updateCopy]
+    [updateCopy, setActiveDrag]
   );
 
   const handleDragEnd = useCallback(
     (event: DragEndEvent) => {
-      setDragging(null);
+      setActiveDrag(null);
       const drag = asFileDragData(event.active.data.current);
       const drop = asFileDropData(event.over?.data.current);
       if (!drag || !drop) return;
       onDrop(drag.entries, drop.destDir, copyRef.current ? "copy" : "move", drop.destEntry);
     },
-    [onDrop]
+    [onDrop, setActiveDrag]
   );
 
   return (
@@ -117,7 +178,7 @@ export function FileBrowserDndProvider({ onDrop, children }: FileBrowserDndProvi
       collisionDetection={pointerWithin}
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      onDragCancel={() => setDragging(null)}
+      onDragCancel={() => setActiveDrag(null)}
       accessibility={{ announcements: announcements(() => copyRef.current) }}
     >
       {children}

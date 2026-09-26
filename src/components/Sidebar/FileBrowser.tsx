@@ -84,6 +84,7 @@ import { FileMoveConflictDialog } from "./FileMoveConflictDialog";
 import { MoveToDialog, type MoveToRequest } from "./MoveToDialog";
 import { useFileRowDnd } from "./fileBrowserDnd";
 import { useFileMoveTransfer } from "@/hooks/useFileMoveTransfer";
+import { useFileDragOut } from "@/hooks/useFileDragOut";
 import "./FileBrowser.css";
 
 /**
@@ -1040,6 +1041,7 @@ export function FileBrowser() {
     createSymlink,
     supportsOwner,
     supportsSymlink,
+    supportsDragOut,
     openInVscode,
     copyEntry,
     cutEntry,
@@ -1239,6 +1241,13 @@ export function FileBrowser() {
   // The plain Paste reuses the same engine with the user's clipboard (#3458).
   const { requestTransfer, requestPaste, pendingConflict, confirmConflict, cancelConflict } =
     useFileMoveTransfer({ mode, sessionId: sessionFileBrowserId, pasteEntry });
+
+  // Drag rows out of the window onto the OS file manager (#3457).
+  const handleDragOut = useFileDragOut(
+    mode === "session"
+      ? { mode, sessionId: sessionFileBrowserId, transferQueueCapable: supportsDragOut }
+      : { mode }
+  );
 
   // Entries a drag of a selected row carries (the whole multi-selection).
   const selectedEntries = useMemo(
@@ -1677,7 +1686,7 @@ export function FileBrowser() {
       className={`file-browser${isDragOver ? " file-browser--drag-over" : ""}`}
       ref={containerRef}
     >
-      <FileBrowserDndProvider onDrop={requestTransfer}>
+      <FileBrowserDndProvider onDrop={requestTransfer} onDragOut={handleDragOut}>
         {isDragOver && (
           <div className="file-browser__drag-overlay">
             <Upload size={24} />

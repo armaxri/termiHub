@@ -142,6 +142,10 @@ exit /b 0
 :package_plugins
 call scripts\package-plugin.cmd examples\plugins\solarized-night-theme --out target\plugin-dist --no-build || exit /b 1
 call scripts\package-plugin.cmd examples\plugins\echo-backend --out target\plugin-dist || exit /b 1
+call scripts\package-plugin.cmd examples\plugins\log-highlighter --out target\plugin-dist --no-build || exit /b 1
+call scripts\package-plugin.cmd examples\plugins\clock-widget --out target\plugin-dist --no-build || exit /b 1
+if not exist target\plugin-dist\log-highlighter-1.0.0.termihub-plugin exit /b 1
+if not exist target\plugin-dist\clock-widget-1.0.0.termihub-plugin exit /b 1
 if not exist target\plugin-dist\solarized-night-1.0.0.termihub-plugin exit /b 1
 if not exist target\plugin-dist\echo-backend-1.0.0.termihub-plugin exit /b 1
 exit /b 0

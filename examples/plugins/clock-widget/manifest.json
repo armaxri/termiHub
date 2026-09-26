@@ -1,0 +1,17 @@
+{
+  "id": "clock-widget",
+  "name": "Clock Widget",
+  "version": "1.0.0",
+  "author": "termiHub examples",
+  "description": "An example JavaScript status-bar-widget plugin that shows the current time (HH:MM) on the right of the status bar. Runs in the frontend-plugin sandbox.",
+  "license": "MIT",
+  "apiVersion": "1.0",
+  "platforms": ["windows", "linux", "macos"],
+  "permissions": ["ui"],
+  "extensions": {
+    "statusBarWidget": {
+      "entryPoint": "frontend/index.js",
+      "position": "right"
+    }
+  }
+}

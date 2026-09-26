@@ -124,6 +124,10 @@ gate_machinery() { ./tests/system/pytest.sh -m "not integration" -q; }
 gate_package_plugins() {
   ./scripts/package-plugin.sh examples/plugins/solarized-night-theme --out target/plugin-dist --no-build &&
     ./scripts/package-plugin.sh examples/plugins/echo-backend --out target/plugin-dist &&
+    ./scripts/package-plugin.sh examples/plugins/log-highlighter --out target/plugin-dist --no-build &&
+    ./scripts/package-plugin.sh examples/plugins/clock-widget --out target/plugin-dist --no-build &&
+    test -f target/plugin-dist/log-highlighter-1.0.0.termihub-plugin &&
+    test -f target/plugin-dist/clock-widget-1.0.0.termihub-plugin &&
     test -f target/plugin-dist/solarized-night-1.0.0.termihub-plugin &&
     test -f target/plugin-dist/echo-backend-1.0.0.termihub-plugin
 }

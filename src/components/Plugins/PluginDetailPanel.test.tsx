@@ -68,6 +68,19 @@ describe("PluginDetailPanel (#1997)", () => {
     container.remove();
   });
 
+  it("shows the Updates block only for a plugin that publishes an updateUrl (PROD-051)", () => {
+    useAppStore.setState({ plugins: [plugin("active")] });
+    render();
+    expect(container.querySelector('[data-testid="plugin-update"]')).toBeNull();
+
+    useAppStore.setState({
+      plugins: [plugin("active", { updateUrl: "https://example.com/k8s/update.json" })],
+    });
+    render();
+    expect(container.querySelector('[data-testid="plugin-update"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="plugin-update-check"]')).not.toBeNull();
+  });
+
   it("renders identity, extension points, and permissions", () => {
     useAppStore.setState({ plugins: [plugin("active")] });
     render();

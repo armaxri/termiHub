@@ -1,0 +1,18 @@
+{
+  "id": "log-highlighter",
+  "name": "Log Highlighter",
+  "version": "1.0.0",
+  "author": "termiHub examples",
+  "description": "An example JavaScript protocol-parser plugin that colors ERROR and WARN log levels in terminal output. Runs in the frontend-plugin sandbox.",
+  "license": "MIT",
+  "apiVersion": "1.0",
+  "platforms": ["windows", "linux", "macos"],
+  "permissions": ["terminal"],
+  "extensions": {
+    "protocolParser": {
+      "name": "Log Highlighter",
+      "description": "Colors ERROR (red) and WARN (yellow) tokens in terminal output.",
+      "entryPoint": "frontend/index.js"
+    }
+  }
+}

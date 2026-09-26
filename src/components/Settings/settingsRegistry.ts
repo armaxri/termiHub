@@ -617,6 +617,14 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "pluginUpdateCheckEnabled",
+    label: "Check for Plugin Updates Automatically",
+    description:
+      "Off by default. When on, plugins that publish an update URL are checked once a day. Updates are never installed without your confirmation.",
+    category: "plugins",
+    keywords: ["plugin", "update", "upgrade", "version", "check", "automatic", "periodic"],
+  },
+  {
     id: "nativePluginsEnabled",
     label: "Enable Native (In-Process) Plugins",
     description:

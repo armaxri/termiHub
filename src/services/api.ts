@@ -50,6 +50,7 @@ import type {
   NativePluginTrust,
   PluginManifest,
   PluginTrustInfo,
+  PluginUpdateCheckResult,
   TrustedPublisher,
 } from "@/types/plugin";
 import {
@@ -1603,6 +1604,37 @@ export async function localListDir(path: string): Promise<FileEntry[]> {
   return await invoke<FileEntry[]>("local_list_dir", { path });
 }
 
+/** A private staging directory for a remote drag-out and each entry's target path. */
+export interface DragOutStagingDir {
+  dir: string;
+  paths: string[];
+}
+
+/** How a native drag-out ended. */
+export type DragOutResult = "dropped" | "cancelled";
+
+/**
+ * Create a private (`0700`) staging directory for a remote drag-out (#3457) and
+ * return the local target path for each entry name — names are sanitized by the
+ * backend so a hostile remote name can never escape the directory.
+ */
+export async function dragOutCreateStaging(names: string[]): Promise<DragOutStagingDir> {
+  return await invoke<DragOutStagingDir>("drag_out_create_staging", { names });
+}
+
+/** Delete a staging directory created by {@link dragOutCreateStaging}. */
+export async function dragOutDiscardStaging(dir: string): Promise<void> {
+  await invoke("drag_out_discard_staging", { dir });
+}
+
+/**
+ * Start a native OS file drag of existing local `paths` out of this window and
+ * resolve with how it ended (#3457).
+ */
+export async function dragOutStart(paths: string[]): Promise<DragOutResult> {
+  return await invoke<DragOutResult>("drag_out_start", { paths });
+}
+
 /** Copy a file or directory on the local filesystem. */
 export async function localCopyFile(
   srcPath: string,
@@ -2949,6 +2981,25 @@ export async function installPlugin(
     confirmVersionChange,
     confirmSignerChange,
   });
+}
+
+/**
+ * Check installed plugins that declare an `updateUrl` (or only `pluginId`) for a
+ * newer version (PROD-051). Never downloads or installs anything.
+ */
+export async function checkPluginUpdates(pluginId?: string): Promise<PluginUpdateCheckResult[]> {
+  return await invoke<PluginUpdateCheckResult[]>("check_plugin_updates", {
+    pluginId: pluginId ?? null,
+  });
+}
+
+/**
+ * Download the update offered for `pluginId`, verify its SHA-256, id and
+ * version, and return the local package path. It is **not** installed: pass the
+ * path through the normal install flow (validate → trust → confirm).
+ */
+export async function downloadPluginUpdate(pluginId: string): Promise<string> {
+  return await invoke<string>("download_plugin_update", { pluginId });
 }
 
 /** List every trusted publisher key (bundled and user-pinned). */

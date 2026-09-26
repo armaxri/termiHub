@@ -11,13 +11,17 @@ caveat), and how to produce a validated package with the `package-plugin` script
 > `src-tauri/src/lib.rs`) and the plugin **management UI**. This document is the
 > authoring contract for the shipped host.
 
-The two worked examples referenced throughout live under
-[`examples/plugins/`](../examples/plugins):
+The worked examples referenced throughout live under
+[`examples/plugins/`](../examples/plugins) — one per extension point:
 
 - [`solarized-night-theme/`](../examples/plugins/solarized-night-theme) — a
   JSON-only theme plugin (no native code).
 - [`echo-backend/`](../examples/plugins/echo-backend) — a native terminal-backend
   plugin built against [`termihub-plugin-api`](../plugin-api).
+- [`log-highlighter/`](../examples/plugins/log-highlighter) — a JavaScript
+  protocol parser that colors `ERROR` / `WARN` in terminal output.
+- [`clock-widget/`](../examples/plugins/clock-widget) — a JavaScript status-bar
+  widget that shows the local time.
 
 ## The package format
 
@@ -101,6 +105,7 @@ silently ignored.
 | `permissions` | string[] | yes      | Requested capabilities (see below). May be empty.                                                                                                                              |
 | `extensions`  | object   | yes      | Extension points provided; **at least one** required.                                                                                                                          |
 | `settings`    | object   | no       | User-configurable settings, keyed by setting name.                                                                                                                             |
+| `updateUrl`   | string   | no       | HTTPS URL of the plugin's [update document](#updates-and-the-01-distribution-model). Enables "Check for updates"; never installs anything by itself.                           |
 
 ### Permissions
 
@@ -243,6 +248,33 @@ presence and executed by the shipped frontend plugin host — `protocolParser` a
 `statusBarWidget` run in the plugin sandbox (`src/plugins/sandbox/`) and render
 into the app (e.g. the status bar via `PluginStatusBarWidgets`).
 
+Both run in a sandboxed Web Worker (no DOM, no `window`, no Tauri IPC). The
+entry point is wrapped so that `termihub` is the plugin's own API instance:
+
+```js
+termihub.registerProtocolParser({
+  id: "log-highlighter",
+  name: "Log Highlighter",
+  // Return the rewritten chunk, or null to pass it through byte-exact.
+  transform: (data, sessionId) => (data.includes("ERROR") ? highlight(data) : null),
+});
+
+termihub.registerStatusBarWidget({
+  id: "clock-widget",
+  position: "right",
+  // No DOM in the sandbox: return a declarative node the host builds safely.
+  render: () => ({ tag: "span", text: "09:05" }),
+  dispose: () => clearInterval(timer),
+});
+```
+
+A widget updates by registering again under the same `id`; `dispose()` runs when
+the plugin is disabled or uninstalled. The two samples,
+[`log-highlighter`](../examples/plugins/log-highlighter) and
+[`clock-widget`](../examples/plugins/clock-widget), are complete, commented
+references; `src/plugins/examplePlugins.test.ts` loads both through the sandbox
+runtime exactly as the app does.
+
 > **Experimental, default-off gate.** Frontend (JavaScript) plugins run inside the
 > main WebView with full IPC/command access and no per-plugin permission
 > enforcement — the manifest `permissions` are not applied to them (tracked in
@@ -380,8 +412,10 @@ validates** the result against the same checks the host applies on install.
 ./scripts/package-plugin.sh examples/plugins/echo-backend --out dist
 ```
 
-On Windows use `scripts\package-plugin.cmd` with the same arguments. The output
-is named `<id>-<version>.termihub-plugin`.
+JavaScript plugins need no build step either — package them with `--no-build`
+the same way (e.g. `examples/plugins/log-highlighter`). On Windows use
+`scripts\package-plugin.cmd` with the same arguments. The output is named
+`<id>-<version>.termihub-plugin`.
 
 ```mermaid
 flowchart LR
@@ -480,11 +514,106 @@ fingerprint through a channel your users already trust before shipping the
 first release signed with it. A publisher-key change that is also a downgrade
 is confirmed in the same prompt.
 
+## Updates and the 0.1 distribution model
+
+For 0.1 there is **no plugin registry or store** and termiHub **never updates a
+plugin automatically**. Plugins are installed from a local `.termihub-plugin`
+file (**Plugins → Install from file…**). Installing a newer file over an
+installed plugin upgrades it; an older version or a different build of the same
+version asks for confirmation first.
+
+A plugin can additionally publish an **update check** by setting `updateUrl` in
+its manifest to an HTTPS URL serving this JSON document:
+
+```json
+{
+  "latestVersion": "1.3.0",
+  "downloadUrl": "https://example.com/my-plugin-1.3.0.termihub-plugin",
+  "sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+  "minHostAbi": "1.0",
+  "changelogUrl": "https://example.com/my-plugin/CHANGELOG"
+}
+```
+
+| Field           | Required | Notes                                                                                        |
+| --------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `latestVersion` | yes      | The newest published version, as [semver](https://semver.org).                               |
+| `downloadUrl`   | yes      | HTTPS URL of the package for `latestVersion`.                                                |
+| `sha256`        | yes      | SHA-256 of that package file, 64 hex digits.                                                 |
+| `minHostAbi`    | yes      | The plugin ABI (`"major.minor"`) that version needs — normally the same as its `apiVersion`. |
+| `changelogUrl`  | no       | HTTPS URL of release notes, linked from the "Update available" notice.                       |
+
+The document is validated strictly: unknown fields, a malformed version,
+digest or ABI, and any non-`https://` URL are rejected, and it may be at most
+64 KiB.
+
+```mermaid
+sequenceDiagram
+    actor User
+    participant UI as Plugins view
+    participant Host as termiHub backend
+    participant Srv as updateUrl server
+    User->>UI: Check for updates (or the opt-in daily check)
+    UI->>Host: check_plugin_updates
+    Host->>Srv: GET updateUrl (HTTPS only, ≤ 64 KiB, timeouts)
+    Host-->>UI: up to date / update available / needs newer termiHub
+    User->>UI: Download & install…
+    UI->>Host: download_plugin_update
+    Host->>Srv: GET downloadUrl (HTTPS only, ≤ 50 MB)
+    Note over Host: verify SHA-256, plugin id and version
+    Host-->>UI: verified package file
+    UI->>User: normal install dialog (trust, permissions, version change)
+    User->>UI: confirm
+```
+
+What the host guarantees:
+
+- **Opt-in and never silent.** Checks run only when the user clicks **Check for
+  updates** or turns on **Settings → Plugins → Check for Plugin Updates
+  Automatically** (off by default; once a day). A check only reports; the
+  update is installed through the same install dialog as a manual install, with
+  its signature/trust banner, permission list and confirmations. A native
+  backend's library hash changes with every build, so an updated native plugin
+  must be trusted again before it loads.
+- **Only strictly newer versions are offered** — the check can never lead to a
+  downgrade. A newer version whose `minHostAbi` this termiHub cannot load is
+  shown as "needs a newer termiHub" and cannot be downloaded.
+- **HTTPS only, bounded.** Plain HTTP, embedded credentials and redirects to a
+  non-HTTPS URL are refused; redirects are capped at 3; the document and the
+  package are size-capped and every request has connect and overall timeouts.
+- **Verified download.** The package must match the published `sha256` and
+  carry the same plugin `id` and the advertised `latestVersion`, or it is
+  discarded. Sign your packages (see below) so users also see who built the
+  update.
+
+Publishing an update: build and (ideally) sign the new package, upload it,
+compute its digest (`shasum -a 256 my-plugin-1.3.0.termihub-plugin`), then
+update the JSON document. Keep `updateUrl` stable across versions.
+
+### Settings across versions
+
+A plugin's user settings are stored by the host, keyed by the setting names the
+manifest declares under `settings` — the declared schema **is** the settings
+version. When an installed plugin is replaced by a different version, the host
+reconciles the stored values with the **new** manifest:
+
+- a value whose key is still declared and still fits its `type` (and `enum`) is
+  **kept**;
+- a value whose key is no longer declared, or whose type or allowed values
+  changed so it no longer fits, is **dropped**, and the new `default` applies.
+
+So never change the meaning or type of an existing setting in place: add a new
+key (it starts at its default) and stop declaring the old one. There is no
+plugin-side migration callback in 0.1.
+
 ## Testing your plugin
 
 - **Manifest / packaging:** `package-plugin` fails loudly if the manifest is
   invalid or the produced archive would not validate, so a successful run is your
   first check.
+- **JavaScript extensions:** load your `frontend/index.js` through the sandbox
+  runtime the way `src/plugins/examplePlugins.test.ts` does for the samples,
+  then assert on `applyParsers` output or the emitted widget nodes.
 - **Native backend logic:** give your `cdylib` crate a `crate-type` of
   `["cdylib", "rlib"]` and unit-test the backend through the safe host-side
   wrapper (`LoadedBackend`) with an `mpsc`-backed `PluginOutputSender` — no

@@ -18,6 +18,7 @@ import {
   pluginTypeIcon,
   pluginTypeLabel,
 } from "./pluginPresentation";
+import { PluginUpdateSection } from "./PluginUpdateSection";
 import "./Plugins.css";
 
 /** Props for {@link PluginDetailPanel}. */
@@ -166,6 +167,8 @@ export function PluginDetailPanel({ meta, isVisible }: PluginDetailPanelProps) {
           </div>
         </div>
       )}
+
+      {manifest.updateUrl && <PluginUpdateSection plugin={plugin} />}
 
       <div className="plugin-detail__actions">
         {isError ? (

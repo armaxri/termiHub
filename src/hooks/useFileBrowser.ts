@@ -69,6 +69,7 @@ export function useFileBrowser() {
     supportsPermissions: false,
     supportsOwner: false,
     supportsSymlink: false,
+    supportsDragOut: false,
     openInVscode: async () => {},
     copyEntry: () => {},
     cutEntry: () => {},

@@ -631,6 +631,9 @@ export function useSessionFileSystem() {
     supportsPermissions: sftpCapable,
     supportsOwner: sftpCapable,
     supportsSymlink: sftpCapable,
+    // Remote drag-out stages files through the transfer queue (#3457), so only
+    // a queue-capable (SFTP / FTP) session supports it.
+    supportsDragOut: transferQueueCapable,
     openInVscode,
     copyEntry,
     cutEntry,
