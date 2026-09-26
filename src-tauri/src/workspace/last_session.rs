@@ -215,7 +215,9 @@ impl LastSessionManager {
         self.storage.load()
     }
 
-    /// Persist the given session, or clear the file when the session is empty.
+    /// Persist the given session as-is, or clear the file when it is empty.
+    /// Production saves go through [`Self::save_with_active`].
+    #[cfg(test)]
     pub fn save(&self, session: LastSession) -> Result<()> {
         let _guard = self.lock()?;
         self.save_unlocked(session)
