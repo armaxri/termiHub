@@ -168,7 +168,9 @@ describe("RemoteDesktopTab — window takeover (#3388)", () => {
   it("wires the canvas's focus-loss release to the session's release-all (#3402)", () => {
     act(() => useAppStore.setState({ sessionOwners: { [SID]: "main" } }));
     render("active");
-    expect(hoisted.canvasProps.at(-1)?.onReleaseAll).toBe(hoisted.session.releaseInput);
+    expect(hoisted.canvasProps[hoisted.canvasProps.length - 1]?.onReleaseAll).toBe(
+      hoisted.session.releaseInput
+    );
   });
 
   it("a session mid-move to another window is not shown as taken over", () => {
