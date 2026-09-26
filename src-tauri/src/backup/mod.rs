@@ -47,6 +47,9 @@ pub mod pending;
 pub mod restore;
 pub mod sections;
 
+#[cfg(test)]
+mod tests;
+
 
 /// Format identifier stamped on every backup file.
 pub const BACKUP_FORMAT_ID: &str = "termihub-backup";
