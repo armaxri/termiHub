@@ -56,6 +56,7 @@ use crate::connection::{plugin_type_id, ConnectionFactory, ConnectionTypeRegistr
 use super::capabilities::ConnectionPolicy;
 use super::connection::{PluginConnectionType, SessionHostContext};
 use super::host_context::{prepare_plugin_data_dir, PluginDataDirError};
+use super::log_rate_limit::PluginLogLimiter;
 use super::manager::InstalledPlugin;
 use super::manifest::TerminalBackendExtension;
 use super::native_trust::NativeTrustStore;
@@ -302,6 +303,9 @@ pub struct LoadedLibrary {
     /// Plugin-wide cancellation flag (ABI 1.1 host context): set when the host
     /// unloads the plugin, observed by every session's services handle.
     shutdown_signal: Arc<AtomicBool>,
+    /// Plugin-wide log rate limiter (ABI 1.1 host log callback, #3581), shared
+    /// by every session's services handle.
+    log_limiter: Arc<PluginLogLimiter>,
     /// The open library. Never read directly — held solely to keep the mapping
     /// alive (the resolved function pointers point into it) and to unmap on drop.
     /// **Must be the last field** so it is dropped last, after [`Drop`] runs.
@@ -342,6 +346,11 @@ impl LoadedLibrary {
     /// The plugin-wide cancellation flag sessions observe.
     pub(crate) fn shutdown_signal(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.shutdown_signal)
+    }
+
+    /// The plugin-wide log rate limiter sessions charge their log lines to.
+    pub(crate) fn log_limiter(&self) -> Arc<PluginLogLimiter> {
+        Arc::clone(&self.log_limiter)
     }
 
     /// Create a new backend session from this plugin.
@@ -457,6 +466,7 @@ impl LoadedLibrary {
             create_backend: unused_create_backend,
             shutdown,
             shutdown_signal: Arc::new(AtomicBool::new(false)),
+            log_limiter: Arc::new(PluginLogLimiter::default()),
             library,
         }
     }
@@ -814,6 +824,7 @@ fn load_backend_library_impl(
         create_backend,
         shutdown,
         shutdown_signal: Arc::new(AtomicBool::new(false)),
+        log_limiter: Arc::new(PluginLogLimiter::default()),
         library,
     }))
 }
