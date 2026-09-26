@@ -1,3 +1,4 @@
+pub mod drag_out;
 pub mod local;
 pub mod sftp;
 pub mod transfer;
