@@ -8,7 +8,7 @@ use std::sync::Mutex as StdMutex;
 use crate::commands::session::{
     close_session_with_disposition, tab_close_disposition, TabCloseDisposition,
 };
-use crate::session::remote_proxy::RemoteProxy;
+use crate::session::remote_proxy::{ReattachOutcome, RemoteProxy};
 use crate::window::{OutputEmitTarget, WindowManager};
 
 // ── RecordingAgent ────────────────────────────────────────────────
@@ -161,8 +161,9 @@ async fn manager_with_agent_session(sid: &str) -> (SessionManager, RecordingAgen
     let agent = RecordingAgent::default();
     let client: Arc<dyn AgentRpcClient> = Arc::new(agent.clone());
     let manager = SessionManager::new(ConnectionTypeRegistry::new(), client.clone());
-    let proxy =
+    let (proxy, outcome) =
         RemoteProxy::reconnect_existing("agent-1".into(), "r1".into(), client).expect("proxy");
+    assert_eq!(outcome, ReattachOutcome::Attached);
     manager
         .insert_test_remote_session(sid, Box::new(proxy), "agent-1", "r1")
         .await;
