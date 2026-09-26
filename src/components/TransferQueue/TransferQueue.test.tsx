@@ -150,6 +150,42 @@ describe("TransferQueue panel", () => {
     expect(queryAll('[data-testid="transfer-row"]')).toHaveLength(2);
   });
 
+  function renderQueue() {
+    act(() =>
+      root.render(
+        <TooltipProvider>
+          <TransferQueue />
+        </TooltipProvider>
+      )
+    );
+  }
+
+  it("shows the overall rate and ETA in the footer (PROD-038)", () => {
+    seed([
+      entry({ id: "t1", transferred: 0, totalBytes: 2048 * 10, speedBytesPerSec: 1024 }),
+      entry({ id: "t2", transferred: 0, totalBytes: 2048 * 10, speedBytesPerSec: 1024 }),
+    ]);
+    renderQueue();
+    // 40 KB remaining at 2 KB/s → 20 s.
+    expect(query("transfer-queue-throughput")?.textContent).toBe("2 KB/s · ~20s left");
+  });
+
+  it("shows the rate but no ETA when a pending size is unknown (PROD-038)", () => {
+    seed([
+      entry({ id: "t1", speedBytesPerSec: 1024 }),
+      entry({ id: "t2", totalBytes: null, percent: null, speedBytesPerSec: 1024 }),
+    ]);
+    renderQueue();
+    expect(query("transfer-queue-throughput")?.textContent).toBe("2 KB/s");
+  });
+
+  it("hides the footer throughput when every transfer is paused (PROD-038)", () => {
+    seed([entry({ state: "paused", speedBytesPerSec: null })]);
+    renderQueue();
+    expect(query("transfer-queue")).not.toBeNull();
+    expect(query("transfer-queue-throughput")).toBeNull();
+  });
+
   it("hides the panel when minimized (indicator takes over)", () => {
     seed([entry()], true);
     act(() =>

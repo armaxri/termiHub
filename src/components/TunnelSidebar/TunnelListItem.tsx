@@ -17,7 +17,8 @@ import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem"
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
-import { formatBytes } from "@/utils/formatters";
+import { formatBytes, formatRate } from "@/utils/formatters";
+import { useByteRate } from "@/hooks/useByteRate";
 import { connectionStateLabel } from "@/utils/statusLabel";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import {
@@ -125,6 +126,11 @@ export function TunnelListItem({
   const isActive = status === "connected" || status === "connecting" || status === "reconnecting";
   const isError = status === "error";
   const lastError = state?.error;
+  // Live up/down throughput (PROD-038), smoothed from the cumulative stats
+  // counters. Sampled only while connected; reset when the tunnel drops.
+  const sampling = status === "connected" && !!state?.stats;
+  const upRate = useByteRate(state?.stats?.bytesSent, sampling);
+  const downRate = useByteRate(state?.stats?.bytesReceived, sampling);
   const sshConn = connections.find((c) => c.id === tunnel.sshConnectionId);
   const sshLabel = sshConn?.name ?? "Unknown";
 
@@ -337,8 +343,22 @@ export function TunnelListItem({
           </span>
           {isActive && state?.stats && (
             <div className="tunnel-item__stats" data-testid={`tunnel-stats-${tunnel.id}`}>
-              <span>↑ {formatBytes(state.stats.bytesSent)}</span>
-              <span>↓ {formatBytes(state.stats.bytesReceived)}</span>
+              <span data-testid={`tunnel-up-stat-${tunnel.id}`}>
+                ↑ {formatBytes(state.stats.bytesSent)}
+                {formatRate(upRate) && (
+                  <span className="tunnel-item__rate" title="Current upload rate">
+                    {` · ${formatRate(upRate)}`}
+                  </span>
+                )}
+              </span>
+              <span data-testid={`tunnel-down-stat-${tunnel.id}`}>
+                ↓ {formatBytes(state.stats.bytesReceived)}
+                {formatRate(downRate) && (
+                  <span className="tunnel-item__rate" title="Current download rate">
+                    {` · ${formatRate(downRate)}`}
+                  </span>
+                )}
+              </span>
               <span
                 data-testid={`tunnel-conn-stat-${tunnel.id}`}
                 title="Active / total connections"

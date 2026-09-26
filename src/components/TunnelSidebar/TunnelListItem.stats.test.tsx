@@ -4,7 +4,7 @@
  * the stats already carry. Display-only — the counts flow straight from
  * `state.stats`; nothing here changes how they are collected.
  */
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
@@ -102,5 +102,69 @@ describe("TunnelListItem — connection stats (PROD-037)", () => {
       )
     );
     expect(connStat()).toBeNull();
+  });
+});
+
+describe("TunnelListItem — live rate (PROD-038)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers({
+      toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout", "performance", "Date"],
+    });
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState(useAppStore.getInitialState());
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.useRealTimers();
+  });
+
+  const stats = (bytesSent: number, bytesReceived: number): TunnelStats => ({
+    bytesSent,
+    bytesReceived,
+    activeConnections: 1,
+    totalConnections: 1,
+  });
+  const up = () => container.querySelector('[data-testid="tunnel-up-stat-tun-1"]')?.textContent;
+  const down = () => container.querySelector('[data-testid="tunnel-down-stat-tun-1"]')?.textContent;
+
+  it("shows a smoothed KB/s rate next to each running total", () => {
+    renderItem(TUNNEL, stateWith(stats(0, 0)));
+    // Only one sample so far → totals only, no rate yet.
+    expect(up()).not.toContain("/s");
+
+    renderItem(TUNNEL, stateWith(stats(10 * 1024, 20 * 1024)));
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(up()).toContain("10 KB/s");
+    expect(down()).toContain("20 KB/s");
+  });
+
+  it("drops the rate once the counters stop moving", () => {
+    renderItem(TUNNEL, stateWith(stats(0, 0)));
+    renderItem(TUNNEL, stateWith(stats(10 * 1024, 0)));
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    expect(up()).toContain("KB/s");
+    // A long idle stretch with no new bytes decays the rate to nothing.
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(up()).not.toContain("/s");
+  });
+
+  it("shows no rate while the tunnel is not connected", () => {
+    renderItem(TUNNEL, stateWith(stats(0, 0), "reconnecting"));
+    renderItem(TUNNEL, stateWith(stats(50 * 1024, 50 * 1024), "reconnecting"));
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(up()).not.toContain("/s");
+    expect(down()).not.toContain("/s");
   });
 });

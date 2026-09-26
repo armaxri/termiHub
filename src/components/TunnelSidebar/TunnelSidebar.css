@@ -37,6 +37,11 @@
   padding-top: var(--spacing-xxs);
 }
 
+/* Live smoothed rate after each running total (PROD-038). */
+.tunnel-item__rate {
+  font-variant-numeric: tabular-nums;
+}
+
 .tunnel-item__error {
   display: flex;
   align-items: center;

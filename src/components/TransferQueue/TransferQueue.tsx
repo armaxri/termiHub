@@ -6,7 +6,13 @@ import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import { useTransferControls } from "@/hooks/useTransferControls";
 import { frontendLog } from "@/utils/frontendLog";
 import { transferCancel } from "@/services/api";
-import { isTerminalTransferState, type TransferEntry } from "@/types/transfer";
+import {
+  formatThroughput,
+  isTerminalTransferState,
+  summarizeQueueThroughput,
+  type TransferEntry,
+} from "@/types/transfer";
+import { formatElapsed } from "@/utils/formatters";
 import { TransferEntryRow } from "./TransferEntry";
 import "./TransferQueue.css";
 
@@ -42,6 +48,7 @@ export function TransferQueue() {
 
   const entries = useMemo(() => Object.values(transferQueue), [transferQueue]);
   const summary = useMemo(() => summarize(entries), [entries]);
+  const throughput = useMemo(() => summarizeQueueThroughput(entries), [entries]);
 
   // The per-row control handlers are shared with the file-browser footer so both
   // surfaces drive one control language (UX-020) with honest FEC-004 / UX-016
@@ -105,6 +112,16 @@ export function TransferQueue() {
       </div>
 
       <div className="transfer-queue__footer">
+        {throughput.bytesPerSec != null && (
+          <span
+            className="transfer-queue__throughput"
+            data-testid="transfer-queue-throughput"
+            title="Combined rate of the active transfers, and the estimated time until the queue is done"
+          >
+            {formatThroughput(throughput.bytesPerSec)}
+            {throughput.etaSeconds != null && ` · ~${formatElapsed(throughput.etaSeconds)} left`}
+          </span>
+        )}
         <Button
           variant="secondary"
           size="sm"
