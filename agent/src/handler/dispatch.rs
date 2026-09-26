@@ -2606,41 +2606,79 @@ fn docker_probe_timeout() -> Duration {
 /// Probe whether Docker is usable by running `<program> info`.
 ///
 /// The `program`/`timeout` seam keeps this injectable so tests can point at a
-/// shim binary without depending on a real Docker installation. Any spawn
+/// missing binary without depending on a real Docker installation. Any spawn
 /// failure or non-zero exit reports "unavailable" — Docker container spawning
 /// is simply disabled, never a hard error that could fail `initialize`.
 async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
     let mut cmd = tokio::process::Command::new(program);
-    cmd.args(["info"])
-        .stdin(std::process::Stdio::null())
+    cmd.arg("info");
+    match run_docker_probe(cmd, timeout).await {
+        Ok(()) => true,
+        Err(DockerProbeFailure::TimedOut) => {
+            warn!(
+                "docker availability probe timed out after {timeout:?}; treating Docker as unavailable"
+            );
+            false
+        }
+        Err(e) => {
+            debug!("docker availability probe for '{program}': {e}");
+            false
+        }
+    }
+}
+
+/// Why a Docker availability probe reported "unavailable". Kept distinct from
+/// the `bool` [`probe_docker_available`] returns so tests can put the actual
+/// reason (e.g. the spawn error) in their assertion message.
+#[derive(Debug)]
+enum DockerProbeFailure {
+    Spawn(std::io::Error),
+    Wait(std::io::Error),
+    Exit(std::process::ExitStatus),
+    TimedOut,
+}
+
+impl std::fmt::Display for DockerProbeFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Spawn(e) => write!(f, "failed to spawn: {e}"),
+            Self::Wait(e) => write!(f, "wait failed: {e}"),
+            Self::Exit(status) => write!(f, "exited unsuccessfully: {status}"),
+            Self::TimedOut => write!(f, "timed out"),
+        }
+    }
+}
+
+/// Run a fully built probe command, bounded by `timeout`.
+///
+/// Taking the [`tokio::process::Command`] (rather than a program path) is the
+/// test seam: unit tests run `/bin/sh -c <body>` instead of exec'ing a freshly
+/// written shim script. Exec'ing a just-written file races every other test
+/// thread that forks while the file's write fd is open — the forked child
+/// inherits that fd until its own exec, and Linux refuses to exec a file with
+/// a writer outstanding (`ETXTBSY`, #3559).
+async fn run_docker_probe(
+    mut cmd: tokio::process::Command,
+    timeout: Duration,
+) -> Result<(), DockerProbeFailure> {
+    cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         // Kill the probe child if this future is dropped (e.g. on timeout) so
         // a hung `docker info` cannot linger.
         .kill_on_drop(true);
 
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) => {
-            debug!("docker availability probe: failed to spawn '{program}': {e}");
-            return false;
-        }
-    };
+    let mut child = cmd.spawn().map_err(DockerProbeFailure::Spawn)?;
 
     match tokio::time::timeout(timeout, child.wait()).await {
-        Ok(Ok(status)) => status.success(),
-        Ok(Err(e)) => {
-            debug!("docker availability probe: wait failed: {e}");
-            false
-        }
+        Ok(Ok(status)) if status.success() => Ok(()),
+        Ok(Ok(status)) => Err(DockerProbeFailure::Exit(status)),
+        Ok(Err(e)) => Err(DockerProbeFailure::Wait(e)),
         Err(_) => {
             // Timed out — the Docker daemon is unresponsive. Kill the child and
             // treat Docker as unavailable rather than blocking `initialize`.
             let _ = child.start_kill();
-            warn!(
-                "docker availability probe timed out after {timeout:?}; treating Docker as unavailable"
-            );
-            false
+            Err(DockerProbeFailure::TimedOut)
         }
     }
 }
@@ -2652,7 +2690,7 @@ async fn probe_docker_available(program: &str, timeout: Duration) -> bool {
 /// Unit tests skip unconditionally (CI-013, #3350): ~100 dispatch tests call
 /// `initialize`, and on a host with Docker each spawned `docker info` plus
 /// `docker images`, oversubscribing CI runners. No unit test depends on the
-/// real probe; `probe_docker_available` is tested directly against shims.
+/// real probe; the probe itself is tested directly via `run_docker_probe`.
 fn docker_probe_skipped() -> bool {
     cfg!(test)
         || (DOCKER_PROBE_SKIP_ENV_HONOURED
@@ -2806,26 +2844,22 @@ mod tests {
     /// Unit tests never spawn a real `docker info` / `docker images` child
     /// (CI-013, #3350): ~100 dispatch tests call `initialize`, and on a runner
     /// with Docker installed each one spawned two docker CLI processes,
-    /// oversubscribing the cores. The probe itself stays covered by the shim
-    /// tests below, which call `probe_docker_available` directly.
+    /// oversubscribing the cores. The probe itself stays covered by the
+    /// `/bin/sh -c` tests below, which call `run_docker_probe` directly.
     #[tokio::test]
     async fn docker_probe_is_skipped_in_unit_tests() {
         assert!(docker_probe_skipped());
         assert!(!detect_docker_available().await);
     }
 
-    /// Write an executable shim script under a unique temp path and return it.
+    /// A probe command that runs `body` through `/bin/sh -c`, standing in for
+    /// `docker info`. Deliberately not a shim script written to disk and exec'd:
+    /// that raced concurrently forking test threads into `ETXTBSY` (#3559).
     #[cfg(unix)]
-    fn write_shim(body: &str) -> std::path::PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-
-        let path =
-            std::env::temp_dir().join(format!("termihub-docker-shim-{}.sh", uuid::Uuid::new_v4()));
-        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write shim");
-        let mut perms = std::fs::metadata(&path).expect("stat shim").permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&path, perms).expect("chmod shim");
-        path
+    fn sh_probe(body: &str) -> tokio::process::Command {
+        let mut cmd = tokio::process::Command::new("/bin/sh");
+        cmd.args(["-c", body]);
+        cmd
     }
 
     /// A Docker binary that never responds must not stall the probe: it has to
@@ -2833,29 +2867,40 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     async fn probe_docker_available_times_out_on_hang() {
-        let shim = write_shim("sleep 30");
         let start = Instant::now();
-        let available =
-            probe_docker_available(shim.to_str().unwrap(), Duration::from_millis(200)).await;
+        let outcome = run_docker_probe(sh_probe("sleep 30"), Duration::from_millis(200)).await;
         let elapsed = start.elapsed();
 
-        assert!(!available, "hanging docker binary must report unavailable");
+        assert!(
+            matches!(outcome, Err(DockerProbeFailure::TimedOut)),
+            "hanging docker binary must time out, got {outcome:?}"
+        );
         assert!(
             elapsed < Duration::from_secs(5),
             "probe must be time-bounded, took {elapsed:?}"
         );
-        let _ = std::fs::remove_file(&shim);
     }
 
     /// A responsive Docker binary that exits 0 reports "available" promptly.
     #[cfg(unix)]
     #[tokio::test]
     async fn probe_docker_available_reports_available_on_success() {
-        let shim = write_shim("exit 0");
-        let available =
-            probe_docker_available(shim.to_str().unwrap(), Duration::from_secs(2)).await;
-        assert!(available, "successful docker probe must report available");
-        let _ = std::fs::remove_file(&shim);
+        let outcome = run_docker_probe(sh_probe("exit 0"), Duration::from_secs(2)).await;
+        assert!(
+            outcome.is_ok(),
+            "successful docker probe must report available, got {outcome:?}"
+        );
+    }
+
+    /// A Docker binary that exits non-zero (daemon down) reports "unavailable".
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_docker_available_reports_unavailable_on_failure_exit() {
+        let outcome = run_docker_probe(sh_probe("exit 1"), Duration::from_secs(2)).await;
+        assert!(
+            matches!(outcome, Err(DockerProbeFailure::Exit(_))),
+            "failing docker probe must report unavailable, got {outcome:?}"
+        );
     }
 
     /// A missing Docker binary (spawn failure) reports "unavailable" promptly.
