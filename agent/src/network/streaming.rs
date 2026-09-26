@@ -684,6 +684,37 @@ mod tests {
         );
     }
 
+    /// #3385: a streamed `port_scan` of a multi-target spec (driven through the
+    /// real built-in tool, as `tool.start` does) emits one attributed result per
+    /// expanded host — not one probe of the whole spec as a host name.
+    #[tokio::test]
+    async fn streamed_port_scan_emits_per_host_results_for_a_multi_target_spec() {
+        let (m, mut rx) = manager(RunLimits::default());
+        let spec = "127.0.0.3, 127.0.0.0/30";
+        m.start(
+            Arc::new(ToolRegistry::with_builtin_network_tools()),
+            "scan".into(),
+            "port_scan".into(),
+            json!({ "host": spec, "ports": "9", "timeoutMs": 200, "concurrency": 8 }),
+        )
+        .unwrap();
+
+        let (events, _, done) = collect(&mut rx).await;
+        assert!(done.error.is_none(), "{:?}", done.error);
+        let hosts: std::collections::BTreeSet<String> = events
+            .iter()
+            .map(|e| e.payload["host"].as_str().unwrap_or_default().to_string())
+            .collect();
+        let expected: std::collections::BTreeSet<String> =
+            termihub_core::network::parse_target_spec(spec)
+                .unwrap()
+                .into_iter()
+                .collect();
+        assert_eq!(hosts, expected);
+        assert_eq!(events.len(), 3, "one result per (host, port)");
+        assert_eq!(done.result.as_ref().unwrap()["total"], 3);
+    }
+
     #[test]
     fn without_a_sender_streaming_is_unavailable() {
         let m = ToolRunManager::new(RunLimits::default());
