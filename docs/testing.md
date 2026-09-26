@@ -1797,7 +1797,7 @@ rendering needs a real WebView, so it stays manual.
 2. Run `chafa -f sixel <some.png>` and an iTerm2 `imgcat <some.png>`.
    **Expected:** both render as pictures, not escape-sequence noise.
 3. Turn **Settings > Terminal > Inline Images** off and repeat step 1.
-   **Expected:** no image; no garbage text either (xterm swallows the sequence).
+   **Expected:** no image renders and the terminal stays usable.
 4. Turn it back on, render an image, then scroll it out of view and back.
    **Expected:** it scrolls with the text, on both WebGL and DOM renderers.
 5. Disconnect and reconnect the tab. **Expected:** the text scrollback is
