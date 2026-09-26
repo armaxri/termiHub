@@ -87,9 +87,11 @@ fn security_flags(mode: SecurityMode) -> (bool, bool) {
 fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig> {
     let (enable_tls, enable_credssp) = security_flags(cfg.security());
 
-    // RDP bitmap output is only defined for 16- or 32-bit color; clamp anything
-    // else to 32-bit (the shared editor also offers 8/24 which RDP rejects).
-    let color_depth = if cfg.color_depth_bpp() == 16 { 16 } else { 32 };
+    // 16/24/32 — exactly the depths IronRDP negotiates and decodes; the config
+    // already maps anything else (legacy "8", unknown) to 32 (PROD-026).
+    let color_depth = cfg.color_depth_bpp();
+    // The fixed size (PROD-026) or the dynamic default; see `desktop_size`.
+    let (width, height) = cfg.desktop_size();
     let codecs = client_codecs_capabilities(&[])
         .map_err(|help| anyhow!("RDP codec setup failed: {help}"))?;
 
@@ -107,10 +109,7 @@ fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig> {
         keyboard_functional_keys_count: 12,
         ime_file_name: String::new(),
         dig_product_id: String::new(),
-        desktop_size: DesktopSize {
-            width: cfg.desktop_width(),
-            height: cfg.desktop_height(),
-        },
+        desktop_size: DesktopSize { width, height },
         desktop_scale_factor: 0,
         bitmap: Some(BitmapConfig {
             color_depth,
@@ -1279,6 +1278,7 @@ mod tests {
             domain: "CORP".to_string(),
             security_mode: "nla".to_string(),
             color_depth: "16".to_string(),
+            resolution_mode: "fixed".to_string(),
             width: Some(1024),
             height: Some(768),
             ..Default::default()
@@ -1294,6 +1294,51 @@ mod tests {
             conn.credentials,
             Credentials::UsernamePassword { .. }
         ));
+    }
+
+    #[test]
+    fn connector_config_passes_24_bit_color_through() {
+        let cfg = RdpConfig {
+            host: "h".to_string(),
+            color_depth: "24".to_string(),
+            ..Default::default()
+        };
+        let conn = build_connector_config(&cfg).unwrap();
+        assert_eq!(conn.bitmap.as_ref().unwrap().color_depth, 24);
+    }
+
+    #[test]
+    fn connector_config_dynamic_mode_requests_default_size() {
+        // Dynamic mode ignores stale width/height left in the settings: the
+        // canvas drives the size via Match Window resizes instead (PROD-026).
+        let cfg = RdpConfig {
+            host: "h".to_string(),
+            resolution_mode: "dynamic".to_string(),
+            width: Some(1920),
+            height: Some(1080),
+            ..Default::default()
+        };
+        let conn = build_connector_config(&cfg).unwrap();
+        assert_eq!(
+            (conn.desktop_size.width, conn.desktop_size.height),
+            (1280, 800)
+        );
+    }
+
+    #[test]
+    fn connector_config_fixed_mode_normalizes_size() {
+        let cfg = RdpConfig {
+            host: "h".to_string(),
+            resolution_mode: "fixed".to_string(),
+            width: Some(1367),
+            height: Some(9000),
+            ..Default::default()
+        };
+        let conn = build_connector_config(&cfg).unwrap();
+        assert_eq!(
+            (conn.desktop_size.width, conn.desktop_size.height),
+            (1366, 8192)
+        );
     }
 
     #[test]

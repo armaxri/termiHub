@@ -1,7 +1,9 @@
 import { useState, useCallback, useMemo } from "react";
 import { Download, Play, ServerCog, StopCircle } from "lucide-react";
 import { Button, ConfirmDialog, Field, Input, NumberInput } from "@/components/ui";
-import { exportNetworkResults, portScanResultsToCsv } from "./exportResults";
+import { exportNetworkResults, portScanResultsTable, portScanResultsToCsv } from "./exportResults";
+import { NetworkToolHistory } from "./NetworkToolHistory";
+import { paramNumber, paramString, useRecordRunOnFinish, useRerunAfterUpdate } from "./runHistory";
 import { FleetOnboardDialog } from "@/components/Sidebar/FleetOnboardDialog";
 import { portScanResultsToRows } from "@/services/fleetOnboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
@@ -12,7 +14,7 @@ import {
   onScanComplete,
   onScanError,
 } from "@/services/networkApi";
-import type { PortScanSummary } from "@/types/network";
+import type { NetworkToolRun, PortScanSummary } from "@/types/network";
 import { resolveUiLocale } from "@/utils/locale";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
@@ -170,6 +172,33 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
     await exportNetworkResults(`port-scan-${host || "results"}`, portScanResultsToCsv(results));
   }, [host, results]);
 
+  // Record every finished scan to the local history (PROD-032).
+  useRecordRunOnFinish("port-scanner", status, () => ({
+    params: {
+      host,
+      ports,
+      timeoutMs: timeoutMs === "" ? null : timeoutMs,
+      concurrency: concurrency === "" ? null : concurrency,
+    },
+    summary: summary
+      ? `${summary.open} open, ${summary.closed} closed, ${summary.filtered} filtered of ${summary.total} ports`
+      : `${results.length} checked, ${liveOpen} open`,
+    table: portScanResultsTable(results),
+    error,
+  }));
+
+  const requestRerun = useRerunAfterUpdate(handleRun);
+  const handleRerun = useCallback(
+    (past: NetworkToolRun) => {
+      setHost(paramString(past, "host"));
+      setPorts(paramString(past, "ports"));
+      setTimeoutMs(paramNumber(past, "timeoutMs"));
+      setConcurrency(paramNumber(past, "concurrency"));
+      requestRerun();
+    },
+    [requestRerun]
+  );
+
   return (
     <form className="network-panel" data-testid="port-scanner-panel">
       <div className="network-panel__header">
@@ -301,6 +330,12 @@ export function PortScannerPanel({ prefillHost }: PortScannerPanelProps) {
               ? `Scanning… ${results.length} checked, ${liveOpen} open`
               : null
         }
+      />
+
+      <NetworkToolHistory
+        tool="port-scanner"
+        onRerun={handleRerun}
+        rerunDisabled={status === "running"}
       />
 
       <ConfirmDialog

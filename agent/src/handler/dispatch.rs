@@ -35,23 +35,24 @@ use crate::protocol::methods::{
     AgentRequestDeferredUpdateResult, AgentRequestUpdateParams, AgentRequestUpdateResult,
     AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
     Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
-    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, FilesCopyParams,
-    FilesCreateSymlinkParams, FilesDeleteParams, FilesListParams, FilesListResult,
-    FilesMkdirParams, FilesReadParams, FilesReadResult, FilesRenameParams, FilesSetOwnerParams,
-    FilesSetPermissionsParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
-    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, HostSessionEntry,
-    HostSessionListResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
-    MonitoringUnsubscribeParams, NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams,
-    NetworkTracerouteParams, NetworkWolParams, ProcessKillParams, ProcessesListParams,
-    ProcessesListResult, ServicePauseParams, ServicePauseResult, ServiceResumeParams,
-    ServiceResumeResult, ServiceStartParams, ServiceStartResult, ServiceStatusParams,
-    ServiceStatusResult, ServiceStopParams, ServiceStopResult, SessionAttachParams,
-    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
-    SessionGetBufferParams, SessionGetBufferResult, SessionInputParams, SessionListEntry,
-    SessionListResult, SessionResizeParams, ToolCancelParams, ToolCancelResult, ToolStartParams,
-    ToolStartResult, TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
-    TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdatePendingNotification,
-    AGENT_UPDATE_PENDING,
+    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams,
+    EmbeddedServerActivityParams, EmbeddedServerActivityResult, EmbeddedServerClearActivityParams,
+    EmbeddedServerClearActivityResult, FilesCopyParams, FilesCreateSymlinkParams,
+    FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
+    FilesReadResult, FilesRenameParams, FilesSetOwnerParams, FilesSetPermissionsParams,
+    FilesStatParams, FilesWriteParams, FolderCreateParams, FolderDeleteParams, FolderUpdateParams,
+    HealthCheckResult, HostSessionEntry, HostSessionListResult, InitializeParams, InitializeResult,
+    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
+    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
+    ProcessKillParams, ProcessesListParams, ProcessesListResult, ServicePauseParams,
+    ServicePauseResult, ServiceResumeParams, ServiceResumeResult, ServiceStartParams,
+    ServiceStartResult, ServiceStatusParams, ServiceStatusResult, ServiceStopParams,
+    ServiceStopResult, SessionAttachParams, SessionCloseParams, SessionCreateParams,
+    SessionCreateResult, SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult,
+    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams, ToolCancelParams,
+    ToolCancelResult, ToolStartParams, ToolStartResult, TunnelForwardSpec, TunnelStartParams,
+    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
+    UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 use termihub_core::protocol::methods::{KbdInteractiveRespondParams, KbdInteractiveRespondResult};
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
@@ -91,7 +92,10 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// `clientCapabilities` initialize param, the `keyboardInteractivePrompts`
 /// capability, the `ssh.keyboard_interactive.prompt` / `.closed` notifications
 /// and the `ssh.keyboard_interactive.respond` method (#3375).
-const AGENT_PROTOCOL_VERSION: &str = "0.10.0";
+/// Bumped to 0.11.0 for the additive `embedded_server.activity` /
+/// `embedded_server.clear_activity` methods and the `embeddedServerActivity`
+/// capability (#3453).
+const AGENT_PROTOCOL_VERSION: &str = "0.11.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -612,6 +616,8 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_service_pause(module)?;
     register_service_resume(module)?;
     register_service_status(module)?;
+    register_embedded_server_activity(module)?;
+    register_embedded_server_clear_activity(module)?;
     register_health_check(module)?;
     register_agent_shutdown(module)?;
     register_agent_settings_update(module)?;
@@ -760,6 +766,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 monitoring_supported: detect_monitoring_supported(),
                 tool_streaming,
                 keyboard_interactive_prompts: ki_prompts,
+                embedded_server_activity: true,
             },
         })
     })?;
@@ -2073,6 +2080,47 @@ fn register_service_status(module: &mut RpcModule<Mutex<HandlerState>>) -> anyho
     Ok(())
 }
 
+// ── embedded_server.activity / clear_activity (#3453) ─────────────
+//
+// An agent-hosted embedded server records its access log + detailed stats on
+// the agent; these let the desktop read (incrementally, by `sinceSeq`) and
+// clear them. Advertised by the `embeddedServerActivity` capability. The
+// snapshot is the core `ActivitySnapshot` — no passwords / query strings.
+
+fn register_embedded_server_activity(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::EMBEDDED_SERVER_ACTIVITY,
+        |params, ctx, _ext| async move {
+            let registry = get_service_registry(&ctx).await?;
+            let p: EmbeddedServerActivityParams = params
+                .parse()
+                .map_err(|e| invalid_params("embedded_server.activity", e))?;
+            let activity = registry.activity(&p.server_id, p.since_seq).await;
+            to_result_value(&EmbeddedServerActivityResult { activity })
+        },
+    )?;
+    Ok(())
+}
+
+fn register_embedded_server_clear_activity(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::EMBEDDED_SERVER_CLEAR_ACTIVITY,
+        |params, ctx, _ext| async move {
+            let registry = get_service_registry(&ctx).await?;
+            let p: EmbeddedServerClearActivityParams = params
+                .parse()
+                .map_err(|e| invalid_params("embedded_server.clear_activity", e))?;
+            let cleared = registry.clear_activity(&p.server_id).await;
+            to_result_value(&EmbeddedServerClearActivityResult { cleared })
+        },
+    )?;
+    Ok(())
+}
+
 // ── tunnel.* (agent-hosted forwarding, #2185) ──────────────────────
 //
 // The agent runs the SSH client and the listen socket; the desktop keeps only
@@ -3108,11 +3156,12 @@ mod tests {
     /// which additive capabilities (`agent.update_pending`, the `agent.forward.*`
     /// ssh-agent relay, the `tunnel.*` agent-hosted forwarding methods, the
     /// `service.*` agent-hosted embedded servers, the `service.pause/resume`
-    /// in-place monitor pause, the streaming `tool.start/cancel` runs, and the
-    /// SSH keyboard-interactive prompt relay) may now arrive.
+    /// in-place monitor pause, the streaming `tool.start/cancel` runs, the
+    /// SSH keyboard-interactive prompt relay, and the embedded-server access
+    /// log RPC) may now arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.10.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.11.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -4823,6 +4872,172 @@ mod tests {
         )
         .await;
         assert_eq!(after["result"]["running"], false, "{after}");
+    }
+
+    /// `embedded_server.activity` returns the hosted server's access log
+    /// incrementally (by `sinceSeq`) and `embedded_server.clear_activity`
+    /// resets it; an unknown server reads as `null` / `cleared: false`, and the
+    /// `initialize` result advertises the capability (#3453).
+    #[tokio::test]
+    async fn embedded_server_activity_round_trips_the_hosted_log() {
+        use std::io::{Read, Write};
+
+        let handler = make_handler();
+        let init = dispatch(&handler, "initialize", init_params(), 1).await;
+        assert_eq!(
+            init["result"]["capabilities"]["embeddedServerActivity"], true,
+            "{init}"
+        );
+
+        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
+        let port = probe.local_addr().unwrap().port();
+        drop(probe);
+
+        let start = dispatch(
+            &handler,
+            "service.start",
+            json!({
+                "instanceId": "srv-log",
+                "serviceId": "http_server",
+                "config": {
+                    "id": "srv-log",
+                    "name": "Agent HTTP",
+                    "serverType": "http",
+                    "rootDirectory": ".",
+                    "bindHost": "127.0.0.1",
+                    "port": port,
+                    "readOnly": true,
+                    "directoryListing": true
+                }
+            }),
+            2,
+        )
+        .await;
+        assert_eq!(start["result"]["status"]["state"], "running", "{start}");
+
+        // Empty log before any request.
+        let empty = dispatch(
+            &handler,
+            "embedded_server.activity",
+            json!({ "serverId": "srv-log" }),
+            3,
+        )
+        .await;
+        let snap = &empty["result"]["activity"];
+        assert_eq!(snap["entries"].as_array().map(Vec::len), Some(0), "{empty}");
+        assert!(snap["capacity"].as_u64().unwrap_or(0) > 0, "{empty}");
+
+        // One request with a query string (which must never be logged).
+        let fetch = |path: &str| {
+            let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+            s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            write!(
+                s,
+                "GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+            )
+            .unwrap();
+            let mut buf = Vec::new();
+            let _ = s.read_to_end(&mut buf);
+        };
+        fetch("/nope-1?token=secret");
+
+        // The log entry is recorded after the response; poll briefly.
+        let mut first = Value::Null;
+        for i in 0..100 {
+            let r = dispatch(
+                &handler,
+                "embedded_server.activity",
+                json!({ "serverId": "srv-log" }),
+                10 + i,
+            )
+            .await;
+            if r["result"]["activity"]["entries"]
+                .as_array()
+                .is_some_and(|e| !e.is_empty())
+            {
+                first = r;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let snap = &first["result"]["activity"];
+        let entries = snap["entries"].as_array().expect("entries recorded");
+        assert_eq!(entries.len(), 1, "{first}");
+        assert_eq!(entries[0]["method"], "GET");
+        assert!(
+            !first.to_string().contains("secret"),
+            "query leaked: {first}"
+        );
+        assert_eq!(snap["stats"]["totalRequests"], 1, "{first}");
+        let cursor = snap["latestSeq"].as_u64().expect("latestSeq");
+
+        // Incremental read past the cursor returns nothing new.
+        let inc = dispatch(
+            &handler,
+            "embedded_server.activity",
+            json!({ "serverId": "srv-log", "sinceSeq": cursor }),
+            200,
+        )
+        .await;
+        assert_eq!(
+            inc["result"]["activity"]["entries"]
+                .as_array()
+                .map(Vec::len),
+            Some(0),
+            "{inc}"
+        );
+
+        // Clear resets the log and bumps the epoch.
+        let epoch = snap["epoch"].as_u64().expect("epoch");
+        let cleared = dispatch(
+            &handler,
+            "embedded_server.clear_activity",
+            json!({ "serverId": "srv-log" }),
+            201,
+        )
+        .await;
+        assert_eq!(cleared["result"]["cleared"], true, "{cleared}");
+        let after = dispatch(
+            &handler,
+            "embedded_server.activity",
+            json!({ "serverId": "srv-log" }),
+            202,
+        )
+        .await;
+        let a = &after["result"]["activity"];
+        assert_eq!(a["entries"].as_array().map(Vec::len), Some(0), "{after}");
+        assert_ne!(a["epoch"].as_u64(), Some(epoch), "{after}");
+        assert_eq!(a["stats"]["totalRequests"], 0, "{after}");
+
+        // Unknown server: null activity, nothing cleared.
+        let unknown = dispatch(
+            &handler,
+            "embedded_server.activity",
+            json!({ "serverId": "missing" }),
+            203,
+        )
+        .await;
+        assert!(unknown["result"]["activity"].is_null(), "{unknown}");
+        let unknown_clear = dispatch(
+            &handler,
+            "embedded_server.clear_activity",
+            json!({ "serverId": "missing" }),
+            204,
+        )
+        .await;
+        assert_eq!(unknown_clear["result"]["cleared"], false, "{unknown_clear}");
+
+        // Missing serverId is an invalid-params error.
+        let bad = dispatch(&handler, "embedded_server.activity", json!({}), 205).await;
+        assert_eq!(bad["error"]["code"], errors::INVALID_PARAMS, "{bad}");
+
+        let _ = dispatch(
+            &handler,
+            "service.stop",
+            json!({ "instanceId": "srv-log" }),
+            206,
+        )
+        .await;
     }
 
     /// The agent also lists the HTTP monitor as a hostable service (#2592).

@@ -14,15 +14,22 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::connection::graphical_resolution::{
+    DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH, RESOLUTION_MODE_DYNAMIC,
+};
 use crate::connection::schema::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
-use crate::connection::{shared_field_base, SettingsSchema};
+use crate::connection::{
+    fixed_resolution_fields, is_fixed_mode, normalize_fixed_size, shared_field_base, SettingsSchema,
+};
 
 /// Standard RDP TCP port.
 pub const RDP_DEFAULT_PORT: u16 = 3389;
 
-/// Default initial desktop width requested from the server, in pixels.
+/// Default initial desktop width requested from the server in the dynamic
+/// resolution mode, in pixels.
 pub const DEFAULT_WIDTH: u16 = 1280;
-/// Default initial desktop height requested from the server, in pixels.
+/// Default initial desktop height requested from the server in the dynamic
+/// resolution mode, in pixels.
 pub const DEFAULT_HEIGHT: u16 = 800;
 
 /// The security mode the client negotiates with the RDP server.
@@ -80,11 +87,17 @@ pub struct RdpConfig {
     pub ignore_cert_errors: bool,
     /// Suppress all keyboard/mouse input when `true`.
     pub view_only: bool,
-    /// Initial requested desktop width in pixels.
+    /// Resolution mode select (`"dynamic" | "fixed"`, PROD-026). Only
+    /// `"fixed"` makes [`Self::width`] / [`Self::height`] take effect; anything
+    /// else (including the empty value of a pre-PROD-026 config) is dynamic.
+    pub resolution_mode: String,
+    /// Fixed desktop width in pixels (fixed resolution mode only).
     pub width: Option<u16>,
-    /// Initial requested desktop height in pixels.
+    /// Fixed desktop height in pixels (fixed resolution mode only).
     pub height: Option<u16>,
-    /// Shared field-base color depth select (`"32" | "24" | "16" | "8"`).
+    /// Color depth select (`"32" | "24" | "16"`). Older configs may carry `"8"`
+    /// from the former shared select; RDP has no usable 8-bit path here, so it
+    /// maps to 32 like any unknown value.
     pub color_depth: String,
     /// Opt in to drive redirection (RDPDR): expose [`Self::shared_folder_path`]
     /// to the remote session as a mapped drive. Off by default; enabling it with
@@ -142,6 +155,7 @@ impl Default for RdpConfig {
             security_mode: "auto".to_string(),
             ignore_cert_errors: false,
             view_only: false,
+            resolution_mode: RESOLUTION_MODE_DYNAMIC.to_string(),
             width: None,
             height: None,
             color_depth: "32".to_string(),
@@ -190,21 +204,46 @@ impl RdpConfig {
         SecurityMode::from_value(&self.security_mode)
     }
 
-    /// The initial desktop width to request (clamped to a sane minimum).
+    /// Whether the user pinned the remote to a fixed resolution (PROD-026).
+    pub fn is_fixed_resolution(&self) -> bool {
+        is_fixed_mode(&self.resolution_mode)
+    }
+
+    /// The fixed desktop size, normalized into the range every server accepts
+    /// (200..=8192, even width), or `None` in the dynamic mode. A fixed mode
+    /// with a missing dimension falls back to the editor's 1920x1080 default.
+    pub fn fixed_size(&self) -> Option<(u16, u16)> {
+        self.is_fixed_resolution().then(|| {
+            normalize_fixed_size(
+                self.width.unwrap_or(DEFAULT_FIXED_WIDTH),
+                self.height.unwrap_or(DEFAULT_FIXED_HEIGHT),
+            )
+        })
+    }
+
+    /// The initial desktop size to request: the fixed size in the fixed mode,
+    /// otherwise the dynamic default (the canvas then drives the size through
+    /// "Match Window" resizes). Stale `width` / `height` values left in a config
+    /// switched back to dynamic are deliberately ignored.
+    pub fn desktop_size(&self) -> (u16, u16) {
+        self.fixed_size().unwrap_or((DEFAULT_WIDTH, DEFAULT_HEIGHT))
+    }
+
+    /// The initial desktop width to request (see [`Self::desktop_size`]).
     pub fn desktop_width(&self) -> u16 {
-        self.width.filter(|w| *w > 0).unwrap_or(DEFAULT_WIDTH)
+        self.desktop_size().0
     }
 
-    /// The initial desktop height to request (clamped to a sane minimum).
+    /// The initial desktop height to request (see [`Self::desktop_size`]).
     pub fn desktop_height(&self) -> u16 {
-        self.height.filter(|h| *h > 0).unwrap_or(DEFAULT_HEIGHT)
+        self.desktop_size().1
     }
 
-    /// Parse the shared-base color-depth select into bits-per-pixel, defaulting
-    /// to 32 for unknown/empty input.
+    /// The bitmap color depth to negotiate, in bits per pixel: 16, 24 or 32 —
+    /// exactly the depths IronRDP both negotiates (`HighColorDepth`) and decodes
+    /// (fast-path 16/24/32-bit bitmaps). Unknown / empty / legacy `"8"` → 32.
     pub fn color_depth_bpp(&self) -> u32 {
-        match self.color_depth.as_str() {
-            "8" => 8,
+        match self.color_depth.trim() {
             "16" => 16,
             "24" => 24,
             _ => 32,
@@ -321,10 +360,41 @@ fn when_field_is_true(field: &str) -> Option<Condition> {
     })
 }
 
+/// The RDP color-depth select: only the depths the sidecar actually negotiates
+/// and decodes (see [`RdpConfig::color_depth_bpp`]).
+fn color_depth_field() -> SettingsField {
+    let opt = |value: &str, label: &str| SelectOption {
+        value: value.to_string(),
+        label: label.to_string(),
+    };
+    SettingsField {
+        default: Some(serde_json::json!("32")),
+        description: Some(
+            "Bits per pixel requested from the server. Lower depths use less bandwidth."
+                .to_string(),
+        ),
+        ..field(
+            "colorDepth",
+            "Color Depth",
+            FieldType::Select {
+                options: vec![
+                    opt("32", "32-bit (true color)"),
+                    opt("24", "24-bit"),
+                    opt("16", "16-bit (high color)"),
+                ],
+            },
+        )
+    }
+}
+
 /// The RDP connection editor schema: the shared field base plus the RDP-specific
 /// **RDP Options** group (domain, security mode, certificate handling).
 pub fn rdp_settings_schema() -> SettingsSchema {
     let mut groups = shared_field_base(RDP_DEFAULT_PORT);
+    if let Some(display) = groups.iter_mut().find(|g| g.key == "display") {
+        display.fields.extend(fixed_resolution_fields());
+        display.fields.push(color_depth_field());
+    }
 
     groups.push(SettingsGroup {
         collapsed: false,
@@ -540,26 +610,101 @@ mod tests {
     #[test]
     fn desktop_size_defaults_and_overrides() {
         let cfg = RdpConfig::default();
+        assert!(!cfg.is_fixed_resolution());
+        assert_eq!(cfg.fixed_size(), None);
         assert_eq!(cfg.desktop_width(), DEFAULT_WIDTH);
         assert_eq!(cfg.desktop_height(), DEFAULT_HEIGHT);
-        let sized = RdpConfig {
-            width: Some(1920),
-            height: Some(1080),
-            ..Default::default()
-        };
+        let sized: RdpConfig = serde_json::from_value(serde_json::json!({
+            "host": "h", "resolutionMode": "fixed", "width": 1920, "height": 1080
+        }))
+        .unwrap();
+        assert!(sized.is_fixed_resolution());
+        assert_eq!(sized.fixed_size(), Some((1920, 1080)));
         assert_eq!(sized.desktop_width(), 1920);
         assert_eq!(sized.desktop_height(), 1080);
-        // Zero is treated as "unset".
-        let zeroed = RdpConfig {
-            width: Some(0),
+    }
+
+    #[test]
+    fn dynamic_mode_ignores_stale_fixed_dimensions() {
+        // A connection switched back from Fixed keeps its (hidden) width/height
+        // in the saved settings; dynamic must not start at that stale size.
+        let cfg: RdpConfig = serde_json::from_value(serde_json::json!({
+            "host": "h", "resolutionMode": "dynamic", "width": 1920, "height": 1080
+        }))
+        .unwrap();
+        assert_eq!(cfg.desktop_size(), (DEFAULT_WIDTH, DEFAULT_HEIGHT));
+        // A pre-PROD-026 config (no mode at all) is dynamic too.
+        let legacy = RdpConfig {
+            resolution_mode: String::new(),
+            width: Some(1600),
+            height: Some(900),
             ..Default::default()
         };
-        assert_eq!(zeroed.desktop_width(), DEFAULT_WIDTH);
+        assert_eq!(legacy.fixed_size(), None);
+    }
+
+    #[test]
+    fn fixed_size_is_normalized_into_the_accepted_range() {
+        let fixed = |w: Option<u16>, h: Option<u16>| RdpConfig {
+            resolution_mode: "fixed".to_string(),
+            width: w,
+            height: h,
+            ..Default::default()
+        };
+        // Odd width rounds down to even (MS-RDPEDISP); height is kept.
+        assert_eq!(fixed(Some(1281), Some(721)).fixed_size(), Some((1280, 721)));
+        // Out-of-range values clamp to 200..=8192.
+        assert_eq!(fixed(Some(0), Some(50)).fixed_size(), Some((200, 200)));
+        assert_eq!(
+            fixed(Some(10_000), Some(9000)).fixed_size(),
+            Some((8192, 8192))
+        );
+        // A missing dimension falls back to the editor default.
+        assert_eq!(fixed(None, None).fixed_size(), Some((1920, 1080)));
+    }
+
+    #[test]
+    fn schema_exposes_resolution_and_supported_color_depths() {
+        let schema = rdp_settings_schema();
+        let display = schema
+            .groups
+            .iter()
+            .find(|g| g.key == "display")
+            .expect("display group");
+        let keys: Vec<&str> = display.fields.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            vec![
+                "scaleMode",
+                "resolutionMode",
+                "width",
+                "height",
+                "colorDepth"
+            ]
+        );
+        let depth = display
+            .fields
+            .iter()
+            .find(|f| f.key == "colorDepth")
+            .expect("color depth row");
+        let FieldType::Select { options } = &depth.field_type else {
+            panic!("color depth must be a select");
+        };
+        let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+        // Exactly the depths IronRDP negotiates and decodes — no 8-bit.
+        assert_eq!(values, vec!["32", "24", "16"]);
+        for opt in options {
+            let cfg = RdpConfig {
+                color_depth: opt.value.clone(),
+                ..Default::default()
+            };
+            assert_eq!(cfg.color_depth_bpp().to_string(), opt.value);
+        }
     }
 
     #[test]
     fn color_depth_parses() {
-        for (val, bpp) in [("8", 8), ("16", 16), ("24", 24), ("32", 32), ("x", 32)] {
+        for (val, bpp) in [("8", 32), ("16", 16), ("24", 24), ("32", 32), ("x", 32)] {
             let cfg = RdpConfig {
                 color_depth: val.to_string(),
                 ..Default::default()
@@ -600,6 +745,7 @@ mod tests {
             security_mode: "nla".to_string(),
             ignore_cert_errors: true,
             view_only: true,
+            resolution_mode: "fixed".to_string(),
             width: Some(1600),
             height: Some(900),
             color_depth: "16".to_string(),
@@ -620,7 +766,7 @@ mod tests {
         assert_eq!(back.security(), SecurityMode::Nla);
         assert!(back.ignore_cert_errors);
         assert!(back.view_only);
-        assert_eq!(back.desktop_width(), 1600);
+        assert_eq!(back.fixed_size(), Some((1600, 900)));
         assert_eq!(back.color_depth_bpp(), 16);
         assert!(back.drive_redirection);
         assert_eq!(back.shared_folder_path, "/tmp/share");

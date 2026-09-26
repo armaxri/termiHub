@@ -232,6 +232,27 @@ pub trait Service: Send {
 
     /// Subscribe to the service's status/stats event stream.
     fn subscribe_events(&self) -> ServiceEventReceiver;
+
+    /// Read the service's access log (entries newer than `since`) plus its
+    /// detailed statistics (PROD-034/036). `None` for a service that keeps no
+    /// access log — the default; the embedded HTTP/FTP/TFTP servers override
+    /// it. Lets a host that holds services as `dyn Service` (the agent, #3453)
+    /// reach the log without downcasting.
+    #[cfg(feature = "embedded-servers")]
+    fn access_activity(
+        &self,
+        _since: Option<u64>,
+    ) -> Option<crate::embedded_servers::activity::ActivitySnapshot> {
+        None
+    }
+
+    /// Clear the service's access log and its counters. Returns whether the
+    /// service keeps a log at all (`false` by default, see
+    /// [`access_activity`](Self::access_activity)).
+    #[cfg(feature = "embedded-servers")]
+    fn clear_access_activity(&self) -> bool {
+        false
+    }
 }
 
 /// Errors from a [`Service`] lifecycle operation.

@@ -55,7 +55,10 @@ export function mergeActivity(prev: ActivityView, next: ServerActivity): Activit
 /** Result of {@link useEmbeddedServerActivity}. */
 export interface EmbeddedServerActivityState {
   view: ActivityView;
-  /** False when the server has no desktop-hosted log (e.g. hosted on an agent). */
+  /**
+   * False when the backend has no log for the server (never started, or hosted
+   * on an agent that predates the access-log RPC).
+   */
   available: boolean;
   /** Last read error, if any. */
   error: string | null;

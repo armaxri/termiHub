@@ -4,6 +4,9 @@ import { Button, Field, Input, Select } from "@/components/ui";
 import { networkOpenPorts } from "@/services/networkApi";
 import type { OpenPort, PortProtocol } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
+import { openPortsTable } from "./exportResults";
+import { NetworkToolHistory } from "./NetworkToolHistory";
+import { recordToolRun } from "./runHistory";
 import { frontendLog } from "@/utils/frontendLog";
 import { useRunLocationStore } from "@/store/runLocationStore";
 
@@ -24,12 +27,29 @@ export function OpenPortsPanel() {
 
   const handleRefresh = useCallback(async () => {
     setError(null);
+    const startedAt = new Date().toISOString();
     try {
       const result = await networkOpenPorts();
       setPorts(result);
       setLoaded(true);
+      void recordToolRun({
+        tool: "open-ports",
+        status: "completed",
+        startedAt,
+        params: {},
+        summary: `${result.length} listening port(s)`,
+        table: openPortsTable(result),
+      });
     } catch (err) {
       setError(String(err));
+      void recordToolRun({
+        tool: "open-ports",
+        status: "error",
+        startedAt,
+        params: {},
+        summary: "Listing failed",
+        error: String(err),
+      });
       frontendLog("open_ports", `Failed to list open ports: ${err}`);
       throw err; // keep the async Button in its error path (no false success flash)
     }
@@ -143,6 +163,8 @@ export function OpenPortsPanel() {
             : null
         }
       />
+
+      <NetworkToolHistory tool="open-ports" onRerun={() => void handleRefresh().catch(() => {})} />
     </div>
   );
 }

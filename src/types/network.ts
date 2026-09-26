@@ -156,3 +156,49 @@ export interface HttpMonitorState {
 // ── Tool states (frontend-only) ───────────────────────────────────────────────
 
 export type DiagnosticStatus = "idle" | "running" | "completed" | "canceled" | "error";
+
+// ── Run history (PROD-032) ───────────────────────────────────────────────────
+
+/** A network tool whose finished runs are recorded to the run history. */
+export type NetworkHistoryTool =
+  | "ping"
+  | "traceroute"
+  | "port-scanner"
+  | "ping-sweep"
+  | "dns-lookup"
+  | "open-ports"
+  | "wol";
+
+/** How a recorded run ended. */
+export type NetworkRunStatus = "completed" | "canceled" | "error";
+
+/** A plain CSV-cell value stored in a recorded result table. */
+export type NetworkRunCell = string | number | boolean | null;
+
+/** A run's results as a table — the same columns as the tool's CSV export. */
+export interface NetworkRunResult {
+  columns: string[];
+  rows: NetworkRunCell[][];
+  /** Rows the run produced; more than `rows.length` when trimmed to the size cap. */
+  totalRows: number;
+}
+
+/**
+ * One recorded network-tool run. Mirrors the Rust `NetworkToolRun`
+ * (`src-tauri/src/network/tool_history.rs`).
+ */
+export interface NetworkToolRun {
+  id: string;
+  tool: NetworkHistoryTool;
+  /** The tool's input parameters, enough to re-run it. */
+  params: Record<string, string | number | boolean | null>;
+  runLocation: { kind: "thisComputer" } | { kind: "agent"; agentId: string };
+  /** RFC 3339 start time. */
+  startedAt: string;
+  /** RFC 3339 end time. */
+  endedAt: string;
+  status: NetworkRunStatus;
+  summary: string;
+  error?: string;
+  result?: NetworkRunResult;
+}

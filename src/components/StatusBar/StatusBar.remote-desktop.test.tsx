@@ -50,9 +50,9 @@ describe("StatusBar — remote-desktop segment", () => {
 
   const query = () => container.querySelector('[data-testid="status-bar-remote-desktop"]');
 
-  it("shows host:port and colour depth for an active remote-desktop tab", () => {
+  it("shows host:port and colour depth for an active RDP tab", () => {
     setActiveTab({
-      config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "32" } },
+      config: { type: "rdp", config: { host: "kiosk", port: 5901, colorDepth: "32" } },
     });
 
     act(() => root.render(React.createElement(StatusBar)));
@@ -66,7 +66,7 @@ describe("StatusBar — remote-desktop segment", () => {
   it("includes the live framebuffer resolution once it is surfaced to the store", () => {
     setActiveTab({
       sessionId: "vnc-1",
-      config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "16" } },
+      config: { type: "rdp", config: { host: "kiosk", port: 5901, colorDepth: "16" } },
     });
     act(() => useAppStore.getState().setRemoteDesktopResolution("vnc-1", 1920, 1080));
 
@@ -76,6 +76,19 @@ describe("StatusBar — remote-desktop segment", () => {
     expect(item).not.toBeNull();
     expect(item!.textContent).toContain("1920×1080");
     expect(item!.textContent).toContain("16-bit");
+  });
+
+  it("omits a stale colour depth for VNC, which is always 32-bit (PROD-026)", () => {
+    setActiveTab({
+      config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "16" } },
+    });
+
+    act(() => root.render(React.createElement(StatusBar)));
+
+    const item = query();
+    expect(item).not.toBeNull();
+    expect(item!.textContent).toContain("kiosk:5901");
+    expect(item!.textContent).not.toContain("-bit");
   });
 
   it("hides the resolution before the first frame arrives", () => {

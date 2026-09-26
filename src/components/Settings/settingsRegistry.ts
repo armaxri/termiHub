@@ -680,6 +680,26 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["session", "history", "recent", "sidebar", "panel", "show", "hide"],
   },
   {
+    id: "networkToolHistoryEnabled",
+    label: "Record Network Tool History",
+    description:
+      "Keep a local history of finished network tool runs (ping, traceroute, port scan, DNS, …) to revisit, re-run and export",
+    category: "sessions",
+    keywords: [
+      "network",
+      "tools",
+      "history",
+      "ping",
+      "traceroute",
+      "port scan",
+      "dns",
+      "results",
+      "record",
+      "clear",
+      "privacy",
+    ],
+  },
+  {
     id: "provideXServerAutomatically",
     label: "Provide X Server Automatically",
     description: "Start a local X server automatically for X11 forwarding",

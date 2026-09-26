@@ -17,13 +17,13 @@ import { Button, toast, Tooltip } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
-import { EmbeddedServerActivityPanel } from "./EmbeddedServerActivityPanel";
+import { EmbeddedServerActivityPanel, type ActivityHostAgent } from "./EmbeddedServerActivityPanel";
 import { serverStatusLabel } from "@/utils/statusLabel";
 import { formatBytes } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
 import { fireAndForget } from "@/utils/frontendLog";
 import type { RemoteAgentDefinition } from "@/types/connection";
-import { THIS_COMPUTER, type RunLocation } from "@/utils/runLocation";
+import { THIS_COMPUTER, isAgentHost, type RunLocation } from "@/utils/runLocation";
 import {
   EmbeddedServerConfig,
   ServerState,
@@ -69,6 +69,24 @@ function statusTone(status: ServerStatus | undefined): SidebarStatusTone {
     default:
       return "neutral";
   }
+}
+
+/**
+ * The agent `runLocation` points at, for the activity panel (#3453). An agent
+ * whose capabilities are unknown (not connected) is not flagged unsupported.
+ */
+export function hostAgentFor(
+  runLocation: RunLocation,
+  agents: RemoteAgentDefinition[]
+): ActivityHostAgent | undefined {
+  if (!isAgentHost(runLocation)) return undefined;
+  const agent = agents.find((a) => a.id === runLocation.agentId);
+  return {
+    name: agent?.name ?? "the agent",
+    supportsActivity: agent?.capabilities
+      ? agent.capabilities.embeddedServerActivity === true
+      : true,
+  };
 }
 
 function isActive(status: ServerStatus | undefined): boolean {
@@ -278,7 +296,11 @@ export function EmbeddedServerItem({
                 />
               </span>
               {showActivity && (
-                <EmbeddedServerActivityPanel serverId={config.id} live={status === "running"} />
+                <EmbeddedServerActivityPanel
+                  serverId={config.id}
+                  live={status === "running"}
+                  hostAgent={hostAgentFor(runLocation, agents)}
+                />
               )}
             </>
           }

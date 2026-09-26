@@ -63,8 +63,14 @@ fn opt(value: &str, label: &str) -> SelectOption {
 /// natural position.
 ///
 /// Groups: **Connection** (host, port, username, password + save-to-store),
-/// **Display** (scale mode, color depth), **Features** (view only, clipboard
-/// sync, auto-reconnect).
+/// **Display** (scale mode), **Features** (view only, clipboard sync,
+/// auto-reconnect).
+///
+/// Color depth and a fixed remote resolution are deliberately **not** shared
+/// (PROD-026): only protocols that actually honor them expose them, by
+/// appending their own rows to the **Display** group (RDP does; vnc-rs only
+/// negotiates 32-bit true-color and cannot request a desktop size, so VNC
+/// shows neither).
 pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
     vec![
         SettingsGroup {
@@ -103,38 +109,21 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
             collapsed: false,
             key: "display".to_string(),
             label: "Display".to_string(),
-            fields: vec![
-                SettingsField {
-                    default: Some(serde_json::json!("fit")),
-                    description: Some("How the remote framebuffer fills the tab".to_string()),
-                    ..field(
-                        "scaleMode",
-                        "Scale Mode",
-                        FieldType::Select {
-                            options: vec![
-                                opt("fit", "Fit to Tab"),
-                                opt("pixel", "1:1 Pixel"),
-                                opt("match", "Match Window"),
-                            ],
-                        },
-                    )
-                },
-                SettingsField {
-                    default: Some(serde_json::json!("32")),
-                    ..field(
-                        "colorDepth",
-                        "Color Depth",
-                        FieldType::Select {
-                            options: vec![
-                                opt("32", "32-bit"),
-                                opt("24", "24-bit"),
-                                opt("16", "16-bit"),
-                                opt("8", "8-bit"),
-                            ],
-                        },
-                    )
-                },
-            ],
+            fields: vec![SettingsField {
+                default: Some(serde_json::json!("fit")),
+                description: Some("How the remote framebuffer fills the tab".to_string()),
+                ..field(
+                    "scaleMode",
+                    "Scale Mode",
+                    FieldType::Select {
+                        options: vec![
+                            opt("fit", "Fit to Tab"),
+                            opt("pixel", "1:1 Pixel"),
+                            opt("match", "Match Window"),
+                        ],
+                    },
+                )
+            }],
         },
         SettingsGroup {
             collapsed: false,
@@ -1065,7 +1054,6 @@ mod tests {
             "password",
             "saveToStore",
             "scaleMode",
-            "colorDepth",
             "viewOnly",
             "clipboardSync",
             "autoReconnect",

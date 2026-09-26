@@ -1017,6 +1017,24 @@ pub(crate) fn init_secondary_managers(
         }
     }
 
+    // Initialize the network-tool run-history manager (PROD-032). On failure
+    // the app still starts; recording from the tool panels is fire-and-forget
+    // and the history view shows an error instead of past runs.
+    match network::tool_history_manager::NetworkToolHistoryManager::new(app.handle()) {
+        Ok(manager) => {
+            recovery_warnings.extend(manager.take_recovery_warnings());
+            app.manage(manager);
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize network tool history manager: {e}");
+            recovery_warnings.push(RecoveryWarning {
+                file_name: "network-tool-history.json".to_string(),
+                message: "Could not initialize network tool history storage. Tool run history is unavailable until the app is restarted.".to_string(),
+                details: Some(e.to_string()),
+            });
+        }
+    }
+
     // Initialize the workflow run-history manager with recovery loading
     // (PROD-0046). On failure, the app still starts but run history is
     // unavailable (recording is fire-and-forget on the frontend regardless).

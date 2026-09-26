@@ -663,6 +663,50 @@ describe("useSessionFileSystem — byte-based transport (probe rejects)", () => 
     expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("no such file");
   });
 
+  // #3458: a failed plain paste must resolve (never an unhandled rejection),
+  // report the typed error, and keep a cut clipboard so the user can retry.
+  it("resolves a failed same-session cut paste and keeps the cut clipboard", async () => {
+    vi.mocked(sessionRenameFile).mockRejectedValueOnce(new Error("permission denied"));
+    const api = await mountHook();
+    useAppStore.getState().setFileClipboard({
+      entries: [
+        {
+          name: "file.bin",
+          path: "/remote/src/file.bin",
+          isDirectory: false,
+          size: 10,
+          modified: "",
+          permissions: null,
+          writable: null,
+        },
+      ],
+      operation: "cut",
+      sourceMode: "session",
+      sourcePath: "/remote/src",
+      terminalSessionId: "docker-1",
+    });
+
+    await act(async () => {
+      await expect(api.pasteEntry()).resolves.toBeUndefined();
+    });
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1);
+    expect(String(vi.mocked(toast.error).mock.calls[0][0])).toContain("permission denied");
+    expect(currentFileBrowsersView().clipboard?.operation).toBe("cut");
+  });
+
+  // #3458: a file picker that fails to open is reported, not rejected unhandled.
+  it("reports an upload file picker that fails to open", async () => {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    vi.mocked(open).mockRejectedValueOnce(new Error("dialog unavailable"));
+    const api = await mountHook();
+    await act(async () => {
+      await expect(api.uploadFile()).resolves.toBeUndefined();
+    });
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith("Upload failed: dialog unavailable");
+    expect(vi.mocked(sessionWriteFile)).not.toHaveBeenCalled();
+  });
+
   // #2469: a byte-based backend has no dedicated transfer channel, so a
   // session→session copy stays a read/write round-trip (no tracked transfer).
   it("falls back to read/write for a session→session copy (no tracked transfer)", async () => {

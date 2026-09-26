@@ -1,6 +1,7 @@
 import { useCallback, useState } from "react";
 import { toast } from "@/components/ui";
 import { localListDir, sessionListFiles } from "@/services/api";
+import { currentFileBrowsersView } from "@/store/fileBrowsersBridge";
 import type { FileClipboard } from "@/store/appStore";
 import type { FileEntry } from "@/types/connection";
 import { frontendLog } from "@/utils/frontendLog";
@@ -12,7 +13,6 @@ import {
   type FileTransferOperation,
   type PasteOptions,
 } from "@/utils/fileDragMove";
-import { runBlockingTransfer } from "./transferFeedback";
 
 /** A move/copy waiting on the user's overwrite confirmation. */
 export interface PendingFileMoveConflict {
@@ -21,6 +21,12 @@ export interface PendingFileMoveConflict {
   operation: FileTransferOperation;
   /** Names already present in the destination, or `null` when it could not be listed. */
   conflicts: string[] | null;
+  /**
+   * `true` when this is a plain Paste of the user's copy/cut clipboard (#3458):
+   * confirming runs the pane's normal paste (which clears a cut clipboard) rather
+   * than a one-shot move/copy of `entries`.
+   */
+  fromClipboard?: boolean;
 }
 
 /** Inputs for {@link useFileMoveTransfer}. */
@@ -42,6 +48,12 @@ export interface FileMoveTransfer {
     operation: FileTransferOperation,
     destEntry?: FileEntry | null
   ) => Promise<void>;
+  /**
+   * Paste the user's copy/cut clipboard into `destDir` (the pane's current
+   * folder) through the same guards, conflict prompt and feedback as a drag or
+   * Move to… request. Never rejects.
+   */
+  requestPaste: (destDir: string) => Promise<void>;
   /** The request awaiting overwrite confirmation, if any. */
   pendingConflict: PendingFileMoveConflict | null;
   /** Proceed with the pending request, replacing the conflicting names. */
@@ -86,20 +98,10 @@ export function useFileMoveTransfer({
         "file_browser",
         `${verb} ${entries.length} entr${entries.length === 1 ? "y" : "ies"} → ${destDir}`
       );
-      if (sourceMode === "session") {
-        // The session paste owns per-item progress/success/error feedback and
-        // routes onto the transfer queue where the transport supports it.
-        await pasteEntry(options);
-        return;
-      }
-      // The local paste is a blocking rename/copy with no transfer events, so
-      // own the loading → success/error feedback here.
-      const what = describeEntries(entries);
-      await runBlockingTransfer(() => pasteEntry(options), {
-        loading: `${operation === "move" ? "Moving" : "Copying"} ${what}…`,
-        success: `${operation === "move" ? "Moved" : "Copied"} ${what} to ${destDir}`,
-        errorLabel: `${verb} ${what}`,
-      });
+      // Both panes' paste own their loading → success/error feedback (the local
+      // one as a summary toast, the session one per item on the transfer queue)
+      // and never reject, so there is nothing to wrap here (#3458).
+      await pasteEntry(options);
     },
     [mode, sessionId, pasteEntry]
   );
@@ -127,7 +129,7 @@ export function useFileMoveTransfer({
       operation: FileTransferOperation,
       destEntry?: FileEntry | null
     ) => {
-      if (mode === "none") return;
+      if (mode === "none" || (mode === "session" && !sessionId)) return;
       const plan = planFileDrop(entries, destDir, operation, destEntry);
       if (plan.kind === "refuse") {
         toast.error(plan.message);
@@ -144,17 +146,69 @@ export function useFileMoveTransfer({
       }
       await execute(plan.entries, destDir, operation);
     },
-    [mode, listDestinationNames, execute]
+    [mode, sessionId, listDestinationNames, execute]
+  );
+
+  const requestPaste = useCallback(
+    async (destDir: string) => {
+      const clipboard = currentFileBrowsersView().clipboard;
+      if (mode === "none" || (mode === "session" && !sessionId)) return;
+      if (!clipboard || clipboard.entries.length === 0) return;
+      if (mode === "local" && clipboard.sourceMode !== "local") {
+        // Unsupported direction: the local paste explains that itself.
+        await pasteEntry();
+        return;
+      }
+      const operation: FileTransferOperation = clipboard.operation === "cut" ? "move" : "copy";
+      // The into-self / same-folder guards only make sense when the clipboard
+      // lives on the same filesystem as this pane.
+      const sameFilesystem =
+        clipboard.sourceMode === mode &&
+        (mode === "local" || (clipboard.terminalSessionId ?? sessionId) === sessionId);
+      let entries = clipboard.entries;
+      if (sameFilesystem) {
+        const plan = planFileDrop(entries, destDir, operation);
+        if (plan.kind === "refuse") {
+          toast.error(plan.message);
+          return;
+        }
+        if (plan.kind === "noop") {
+          // Pasting into the folder the items came from would move them onto
+          // themselves (or clobber the source on a copy): say so, do nothing.
+          toast.info(
+            `${describeEntries(entries)} ${entries.length === 1 ? "is" : "are"} already in ${destDir}`
+          );
+          return;
+        }
+        entries = plan.entries;
+      }
+      const names = await listDestinationNames(destDir);
+      const conflicts = names === null ? null : findNameConflicts(entries, names);
+      if (conflicts === null || conflicts.length > 0) {
+        setPendingConflict({ entries, destDir, operation, conflicts, fromClipboard: true });
+        return;
+      }
+      frontendLog(
+        "file_browser",
+        `Paste ${entries.length} entr${entries.length === 1 ? "y" : "ies"} → ${destDir}`
+      );
+      await pasteEntry({ destDir });
+    },
+    [mode, sessionId, pasteEntry, listDestinationNames]
   );
 
   const confirmConflict = useCallback(async () => {
     const pending = pendingConflict;
     setPendingConflict(null);
     if (!pending) return;
+    if (pending.fromClipboard) {
+      await pasteEntry({ destDir: pending.destDir });
+      return;
+    }
     await execute(pending.entries, pending.destDir, pending.operation);
-  }, [pendingConflict, execute]);
+  }, [pendingConflict, execute, pasteEntry]);
 
   const cancelConflict = useCallback(() => setPendingConflict(null), []);
 
-  return { requestTransfer, pendingConflict, confirmConflict, cancelConflict };
+  return { requestTransfer, requestPaste, pendingConflict, confirmConflict, cancelConflict };
 }

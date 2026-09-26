@@ -35,6 +35,8 @@ import {
   EmbeddedServerActivityPanel,
   entryMatches,
   entryToTsv,
+  unavailableMessage,
+  type ActivityHostAgent,
 } from "./EmbeddedServerActivityPanel";
 import { TooltipProvider } from "@/components/ui";
 
@@ -97,11 +99,11 @@ function activity(overrides: Partial<ServerActivity> = {}): ServerActivity {
   };
 }
 
-async function renderPanel(live = false) {
+async function renderPanel(live = false, hostAgent?: ActivityHostAgent) {
   await act(async () => {
     root.render(
       <TooltipProvider delayDuration={0}>
-        <EmbeddedServerActivityPanel serverId="srv-1" live={live} />
+        <EmbeddedServerActivityPanel serverId="srv-1" live={live} hostAgent={hostAgent} />
       </TooltipProvider>
     );
   });
@@ -199,6 +201,31 @@ describe("EmbeddedServerActivityPanel", () => {
     getActivity.mockResolvedValue(null);
     await renderPanel();
     expect(container.textContent).toContain("No access log yet");
+  });
+
+  it("says the agent is too old when it lacks the access-log capability", async () => {
+    getActivity.mockResolvedValue(null);
+    await renderPanel(true, { name: "Lab Pi", supportsActivity: false });
+    expect(container.textContent).toContain("not supported by this agent version");
+    expect(container.textContent).toContain("Update Lab Pi");
+    expect(container.textContent).not.toContain("No access log yet");
+  });
+
+  it("shows an agent-hosted server's log read from the agent", async () => {
+    getActivity.mockResolvedValue(activity());
+    await renderPanel(true, { name: "Lab Pi", supportsActivity: true });
+    expect(container.textContent).toContain("firmware.bin");
+    expect(container.textContent).not.toContain("not supported");
+  });
+
+  it("words the empty state for desktop, capable agent and old agent", () => {
+    expect(unavailableMessage().description).toContain("this computer");
+    expect(unavailableMessage({ name: "A", supportsActivity: true }).title).toBe(
+      "No access log yet"
+    );
+    expect(unavailableMessage({ name: "A", supportsActivity: false }).title).toBe(
+      "Access log not supported by this agent version"
+    );
   });
 
   it("polls incrementally from the last cursor while live", async () => {
