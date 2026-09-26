@@ -283,6 +283,8 @@ export function useLocalFileSystem() {
     supportsPermissions: true,
     supportsOwner: true,
     supportsSymlink: true,
+    // Local rows have real paths, so they can always be dragged out (#3457).
+    supportsDragOut: true,
     openInVscode,
     copyEntry,
     cutEntry,
