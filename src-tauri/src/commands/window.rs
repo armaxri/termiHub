@@ -11,6 +11,8 @@ use tauri::{
     WebviewWindowBuilder,
 };
 
+use crate::commands::remote_desktop::release_on_takeover;
+use crate::session::graphical_manager::GraphicalSessionManager;
 use crate::session::manager::SessionManager;
 use crate::utils::errors::TerminalError;
 use crate::window::{
@@ -98,6 +100,20 @@ pub fn claim_session(
 ) -> Option<String> {
     let previous = window_manager.claim(&session_id, window.label());
     let app = window.app_handle();
+    // #3402: control of a graphical session moved to this window — release
+    // whatever the previous controller still held on the remote (the evicted
+    // window can no longer send the key-up / button-up itself). Input this
+    // window holds is kept. A terminal session id is a silent no-op.
+    if previous.as_deref() != Some(window.label()) {
+        if let Some(graphical) = app.try_state::<GraphicalSessionManager>() {
+            let graphical = (*graphical).clone();
+            let session_id = session_id.clone();
+            let new_owner = window.label().to_string();
+            tauri::async_runtime::spawn(async move {
+                release_on_takeover(&graphical, &session_id, &new_owner).await;
+            });
+        }
+    }
     // Push the ownership change to every window (#1985) so a non-owning window
     // refreshes its `session → window` mirror immediately, instead of only once
     // a `transfer-progress` event happens to flow (which caused a brief flash).

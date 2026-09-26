@@ -6,6 +6,7 @@ import {
   remoteDesktopDisconnect,
   remoteDesktopResize,
   remoteDesktopSendInput,
+  remoteDesktopReleaseInput,
   remoteDesktopSendClipboard,
   remoteDesktopRemoteClipboardFiles,
   remoteDesktopBindClipboardFiles,
@@ -49,6 +50,12 @@ export interface RemoteDesktopSession {
   scaleMode: ScaleMode;
   /** Send a protocol-agnostic input event (no-op while view-only/not-active). */
   sendInput: (event: RemoteDesktopInput) => void;
+  /**
+   * Release every key / mouse button held on the remote (#3402) — sent on
+   * canvas / window focus loss. No-op while view-only or evicted (the backend
+   * releases an evicted window's input itself on takeover).
+   */
+  releaseInput: () => void;
   /** Request a new pixel resolution (Match Window / dynamic resize). */
   resize: (width: number, height: number) => void;
   /** Push local clipboard text to the remote. */
@@ -324,6 +331,14 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     [viewOnly]
   );
 
+  const releaseInput = useCallback(() => {
+    const id = sessionIdRef.current;
+    if (!id || viewOnly || isWindowEvicted(id)) return;
+    void remoteDesktopReleaseInput(id).catch((err) =>
+      frontendLog("remote_desktop", `release_input failed: ${err}`)
+    );
+  }, [viewOnly]);
+
   const resize = useCallback((width: number, height: number) => {
     const id = sessionIdRef.current;
     if (!id || width <= 0 || height <= 0) return;
@@ -412,6 +427,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     viewOnly,
     scaleMode,
     sendInput,
+    releaseInput,
     resize,
     sendClipboard,
     remoteClipboardFiles,

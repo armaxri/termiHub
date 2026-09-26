@@ -7,6 +7,7 @@ name = "termihub-plugin-api"
 version = "0.1.0"
 description = "Stable ABI contract for termiHub native (dynamically-loaded) terminal-backend plugins"
 edition = "2021"
+rust-version.workspace = true
 # Internal for 0.1 (maintainer decision 2026-09-26, #3367): the ABI is frozen,
 # but the SDK is not published — native-plugin authoring is in-repo only (see
 # docs/plugin-authoring.md, "The SDK is internal for 0.1"). The repo is MIT (see
