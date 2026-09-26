@@ -132,15 +132,11 @@ mod tests {
     fn destination_must_be_an_absolute_zip_in_an_existing_folder() {
         let tmp = tempfile::tempdir().unwrap();
         let ok = tmp.path().join("diag.zip");
-        assert_eq!(
-            validate_destination(ok.to_str().unwrap()).unwrap(),
-            ok
-        );
+        assert_eq!(validate_destination(ok.to_str().unwrap()).unwrap(), ok);
         assert!(validate_destination("diag.zip").is_err());
         assert!(validate_destination(tmp.path().join("diag.txt").to_str().unwrap()).is_err());
         assert!(
-            validate_destination(tmp.path().join("nope").join("d.zip").to_str().unwrap())
-                .is_err()
+            validate_destination(tmp.path().join("nope").join("d.zip").to_str().unwrap()).is_err()
         );
     }
 

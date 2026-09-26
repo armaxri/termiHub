@@ -172,7 +172,12 @@ pub fn list_reports(dir: &Path) -> Vec<ReportEntry> {
 
 /// Delete reports beyond `max_count` (oldest first) and any older than
 /// `max_age` relative to `now`. Returns how many were deleted.
-pub fn prune(dir: &Path, max_count: usize, max_age: Duration, now: SystemTime) -> io::Result<usize> {
+pub fn prune(
+    dir: &Path,
+    max_count: usize,
+    max_age: Duration,
+    now: SystemTime,
+) -> io::Result<usize> {
     let mut deleted = 0;
     for (index, report) in list_reports(dir).into_iter().enumerate() {
         let too_old = fs::metadata(&report.path)
@@ -233,7 +238,10 @@ fn truncate(s: &str, max: usize) -> String {
 
 /// `YYYY-MM-DDTHH:MM:SSZ` for a system time (UTC).
 pub fn format_utc(t: SystemTime) -> String {
-    let secs = t.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    let secs = t
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (y, m, d) = civil_from_days(days);

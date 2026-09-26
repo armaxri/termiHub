@@ -98,15 +98,27 @@ connection settings and the credential store are never included.\n";
 pub fn plan_bundle(log_dir: Option<&Path>, build: &BuildInfo, now: SystemTime) -> Vec<BundleEntry> {
     let system_info = render_system_info(build, now);
     let mut entries = vec![
-        text_entry("README.txt", "What this bundle contains", README.to_string()),
-        text_entry("system-info.txt", "App version, build and platform", system_info),
+        text_entry(
+            "README.txt",
+            "What this bundle contains",
+            README.to_string(),
+        ),
+        text_entry(
+            "system-info.txt",
+            "App version, build and platform",
+            system_info,
+        ),
     ];
     let Some(log_dir) = log_dir else {
         return entries;
     };
     for path in file_log::existing_log_files_in(log_dir) {
         if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-            entries.push(file_entry(format!("logs/{name}"), "Application log", path.clone()));
+            entries.push(file_entry(
+                format!("logs/{name}"),
+                "Application log",
+                path.clone(),
+            ));
         }
     }
     let crash_dir = crash_report::crash_dir_in(log_dir);
@@ -169,7 +181,11 @@ fn render_system_info(build: &BuildInfo, now: SystemTime) -> String {
 /// Written to a sibling temp file first and renamed into place, so a failure
 /// part-way never leaves a truncated bundle at the user's chosen path. A source
 /// file that vanished since planning (e.g. rotated away) is skipped.
-pub fn write_bundle(dest: &Path, entries: &[BundleEntry], redactor: &Redactor) -> io::Result<usize> {
+pub fn write_bundle(
+    dest: &Path,
+    entries: &[BundleEntry],
+    redactor: &Redactor,
+) -> io::Result<usize> {
     let tmp = dest.with_extension("zip.partial");
     let result = write_zip(&tmp, entries, redactor);
     match result {

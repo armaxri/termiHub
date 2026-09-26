@@ -148,7 +148,10 @@ fn masks_the_local_hostname() {
 fn masks_host_and_user_fields() {
     let r = plain();
     let out = r.redact(r#"Connect { host: "prod-db", username: "root", port: 22 }"#);
-    assert_eq!(out, r#"Connect { host: "[host]", username: "[user]", port: 22 }"#);
+    assert_eq!(
+        out,
+        r#"Connect { host: "[host]", username: "[user]", port: 22 }"#
+    );
     assert_eq!(r.redact("host=jumpbox user=eve"), "host=[host] user=[user]");
 }
 

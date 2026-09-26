@@ -490,8 +490,7 @@ pub fn run() -> anyhow::Result<()> {
     // otherwise leaves no trace in `termihub.log`.
     // It also leaves a redacted local crash report (OBS-010).
     utils::panic_hook::install(
-        file_log::log_dir()
-            .map(|d| termihub_core::diagnostics::crash_report::crash_dir_in(&d)),
+        file_log::log_dir().map(|d| termihub_core::diagnostics::crash_report::crash_dir_in(&d)),
     );
 
     // Shared X server manager (#1049), held as an `Arc` so the provisioner

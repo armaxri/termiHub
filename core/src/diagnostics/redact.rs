@@ -271,7 +271,9 @@ fn build_patterns() -> Option<Patterns> {
         ipv4: r(r"\d{1,3}(?:\.\d{1,3}){3}")?,
         ipv6: r(r"[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*")?,
         mac: r(r"\b[0-9A-Fa-f]{2}(?:[:-][0-9A-Fa-f]{2}){5}\b")?,
-        dotted_host: r(r"\b[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.[a-z]{2,24}\b")?,
+        dotted_host: r(
+            r"\b[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*\.[a-z]{2,24}\b",
+        )?,
     })
 }
 
@@ -283,7 +285,10 @@ fn redact_secrets(p: &Patterns, text: &str) -> String {
     out = p
         .authorization
         .replace_all(&out, |c: &Captures| {
-            let scheme = c.get(2).map(|m| format!("{} ", m.as_str())).unwrap_or_default();
+            let scheme = c
+                .get(2)
+                .map(|m| format!("{} ", m.as_str()))
+                .unwrap_or_default();
             if c[3].starts_with('[') {
                 return c[0].to_string();
             }
@@ -313,7 +318,10 @@ fn redact_secrets(p: &Patterns, text: &str) -> String {
         })
         .into_owned();
     out = p.jwt.replace_all(&out, REDACTED_TOKEN).into_owned();
-    out = p.prefixed_token.replace_all(&out, REDACTED_TOKEN).into_owned();
+    out = p
+        .prefixed_token
+        .replace_all(&out, REDACTED_TOKEN)
+        .into_owned();
     p.long_token
         .replace_all(&out, |c: &Captures| {
             if looks_like_secret_token(&c[0]) {
@@ -344,12 +352,10 @@ fn redact_identity(p: &Patterns, text: &str) -> String {
         .replace_all(&out, format!("{USER}@{HOST}").as_str())
         .into_owned();
     out = p.mac.replace_all(&out, MAC).into_owned();
-    out = replace_bounded(&p.ipv6, &out, |s| {
-        match s.parse::<Ipv6Addr>() {
-            Ok(ip) if ip.is_loopback() || ip.is_unspecified() => None,
-            Ok(_) => Some(IP.to_string()),
-            Err(_) => None,
-        }
+    out = replace_bounded(&p.ipv6, &out, |s| match s.parse::<Ipv6Addr>() {
+        Ok(ip) if ip.is_loopback() || ip.is_unspecified() => None,
+        Ok(_) => Some(IP.to_string()),
+        Err(_) => None,
     });
     out = replace_bounded(&p.ipv4, &out, |s| match s.parse::<Ipv4Addr>() {
         Ok(ip) if ip.is_loopback() || ip.is_unspecified() => None,
@@ -380,7 +386,9 @@ fn mask_url(c: &Captures) -> String {
     let keep = host.is_empty()
         || host.starts_with('~')
         || host.eq_ignore_ascii_case("localhost")
-        || host.parse::<Ipv4Addr>().is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified());
+        || host
+            .parse::<Ipv4Addr>()
+            .is_ok_and(|ip| ip.is_loopback() || ip.is_unspecified());
     let host = if keep { host } else { HOST };
     format!("{scheme}{userinfo}{host}")
 }
@@ -449,7 +457,10 @@ fn looks_like_secret_token(s: &str) -> bool {
     }
     if s.contains('/') {
         let path_like = s.split('/').any(|seg| {
-            seg.len() >= 2 && seg.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c == '-')
+            seg.len() >= 2
+                && seg
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c == '_' || c == '-')
         });
         return !path_like;
     }

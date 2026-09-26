@@ -51,7 +51,11 @@ fn report_names_sort_chronologically() {
 
 #[test]
 fn a_report_has_version_os_time_message_and_backtrace() {
-    let text = render_report(&details("index out of bounds"), at(1_790_424_062), &redactor());
+    let text = render_report(
+        &details("index out of bounds"),
+        at(1_790_424_062),
+        &redactor(),
+    );
     assert!(text.contains("version:   0.1.0"));
     assert!(text.contains(std::env::consts::OS));
     assert!(text.contains("2026-09-26T12:01:02Z"));
@@ -105,10 +109,16 @@ fn list_ignores_non_report_files_and_sorts_newest_first() {
     touch(tmp.path(), "crash-20260301T000000Z-1.txt");
     touch(tmp.path(), "notes.txt");
     touch(tmp.path(), ".notified");
-    let names: Vec<String> = list_reports(tmp.path()).into_iter().map(|r| r.name).collect();
+    let names: Vec<String> = list_reports(tmp.path())
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
     assert_eq!(
         names,
-        vec!["crash-20260301T000000Z-1.txt", "crash-20260101T000000Z-1.txt"]
+        vec![
+            "crash-20260301T000000Z-1.txt",
+            "crash-20260101T000000Z-1.txt"
+        ]
     );
     assert!(list_reports(&tmp.path().join("missing")).is_empty());
 }
@@ -117,7 +127,10 @@ fn list_ignores_non_report_files_and_sorts_newest_first() {
 fn prune_bounds_the_report_count() {
     let tmp = tempfile::tempdir().unwrap();
     for i in 0..15 {
-        touch(tmp.path(), &format!("crash-202601{:02}T000000Z-1.txt", i + 1));
+        touch(
+            tmp.path(),
+            &format!("crash-202601{:02}T000000Z-1.txt", i + 1),
+        );
     }
     let deleted = prune(tmp.path(), MAX_REPORTS, MAX_REPORT_AGE, SystemTime::now()).unwrap();
     assert_eq!(deleted, 5);
@@ -132,7 +145,10 @@ fn prune_drops_reports_older_than_the_age_limit() {
     let tmp = tempfile::tempdir().unwrap();
     touch(tmp.path(), "crash-20260101T000000Z-1.txt");
     let later = SystemTime::now() + MAX_REPORT_AGE + Duration::from_secs(60);
-    assert_eq!(prune(tmp.path(), MAX_REPORTS, MAX_REPORT_AGE, later).unwrap(), 1);
+    assert_eq!(
+        prune(tmp.path(), MAX_REPORTS, MAX_REPORT_AGE, later).unwrap(),
+        1
+    );
     assert!(list_reports(tmp.path()).is_empty());
     // A fresh report is kept.
     touch(tmp.path(), "crash-20260102T000000Z-1.txt");
@@ -146,7 +162,10 @@ fn prune_drops_reports_older_than_the_age_limit() {
 fn write_report_enforces_the_bound_itself() {
     let tmp = tempfile::tempdir().unwrap();
     for i in 0..MAX_REPORTS {
-        touch(tmp.path(), &format!("crash-200001{:02}T000000Z-1.txt", i + 1));
+        touch(
+            tmp.path(),
+            &format!("crash-200001{:02}T000000Z-1.txt", i + 1),
+        );
     }
     write_report(tmp.path(), &details("boom"), SystemTime::now(), &redactor()).unwrap();
     assert_eq!(list_reports(tmp.path()).len(), MAX_REPORTS);
@@ -175,7 +194,12 @@ fn read_report_refuses_paths_outside_the_directory() {
         read_report(tmp.path(), "crash-20260101T000000Z-1.txt").unwrap(),
         "x"
     );
-    for bad in ["../secret.txt", "crash-../../x.txt", "notes.txt", "crash-a/b.txt"] {
+    for bad in [
+        "../secret.txt",
+        "crash-../../x.txt",
+        "notes.txt",
+        "crash-a/b.txt",
+    ] {
         assert!(read_report(tmp.path(), bad).is_err(), "{bad} accepted");
     }
 }

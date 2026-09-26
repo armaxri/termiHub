@@ -35,12 +35,17 @@ fn populated_log_dir() -> tempfile::TempDir {
     fs::write(dir.join("termihub.1.log"), "INFO older run\n").unwrap();
     fs::create_dir_all(dir.join(CRASH_DIR_NAME)).unwrap();
     fs::write(
-        dir.join(CRASH_DIR_NAME).join("crash-20260101T000000Z-1.txt"),
+        dir.join(CRASH_DIR_NAME)
+            .join("crash-20260101T000000Z-1.txt"),
         "panic at /Users/alice/x.rs",
     )
     .unwrap();
     fs::create_dir_all(dir.join("sessions")).unwrap();
-    fs::write(dir.join("sessions").join("ssh-session.log"), "$ secret output").unwrap();
+    fs::write(
+        dir.join("sessions").join("ssh-session.log"),
+        "$ secret output",
+    )
+    .unwrap();
     fs::write(dir.join("unrelated.txt"), "nope").unwrap();
     tmp
 }
