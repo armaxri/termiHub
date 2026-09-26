@@ -62,6 +62,75 @@ export interface ServerState {
   startedAt?: string;
 }
 
+/**
+ * One recorded request / command / transfer in a server's access log
+ * (PROD-034). Never carries a password, `Authorization` header or HTTP query
+ * string.
+ */
+export interface AccessLogEntry {
+  /** Monotonic sequence number (the incremental-read cursor). */
+  seq: number;
+  /** RFC 3339 completion time. */
+  timestamp: string;
+  /** Client IP address. */
+  client?: string;
+  /** Authenticated / attempted username (FTP login, HTTP Basic). */
+  user?: string;
+  /** HTTP method, FTP command (`LOGIN`, `RETR`, …) or TFTP `RRQ`/`WRQ`. */
+  method: string;
+  path?: string;
+  /** HTTP status code, or `ok` / `denied` / `error` / `aborted` / `timeout` / `busy`. */
+  status: string;
+  success: boolean;
+  /** Payload bytes transferred. */
+  bytes: number;
+  durationMs?: number;
+  /** Short failure detail. */
+  detail?: string;
+}
+
+/** A `key → hits` pair in a "top paths" / "top clients" list. */
+export interface TopEntry {
+  key: string;
+  count: number;
+}
+
+/** A transfer currently in flight. */
+export interface TransferInfo {
+  id: number;
+  method: string;
+  client?: string;
+  path?: string;
+  bytes: number;
+  startedAt: string;
+}
+
+/** Detailed per-server statistics (PROD-036). */
+export interface DetailedServerStats extends ServerStats {
+  /** Requests recorded since the log was last cleared. */
+  totalRequests: number;
+  /** Failed requests recorded since the log was last cleared. */
+  errors: number;
+  topPaths: TopEntry[];
+  topClients: TopEntry[];
+  currentTransfers: TransferInfo[];
+}
+
+/** Incremental access-log read returned by `get_embedded_server_activity`. */
+export interface ServerActivity {
+  /** Entries newer than the requested cursor, oldest first. */
+  entries: AccessLogEntry[];
+  /** Highest sequence number assigned so far — the next cursor. */
+  latestSeq: number;
+  /** Bumped on every clear; a changed epoch means "discard buffered entries". */
+  epoch: number;
+  /** Entries evicted from the bounded log since the last clear. */
+  dropped: number;
+  /** Maximum number of entries the log retains. */
+  capacity: number;
+  stats: DetailedServerStats;
+}
+
 /** Default ports per protocol. */
 export const DEFAULT_PORTS: Record<ServerType, number> = {
   http: 8080,

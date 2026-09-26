@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
+use super::activity::ServerActivity;
 use crate::service::ServiceStatus;
 
 /// Protocol type for an embedded server.
@@ -172,16 +173,27 @@ pub struct AtomicServerStats {
     pub total_connections: AtomicU64,
     pub bytes_sent: AtomicU64,
     pub bytes_received: AtomicU64,
+    /// Per-request access log + detailed stats (PROD-034, PROD-036). Owned by
+    /// the service across restarts; the counters above are per run.
+    pub activity: Arc<ServerActivity>,
 }
 
 impl AtomicServerStats {
-    /// Create a new zeroed stats instance wrapped in an Arc.
+    /// Create a new zeroed stats instance (with a fresh activity log) wrapped
+    /// in an Arc.
     pub fn new() -> Arc<Self> {
+        Self::with_activity(ServerActivity::new())
+    }
+
+    /// Create zeroed per-run counters that record into an existing, longer-lived
+    /// `activity` log (so the access log survives a stop/start).
+    pub fn with_activity(activity: Arc<ServerActivity>) -> Arc<Self> {
         Arc::new(Self {
             active_connections: AtomicU64::new(0),
             total_connections: AtomicU64::new(0),
             bytes_sent: AtomicU64::new(0),
             bytes_received: AtomicU64::new(0),
+            activity,
         })
     }
 

@@ -16,6 +16,8 @@ import {
   stopEmbeddedServer,
   createAndStartServer,
   listNetworkInterfaces,
+  getEmbeddedServerActivity,
+  clearEmbeddedServerActivity,
 } from "./embeddedServerApi";
 
 describe("embeddedServerApi", () => {
@@ -157,6 +159,35 @@ describe("embeddedServerApi", () => {
 
       expect(result.some((i) => i.addr === "127.0.0.1")).toBe(true);
       expect(result.some((i) => i.addr === "0.0.0.0")).toBe(true);
+    });
+  });
+
+  describe("access log (PROD-034/036)", () => {
+    it("reads activity incrementally from a cursor", async () => {
+      mockedInvoke.mockResolvedValue(null);
+      const result = await getEmbeddedServerActivity("srv-1", 42);
+      expect(mockedInvoke).toHaveBeenCalledWith("get_embedded_server_activity", {
+        serverId: "srv-1",
+        sinceSeq: 42,
+      });
+      expect(result).toBeNull();
+    });
+
+    it("reads the whole log when no cursor is given", async () => {
+      mockedInvoke.mockResolvedValue(null);
+      await getEmbeddedServerActivity("srv-1");
+      expect(mockedInvoke).toHaveBeenCalledWith("get_embedded_server_activity", {
+        serverId: "srv-1",
+        sinceSeq: null,
+      });
+    });
+
+    it("clears the log", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+      await clearEmbeddedServerActivity("srv-1");
+      expect(mockedInvoke).toHaveBeenCalledWith("clear_embedded_server_activity", {
+        serverId: "srv-1",
+      });
     });
   });
 });

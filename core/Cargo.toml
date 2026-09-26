@@ -171,6 +171,11 @@ base64 = { version = "0.22", optional = true }
 # in the workspace tree (a transitive dependency of `argon2`), so this adds no
 # new supply-chain surface. Behind the optional `embedded-servers` feature.
 subtle = { version = "2", optional = true }
+# `http_body::Body` trait, implemented by the embedded HTTP server's access-log
+# body wrapper (PROD-034) to count streamed bytes and time a download to its
+# last byte. Already in the tree via axum/hyper — adds no new crate. Behind the
+# optional `embedded-servers` feature.
+http-body = { version = "1", optional = true }
 # HTTP client for the periodic HTTP monitor service (#2592), hostable on the
 # desktop or a remote agent. `rustls-tls` avoids an OpenSSL dependency for the
 # agent's musl cross-compilation; `blocking` backs the offline unit test that
@@ -283,6 +288,8 @@ embedded-servers = [
     "dep:base64",
     "dep:sha2",
     "dep:subtle",
+    # Access-log body wrapper for the HTTP server (PROD-034).
+    "dep:http-body",
 ]
 # Plugin package format + manifest schema/validation (#1989), plus the native
 # host loader (#1995). Pulls `zip` to read `.termihub-plugin` archives,

@@ -864,6 +864,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::embedded_servers::save_embedded_server,
             commands::embedded_servers::delete_embedded_server,
             commands::embedded_servers::get_embedded_server_states,
+            commands::embedded_servers::get_embedded_server_activity,
+            commands::embedded_servers::clear_embedded_server_activity,
             commands::embedded_servers::set_embedded_server_run_location,
             commands::embedded_servers::start_embedded_server,
             commands::embedded_servers::stop_embedded_server,

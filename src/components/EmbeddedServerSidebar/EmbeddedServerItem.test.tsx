@@ -26,6 +26,11 @@ vi.mock("@tauri-apps/plugin-opener", () => ({
   openUrl: vi.fn(() => Promise.resolve()),
 }));
 
+vi.mock("@/services/embeddedServerApi", () => ({
+  getEmbeddedServerActivity: vi.fn(() => Promise.resolve(null)),
+  clearEmbeddedServerActivity: vi.fn(() => Promise.resolve()),
+}));
+
 import { EmbeddedServerItem } from "./EmbeddedServerItem";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
@@ -225,5 +230,20 @@ describe("EmbeddedServerItem", () => {
     expect(toastError).toHaveBeenCalledTimes(1);
     const [title] = toastError.mock.calls[0] as [string, unknown];
     expect(title).toContain("My HTTP");
+  });
+
+  it("toggles the activity panel (access log + stats, PROD-034/036)", async () => {
+    render(<EmbeddedServerItem {...baseProps({ state: runningState })} />);
+    const toggle = container.querySelector('[data-testid="server-activity-toggle-srv-1"]');
+    expect(toggle?.getAttribute("aria-pressed")).toBe("false");
+    expect(container.querySelector('[data-testid="server-activity-srv-1"]')).toBeNull();
+
+    click(toggle!);
+    await flush();
+    expect(toggle?.getAttribute("aria-pressed")).toBe("true");
+    expect(container.querySelector('[data-testid="server-activity-srv-1"]')).not.toBeNull();
+
+    click(toggle!);
+    expect(container.querySelector('[data-testid="server-activity-srv-1"]')).toBeNull();
   });
 });

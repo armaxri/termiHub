@@ -16,6 +16,7 @@
 //! (`EmbeddedServerManager`) and the agent both register these `Service`
 //! factories and bridge the `EventChannel` to their respective transports.
 
+pub mod activity;
 pub mod config;
 pub mod service;
 pub mod shutdown;

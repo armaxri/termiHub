@@ -1,11 +1,14 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::task::{Context as TaskContext, Poll};
+use std::time::Instant;
 
 use anyhow::{Context, Result};
-use axum::body::Body;
-use axum::extract::State;
+use axum::body::{Body, Bytes};
+use axum::extract::{ConnectInfo, State};
 use axum::handler::Handler;
 use axum::http::{header, HeaderMap, HeaderValue, Request, StatusCode};
 use axum::middleware::Next;
@@ -16,6 +19,7 @@ use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 use tower_http::services::ServeDir;
 
+use super::activity::{AccessRecord, TransferGuard};
 use super::config::{AtomicServerStats, EmbeddedServerConfig, HttpBasicAuth};
 use super::service::BindSignal;
 use super::shutdown::ShutdownSignal;
@@ -24,14 +28,37 @@ use super::shutdown::ShutdownSignal;
 #[derive(Clone)]
 struct TrackingState {
     stats: Arc<AtomicServerStats>,
+    /// Whether Basic auth is configured — only then is the (username part of
+    /// the) `Authorization` header read for the access log.
+    auth_enabled: bool,
 }
 
-/// Tower middleware that tracks active and total HTTP connections.
+/// Tower middleware that tracks active and total HTTP connections and records
+/// one access-log entry per request (PROD-034).
+///
+/// The entry is finalised when the response body is fully streamed (or
+/// dropped), so it carries the real byte count and the time to the last byte;
+/// the download is listed as a current transfer meanwhile. Only the URI *path*
+/// is logged — never the query string — and only the Basic-auth *username* of
+/// an accepted request, never a password.
 async fn track_connections(
     State(state): State<TrackingState>,
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    let started = Instant::now();
+    let client = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|ci| ci.0.ip());
+    let method = req.method().to_string();
+    let path = req.uri().path().to_string();
+    let user = if state.auth_enabled {
+        decode_basic_credentials(req.headers()).map(|(username, _password)| username)
+    } else {
+        None
+    };
+
     state
         .stats
         .active_connections
@@ -43,22 +70,126 @@ async fn track_connections(
 
     let resp = next.run(req).await;
 
-    // Approximate bytes sent via Content-Length header.
-    if let Some(cl) = resp
-        .headers()
-        .get(axum::http::header::CONTENT_LENGTH)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|s| s.parse::<u64>().ok())
-    {
-        state.stats.bytes_sent.fetch_add(cl, Ordering::Relaxed);
-    }
-
     state
         .stats
         .active_connections
         .fetch_sub(1, Ordering::Relaxed);
 
-    resp
+    let status = resp.status();
+    // A rejected (401) attempt's username is not recorded as a user.
+    let user = user.filter(|_| status != StatusCode::UNAUTHORIZED);
+    let transfer = state
+        .stats
+        .activity
+        .begin_transfer(&method, client, Some(&path));
+    let pending = PendingAccess {
+        stats: Arc::clone(&state.stats),
+        transfer,
+        started,
+        client,
+        user,
+        method,
+        path,
+        status,
+    };
+    resp.map(|inner| {
+        Body::new(LoggedBody {
+            inner,
+            finished: false,
+            pending: Some(pending),
+        })
+    })
+}
+
+/// Everything needed to write a request's access-log entry once its response
+/// body is done.
+struct PendingAccess {
+    stats: Arc<AtomicServerStats>,
+    transfer: TransferGuard,
+    started: Instant,
+    client: Option<IpAddr>,
+    user: Option<String>,
+    method: String,
+    path: String,
+    status: StatusCode,
+}
+
+impl PendingAccess {
+    /// Record the entry. `completed` is false when the body was dropped before
+    /// its end (e.g. the client disconnected mid-download).
+    fn finish(self, completed: bool) {
+        // A HEAD response carries no body, so hyper may drop it unpolled.
+        let completed = completed || self.method == "HEAD";
+        let code = self.status.as_u16().to_string();
+        let ok = completed && !(self.status.is_client_error() || self.status.is_server_error());
+        let status = if completed {
+            code
+        } else {
+            format!("{code} aborted")
+        };
+        let mut record = AccessRecord::new(self.method, status, ok)
+            .path(self.path)
+            .bytes(self.transfer.bytes())
+            .elapsed_since(self.started);
+        if let Some(ip) = self.client {
+            record = record.client(ip);
+        }
+        if let Some(user) = self.user {
+            record = record.user(user);
+        }
+        self.stats.activity.record(record);
+    }
+}
+
+/// Response body wrapper that counts streamed bytes and records the request's
+/// access-log entry when the body ends or is dropped (PROD-034).
+struct LoggedBody {
+    inner: Body,
+    finished: bool,
+    pending: Option<PendingAccess>,
+}
+
+impl http_body::Body for LoggedBody {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut TaskContext<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+        let polled = Pin::new(&mut self.inner).poll_frame(cx);
+        match &polled {
+            Poll::Ready(Some(Ok(frame))) => {
+                if let Some(data) = frame.data_ref() {
+                    let n = data.len() as u64;
+                    if let Some(pending) = &self.pending {
+                        pending.transfer.add_bytes(n);
+                        pending.stats.bytes_sent.fetch_add(n, Ordering::Relaxed);
+                    }
+                }
+            }
+            Poll::Ready(None) => self.finished = true,
+            _ => {}
+        }
+        polled
+    }
+
+    fn is_end_stream(&self) -> bool {
+        self.inner.is_end_stream()
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+impl Drop for LoggedBody {
+    fn drop(&mut self) {
+        if let Some(pending) = self.pending.take() {
+            let completed = self.finished || http_body::Body::is_end_stream(&self.inner);
+            pending.finish(completed);
+        }
+    }
 }
 
 /// State shared with the Basic-auth middleware (PROD-0035).
@@ -353,6 +484,7 @@ pub fn start_http_server(
     let realm = config.name.clone();
     let tracking_state = TrackingState {
         stats: stats.clone(),
+        auth_enabled: auth.is_some(),
     };
 
     // Build a tokio current-thread runtime in this thread.
@@ -387,14 +519,18 @@ pub fn start_http_server(
 
         tracing::info!(addr = %addr, "HTTP server listening");
 
-        axum::serve(listener, router)
-            // Event-driven shutdown: park until the signal fires, then stop
-            // immediately — no busy-poll and no fixed latency (WA-RS-001).
-            .with_graceful_shutdown(async move {
-                shutdown.wait().await;
-            })
-            .await
-            .context("HTTP server error")?;
+        // Connect info exposes each request's peer address to the access log.
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        // Event-driven shutdown: park until the signal fires, then stop
+        // immediately — no busy-poll and no fixed latency (WA-RS-001).
+        .with_graceful_shutdown(async move {
+            shutdown.wait().await;
+        })
+        .await
+        .context("HTTP server error")?;
 
         Ok::<(), anyhow::Error>(())
     })?;
@@ -420,10 +556,22 @@ mod tests {
         directory_listing: bool,
         auth: Option<HttpBasicAuth>,
     ) -> (tempfile::TempDir, Router) {
+        let (dir, router, _stats) = router_with_stats(directory_listing, auth);
+        (dir, router)
+    }
+
+    /// As [`router_with_hello_auth`], also returning the stats (and access log)
+    /// the router records into.
+    fn router_with_stats(
+        directory_listing: bool,
+        auth: Option<HttpBasicAuth>,
+    ) -> (tempfile::TempDir, Router, Arc<AtomicServerStats>) {
         let dir = tempfile::tempdir().expect("create temp dir");
         std::fs::write(dir.path().join("hello.txt"), "hello world").expect("write file");
+        let stats = AtomicServerStats::new();
         let tracking_state = TrackingState {
-            stats: AtomicServerStats::new(),
+            stats: Arc::clone(&stats),
+            auth_enabled: auth.is_some(),
         };
         let router = build_router(
             dir.path().to_path_buf(),
@@ -432,7 +580,14 @@ mod tests {
             auth,
             "Test Realm",
         );
-        (dir, router)
+        (dir, router, stats)
+    }
+
+    /// All access-log entries recorded so far.
+    fn log_entries(
+        stats: &AtomicServerStats,
+    ) -> Vec<crate::embedded_servers::activity::AccessLogEntry> {
+        stats.activity.snapshot(None, &stats.snapshot()).entries
     }
 
     async fn get(router: Router, uri: &str) -> (StatusCode, String) {
@@ -608,6 +763,158 @@ mod tests {
             value.to_str().expect("valid header"),
             r#"Basic realm="namewith""#
         );
+    }
+
+    // ─── Access log (PROD-034) ──────────────────────────────────────────────
+
+    #[tokio::test]
+    async fn access_log_records_successful_download() {
+        let (_dir, router, stats) = router_with_stats(false, None);
+        let (status, body) = get(router, "/hello.txt").await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "hello world");
+
+        let entries = log_entries(&stats);
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!(e.method, "GET");
+        assert_eq!(e.path.as_deref(), Some("/hello.txt"));
+        assert_eq!(e.status, "200");
+        assert!(e.success);
+        assert_eq!(e.bytes, 11);
+        assert!(e.duration_ms.is_some());
+        // Real streamed bytes feed the aggregate counter too.
+        assert_eq!(stats.snapshot().bytes_sent, 11);
+        // The finished download is no longer a current transfer.
+        let snap = stats.activity.snapshot(None, &stats.snapshot());
+        assert!(snap.stats.current_transfers.is_empty());
+    }
+
+    #[tokio::test]
+    async fn access_log_records_missing_file_as_error() {
+        let (_dir, router, stats) = router_with_stats(true, None);
+        let (status, _) = get(router, "/nope.txt").await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+        let entries = log_entries(&stats);
+        assert_eq!(entries[0].status, "404");
+        assert!(!entries[0].success);
+        let snap = stats.activity.snapshot(None, &stats.snapshot());
+        assert_eq!(snap.stats.errors, 1);
+        assert_eq!(snap.stats.top_paths[0].key, "/nope.txt");
+    }
+
+    #[tokio::test]
+    async fn access_log_never_records_query_string() {
+        let (_dir, router, stats) = router_with_stats(false, None);
+        let _ = get(router, "/hello.txt?token=supersecret").await;
+        let entries = log_entries(&stats);
+        assert_eq!(entries[0].path.as_deref(), Some("/hello.txt"));
+        let json = serde_json::to_string(&entries).expect("serialize");
+        assert!(!json.contains("supersecret"), "query leaked: {json}");
+    }
+
+    #[tokio::test]
+    async fn access_log_records_username_but_never_password() {
+        let (_dir, router, stats) = router_with_stats(false, Some(creds("admin", "s3cret-pw")));
+        // One accepted and one rejected attempt.
+        let (ok, _, _) = get_full(
+            router.clone(),
+            "/hello.txt",
+            Some(&basic_header("admin", "s3cret-pw")),
+        )
+        .await;
+        assert_eq!(ok, StatusCode::OK);
+        let (denied, _, _) = get_full(
+            router,
+            "/hello.txt",
+            Some(&basic_header("mallory", "s3cret-guess")),
+        )
+        .await;
+        assert_eq!(denied, StatusCode::UNAUTHORIZED);
+
+        let entries = log_entries(&stats);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].user.as_deref(), Some("admin"));
+        assert_eq!(entries[1].status, "401");
+        assert!(!entries[1].success);
+        assert!(
+            entries[1].user.is_none(),
+            "rejected user must not be recorded"
+        );
+        let json = serde_json::to_string(&entries).expect("serialize");
+        assert!(
+            !json.contains("s3cret"),
+            "password leaked into the log: {json}"
+        );
+        assert!(!json.contains("Basic "), "auth header leaked: {json}");
+    }
+
+    /// End-to-end over a real socket: the peer address reaches the log via
+    /// connect info.
+    #[test]
+    fn access_log_records_client_address_over_real_socket() {
+        use crate::embedded_servers::config::ServerType;
+        use std::io::{Read, Write};
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().expect("create temp dir");
+        std::fs::write(dir.path().join("fw.bin"), "firmware").expect("write file");
+        let port = std::net::TcpListener::bind("127.0.0.1:0")
+            .and_then(|l| l.local_addr())
+            .expect("free port")
+            .port();
+        let config = EmbeddedServerConfig {
+            id: "test-http-log".to_string(),
+            name: "test".to_string(),
+            server_type: ServerType::Http,
+            root_directory: dir.path().to_string_lossy().into_owned(),
+            bind_host: "127.0.0.1".to_string(),
+            port,
+            auto_start: false,
+            read_only: true,
+            directory_listing: Some(false),
+            ftp_auth: None,
+            http_auth: None,
+            max_transfer_bytes: None,
+        };
+        let shutdown = ShutdownSignal::new();
+        let stats = AtomicServerStats::new();
+        let (ready, ready_rx) = BindSignal::for_test();
+        let server_shutdown = shutdown.clone();
+        let server_stats = Arc::clone(&stats);
+        let handle = std::thread::spawn(move || {
+            start_http_server(&config, server_shutdown, server_stats, ready)
+        });
+        let bind = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("server should confirm its bind");
+        assert!(bind.is_ok(), "bind failed: {bind:?}");
+
+        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        stream
+            .write_all(b"GET /fw.bin HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            .expect("send request");
+        let mut response = String::new();
+        stream.read_to_string(&mut response).expect("read response");
+        assert!(response.ends_with("firmware"), "response: {response}");
+
+        // The entry is written when the body finishes streaming; allow the
+        // server thread a moment to drop it.
+        let mut entries = Vec::new();
+        for _ in 0..100 {
+            entries = log_entries(&stats);
+            if !entries.is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        shutdown.trigger();
+        let _ = handle.join();
+
+        assert_eq!(entries.len(), 1, "expected one entry, got {entries:?}");
+        assert_eq!(entries[0].client.as_deref(), Some("127.0.0.1"));
+        assert_eq!(entries[0].path.as_deref(), Some("/fw.bin"));
+        assert_eq!(entries[0].bytes, 8);
     }
 
     #[test]
