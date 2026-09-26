@@ -130,6 +130,20 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             />
           </SettingsField>
         )}
+        {show("terminalCommandDecorations") && (
+          <SettingsField
+            label="Command Status Marks"
+            hint="Show a thin green (success) or red (failure) mark next to each finished command's prompt. Requires shell integration (OSC 133 command marks); has no effect in shells that do not emit them."
+          >
+            <Toggle
+              data-testid="settings-terminal-command-decorations"
+              checked={settings.terminalCommandDecorations ?? true}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, terminalCommandDecorations: checked })
+              }
+            />
+          </SettingsField>
+        )}
         {show("askOpenSavedFileInTab") && (
           <SettingsField
             label="Open Saved File in Tab"

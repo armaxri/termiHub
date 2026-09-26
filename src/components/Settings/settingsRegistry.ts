@@ -183,6 +183,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["right-click", "context menu", "copy", "paste", "quick action", "mouse"],
   },
   {
+    id: "terminalCommandDecorations",
+    label: "Command Status Marks",
+    description:
+      "Show a success/failure mark next to each finished command (needs shell integration)",
+    category: "terminal",
+    keywords: [
+      "osc 133",
+      "command",
+      "prompt",
+      "exit code",
+      "status",
+      "success",
+      "failure",
+      "gutter",
+      "decoration",
+      "shell integration",
+    ],
+  },
+  {
     id: "askOpenSavedFileInTab",
     label: "Open Saved File in Tab",
     description: "Offer to open terminal content in an editor tab after saving it to a file",
