@@ -26,9 +26,9 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
-    auto_reconnect_enabled, CertPrompt, CertPromptReceiver, ConnectionType, ConnectionTypeRegistry,
-    CursorUpdate, FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile,
-    SessionStateMachine,
+    auto_reconnect_enabled, fixed_resolution_requested, CertPrompt, CertPromptReceiver,
+    ConnectionType, ConnectionTypeRegistry, CursorUpdate, FrameUpdate, GraphicalState, InputEvent,
+    RemoteClipboardFile, SessionStateMachine,
 };
 use termihub_core::errors::SessionError;
 
@@ -196,6 +196,10 @@ struct GraphicalSession {
     tasks: Vec<JoinHandle<()>>,
     /// The last requested pixel size, re-sent after an auto-reconnect.
     last_size: LastSize,
+    /// The user pinned this session to a fixed resolution (PROD-026): resize
+    /// requests are refused, so neither the live session nor an auto-reconnect
+    /// (which re-dials with the same settings) ever leaves the configured size.
+    fixed_resolution: bool,
     /// Backend type id (for diagnostics).
     type_id: String,
     /// The certificate prompt currently awaiting a user decision, if any (#1767).
@@ -285,6 +289,7 @@ impl GraphicalSessionManager {
         // Keep the settings for re-dials only when Auto-Reconnect is on (#3364),
         // so a session that never re-dials does not retain its credentials.
         let redial_settings = auto_reconnect_enabled(&settings).then(|| settings.clone());
+        let fixed_resolution = fixed_resolution_requested(&settings);
 
         // Authenticating → establish.
         emit_state(&sink, &session_id, GraphicalState::Authenticating, 0, None);
@@ -353,6 +358,7 @@ impl GraphicalSessionManager {
             state,
             tasks,
             last_size,
+            fixed_resolution,
             type_id: type_id.to_string(),
             pending_cert,
             held,
@@ -501,7 +507,18 @@ impl GraphicalSessionManager {
             .map_err(|e| TerminalError::InternalError(e.to_string()))
     }
 
-    /// Request a new session resolution in pixels.
+    /// Whether `session_id` was connected with a fixed resolution (PROD-026).
+    async fn is_fixed_resolution(&self, session_id: &str) -> Result<bool, TerminalError> {
+        self.sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|s| s.fixed_resolution)
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))
+    }
+
+    /// Request a new session resolution in pixels. A fixed-resolution session
+    /// (PROD-026) ignores the request.
     pub async fn resize(
         &self,
         session_id: &str,
@@ -509,6 +526,16 @@ impl GraphicalSessionManager {
         height_px: u16,
         sink: impl GraphicalEventSink,
     ) -> Result<(), TerminalError> {
+        if self.is_fixed_resolution(session_id).await? {
+            // A fixed-resolution session scales locally instead (PROD-026); the
+            // request is dropped before it can reach the backend or be recorded
+            // for replay after a reconnect.
+            debug!(
+                session_id,
+                width_px, height_px, "fixed-resolution session; resize ignored"
+            );
+            return Ok(());
+        }
         let (conn, state, last_size) = self.session_handles(session_id).await?;
         if let Ok(mut size) = last_size.lock() {
             *size = Some((width_px, height_px));
@@ -1116,6 +1143,79 @@ mod tests {
         );
 
         mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    /// The size recorded for replay after an auto-reconnect.
+    async fn recorded_size(mgr: &GraphicalSessionManager, sid: &str) -> Option<(u16, u16)> {
+        let (_, _, last_size) = mgr.session_handles(sid).await.expect("session");
+        let size = *last_size.lock().unwrap();
+        size
+    }
+
+    #[tokio::test]
+    async fn fixed_resolution_session_ignores_resize_requests() {
+        // PROD-026: a session pinned to a fixed size never resizes the remote,
+        // and records nothing an auto-reconnect could replay — the re-dial uses
+        // the same fixed settings instead.
+        let mgr = manager();
+        let sink = RecordingSink::default();
+        let sid = mgr
+            .connect(
+                "mock-remote-desktop",
+                serde_json::json!({ "resolutionMode": "fixed", "width": 1024, "height": 768 }),
+                sink.clone(),
+            )
+            .await
+            .expect("connect");
+
+        mgr.resize(&sid, 640, 480, sink.clone())
+            .await
+            .expect("a refused resize is not an error");
+        assert_eq!(recorded_size(&mgr, &sid).await, None);
+        assert!(
+            !sink
+                .states
+                .lock()
+                .unwrap()
+                .contains(&GraphicalState::Resizing),
+            "a fixed session must never enter Resizing"
+        );
+        mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    #[tokio::test]
+    async fn dynamic_session_records_resize_for_reconnect_replay() {
+        let mgr = manager();
+        let sink = RecordingSink::default();
+        let sid = mgr
+            .connect(
+                "mock-remote-desktop",
+                serde_json::json!({ "resolutionMode": "dynamic" }),
+                sink.clone(),
+            )
+            .await
+            .expect("connect");
+
+        mgr.resize(&sid, 640, 480, sink.clone())
+            .await
+            .expect("resize");
+        assert_eq!(recorded_size(&mgr, &sid).await, Some((640, 480)));
+        assert!(sink
+            .states
+            .lock()
+            .unwrap()
+            .contains(&GraphicalState::Resizing));
+        mgr.disconnect(&sid, sink).await.expect("disconnect");
+    }
+
+    #[tokio::test]
+    async fn resize_of_unknown_session_is_not_found() {
+        let mgr = manager();
+        let err = mgr
+            .resize("nope", 640, 480, RecordingSink::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, TerminalError::SessionNotFound(_)));
     }
 
     #[tokio::test]
