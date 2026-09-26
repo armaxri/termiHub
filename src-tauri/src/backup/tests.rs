@@ -91,6 +91,14 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
             "network-tool-history.json",
             json!({"version": "1", "runs": []}),
         ),
+        (
+            "ssh_known_hosts.json",
+            json!({"server.example:22": ["SHA256:AAAA", "SHA256:BBBB"]}),
+        ),
+        (
+            "rdp_known_hosts.json",
+            json!({"desk.example:3389": ["sha256:11:22"]}),
+        ),
     ]
 }
 

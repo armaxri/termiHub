@@ -66,6 +66,10 @@ pub mod sections;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_plugins;
+#[cfg(test)]
+mod tests_trust;
 
 /// Format identifier stamped on every backup file.
 pub const BACKUP_FORMAT_ID: &str = "termihub-backup";
