@@ -50,3 +50,21 @@
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
+
+.broadcast-scope-dialog__save-group {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--spacing-sm);
+  margin-top: var(--spacing-md);
+}
+
+.broadcast-scope-dialog__save-group > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.broadcast-scope-dialog__note {
+  margin: var(--spacing-sm) 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}

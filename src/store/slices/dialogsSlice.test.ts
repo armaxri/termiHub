@@ -44,6 +44,21 @@ describe("dialogsSlice", () => {
     });
   });
 
+  it("carries the broadcast target count only for a multi-target paste (#3443)", () => {
+    const onConfirm = vi.fn();
+    store.getState().showLargePasteDialog(10, onConfirm, 3);
+    expect(store.getState().largePasteDialog).toEqual({
+      open: true,
+      charCount: 10,
+      onConfirm,
+      broadcastTargetCount: 3,
+    });
+    store.getState().showLargePasteDialog(10, onConfirm, 1);
+    expect(store.getState().largePasteDialog.broadcastTargetCount).toBeUndefined();
+    store.getState().closeLargePasteDialog();
+    expect(store.getState().largePasteDialog.broadcastTargetCount).toBeUndefined();
+  });
+
   it("opens and closes the open-saved-file dialog", () => {
     store.getState().showOpenSavedFileDialog("/tmp/out.log");
     expect(store.getState().openSavedFileDialog).toEqual({ open: true, filePath: "/tmp/out.log" });

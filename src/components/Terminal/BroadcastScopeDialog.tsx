@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Modal, Button, Field, Select, Checkbox, EmptyState } from "@/components/ui";
+import { Modal, Button, Field, Select, Checkbox, EmptyState, toast } from "@/components/ui";
 import { useAppStore, resolveBroadcastTargetTabIds } from "@/store/appStore";
 import {
   useActiveTabGroupId,
@@ -7,6 +7,10 @@ import {
   useLayoutTabGroups,
 } from "@/store/layoutSelectors";
 import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
+import { deleteBroadcastGroup, useBroadcastGroups } from "@/store/broadcastGroups";
+import { groupableConnectionIds, resolveBroadcastGroup } from "@/utils/broadcastGroups";
+import { errorMessage } from "@/utils/errorMessage";
+import { BroadcastGroupSaveRow } from "./BroadcastGroupSaveRow";
 import { getAllLeaves } from "@/utils/panelTree";
 import type { BroadcastScope, ConnectionType, TerminalTab } from "@/types/terminal";
 import "./BroadcastScopeDialog.css";
@@ -38,6 +42,9 @@ function typeLabel(type: ConnectionType): string {
   return TYPE_LABELS[type] ?? String(type);
 }
 
+/** Select-value prefix for a saved named broadcast group (PROD-061). */
+const GROUP_PREFIX = "group:";
+
 /**
  * Scope-selection flow shown when the user clicks the broadcast toolbar toggle
  * (#1956). Presents the three scopes — **All terminals**, **All in current
@@ -46,6 +53,12 @@ function typeLabel(type: ConnectionType): string {
  * Non-terminal tabs (editors, SFTP) never appear. On confirm it resolves the
  * chosen scope to a concrete target set, starts broadcast, and persists the
  * scope as `lastBroadcastScope` (via `startBroadcast`).
+ *
+ * Saved named broadcast groups (PROD-061, #3443) appear as extra scopes: a
+ * group resolves to the open terminals of its saved connections and starts a
+ * frozen (`custom`) broadcast, listing exactly which terminals receive input and
+ * which members are not open. The custom picker can save its selection as a
+ * group.
  *
  * Composed from the shared UI primitives (Modal/Select/Checkbox/Button).
  */
@@ -68,7 +81,15 @@ export function BroadcastScopeDialog({
     [tabGroups, activeTabGroupId, rootPanel]
   );
 
-  const [scope, setScope] = useState<BroadcastScope>(lastBroadcastScope);
+  const groups = useBroadcastGroups();
+  // `all` / `panel` / `custom`, or `group:<id>` for a saved named group.
+  const [scopeValue, setScopeValue] = useState<string>(lastBroadcastScope);
+  const isGroupScope = scopeValue.startsWith(GROUP_PREFIX);
+  const selectedGroup = isGroupScope
+    ? (groups.find((g) => `${GROUP_PREFIX}${g.id}` === scopeValue) ?? null)
+    : null;
+  // A named group broadcasts as a frozen custom selection (no auto-joining).
+  const scope: BroadcastScope = isGroupScope ? "custom" : (scopeValue as BroadcastScope);
   const [customSelected, setCustomSelected] = useState<Set<string>>(new Set());
 
   // Terminal tabs in the active group — the only broadcast-eligible tabs and the
@@ -86,7 +107,7 @@ export function BroadcastScopeDialog({
   // actionable.
   useEffect(() => {
     if (open) {
-      setScope(lastBroadcastScope);
+      setScopeValue(lastBroadcastScope);
       setCustomSelected(new Set(terminalTabs.map((t) => t.id)));
     }
   }, [open, lastBroadcastScope, terminalTabs]);
@@ -106,19 +127,45 @@ export function BroadcastScopeDialog({
       { value: "all", label: `All terminals (${allCount})` },
       { value: "panel", label: `All in current panel (${panelCount})` },
       { value: "custom", label: "Custom selection…" },
+      ...groups.map((g) => ({
+        value: `${GROUP_PREFIX}${g.id}`,
+        label: `Group "${g.name}" (${resolveBroadcastGroup(terminalTabs, g).tabIds.length} open)`,
+      })),
     ],
-    [allCount, panelCount]
+    [allCount, panelCount, groups, terminalTabs]
+  );
+
+  const groupResolution = useMemo(
+    () => (selectedGroup ? resolveBroadcastGroup(terminalTabs, selectedGroup) : null),
+    [selectedGroup, terminalTabs]
   );
 
   // The concrete target set the chosen scope resolves to.
   const resolvedTargets = useMemo<string[]>(() => {
     if (!sourceTabId) return [];
+    // A group that vanished (deleted in another window) resolves to nothing —
+    // never silently to a broader scope.
+    if (isGroupScope) return groupResolution?.tabIds ?? [];
     if (scope === "custom") {
       const terminalIds = new Set(terminalTabs.map((t) => t.id));
       return [...customSelected].filter((id) => terminalIds.has(id));
     }
     return resolveBroadcastTargetTabIds(resolveState, scope, sourceTabId);
-  }, [scope, sourceTabId, resolveState, customSelected, terminalTabs]);
+  }, [
+    scope,
+    sourceTabId,
+    resolveState,
+    customSelected,
+    terminalTabs,
+    groupResolution,
+    isGroupScope,
+  ]);
+
+  const groupable = useMemo(
+    () => groupableConnectionIds(terminalTabs, customSelected),
+    [terminalTabs, customSelected]
+  );
+  const titleOf = (tabId: string) => terminalTabs.find((t) => t.id === tabId)?.title ?? tabId;
 
   const canStart = sourceTabId !== null && resolvedTargets.length > 0;
 
@@ -129,6 +176,17 @@ export function BroadcastScopeDialog({
       else next.delete(tabId);
       return next;
     });
+  };
+
+  const handleDeleteGroup = async () => {
+    if (!selectedGroup) return;
+    try {
+      await deleteBroadcastGroup(selectedGroup.id);
+      toast.success(`Deleted broadcast group "${selectedGroup.name}"`);
+      setScopeValue("custom");
+    } catch (err) {
+      toast.error(`Failed to delete broadcast group: ${errorMessage(err)}`);
+    }
   };
 
   const handleStart = () => {
@@ -144,6 +202,9 @@ export function BroadcastScopeDialog({
       title="Broadcast Input"
       description="Choose which terminals receive broadcast input"
       onKeyDown={(e) => {
+        // Enter a focused control already consumed (opening the scope Select,
+        // saving a group name) must not also start broadcasting.
+        if (e.defaultPrevented) return;
         if (e.key === "Enter" && canStart) handleStart();
       }}
       data-testid="broadcast-scope-dialog"
@@ -162,22 +223,58 @@ export function BroadcastScopeDialog({
             disabled={!canStart}
             data-testid="broadcast-scope-confirm"
           >
-            Start Broadcast
+            {`Start Broadcast (${resolvedTargets.length + (sourceTabId && !resolvedTargets.includes(sourceTabId) ? 1 : 0)})`}
           </Button>
         </>
       }
     >
       <Field label="Broadcast to" htmlFor="broadcast-scope-select">
         <Select
-          value={scope}
-          onChange={(v) => setScope(v as BroadcastScope)}
+          value={scopeValue}
+          onChange={setScopeValue}
           options={scopeOptions}
           aria-label="Broadcast scope"
           data-testid="broadcast-scope-select"
         />
       </Field>
 
-      {scope === "custom" && (
+      {selectedGroup && groupResolution && (
+        <div className="broadcast-scope-dialog__custom" data-testid="broadcast-group-summary">
+          {groupResolution.tabIds.length === 0 ? (
+            <EmptyState title="None of this group's connections are open in this tab group." />
+          ) : (
+            <ul className="broadcast-scope-dialog__list" data-testid="broadcast-group-members">
+              {groupResolution.tabIds.map((tabId) => (
+                <li key={tabId} className="broadcast-scope-dialog__row">
+                  <span className="broadcast-scope-dialog__row-title">{titleOf(tabId)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {groupResolution.missingConnectionIds.length > 0 && (
+            <p className="broadcast-scope-dialog__note" role="status">
+              {`${groupResolution.missingConnectionIds.length} saved connection${
+                groupResolution.missingConnectionIds.length === 1 ? " is" : "s are"
+              } not open and will not receive input.`}
+            </p>
+          )}
+          {sourceTabId && !groupResolution.tabIds.includes(sourceTabId) && (
+            <p className="broadcast-scope-dialog__note" role="status">
+              {`You type in "${titleOf(sourceTabId)}", which is not in this group — it receives the input too.`}
+            </p>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleDeleteGroup}
+            data-testid="broadcast-group-delete"
+          >
+            Delete group
+          </Button>
+        </div>
+      )}
+
+      {scope === "custom" && !isGroupScope && (
         <div className="broadcast-scope-dialog__custom">
           <div className="broadcast-scope-dialog__custom-actions">
             <Button
@@ -222,6 +319,11 @@ export function BroadcastScopeDialog({
               })}
             </ul>
           )}
+          <BroadcastGroupSaveRow
+            connectionIds={groupable.connectionIds}
+            unsavedCount={groupable.unsavedCount}
+            onSaved={(group) => setScopeValue(`${GROUP_PREFIX}${group.id}`)}
+          />
         </div>
       )}
     </Modal>

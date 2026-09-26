@@ -1985,6 +1985,43 @@ export function resolveBroadcastTargetTabIds(
 }
 
 /**
+ * The subset of `tabIds` that are *connected* terminal tabs able to receive
+ * input right now — live, terminal content, backed by a session, status
+ * `connected`, and not taken over by another desktop/window (SM-003 / #3368).
+ * Order follows `tabIds`. The single connected-terminal filter shared by the
+ * broadcast fan-out ({@link AppState.getBroadcastTargetTabIds}) and multi-target
+ * macro playback (PROD-042, #3443), so both skip exactly the same tabs.
+ */
+export function filterConnectedTerminalTabIds(state: AppState, tabIds: Iterable<string>): string[] {
+  // Connect / reconnect / disconnect-error / exited status is sourced from the
+  // shared `session-lifecycle` region — the sole authority since the `appStore`
+  // twins were removed (#2205 PR-B / #2625); only spawn errors stay per-client.
+  const sessionView = currentSessionView();
+  const statusMaps: TabStatusMaps = {
+    terminalConnecting: effectiveConnectingMap(sessionView),
+    terminalReconnectingTabs: effectiveReconnectingMap(sessionView),
+    terminalSpawnErrors: state.terminalSpawnErrors,
+    terminalDisconnectErrors: effectiveDisconnectErrorMap(sessionView),
+    terminalExitedTabs: effectiveExitedMap(sessionView),
+    // SM-003: a tab another desktop took over must never receive input.
+    terminalEvicted: effectiveEvictedMap(sessionView),
+  };
+  const tabsById = new Map(collectLiveTabs(state).map((t) => [t.id, t]));
+  const result: string[] = [];
+  for (const tabId of tabIds) {
+    const tab = tabsById.get(tabId);
+    // Only connected terminal sessions receive input. Disconnected/
+    // connecting sessions and non-terminal tabs are skipped silently.
+    if (!tab || tab.contentType !== "terminal" || !tab.sessionId) continue;
+    if (deriveTabStatus(statusMaps, tabId) !== "connected") continue;
+    // #3368: nor a tab whose session another window took over.
+    if (state.isSessionWindowEvicted(tab.sessionId)) continue;
+    result.push(tabId);
+  }
+  return result;
+}
+
+/**
  * Derive the monitor key for a tab: the id of the terminal session that owns the
  * monitor. Every monitor — desktop-direct SSH and remote-session alike — routes
  * through the session-based `MonitoringProvider` push path (#1232), so the key is
@@ -6261,33 +6298,7 @@ export const useAppStore = create<AppState>((set, get, store) => {
     getBroadcastTargetTabIds: () => {
       const view = currentBroadcastView();
       if (!view.active) return [];
-      const state = get();
-      // Connect / reconnect / disconnect-error / exited status is sourced from the
-      // shared `session-lifecycle` region — the sole authority since the `appStore`
-      // twins were removed (#2205 PR-B / #2625); only spawn errors stay per-client.
-      const sessionView = currentSessionView();
-      const statusMaps: TabStatusMaps = {
-        terminalConnecting: effectiveConnectingMap(sessionView),
-        terminalReconnectingTabs: effectiveReconnectingMap(sessionView),
-        terminalSpawnErrors: state.terminalSpawnErrors,
-        terminalDisconnectErrors: effectiveDisconnectErrorMap(sessionView),
-        terminalExitedTabs: effectiveExitedMap(sessionView),
-        // SM-003: a tab another desktop took over must never receive input.
-        terminalEvicted: effectiveEvictedMap(sessionView),
-      };
-      const tabsById = new Map(collectLiveTabs(state).map((t) => [t.id, t]));
-      const result: string[] = [];
-      for (const tabId of view.targetTabIds) {
-        const tab = tabsById.get(tabId);
-        // Only connected terminal sessions receive input. Disconnected/
-        // connecting sessions and non-terminal tabs are skipped silently.
-        if (!tab || tab.contentType !== "terminal" || !tab.sessionId) continue;
-        if (deriveTabStatus(statusMaps, tabId) !== "connected") continue;
-        // #3368: nor a tab whose session another window took over.
-        if (state.isSessionWindowEvicted(tab.sessionId)) continue;
-        result.push(tabId);
-      }
-      return result;
+      return filterConnectedTerminalTabIds(get(), view.targetTabIds);
     },
 
     refreshBroadcastMembership: () => {

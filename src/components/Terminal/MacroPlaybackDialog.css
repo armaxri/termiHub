@@ -7,3 +7,18 @@
 .macro-playback-dialog__hint {
   margin-top: var(--spacing-sm);
 }
+
+.macro-playback-dialog__warning {
+  margin: 0 0 var(--spacing-sm);
+  padding: var(--spacing-sm);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-md);
+  background: var(--bg-warning);
+}
+
+.macro-playback-dialog__targets {
+  margin: 0;
+  padding-left: var(--spacing-lg);
+  max-height: 200px;
+  overflow-y: auto;
+}

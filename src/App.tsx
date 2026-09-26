@@ -355,6 +355,7 @@ function App() {
           <LargePasteDialog
             open={largePasteDialog.open}
             charCount={largePasteDialog.charCount}
+            broadcastTargetCount={largePasteDialog.broadcastTargetCount}
             onConfirm={() => {
               largePasteDialog.onConfirm?.();
               closeLargePasteDialog();

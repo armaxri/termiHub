@@ -35,6 +35,18 @@ import { isFitReady, isProposedFitSafe } from "./safeFit";
 const LARGE_PASTE_THRESHOLD = 5000;
 
 /**
+ * The number of connected broadcast targets a paste into `tabId` would reach
+ * when it is multi-line and `tabId` is the active broadcast source, else `0`.
+ * Drives the multi-line broadcast paste confirmation (#3443).
+ */
+function broadcastPasteTargetCount(tabId: string, text: string): number {
+  if (!/[\r\n]/.test(text)) return 0;
+  const view = currentBroadcastView();
+  if (!view.active || view.sourceTabId !== tabId) return 0;
+  return useAppStore.getState().getBroadcastTargetTabIds().length;
+}
+
+/**
  * Build the decoration options passed to every search so the search addon
  * highlights all matches AND emits `onDidChangeResults` (the addon only fires
  * that event — the source of the "current / total" count — when `decorations`
@@ -493,8 +505,13 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
         await pasteInto(tabId, sessionId);
       };
 
-      if (text.length > LARGE_PASTE_THRESHOLD) {
-        useAppStore.getState().showLargePasteDialog(text.length, doPaste);
+      // A multi-line paste from a broadcast source would run on every target at
+      // once, so it always asks first and names the target count (#3443).
+      const broadcastTargetCount = broadcastPasteTargetCount(tabId, text);
+      if (text.length > LARGE_PASTE_THRESHOLD || broadcastTargetCount > 1) {
+        useAppStore
+          .getState()
+          .showLargePasteDialog(text.length, doPaste, broadcastTargetCount || undefined);
       } else {
         await doPaste();
       }
