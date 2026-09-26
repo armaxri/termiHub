@@ -5,11 +5,7 @@ use std::{future::Future, sync::Arc, vec};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
-        mpsc::{
-            channel,
-            error::{TryRecvError, TrySendError},
-            Receiver, Sender,
-        },
+        mpsc::{channel, error::TryRecvError, Receiver, Sender},
         oneshot, Mutex,
     },
 };
@@ -64,7 +60,8 @@ impl ImageRect {
 
 /// Largest desktop name accepted in `ServerInit` (termiHub fork, #3473). The
 /// length is a server-chosen `u32`; upstream allocated it verbatim (up to 4 GiB).
-const MAX_DESKTOP_NAME_BYTES: u32 = 64 * 1024;
+/// Lowered from 64 KiB to upstream 0.6.0's 4 KiB bound (#3499).
+const MAX_DESKTOP_NAME_BYTES: u32 = 4096;
 
 /// Run one of the client's internal tasks with a panic boundary (termiHub fork,
 /// #3473). A panic in the decoder must never take the host down silently: it is
@@ -132,7 +129,7 @@ impl VncInner {
             .await?;
 
         trace!("client encodings: {:?}", encodings);
-        send_client_encoding(&mut stream, encodings).await?;
+        send_client_encoding(&mut stream, encodings.clone()).await?;
 
         trace!("Require the first frame");
         input_ch_tx
@@ -167,23 +164,22 @@ impl VncInner {
                 // format when the caller did not choose one).
                 let pf = pixel_format.unwrap_or_default();
                 let pf = &pf;
-                if let Err(e) =
-                    asycn_vnc_read_loop(&mut conn_ch_rx, pf, &output_func, decoding_stop_rx).await
-                {
-                    if let VncError::IoError(e) = e {
-                        if let std::io::ErrorKind::UnexpectedEof = e.kind() {
-                            // this should be a normal case when the network connection disconnects
-                            // and we just send an EOF over the inner bridge between the process thread and the decode thread
-                            // do nothing here
-                        } else {
-                            error!("Error occurs during the decoding {:?}", e);
-                            let _ =
-                                output_func(VncEvent::Error(Arc::new(VncError::IoError(e)))).await;
-                        }
-                    } else {
-                        error!("Error occurs during the decoding {:?}", e);
-                        let _ = output_func(VncEvent::Error(Arc::new(e))).await;
-                    }
+                let mut decoding_stop_rx = decoding_stop_rx;
+                let result = asycn_vnc_read_loop(
+                    &mut conn_ch_rx,
+                    pf,
+                    &output_func,
+                    &mut decoding_stop_rx,
+                    &encodings,
+                    (width, height),
+                )
+                .await;
+                // termiHub fork (#3499, upstream 6acf3da): release the network
+                // bridge before waiting for output capacity, so the connection
+                // task is never kept alive by a decoder parked on a full queue.
+                drop(conn_ch_rx);
+                if let Err(e) = result {
+                    report_decoder_error(e, &output_ch_tx, &mut decoding_stop_rx).await;
                 }
                 trace!("Decoding thread stops");
             },
@@ -219,7 +215,8 @@ impl VncInner {
         })
     }
 
-    async fn input(&mut self, event: X11Event) -> Result<(), VncError> {
+    /// Translate a frontend event into the client message to send.
+    fn input_message(&self, event: X11Event) -> Result<ClientMsg, VncError> {
         if self.closed {
             Err(VncError::ClientNotRunning)
         } else {
@@ -248,8 +245,7 @@ impl VncInner {
                 }
                 X11Event::CopyText(text) => ClientMsg::ClientCutText(text),
             };
-            self.input_ch.send(msg).await?;
-            Ok(())
+            Ok(msg)
         }
     }
 
@@ -330,7 +326,21 @@ impl VncClient {
     /// Input a `X11Event` from the frontend
     ///
     pub async fn input(&self, event: X11Event) -> Result<(), VncError> {
-        self.inner.lock().await.input(event).await
+        // termiHub fork (#3499, upstream dea233d): never hold the client mutex
+        // while waiting for input-queue capacity. Upstream awaited `send` under
+        // the lock, so a server that stops reading (full socket -> full queue)
+        // wedged `poll_event`, `recv_event` *and* `close` on the same mutex.
+        let sender = {
+            let inner = self.inner.lock().await;
+            if inner.closed {
+                return Err(VncError::ClientNotRunning);
+            }
+            inner.input_ch.clone()
+        };
+        let permit = sender.reserve().await?;
+        let msg = self.inner.lock().await.input_message(event)?;
+        permit.send(msg);
+        Ok(())
     }
 
     /// Receive a `VncEvent` from the engine
@@ -392,6 +402,8 @@ where
 
     let screen_width = stream.read_u16().await?;
     let screen_height = stream.read_u16().await?;
+    // termiHub fork (#3499, upstream 623b894): bound the initial framebuffer.
+    codec::validate_screen(screen_width, screen_height)?;
     let mut send_our_pf = false;
 
     output_func(VncEvent::SetResolution(
@@ -401,6 +413,10 @@ where
 
     let pixel_format = PixelFormat::read(stream).await?;
     if pf.is_none() {
+        // termiHub fork (#3499, upstream 1c07e2c): the server's format is only
+        // validated when the client will actually decode with it; a caller-set
+        // format was validated by `VncConnector::build` and replaces it.
+        pixel_format.validate()?;
         output_func(VncEvent::SetPixelFormat(pixel_format)).await?;
         let _ = pf.insert(pixel_format);
     } else {
@@ -437,11 +453,62 @@ where
     Ok(())
 }
 
+/// Report a decoder failure to the consumer (termiHub fork, #3499 — adapted
+/// from upstream 6acf3da). A normal disconnect (bridge EOF) is silent. Waiting
+/// for output capacity races the stop signal, so `close()` never leaves the
+/// decoder task parked on a consumer that stopped draining.
+async fn report_decoder_error(
+    error: VncError,
+    output: &Sender<VncEvent>,
+    stop: &mut oneshot::Receiver<()>,
+) {
+    if let VncError::IoError(e) = &error {
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            // The network bridge closes with EOF on a normal disconnection.
+            return;
+        }
+    }
+    error!("Error occurs during the decoding {:?}", error);
+    tokio::select! {
+        biased;
+        _ = stop => {}
+        _ = output.send(VncEvent::Error(Arc::new(error))) => {}
+    }
+}
+
+/// The decoding loop, cancelled as a whole by `stop_ch` (termiHub fork, #3499,
+/// upstream dea233d): upstream only checked the stop signal between messages,
+/// so a decoder blocked mid-message (or on a full output queue) ignored
+/// `close()`.
+///
+/// `encodings` is the list the client sent in `SetEncodings`; `screen` is the
+/// framebuffer size from `ServerInit`, tracked through `DesktopSize` updates.
 pub(super) async fn asycn_vnc_read_loop<S, F, Fut>(
     stream: &mut S,
     pf: &PixelFormat,
     output_func: &F,
-    mut stop_ch: oneshot::Receiver<()>,
+    stop_ch: &mut oneshot::Receiver<()>,
+    encodings: &[VncEncoding],
+    screen: (u16, u16),
+) -> Result<(), VncError>
+where
+    S: AsyncRead + Unpin,
+    F: Fn(VncEvent) -> Fut,
+    Fut: Future<Output = Result<(), VncError>>,
+{
+    tokio::select! {
+        biased;
+        _ = stop_ch => Ok(()),
+        result = read_vnc_messages(stream, pf, output_func, encodings, screen) => result,
+    }
+}
+
+async fn read_vnc_messages<S, F, Fut>(
+    stream: &mut S,
+    pf: &PixelFormat,
+    output_func: &F,
+    encodings: &[VncEncoding],
+    mut screen: (u16, u16),
 ) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
@@ -455,14 +522,22 @@ where
     let mut cursor = codec::CursorDecoder::new();
 
     // main decoding loop
-    while let Err(oneshot::error::TryRecvError::Empty) = stop_ch.try_recv() {
+    loop {
         let server_msg = ServerMsg::read(stream).await?;
         trace!("Server message got: {:?}", server_msg);
         match server_msg {
             ServerMsg::FramebufferUpdate(rect_num) => {
                 for _ in 0..rect_num {
                     let rect = ImageRect::read(stream).await?;
-                    // trace!("Encoding: {:?}", rect.encoding);
+
+                    // termiHub fork (#3499, upstream 623b894): the server may only
+                    // use an encoding the client asked for (Raw is always allowed).
+                    if rect.encoding != VncEncoding::Raw && !encodings.contains(&rect.encoding) {
+                        return Err(VncError::Protocol(format!(
+                            "server used encoding {:?} that the client did not negotiate",
+                            rect.encoding
+                        )));
+                    }
 
                     // termiHub fork (#3473): bound the server-chosen geometry of
                     // every pixel-carrying rectangle before a decoder allocates
@@ -478,6 +553,9 @@ where
                             | VncEncoding::Zrle
                     ) {
                         codec::validate_image_rect(&rect.rect)?;
+                        // termiHub fork (#3499, upstream 623b894): and it must lie
+                        // inside the current framebuffer.
+                        codec::validate_rect_on_screen(&rect.rect, screen)?;
                     }
 
                     match rect.encoding {
@@ -493,6 +571,7 @@ where
                             src_rect.x = source_x;
                             src_rect.y = source_y;
                             codec::validate_image_rect(&src_rect)?;
+                            codec::validate_rect_on_screen(&src_rect, screen)?;
                             output_func(VncEvent::Copy(rect.rect, src_rect)).await?;
                         }
                         VncEncoding::Tight => {
@@ -514,6 +593,10 @@ where
                             cursor.decode(pf, &rect.rect, stream, output_func).await?;
                         }
                         VncEncoding::DesktopSizePseudo => {
+                            // termiHub fork (#3499, upstream 623b894): bound the new
+                            // size and track it for the on-screen checks above.
+                            codec::validate_screen(rect.rect.width, rect.rect.height)?;
+                            screen = (rect.rect.width, rect.rect.height);
                             output_func(VncEvent::SetResolution(
                                 (rect.rect.width, rect.rect.height).into(),
                             ))
@@ -546,7 +629,6 @@ where
             }
         }
     }
-    Ok(())
 }
 
 async fn async_connection_process_loop<S>(
@@ -561,52 +643,56 @@ where
     let mut buffer = [0; 65535];
     let mut pending = 0;
 
-    // main traffic loop
+    // termiHub fork (#3499, upstream dea233d): upstream retried a bridge
+    // `try_send` only when some *other* select arm fired, so once the decoder
+    // queue filled the task could sleep forever with data pending (reads are
+    // disabled while `pending > 0`). Reserving capacity inside the select wakes
+    // it the moment the decoder frees a slot. Socket writes also race the stop
+    // signal, so `close()` cancels a write blocked on a server that stopped
+    // reading.
     loop {
-        if pending > 0 {
-            match conn_ch.try_send(Ok(buffer[0..pending].to_owned())) {
-                Err(TrySendError::Full(_message)) => (),
-                Err(TrySendError::Closed(_message)) => break,
-                Ok(()) => pending = 0,
-            }
-        }
-
         tokio::select! {
             _ = &mut stop_ch => break,
+            _ = conn_ch.closed() => break,
+            permit = conn_ch.reserve(), if pending > 0 => {
+                match permit {
+                    Ok(permit) => {
+                        permit.send(Ok(buffer[..pending].to_vec()));
+                        pending = 0;
+                    }
+                    Err(_) => break,
+                }
+            }
             result = stream.read(&mut buffer), if pending == 0 => {
                 match result {
-                    Ok(nread) => {
-                        if nread > 0 {
-                            match conn_ch.try_send(Ok(buffer[0..nread].to_owned())) {
-                                Err(TrySendError::Full(_message)) => pending = nread,
-                                Err(TrySendError::Closed(_message)) => break,
-                                Ok(()) => ()
-                            }
-                        } else {
-                            // According to the tokio's Doc
-                            // https://docs.rs/tokio/latest/tokio/io/trait.AsyncRead.html
-                            // if nread == 0, then EOF is reached
-                            trace!("Net Connection EOF detected");
-                            break;
-                        }
+                    // According to the tokio's Doc
+                    // https://docs.rs/tokio/latest/tokio/io/trait.AsyncRead.html
+                    // if nread == 0, then EOF is reached
+                    Ok(0) => {
+                        trace!("Net Connection EOF detected");
+                        break;
                     }
+                    Ok(nread) => pending = nread,
                     Err(e) => {
                         error!("{}", e.to_string());
                         break;
                     }
                 }
             }
-            Some(msg) = input_ch.recv() => {
-                msg.write(&mut stream).await?;
+            msg = input_ch.recv() => {
+                let Some(msg) = msg else { break };
+                tokio::select! {
+                    biased;
+                    _ = &mut stop_ch => break,
+                    result = msg.write(&mut stream) => result?,
+                }
             }
         }
     }
 
-    // notify the decoding thread
-    let _ = conn_ch
-        .send(Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof)))
-        .await;
-
+    // Dropping `conn_ch` ends the bridge, which the decoder reads as EOF.
+    // Upstream `send().await`ed an explicit EOF here, which blocked shutdown for
+    // as long as the decoder's queue stayed full.
     Ok(())
 }
 
@@ -639,6 +725,67 @@ mod tests {
         let (tx, mut rx) = channel(4);
         run_guarded("decoder", async {}, Some(tx)).await;
         assert!(rx.recv().await.is_none());
+    }
+
+    /// termiHub fork (#3499, upstream dea233d): once the decoder bridge is
+    /// full, the connection task must resume as soon as the decoder frees a
+    /// slot. Upstream parked with data pending and no arm that could wake it.
+    #[tokio::test]
+    async fn network_bridge_resumes_when_the_decoder_frees_a_slot() {
+        let (mut server, client) = tokio::io::duplex(16);
+        let (_input_tx, input_rx) = channel(1);
+        let (conn_tx, mut conn_rx) = channel(1);
+        let (_stop_tx, stop_rx) = oneshot::channel();
+        let task = spawn(async_connection_process_loop(
+            client, input_rx, conn_tx, stop_rx,
+        ));
+
+        let total = 16 * 64;
+        let writer = spawn(async move {
+            for i in 0..64u8 {
+                server.write_all(&[i; 16]).await.unwrap();
+            }
+            server
+        });
+        // Drain slowly: every chunk must arrive even though the bridge holds
+        // only one message and each read leaves the task with data pending.
+        let mut received = Vec::new();
+        while received.len() < total {
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+            let chunk = tokio::time::timeout(std::time::Duration::from_secs(5), conn_rx.recv())
+                .await
+                .expect("the connection task stalled with data pending")
+                .unwrap()
+                .unwrap();
+            received.extend(chunk);
+        }
+        let expected: Vec<u8> = (0..64u8).flat_map(|i| [i; 16]).collect();
+        assert_eq!(received, expected);
+        drop(writer.await.unwrap()); // server EOF
+        assert!(conn_rx.recv().await.is_none(), "EOF closes the bridge");
+        task.await.unwrap().unwrap();
+    }
+
+    /// Dropping the bridge on exit must not wait for decoder capacity
+    /// (upstream `send().await`ed an explicit EOF into a possibly full queue).
+    #[tokio::test]
+    async fn stopping_does_not_block_on_a_full_bridge() {
+        let (mut server, client) = tokio::io::duplex(64);
+        let (_input_tx, input_rx) = channel(1);
+        let (conn_tx, conn_rx) = channel(1);
+        let (stop_tx, stop_rx) = oneshot::channel();
+        let task = spawn(async_connection_process_loop(
+            client, input_rx, conn_tx, stop_rx,
+        ));
+        server.write_all(&[1; 64]).await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        stop_tx.send(()).unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), task)
+            .await
+            .expect("stop must not wait on a full bridge")
+            .unwrap()
+            .unwrap();
+        drop(conn_rx);
     }
 
     #[tokio::test]

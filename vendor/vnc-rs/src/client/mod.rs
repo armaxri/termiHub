@@ -5,6 +5,8 @@ pub mod connector;
 mod hostile_server_tests;
 mod messages;
 mod security;
+#[cfg(test)]
+mod upstream_060_tests;
 #[cfg(feature = "vencrypt")]
 mod vencrypt;
 

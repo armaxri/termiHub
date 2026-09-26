@@ -29,6 +29,8 @@ mod host_clipboard_watch;
 mod input;
 mod keymap;
 mod rdp;
+#[cfg(test)]
+mod rdpsnd_fork_tests;
 mod sandbox;
 
 use anyhow::{bail, Context, Result};

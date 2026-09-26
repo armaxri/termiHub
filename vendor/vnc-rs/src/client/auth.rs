@@ -24,17 +24,29 @@ impl TryFrom<u8> for SecurityType {
     type Error = VncError;
     fn try_from(num: u8) -> Result<Self, Self::Error> {
         match num {
-            0 | 1 | 2 | 5 | 6 | 16 | 17 | 18 | 19 | 20 | 21 | 22 => {
-                Ok(unsafe { std::mem::transmute::<u8, SecurityType>(num) })
-            }
+            // termiHub fork (#3499, upstream b266a3f/6adeb0d): an explicit
+            // match instead of a guarded `transmute`.
+            0 => Ok(Self::Invalid),
+            1 => Ok(Self::None),
+            2 => Ok(Self::VncAuth),
+            5 => Ok(Self::RA2),
+            6 => Ok(Self::RA2ne),
+            16 => Ok(Self::Tight),
+            17 => Ok(Self::Ultra),
+            18 => Ok(Self::Tls),
+            19 => Ok(Self::VeNCrypt),
+            20 => Ok(Self::GtkVncSasl),
+            21 => Ok(Self::Md5Hash),
+            22 => Ok(Self::ColinDeanXvp),
             invalid => Err(VncError::InvalidSecurityTyep(invalid)),
         }
     }
 }
 
 /// Largest failure-reason string accepted from the server (termiHub fork,
-/// #3473). Longer reasons are truncated to this many bytes.
-pub(super) const MAX_REASON_BYTES: u32 = 64 * 1024;
+/// #3473). Longer reasons are truncated to this many bytes. Lowered from 64 KiB
+/// to upstream 0.6.0's 4 KiB bound (#3499): a reason is a one-line message.
+pub(super) const MAX_REASON_BYTES: u32 = 4096;
 
 /// Read an RFB failure reason (`U32 length` + bytes) with a bounded buffer.
 ///
@@ -68,7 +80,17 @@ impl SecurityType {
         match version {
             VncVersion::RFB33 => {
                 let security_type = reader.read_u32().await?;
-                let security_type = (security_type as u8).try_into()?;
+                // RFB 3.3 only allows 0, 1 or 2 here. termiHub fork (#3499,
+                // upstream 6adeb0d): reject anything else *before* narrowing to
+                // `u8` — `257 as u8` is 1 (None), silently skipping authentication.
+                let security_type = match security_type {
+                    0..=2 => (security_type as u8).try_into()?,
+                    other => {
+                        return Err(VncError::Protocol(format!(
+                            "RFB 3.3 server sent invalid security type {other}"
+                        )))
+                    }
+                };
                 if let SecurityType::Invalid = security_type {
                     return Err(VncError::General(read_reason(reader).await?));
                 }
@@ -89,7 +111,12 @@ impl SecurityType {
                 }
                 let mut sec_types = vec![];
                 for _ in 0..num {
-                    sec_types.push(reader.read_u8().await?.try_into()?);
+                    // termiHub fork (#3499, upstream 6adeb0d): skip security types
+                    // we do not know instead of aborting the handshake — the
+                    // server offers a list and we only ever pick a known entry.
+                    if let Ok(kind) = SecurityType::try_from(reader.read_u8().await?) {
+                        sec_types.push(kind);
+                    }
                 }
                 tracing::trace!("Server supported security type: {:?}", sec_types);
                 Ok(sec_types)
@@ -107,16 +134,36 @@ impl SecurityType {
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub(super) enum AuthResult {
     Ok = 0,
     Failed = 1,
 }
 
-impl From<u32> for AuthResult {
-    fn from(num: u32) -> Self {
-        unsafe { std::mem::transmute(num) }
+/// termiHub fork (#3499, upstream b266a3f): upstream `transmute`d the
+/// server-chosen `u32` into this two-variant enum — undefined behaviour for any
+/// value other than 0 or 1. Unknown results are now a typed protocol error.
+impl TryFrom<u32> for AuthResult {
+    type Error = VncError;
+
+    fn try_from(num: u32) -> Result<Self, Self::Error> {
+        match num {
+            0 => Ok(Self::Ok),
+            1 => Ok(Self::Failed),
+            other => Err(VncError::Protocol(format!(
+                "server sent unknown SecurityResult {other}"
+            ))),
+        }
     }
+}
+
+/// Read a `SecurityResult` word (RFB 7.1.3) as a checked [`AuthResult`].
+pub(super) async fn read_auth_result<S>(reader: &mut S) -> Result<AuthResult, VncError>
+where
+    S: AsyncRead + Unpin,
+{
+    reader.read_u32().await?.try_into()
 }
 
 impl From<AuthResult> for u32 {
@@ -169,7 +216,6 @@ impl AuthHelper {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        let result = reader.read_u32().await?;
-        Ok(result.into())
+        read_auth_result(reader).await
     }
 }
