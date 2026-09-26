@@ -35,14 +35,17 @@ pub mod state;
 // pure queue machinery above around one backend's streaming primitive, so both
 // the desktop backend and the remote agent reuse one implementation. Gated on
 // the backend feature they depend on: `ftp` (`crate::backends::ftp`) and `ssh`
-// (`crate::backends::ssh`). The public executors return `()` — no error escapes.
+// (`crate::backends::ssh`); the local-disk executor on `local-transfer`. The
+// public executors return `()` — no error escapes.
 // Shared attempt orchestration for the offset-resuming executors (PARITY-004).
-#[cfg(any(feature = "ssh", feature = "docker"))]
+#[cfg(any(feature = "ssh", feature = "docker", feature = "local-transfer"))]
 mod attempt;
 #[cfg(feature = "docker")]
 pub mod docker;
 #[cfg(feature = "ftp")]
 pub mod ftp;
+#[cfg(feature = "local-transfer")]
+pub mod local;
 #[cfg(feature = "ssh")]
 pub mod sftp;
 

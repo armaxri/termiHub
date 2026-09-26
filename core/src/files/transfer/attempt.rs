@@ -1,6 +1,6 @@
 //! Backend-neutral attempt orchestration shared by the offset-resuming transfer
-//! executors — SFTP ([`super::sftp`]) and Docker ([`super::docker`])
-//! (PARITY-004, #3567).
+//! executors — SFTP (`super::sftp`), Docker (`super::docker`) and the local disk
+//! (`super::local`) (PARITY-004, #3567).
 //!
 //! Lifted out of the SFTP executor so every streaming backend drives the queue
 //! state machine the same way:
@@ -54,7 +54,13 @@ pub(super) enum AttemptOutcome {
     },
     /// The peer cannot continue from a non-zero offset (a server rejecting the
     /// seek/append open, a container lacking the offset-read tool); the caller
-    /// restarts this stint from byte zero.
+    /// restarts this stint from byte zero. Never produced by the local
+    /// executor (a local file can always be seeked), so it is unused when
+    /// `local-transfer` is the only executor compiled in.
+    #[cfg_attr(
+        not(any(feature = "ssh", feature = "docker")),
+        allow(dead_code)
+    )]
     ResumeRejected,
 }
 
