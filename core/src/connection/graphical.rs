@@ -877,15 +877,19 @@ pub trait GraphicalBackend: Send + Sync {
     /// The typed reason this backend's session ended fatally, when the backend
     /// learned one **after** `connect()` returned (#3390).
     ///
-    /// Backends that establish (and authenticate) inside `connect()` — VNC, the
-    /// mock — report failures from `connect()` itself and return `None` (the
-    /// default). The RDP sidecar negotiates asynchronously, so a rejected
+    /// Backends that establish (and authenticate) inside `connect()` report
+    /// connect failures from `connect()` itself. VNC returns
+    /// [`SessionError::ProtocolError`] once a running session ended because the
+    /// server sent data it cannot handle, or its driver panicked (#3479); the
+    /// mock returns `None` (the default). The RDP sidecar negotiates asynchronously, so a rejected
     /// credential only surfaces once its frame stream has closed; it then
     /// returns [`SessionError::AuthFailed`] for a credential rejection or
     /// [`SessionError::ConnectionFailed`] for any other connect-time failure.
     /// The session supervisor consults this when the frame stream ends, so an
     /// auth rejection rests in `AuthFailed` instead of burning auto-reconnect
-    /// attempts. `None` means "no typed reason" — an ordinary drop.
+    /// attempts, and a protocol error rests in `Disconnected` with its reason
+    /// instead of re-dialling into the same server behaviour. `None` means "no
+    /// typed reason" — an ordinary drop.
     fn fatal_error(&self) -> Option<SessionError> {
         None
     }

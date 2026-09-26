@@ -65,6 +65,27 @@ struct VncShared {
     view_only: bool,
     /// Whether server cursor shapes are rendered.
     show_remote_cursor: bool,
+    /// The typed reason the session ended because the server sent data this
+    /// client cannot handle (#3479), surfaced through
+    /// [`GraphicalBackend::fatal_error`]. Recorded by the driver **before** it
+    /// drops the frame sender, so it is set by the time the supervisor sees the
+    /// stream close. `None` for a transport drop or a user disconnect.
+    failure: StdMutex<Option<String>>,
+}
+
+impl VncShared {
+    /// Record the first fatal reason; later ones are consequences of it.
+    fn record_failure(&self, message: String) {
+        if let Ok(mut slot) = self.failure.lock() {
+            slot.get_or_insert(message);
+        }
+    }
+
+    /// The recorded reason as the shared typed error.
+    fn fatal_error(&self) -> Option<SessionError> {
+        let guard = self.failure.lock().ok()?;
+        guard.clone().map(SessionError::ProtocolError)
+    }
 }
 
 /// Live runtime of a connected VNC session.
@@ -273,6 +294,37 @@ fn map_vnc_err(e: VncError) -> SessionError {
     }
 }
 
+/// Lead-in of every user-facing VNC protocol-error message (#3479).
+const PROTOCOL_ERROR_PREFIX: &str = "The VNC server sent data termiHub can't handle";
+
+/// Classify an error that ended a running VNC session (#3479).
+///
+/// Returns the user-facing reason for a **server protocol failure** — data the
+/// server sent that this client cannot handle — or `None` for a transport-level
+/// end (connection reset, EOF, TLS/transport errors, a closed client), which
+/// stays an ordinary, retryable drop. A protocol failure is terminal: the
+/// supervisor does not auto-reconnect into it, because a re-dial would most
+/// likely meet the same server behaviour again.
+fn protocol_failure_reason(e: &VncError) -> Option<String> {
+    let detail = match e {
+        VncError::Protocol(msg) => msg.clone(),
+        VncError::UnsupportedEncoding(encoding) => format!("unsupported encoding {encoding}"),
+        VncError::WrongPixelFormat => "unsupported pixel format".to_string(),
+        VncError::InvalidImageData => "image data that cannot be decoded".to_string(),
+        VncError::WrongServerMessage => "an unknown server message".to_string(),
+        VncError::InvalidSecurityTyep(kind) => format!("unknown security type {kind}"),
+        VncError::Internal(msg) => return Some(internal_failure_reason(msg)),
+        _ => return None,
+    };
+    Some(format!("{PROTOCOL_ERROR_PREFIX}: {detail}"))
+}
+
+/// The user-facing reason for a caught panic in the VNC client or driver
+/// (#3473 / #3479). Treated like a protocol failure: terminal, no auto-retry.
+fn internal_failure_reason(detail: &str) -> String {
+    format!("The VNC session ended because of an internal client error: {detail}")
+}
+
 /// The driver task: polls decoded RFB events, maintains the shadow framebuffer,
 /// emits shared frame/cursor updates, mirrors the clipboard, and drives
 /// incremental framebuffer-update requests. Ends when cancelled or on RFB error.
@@ -309,6 +361,9 @@ async fn drive(
                         Ok(None) => break,
                         Err(e) => {
                             debug!(error = %e, "vnc session ended");
+                            if let Some(reason) = protocol_failure_reason(&e) {
+                                shared.record_failure(reason);
+                            }
                             return;
                         }
                     }
@@ -360,11 +415,13 @@ impl<F: std::future::Future> std::future::Future for CatchUnwind<F> {
 /// Task boundary for the VNC driver (#3473, belt-and-braces): the vendored
 /// client no longer panics on server input, but if anything in the driver ever
 /// does, contain it here and end the session cleanly. Unwinding drops the
-/// frame/cursor senders, so the graphical manager sees the stream close and
-/// moves the session to `Disconnected` exactly as for a network drop.
-async fn drive_guarded<F: std::future::Future<Output = ()>>(driver: F) {
+/// frame/cursor senders, so the graphical manager sees the stream close; the
+/// panic is recorded on `shared` as the session's typed fatal reason (#3479),
+/// so the session rests in `Disconnected` with that message and no auto-retry.
+async fn drive_guarded<F: std::future::Future<Output = ()>>(shared: Arc<VncShared>, driver: F) {
     if let Err(msg) = CatchUnwind(Box::pin(driver)).await {
         warn!(panic = %msg, "vnc driver panicked — session ended");
+        shared.record_failure(internal_failure_reason(&msg));
     }
 }
 
@@ -528,8 +585,14 @@ async fn handle_event(
             *shared.clipboard.lock().await = text;
             true
         }
-        VncEvent::Error(msg) => {
-            warn!(%msg, "vnc protocol error");
+        VncEvent::Error(err) => {
+            match protocol_failure_reason(&err) {
+                Some(reason) => {
+                    warn!(error = %err, "vnc protocol error — session ended");
+                    shared.record_failure(reason);
+                }
+                None => debug!(error = %err, "vnc transport error — session ended"),
+            }
             false
         }
         // Bell, SetPixelFormat — no shared surface to route to; safely ignored.
@@ -611,18 +674,22 @@ impl ConnectionType for Vnc {
             ptr_y: AtomicU32::new(0),
             view_only: cfg.view_only,
             show_remote_cursor: cfg.show_remote_cursor,
+            failure: StdMutex::new(None),
         });
         let cancel = CancellationToken::new();
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cursor_tx, cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
 
-        let task = tokio::spawn(drive_guarded(drive(
-            client.clone(),
+        let task = tokio::spawn(drive_guarded(
             shared.clone(),
-            cancel.clone(),
-            frame_tx,
-            cursor_tx,
-        )));
+            drive(
+                client.clone(),
+                shared.clone(),
+                cancel.clone(),
+                frame_tx,
+                cursor_tx,
+            ),
+        ));
 
         self.frame_rx = StdMutex::new(Some(frame_rx));
         self.cursor_rx = StdMutex::new(Some(cursor_rx));
@@ -779,6 +846,11 @@ impl GraphicalBackend for Vnc {
             .await
             .map_err(map_vnc_err)
     }
+    /// The server-protocol failure (or caught driver panic) that ended the
+    /// session (#3479); `None` for a transport drop or before one happened.
+    fn fatal_error(&self) -> Option<SessionError> {
+        self.runtime.as_ref()?.shared.fatal_error()
+    }
 }
 
 #[cfg(test)]
@@ -853,22 +925,132 @@ mod tests {
     /// A solid 16×16 red Tight JPEG sub-rect fixture (shared with `jpeg` tests).
     const RED_JPEG_16X16: &[u8] = include_bytes!("testdata/red_16x16.jpg");
 
+    fn test_shared() -> Arc<VncShared> {
+        Arc::new(VncShared {
+            clipboard: Mutex::new(String::new()),
+            ptr_x: AtomicU32::new(0),
+            ptr_y: AtomicU32::new(0),
+            view_only: false,
+            show_remote_cursor: true,
+            failure: StdMutex::new(None),
+        })
+    }
+
     #[tokio::test]
     async fn drive_guard_contains_a_panicking_driver() {
         let (tx, mut rx) = mpsc::channel::<u8>(1);
-        let task = tokio::spawn(drive_guarded(async move {
+        let shared = test_shared();
+        let task = tokio::spawn(drive_guarded(shared.clone(), async move {
             let _tx = tx;
             panic!("hostile server");
         }));
         // The task completes normally (no JoinError) and the channel closes.
         task.await.expect("panic must not escape the driver task");
         assert!(rx.recv().await.is_none());
+        // The panic is the session's typed, terminal end reason (#3479).
+        match shared.fatal_error() {
+            Some(SessionError::ProtocolError(msg)) => {
+                assert!(msg.contains("internal client error"), "{msg}");
+                assert!(msg.contains("hostile server"), "{msg}");
+            }
+            other => panic!("expected a protocol error, got {other:?}"),
+        }
     }
 
     #[tokio::test]
     async fn drive_guard_passes_through_a_normal_driver() {
-        let task = tokio::spawn(drive_guarded(async {}));
+        let shared = test_shared();
+        let task = tokio::spawn(drive_guarded(shared.clone(), async {}));
         task.await.expect("normal completion");
+        assert!(shared.fatal_error().is_none());
+    }
+
+    /// Every server-protocol `VncError` kind maps to a user-facing reason
+    /// (#3479); transport-level kinds stay `None` (an ordinary, retryable drop).
+    #[test]
+    fn protocol_failure_reason_classifies_each_error_kind() {
+        let reason = |e: VncError| protocol_failure_reason(&e);
+        assert_eq!(
+            reason(VncError::UnsupportedEncoding(7)).as_deref(),
+            Some("The VNC server sent data termiHub can't handle: unsupported encoding 7")
+        );
+        assert_eq!(
+            reason(VncError::Protocol("rectangle too large".into())).as_deref(),
+            Some("The VNC server sent data termiHub can't handle: rectangle too large")
+        );
+        assert_eq!(
+            reason(VncError::WrongPixelFormat).as_deref(),
+            Some("The VNC server sent data termiHub can't handle: unsupported pixel format")
+        );
+        assert_eq!(
+            reason(VncError::InvalidImageData).as_deref(),
+            Some(
+                "The VNC server sent data termiHub can't handle: image data that cannot be decoded"
+            )
+        );
+        assert!(reason(VncError::WrongServerMessage)
+            .is_some_and(|r| r.starts_with(PROTOCOL_ERROR_PREFIX)));
+        assert!(reason(VncError::Internal("decoder task: boom".into()))
+            .is_some_and(|r| r.contains("internal client error") && r.contains("boom")));
+
+        // Transport ends are not protocol failures.
+        let io = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+        assert!(reason(VncError::IoError(io)).is_none());
+        assert!(reason(VncError::ClientNotRunning).is_none());
+        assert!(reason(VncError::ConnectError).is_none());
+        assert!(reason(VncError::Tls("bad record".into())).is_none());
+        assert!(reason(VncError::General("Channel closed".into())).is_none());
+    }
+
+    /// A protocol-error event ends the session and records the typed reason the
+    /// supervisor reads on stream close (#3479).
+    #[tokio::test]
+    async fn protocol_error_event_records_a_typed_fatal_error() {
+        let shared = test_shared();
+        let (frame_tx, _frame_rx) = mpsc::channel(1);
+        let (cursor_tx, _cursor_rx) = mpsc::channel(1);
+        let mut shadow = FrameShadow::new();
+        let event = VncEvent::Error(Arc::new(VncError::UnsupportedEncoding(7)));
+        let keep_going = handle_event(event, &mut shadow, &shared, &frame_tx, &cursor_tx).await;
+        assert!(!keep_going, "a protocol error ends the session");
+        match shared.fatal_error() {
+            Some(SessionError::ProtocolError(msg)) => {
+                assert!(msg.contains("unsupported encoding 7"), "{msg}");
+            }
+            other => panic!("expected a protocol error, got {other:?}"),
+        }
+    }
+
+    /// A transport-error event ends the session without a fatal reason, so the
+    /// supervisor treats it as an ordinary drop and may auto-reconnect.
+    #[tokio::test]
+    async fn transport_error_event_records_no_fatal_error() {
+        let shared = test_shared();
+        let (frame_tx, _frame_rx) = mpsc::channel(1);
+        let (cursor_tx, _cursor_rx) = mpsc::channel(1);
+        let mut shadow = FrameShadow::new();
+        let io = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
+        let event = VncEvent::Error(Arc::new(VncError::IoError(io)));
+        let keep_going = handle_event(event, &mut shadow, &shared, &frame_tx, &cursor_tx).await;
+        assert!(!keep_going);
+        assert!(shared.fatal_error().is_none());
+    }
+
+    /// Only the first reason is kept; later errors are its consequences.
+    #[test]
+    fn record_failure_keeps_the_first_reason() {
+        let shared = test_shared();
+        shared.record_failure("first".into());
+        shared.record_failure("second".into());
+        assert!(matches!(
+            shared.fatal_error(),
+            Some(SessionError::ProtocolError(m)) if m == "first"
+        ));
+    }
+
+    #[test]
+    fn disconnected_backend_has_no_fatal_error() {
+        assert!(GraphicalBackend::fatal_error(&Vnc::new()).is_none());
     }
 
     #[test]

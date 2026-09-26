@@ -38,6 +38,10 @@ pub enum VncError {
     /// Raw, desynchronising the stream.
     #[error("Unsupported VNC encoding: {0}")]
     UnsupportedEncoding(i32),
+    /// An internal client task panicked (termiHub fork, #3479). The panic was
+    /// caught at the task boundary; the payload is the panic message.
+    #[error("Internal VNC client error: {0}")]
+    Internal(String),
 }
 
 impl<T> From<tokio::sync::mpsc::error::SendError<T>> for VncError {
