@@ -739,9 +739,10 @@ jobs:
     runs-on: windows-latest
     needs: changes
     if: ${{ !cancelled() && needs.changes.outputs.agent != 'false' }}
-    # Serial live-agent spawns are slow by construction; the ceiling only stops
-    # a genuinely wedged agent from hanging the job.
-    timeout-minutes: 60
+    # The 10 tests take ~20s serially; a cold build is the long pole. The
+    # script's own deadline (CI_SERIAL_TIMEOUT_SECS) kills a wedged run first
+    # and names the stuck test; this ceiling is only the backstop.
+    timeout-minutes: 30
 
     steps:
       - name: Checkout code

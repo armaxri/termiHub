@@ -19,7 +19,7 @@
 #          nothing else competes for the cores.
 #   serial ONLY the live-agent-TCP tests (SERIAL_FILTERS), one at a time
 #          (--test-threads=1), then verify at least SERIAL_MIN_TESTS ran and
-#          none was ignored (#2495, #3615). Used by the dedicated Windows job.
+#          none was ignored (#2495, #3615); killed at CI_SERIAL_TIMEOUT_SECS.
 #   list   print what each phase selects and verify the partition is exact
 #          (bulk + heavy [+ serial] == the full test set, no overlap). Builds,
 #          never runs.
@@ -84,6 +84,10 @@ else
   SERIAL_MIN_TESTS_DEFAULT=16
 fi
 SERIAL_MIN_TESTS="${CI_SERIAL_MIN_TESTS:-$SERIAL_MIN_TESTS_DEFAULT}"
+# Hard ceiling for the whole serial phase (incremental build + the tests). The
+# 10 Windows tests take ~20s; on a timeout the phase is killed and the last
+# started test is named, instead of the job silently eating its own timeout.
+SERIAL_TIMEOUT_SECS="${CI_SERIAL_TIMEOUT_SECS:-1200}"
 SPLIT_SERIAL="${CI_RUST_TESTS_SPLIT_SERIAL:-0}"
 
 phase="${1:-}"
@@ -152,13 +156,65 @@ case "$phase" in
       --test-threads="$HEAVY_TEST_THREADS" "${HEAVY_FILTERS[@]}" ${serial_skip_args[@]+"${serial_skip_args[@]}"}
     ;;
   serial)
-    echo "runner cores: $(cores); serial phase: --test-threads=1, expecting >= ${SERIAL_MIN_TESTS} test(s)"
+    echo "runner cores: $(cores); serial phase: --test-threads=1, expecting >= ${SERIAL_MIN_TESTS} test(s), deadline ${SERIAL_TIMEOUT_SECS}s"
     printf '  filter: %s\n' "${SERIAL_FILTERS[@]}"
     log="$(mktemp)"
     trap 'rm -f "$log"' EXIT
-    status=0
+    # cargo writes to a FILE, never a pipe. The fresh-after-reconnect test
+    # deliberately leaves a detached registry daemon behind (it models one that
+    # outlives the agent), and on Windows every inheritable handle -- including
+    # the write end of a `cargo | tee` pipe -- leaks into that grandchild. The
+    # pipe then never reaches EOF: all 10 tests passed in 16s and the job still
+    # hung until its 60-minute timeout (#3615, first run). A file has no EOF to
+    # wait for, so we poll cargo itself and stream the log while it runs.
     cargo test "${selection[@]}" "${targets[@]}" -- \
-      --test-threads=1 --nocapture "${SERIAL_FILTERS[@]}" 2>&1 | tee "$log" || status=$?
+      --test-threads=1 --nocapture "${SERIAL_FILTERS[@]}" >"$log" 2>&1 &
+    cargo_pid=$!
+    streamed=0
+    stream_log() {
+      local size
+      size=$(wc -c <"$log" | tr -d ' ')
+      if [ "$size" -gt "$streamed" ]; then
+        tail -c +"$((streamed + 1))" "$log" | head -c "$((size - streamed))" || true
+        streamed=$size
+      fi
+    }
+    deadline=$((SECONDS + SERIAL_TIMEOUT_SECS))
+    timed_out=0
+    while kill -0 "$cargo_pid" 2>/dev/null; do
+      stream_log
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        timed_out=1
+        break
+      fi
+      sleep 2
+    done
+    if [ "$timed_out" = "1" ]; then
+      # Kill the whole tree (cargo -> test binary -> agent). Git Bash's `kill`
+      # only reaches the top native process, so use taskkill /T there.
+      if [ -r "/proc/$cargo_pid/winpid" ]; then
+        taskkill //F //T //PID "$(cat "/proc/$cargo_pid/winpid")" >/dev/null 2>&1 || true
+      fi
+      kill "$cargo_pid" 2>/dev/null || true
+    fi
+    status=0
+    wait "$cargo_pid" || status=$?
+    stream_log
+    if [ "$timed_out" = "1" ]; then
+      # The last "test NAME ..." line with no result after it is the wedged one.
+      hung="$(tr -d '\r' <"$log" | grep -oE '^test [^ ]+ \.\.\.' | tail -n 1 || true)"
+      echo "serial phase: TIMED OUT after ${SERIAL_TIMEOUT_SECS}s (CI_SERIAL_TIMEOUT_SECS)." >&2
+      echo "  last test started: ${hung:-<none -- still building?>}" >&2
+      exit 124
+    fi
+    # Say so when a test leaked an agent process: harmless now that nothing waits
+    # on a pipe, but a leak that starts accumulating should be visible.
+    if [ "${OS:-}" = "Windows_NT" ]; then
+      leaked="$(tasklist //FI "IMAGENAME eq termihub-agent.exe" //NH 2>/dev/null | grep -ci 'termihub-agent' || true)"
+      if [ "${leaked:-0}" -gt 0 ]; then
+        echo "serial phase: note: ${leaked} termihub-agent process(es) still running after cargo exited (leaked by a test)"
+      fi
+    fi
     # Sum libtest's per-binary summaries. A guard, not a formality: a filter that
     # silently matched nothing would otherwise "pass" with zero tests run.
     read -r passed failed ignored < <(
