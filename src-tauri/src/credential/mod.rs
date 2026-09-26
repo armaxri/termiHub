@@ -5,6 +5,7 @@ pub mod master_password;
 pub mod null;
 pub mod os_keychain;
 pub mod types;
+pub mod vault;
 
 use anyhow::Result;
 

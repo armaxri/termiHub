@@ -2,6 +2,7 @@ pub mod agent;
 pub mod connection;
 pub mod connection_path;
 pub mod credential;
+pub mod credential_vault;
 pub mod embedded_servers;
 pub mod files;
 pub mod inventory_import;

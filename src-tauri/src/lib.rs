@@ -881,6 +881,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::credential::resolve_credential,
             commands::credential::remove_credential,
             commands::credential::set_auto_lock_timeout,
+            commands::credential_vault::export_credential_vault,
+            commands::credential_vault::preview_credential_vault_import,
+            commands::credential_vault::import_credential_vault,
             // Portable mode
             commands::portable::get_app_mode,
             commands::portable::list_config_files,
