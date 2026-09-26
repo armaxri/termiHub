@@ -225,6 +225,59 @@ describe("appStore — multi-target macro playback (PROD-042)", () => {
     expect(useAppStore.getState().macroPlayback).toBeNull();
   });
 
+  it("narrows the receiving set when a target drops mid-run, clearing its tab marker (#3446)", async () => {
+    await ensureSessionSubscribed();
+    vi.useFakeTimers();
+    seedFleet();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "one", delayMs: 0 },
+          { data: "two", delayMs: 100 },
+          { data: "three", delayMs: 1000 },
+        ]),
+      ],
+    });
+
+    const done = useAppStore
+      .getState()
+      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a", "b"]);
+
+    harness.transport.setSession("b", disconnected());
+    await vi.advanceTimersByTimeAsync(100);
+    // Step two went to `a` only — `b` is no longer marked as receiving.
+    expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a"]);
+
+    await vi.advanceTimersByTimeAsync(1000);
+    await done;
+    expect(useAppStore.getState().macroPlayback).toBeNull();
+  });
+
+  it("does not mark a single-terminal run with a receiving set (#3446)", async () => {
+    vi.useFakeTimers();
+    seedFleet();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "a", delayMs: 0 },
+          { data: "b", delayMs: 1000 },
+        ]),
+      ],
+    });
+
+    const done = useAppStore
+      .getState()
+      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["b"] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAppStore.getState().macroPlayback?.tabId).toBe("b");
+    expect(useAppStore.getState().macroPlayback?.targetTabIds).toBeUndefined();
+
+    useAppStore.getState().cancelMacroPlayback();
+    await done;
+  });
+
   it("treats a single-element targetTabIds as a normal single-terminal run", async () => {
     seedFleet();
     useAppStore.setState({ macros: [macro("m1", [{ data: "x", delayMs: 0 }])] });
@@ -242,6 +295,35 @@ describe("appStore — multi-target playback drops a target whose injection fail
   afterEach(() => {
     registerTerminalInputInjector(null);
     vi.restoreAllMocks();
+  });
+
+  it("clears the failed target from the receiving set (#3446)", async () => {
+    vi.useFakeTimers();
+    useAppStore.setState(useAppStore.getInitialState());
+    registerTerminalInputInjector(async (tabId, data) => !(tabId === "b" && data === "two"));
+    seedFleet();
+    useAppStore.setState({
+      macros: [
+        macro("m1", [
+          { data: "one", delayMs: 0 },
+          { data: "two", delayMs: 100 },
+          { data: "three", delayMs: 1000 },
+        ]),
+      ],
+    });
+
+    const done = useAppStore
+      .getState()
+      .playMacro("m1", { timingMode: "real-time", targetTabIds: ["a", "b"] });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a", "b"]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(useAppStore.getState().macroPlayback?.targetTabIds).toEqual(["a"]);
+
+    useAppStore.getState().cancelMacroPlayback();
+    await done;
+    expect(useAppStore.getState().macroPlayback).toBeNull();
+    vi.useRealTimers();
   });
 
   it("stops typing into the failed target and keeps the others going", async () => {

@@ -27,6 +27,7 @@ import {
   TriangleAlert,
   Unplug,
   MonitorX,
+  ListVideo,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { TerminalTab } from "@/types/terminal";
@@ -35,6 +36,7 @@ import { ConnectionIcon } from "@/utils/connectionIcons";
 import { Tooltip } from "@/components/ui";
 import type { WindowInfo } from "@/types/window";
 import { buildWindowPickerEntries, hasOtherWindows, tabCountHint } from "@/utils/windowPicker";
+import { macroReceivingLabel, type MacroReceivingInfo } from "@/utils/macroTabMarker";
 
 /** Human-readable label for each connection status, used as the dot's tooltip. */
 const STATUS_LABELS: Record<TabStatus, string> = {
@@ -90,6 +92,13 @@ interface TabProps {
    */
   isBroadcast?: boolean;
   /**
+   * Set while this tab is one of the terminals receiving a multi-target macro
+   * playback (#3446). Shows a "receiving macro" badge — distinct in icon and
+   * colour from the broadcast badge — with the macro name and step progress, so
+   * every host a macro types into is visibly marked. `null`/`undefined` hides it.
+   */
+  macroReceiving?: MacroReceivingInfo | null;
+  /**
    * The window that currently controls this tab's session, when it is a
    * *different* window than the one rendering the tab (#2872, follow-up to
    * SM-026). When set, a persistent badge is shown explaining that resize is
@@ -137,6 +146,7 @@ export function Tab({
   onDisconnect,
   status,
   isBroadcast,
+  macroReceiving,
   controlledByWindow,
   onFocusOwningWindow,
   displayTitle,
@@ -242,6 +252,21 @@ export function Tab({
           <Radio size={12} />
         </span>
       )}
+      {macroReceiving &&
+        (() => {
+          const label = macroReceivingLabel(macroReceiving);
+          return (
+            <span
+              className="tab__macro-badge"
+              role="img"
+              aria-label={label}
+              title={label}
+              data-testid={`tab-macro-badge-${tab.id}`}
+            >
+              <ListVideo size={12} aria-hidden />
+            </span>
+          );
+        })()}
       {controlledByWindow && (
         <Tooltip
           content={`Taken over by ${controlledByWindow.name} — input and resize are disabled here. Click to focus that window.`}
