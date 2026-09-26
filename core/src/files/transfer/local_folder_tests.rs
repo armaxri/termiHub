@@ -335,6 +335,7 @@ async fn cancelling_one_file_cancels_the_rest_of_its_folder() {
             reg.clone(),
             quiet_sink(),
             ids.clone(),
+            0,
         )));
     }
     wait_for(|| {
@@ -377,6 +378,7 @@ async fn completed_files_do_not_cancel_their_siblings() {
         reg.clone(),
         quiet_sink(),
         ids,
+        0,
     )
     .await;
 
@@ -413,6 +415,7 @@ async fn a_folder_copy_end_to_end_reproduces_the_tree() {
         reg,
         quiet_sink(),
         ids,
+        0,
     )
     .await;
 
