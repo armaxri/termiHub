@@ -10,7 +10,8 @@ evidence:
   - scripts/package-plugin.sh:87
   - docs/plugin-authoring.md:240
   - docs/plugin-authoring.md:244
-status: open
+status: fixed
+resolution: "#3508 — multi-platform plugin packages (backend/<triple>/ + libraries map), host-triple selection bound to trust hash, packer --target/--merge, per-OS package-then-load CI + fat merge job"
 ---
 
 ## What
