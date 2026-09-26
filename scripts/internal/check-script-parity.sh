@@ -14,6 +14,16 @@
 # it fails until the other half (or an ALLOWLIST entry justifying the asymmetry)
 # lands.
 #
+# Existence alone is not parity: build-agents.cmd once had both halves present
+# while missing the .sh's --dev/--features/--sign-key flags and its .sha256
+# sidecar (#3340). So for every pair the check ALSO compares the long options
+# each half actually parses -- `--flag)` case labels / `[ "$1" = "--flag" ]`
+# tests in the .sh, `"%~1"=="--flag"` tests in the .cmd -- and fails when one
+# half accepts a flag the other does not. `--help` is exempt (spelled
+# differently per platform). A .cmd that forwards all arguments to its .sh
+# (`bash scripts/<name>.sh %*`) inherits the .sh's flags and is skipped. Known,
+# tracked flag gaps live in FLAG_DRIFT_ALLOWLIST below.
+#
 # It is a pure filesystem/git check -- no build, no network -- and is wired into
 # the `Shell Script Quality` CI job as a BLOCKING gate alongside shellcheck.
 #
@@ -97,5 +107,97 @@ if [ "$missing" -gt 0 ]; then
   exit 1
 fi
 
+# --- Flag parity -------------------------------------------------------------
+#
+# Known flag gaps, as "<script path without extension>|<flag>". Each entry must
+# name the tracking issue; remove it when the gap is closed. An entry that no
+# longer matches a real gap fails the check, so the list cannot rot.
+FLAG_DRIFT_ALLOWLIST=(
+  # build-rdp-sidecar.cmd lacks --target (cross-build) and --out (copy the
+  # binary elsewhere); build.cmd only needs --release --tauri-externalbin.
+  "scripts/build-rdp-sidecar|--out"    # #3475
+  "scripts/build-rdp-sidecar|--target" # #3475
+)
+
+flag_drift_allowed() {
+  local needle="$1" entry
+  for entry in "${FLAG_DRIFT_ALLOWLIST[@]}"; do
+    [ "$entry" = "$needle" ] && return 0
+  done
+  return 1
+}
+
+# Long options a .sh parses: `case` labels such as `--dev)` or `-h | --help)`,
+# plus `[ "$1" = "--x" ]` / `[[ "${1:-}" == "--x" ]]` tests. Prints one per line.
+sh_flags() {
+  {
+    grep -E '^[[:space:]]*(-{1,2}[A-Za-z][A-Za-z0-9-]*|"")([[:space:]]*\|[[:space:]]*(-{1,2}[A-Za-z][A-Za-z0-9-]*|""))*[[:space:]]*\)' "$1" || true
+    grep -E '\[\[?[^]]*=[[:space:]]*"--[A-Za-z][A-Za-z0-9-]*"' "$1" || true
+  } | { grep -oE -- '--[A-Za-z][A-Za-z0-9-]*' || true; } | { grep -vx -- '--help' || true; } | sort -u
+}
+
+# Long options a .cmd parses: `if [/i] "%~1"=="--x"` style comparisons.
+cmd_flags() {
+  { grep -oiE '=="--[A-Za-z][A-Za-z0-9-]*"' "$1" || true; } \
+    | { grep -oE -- '--[A-Za-z][A-Za-z0-9-]*' || true; } | { grep -vx -- '--help' || true; } | sort -u
+}
+
+# True if the .cmd just forwards every argument to its .sh twin.
+cmd_forwards_to_sh() {
+  local cmd="$1" base
+  base="$(basename "${cmd%.cmd}")"
+  grep -qE "${base}\.sh\"?[[:space:]]+%\*" "$cmd"
+}
+
+drift=0
+stale=0
+checked=0
+seen_allow=" " # space-separated allowlist entries that matched a real gap
+while IFS= read -r sh; do
+  [ -n "$sh" ] || continue
+  cmd="${sh%.sh}.cmd"
+  [ -f "$cmd" ] || continue
+  cmd_forwards_to_sh "$cmd" && continue
+  stem="${sh%.sh}"
+  checked=$((checked + 1))
+  sh_set="$(sh_flags "$sh")"
+  cmd_set="$(cmd_flags "$cmd")"
+  # comm needs sorted input (sh_flags/cmd_flags sort); -23 = only in first.
+  while IFS= read -r flag; do
+    [ -n "$flag" ] || continue
+    if flag_drift_allowed "${stem}|${flag}"; then
+      seen_allow="${seen_allow}${stem}|${flag} "
+      continue
+    fi
+    echo "::error file=${cmd}::${cmd} does not accept ${flag}, which ${sh} does (flag parity, #3340)"
+    drift=$((drift + 1))
+  done < <(comm -23 <(printf '%s\n' "$sh_set") <(printf '%s\n' "$cmd_set"))
+  while IFS= read -r flag; do
+    [ -n "$flag" ] || continue
+    if flag_drift_allowed "${stem}|${flag}"; then
+      seen_allow="${seen_allow}${stem}|${flag} "
+      continue
+    fi
+    echo "::error file=${sh}::${sh} does not accept ${flag}, which ${cmd} does (flag parity, #3340)"
+    drift=$((drift + 1))
+  done < <(comm -13 <(printf '%s\n' "$sh_set") <(printf '%s\n' "$cmd_set"))
+done < <(printf '%s\n' "$all_scripts" | grep -E '\.sh$' || true)
+
+for entry in "${FLAG_DRIFT_ALLOWLIST[@]}"; do
+  if [[ "$seen_allow" != *" ${entry} "* ]]; then
+    echo "::error file=scripts/internal/check-script-parity.sh::FLAG_DRIFT_ALLOWLIST entry '${entry}' matches no real gap -- remove it"
+    stale=$((stale + 1))
+  fi
+done
+
+if [ $((drift + stale)) -gt 0 ]; then
+  echo ""
+  echo "Script parity check FAILED: ${drift} flag mismatch(es), ${stale} stale allowlist entr(y/ies)."
+  echo "Implement the flag in the other half, or -- if the gap is deliberate and"
+  echo "tracked -- add \"<script stem>|<flag>\" to FLAG_DRIFT_ALLOWLIST with its issue."
+  exit 1
+fi
+
 echo "Script parity OK: every scripts/**/*.sh <-> .cmd pair is present"
-echo "(${#ALLOWLIST[@]} documented single-platform exception(s) skipped)."
+echo "(${#ALLOWLIST[@]} documented single-platform exception(s) skipped),"
+echo "and ${checked} pair(s) accept the same flags (${#FLAG_DRIFT_ALLOWLIST[@]} tracked gap(s))."
