@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { Terminal as XTerm } from "@xterm/xterm";
+import { SerializeAddon } from "@xterm/addon-serialize";
 import {
   type CommandMarkTerminal,
   CommandMarkTracker,
@@ -452,6 +453,202 @@ describe("CommandMarkTracker (real xterm)", () => {
     // Further marks after dispose are ignored.
     await write(term, cycle("again", "y\r\n", 0));
     expect(tracker.hasMarks()).toBe(false);
+  });
+});
+
+describe("CommandMarkTracker across reset / snapshot replay (#3420)", () => {
+  const hosts: HTMLDivElement[] = [];
+  const disposables: Array<{ dispose(): void }> = [];
+
+  /** A real, opened xterm with a tracker wired to its OSC 133 handler. */
+  function makeTerminal(cols = 40) {
+    const term = new XTerm({ cols, rows: 10, scrollback: 1000, allowProposedApi: true });
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    term.open(host);
+    const serializer = new SerializeAddon();
+    term.loadAddon(serializer);
+    const tracker = new CommandMarkTracker(term);
+    term.parser.registerOscHandler(OSC_133, tracker.handleOsc);
+    hosts.push(host);
+    disposables.push(tracker, term);
+    return { term, tracker, serializer };
+  }
+
+  afterEach(() => {
+    for (const d of disposables.splice(0)) d.dispose();
+    for (const h of hosts.splice(0)) h.remove();
+  });
+
+  /** Commands as (prompt text, exit code, output text) — width-independent. */
+  function describeCommands(term: XTerm, tracker: CommandMarkTracker) {
+    return tracker.getCommands().map((c) => ({
+      prompt: term.buffer.active.getLine(c.promptLine)?.translateToString(true) ?? "",
+      state: c.state,
+      exitCode: c.exitCode,
+    }));
+  }
+
+  const HISTORY =
+    cycle("echo one", "one\r\n", 0) +
+    cycle("false", "", 1) +
+    cycle("cat long", `${"x".repeat(70)}\r\nlast\r\n`, 0) +
+    `${A}$ ${B}`;
+
+  it("rebuilds marks after a serialized snapshot is replayed into a fresh xterm", async () => {
+    const before = makeTerminal();
+    await write(before.term, HISTORY);
+    const snapshot = before.tracker.exportSnapshot();
+    const serialized = before.serializer.serialize();
+    expect(snapshot?.commands).toHaveLength(4);
+
+    const after = makeTerminal();
+    await write(after.term, serialized);
+    // The serialized scrollback carries no OSC 133 on its own.
+    expect(after.tracker.hasMarks()).toBe(false);
+    after.tracker.restoreSnapshot(snapshot);
+
+    const restored = describeCommands(after.term, after.tracker);
+    expect(restored.map((c) => c.exitCode)).toEqual([0, 1, 0, undefined]);
+    expect(restored.every((c) => c.state === "finished")).toBe(true);
+    expect(restored.map((c) => c.prompt)).toEqual(["$ echo one", "$ false", "$ cat long", "$ "]);
+    expect(after.tracker.getLastCommandOutput()).toBe(`${"x".repeat(70)}\nlast`);
+    // Same buffer rows as before the round trip.
+    expect(after.tracker.getCommands().map((c) => c.promptLine)).toEqual(
+      before.tracker.getCommands().map((c) => c.promptLine)
+    );
+    expect(after.tracker.jumpToPreviousPrompt()).toBe(true);
+  });
+
+  it("restores the exit-status gutter for restored commands", async () => {
+    const before = makeTerminal();
+    await write(before.term, HISTORY);
+    const snapshot = before.tracker.exportSnapshot();
+    const serialized = before.serializer.serialize();
+
+    const after = makeTerminal();
+    await write(after.term, serialized);
+    const spy = vi.spyOn(after.term, "registerDecoration");
+    after.tracker.restoreSnapshot(snapshot);
+    // Three finished commands with a known exit code → three gutter marks.
+    expect(spy).toHaveBeenCalledTimes(3);
+  });
+
+  it("survives replay at a different terminal width (reflowed rows)", async () => {
+    const before = makeTerminal(40);
+    await write(before.term, HISTORY);
+    const snapshot = before.tracker.exportSnapshot();
+    const serialized = before.serializer.serialize();
+
+    const after = makeTerminal(25);
+    await write(after.term, serialized);
+    after.tracker.restoreSnapshot(snapshot);
+
+    expect(describeCommands(after.term, after.tracker)).toEqual(
+      describeCommands(before.term, before.tracker).map((c) => ({
+        ...c,
+        state: "finished",
+      }))
+    );
+    expect(after.tracker.getLastCommandOutput()).toBe(`${"x".repeat(70)}\nlast`);
+  });
+
+  it("never attributes a live exit status to a restored in-flight command", async () => {
+    const before = makeTerminal();
+    await write(before.term, `${cycle("ok", "y\r\n", 0)}${A}$ ${B}sleep 9\r\n${C}`);
+    const snapshot = before.tracker.exportSnapshot();
+    const serialized = before.serializer.serialize();
+
+    const after = makeTerminal();
+    await write(after.term, serialized);
+    after.tracker.restoreSnapshot(snapshot);
+    // The new shell's first prompt reports the exit status of ITS last command.
+    await write(after.term, `${D(127)}${A}$ ${B}`);
+    const commands = after.tracker.getCommands();
+    expect(commands.map((c) => c.exitCode)).toEqual([0, undefined, undefined]);
+    expect(commands.map((c) => c.state)).toEqual(["finished", "finished", "input"]);
+  });
+
+  it("appends live commands after the restored ones and keeps them navigable", async () => {
+    const before = makeTerminal();
+    await write(before.term, HISTORY);
+    const snapshot = before.tracker.exportSnapshot();
+    const serialized = before.serializer.serialize();
+
+    const after = makeTerminal();
+    await write(after.term, serialized);
+    after.tracker.restoreSnapshot(snapshot);
+    await write(after.term, `\r\n${cycle("pwd", "/tmp\r\n", 0)}${A}$ ${B}`);
+    const lines = after.tracker.getCommands().map((c) => c.promptLine);
+    expect(lines).toHaveLength(6);
+    expect([...lines].sort((a, b) => a - b)).toEqual(lines);
+    expect(after.tracker.getLastCommandOutput()).toBe("/tmp");
+  });
+
+  it("skips commands whose lines did not survive the replay", async () => {
+    const before = makeTerminal();
+    await write(before.term, HISTORY);
+    const snapshot = before.tracker.exportSnapshot()!;
+    // Only the last two logical lines are replayed (e.g. trimmed scrollback).
+    const after = makeTerminal();
+    await write(after.term, "last\r\n$ ");
+    after.tracker.restoreSnapshot(snapshot);
+    // Only the trailing prompt still maps onto a replayed line.
+    expect(after.tracker.getCommands()).toHaveLength(1);
+  });
+
+  it("exports nothing when there are no marks, and restoring null is a no-op", async () => {
+    const { term, tracker } = makeTerminal();
+    await write(term, "$ ls\r\nfile\r\n$ ");
+    expect(tracker.exportSnapshot()).toBeNull();
+    tracker.restoreSnapshot(null);
+    tracker.restoreSnapshot({ commands: [] });
+    expect(tracker.hasMarks()).toBe(false);
+  });
+
+  it("exports nothing while the alternate buffer is active", async () => {
+    const { term, tracker } = makeTerminal();
+    await write(term, cycle("vim", "", 0));
+    await write(term, `${ESC}[?1049h`);
+    expect(tracker.exportSnapshot()).toBeNull();
+  });
+
+  it("reset() forgets every mark; replaying the raw stream rebuilds them without duplicates", async () => {
+    const { term, tracker } = makeTerminal();
+    await write(term, HISTORY);
+    const original = describeCommands(term, tracker);
+    const originalLines = tracker.getCommands().map((c) => c.promptLine);
+
+    // xterm.reset() does NOT dispose markers of the old buffer: without a
+    // tracker reset the stale records would survive next to the rebuilt ones.
+    tracker.reset();
+    term.reset();
+    expect(tracker.hasMarks()).toBe(false);
+    await write(term, HISTORY);
+
+    expect(describeCommands(term, tracker)).toEqual(original);
+    expect(tracker.getCommands().map((c) => c.promptLine)).toEqual(originalLines);
+  });
+
+  it("stays usable after reset() (unlike dispose())", async () => {
+    const { term, tracker } = makeTerminal();
+    await write(term, cycle("a", "1\r\n", 0));
+    tracker.reset();
+    await write(term, cycle("b", "2\r\n", 3));
+    expect(tracker.getCommands().map((c) => c.exitCode)).toEqual([3]);
+  });
+
+  it("a shell RIS (ESC c) routed to reset() clears the marks (genuine clear)", async () => {
+    const { term, tracker } = makeTerminal();
+    term.parser.registerEscHandler({ final: "c" }, () => {
+      tracker.reset();
+      return false;
+    });
+    await write(term, HISTORY);
+    await write(term, `${ESC}c`);
+    expect(tracker.hasMarks()).toBe(false);
+    // xterm's own reset still ran (buffer cleared).
+    expect(term.buffer.active.getLine(0)?.translateToString(true)).toBe("");
   });
 });
 

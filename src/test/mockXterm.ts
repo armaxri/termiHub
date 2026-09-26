@@ -103,7 +103,10 @@ export class MockXTerm {
   buffer: MockXtermBuffer = {
     active: { viewportY: 0, baseY: 0, length: 0, getLine: vi.fn() },
   };
-  parser = { registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })) };
+  parser = {
+    registerOscHandler: vi.fn(() => ({ dispose: vi.fn() })),
+    registerEscHandler: vi.fn(() => ({ dispose: vi.fn() })),
+  };
   options: MockXtermOptions;
   /**
    * Private `_core` render-service handle. Present (unlike the former hand-rolled

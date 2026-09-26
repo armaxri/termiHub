@@ -21,6 +21,7 @@ import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
 import { mockXtermInstances as xtermInstances } from "@/test/mockXterm";
+import { CommandMarkTracker, type CommandMarksSnapshot } from "@/services/commandMarks";
 
 // --- Mocks ---
 
@@ -180,5 +181,53 @@ describe("Terminal — scrollback survives reconnect (#1126)", () => {
       (call) => call[0] === SERIALIZED_SCROLLBACK
     );
     expect(replayed).toBe(true);
+  });
+
+  it("rebuilds the OSC 133 command marks after replaying the snapshot (#3420)", async () => {
+    const marks: CommandMarksSnapshot = {
+      commands: [{ prompt: { line: 2, offset: 0 }, exitCode: 1 }],
+    };
+    const exportSpy = vi
+      .spyOn(CommandMarkTracker.prototype, "exportSnapshot")
+      .mockReturnValue(marks);
+    const restoreSpy = vi.spyOn(CommandMarkTracker.prototype, "restoreSnapshot");
+    try {
+      act(() => {
+        root.render(
+          <TerminalPortalProvider>
+            <Terminal tabId="tab-1" config={LOCAL_CONFIG} isVisible={true} />
+          </TerminalPortalProvider>
+        );
+      });
+      await act(async () => {
+        await wait(50);
+      });
+      // Nothing to restore on the very first mount.
+      expect(restoreSpy).not.toHaveBeenCalled();
+
+      act(() => {
+        useAppStore.getState().reconnectTerminal("tab-1");
+      });
+      await act(async () => {
+        await wait(50);
+      });
+
+      // The marks exported at teardown are restored into the fresh tracker —
+      // after the snapshot write was parsed (the write callback), exactly once.
+      expect(exportSpy).toHaveBeenCalled();
+      expect(restoreSpy).toHaveBeenCalledTimes(1);
+      expect(restoreSpy).toHaveBeenCalledWith(marks);
+      const fresh = xtermInstances[xtermInstances.length - 1];
+      const snapshotWrite = fresh.write.mock.calls.findIndex(
+        (call) => call[0] === SERIALIZED_SCROLLBACK
+      );
+      expect(snapshotWrite).toBeGreaterThanOrEqual(0);
+      expect(restoreSpy.mock.invocationCallOrder[0]).toBeGreaterThan(
+        fresh.write.mock.invocationCallOrder[snapshotWrite]
+      );
+    } finally {
+      exportSpy.mockRestore();
+      restoreSpy.mockRestore();
+    }
   });
 });
