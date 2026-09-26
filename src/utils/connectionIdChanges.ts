@@ -15,9 +15,10 @@
  *   the panel structure only), so each window remaps its own tabs.
  * - **`persistentSessions`** — keyed by the id the *backend* persistent-session
  *   registry uses. Re-keying only the frontend map would desync it from the
- *   backend, so it is left as is (backend follow-up).
+ *   backend, so it is left as is until the registry follows too (#3595).
  * - **Saved workspaces, broadcast groups, schedules, workflow triggers, tunnels,
- *   jump-host references** — persisted, backend-owned records; not remapped here.
+ *   jump-host references** — persisted, backend-owned records; not remapped here
+ *   (#3596).
  * - **Session history** — a historical record of what was opened; not remapped.
  */
 
