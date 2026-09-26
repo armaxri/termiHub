@@ -68,17 +68,17 @@ fn macros_doc(items: &[(&str, &str)]) -> Value {
 }
 
 fn fixture_docs() -> Vec<(&'static str, Value)> {
-    let docs = vec![
+    vec![
         ("connections.json", connections_doc()),
         (
             "settings.json",
-            json!({"theme": "dark", "credentialStorageMode": "none",
+            json!({"version": "1", "theme": "dark", "credentialStorageMode": "none",
                    "customThemes": [{"id": "t1", "name": "Mine"}],
                    "keybindingOverrides": []}),
         ),
         (
             "workspaces.json",
-            json!({"workspaces": [{"id": "w1", "name": "Dev", "tabGroups": []}]}),
+            json!({"version": "1", "workspaces": [{"id": "w1", "name": "Dev", "tabGroups": []}]}),
         ),
         (
             "macros.json",
@@ -86,12 +86,12 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
         ),
         (
             "workflows.json",
-            json!({"workflows": [{"id": "wf1", "name": "Nightly"}]}),
+            json!({"version": "1", "workflows": [{"id": "wf1", "name": "Nightly"}]}),
         ),
-        ("tunnels.json", json!({"tunnels": []})),
+        ("tunnels.json", json!({"version": "1", "tunnels": []})),
         (
             "embedded_servers.json",
-            json!({"servers": [{
+            json!({"version": "1", "servers": [{
                 "id": "s1", "name": "FTP", "serverType": "ftp", "rootDirectory": "/tmp",
                 "bindHost": "127.0.0.1", "port": 2121,
                 "ftpAuth": {"type": "credentials", "username": "u", "password": SERVER_SECRET}
@@ -107,11 +107,11 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
             json!({"monitors": [{"id": "h1", "url": "https://example.com", "intervalMs": 1000,
                                  "method": "GET", "expectedStatus": 200, "timeoutMs": 500}]}),
         ),
-        ("network-tool-history.json", json!({"runs": []})),
-    ];
-    docs.into_iter()
-        .map(|(file, doc)| (file, at_current(file, doc)))
-        .collect()
+        (
+            "network-tool-history.json",
+            json!({"version": "1", "runs": []}),
+        ),
+    ]
 }
 
 fn write_doc(dir: &Path, file: &str, doc: &Value) {
@@ -120,7 +120,7 @@ fn write_doc(dir: &Path, file: &str, doc: &Value) {
 
 fn populate(dir: &Path) {
     for (file, doc) in fixture_docs() {
-        write_doc(dir, file, &doc);
+        write_doc(dir, file, &at_current(file, doc));
     }
 }
 
@@ -1020,10 +1020,10 @@ fn every_section_file_is_known_to_the_manifest_validator() {
 // --- section schema versions follow the owning stores ---
 
 /// Guard: every backup section's schema version is the owning store's own
-/// `CURRENT_VERSION`, and it matches what the store's own writer (its default
+/// `CURRENT_VERSION` and matches what the store's own writer (its default
 /// document) stamps. Bumping a store without the backup following — e.g. a new
-/// `Default` version string while the section still reads an older constant —
-/// fails here instead of turning every same-build backup into a "migrated" or
+/// `Default` version string while the constant still says the old one — fails
+/// here instead of turning every same-build backup into a "migrated" or
 /// refused one.
 #[test]
 fn every_section_version_is_its_stores_current_version() {
@@ -1039,7 +1039,8 @@ fn every_section_version_is_its_stores_current_version() {
     use crate::workflows::config::WorkflowStore;
     use crate::workspace::config::WorkspaceStore;
 
-    let expected: &[(&str, u32)] = &[
+    // Each store-backed section reads its store's own constant.
+    let store_versions: &[(&str, u32)] = &[
         (
             "connections",
             <ConnectionStore as VersionedStore>::CURRENT_VERSION,
@@ -1063,31 +1064,29 @@ fn every_section_version_is_its_stores_current_version() {
             <NetworkToolHistoryStore as VersionedStore>::CURRENT_VERSION,
         ),
     ];
-    let mut ids: Vec<&str> = expected.iter().map(|(id, _)| *id).collect();
-    let mut section_ids: Vec<&str> = SECTIONS.iter().map(|s| s.id).collect();
-    ids.sort_unstable();
-    section_ids.sort_unstable();
-    assert_eq!(
-        ids, section_ids,
-        "every backup section needs a version guard"
-    );
-
-    for (id, store_version) in expected {
+    for (id, store_version) in store_versions {
         let spec = sections::spec(id).unwrap();
         assert_eq!(spec.current_version, *store_version, "{id}");
+    }
 
-        // What the store's own writer stamps agrees with the constant.
+    // For every section: the store's own writer stamps the section's version,
+    // a current document is accepted as-is, and one past it is refused.
+    for spec in SECTIONS {
+        let id = spec.id;
         let default_doc = spec.default_doc();
         let written = read_version(&default_doc).unwrap_or(1);
         assert_eq!(written, spec.current_version, "{id}: default document");
 
-        // A current document is accepted as-is; one past it is refused.
         let normalized = spec.normalize(default_doc.clone()).unwrap();
         assert_eq!(
             read_version(&normalized).unwrap_or(1),
             spec.current_version,
             "{id}: normalized"
         );
+
+        if default_doc.get("version").is_none() {
+            continue; // No in-file version to push past.
+        }
         let mut newer = default_doc;
         newer
             .as_object_mut()

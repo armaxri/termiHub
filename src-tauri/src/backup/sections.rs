@@ -148,23 +148,43 @@ fn normalize_versioned<T: VersionedStore + Serialize>(
     }
 }
 
+/// A store without a migration layer. Its schema version is the store's own
+/// `CURRENT_VERSION` constant — the backup never repeats it as a literal.
+trait PlainStore: DeserializeOwned + Serialize {
+    const CURRENT_VERSION: u32;
+}
+
+macro_rules! plain_store {
+    ($($store:ty),* $(,)?) => {
+        $(impl PlainStore for $store {
+            const CURRENT_VERSION: u32 = <$store>::CURRENT_VERSION;
+        })*
+    };
+}
+
+plain_store!(
+    MacroStore,
+    TunnelStore,
+    EmbeddedServerStore,
+    WolDevicesFile,
+    HttpMonitorsFile,
+);
+
 /// Normalize a store that has no migration layer: refuse a `version` newer
-/// than `CURRENT` (the store's own `CURRENT_VERSION`), otherwise validate
-/// through the typed model. The document's `version` is left as-is — such a
-/// store's own loader owns any upgrade of an older file.
-fn normalize_plain<T: DeserializeOwned + Serialize, const CURRENT: u32>(
-    data: Value,
-) -> Result<Value, NormalizeError> {
+/// than the store's `CURRENT_VERSION`, otherwise validate through the typed
+/// model. The document's `version` is left as-is — such a store's own loader
+/// owns any upgrade of an older file.
+fn normalize_plain<T: PlainStore>(data: Value) -> Result<Value, NormalizeError> {
     if !data.is_object() {
         return Err(NormalizeError::Invalid(
             "expected a JSON object".to_string(),
         ));
     }
     if let Some(found) = read_version(&data) {
-        if found > CURRENT {
+        if found > T::CURRENT_VERSION {
             return Err(NormalizeError::Newer {
                 found,
-                supported: CURRENT,
+                supported: T::CURRENT_VERSION,
             });
         }
     }
@@ -258,7 +278,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: MacroStore::CURRENT_VERSION,
         shape: Shape::List { field: "macros" },
         contains_secrets: false,
-        normalize: normalize_plain::<MacroStore, { MacroStore::CURRENT_VERSION }>,
+        normalize: normalize_plain::<MacroStore>,
         default_doc: || to_doc(&MacroStore::default()),
     },
     SectionSpec {
@@ -280,7 +300,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: TunnelStore::CURRENT_VERSION,
         shape: Shape::List { field: "tunnels" },
         contains_secrets: false,
-        normalize: normalize_plain::<TunnelStore, { TunnelStore::CURRENT_VERSION }>,
+        normalize: normalize_plain::<TunnelStore>,
         default_doc: || to_doc(&TunnelStore::default()),
     },
     SectionSpec {
@@ -291,7 +311,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: EmbeddedServerStore::CURRENT_VERSION,
         shape: Shape::List { field: "servers" },
         contains_secrets: true,
-        normalize: normalize_plain::<EmbeddedServerStore, { EmbeddedServerStore::CURRENT_VERSION }>,
+        normalize: normalize_plain::<EmbeddedServerStore>,
         default_doc: || to_doc(&EmbeddedServerStore::default()),
     },
     SectionSpec {
@@ -302,7 +322,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: WolDevicesFile::CURRENT_VERSION,
         shape: Shape::List { field: "devices" },
         contains_secrets: false,
-        normalize: normalize_plain::<WolDevicesFile, { WolDevicesFile::CURRENT_VERSION }>,
+        normalize: normalize_plain::<WolDevicesFile>,
         default_doc: || to_doc(&WolDevicesFile::default()),
     },
     SectionSpec {
@@ -313,7 +333,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: HttpMonitorsFile::CURRENT_VERSION,
         shape: Shape::List { field: "monitors" },
         contains_secrets: false,
-        normalize: normalize_plain::<HttpMonitorsFile, { HttpMonitorsFile::CURRENT_VERSION }>,
+        normalize: normalize_plain::<HttpMonitorsFile>,
         default_doc: || to_doc(&HttpMonitorsFile::default()),
     },
     SectionSpec {
