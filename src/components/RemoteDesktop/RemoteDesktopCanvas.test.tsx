@@ -260,6 +260,29 @@ describe("RemoteDesktopCanvas", () => {
     );
   });
 
+  it("1:1 mode draws the framebuffer at native size regardless of the container", () => {
+    // The other half of a fixed-resolution session's Fit ↔ 1:1 toggle
+    // (PROD-026): the canvas is the framebuffer size and the container scrolls.
+    render({ scaleMode: "pixel" });
+    setContainerSize(200, 100);
+    emitFrame(makeFrame(400, 300));
+
+    const canvas = canvasEl();
+    expect(canvas.width).toBe(400);
+    expect(canvas.height).toBe(300);
+    expect(canvasStub.contextFor(canvas).drawImage).toHaveBeenCalledWith(
+      expect.any(HTMLCanvasElement),
+      0,
+      0,
+      400,
+      300,
+      0,
+      0,
+      400,
+      300
+    );
+  });
+
   it("match mode stretches the framebuffer to fill the container", () => {
     render({ scaleMode: "match" });
     setContainerSize(300, 200);
