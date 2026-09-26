@@ -67,6 +67,8 @@ pub const MAX_VAULT_FILE_BYTES: usize = 16 * 1024 * 1024;
 /// A vault export failure, serialized to the frontend as
 /// `{ "kind": "<variant>", "message": "…" }` so the UI can branch on a stable,
 /// locale-invariant `kind` rather than on the English message.
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[derive(Debug, Serialize, thiserror::Error, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum VaultError {
@@ -165,6 +167,8 @@ pub struct OpenedVault {
 
 /// How to treat an imported credential whose key already exists in the
 /// current store with a different value.
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum ConflictStrategy {
@@ -175,6 +179,8 @@ pub enum ConflictStrategy {
 }
 
 /// A credential in the import file that collides with an existing one.
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultConflict {
@@ -186,6 +192,8 @@ pub struct VaultConflict {
 }
 
 /// Preview of an import, shown before anything is written. Contains no secrets.
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultImportPreview {
@@ -210,6 +218,8 @@ pub struct VaultImportPreview {
 }
 
 /// Outcome of an applied import. Contains no secrets.
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct VaultImportResult {
