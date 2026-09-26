@@ -23,20 +23,28 @@
  *   The UI caches refresh from their own sources: the `settings`, `tunnels` and
  *   `connections` regions, `schedules-changed`, and a workflow-list reload in
  *   `followConnectionIdChanges`.
+ * - **Open editors' unsaved drafts** of those records (workspace tab refs,
+ *   workflow on-connect triggers, schedule targets, a tunnel's SSH connection,
+ *   jump-host hops, a shell-integration entry's connection) — each editor
+ *   follows the event while open (`useFollowConnectionIdChanges`, #3603) with
+ *   the helpers below, so saving the draft does not write the old id back.
  * - **Session history** — a historical record of what was opened; not remapped.
  */
 
 import type { ConnectionIdChange } from "@/types/connection";
 import type { TabContent } from "@/types/terminal";
+import type { WorkspaceLayoutNode, WorkspaceTabGroupDef } from "@/types/workspace";
+import type { WorkflowTrigger } from "@/types/workflow";
+
+/** Maps a saved-connection id to its id after one batch of changes. */
+export type ConnectionIdRemap = (id: string) => string;
 
 /**
  * A lookup applying one batch of id changes. The changes of one batch apply
  * simultaneously: `a→b, b→c` maps `a` to `b` and `b` to `c` (not `a` to `c`), and
  * a swap `a→b, b→a` exchanges the two. Ids not in the batch map to themselves.
  */
-export function connectionIdRemapper(
-  changes: readonly ConnectionIdChange[]
-): (id: string) => string {
+export function connectionIdRemapper(changes: readonly ConnectionIdChange[]): ConnectionIdRemap {
   const byOld = new Map<string, string>();
   for (const { oldId, newId } of changes) byOld.set(oldId, newId);
   return (id) => byOld.get(id) ?? id;
@@ -70,4 +78,124 @@ export function remapTabContentConnectionIds(
     }
   }
   return next;
+}
+
+/**
+ * Re-point a list of connection ids. Returns the input array itself when no id
+ * changed, so a state setter can bail out of a re-render.
+ */
+export function remapConnectionIdList<T extends readonly string[]>(
+  ids: T,
+  remap: ConnectionIdRemap
+): T {
+  let next: string[] | null = null;
+  ids.forEach((id, i) => {
+    const mapped = remap(id);
+    if (mapped !== id) {
+      next ??= [...ids];
+      next[i] = mapped;
+    }
+  });
+  return (next ?? ids) as T;
+}
+
+function remapWorkspaceLayout(
+  node: WorkspaceLayoutNode,
+  remap: ConnectionIdRemap
+): WorkspaceLayoutNode {
+  if (node.type === "leaf") {
+    let tabs: typeof node.tabs | null = null;
+    node.tabs.forEach((tab, i) => {
+      if (tab.connectionRef == null) return;
+      const mapped = remap(tab.connectionRef);
+      if (mapped !== tab.connectionRef) {
+        tabs ??= [...node.tabs];
+        tabs[i] = { ...tab, connectionRef: mapped };
+      }
+    });
+    return tabs ? { ...node, tabs } : node;
+  }
+  let children: WorkspaceLayoutNode[] | null = null;
+  node.children.forEach((child, i) => {
+    const mapped = remapWorkspaceLayout(child, remap);
+    if (mapped !== child) {
+      children ??= [...node.children];
+      children[i] = mapped;
+    }
+  });
+  return children ? { ...node, children } : node;
+}
+
+/**
+ * Re-point every tab's `connectionRef` in a workspace's tab groups (mirrors the
+ * backend's saved-workspace follow, #3596). Returns the input array itself when
+ * nothing changed.
+ */
+export function remapWorkspaceTabGroups(
+  groups: WorkspaceTabGroupDef[],
+  remap: ConnectionIdRemap
+): WorkspaceTabGroupDef[] {
+  let next: WorkspaceTabGroupDef[] | null = null;
+  groups.forEach((group, i) => {
+    const layout = remapWorkspaceLayout(group.layout, remap);
+    if (layout !== group.layout) {
+      next ??= [...groups];
+      next[i] = { ...group, layout };
+    }
+  });
+  return next ?? groups;
+}
+
+/**
+ * Re-point the connections of every on-connect trigger (mirrors the backend's
+ * workflow-trigger follow, #3596). Returns the input array itself when nothing
+ * changed.
+ */
+export function remapWorkflowTriggers(
+  triggers: WorkflowTrigger[],
+  remap: ConnectionIdRemap
+): WorkflowTrigger[] {
+  let next: WorkflowTrigger[] | null = null;
+  triggers.forEach((trigger, i) => {
+    if (trigger.kind !== "on-connect") return;
+    const connectionIds = remapConnectionIdList(trigger.connectionIds, remap);
+    if (connectionIds !== trigger.connectionIds) {
+      next ??= [...triggers];
+      next[i] = { ...trigger, connectionIds };
+    }
+  });
+  return next ?? triggers;
+}
+
+/**
+ * Re-point the saved-connection jump-host references in a connection's settings
+ * — the `proxyJump` array and its legacy `jumpHosts` alias (mirrors the backend's
+ * `follow_jump_host_refs`, #3596). Returns the input object itself when nothing
+ * changed.
+ */
+export function remapJumpHostRefs<T extends Record<string, unknown>>(
+  settings: T,
+  remap: ConnectionIdRemap
+): T {
+  let next: Record<string, unknown> | null = null;
+  for (const key of ["proxyJump", "jumpHosts"]) {
+    const hops = settings[key];
+    if (!Array.isArray(hops)) continue;
+    let nextHops: unknown[] | null = null;
+    hops.forEach((hop: unknown, i) => {
+      if (hop === null || typeof hop !== "object") return;
+      const id = (hop as { connectionId?: unknown }).connectionId;
+      if (typeof id !== "string") return;
+      const mapped = remap(id);
+      if (mapped !== id) {
+        nextHops ??= [...hops];
+        nextHops[i] = { ...hop, connectionId: mapped };
+      }
+    });
+    if (nextHops) {
+      next ??= { ...settings };
+      next[key] = nextHops;
+    }
+  }
+  return (next ?? settings) as T;
 }
