@@ -9,8 +9,8 @@ subsystem: src/store/appStore
 evidence:
   - src/store/appStore.ts:7266
   - src/store/appStore.ts:3943
-status: partial
-resolution: "#3421 — manual run on selected sessions / broadcast group (sequential); concurrent fan-out #3418"
+status: fixed
+resolution: "#3421,#3429 — run on selected sessions / broadcast group, concurrent (cap 8) with per-target and stop-all cancel; palette entry #3430"
 ---
 
 ## What
