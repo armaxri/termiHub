@@ -31,7 +31,7 @@
 //!    and does **not** swap the running binary — the active session is never
 //!    interrupted.
 //! 2. Closing that last session applies the update: the agent **swaps its binary
-//!    (inode changes) and re-execs**, then comes back alive on the same port.
+//!    (inode changes) and re-execs**, then comes back alive and announces its listener.
 //! 3. The applied update leaves **no `pending_update`** behind (#1551) — the
 //!    re-execed agent, whose executable is now byte-identical to the staged
 //!    binary, sweeps the already-applied record at startup.
@@ -57,7 +57,7 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -88,17 +88,6 @@ fn agent_binary() -> PathBuf {
 
 fn inode(path: &Path) -> Option<u64> {
     std::fs::metadata(path).ok().map(|m| m.ino())
-}
-
-/// Reserve a free localhost TCP port by binding to `:0` and releasing it. The
-/// agent re-binds this fixed port across its re-exec, so a reconnect after the
-/// swap lands on the same address.
-fn reserve_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral port")
-        .local_addr()
-        .expect("local_addr")
-        .port()
 }
 
 // ── Docker availability ───────────────────────────────────────────────────────
@@ -145,7 +134,6 @@ fn pull_image() {
 /// client stages through `agent.request_deferred_update`.
 struct LiveAgent {
     child: Child,
-    addr: String,
     bin_path: PathBuf,
     stderr_path: PathBuf,
     _install_dir: TempDir,
@@ -164,7 +152,6 @@ impl LiveAgent {
         let install_dir = TempDir::new().expect("install dir");
         let bin_path = install_dir.path().join("termihub-agent");
         let config_home = TempDir::new().expect("config home");
-        let addr = format!("127.0.0.1:{}", reserve_port());
 
         let stderr_file = tempfile::NamedTempFile::new().expect("stderr file");
         let stderr_path = stderr_file.path().to_path_buf();
@@ -180,7 +167,9 @@ impl LiveAgent {
 
         let child = Command::new(&bin_path)
             .arg("--listen")
-            .arg(&addr)
+            // Port 0: the agent binds an OS-assigned port and announces it; the
+            // suite reads it back from the log (see `LiveAgent::addr`, #3533).
+            .arg("127.0.0.1:0")
             .env("XDG_CONFIG_HOME", config_home.path())
             .env("RUST_LOG", "info")
             .stdin(Stdio::null())
@@ -194,7 +183,6 @@ impl LiveAgent {
 
         LiveAgent {
             child,
-            addr,
             bin_path,
             stderr_path,
             _install_dir: install_dir,
@@ -228,6 +216,21 @@ impl LiveAgent {
 
     fn stderr(&self) -> String {
         std::fs::read_to_string(&self.stderr_path).unwrap_or_default()
+    }
+
+    /// The address the agent's `generation`-th incarnation listens on (`0` = as
+    /// spawned, `1` = after the first self-apply re-exec), read from its
+    /// `Listening on` log line. The agent runs on `--listen 127.0.0.1:0`, so a
+    /// re-exec re-binds a fresh OS-assigned port (#3533).
+    fn addr(&self, generation: usize) -> String {
+        common::wait_for_listen_addr(&self.stderr_path, generation, Duration::from_secs(30))
+            .unwrap_or_else(|| {
+                panic!(
+                    "agent incarnation {generation} never logged a `Listening on` address.\n\
+                     --- agent stderr ---\n{}",
+                    self.stderr()
+                )
+            })
     }
 
     /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
@@ -411,9 +414,9 @@ impl Client {
     fn failure_report(&mut self, agent: &LiveAgent) -> String {
         let raw = self.session_list_raw();
         format!(
-            "--- agent addr ---\n{}\n--- raw connection.list ---\n{raw}\n\
+            "--- agent listen addrs ---\n{}\n--- raw connection.list ---\n{raw}\n\
              --- persisted state.json ---\n{}\n--- agent stderr ---\n{}",
-            agent.addr,
+            common::listen_addrs(&agent.stderr()).join(", "),
             agent.state(),
             agent.stderr()
         )
@@ -460,7 +463,7 @@ fn sha256_hex_of_file(path: &Path) -> String {
 ///    binary → **deferred** (`applied: false`, one active session) and the binary
 ///    is **not** swapped: the active session is never interrupted.
 /// 2. Close that last session → the agent **swaps its binary and re-execs**, and
-///    answers again on the same port.
+///    answers again on the listener its new incarnation announces.
 /// 3. The successful apply leaves **no `pending_update`** (#1551).
 #[tokio::test]
 #[ignore = "docker: real-daemon test, runs in the nightly integration lane via `cargo test -- --ignored`; see TIN-008"]
@@ -477,7 +480,7 @@ async fn deferred_update_applies_on_last_docker_disconnect() {
     // apply-path confinement (AGT-003, #3214) accepts it; the harness sends its
     // SHA-256 so the AGT-004 integrity gate accepts it too.
     let staged_bin = stage_newer_binary(&agent.staging_dir());
-    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(30))
+    let mut client = Client::connect(&agent.addr(0), agent.config_home(), Duration::from_secs(30))
         .unwrap_or_else(|| panic!("agent never came up.\n{}", agent.stderr()));
 
     // ── Open a real Docker container session ────────────────────────────────
@@ -534,9 +537,10 @@ async fn deferred_update_applies_on_last_docker_disconnect() {
         agent.stderr()
     );
 
-    // It re-execed with the same args → same port → reconnect succeeds and the
-    // agent is healthy on the swapped-in binary.
-    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(30))
+    // It re-execed with the same args → its second incarnation announces a fresh
+    // listener (the args say port 0) → reconnect succeeds and the agent is
+    // healthy on the swapped-in binary.
+    let mut client = Client::connect(&agent.addr(1), agent.config_home(), Duration::from_secs(30))
         .unwrap_or_else(|| {
             panic!(
                 "agent did not come back after the deferred apply + re-exec.\n{}",

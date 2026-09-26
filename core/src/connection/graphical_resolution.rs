@@ -10,8 +10,12 @@
 //! requests for it, and an auto-reconnect re-dials with the same fixed size.
 //!
 //! The mode key and the fixed-size rows are protocol-agnostic so any backend
-//! that can honor a requested size can append them to its **Display** group;
-//! today only RDP does (vnc-rs has no client-initiated `SetDesktopSize`).
+//! that can honor a requested size can append them to its **Display** group.
+//! RDP uses [`fixed_resolution_fields`] (dynamic by default). VNC (#3463) uses
+//! [`server_resolution_fields`], which adds a third, default **server** mode:
+//! the remote keeps the size its server chose — the only behavior VNC had
+//! before RFB ExtendedDesktopSize support — so saved VNC connections are
+//! unchanged.
 
 use super::schema::{Condition, FieldType, SelectOption, SettingsField};
 use super::MAX_FRAMEBUFFER_DIMENSION;
@@ -22,6 +26,8 @@ pub const RESOLUTION_MODE_KEY: &str = "resolutionMode";
 pub const RESOLUTION_MODE_DYNAMIC: &str = "dynamic";
 /// Resolution mode: pin the remote to the configured `width × height`.
 pub const RESOLUTION_MODE_FIXED: &str = "fixed";
+/// Resolution mode: keep the size the server chose (VNC's default, #3463).
+pub const RESOLUTION_MODE_SERVER: &str = "server";
 
 /// Smallest fixed dimension accepted, in pixels — the MS-RDPEDISP lower bound,
 /// below which servers reject or misrender a desktop.
@@ -92,39 +98,70 @@ fn size_field(key: &str, label: &str, default: u16, description: &str) -> Settin
     }
 }
 
+fn option(value: &str, label: &str) -> SelectOption {
+    SelectOption {
+        value: value.to_string(),
+        label: label.to_string(),
+    }
+}
+
+fn mode_field(options: Vec<SelectOption>, default: &str, description: &str) -> SettingsField {
+    SettingsField {
+        key: RESOLUTION_MODE_KEY.to_string(),
+        label: "Resolution".to_string(),
+        description: Some(description.to_string()),
+        help_text: None,
+        field_type: FieldType::Select { options },
+        required: false,
+        default: Some(serde_json::json!(default)),
+        placeholder: None,
+        supports_env_expansion: false,
+        supports_tilde_expansion: false,
+        visible_when: None,
+    }
+}
+
 /// The resolution rows a size-capable backend appends to its **Display**
 /// group: the mode select plus the fixed `width` / `height` inputs, which are
 /// shown only when "Fixed" is selected.
 pub fn fixed_resolution_fields() -> Vec<SettingsField> {
+    let mut fields = vec![mode_field(
+        vec![
+            option(RESOLUTION_MODE_DYNAMIC, "Dynamic (follow window)"),
+            option(RESOLUTION_MODE_FIXED, "Fixed size"),
+        ],
+        RESOLUTION_MODE_DYNAMIC,
+        "Dynamic follows the tab (the remote resizes in Match Window scaling). Fixed \
+         pins the remote desktop to the size below and scales it locally.",
+    )];
+    fields.extend(fixed_size_fields());
+    fields
+}
+
+/// [`fixed_resolution_fields`] with a leading, default **server** mode (#3463):
+/// the remote keeps the size its server chose. For protocols where resizing
+/// the remote depends on an optional server extension (VNC ExtendedDesktopSize),
+/// so connections saved before the option existed keep the server's size.
+pub fn server_resolution_fields() -> Vec<SettingsField> {
+    let mut fields = vec![mode_field(
+        vec![
+            option(RESOLUTION_MODE_SERVER, "Server default"),
+            option(RESOLUTION_MODE_DYNAMIC, "Dynamic (follow window)"),
+            option(RESOLUTION_MODE_FIXED, "Fixed size"),
+        ],
+        RESOLUTION_MODE_SERVER,
+        "Server default keeps the size the server chose. Dynamic follows the tab (the \
+         remote resizes in Match Window scaling). Fixed pins the remote desktop to the \
+         size below. Dynamic and Fixed need a server that allows clients to resize the \
+         desktop; otherwise the server's size is kept and scaled locally.",
+    )];
+    fields.extend(fixed_size_fields());
+    fields
+}
+
+/// The fixed `width` / `height` inputs, shown only when "Fixed" is selected.
+fn fixed_size_fields() -> Vec<SettingsField> {
     vec![
-        SettingsField {
-            key: RESOLUTION_MODE_KEY.to_string(),
-            label: "Resolution".to_string(),
-            description: Some(
-                "Dynamic follows the tab (the remote resizes in Match Window scaling). Fixed \
-                 pins the remote desktop to the size below and scales it locally."
-                    .to_string(),
-            ),
-            help_text: None,
-            field_type: FieldType::Select {
-                options: vec![
-                    SelectOption {
-                        value: RESOLUTION_MODE_DYNAMIC.to_string(),
-                        label: "Dynamic (follow window)".to_string(),
-                    },
-                    SelectOption {
-                        value: RESOLUTION_MODE_FIXED.to_string(),
-                        label: "Fixed size".to_string(),
-                    },
-                ],
-            },
-            required: false,
-            default: Some(serde_json::json!(RESOLUTION_MODE_DYNAMIC)),
-            placeholder: None,
-            supports_env_expansion: false,
-            supports_tilde_expansion: false,
-            visible_when: None,
-        },
         size_field(
             "width",
             "Width (px)",
@@ -143,6 +180,28 @@ pub fn fixed_resolution_fields() -> Vec<SettingsField> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_rows_default_to_server_and_share_the_size_rows() {
+        let fields = server_resolution_fields();
+        let keys: Vec<&str> = fields.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(keys, vec!["resolutionMode", "width", "height"]);
+        assert_eq!(fields[0].default, Some(serde_json::json!("server")));
+        let FieldType::Select { options } = &fields[0].field_type else {
+            panic!("resolutionMode must be a select");
+        };
+        let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(values, vec!["server", "dynamic", "fixed"]);
+        // Same fixed-size rows as the RDP variant.
+        assert_eq!(
+            serde_json::to_value(&fields[1..]).unwrap(),
+            serde_json::to_value(&fixed_resolution_fields()[1..]).unwrap()
+        );
+        // "server" is not a fixed mode for the session manager.
+        assert!(!fixed_resolution_requested(
+            &serde_json::json!({ "resolutionMode": "server" })
+        ));
+    }
 
     #[test]
     fn mode_parsing_defaults_to_dynamic() {

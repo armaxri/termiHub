@@ -1,6 +1,5 @@
 use super::*;
 use base64::engine::general_purpose::STANDARD as B64;
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -67,14 +66,70 @@ fn find_agent_binary() -> Option<PathBuf> {
     .find(|cand| cand.is_file())
 }
 
-/// Grab a currently-free loopback TCP port (best-effort; the caller retries a
-/// bind race by respawning on a new port).
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral")
-        .local_addr()
-        .expect("local_addr")
-        .port()
+/// Lowest port of the kernel's ephemeral (auto-assigned) range: every port-0
+/// bind and every outgoing connect's local port is drawn from `[this, 65535]`.
+/// Falls back to the IANA/Linux-default floor when it cannot be read.
+fn ephemeral_port_floor() -> u16 {
+    const DEFAULT_FLOOR: u16 = 32768;
+    #[cfg(target_os = "linux")]
+    let floor = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+        .ok()
+        .and_then(|range| range.split_whitespace().next()?.parse::<u16>().ok());
+    #[cfg(target_os = "macos")]
+    let floor = Command::new("sysctl")
+        .args(["-n", "net.inet.ip.portrange.first"])
+        .output()
+        .ok()
+        .and_then(|out| {
+            String::from_utf8_lossy(&out.stdout)
+                .trim()
+                .parse::<u16>()
+                .ok()
+        });
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let floor: Option<u16> = None;
+    floor.unwrap_or(DEFAULT_FLOOR).min(DEFAULT_FLOOR)
+}
+
+/// Pick a loopback TCP port for the throwaway `sshd`, which must bind it itself
+/// and re-bind the *same* port across a stop/restart (the reconnect target is
+/// fixed).
+///
+/// The old "bind `127.0.0.1:0`, read the port, drop the listener" idiom handed
+/// sshd a freed **ephemeral** port — which the kernel is free to hand straight
+/// to any concurrent test's port-0 bind or outgoing connect before sshd binds
+/// it (and again during the stop → restart gap), so sshd's bind failed or the
+/// agent reconnected to a stranger (#3533). A port *below* the ephemeral range
+/// is never auto-assigned, so no port-0 bind or connect anywhere on the host can
+/// take it; only an explicit bind of that exact number could. The candidate
+/// sequence is spread by PID and a per-process counter so concurrent instances
+/// (in this process or a parallel checkout's) start on different ports, and a
+/// port already held by something else is skipped.
+fn sshd_port() -> u16 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+
+    const RANGE_START: u16 = 10_000;
+    let range_end = ephemeral_port_floor();
+    assert!(
+        range_end > RANGE_START + 1_000,
+        "ephemeral port range starts too low ({range_end}) to pick a stable sshd port"
+    );
+    let span = u32::from(range_end - RANGE_START);
+    let seed = std::process::id()
+        .wrapping_mul(7919)
+        .wrapping_add(NEXT.fetch_add(1, Ordering::Relaxed).wrapping_mul(104_729));
+    (0..span)
+        .map(|i| RANGE_START + ((seed.wrapping_add(i) % span) as u16))
+        .find(|&port| std::net::TcpListener::bind(("127.0.0.1", port)).is_ok())
+        .expect("no free non-ephemeral loopback port for sshd")
+}
+
+/// A process-unique suffix for per-instance temp dirs.
+fn unique_suffix() -> u32 {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static NEXT: AtomicU32 = AtomicU32::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 fn is_listening(port: u16) -> bool {
@@ -328,7 +383,7 @@ impl LocalAgentSshd {
         let dir = std::env::temp_dir().join(format!(
             "termihub-russh-reconnect-{}-{}",
             std::process::id(),
-            free_port()
+            unique_suffix()
         ));
         std::fs::create_dir_all(&dir)?;
         std::fs::set_permissions(&dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
@@ -376,7 +431,7 @@ impl LocalAgentSshd {
         .join("\n");
         // The port is fixed for the lifetime of the instance (drop/restore
         // must reuse it), so pick it now and write the final config.
-        let port = free_port();
+        let port = sshd_port();
         let config_body = config_body.replacen("Port 0", &format!("Port {port}"), 1);
         std::fs::write(&config, config_body)?;
 

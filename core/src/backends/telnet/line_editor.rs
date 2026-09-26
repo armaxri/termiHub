@@ -12,6 +12,7 @@
 
 use super::negotiation::escape_iac;
 
+const NUL: u8 = 0x00;
 const BS: u8 = 0x08;
 const LF: u8 = b'\n';
 const CR: u8 = b'\r';
@@ -162,16 +163,43 @@ impl LineEditor {
     }
 }
 
+/// Make every `CR` in pass-through input a valid NVT line ending (RFC 854):
+/// a `CR` directly followed by `LF` stays `CR LF`, any other `CR` becomes
+/// `CR NUL` (what BSD telnet sends for Enter in character mode).
+///
+/// The translation is **stateless per write**: a `CR` that ends a write is
+/// sent as `CR NUL` at once rather than held back to see whether the next
+/// write starts with `LF`. Keystrokes are never delayed, and a following
+/// `LF` write is sent as-is (`CR NUL LF`) — it may be a deliberate Ctrl-J,
+/// so it is not swallowed. The terminal sends Enter as a lone `CR` and
+/// normalises pasted line endings to `CR`, so a `CR LF` split across writes
+/// does not occur in practice.
+///
+/// TRANSMIT-BINARY (RFC 856), which would disable this translation, is never
+/// negotiated: the negotiator declines `DO BINARY` / `WILL BINARY`, so the
+/// session always stays in NVT (non-binary) mode.
+fn nvt_line_endings(data: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(data.len() + 1);
+    for (i, &byte) in data.iter().enumerate() {
+        out.push(byte);
+        if byte == CR && data.get(i + 1) != Some(&LF) {
+            out.push(NUL);
+        }
+    }
+    out
+}
+
 /// Turn a chunk of keyboard input into the bytes to send (IAC-escaped, RFC
 /// 854) and the bytes to echo locally. With `local_editing` off (character
 /// mode, or line mode while the server echoes) the input passes straight
-/// through, preceded by any line left half-typed in the editor.
+/// through — with a bare `CR` sent as `CR NUL`, see [`nvt_line_endings`] —
+/// preceded by any line left half-typed in the editor.
 pub(super) fn prepare_input(editor: &mut LineEditor, local_editing: bool, data: &[u8]) -> Edited {
     let raw = if local_editing {
         editor.feed(data)
     } else {
         let mut send = editor.take_pending();
-        send.extend_from_slice(data);
+        send.extend_from_slice(&nvt_line_endings(data));
         Edited {
             send,
             echo: Vec::new(),

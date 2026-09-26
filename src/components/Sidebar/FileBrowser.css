@@ -644,3 +644,61 @@
   white-space: nowrap;
   pointer-events: none;
 }
+
+/* ── Bookmarks (PROD-007, #3558) ─────────────────────────────────────────── */
+
+.file-bookmarks__menu {
+  max-width: 320px;
+}
+
+.file-bookmarks__item {
+  min-width: 0;
+}
+
+.file-bookmarks__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-bookmarks__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.file-bookmarks__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border-radius: var(--radius-sm);
+}
+
+.file-bookmarks__row:hover,
+.file-bookmarks__row:focus-within {
+  background-color: var(--bg-hover);
+}
+
+.file-bookmarks__text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.file-bookmarks__path {
+  overflow: hidden;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-bookmarks__empty {
+  margin: 0;
+  color: var(--text-secondary);
+}

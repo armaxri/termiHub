@@ -107,7 +107,9 @@ async fn run_ftp_server(
     match tokio::net::TcpListener::bind(&addr).await {
         Ok(probe) => {
             drop(probe);
-            ready.confirm();
+            // libunftp owns the real listener, so its bound address is not
+            // observable here (see `EmbeddedServerService::local_addr`).
+            ready.confirm(None);
         }
         Err(e) => {
             let msg = format!("Failed to bind FTP server to {addr}: {e}");

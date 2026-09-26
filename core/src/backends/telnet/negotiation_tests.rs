@@ -188,6 +188,21 @@ fn other_options_are_declined() {
 }
 
 #[test]
+fn transmit_binary_is_declined_in_both_directions() {
+    // The outgoing encoder sends a bare CR as CR NUL (RFC 854), which is
+    // only correct while TRANSMIT-BINARY (RFC 856, option 0) is off. If
+    // BINARY is ever accepted here, that translation must be gated on it.
+    const OPT_BINARY: u8 = 0;
+    for mode in [InputMode::Character, InputMode::Line] {
+        let mut n = neg().with_input_mode(mode);
+        let mut out = Vec::new();
+        n.on_command(DO, OPT_BINARY, &mut out);
+        n.on_command(WILL, OPT_BINARY, &mut out);
+        assert_eq!(out, vec![IAC, WONT, OPT_BINARY, IAC, DONT, OPT_BINARY]);
+    }
+}
+
+#[test]
 fn escape_iac_doubles_only_ff() {
     assert_eq!(escape_iac(&[1, IAC, 2]), vec![1, IAC, IAC, 2]);
     assert_eq!(escape_iac(b"abc"), b"abc".to_vec());

@@ -26,6 +26,7 @@ import type {
   ScaleMode,
 } from "@/types/remoteDesktop";
 import { effectiveScaleMode, isFixedResolution } from "@/types/remoteDesktop";
+import { toast } from "@/components/ui";
 import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 
@@ -139,6 +140,10 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   // even while another window controls the session so a Reclaim can re-assert
   // it (#3388). `null` until the canvas first requests a size.
   const desiredSizeRef = useRef<{ width: number; height: number } | null>(null);
+  // The session whose refused remote resize was already surfaced (#3463), so a
+  // server that cannot resize (e.g. VNC without ExtendedDesktopSize) is
+  // reported once, not on every debounced tab resize.
+  const resizeNoticeSessionRef = useRef<string | null>(null);
   // Cancellation token for the on-unmount disconnect, deferred to a microtask so
   // a same-tick effect re-run (React StrictMode's dev unmount→remount) can cancel
   // it before the live session is disconnected. The re-run's effect body flips
@@ -366,9 +371,15 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
       // Another window sizes the remote while it controls the session (#3388);
       // the recorded size is re-asserted on Reclaim instead.
       if (isWindowEvicted(id)) return;
-      void remoteDesktopResize(id, size.width, size.height).catch((err) =>
-        frontendLog("remote_desktop", `resize failed: ${err}`)
-      );
+      void remoteDesktopResize(id, size.width, size.height).catch((err) => {
+        const reason = backendErrorMessage(err);
+        frontendLog("remote_desktop", `resize failed: ${reason}`);
+        // The session keeps its size and the canvas scales locally; tell the
+        // user why the remote did not follow the tab, once per session.
+        if (resizeNoticeSessionRef.current === id) return;
+        resizeNoticeSessionRef.current = id;
+        toast.info("Remote desktop not resized", { id: `rd-resize-${id}`, description: reason });
+      });
     },
     [fixedResolution]
   );

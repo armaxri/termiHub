@@ -512,8 +512,9 @@ pub fn start_http_server(
             }
         };
 
-        // Bind confirmed — tell the manager it is safe to report Running.
-        ready.confirm();
+        // Bind confirmed — tell the manager it is safe to report Running, and
+        // which address it bound (the OS picks the port for a port-0 config).
+        ready.confirm(listener.local_addr().ok());
 
         let router = build_router(root, directory_listing, tracking_state, auth, &realm);
 
@@ -859,17 +860,15 @@ mod tests {
 
         let dir = tempfile::tempdir().expect("create temp dir");
         std::fs::write(dir.path().join("fw.bin"), "firmware").expect("write file");
-        let port = std::net::TcpListener::bind("127.0.0.1:0")
-            .and_then(|l| l.local_addr())
-            .expect("free port")
-            .port();
         let config = EmbeddedServerConfig {
             id: "test-http-log".to_string(),
             name: "test".to_string(),
             server_type: ServerType::Http,
             root_directory: dir.path().to_string_lossy().into_owned(),
             bind_host: "127.0.0.1".to_string(),
-            port,
+            // Ephemeral: the server binds port 0 itself and reports the port it
+            // got, so no other test can take it in between (#3533).
+            port: 0,
             auto_start: false,
             read_only: true,
             directory_listing: Some(false),
@@ -885,12 +884,13 @@ mod tests {
         let handle = std::thread::spawn(move || {
             start_http_server(&config, server_shutdown, server_stats, ready)
         });
-        let bind = ready_rx
+        let bound = ready_rx
             .recv_timeout(Duration::from_secs(5))
-            .expect("server should confirm its bind");
-        assert!(bind.is_ok(), "bind failed: {bind:?}");
+            .expect("server should confirm its bind")
+            .expect("bind failed")
+            .expect("HTTP server reports its bound address");
 
-        let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).expect("connect");
+        let mut stream = std::net::TcpStream::connect(bound).expect("connect");
         stream
             .write_all(b"GET /fw.bin HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
             .expect("send request");

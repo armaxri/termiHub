@@ -19,6 +19,9 @@ pub enum VncEncoding {
     CursorPseudo,
     DesktopSizePseudo,
     LastRectPseudo,
+    /// ExtendedDesktopSize pseudo-encoding (-308, termiHub fork, #3463):
+    /// screen-layout reports and client-initiated `SetDesktopSize`.
+    ExtendedDesktopSizePseudo,
     /// Tight JPEG quality level pseudo-encoding (`-32 + level`, level `0..=9`,
     /// 9 = best quality). Levels above 9 are clamped to 9 (termiHub fork, #3464).
     TightJpegQuality(u8),
@@ -40,6 +43,7 @@ impl VncEncoding {
             VncEncoding::CursorPseudo => -239,
             VncEncoding::DesktopSizePseudo => -223,
             VncEncoding::LastRectPseudo => -224,
+            VncEncoding::ExtendedDesktopSizePseudo => -308,
             VncEncoding::TightJpegQuality(level) => -32 + i32::from(level.min(9)),
             VncEncoding::TightCompressLevel(level) => -256 + i32::from(level.min(9)),
         }
@@ -60,6 +64,7 @@ impl From<u32> for VncEncoding {
             -239 => VncEncoding::CursorPseudo,
             -223 => VncEncoding::DesktopSizePseudo,
             -224 => VncEncoding::LastRectPseudo,
+            -308 => VncEncoding::ExtendedDesktopSizePseudo,
             _ => VncEncoding::Raw,
         }
     }
@@ -80,6 +85,7 @@ impl VncEncoding {
             -239 => Some(VncEncoding::CursorPseudo),
             -223 => Some(VncEncoding::DesktopSizePseudo),
             -224 => Some(VncEncoding::LastRectPseudo),
+            -308 => Some(VncEncoding::ExtendedDesktopSizePseudo),
             _ => None,
         }
     }

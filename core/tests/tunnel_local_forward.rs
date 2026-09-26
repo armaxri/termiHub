@@ -26,16 +26,6 @@ use termihub_core::tunnel::local_forward::LocalForwarder;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-/// Reserve an ephemeral loopback port, then release it so the forwarder can bind
-/// it. A small TOCTOU window exists but is harmless for a test.
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral")
-        .local_addr()
-        .expect("local addr")
-        .port()
-}
-
 /// A local (`-L`) forward to the SSH server's own internal HTTP service (8080)
 /// relays a real HTTP request/response — proving the data path forwards traffic
 /// that is otherwise unreachable from the host.
@@ -48,16 +38,18 @@ async fn local_forward_relays_http_over_ssh() {
         .await
         .expect("SSH connect to ssh-tunnel-target should succeed");
 
-    let listen_port = free_port();
     let forward = LocalForwardConfig {
         local_host: "127.0.0.1".to_string(),
-        local_port: listen_port,
+        // Port 0: the forwarder binds an OS-assigned port itself and reports it
+        // via `local_addr()`, so no other test can take it in between (#3533).
+        local_port: 0,
         // Resolved from the SSH server's network — the internal HTTP service.
         remote_host: "localhost".to_string(),
         remote_port: 8080,
     };
-    let _forwarder =
+    let forwarder =
         LocalForwarder::start(&forward, Arc::new(session)).expect("bind local forwarder");
+    let listen_port = forwarder.local_addr().port();
 
     // Connect to the forwarded listen socket and speak HTTP/1.0 to the internal
     // server through the tunnel.
@@ -94,15 +86,17 @@ async fn local_forward_stops_on_teardown() {
         .await
         .expect("SSH connect to ssh-tunnel-target should succeed");
 
-    let listen_port = free_port();
     let forward = LocalForwardConfig {
         local_host: "127.0.0.1".to_string(),
-        local_port: listen_port,
+        // Port 0: the forwarder binds an OS-assigned port itself and reports it
+        // via `local_addr()`, so no other test can take it in between (#3533).
+        local_port: 0,
         remote_host: "localhost".to_string(),
         remote_port: 8080,
     };
     let forwarder =
         LocalForwarder::start(&forward, Arc::new(session)).expect("bind local forwarder");
+    let listen_port = forwarder.local_addr().port();
 
     TcpStream::connect(("127.0.0.1", listen_port))
         .await

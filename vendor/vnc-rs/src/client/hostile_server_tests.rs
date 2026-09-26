@@ -7,7 +7,7 @@ use std::sync::Mutex;
 
 use tokio::sync::oneshot;
 
-use super::connection::asycn_vnc_read_loop;
+use super::connection::{asycn_vnc_read_loop, ScreenCell};
 use super::messages::ServerMsg;
 use crate::{PixelFormat, VncEncoding, VncError, VncEvent};
 
@@ -82,8 +82,9 @@ async fn run_with(
     };
     let (_stop_tx, mut stop_rx) = oneshot::channel();
     let mut reader = bytes;
+    let screen = ScreenCell::new(screen);
     let result =
-        asycn_vnc_read_loop(&mut reader, pf, &output, &mut stop_rx, encodings, screen).await;
+        asycn_vnc_read_loop(&mut reader, pf, &output, &mut stop_rx, encodings, &screen).await;
     (result, events.into_inner().unwrap())
 }
 
@@ -311,13 +312,14 @@ async fn stop_cancels_a_decoder_blocked_mid_message() {
     let (stop_tx, mut stop_rx) = oneshot::channel();
     let output = |_e: VncEvent| std::future::ready(Ok::<(), VncError>(()));
     let pf = PixelFormat::rgba();
+    let screen = ScreenCell::new((640, 480));
     let decoder = asycn_vnc_read_loop(
         &mut client,
         &pf,
         &output,
         &mut stop_rx,
         &ALL_ENCODINGS,
-        (640, 480),
+        &screen,
     );
     tokio::pin!(decoder);
     assert!(futures::poll!(decoder.as_mut()).is_pending());

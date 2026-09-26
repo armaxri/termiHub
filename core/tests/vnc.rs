@@ -10,12 +10,14 @@
 //! Two fixtures, both under the `vnc` compose profile:
 //!
 //! * `vnc-server` on port 2501 (x11vnc + Xvfb) — classic RFB VncAuth, password
-//!   `testpass`. Covers VNC-01..05 and VNC-08 (16-bit color depth and Tight
-//!   quality levels, #3464).
+//!   `testpass`. Covers VNC-01..05, VNC-08 (16-bit color depth and Tight
+//!   quality levels, #3464) and VNC-10 (a server that does not let clients
+//!   resize the desktop, #3463).
 //! * `vnc-vencrypt-server` on port 2502 (TigerVNC Xvnc) — VeNCrypt (RFB security
 //!   type 19, X509Vnc sub-type): a TLS handshake then the VNC-password stage.
 //!   Covers VNC-06 (`tlsVerify=insecure`) and VNC-07 (`tlsVerify=ca`), the
-//!   VeNCrypt/TLS path added in #1714.
+//!   VeNCrypt/TLS path added in #1714, and VNC-09 (fixed and dynamic remote
+//!   resolution through RFB ExtendedDesktopSize / SetDesktopSize, #3463).
 //!
 //! Both serve the same static four-quadrant test pattern (TL red, TR green,
 //! BL blue, BR white) at 1024x768, so a decoded framebuffer asserts exactly.
@@ -31,7 +33,7 @@ use std::time::Duration;
 
 use common::{port_vnc, port_vnc_vencrypt, require_docker};
 use termihub_core::backends::vnc::Vnc;
-use termihub_core::connection::{ConnectionType, FrameUpdate, InputEvent};
+use termihub_core::connection::{ConnectionType, FrameReceiver, FrameUpdate, InputEvent};
 
 /// The fixture's password (see `tests/docker/vnc-server`).
 const VNC_PASSWORD: &str = "testpass";
@@ -42,6 +44,11 @@ const FB_HEIGHT: u32 = 768;
 /// as an RFB `ServerCutText`. MUST match `CLIPBOARD_TEXT` in
 /// `tests/docker/vnc-server/entrypoint.sh`.
 const VNC_SERVER_CLIPBOARD: &str = "termiHub vnc server clipboard 4711";
+
+/// Serializes the tests that depend on the VeNCrypt fixture's desktop size:
+/// VNC-09 resizes the (shared, long-lived) Xvnc desktop and restores it, while
+/// VNC-06/07 assert the 1024x768 pattern (#3463).
+static VENCRYPT_DESKTOP: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Settings JSON for the fixture with the correct password.
 fn vnc_settings(port: u16) -> serde_json::Value {
@@ -398,6 +405,7 @@ async fn vnc_04_wrong_password_rejected() {
 #[tokio::test]
 async fn vnc_06_vencrypt_insecure_connect_and_decode() {
     require_docker!(port_vnc_vencrypt());
+    let _desktop = VENCRYPT_DESKTOP.lock().await;
 
     let mut vnc = Vnc::new();
     vnc.connect(vencrypt_settings(port_vnc_vencrypt(), "insecure", None))
@@ -419,6 +427,7 @@ async fn vnc_06_vencrypt_insecure_connect_and_decode() {
 #[tokio::test]
 async fn vnc_07_vencrypt_custom_ca_connect_and_decode() {
     require_docker!(port_vnc_vencrypt());
+    let _desktop = VENCRYPT_DESKTOP.lock().await;
 
     let ca_path = vencrypt_ca_path();
     let ca_path = ca_path.to_str().expect("CA path is valid UTF-8");
@@ -462,4 +471,128 @@ async fn vnc_08_color_depth_and_quality_decode() {
         assert_pattern_decodes(&vnc, &format!("VNC-08 {label}")).await;
         vnc.disconnect().await.expect("disconnect should succeed");
     }
+}
+
+// ── VNC-09 / VNC-10: remote resolution (#3463) ──────────────────────
+
+/// Wait until a decoded frame reports a `width` x `height` framebuffer.
+async fn wait_for_size(frames: &mut FrameReceiver, width: u32, height: u32, label: &str) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut last = (0, 0);
+    loop {
+        match tokio::time::timeout_at(deadline, frames.recv()).await {
+            Ok(Some(frame)) => {
+                last = (frame.width, frame.height);
+                if last == (width, height) {
+                    return;
+                }
+            }
+            Ok(None) => panic!("{label}: frame stream closed at {last:?}"),
+            Err(_) => panic!("{label}: framebuffer never became {width}x{height} (last {last:?})"),
+        }
+    }
+}
+
+/// Ask a dynamic session to resize until the backend accepts the request (it
+/// holds it back until the server's first layout report arrives).
+async fn resize_dynamic(vnc: &Vnc, width: u16, height: u16, label: &str) {
+    let graphical = vnc.graphical().expect("graphical backend");
+    graphical
+        .resize(width, height)
+        .await
+        .unwrap_or_else(|e| panic!("{label}: resize to {width}x{height} failed: {e}"));
+}
+
+/// TigerVNC's Xvnc accepts `SetDesktopSize`: a fixed-resolution session is
+/// resized right after the handshake, and a dynamic one follows `resize`.
+/// The fixture's desktop is restored to 1024x768 at the end.
+#[tokio::test]
+async fn vnc_09_fixed_and_dynamic_resolution() {
+    require_docker!(port_vnc_vencrypt());
+    let _desktop = VENCRYPT_DESKTOP.lock().await;
+
+    // Fixed: pinned to 800x600 on connect.
+    let mut settings = vencrypt_settings(port_vnc_vencrypt(), "insecure", None);
+    settings["resolutionMode"] = serde_json::json!("fixed");
+    settings["width"] = serde_json::json!(800);
+    settings["height"] = serde_json::json!(600);
+    let mut vnc = Vnc::new();
+    vnc.connect(settings)
+        .await
+        .expect("VNC-09: fixed-resolution connect");
+    let graphical = vnc.graphical().expect("graphical backend");
+    assert!(
+        !graphical.graphical_capabilities().supports_dynamic_resize,
+        "VNC-09: a fixed session does not follow the tab"
+    );
+    let mut frames = graphical.subscribe_frames();
+    wait_for_size(&mut frames, 800, 600, "VNC-09 fixed").await;
+    vnc.disconnect().await.expect("disconnect should succeed");
+
+    // Dynamic: follows resize requests.
+    let mut settings = vencrypt_settings(port_vnc_vencrypt(), "insecure", None);
+    settings["resolutionMode"] = serde_json::json!("dynamic");
+    let mut vnc = Vnc::new();
+    vnc.connect(settings)
+        .await
+        .expect("VNC-09: dynamic-resolution connect");
+    let graphical = vnc.graphical().expect("graphical backend");
+    assert!(graphical.graphical_capabilities().supports_dynamic_resize);
+    let mut frames = graphical.subscribe_frames();
+    // The first frame carries the server's current size (800x600 from above).
+    wait_for_size(&mut frames, 800, 600, "VNC-09 dynamic initial").await;
+    resize_dynamic(&vnc, 900, 700, "VNC-09").await;
+    wait_for_size(&mut frames, 900, 700, "VNC-09 dynamic").await;
+
+    // Restore the shared fixture for VNC-06/07.
+    resize_dynamic(&vnc, FB_WIDTH as u16, FB_HEIGHT as u16, "VNC-09 restore").await;
+    wait_for_size(&mut frames, FB_WIDTH, FB_HEIGHT, "VNC-09 restore").await;
+    vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+/// x11vnc does not let clients resize its desktop: a dynamic session keeps
+/// the server's size and `resize` reports why, without ending the session.
+#[tokio::test]
+async fn vnc_10_refused_dynamic_resolution_is_reported() {
+    require_docker!(port_vnc());
+
+    let mut settings = vnc_settings(port_vnc());
+    settings["resolutionMode"] = serde_json::json!("dynamic");
+    let mut vnc = Vnc::new();
+    vnc.connect(settings)
+        .await
+        .expect("VNC-10: dynamic-resolution connect");
+    let graphical = vnc.graphical().expect("graphical backend");
+    let mut frames = graphical.subscribe_frames();
+    wait_for_size(&mut frames, FB_WIDTH, FB_HEIGHT, "VNC-10 initial").await;
+
+    // Early requests may be held back until the server's first update tells
+    // whether it supports the extension; within a few tries it must refuse.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    let notice = loop {
+        match graphical.resize(900, 700).await {
+            Err(e) => break e.to_string(),
+            Ok(()) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            Ok(()) => panic!("VNC-10: resize was never refused"),
+        }
+    };
+    assert!(
+        notice.contains("1024x768") && notice.contains("scaling it locally"),
+        "VNC-10: unexpected notice {notice:?}"
+    );
+    assert!(
+        !graphical.graphical_capabilities().supports_dynamic_resize,
+        "VNC-10: capability drops once the server refused"
+    );
+    // The session survives the refusal: the frame stream is still open.
+    assert!(
+        matches!(
+            tokio::time::timeout(Duration::from_millis(500), frames.recv()).await,
+            Err(_) | Ok(Some(_))
+        ),
+        "VNC-10: the refusal must not end the session"
+    );
+    vnc.disconnect().await.expect("disconnect should succeed");
 }

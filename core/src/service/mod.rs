@@ -253,6 +253,17 @@ pub trait Service: Send {
     fn clear_access_activity(&self) -> bool {
         false
     }
+
+    /// The address the service's listening socket actually bound, when it
+    /// hosts one and can observe it (`None` by default).
+    ///
+    /// Lets a host holding the service as `dyn Service` learn the OS-assigned
+    /// port of a server started on port `0`, instead of reserving a port by
+    /// binding and dropping it first — a race under a parallel test suite
+    /// (#3533).
+    fn local_addr(&self) -> Option<std::net::SocketAddr> {
+        None
+    }
 }
 
 /// Errors from a [`Service`] lifecycle operation.

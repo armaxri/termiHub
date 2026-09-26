@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useAppStore } from "@/store/appStore";
+import { toast } from "@/components/ui";
 import { useRemoteDesktopSession, type RemoteDesktopSession } from "./useRemoteDesktopSession";
 import {
   remoteDesktopConnect,
@@ -61,6 +62,12 @@ vi.mock("@/services/events", () => ({
     hoisted.certCbs.push(cb);
     return Promise.resolve(() => {});
   },
+}));
+
+// The resize-refusal notice (#3463) is a toast; stub only the toast hub.
+vi.mock("@/components/ui", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/ui")>()),
+  toast: { info: vi.fn(), error: vi.fn(), success: vi.fn(), loading: vi.fn(), dismiss: vi.fn() },
 }));
 
 // Preserve the real module (incl. fireAndForget) and stub only the DEBUG logger,
@@ -278,6 +285,29 @@ describe("useRemoteDesktopSession", () => {
     await flush();
     act(() => h.get().resize(640, 480));
     expect(mockedResize).toHaveBeenCalledWith("rd-1", 640, 480);
+  });
+
+  it("surfaces a refused remote resize once per session (#3463)", async () => {
+    const refused = {
+      code: "internal",
+      message: "The VNC desktop was not resized: resizing is prohibited.",
+    };
+    mockedResize.mockRejectedValueOnce(refused).mockRejectedValueOnce(refused);
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    act(() => h.get().resize(640, 480));
+    await flush();
+    act(() => h.get().resize(800, 600));
+    await flush();
+    expect(mockedResize).toHaveBeenCalledTimes(2);
+    expect(toast.info).toHaveBeenCalledTimes(1);
+    expect(toast.info).toHaveBeenCalledWith(
+      "Remote desktop not resized",
+      expect.objectContaining({
+        description: "The VNC desktop was not resized: resizing is prohibited.",
+      })
+    );
   });
 
   it("sends clipboard and reflects remote clipboard events", async () => {

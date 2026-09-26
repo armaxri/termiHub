@@ -195,5 +195,37 @@ rejected every other format. termiHub can now negotiate 16-bit high colour:
 Tests: `src/client/hostile_server_tests.rs` (16-bpp cursor incl. big-endian,
 Tight fill/copy/palette/gradient, ZRLE), `src/codec/mod.rs` and `src/config.rs`.
 
+## ExtendedDesktopSize and SetDesktopSize (#3463)
+
+Upstream `0.5.3` could only follow a server-dictated size (`DesktopSize`, -223);
+upstream 0.6.0's desktop-resize work was not ported (see above). termiHub needs
+client-requested sizes for its fixed and dynamic VNC resolution modes, so the
+fork adds its own, hostile-server-hardened implementation of the community RFB
+spec's ExtendedDesktopSize extension (`src/client/desktop_size.rs`):
+
+- `VncEncoding::ExtendedDesktopSizePseudo` (-308). Only negotiated when the
+  consumer adds it; termiHub does so for the fixed and dynamic modes only.
+- The server's layout rectangle (`x` = reason, `y` = status, size, then
+  `number-of-screens` 16-byte `SCREEN`s) is parsed with every length bounded
+  first: more than `MAX_DESKTOP_SCREENS` (16) screens, or an accepted (status 0)
+  size beyond 8192 per side, is `VncError::Protocol`. A refusal (non-zero
+  status) never changes the framebuffer, whatever size it carries. It surfaces
+  as `VncEvent::DesktopLayout(ExtendedDesktopSize)` (reason, status, size,
+  screens); an accepted size change is also a `VncEvent::SetResolution`.
+- If the extension was negotiated but the server's first `FramebufferUpdate`
+  carries no layout rectangle, the server does not support it:
+  `VncEvent::DesktopLayoutUnsupported` is emitted once.
+- `X11Event::SetDesktopSize(DesktopSizeRequest)` sends RFB message 251. The
+  request is validated in `input()` (non-empty size within 8192, 1..=16 screens
+  that lie inside it), so an invalid one is an error to the caller and never
+  reaches the socket or ends the session.
+- The framebuffer size is shared between the decoder and the client handle
+  (`ScreenCell`): upstream kept the `ServerInit` size forever, so after any
+  resize `Refresh` / `FullRefresh` still requested the old geometry.
+
+Tests: `src/client/desktop_size_tests.rs` (wire format, parser, read-loop
+resize handling, unsupported inference, hostile inputs incl. a seeded fuzz of
+layout rectangles, and SetDesktopSize / refresh through the real client).
+
 Everything else is upstream `0.5.3`, under the original MIT/Apache-2.0 licenses
 (`LICENSE-MIT`, `LICENSE-APACHE`).

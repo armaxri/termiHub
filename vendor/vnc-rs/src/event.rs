@@ -29,6 +29,103 @@ impl From<(u16, u16)> for Screen {
     }
 }
 
+/// One screen of an RFB ExtendedDesktopSize layout (termiHub fork, #3463).
+///
+/// ```text
+/// +--------------+--------------+-------------+
+/// | No. of bytes | Type [Value] | Description |
+/// +--------------+--------------+-------------+
+/// | 4            | U32          | id          |
+/// | 2            | U16          | x-position  |
+/// | 2            | U16          | y-position  |
+/// | 2            | U16          | width       |
+/// | 2            | U16          | height      |
+/// | 4            | U32          | flags       |
+/// +--------------+--------------+-------------+
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DesktopScreen {
+    pub id: u32,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+    pub flags: u32,
+}
+
+/// Why the server sent an ExtendedDesktopSize rectangle (its `x-position`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopSizeReason {
+    /// The server changed the size itself (or reports the initial layout).
+    Server,
+    /// The reply to this client's own `SetDesktopSize`.
+    Client,
+    /// Another client resized the desktop.
+    OtherClient,
+    /// A reason code this client does not know.
+    Unknown(u16),
+}
+
+impl From<u16> for DesktopSizeReason {
+    fn from(value: u16) -> Self {
+        match value {
+            0 => Self::Server,
+            1 => Self::Client,
+            2 => Self::OtherClient,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+/// The result of a `SetDesktopSize` request (the rectangle's `y-position`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopSizeStatus {
+    /// No error: the framebuffer and layout in the rectangle are in effect.
+    Ok,
+    /// The server does not allow clients to resize the desktop.
+    Prohibited,
+    /// The server lacks the resources for the requested size.
+    OutOfResources,
+    /// The requested screen layout is invalid.
+    InvalidLayout,
+    /// A status code this client does not know (always a refusal).
+    Unknown(u16),
+}
+
+impl From<u16> for DesktopSizeStatus {
+    fn from(value: u16) -> Self {
+        match value {
+            0 => Self::Ok,
+            1 => Self::Prohibited,
+            2 => Self::OutOfResources,
+            3 => Self::InvalidLayout,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+/// A server ExtendedDesktopSize pseudo-rectangle (encoding -308, termiHub
+/// fork, #3463): the framebuffer size and screen layout, why they were sent,
+/// and — for a reply to this client's `SetDesktopSize` — whether the request
+/// was honoured. With a non-[`DesktopSizeStatus::Ok`] status the size and
+/// layout are informational only; the framebuffer did not change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtendedDesktopSize {
+    pub reason: DesktopSizeReason,
+    pub status: DesktopSizeStatus,
+    pub width: u16,
+    pub height: u16,
+    pub screens: Vec<DesktopScreen>,
+}
+
+/// A client `SetDesktopSize` request (RFB message 251, termiHub fork, #3463).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopSizeRequest {
+    pub width: u16,
+    pub height: u16,
+    pub screens: Vec<DesktopScreen>,
+}
+
 type SrcRect = Rect;
 type DstRect = Rect;
 
@@ -87,6 +184,18 @@ pub enum VncEvent {
     /// According to [RFC6143](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.6.4)
     ///
     Text(String),
+    /// The server's ExtendedDesktopSize layout (termiHub fork, #3463): sent
+    /// only when [crate::VncEncoding::ExtendedDesktopSizePseudo] was
+    /// negotiated — first with the initial layout, then on every server- or
+    /// client-initiated change and as the reply to [X11Event::SetDesktopSize].
+    /// A size change with status `Ok` is also reported as
+    /// [VncEvent::SetResolution].
+    DesktopLayout(ExtendedDesktopSize),
+    /// ExtendedDesktopSize was negotiated but the server's first
+    /// `FramebufferUpdate` carried no layout rectangle, so the server does not
+    /// support it and `SetDesktopSize` must not be sent (termiHub fork, #3463).
+    /// Emitted at most once.
+    DesktopLayoutUnsupported,
     /// If any unexpected error happens in the async process routines
     /// This event will propagate the error to the current context
     ///
@@ -160,4 +269,9 @@ pub enum X11Event {
     /// Only Latin-1 character set is allowed
     ///
     CopyText(String),
+    /// Ask the server to resize the desktop (RFB `SetDesktopSize`, termiHub
+    /// fork, #3463). Only valid once the server has sent a
+    /// [VncEvent::DesktopLayout]; the reply arrives as another one with
+    /// [DesktopSizeReason::Client].
+    SetDesktopSize(DesktopSizeRequest),
 }

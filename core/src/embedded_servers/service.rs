@@ -17,6 +17,7 @@
 //! run on the desktop **or** a remote agent; #2192 relocated the implementations
 //! here so the agent crate can compile and host them.
 
+use std::net::SocketAddr;
 use std::sync::mpsc::{RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -116,15 +117,25 @@ pub fn display_name_for(server_type: &ServerType) -> &'static str {
 /// keeps the server out of the active slot so it never shows a stuck "Running"
 /// before flipping to `Error` (GAP G3, #1145).
 pub struct BindSignal {
-    tx: SyncSender<Result<(), String>>,
+    tx: SyncSender<BindResult>,
 }
 
+/// What a server thread reports over its [`BindSignal`]: the address its
+/// listening socket actually bound (`None` when the server cannot observe it),
+/// or the reason the bind failed.
+pub(crate) type BindResult = Result<Option<SocketAddr>, String>;
+
 impl BindSignal {
-    /// Report that the listening socket bound successfully.
-    pub fn confirm(&self) {
+    /// Report that the listening socket bound successfully, carrying the address
+    /// it actually bound when the server can observe it.
+    ///
+    /// The bound address matters for a config with port `0`: the OS picks the
+    /// port at bind time, so this is the only way a caller learns it without the
+    /// racy "reserve a port, free it, re-bind it" idiom (#3533).
+    pub fn confirm(&self, local_addr: Option<SocketAddr>) {
         // A full/closed channel means the service already gave up waiting; the
         // send failure is harmless because the thread will still shut down.
-        let _ = self.tx.send(Ok(()));
+        let _ = self.tx.send(Ok(local_addr));
     }
 
     /// Report that binding failed, carrying the reason for the UI.
@@ -135,7 +146,7 @@ impl BindSignal {
     /// Build a `BindSignal` and its receiving end for tests that drive a real
     /// server thread directly, without going through [`EmbeddedServerService`].
     #[cfg(test)]
-    pub(crate) fn for_test() -> (Self, std::sync::mpsc::Receiver<Result<(), String>>) {
+    pub(crate) fn for_test() -> (Self, std::sync::mpsc::Receiver<BindResult>) {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         (Self { tx }, rx)
     }
@@ -144,8 +155,9 @@ impl BindSignal {
 /// Decision the service makes from a server thread's bind signal.
 #[derive(Debug)]
 enum BindOutcome {
-    /// The socket bound — keep the active entry and report `Running`.
-    Running,
+    /// The socket bound (at this address, when known) — keep the active entry
+    /// and report `Running`.
+    Running(Option<SocketAddr>),
     /// The bind failed (explicit error, dropped sender, or timeout) — drop the
     /// active entry and report `Error` with this reason.
     Failed(String),
@@ -156,9 +168,9 @@ enum BindOutcome {
 /// bind (GAP G3, #1145).
 ///
 /// Pure and `AppHandle`-free so the start-flow decision can be unit-tested.
-fn decide_bind_outcome(signal: Result<Result<(), String>, RecvTimeoutError>) -> BindOutcome {
+fn decide_bind_outcome(signal: Result<BindResult, RecvTimeoutError>) -> BindOutcome {
     match signal {
-        Ok(Ok(())) => BindOutcome::Running,
+        Ok(Ok(local_addr)) => BindOutcome::Running(local_addr),
         Ok(Err(reason)) => BindOutcome::Failed(reason),
         Err(RecvTimeoutError::Disconnected) => {
             BindOutcome::Failed("server exited before confirming it was listening".to_string())
@@ -178,6 +190,8 @@ struct ActiveServer {
     thread_handle: thread::JoinHandle<()>,
     stats: Arc<AtomicServerStats>,
     started_at: String,
+    /// The address the listener actually bound, when the server reported it.
+    local_addr: Option<SocketAddr>,
     /// Shared status updated by the server thread on error.
     error: Arc<Mutex<Option<String>>>,
 }
@@ -324,7 +338,7 @@ impl EmbeddedServerService {
         // One-slot channel the server thread uses to confirm (or reject) its real
         // bind. `Running` is only emitted after this confirmation, so a late bind
         // failure never leaves the item stuck green (GAP G3, #1145).
-        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel::<BindResult>(1);
 
         let cfg = config.clone();
         let shutdown_clone = shutdown.clone();
@@ -364,7 +378,7 @@ impl EmbeddedServerService {
 
         // Wait for the thread to confirm its bind before declaring Running.
         match decide_bind_outcome(ready_rx.recv_timeout(BIND_CONFIRM_TIMEOUT)) {
-            BindOutcome::Running => {
+            BindOutcome::Running(local_addr) => {
                 let started_at = chrono::Utc::now().to_rfc3339();
                 let snapshot = stats.snapshot();
                 self.active = Some(ActiveServer {
@@ -372,6 +386,7 @@ impl EmbeddedServerService {
                     thread_handle,
                     stats,
                     started_at: started_at.clone(),
+                    local_addr,
                     error: error_slot,
                 });
                 self.set_status_and_emit(ServiceStatus::Running, snapshot, Some(started_at));
@@ -416,6 +431,16 @@ impl EmbeddedServerService {
             }
         }
         self.status = ServiceStatus::Stopped;
+    }
+
+    /// The address the running server's listener actually bound, or `None` when
+    /// it is not running or the server type cannot report it (FTP, whose
+    /// listener is bound inside libunftp).
+    ///
+    /// For a config with port `0` this is how a caller learns the OS-assigned
+    /// port (#3533).
+    pub fn local_addr(&self) -> Option<SocketAddr> {
+        self.active.as_ref().and_then(|a| a.local_addr)
     }
 
     /// Whether the server is currently live (running, with no recorded runtime
@@ -533,6 +558,7 @@ impl EmbeddedServerService {
             thread_handle: thread::spawn(|| {}),
             stats: AtomicServerStats::with_activity(Arc::clone(&svc.activity)),
             started_at: chrono::Utc::now().to_rfc3339(),
+            local_addr: None,
             error: Arc::new(Mutex::new(None)),
         });
         svc.status = ServiceStatus::Running;
@@ -600,6 +626,10 @@ impl Service for EmbeddedServerService {
     fn clear_access_activity(&self) -> bool {
         self.clear_activity();
         true
+    }
+
+    fn local_addr(&self) -> Option<SocketAddr> {
+        EmbeddedServerService::local_addr(self)
     }
 }
 
@@ -706,9 +736,14 @@ mod tests {
 
     #[test]
     fn bind_success_signal_yields_running() {
+        let addr: SocketAddr = "127.0.0.1:4321".parse().unwrap();
         assert!(matches!(
-            decide_bind_outcome(Ok(Ok(()))),
-            BindOutcome::Running
+            decide_bind_outcome(Ok(Ok(Some(addr)))),
+            BindOutcome::Running(Some(a)) if a == addr
+        ));
+        assert!(matches!(
+            decide_bind_outcome(Ok(Ok(None))),
+            BindOutcome::Running(None)
         ));
     }
 

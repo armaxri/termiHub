@@ -9,6 +9,9 @@ describe("remote-desktop resolution helpers (PROD-026)", () => {
     // A connection saved before the option existed is dynamic.
     expect(isFixedResolution({ host: "h" })).toBe(false);
     expect(isFixedResolution({ resolutionMode: 1 })).toBe(false);
+    // VNC's "server default" mode (#3463) is not fixed: the remote keeps the
+    // server's size, and the backend ignores tab resizes itself.
+    expect(isFixedResolution({ resolutionMode: "server" })).toBe(false);
   });
 
   it("offers Match Window only to dynamic sessions", () => {

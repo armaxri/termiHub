@@ -46,7 +46,7 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -81,17 +81,6 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
-}
-
-/// Reserve a free localhost TCP port by binding to `:0` and immediately
-/// releasing it. The agent re-binds this fixed port across its re-exec, so a
-/// reconnect after the swap lands on the same address.
-fn reserve_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .expect("bind ephemeral port")
-        .local_addr()
-        .expect("local_addr")
-        .port()
 }
 
 fn inode(path: &Path) -> Option<u64> {
@@ -169,7 +158,6 @@ async fn mount_release(server: &MockServer, agent_bytes: &[u8]) {
 /// running from a throwaway copy of the binary so its self-replace is contained.
 struct LiveAgent {
     child: Child,
-    addr: String,
     bin_path: PathBuf,
     stderr_path: PathBuf,
     _install_dir: TempDir,
@@ -192,8 +180,6 @@ impl LiveAgent {
         let bin_path = install_dir.path().join("termihub-agent");
 
         let config_home = TempDir::new().expect("config home");
-        let port = reserve_port();
-        let addr = format!("127.0.0.1:{port}");
 
         let stderr_file = tempfile::NamedTempFile::new().expect("stderr file");
         let stderr_path = stderr_file.path().to_path_buf();
@@ -209,7 +195,9 @@ impl LiveAgent {
 
         let child = Command::new(&bin_path)
             .arg("--listen")
-            .arg(&addr)
+            // Port 0: the agent binds an OS-assigned port and announces it; the
+            // suite reads it back from the log (see `LiveAgent::addr`, #3533).
+            .arg("127.0.0.1:0")
             .arg("--allow-self-update")
             .arg("--update-strategy")
             .arg(strategy)
@@ -234,7 +222,6 @@ impl LiveAgent {
 
         LiveAgent {
             child,
-            addr,
             bin_path,
             stderr_path,
             _install_dir: install_dir,
@@ -266,6 +253,21 @@ impl LiveAgent {
 
     fn stderr(&self) -> String {
         std::fs::read_to_string(&self.stderr_path).unwrap_or_default()
+    }
+
+    /// The address the agent's `generation`-th incarnation listens on (`0` = as
+    /// spawned, `1` = after the first self-apply re-exec), read from its
+    /// `Listening on` log line. The agent runs on `--listen 127.0.0.1:0`, so a
+    /// re-exec re-binds a fresh OS-assigned port (#3533).
+    fn addr(&self, generation: usize) -> String {
+        common::wait_for_listen_addr(&self.stderr_path, generation, Duration::from_secs(30))
+            .unwrap_or_else(|| {
+                panic!(
+                    "agent incarnation {generation} never logged a `Listening on` address.\n\
+                     --- agent stderr ---\n{}",
+                    self.stderr()
+                )
+            })
     }
 
     /// The agent's `XDG_CONFIG_HOME` (holds `termihub-agent/listen-auth.token`).
@@ -481,12 +483,12 @@ impl Client {
             None => "<no sessions array — RPC returned no result>".to_string(),
         };
         format!(
-            "--- agent addr ---\n{}\n\
+            "--- agent listen addrs ---\n{}\n\
              --- raw connection.list ---\n{raw}\n\
              --- listed sessions ---\n  {ids}\n\
              --- persisted state.json ---\n{}\n\
              --- agent stderr ---\n{}",
-            agent.addr,
+            common::listen_addrs(&agent.stderr()).join(", "),
             agent.state(),
             agent.stderr()
         )
@@ -555,9 +557,10 @@ async fn deferred_strategy_auto_applies_on_idle_and_comes_back() {
         "verified update was not staged at {staged:?}"
     );
 
-    // It re-execed with the same args → same port → reconnect succeeds and the
-    // agent is healthy on the swapped-in binary.
-    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(30))
+    // It re-execed with the same args → its second incarnation announces a fresh
+    // listener (the args say port 0) → reconnect succeeds and the agent is
+    // healthy on the swapped-in binary.
+    let mut client = Client::connect(&agent.addr(1), agent.config_home(), Duration::from_secs(30))
         .unwrap_or_else(|| {
             panic!(
                 "agent did not come back after self-apply.\n{}",
@@ -613,7 +616,7 @@ async fn applied_update_does_not_re_exec_on_the_next_idle() {
         agent.stderr()
     );
 
-    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(30))
+    let mut client = Client::connect(&agent.addr(1), agent.config_home(), Duration::from_secs(30))
         .unwrap_or_else(|| {
             panic!(
                 "agent did not come back after self-apply.\n{}",
@@ -699,7 +702,7 @@ async fn coordinated_strategy_stages_without_applying() {
     );
 
     // The agent stayed up on its original binary (it never re-execed).
-    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(15))
+    let mut client = Client::connect(&agent.addr(0), agent.config_home(), Duration::from_secs(15))
         .expect("agent should still be reachable after a coordinated stage");
     assert!(!client.agent_version().is_empty());
 }
@@ -746,7 +749,7 @@ async fn failed_apply_keeps_pending_update() {
     );
 
     // The agent kept running its old binary and is still reachable (no re-exec).
-    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(15))
+    let mut client = Client::connect(&agent.addr(0), agent.config_home(), Duration::from_secs(15))
         .expect("agent should keep running after a failed apply");
     assert!(!client.agent_version().is_empty());
 }
@@ -801,7 +804,7 @@ async fn assert_never_interrupts(
     let agent = LiveAgent::spawn(&server, "deferred", Duration::from_secs(6));
     let bin_inode_before = inode(&agent.bin_path).expect("binary present");
 
-    let mut client = Client::connect(&agent.addr, agent.config_home(), Duration::from_secs(15))
+    let mut client = Client::connect(&agent.addr(0), agent.config_home(), Duration::from_secs(15))
         .expect("agent should be reachable before the first poll");
     let session_id = client.create_session(session_type, config);
     // Confirm the session is actually active before the poll can fire.

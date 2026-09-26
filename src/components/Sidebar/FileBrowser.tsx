@@ -82,9 +82,11 @@ import { FileBrowserPathBar } from "./FileBrowserPathBar";
 import { FileBrowserDndProvider } from "./FileBrowserDndProvider";
 import { FileMoveConflictDialog } from "./FileMoveConflictDialog";
 import { MoveToDialog, type MoveToRequest } from "./MoveToDialog";
+import { FileBookmarksMenu } from "./FileBookmarksMenu";
 import { useFileRowDnd } from "./fileBrowserDnd";
 import { useFileMoveTransfer } from "@/hooks/useFileMoveTransfer";
 import { useFileDragOut } from "@/hooks/useFileDragOut";
+import { useFileBookmarkScope } from "@/hooks/useFileBookmarkScope";
 import "./FileBrowser.css";
 
 /**
@@ -1234,6 +1236,7 @@ export function FileBrowser() {
   }, []);
 
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
+  const bookmarkScope = useFileBookmarkScope(mode, sessionFileBrowserId);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
 
   // Drag-to-move / Move to… engine (PROD-006): guards, conflict prompt, and the
@@ -1718,6 +1721,11 @@ export function FileBrowser() {
                 data-testid="file-browser-go-to-cwd"
               />
             </Tooltip>
+            <FileBookmarksMenu
+              scope={bookmarkScope}
+              currentPath={currentPath}
+              onNavigate={handleNavigatePath}
+            />
             <Tooltip
               content={canCd ? `cd to ${currentPath}` : "cd here (no active terminal)"}
               side="top"
