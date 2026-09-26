@@ -171,10 +171,20 @@ fn validate_rule_enforces_interval_bounds_and_days() {
 
 #[test]
 fn invalid_rule_has_no_next_run() {
-    assert!(next_run_after(&interval(0), utc(2026, 1, 1, 0, 0), utc(2026, 1, 1, 0, 0), &BERLIN)
-        .is_none());
-    assert!(next_run_after(&daily("7am"), utc(2026, 1, 1, 0, 0), utc(2026, 1, 1, 0, 0), &BERLIN)
-        .is_none());
+    assert!(next_run_after(
+        &interval(0),
+        utc(2026, 1, 1, 0, 0),
+        utc(2026, 1, 1, 0, 0),
+        &BERLIN
+    )
+    .is_none());
+    assert!(next_run_after(
+        &daily("7am"),
+        utc(2026, 1, 1, 0, 0),
+        utc(2026, 1, 1, 0, 0),
+        &BERLIN
+    )
+    .is_none());
 }
 
 // ── interval ────────────────────────────────────────────────────────────
@@ -262,11 +272,19 @@ fn daily_uses_local_date_not_utc_date() {
     // 23:30Z on 1 June is already 01:30 local on 2 June in Berlin: a 00:15
     // daily run is due 2 June 22:15Z → no wait, 00:15 local on 3 June.
     let rule = daily("00:15");
-    assert_eq!(next(&rule, utc(2026, 6, 1, 23, 30)), utc(2026, 6, 2, 22, 15));
+    assert_eq!(
+        next(&rule, utc(2026, 6, 1, 23, 30)),
+        utc(2026, 6, 2, 22, 15)
+    );
     // New York: 03:00Z on 2 June is 23:00 local on 1 June; 23:30 local is 03:30Z.
     let rule = daily("23:30");
     assert_eq!(
-        next_run_after(&rule, utc(2026, 6, 2, 3, 0), utc(2026, 6, 2, 3, 0), &NEW_YORK),
+        next_run_after(
+            &rule,
+            utc(2026, 6, 2, 3, 0),
+            utc(2026, 6, 2, 3, 0),
+            &NEW_YORK
+        ),
         Some(utc(2026, 6, 2, 3, 30))
     );
 }
@@ -283,8 +301,14 @@ fn daily_keeps_local_time_across_spring_forward() {
 #[test]
 fn daily_keeps_local_time_across_fall_back() {
     let rule = daily("09:00");
-    assert_eq!(next(&rule, utc(2026, 10, 24, 7, 0)), utc(2026, 10, 25, 8, 0));
-    assert_eq!(next(&rule, utc(2026, 10, 25, 8, 0)), utc(2026, 10, 26, 8, 0));
+    assert_eq!(
+        next(&rule, utc(2026, 10, 24, 7, 0)),
+        utc(2026, 10, 25, 8, 0)
+    );
+    assert_eq!(
+        next(&rule, utc(2026, 10, 25, 8, 0)),
+        utc(2026, 10, 26, 8, 0)
+    );
 }
 
 #[test]
@@ -298,7 +322,12 @@ fn nonexistent_local_time_fires_at_first_valid_minute_after_the_gap() {
     // New York 8 Mar 2026: 02:00 → 03:00; 02:15 fires at 03:00 EDT (07:00Z).
     let rule = daily("02:15");
     assert_eq!(
-        next_run_after(&rule, utc(2026, 3, 7, 12, 0), utc(2026, 3, 7, 12, 0), &NEW_YORK),
+        next_run_after(
+            &rule,
+            utc(2026, 3, 7, 12, 0),
+            utc(2026, 3, 7, 12, 0),
+            &NEW_YORK
+        ),
         Some(utc(2026, 3, 8, 7, 0))
     );
 }
@@ -325,10 +354,16 @@ fn ambiguous_local_time_fires_once_at_the_earlier_occurrence() {
     // Berlin 25 Oct 2026: 03:00 CEST → 02:00 CET, so 02:30 happens at 00:30Z
     // and again at 01:30Z. Fire at 00:30Z only.
     let rule = daily("02:30");
-    assert_eq!(next(&rule, utc(2026, 10, 24, 12, 0)), utc(2026, 10, 25, 0, 30));
+    assert_eq!(
+        next(&rule, utc(2026, 10, 24, 12, 0)),
+        utc(2026, 10, 25, 0, 30)
+    );
     // After the first occurrence the next run is the following day, not the
     // second occurrence an hour later.
-    assert_eq!(next(&rule, utc(2026, 10, 25, 0, 30)), utc(2026, 10, 26, 1, 30));
+    assert_eq!(
+        next(&rule, utc(2026, 10, 25, 0, 30)),
+        utc(2026, 10, 26, 1, 30)
+    );
 }
 
 #[test]
@@ -401,13 +436,30 @@ fn weekly_on_dst_switch_day() {
     assert_eq!(next(&rule, utc(2026, 3, 23, 0, 0)), utc(2026, 3, 29, 1, 0));
     assert_eq!(next(&rule, utc(2026, 3, 29, 1, 0)), utc(2026, 4, 5, 0, 30));
     // 25 Oct 2026 is a Sunday (fall-back).
-    assert_eq!(next(&rule, utc(2026, 10, 19, 0, 0)), utc(2026, 10, 25, 0, 30));
-    assert_eq!(next(&rule, utc(2026, 10, 25, 0, 30)), utc(2026, 11, 1, 1, 30));
+    assert_eq!(
+        next(&rule, utc(2026, 10, 19, 0, 0)),
+        utc(2026, 10, 25, 0, 30)
+    );
+    assert_eq!(
+        next(&rule, utc(2026, 10, 25, 0, 30)),
+        utc(2026, 11, 1, 1, 30)
+    );
 }
 
 #[test]
 fn every_weekday_equals_daily() {
-    let all = weekly(&[Mon, ScheduleWeekday::Tue, Wed, ScheduleWeekday::Thu, Fri, Sat, Sun], "07:45");
+    let all = weekly(
+        &[
+            Mon,
+            ScheduleWeekday::Tue,
+            Wed,
+            ScheduleWeekday::Thu,
+            Fri,
+            Sat,
+            Sun,
+        ],
+        "07:45",
+    );
     let d = daily("07:45");
     let mut t = utc(2026, 3, 20, 0, 0);
     for _ in 0..30 {

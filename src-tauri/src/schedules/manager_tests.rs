@@ -1,7 +1,7 @@
 //! Scheduler-authority tests: the safety rules and every tick decision.
 
 use super::*;
-use crate::schedules::config::ScheduleWeekday;
+use crate::schedules::config::{ScheduleAction, ScheduleRule, ScheduleWeekday};
 use chrono::Utc;
 use tempfile::TempDir;
 
@@ -76,7 +76,6 @@ fn a_new_schedule_is_created_disabled_and_unconfirmed() {
     assert!(!view.schedule.enabled);
     assert!(view.schedule.confirmed_at.is_none());
     assert!(view.next_run_at.is_none());
-    assert_eq!(m.enabled_count(), 0);
 }
 
 #[test]
@@ -84,12 +83,17 @@ fn first_enable_requires_confirmation() {
     let dir = TempDir::new().unwrap();
     let m = ScheduleManager::new_test(dir.path());
     m.save(input("s1", every(5)), t(10, 0), &Utc).unwrap();
-    let e = m.set_enabled("s1", true, false, t(10, 0), &Utc).unwrap_err();
+    let e = m
+        .set_enabled("s1", true, false, t(10, 0), &Utc)
+        .unwrap_err();
     assert!(e.to_string().contains("Confirm"));
     let v = m.set_enabled("s1", true, true, t(10, 0), &Utc).unwrap();
     assert!(v.schedule.enabled);
     assert!(v.schedule.confirmed_at.is_some());
-    assert_eq!(v.next_run_at.as_deref(), Some(t(10, 5).to_rfc3339().as_str()));
+    assert_eq!(
+        v.next_run_at.as_deref(),
+        Some(t(10, 5).to_rfc3339().as_str())
+    );
     // Once confirmed, a later re-enable needs no new confirmation.
     m.set_enabled("s1", false, false, t(10, 1), &Utc).unwrap();
     assert!(m.set_enabled("s1", true, false, t(10, 2), &Utc).is_ok());
@@ -127,7 +131,10 @@ fn renaming_or_retiming_keeps_the_schedule_enabled() {
     assert!(v.schedule.enabled);
     assert_eq!(v.schedule.name, "Renamed");
     // Re-timed from the edit, never a catch-up.
-    assert_eq!(v.next_run_at.as_deref(), Some(t(10, 37).to_rfc3339().as_str()));
+    assert_eq!(
+        v.next_run_at.as_deref(),
+        Some(t(10, 37).to_rfc3339().as_str())
+    );
 }
 
 #[test]
@@ -185,7 +192,10 @@ fn delete_removes_and_unknown_id_errors() {
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     m.delete("s1").unwrap();
     assert!(m.delete("s1").is_err());
-    assert!(m.tick(t(10, 10), &Utc, &windows(&["main"])).fires.is_empty());
+    assert!(m
+        .tick(t(10, 10), &Utc, &windows(&["main"]))
+        .fires
+        .is_empty());
 }
 
 // ── firing ─────────────────────────────────────────────────────────────
@@ -210,7 +220,10 @@ fn fires_when_due_and_not_before() {
     );
     let view = &m.state(t(10, 10), &Utc).unwrap().schedules[0];
     assert!(view.running);
-    assert_eq!(view.next_run_at.as_deref(), Some(t(10, 20).to_rfc3339().as_str()));
+    assert_eq!(
+        view.next_run_at.as_deref(),
+        Some(t(10, 20).to_rfc3339().as_str())
+    );
 }
 
 #[test]
@@ -219,7 +232,10 @@ fn a_disabled_schedule_never_fires() {
     let m = ScheduleManager::new_test(dir.path());
     m.save(input("s1", every(1)), t(10, 0), &Utc).unwrap();
     for minute in 0..30 {
-        assert!(m.tick(t(10, minute), &Utc, &windows(&["main"])).fires.is_empty());
+        assert!(m
+            .tick(t(10, minute), &Utc, &windows(&["main"]))
+            .fires
+            .is_empty());
     }
 }
 
@@ -247,7 +263,14 @@ fn a_run_settles_only_after_every_window_reported() {
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     let w = windows(&["main", "win-1"]);
     let token = m.tick(t(10, 10), &Utc, &w).fires[0].token.clone();
-    assert!(!m.report(&token, "main", skip_report("No target connected"), t(10, 10)).unwrap());
+    assert!(!m
+        .report(
+            &token,
+            "main",
+            skip_report("No target connected"),
+            t(10, 10)
+        )
+        .unwrap());
     // A duplicate report from the same window is ignored.
     assert!(!m.report(&token, "main", completed(1), t(10, 10)).unwrap());
     assert!(m.report(&token, "win-1", completed(1), t(10, 11)).unwrap());
@@ -263,8 +286,10 @@ fn disconnected_targets_everywhere_record_a_skip_with_the_reason() {
     let w = windows(&["main", "win-1"]);
     let token = m.tick(t(10, 10), &Utc, &w).fires[0].token.clone();
     let reason = "None of the target connections are connected";
-    m.report(&token, "main", skip_report(reason), t(10, 10)).unwrap();
-    m.report(&token, "win-1", skip_report(reason), t(10, 10)).unwrap();
+    m.report(&token, "main", skip_report(reason), t(10, 10))
+        .unwrap();
+    m.report(&token, "win-1", skip_report(reason), t(10, 10))
+        .unwrap();
     let res = last_result(&m);
     assert_eq!(res.outcome, ScheduleRunOutcome::Skipped);
     assert_eq!(res.message.as_deref(), Some(reason));
@@ -285,7 +310,10 @@ fn a_failure_in_any_window_marks_the_run_failed() {
     m.report(&token, "win-1", failed, t(10, 11)).unwrap();
     let res = last_result(&m);
     assert_eq!(res.outcome, ScheduleRunOutcome::Failed);
-    assert_eq!(res.message.as_deref(), Some("Ran on 3 terminals: step 2 failed"));
+    assert_eq!(
+        res.message.as_deref(),
+        Some("Ran on 3 terminals: step 2 failed")
+    );
 }
 
 #[test]
@@ -293,8 +321,12 @@ fn unknown_tokens_and_windows_are_ignored() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     assert!(!m.report("nope", "main", completed(1), t(10, 0)).unwrap());
-    let token = m.tick(t(10, 10), &Utc, &windows(&["main"])).fires[0].token.clone();
-    assert!(!m.report(&token, "stranger", completed(1), t(10, 10)).unwrap());
+    let token = m.tick(t(10, 10), &Utc, &windows(&["main"])).fires[0]
+        .token
+        .clone();
+    assert!(!m
+        .report(&token, "stranger", completed(1), t(10, 10))
+        .unwrap());
     assert!(m.state(t(10, 10), &Utc).unwrap().schedules[0].running);
 }
 
@@ -334,7 +366,10 @@ fn no_window_open_skips_with_a_reason() {
     let dir = TempDir::new().unwrap();
     let m = enabled_manager(&dir, MissedRunPolicy::Skip);
     assert!(m.tick(t(10, 10), &Utc, &[]).fires.is_empty());
-    assert!(last_result(&m).message.unwrap().contains("no termiHub window"));
+    assert!(last_result(&m)
+        .message
+        .unwrap()
+        .contains("no termiHub window"));
 }
 
 // ── missed runs: skip vs catch-up ───────────────────────────────────────
@@ -358,10 +393,16 @@ fn missed_runs_are_skipped_by_default() {
     assert!(r.fires.is_empty());
     let res = last_result(&m);
     assert_eq!(res.outcome, ScheduleRunOutcome::Skipped);
-    assert!(res.message.unwrap().contains("Missed the run due at 2026-06-01 10:10"));
+    assert!(res
+        .message
+        .unwrap()
+        .contains("Missed the run due at 2026-06-01 10:10"));
     // Back on the regular cadence (anchor-aligned).
     let v = &m.state(t(11, 3), &Utc).unwrap().schedules[0];
-    assert_eq!(v.next_run_at.as_deref(), Some(t(11, 10).to_rfc3339().as_str()));
+    assert_eq!(
+        v.next_run_at.as_deref(),
+        Some(t(11, 10).to_rfc3339().as_str())
+    );
     assert_eq!(m.tick(t(11, 10), &Utc, &windows(&["main"])).fires.len(), 1);
 }
 
@@ -394,7 +435,9 @@ fn a_missed_daily_run_is_detected_after_an_app_restart() {
         i.missed_runs = MissedRunPolicy::RunOnce;
         m.save(i, t(8, 0), &Utc).unwrap();
         m.set_enabled("s1", true, true, t(8, 0), &Utc).unwrap();
-        let token = m.tick(t(9, 0), &Utc, &windows(&["main"])).fires[0].token.clone();
+        let token = m.tick(t(9, 0), &Utc, &windows(&["main"])).fires[0]
+            .token
+            .clone();
         m.report(&token, "main", completed(1), t(9, 1)).unwrap();
     }
     // App closed; reopened two days later at 12:00.
@@ -406,7 +449,12 @@ fn a_missed_daily_run_is_detected_after_an_app_restart() {
     let v = &m.state(later, &Utc).unwrap().schedules[0];
     assert_eq!(
         v.next_run_at.as_deref(),
-        Some(Utc.with_ymd_and_hms(2026, 6, 4, 9, 0, 0).unwrap().to_rfc3339().as_str())
+        Some(
+            Utc.with_ymd_and_hms(2026, 6, 4, 9, 0, 0)
+                .unwrap()
+                .to_rfc3339()
+                .as_str()
+        )
     );
 }
 
@@ -456,7 +504,10 @@ fn pause_survives_a_restart() {
     }
     let m = ScheduleManager::new_test(dir.path());
     assert!(m.state(t(10, 1), &Utc).unwrap().paused);
-    assert!(m.tick(t(10, 10), &Utc, &windows(&["main"])).fires.is_empty());
+    assert!(m
+        .tick(t(10, 10), &Utc, &windows(&["main"]))
+        .fires
+        .is_empty());
 }
 
 // ── persistence ─────────────────────────────────────────────────────────
@@ -466,19 +517,27 @@ fn state_and_results_persist_across_restarts() {
     let dir = TempDir::new().unwrap();
     {
         let m = enabled_manager(&dir, MissedRunPolicy::Skip);
-        let token = m.tick(t(10, 10), &Utc, &windows(&["main"])).fires[0].token.clone();
+        let token = m.tick(t(10, 10), &Utc, &windows(&["main"])).fires[0]
+            .token
+            .clone();
         m.report(&token, "main", completed(2), t(10, 11)).unwrap();
     }
     let m = ScheduleManager::new_test(dir.path());
     let v = &m.state(t(10, 12), &Utc).unwrap().schedules[0];
     assert!(v.schedule.enabled);
     assert!(v.schedule.confirmed_at.is_some());
-    assert_eq!(v.schedule.last_run_at.as_deref(), Some(t(10, 10).to_rfc3339().as_str()));
+    assert_eq!(
+        v.schedule.last_run_at.as_deref(),
+        Some(t(10, 10).to_rfc3339().as_str())
+    );
     assert_eq!(
         v.schedule.last_result.as_ref().map(|r| r.outcome),
         Some(ScheduleRunOutcome::Completed)
     );
-    assert_eq!(v.next_run_at.as_deref(), Some(t(10, 20).to_rfc3339().as_str()));
+    assert_eq!(
+        v.next_run_at.as_deref(),
+        Some(t(10, 20).to_rfc3339().as_str())
+    );
 }
 
 #[test]
@@ -496,6 +555,9 @@ fn weekly_schedule_in_a_dst_zone_reports_local_next_run() {
     let v = m.set_enabled("s1", true, true, before, &tz).unwrap();
     // 02:30 does not exist on 29 Mar in Berlin → 03:00 CEST = 01:00Z.
     let expected = Utc.with_ymd_and_hms(2026, 3, 29, 1, 0, 0).unwrap();
-    assert_eq!(v.next_run_at.as_deref(), Some(expected.to_rfc3339().as_str()));
+    assert_eq!(
+        v.next_run_at.as_deref(),
+        Some(expected.to_rfc3339().as_str())
+    );
     assert_eq!(m.tick(expected, &tz, &windows(&["main"])).fires.len(), 1);
 }

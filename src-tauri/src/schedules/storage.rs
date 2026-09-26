@@ -112,7 +112,10 @@ mod tests {
         let loaded = storage.load_with_recovery().unwrap();
         assert!(!loaded.warnings.is_empty(), "a newer file is reported");
         assert!(storage.save(&ScheduleStore::default()).is_err());
-        assert_eq!(fs::read_to_string(dir.path().join(FILE_NAME)).unwrap(), newer);
+        assert_eq!(
+            fs::read_to_string(dir.path().join(FILE_NAME)).unwrap(),
+            newer
+        );
     }
 
     #[test]

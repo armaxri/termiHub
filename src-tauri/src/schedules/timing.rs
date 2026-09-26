@@ -143,8 +143,11 @@ pub fn next_run_after<Tz: TimeZone>(
         }
         ScheduleRule::Weekly { days, time } => {
             let time = parse_time(time).ok()?;
-            let wanted: Vec<chrono::Weekday> =
-                days.iter().copied().map(ScheduleWeekday::to_chrono).collect();
+            let wanted: Vec<chrono::Weekday> = days
+                .iter()
+                .copied()
+                .map(ScheduleWeekday::to_chrono)
+                .collect();
             next_local_slot(tz, after, time, |d| {
                 use chrono::Datelike;
                 wanted.contains(&d.weekday())

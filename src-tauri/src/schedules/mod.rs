@@ -22,3 +22,4 @@ pub mod manager;
 pub mod runner;
 pub mod storage;
 pub mod timing;
+pub mod wire;

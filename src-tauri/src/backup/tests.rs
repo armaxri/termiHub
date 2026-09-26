@@ -1045,5 +1045,8 @@ fn a_newer_schedules_backup_is_refused() {
     let err = spec
         .normalize(json!({"version": "2", "schedules": []}))
         .unwrap_err();
-    assert!(matches!(err, sections::NormalizeError::Newer { found: 2, .. }));
+    assert!(matches!(
+        err,
+        sections::NormalizeError::Newer { found: 2, .. }
+    ));
 }

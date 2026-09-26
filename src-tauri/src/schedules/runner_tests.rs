@@ -217,7 +217,11 @@ async fn the_global_pause_stops_the_loop_from_firing() {
     assert_eq!(h.sink.fire_count(), 0);
     h.manager.set_paused(false, h.clock.now(), &Utc).unwrap();
     wait(20).await;
-    assert_eq!(h.sink.fire_count(), 0, "a resume does not replay the paused runs");
+    assert_eq!(
+        h.sink.fire_count(),
+        0,
+        "a resume does not replay the paused runs"
+    );
     wait(60).await;
     assert_eq!(h.sink.fire_count(), 1);
 }
