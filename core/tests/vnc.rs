@@ -1,5 +1,5 @@
 #![cfg(feature = "vnc")]
-//! VNC (RFB) Integration Tests (VNC-01 through VNC-07).
+//! VNC (RFB) Integration Tests (VNC-01 through VNC-08).
 //!
 //! Exercises termiHub's `vnc` graphical backend against a real VNC server — the
 //! live negotiate -> authenticate -> decode path (#1681/#1715) that only exists
@@ -10,7 +10,8 @@
 //! Two fixtures, both under the `vnc` compose profile:
 //!
 //! * `vnc-server` on port 2501 (x11vnc + Xvfb) — classic RFB VncAuth, password
-//!   `testpass`. Covers VNC-01..05.
+//!   `testpass`. Covers VNC-01..05 and VNC-08 (16-bit color depth and Tight
+//!   quality levels, #3464).
 //! * `vnc-vencrypt-server` on port 2502 (TigerVNC Xvnc) — VeNCrypt (RFB security
 //!   type 19, X509Vnc sub-type): a TLS handshake then the VNC-password stage.
 //!   Covers VNC-06 (`tlsVerify=insecure`) and VNC-07 (`tlsVerify=ca`), the
@@ -431,4 +432,34 @@ async fn vnc_07_vencrypt_custom_ca_connect_and_decode() {
     assert_pattern_decodes(&vnc, "VNC-07").await;
 
     vnc.disconnect().await.expect("disconnect should succeed");
+}
+
+// ── VNC-08: 16-bit color depth and Tight quality levels (#3464) ─────
+
+#[tokio::test]
+async fn vnc_08_color_depth_and_quality_decode() {
+    require_docker!(port_vnc());
+
+    // (label, colorDepth, preferredEncoding, quality): 16-bit through every
+    // encoding path the server may pick (Tight/ZRLE, Raw) plus a lossy Tight
+    // quality at both depths.
+    let cases = [
+        ("16-bit zrle/tight lossless", "16", "zrle", "lossless"),
+        ("16-bit raw", "16", "raw", "lossless"),
+        ("16-bit tight low quality", "16", "zrle", "low"),
+        ("32-bit tight high quality", "32", "zrle", "high"),
+    ];
+    for (label, depth, encoding, quality) in cases {
+        let mut settings = vnc_settings(port_vnc());
+        settings["colorDepth"] = serde_json::json!(depth);
+        settings["preferredEncoding"] = serde_json::json!(encoding);
+        settings["quality"] = serde_json::json!(quality);
+
+        let mut vnc = Vnc::new();
+        vnc.connect(settings)
+            .await
+            .unwrap_or_else(|e| panic!("VNC-08 {label}: connect should succeed: {e}"));
+        assert_pattern_decodes(&vnc, &format!("VNC-08 {label}")).await;
+        vnc.disconnect().await.expect("disconnect should succeed");
+    }
 }
