@@ -38,9 +38,13 @@
 //!
 //! # Scope
 //!
-//! Only **SFTP session** transfers (`session_download` / `session_upload`) can be
-//! relaunched today: their session reference resolves to a live SFTP browser that
-//! carries the credentials. Remote-to-remote copies persist only their
+//! **SFTP session** transfers (`session_download` / `session_upload`) relaunch
+//! through their session reference, which resolves to a live SFTP browser that
+//! carries the credentials. **Docker session** transfers (#3585) relaunch through
+//! their persisted full container id instead (the session id does not survive a
+//! restart): see [`super::relaunch_docker`] for how the container is re-attached
+//! by identity and why a same-name recreated container is never resumed into.
+//! Remote-to-remote copies persist only their
 //! destination endpoint (the source session/path were never persisted), and FTP
 //! transfers carry their credentials inline in a frontend-supplied config that is
 //! not persisted and has no credential-store re-sourcing seam yet — both surface
@@ -54,7 +58,7 @@ use super::persist::PersistedTransfer;
 use super::persist_manager::TransferPersistenceManager;
 use super::registry::TransferRegistry;
 use super::state::MAX_RETRIES;
-use super::{TransferDirection, TransferPhase, TransferProgress, TransferStateTag};
+use super::{ProgressSink, TransferDirection, TransferPhase, TransferProgress, TransferStateTag};
 use crate::session::manager::SessionManager;
 
 /// How a rehydrated transfer can be relaunched, derived **purely** from its
@@ -65,6 +69,17 @@ pub(crate) enum RelaunchPlan {
     /// Carries only references, paths, the resume offset and totals.
     Sftp {
         session_id: String,
+        direction: TransferDirection,
+        remote_path: String,
+        local_path: String,
+        offset: u64,
+        total: u64,
+    },
+    /// A Docker session download/upload (#3585): relaunchable by re-attaching to
+    /// the persisted container id. Carries references, paths and progress only.
+    Docker {
+        session_id: String,
+        container_id: String,
         direction: TransferDirection,
         remote_path: String,
         local_path: String,
@@ -98,12 +113,15 @@ pub(crate) enum ResumeDecision {
 /// Derive the relaunch plan for a persisted transfer from its **metadata only**.
 ///
 /// A download or upload persists a `local_path` (the local endpoint) and is
-/// relaunchable as an SFTP session transfer. A remote-to-remote copy persists no
+/// relaunchable as an SFTP session transfer — or, when it carries a persisted
+/// container identity, as a Docker session transfer (#3585). A record under the
+/// reserved local session id is a queued local-disk copy (#3567) and relaunches
+/// with no session at all. A remote-to-remote copy persists no
 /// local endpoint (`local_path == None`) — and never persisted its *source*
 /// session/path — so it cannot be relaunched after a restart.
 pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
-    match &record.local_path {
-        Some(dest_path) if record.session_id == super::local::LOCAL_TRANSFER_SESSION => {
+    match (&record.local_path, &record.docker) {
+        (Some(dest_path), None) if record.session_id == super::local::LOCAL_TRANSFER_SESSION => {
             RelaunchPlan::Local {
                 src_path: record.remote_path.clone(),
                 dest_path: dest_path.clone(),
@@ -111,7 +129,16 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
                 total: record.total,
             }
         }
-        Some(local_path) => RelaunchPlan::Sftp {
+        (Some(local_path), Some(docker)) => RelaunchPlan::Docker {
+            session_id: record.session_id.clone(),
+            container_id: docker.container_id.clone(),
+            direction: record.direction,
+            remote_path: record.remote_path.clone(),
+            local_path: local_path.clone(),
+            offset: record.resume_offset,
+            total: record.total,
+        },
+        (Some(local_path), None) => RelaunchPlan::Sftp {
             session_id: record.session_id.clone(),
             direction: record.direction,
             remote_path: record.remote_path.clone(),
@@ -119,7 +146,7 @@ pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
             offset: record.resume_offset,
             total: record.total,
         },
-        None => RelaunchPlan::Unsupported {
+        (None, _) => RelaunchPlan::Unsupported {
             reason: "Cannot resume a remote-to-remote copy after a restart \
                      (the source was not retained)"
                 .to_string(),
@@ -221,16 +248,28 @@ async fn relaunch_record(
             // row moves to a clear Failed state rather than hanging.
             match manager.sftp_transfer_browser(&session_id).await {
                 Ok(browser) => {
-                    spawn_sftp_relaunch(
-                        browser,
-                        direction,
-                        remote_path,
-                        local_path,
-                        offset,
-                        total,
+                    let (spawn_remote, spawn_local) = (remote_path.clone(), local_path);
+                    spawn_relaunch(
                         &record,
+                        direction,
+                        &remote_path,
+                        total,
                         registry,
                         app_handle,
+                        move |handle, registry, sink| async move {
+                            super::sftp::run_sftp_transfer(
+                                browser,
+                                direction,
+                                spawn_remote,
+                                spawn_local,
+                                handle,
+                                registry,
+                                sink,
+                                super::sftp::DEFAULT_RESUME_MODE,
+                                offset,
+                            )
+                            .await;
+                        },
                     );
                     true
                 }
@@ -244,14 +283,72 @@ async fn relaunch_record(
                 }
             }
         }
+        RelaunchPlan::Docker {
+            session_id,
+            container_id,
+            direction,
+            remote_path,
+            local_path,
+            offset,
+            total,
+        } => {
+            // Re-attach by the persisted container id (never by name). A gone,
+            // stopped or unreachable container fails the row with a message that
+            // says what makes a Retry work.
+            match super::relaunch_docker::resolve_docker_target(manager, &session_id, &container_id)
+                .await
+            {
+                Ok(target) => {
+                    let (spawn_remote, spawn_local) = (remote_path.clone(), local_path);
+                    spawn_relaunch(
+                        &record,
+                        direction,
+                        &remote_path,
+                        total,
+                        registry,
+                        app_handle,
+                        move |handle, registry, sink| async move {
+                            super::docker::run_docker_transfer(
+                                target,
+                                direction,
+                                spawn_remote,
+                                spawn_local,
+                                handle,
+                                registry,
+                                sink,
+                                offset,
+                            )
+                            .await;
+                        },
+                    );
+                    true
+                }
+                Err(message) => {
+                    fail_row(app_handle, &record, message);
+                    true
+                }
+            }
+        }
         RelaunchPlan::Local {
             src_path,
             dest_path,
             offset,
             total,
         } => {
-            spawn_local_relaunch(
-                src_path, dest_path, offset, total, &record, registry, app_handle,
+            let spawn_src = src_path.clone();
+            spawn_relaunch(
+                &record,
+                TransferDirection::Download,
+                &src_path,
+                total,
+                registry,
+                app_handle,
+                move |handle, registry, sink| async move {
+                    super::local::run_local_transfer(
+                        spawn_src, dest_path, handle, registry, sink, offset,
+                    )
+                    .await;
+                },
             );
             true
         }
@@ -262,57 +359,33 @@ async fn relaunch_record(
     }
 }
 
-/// Re-enqueue and spawn the local-copy executor for a rehydrated local copy,
-/// resuming from its persisted offset (race-safe like [`spawn_sftp_relaunch`]).
-fn spawn_local_relaunch(
-    src_path: String,
-    dest_path: String,
-    offset: u64,
-    total: u64,
+/// Re-enqueue a rehydrated transfer and spawn its executor (`run`), which
+/// resumes from the persisted offset. Race-safe:
+/// [`TransferRegistry::enqueue_if_absent`] means two concurrent resume clicks
+/// never spawn two executors for the same file — a losing caller just signals
+/// the now-present handle.
+fn spawn_relaunch<F, Fut>(
     record: &PersistedTransfer,
-    registry: &TransferRegistry,
-    app_handle: &AppHandle,
-) {
-    let Some(handle) = registry.enqueue_if_absent(
-        &record.transfer_id,
-        &record.session_id,
-        TransferDirection::Download,
-        &record.file_name,
-        &src_path,
-        total,
-    ) else {
-        registry.resume(&record.transfer_id);
-        return;
-    };
-    let registry = registry.clone();
-    let sink = super::app_progress_sink(app_handle.clone());
-    tauri::async_runtime::spawn(async move {
-        super::local::run_local_transfer(src_path, dest_path, handle, registry, sink, offset).await;
-    });
-}
-
-/// Re-enqueue and spawn the SFTP executor for a rehydrated transfer, resuming from
-/// its persisted offset. Race-safe: [`TransferRegistry::enqueue_if_absent`] means
-/// two concurrent resume clicks never spawn two executors for the same file — a
-/// losing caller just signals the now-present handle.
-#[allow(clippy::too_many_arguments)]
-fn spawn_sftp_relaunch(
-    browser: std::sync::Arc<termihub_core::backends::ssh::SftpFileBrowser>,
     direction: TransferDirection,
-    remote_path: String,
-    local_path: String,
-    offset: u64,
+    remote_path: &str,
     total: u64,
-    record: &PersistedTransfer,
     registry: &TransferRegistry,
     app_handle: &AppHandle,
-) {
+    run: F,
+) where
+    F: FnOnce(
+        std::sync::Arc<super::registry::TransferHandle>,
+        TransferRegistry,
+        ProgressSink,
+    ) -> Fut,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
     let Some(handle) = registry.enqueue_if_absent(
         &record.transfer_id,
         &record.session_id,
         direction,
         &record.file_name,
-        &remote_path,
+        remote_path,
         total,
     ) else {
         // Already registered concurrently (another resume won the race): just
@@ -321,22 +394,8 @@ fn spawn_sftp_relaunch(
         return;
     };
 
-    let registry = registry.clone();
     let sink = super::app_progress_sink(app_handle.clone());
-    tauri::async_runtime::spawn(async move {
-        super::sftp::run_sftp_transfer(
-            browser,
-            direction,
-            remote_path,
-            local_path,
-            handle,
-            registry,
-            sink,
-            super::sftp::DEFAULT_RESUME_MODE,
-            offset,
-        )
-        .await;
-    });
+    tauri::async_runtime::spawn(run(handle, registry.clone(), sink));
 }
 
 /// Move a rehydrated row to a clear Failed state with an honest message, folding a
@@ -369,6 +428,16 @@ mod tests {
             resume_offset: 4096,
             created_at_ms: 1_000,
             updated_at_ms: 2_000,
+            docker: None,
+        }
+    }
+
+    fn docker_record(id: &str, local_path: Option<&str>) -> PersistedTransfer {
+        PersistedTransfer {
+            docker: Some(crate::files::transfer::persist::PersistedDockerTarget {
+                container_id: "c0ffee".repeat(10),
+            }),
+            ..record(id, local_path)
         }
     }
 
@@ -387,6 +456,61 @@ mod tests {
             },
             "the relaunch plan resumes from the persisted checkpoint offset"
         );
+    }
+
+    /// A Docker record (#3585) relaunches by its persisted container id — not
+    /// through the SFTP path, which a Docker session can never satisfy — and
+    /// from the persisted checkpoint (the executor's gate still verifies it).
+    #[test]
+    fn plan_for_a_docker_transfer_reattaches_by_container_id() {
+        let plan = plan_from_record(&docker_record("t1", Some("/home/user/data.csv")));
+        assert_eq!(
+            plan,
+            RelaunchPlan::Docker {
+                session_id: "sess-a".to_string(),
+                container_id: "c0ffee".repeat(10),
+                direction: TransferDirection::Download,
+                remote_path: "/remote/data.csv".to_string(),
+                local_path: "/home/user/data.csv".to_string(),
+                offset: 4096,
+                total: 8192,
+            }
+        );
+    }
+
+    #[test]
+    fn plan_for_a_docker_record_without_a_local_endpoint_is_unsupported() {
+        assert!(matches!(
+            plan_from_record(&docker_record("t1", None)),
+            RelaunchPlan::Unsupported { .. }
+        ));
+    }
+
+    /// A Docker record keeps its container identity through the persisted
+    /// queue, so a resume after restart plans a Docker relaunch.
+    #[test]
+    fn decide_resume_relaunches_a_rehydrated_docker_record() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let registry = TransferRegistry::new();
+        let persist = TransferPersistenceManager::new_test(dir.path());
+        persist.record_registration(
+            "docker-t",
+            "sess-a",
+            TransferDirection::Upload,
+            "data.csv",
+            "/remote/data.csv",
+            Some("/home/user/data.csv".to_string()),
+            8192,
+        );
+        persist.record_docker_target("docker-t", "abc123");
+
+        match decide_resume("docker-t", &registry, &persist) {
+            ResumeDecision::Relaunch(rec) => assert!(matches!(
+                plan_from_record(&rec),
+                RelaunchPlan::Docker { ref container_id, .. } if container_id == "abc123"
+            )),
+            other => panic!("expected Relaunch, got {other:?}"),
+        }
     }
 
     #[test]

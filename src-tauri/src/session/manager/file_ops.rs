@@ -213,6 +213,18 @@ impl SessionManager {
         self.file_ops().docker_transfer_target(session_id).await
     }
 
+    /// Find a live Docker session's transfer target for exactly `container_id`
+    /// (#3585): how a relaunched Docker transfer re-attaches once the user has
+    /// reconnected the container's session under a new session id.
+    pub async fn docker_transfer_target_for_container(
+        &self,
+        container_id: &str,
+    ) -> Option<termihub_core::backends::docker::DockerTransferTarget> {
+        self.file_ops()
+            .docker_transfer_target_for_container(container_id)
+            .await
+    }
+
     /// Resolve the [`FtpConfig`](termihub_core::config::FtpConfig) backing an
     /// FTP session so a background transfer can run on its own connection,
     /// mirroring [`sftp_transfer_browser`](Self::sftp_transfer_browser).

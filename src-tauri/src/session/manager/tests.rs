@@ -356,6 +356,25 @@ async fn docker_transfer_target_rejects_non_docker_session() {
     );
 }
 
+/// A relaunched Docker transfer re-attaches through a live session only when
+/// that session streams into the exact persisted container (#3585): a
+/// non-Docker session, or no session at all, never yields a target.
+#[tokio::test]
+async fn docker_transfer_target_for_container_ignores_non_docker_sessions() {
+    use crate::session::file_ops::FileOps;
+    let sessions = sessions_with_local_browser("sess-local").await;
+    let ops = FileOps::new(&sessions);
+    assert!(ops
+        .docker_transfer_target_for_container("c0ffee")
+        .await
+        .is_none());
+    let empty: Arc<Mutex<HashMap<String, SessionEntry>>> = Arc::new(Mutex::new(HashMap::new()));
+    assert!(FileOps::new(&empty)
+        .docker_transfer_target_for_container("")
+        .await
+        .is_none());
+}
+
 /// An unknown session surfaces SessionNotFound, not a misleading "not Docker".
 #[tokio::test]
 async fn docker_transfer_target_reports_unknown_session() {

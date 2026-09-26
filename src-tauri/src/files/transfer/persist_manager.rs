@@ -16,7 +16,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::persist::{PersistedTransfer, PersistedTransferStatus, PersistedTransferStore};
+use super::persist::{
+    PersistedDockerTarget, PersistedTransfer, PersistedTransferStatus, PersistedTransferStore,
+};
 use super::persist_storage::TransferPersistenceStorage;
 use super::TransferDirection;
 use crate::connection::recovery::RecoveryWarning;
@@ -128,8 +130,24 @@ impl TransferPersistenceManager {
             resume_offset: 0,
             created_at_ms: now,
             updated_at_ms: now,
+            docker: None,
         };
         let mut store = self.lock();
+        store.upsert(entry);
+        self.schedule_write(&store);
+    }
+
+    /// Attach the Docker container identity to a registered transfer (#3585),
+    /// so a relaunch after a restart can re-attach to the same container by id.
+    /// A no-op for an unknown id (never fabricates a record).
+    pub fn record_docker_target(&self, transfer_id: &str, container_id: &str) {
+        let mut store = self.lock();
+        let Some(mut entry) = store.get(transfer_id).cloned() else {
+            return;
+        };
+        entry.docker = Some(PersistedDockerTarget {
+            container_id: container_id.to_string(),
+        });
         store.upsert(entry);
         self.schedule_write(&store);
     }
@@ -291,6 +309,32 @@ mod tests {
             Some("/home/user/data.csv"),
             "the destination path is persisted (not a credential)"
         );
+    }
+
+    /// The Docker container identity (#3585) survives progress checkpoints and
+    /// rehydration; attaching it to an unknown id never fabricates a record.
+    #[test]
+    fn docker_target_survives_progress_and_rehydration() {
+        let (_d, m) = mgr();
+        register(&m, "t1");
+        m.record_docker_target("t1", "c0ffee");
+        m.record_docker_target("ghost", "c0ffee");
+        m.note_progress(
+            "t1",
+            PersistedTransferStatus::Active,
+            CHECKPOINT_BYTES + 1,
+            2048,
+            false,
+        );
+        let rehydrated = m.load_incomplete_as_paused();
+        assert_eq!(rehydrated.len(), 1, "no record fabricated for `ghost`");
+        assert_eq!(
+            rehydrated[0].docker,
+            Some(PersistedDockerTarget {
+                container_id: "c0ffee".to_string()
+            })
+        );
+        assert_eq!(rehydrated[0].resume_offset, CHECKPOINT_BYTES + 1);
     }
 
     #[test]

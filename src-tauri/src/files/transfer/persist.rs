@@ -109,6 +109,24 @@ pub struct PersistedTransfer {
     pub created_at_ms: u64,
     /// Epoch-millis wall clock of the last update.
     pub updated_at_ms: u64,
+    /// The container a Docker session transfer streams from/into (#3585) —
+    /// absent for every other backend and for records written before it
+    /// existed. A non-secret identity reference, used to re-attach after a
+    /// restart (the owning session id does not survive one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub docker: Option<PersistedDockerTarget>,
+}
+
+/// The persisted identity of a Docker transfer's container (#3585).
+///
+/// Only the **full container id** is kept — never a name: a container
+/// recreated under the same name has a new id and a different filesystem, so
+/// a relaunch that re-attaches by id can never resume into it. Not a secret.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PersistedDockerTarget {
+    /// Full container id the transfer streamed through.
+    pub container_id: String,
 }
 
 impl PersistedTransfer {
@@ -231,6 +249,7 @@ mod tests {
             resume_offset: 512,
             created_at_ms: 1_000,
             updated_at_ms: 2_000,
+            docker: None,
         }
     }
 
@@ -258,11 +277,36 @@ mod tests {
         assert_eq!(parsed, entry);
     }
 
+    /// A Docker record round-trips its container identity (#3585), and a
+    /// record written before the field existed still loads (as non-Docker).
+    #[test]
+    fn docker_target_round_trips_and_old_records_still_load() {
+        let mut entry = sample("t1", PersistedTransferStatus::Paused);
+        entry.docker = Some(PersistedDockerTarget {
+            container_id: "c0ffee".repeat(10),
+        });
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(json.contains(&format!(
+            "\"docker\":{{\"containerId\":\"{}\"}}",
+            "c0ffee".repeat(10)
+        )));
+        let parsed: PersistedTransfer = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, entry);
+
+        let legacy = serde_json::to_string(&sample("t2", PersistedTransferStatus::Paused)).unwrap();
+        assert!(!legacy.contains("docker"), "absent field is not written");
+        let parsed: PersistedTransfer = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(parsed.docker, None);
+    }
+
     /// SECURITY (the point of PROD-0011): a persisted record must never contain
     /// credential/secret material — only references and metadata.
     #[test]
     fn no_credential_fields_are_serialized() {
-        let entry = sample("t1", PersistedTransferStatus::Paused);
+        let mut entry = sample("t1", PersistedTransferStatus::Paused);
+        entry.docker = Some(PersistedDockerTarget {
+            container_id: "0123456789abcdef".repeat(4),
+        });
         let value = serde_json::to_value(&entry).unwrap();
         let obj = value.as_object().unwrap();
         for forbidden in [
@@ -283,6 +327,13 @@ mod tests {
                 "persisted transfer must not serialize a `{forbidden}` field"
             );
         }
+        // The Docker identity is a bare container id — no host/runtime config.
+        let docker = obj["docker"].as_object().unwrap();
+        assert_eq!(
+            docker.keys().collect::<Vec<_>>(),
+            ["containerId"],
+            "the Docker reference carries only the container id"
+        );
         // Whole-JSON belt-and-braces: none of the secret-ish substrings appear.
         let json = serde_json::to_string(&entry).unwrap().to_lowercase();
         for needle in ["password", "passphrase", "secret", "privatekey"] {

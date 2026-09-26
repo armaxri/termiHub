@@ -997,6 +997,11 @@ async fn start_session_transfer(
             Some(local_path.clone()),
             0,
         );
+        // A Docker transfer also records its container identity, so a relaunch
+        // after a restart can re-attach to the same container (#3585).
+        if let SessionTransferTarget::Docker(docker) = &target {
+            pm.record_docker_target(&transfer_id, docker.container_id());
+        }
     }
     let registry = (*registry).clone();
     let sink = transfer::app_progress_sink(app_handle);
