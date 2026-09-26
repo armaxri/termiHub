@@ -22,7 +22,7 @@ export interface TunnelChainPreviewDialogProps {
   /** The parent loopback socket the companion forwards to, e.g. "127.0.0.1:5432". */
   companionForwards: string;
   /** Saved SSH connections to pick the companion's SSH-via from. */
-  sshOptions: { value: string; label: string }[];
+  sshOptions: { value: string; label: string; disabled?: boolean }[];
   /** The currently-selected SSH-via connection id (controlled). */
   sshConnectionId: string;
   /** Change the selected SSH-via connection. */

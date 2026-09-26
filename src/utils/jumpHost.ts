@@ -170,15 +170,32 @@ export function sshJumpHostOptions(
   excludeId?: string
 ): SavedConnectionOption[] {
   const byId = new Map<string, SavedConnectionOption>();
-  const holders = new Map<string, number>();
+  const ambiguous = ambiguousConnectionIds(connections);
   for (const c of connections) {
-    holders.set(c.id, (holders.get(c.id) ?? 0) + 1);
     if (c.config.type !== "ssh" || c.id === excludeId || byId.has(c.id)) continue;
     byId.set(c.id, { id: c.id, label: connectionPathLabel(c, folders) });
   }
   return [...byId.values()]
-    .map((opt) => ((holders.get(opt.id) ?? 0) > 1 ? { ...opt, ambiguous: true } : opt))
+    .map((opt) => (ambiguous.has(opt.id) ? { ...opt, ambiguous: true } : opt))
     .sort((a, b) => compareNames(a.label, b.label));
+}
+
+/**
+ * The ids held by more than one connection in `connections` (the unified view:
+ * the main store plus every enabled external connection file). Ids are tree
+ * paths and not scoped per file, so two files can both hold `Folder/Name`. The
+ * backend refuses to resolve such an id — as a jump-host hop (#3602) or as the
+ * SSH connection a tunnel is hosted on (#3619) — so every picker that offers
+ * saved connections by id marks these as unavailable.
+ */
+export function ambiguousConnectionIds(connections: SavedConnection[]): Set<string> {
+  const seen = new Set<string>();
+  const ambiguous = new Set<string>();
+  for (const c of connections) {
+    if (seen.has(c.id)) ambiguous.add(c.id);
+    else seen.add(c.id);
+  }
+  return ambiguous;
 }
 
 /**
