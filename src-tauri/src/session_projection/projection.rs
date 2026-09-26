@@ -391,6 +391,12 @@ pub fn fold_agent_reconnect_failed<R: tauri::Runtime>(
 /// Human-readable "why" note carried on an evicted tab's region entry (SM-003).
 pub const EVICTED_BY_OTHER_DESKTOP: &str = "This session was taken over by another desktop.";
 
+/// Human-readable note for a tab whose implicit (plain) re-attach was refused
+/// because another desktop holds the session (SM-003, #3404). Same `Evicted`
+/// state and Reclaim as a takeover; only the wording differs.
+pub const EVICTED_HELD_BY_OTHER_DESKTOP: &str =
+    "This session is in use on another desktop. Reclaim it to take over.";
+
 /// Fold a hosted agent session's region entry to the explicit
 /// [`SessionStatus::Evicted`](crate::session_projection::store::SessionStatus::Evicted)
 /// state at the **backend source** when the agent reports `connection.evicted`
@@ -400,6 +406,35 @@ pub const EVICTED_BY_OTHER_DESKTOP: &str = "This session was taken over by anoth
 pub fn fold_agent_session_evicted<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) {
     fold_session_transition(app_handle, |store| {
         store.evicted(tab_id, Some(EVICTED_BY_OTHER_DESKTOP.to_string()));
+    });
+    sync_timer_generic(app_handle, tab_id);
+}
+
+/// Fold a tab whose **implicit** plain re-attach was refused because another
+/// desktop holds the session (SM-003, #3404) to the explicit
+/// [`SessionStatus::Evicted`](crate::session_projection::store::SessionStatus::Evicted)
+/// state, publishing `backend_session_id` (the desktop entry registered for the
+/// refused re-attach) so the frontend binds terminal I/O to it and an explicit
+/// Reclaim resumes output there. Loop-idle — nothing retries.
+///
+/// `ensure_entry` first folds a fresh `connect` when the region has no entry for
+/// the tab yet (a persistent-session tab re-attached through
+/// `attach_persistent_tab` never folded one), so the eviction is not dropped as
+/// an unknown session (SM-006).
+pub fn fold_agent_session_held_by_peer<R: tauri::Runtime>(
+    app_handle: &AppHandle<R>,
+    tab_id: &str,
+    backend_session_id: Option<String>,
+    ensure_entry: bool,
+) {
+    fold_session_transition(app_handle, |store| {
+        if ensure_entry && store.status(tab_id).is_none() {
+            store.connect(tab_id);
+        }
+        store.evicted(tab_id, Some(EVICTED_HELD_BY_OTHER_DESKTOP.to_string()));
+        if backend_session_id.is_some() {
+            store.set_backend_session_id(tab_id, backend_session_id.clone());
+        }
     });
     sync_timer_generic(app_handle, tab_id);
 }

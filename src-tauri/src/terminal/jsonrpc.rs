@@ -10,8 +10,14 @@ use serde_json::Value;
 pub enum JsonRpcMessage {
     /// A successful response with a result.
     Response { id: u64, result: Value },
-    /// An error response.
-    Error { id: u64, message: String },
+    /// An error response. `code` is the JSON-RPC error code when the agent sent
+    /// one, so callers can classify typed refusals (e.g. `SESSION_HELD_BY_OTHER`,
+    /// #3404) without parsing `message`.
+    Error {
+        id: u64,
+        code: Option<i64>,
+        message: String,
+    },
     /// A server-initiated notification (no id).
     Notification { method: String, params: Value },
 }
@@ -35,7 +41,8 @@ pub fn parse_message(line: &str) -> Result<JsonRpcMessage, String> {
                 .and_then(|m| m.as_str())
                 .unwrap_or("Unknown error")
                 .to_string();
-            return Ok(JsonRpcMessage::Error { id, message });
+            let code = error_obj.get("code").and_then(Value::as_i64);
+            return Ok(JsonRpcMessage::Error { id, code, message });
         }
 
         let result = obj.get("result").cloned().unwrap_or(Value::Null);
@@ -85,7 +92,7 @@ pub fn classify_handshake_message(msg: JsonRpcMessage, request_id: u64) -> Hands
         JsonRpcMessage::Response { id, result } if id == request_id => {
             HandshakeOutcome::Response(result)
         }
-        JsonRpcMessage::Error { id, message } if id == request_id => {
+        JsonRpcMessage::Error { id, message, .. } if id == request_id => {
             HandshakeOutcome::Rejected(message)
         }
         JsonRpcMessage::Notification { method, params } => {
@@ -116,8 +123,9 @@ mod tests {
         let line =
             r#"{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":2}"#;
         match parse_message(line).unwrap() {
-            JsonRpcMessage::Error { id, message } => {
+            JsonRpcMessage::Error { id, code, message } => {
                 assert_eq!(id, 2);
+                assert_eq!(code, Some(-32601));
                 assert_eq!(message, "Method not found");
             }
             _ => panic!("Expected Error"),
@@ -158,6 +166,7 @@ mod tests {
     fn classify_rejects_matching_error() {
         let msg = JsonRpcMessage::Error {
             id: 1,
+            code: None,
             message: "bad params".into(),
         };
         assert_eq!(

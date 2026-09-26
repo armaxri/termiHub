@@ -35,7 +35,7 @@ use termihub_core::files::FileEntry;
 use super::line_ending::{normalize_line_endings, LineEnding};
 use super::output_sink::TerminalOutputSink;
 use super::persistent_controller::PersistentController;
-use super::remote_proxy::RemoteProxy;
+use super::remote_proxy::{ReattachOutcome, RemoteProxy};
 use super::retained_request::{RetainedConnectionRequest, RetainedRequestStore};
 use super::session_log::{default_session_log_path, desktop_clock};
 
@@ -355,6 +355,30 @@ pub(super) type SessionLoggers = Arc<StdMutex<HashMap<String, Arc<StdMutex<Sessi
 /// the `terminal-exit` source can be folded as `reconnect` (resilient) vs
 /// `dropped` (non-resilient) server-side, converging with the client.
 type SessionTabIds = Arc<StdMutex<HashMap<String, TabBinding>>>;
+
+/// The result of [`SessionManager::attach_persistent_tab`] (#3404).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistentAttach {
+    /// The persistent session's desktop session id.
+    pub session_id: String,
+    /// The persistent session's new attached-tab count.
+    pub count: u32,
+    /// `true` when re-creating the desktop entry required a plain re-attach that
+    /// was refused because another desktop holds the session (SM-003): the entry
+    /// and tab binding are registered, but the tab must fold `Evicted`.
+    pub held_by_peer: bool,
+}
+
+/// The result of [`SessionManager::reattach_agent_session`] (#2512, #3404).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentReattach {
+    /// The fresh desktop session id the tab re-attaches terminal I/O to.
+    pub session_id: String,
+    /// `true` when the plain re-attach was refused because another desktop holds
+    /// the agent session (SM-003): the desktop entry is registered (so Reclaim
+    /// works) but the tab must fold `Evicted`, not `Connected`, and never retry.
+    pub held_by_peer: bool,
+}
 
 /// A live session's frontend identity + drop classification (#2431, #2439).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1593,7 +1617,9 @@ impl SessionManager {
 
     /// Register `tab_id` as attached to the persistent session for `connection_id`.
     ///
-    /// Returns the new attached-tab count. Returns an error if the session is not
+    /// Returns the new attached-tab count, plus whether the re-attach was refused
+    /// because another desktop holds the session (SM-003, #3404 — the command
+    /// then folds the tab `Evicted`). Returns an error if the session is not
     /// registered and cannot be reconnected.
     ///
     /// When the agent SSH connection drops, `emit_and_cleanup` removes the desktop
@@ -1608,7 +1634,7 @@ impl SessionManager {
         connection_id: &str,
         tab_id: &str,
         emitter: E,
-    ) -> Result<u32, TerminalError> {
+    ) -> Result<PersistentAttach, TerminalError> {
         self.persistent()
             .attach_persistent_tab(connection_id, tab_id, emitter)
             .await
@@ -1634,6 +1660,14 @@ impl SessionManager {
     /// Only ever called for a resilient agent tab, so the identity bridge is
     /// recorded with `resilient: true`. The retained request is left untouched:
     /// the same live agent session id remains valid for the next drop.
+    ///
+    /// A plain re-attach refused because **another desktop holds the session**
+    /// (SM-003, #3404) still registers the desktop entry, identity bridge and
+    /// output reader — the tab keeps its binding so an explicit Reclaim
+    /// ([`reclaim_session`](Self::reclaim_session)) can take the session over and
+    /// resume output on the same channel — and reports
+    /// [`AgentReattach::held_by_peer`] so the redrive folds the tab `Evicted`
+    /// rather than a failure it would retry.
     #[tracing::instrument(
         skip_all,
         fields(
@@ -1649,7 +1683,7 @@ impl SessionManager {
         agent_id: &str,
         remote_session_id: &str,
         emitter: E,
-    ) -> Result<String, TerminalError> {
+    ) -> Result<AgentReattach, TerminalError> {
         let session_id = uuid::Uuid::new_v4().to_string();
         tracing::Span::current().record("session_id", session_id.as_str());
 
@@ -1661,12 +1695,20 @@ impl SessionManager {
         let agent_mgr = self.agent_manager.clone();
         let agent_id_owned = agent_id.to_string();
         let remote_sid_owned = remote_session_id.to_string();
-        let proxy = tokio::task::spawn_blocking(move || {
+        let (proxy, outcome) = tokio::task::spawn_blocking(move || {
             RemoteProxy::reconnect_existing(agent_id_owned, remote_sid_owned, agent_mgr)
         })
         .await
         .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
         .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+        let held_by_peer = outcome == ReattachOutcome::HeldByPeer;
+        if held_by_peer {
+            info!(
+                tab_id,
+                remote_session_id,
+                "Re-attach refused: another desktop holds the session (SM-003); tab evicted"
+            );
+        }
 
         let output_rx = proxy.subscribe_output();
 
@@ -1734,7 +1776,10 @@ impl SessionManager {
             .await;
         });
 
-        Ok(session_id)
+        Ok(AgentReattach {
+            session_id,
+            held_by_peer,
+        })
     }
 
     /// Unregister `tab_id` from the persistent session identified by `session_id`.

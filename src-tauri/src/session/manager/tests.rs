@@ -2483,11 +2483,12 @@ async fn attach_persistent_tab_emits_attached_with_tab_count() {
         .await
         .unwrap();
 
-    let count = manager
+    let attach = manager
         .attach_persistent_tab("conn-p1", "tab-1", emitter.clone())
         .await
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(attach.count, 1);
+    assert!(!attach.held_by_peer);
 
     let events = emitter.events();
     let last = events.last().unwrap();
@@ -2594,6 +2595,13 @@ type AttachLog = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
 /// and succeeds silently on `register_session_output`.
 struct SpyAgent {
     attach_calls: AttachLog,
+    /// When set, a plain `attach_session` is refused as held by another desktop
+    /// (SM-003, #3404) until a `reclaim_session` takes the session over.
+    held_by_peer: Arc<AtomicBool>,
+    reclaim_calls: AttachLog,
+    /// Output senders registered for re-attached sessions, so a test can stream
+    /// output as the agent would after a Reclaim.
+    outputs: Arc<std::sync::Mutex<Vec<OutputSender>>>,
 }
 
 impl SpyAgent {
@@ -2602,9 +2610,20 @@ impl SpyAgent {
         (
             Self {
                 attach_calls: calls.clone(),
+                held_by_peer: Arc::new(AtomicBool::new(false)),
+                reclaim_calls: Arc::new(std::sync::Mutex::new(Vec::new())),
+                outputs: Arc::new(std::sync::Mutex::new(Vec::new())),
             },
             calls,
         )
+    }
+
+    /// A spy whose sessions are held by another desktop: plain attaches are
+    /// refused with the typed [`TerminalError::SessionHeldByPeer`].
+    fn held() -> Self {
+        let (spy, _) = Self::new();
+        spy.held_by_peer.store(true, Ordering::SeqCst);
+        spy
     }
 }
 
@@ -2650,10 +2669,23 @@ impl AgentRpcClient for SpyAgent {
             .lock()
             .unwrap()
             .push((agent_id.to_string(), remote_sid.to_string()));
+        if self.held_by_peer.load(Ordering::SeqCst) {
+            return Err(TerminalError::SessionHeldByPeer(
+                "Session is held by another desktop".to_string(),
+            ));
+        }
+        Ok(())
+    }
+    fn reclaim_session(&self, agent_id: &str, remote_sid: &str) -> Result<(), TerminalError> {
+        self.reclaim_calls
+            .lock()
+            .unwrap()
+            .push((agent_id.to_string(), remote_sid.to_string()));
+        self.held_by_peer.store(false, Ordering::SeqCst);
         Ok(())
     }
     fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
-        unimplemented!()
+        Ok(())
     }
     fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
         unimplemented!()
@@ -2703,8 +2735,9 @@ impl AgentRpcClient for SpyAgent {
         &self,
         _: &str,
         _: &str,
-        _: OutputSender,
+        tx: OutputSender,
     ) -> Result<(), TerminalError> {
+        self.outputs.lock().unwrap().push(tx);
         Ok(())
     }
     fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
@@ -2850,6 +2883,268 @@ async fn attach_persistent_tab_reconnects_after_agent_disconnect() {
     );
     assert_eq!(calls[0].0, "agent-1");
     assert_eq!(calls[0].1, "remote-1");
+}
+
+// ── Held by another desktop (SM-003, #3404) ─────────────────────────
+
+/// Wait until `emitter` has emitted output containing `needle` for `session_id`.
+async fn wait_for_emitted(emitter: &MockEventEmitter, session_id: &str, needle: &[u8]) -> bool {
+    for _ in 0..100 {
+        let found = emitter.outputs.lock().unwrap().iter().any(|e| {
+            e.session_id == session_id && e.data.windows(needle.len()).any(|w| w == needle)
+        });
+        if found {
+            return true;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+    }
+    false
+}
+
+/// A resilient agent tab's implicit re-attach (the reconnect redrive) refused
+/// because another desktop holds the session is not an error: the desktop entry
+/// and tab binding are registered and the refusal is reported as
+/// `held_by_peer`, so the tab can fold `Evicted`. An explicit Reclaim then takes
+/// the session over (a takeover attach) and output flows to the tab.
+#[tokio::test]
+async fn reattach_agent_session_held_by_peer_registers_entry_and_reclaims() {
+    let spy = SpyAgent::held();
+    let reclaim_calls = spy.reclaim_calls.clone();
+    let outputs = spy.outputs.clone();
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(spy));
+    let emitter = MockEventEmitter::new();
+
+    let reattach = manager
+        .reattach_agent_session("tab-held", "agent-1", "remote-1", emitter.clone())
+        .await
+        .expect("a held refusal is not an error");
+    assert!(
+        reattach.held_by_peer,
+        "the refusal must be reported as held"
+    );
+
+    // The desktop entry + tab binding exist, so Reclaim can resolve the session.
+    assert!(manager
+        .sessions
+        .lock()
+        .await
+        .contains_key(&reattach.session_id));
+    assert_eq!(
+        manager.agent_session_for_tab("tab-held").await,
+        Some(("agent-1".to_string(), "remote-1".to_string()))
+    );
+    assert!(
+        reclaim_calls.lock().unwrap().is_empty(),
+        "never reclaims implicitly"
+    );
+
+    manager
+        .reclaim_session("tab-held")
+        .await
+        .expect("reclaim from the held state succeeds");
+    assert_eq!(
+        reclaim_calls.lock().unwrap().as_slice(),
+        &[("agent-1".to_string(), "remote-1".to_string())]
+    );
+
+    // Output the agent streams after the takeover reaches the tab's session.
+    let tx = outputs
+        .lock()
+        .unwrap()
+        .last()
+        .cloned()
+        .expect("output registered");
+    tx.send(b"after-reclaim".to_vec()).unwrap();
+    assert!(wait_for_emitted(&emitter, &reattach.session_id, b"after-reclaim").await);
+}
+
+/// An unheld implicit re-attach is unchanged: attached, not held.
+#[tokio::test]
+async fn reattach_agent_session_unheld_is_attached() {
+    let (spy, attach_calls) = SpyAgent::new();
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(spy));
+
+    let reattach = manager
+        .reattach_agent_session("tab-1", "agent-1", "remote-1", MockEventEmitter::new())
+        .await
+        .unwrap();
+    assert!(!reattach.held_by_peer);
+    assert_eq!(attach_calls.lock().unwrap().len(), 1);
+}
+
+/// A generic (non-held) re-attach failure still surfaces as an error and
+/// registers nothing.
+#[tokio::test]
+async fn reattach_agent_session_generic_failure_is_an_error() {
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(FailingAttachAgent));
+    let result = manager
+        .reattach_agent_session("tab-1", "agent-1", "remote-1", MockEventEmitter::new())
+        .await;
+    assert!(result.is_err());
+    assert!(manager.sessions.lock().await.is_empty());
+    assert_eq!(manager.agent_session_for_tab("tab-1").await, None);
+}
+
+/// A persistent tab whose re-attach is refused as held keeps the re-created
+/// desktop entry, is bound to it (so Reclaim works) and reports `held_by_peer`
+/// instead of failing the attach.
+#[tokio::test]
+async fn attach_persistent_tab_held_by_peer_keeps_entry_for_reclaim() {
+    let spy = SpyAgent::held();
+    let reclaim_calls = spy.reclaim_calls.clone();
+    let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(spy));
+    let emitter = MockPersistentEmitter::new();
+
+    manager.persistent_sessions.lock().await.insert(
+        "conn-held".to_string(),
+        PersistentRecord {
+            connection_id: "conn-held".to_string(),
+            session_id: "sess-held".to_string(),
+            attached_tabs: HashSet::new(),
+            remote_session_id: Some("remote-1".to_string()),
+            agent_id: Some("agent-1".to_string()),
+        },
+    );
+
+    let attach = manager
+        .attach_persistent_tab("conn-held", "tab-held", emitter.clone())
+        .await
+        .expect("a held refusal is not an attach error");
+    assert!(attach.held_by_peer);
+    assert_eq!(attach.session_id, "sess-held");
+    assert_eq!(attach.count, 1);
+    assert!(manager.sessions.lock().await.contains_key("sess-held"));
+
+    manager
+        .reclaim_session("tab-held")
+        .await
+        .expect("reclaim resolves through the tab binding");
+    assert_eq!(reclaim_calls.lock().unwrap().len(), 1);
+}
+
+/// An `AgentRpcClient` whose plain attach fails with a generic error.
+struct FailingAttachAgent;
+
+impl AgentRpcClient for FailingAttachAgent {
+    fn connect_agent(
+        &self,
+        _: &str,
+        _: &RemoteAgentConfig,
+        _: Option<&AgentSettings>,
+    ) -> Result<AgentConnectResult, TerminalError> {
+        unimplemented!()
+    }
+    fn cancel_connect(&self, _: &str) -> bool {
+        false
+    }
+    fn disconnect_agent(&self, _: &str) -> Result<(), TerminalError> {
+        unimplemented!()
+    }
+    fn is_connected(&self, _: &str) -> bool {
+        false
+    }
+    fn get_capabilities(&self, _: &str) -> Option<AgentCapabilities> {
+        None
+    }
+    fn shutdown_agent(&self, _: &str, _: Option<&str>) -> Result<u32, TerminalError> {
+        unimplemented!()
+    }
+    fn send_request(&self, _: &str, _: &str, _: Value) -> Result<Value, TerminalError> {
+        unimplemented!()
+    }
+    fn create_session(
+        &self,
+        _: &str,
+        _: &str,
+        _: Value,
+        _: Option<&str>,
+        _: Option<&str>,
+    ) -> Result<AgentSessionInfo, TerminalError> {
+        unimplemented!()
+    }
+    fn attach_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+        Err(TerminalError::RemoteError(
+            "Agent connection lost".to_string(),
+        ))
+    }
+    fn close_session(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
+    fn list_sessions(&self, _: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
+        unimplemented!()
+    }
+    fn list_connections_and_folders(&self, _: &str) -> Result<AgentConnectionsData, TerminalError> {
+        unimplemented!()
+    }
+    fn list_definitions(&self, _: &str) -> Result<Vec<AgentDefinitionInfo>, TerminalError> {
+        unimplemented!()
+    }
+    fn save_definition(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::ConnectionCreateParams,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
+        unimplemented!()
+    }
+    fn update_definition(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::ConnectionUpdateParams,
+    ) -> Result<AgentDefinitionInfo, TerminalError> {
+        unimplemented!()
+    }
+    fn delete_definition(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+        unimplemented!()
+    }
+    fn create_folder(
+        &self,
+        _: &str,
+        _: &str,
+        _: Option<&str>,
+    ) -> Result<AgentFolderInfo, TerminalError> {
+        unimplemented!()
+    }
+    fn update_folder(
+        &self,
+        _: &str,
+        _: termihub_core::protocol::methods::FolderUpdateParams,
+    ) -> Result<AgentFolderInfo, TerminalError> {
+        unimplemented!()
+    }
+    fn delete_folder(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+        unimplemented!()
+    }
+    fn register_session_output(
+        &self,
+        _: &str,
+        _: &str,
+        _: OutputSender,
+    ) -> Result<(), TerminalError> {
+        Ok(())
+    }
+    fn unregister_session_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+        Ok(())
+    }
+    fn register_monitoring_output(
+        &self,
+        _: &str,
+        _: &str,
+        _: MonitoringSender,
+    ) -> Result<(), TerminalError> {
+        unimplemented!()
+    }
+    fn unregister_monitoring_output(&self, _: &str, _: &str) -> Result<(), TerminalError> {
+        unimplemented!()
+    }
+    fn send_session_input(&self, _: &str, _: &str, _: &[u8]) -> Result<(), TerminalError> {
+        unimplemented!()
+    }
+    fn resize_session(&self, _: &str, _: &str, _: u16, _: u16) -> Result<(), TerminalError> {
+        unimplemented!()
+    }
+    fn apply_agent_settings(&self, _: &str, _: &AgentSettings) -> Result<(), TerminalError> {
+        unimplemented!()
+    }
 }
 
 // ── FileOps facade tests (#2076) ──────────────────────────────────

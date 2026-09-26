@@ -62,6 +62,21 @@ describe("TerminalEvictedOverlay (SM-003 single-attach)", () => {
     expect(container.querySelector("[data-testid='terminal-evicted-reclaim-btn']")).not.toBeNull();
   });
 
+  it("shows Reclaim for a tab whose implicit re-attach was refused as held (#3404)", async () => {
+    // The backend folds a refused plain re-attach (another desktop holds the
+    // session) to the same `evicted` status, with the re-attached session id.
+    transport.setSession(
+      TAB,
+      evicted("This session is in use on another desktop. Reclaim it to take over.", "held-1")
+    );
+
+    act(() => root.render(withTooltip(<TerminalEvictedOverlay tabId={TAB} />)));
+    await flush();
+
+    expect(container.querySelector("[data-testid='terminal-evicted-overlay']")).not.toBeNull();
+    expect(container.querySelector("[data-testid='terminal-evicted-reclaim-btn']")).not.toBeNull();
+  });
+
   it.each([
     ["connected", connected()],
     ["sessionLost", sessionLost("gone")],

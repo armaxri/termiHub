@@ -36,8 +36,10 @@ use tauri::{AppHandle, Manager, Runtime};
 use termihub_core::reconnect_backoff::ReconnectPhase;
 
 use crate::session::manager::SessionManager;
-use crate::session_projection::projection::fold_session_transition;
-use crate::session_projection::store::SessionLifecycleStore;
+use crate::session_projection::projection::{
+    fold_agent_session_held_by_peer, fold_session_transition,
+};
+use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
 use crate::session_projection::timer::{ReconnectRedrive, ReconnectTimerDriver};
 use crate::utils::errors::TerminalError;
 
@@ -265,7 +267,25 @@ async fn reattach_or_lose<R: Runtime>(
         .reattach_agent_session(tab_id, agent_id, remote_session_id, app.clone())
         .await
     {
-        Ok(new_session_id) => {
+        Ok(reattach) if reattach.held_by_peer => {
+            // SM-003 (#3404): the plain re-attach was refused because another
+            // desktop holds the session. Not a failure and never retried (a retry
+            // is another plain attach that can only be refused again): fold the
+            // explicit `Evicted` state, keeping the registered desktop entry so an
+            // explicit Reclaim takes the session over and resumes output on it.
+            //
+            // Cancel race: a user cancel moved the loop off `Connecting` → tear the
+            // entry down. The agent's `connection.evicted` (`heldByPeer`) notice
+            // may already have folded `Evicted` (the entry was registered before
+            // it resolved) — that is the same outcome, not a cancel.
+            if !still_connecting(app, tab_id) && !is_evicted_tab(app, tab_id) {
+                let _ = manager.close_session(&reattach.session_id).await;
+                return;
+            }
+            fold_agent_session_held_by_peer(app, tab_id, Some(reattach.session_id), false);
+        }
+        Ok(reattach) => {
+            let new_session_id = reattach.session_id;
             // Guard the cancel race exactly as the create path does: a user cancel
             // / give-up that landed while attaching moved the loop off
             // `Connecting` — tear the freshly re-attached desktop session down
@@ -329,6 +349,13 @@ fn still_connecting<R: Runtime>(app: &AppHandle<R>, tab_id: &str) -> bool {
         .and_then(|store| store.reconnect_state(tab_id))
         .map(|s| s.phase)
         == Some(ReconnectPhase::Connecting)
+}
+
+/// Whether the tab rests in the sticky SM-003 `Evicted` state.
+fn is_evicted_tab<R: Runtime>(app: &AppHandle<R>, tab_id: &str) -> bool {
+    app.try_state::<Arc<SessionLifecycleStore>>()
+        .and_then(|store| store.status(tab_id))
+        == Some(SessionStatus::Evicted)
 }
 
 /// Whether an agent-reported session status means the live session is still there

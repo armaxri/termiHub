@@ -247,4 +247,22 @@ describe("waitForBackendAgentReconnectOutcome", () => {
     });
     expect(await pending).toEqual({ kind: "evicted" });
   });
+
+  it("re-attaches I/O to the kept session when the re-attach was refused as held (#3404)", async () => {
+    // A plain re-attach refused because another desktop holds the session folds
+    // `evicted` together with the freshly registered desktop session id: the tab
+    // binds its terminal I/O to it (so output resumes there after Reclaim) while
+    // the evicted overlay gates input.
+    const pending = waitForBackendAgentReconnectOutcome("tab-11", "agent-old", never);
+    await flush();
+    transport.setSession("tab-11", reconnecting());
+    await flush();
+    transport.setSession("tab-11", {
+      status: "evicted",
+      reconnect: { phase: "idle", attempt: 0, delayMs: 0 },
+      sessionId: "held-new",
+      error: "This session is in use on another desktop. Reclaim it to take over.",
+    });
+    expect(await pending).toEqual({ kind: "reattach", sessionId: "held-new" });
+  });
 });

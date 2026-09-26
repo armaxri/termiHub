@@ -54,6 +54,7 @@ use termihub_core::protocol::methods::{
 
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::terminal::backend::OUTPUT_CHANNEL_CAPACITY;
+use crate::utils::errors::TerminalError;
 
 /// A [`ConnectionType`] implementation that proxies all operations to a
 /// remote agent via JSON-RPC.
@@ -133,22 +134,36 @@ impl RemoteProxy {
     /// under the **same** session ID that was stored in `PersistentRecord` so that
     /// the tab's `existingSessionId` prop and the pending-output buffer in
     /// `TerminalOutputDispatcher` continue to work without any frontend state update.
+    ///
+    /// A plain re-attach refused because **another desktop holds the session**
+    /// (the typed [`TerminalError::SessionHeldByPeer`], SM-003 / #3404) is not a
+    /// failure: the proxy is still returned — its output channel stays registered
+    /// — with [`ReattachOutcome::HeldByPeer`], so the caller can keep the tab's
+    /// desktop session entry and fold it `Evicted`. An explicit Reclaim (takeover
+    /// attach) then resumes output on that same channel.
     pub fn reconnect_existing(
         agent_id: String,
         remote_session_id: String,
         agent_manager: Arc<dyn AgentRpcClient>,
-    ) -> Result<Self, SessionError> {
+    ) -> Result<(Self, ReattachOutcome), SessionError> {
         let (std_tx, std_rx) = mpsc::sync_channel::<Vec<u8>>(OUTPUT_CHANNEL_CAPACITY);
 
         agent_manager
             .register_session_output(&agent_id, &remote_session_id, std_tx)
             .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
-        agent_manager
-            .attach_session(&agent_id, &remote_session_id)
-            .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
+        let outcome = match agent_manager.attach_session(&agent_id, &remote_session_id) {
+            Ok(()) => ReattachOutcome::Attached,
+            Err(TerminalError::SessionHeldByPeer(_)) => ReattachOutcome::HeldByPeer,
+            Err(e) => {
+                // Nothing will stream on a failed re-attach: drop the sender so
+                // the agent manager does not keep a dead route.
+                let _ = agent_manager.unregister_session_output(&agent_id, &remote_session_id);
+                return Err(SessionError::SpawnFailed(e.to_string()));
+            }
+        };
 
-        Ok(Self {
+        let proxy = Self {
             agent_id,
             remote_session_id: Mutex::new(Some(remote_session_id)),
             agent_manager,
@@ -169,8 +184,20 @@ impl RemoteProxy {
             file_browser_proxy: None,
             monitoring_proxy: None,
             process_proxy: None,
-        })
+        };
+        Ok((proxy, outcome))
     }
+}
+
+/// How a [`RemoteProxy::reconnect_existing`] re-attach resolved (#3404).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReattachOutcome {
+    /// The plain attach succeeded; this desktop controls the session.
+    Attached,
+    /// The plain attach was refused because another desktop holds the session
+    /// (SM-003). The output channel is registered, but nothing streams until an
+    /// explicit Reclaim takes the session over.
+    HeldByPeer,
 }
 
 #[async_trait::async_trait]

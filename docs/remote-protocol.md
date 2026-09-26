@@ -708,9 +708,11 @@ A worker's start-up recovery does **not** adopt orphaned sessions (maintainer de
 2026-09-26). A surviving daemon that nobody holds keeps running **unattached** under its usual
 lifetime/exit rules; nobody owns it until a desktop attaches to it. A plain `connection.attach` of
 such a session adopts it (a recovery-intent connect, so it never evicts another desktop); if
-another desktop holds it, the attach fails with "Session is held by another desktop" and the
-worker sends [`connection.evicted`](#connectionevicted) `heldByPeer`, so a tab bound to it shows
-the evicted state with Reclaim. Unattached orphans still count as active sessions for the deferred
+another desktop holds it, the attach fails with `-32023` ("Session is held by another desktop")
+and the worker sends [`connection.evicted`](#connectionevicted) `heldByPeer`, so a tab bound to it
+shows the evicted state with Reclaim. The desktop classifies the refusal by the `-32023` code (not
+the message): on its implicit re-attach paths it keeps the tab's session binding and folds the tab
+`Evicted` instead of reporting an error or retrying (#3404). Unattached orphans still count as active sessions for the deferred
 self-update idle check.
 
 **Compatibility:** the field is append-only. An agent that predates it ignores it, so a Reclaim
@@ -721,6 +723,8 @@ then sees the historical EOF.
 **Errors:**
 
 - `-32001` Session not found
+- `-32023` Session held by another desktop (plain attach only; retry with `takeover: true` to
+  take it over). An agent that predates this code reports the refusal as `-32001`.
 
 ---
 
@@ -2812,6 +2816,7 @@ For serial sessions:
 | `-32018` | Service start failed        | An agent-hosted embedded server failed to start (bad config, port bind, or unknown type)                                    |
 | `-32021` | Update signature rejected   | An agent update's Ed25519 signature is missing, malformed, or does not verify (AGT-005)                                     |
 | `-32022` | Tool run rejected           | A streaming `tool.start` was refused: unknown tool, duplicate run id, concurrency limit, or no streaming on this connection |
+| `-32023` | Session held by other       | A plain `connection.attach` was refused because another desktop holds the session; only `takeover: true` may evict it       |
 
 ---
 

@@ -89,6 +89,13 @@ pub const UPDATE_SIGNATURE_REJECTED: i64 = -32021;
 /// run id, or the agent's concurrent-run limit is reached (#3353).
 pub const TOOL_RUN_REJECTED: i64 = -32022;
 
+/// A plain (non-takeover) `connection.attach` was refused because another
+/// desktop currently holds the session (SM-003 single-attach, #3395/#3404). The
+/// holder is left undisturbed; only an explicit takeover (`takeover: true`) may
+/// evict it. The desktop folds the refused tab to `Evicted` (with Reclaim)
+/// instead of treating this as a failure or retrying.
+pub const SESSION_HELD_BY_OTHER: i64 = -32023;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,6 +130,7 @@ mod tests {
             PROCESS_NOT_SUPPORTED,
             UPDATE_SIGNATURE_REJECTED,
             TOOL_RUN_REJECTED,
+            SESSION_HELD_BY_OTHER,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -170,6 +178,7 @@ mod tests {
             PROCESS_NOT_SUPPORTED,
             UPDATE_SIGNATURE_REJECTED,
             TOOL_RUN_REJECTED,
+            SESSION_HELD_BY_OTHER,
         ];
         for code in app_codes {
             assert!(
