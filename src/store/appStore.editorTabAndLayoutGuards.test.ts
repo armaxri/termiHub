@@ -97,6 +97,37 @@ describe("appStore — openTunnelEditorTab focus-existing / title branches", () 
   });
 });
 
+describe("appStore — openTunnelEditorTab connection prefill (PROD-023)", () => {
+  function editorMetas() {
+    return allTabs()
+      .filter((t) => t.contentType === "tunnel-editor")
+      .map((t) => t.tunnelEditorMeta);
+  }
+
+  it("carries the connection on a new-tunnel editor and reuses only a matching tab", () => {
+    const open = useAppStore.getState().openTunnelEditorTab;
+    open(null, { sshConnectionId: "conn-1" });
+    expect(editorMetas()).toEqual([{ tunnelId: null, sshConnectionId: "conn-1" }]);
+
+    // The same prefill focuses the existing tab rather than opening another.
+    open(null, { sshConnectionId: "conn-1" });
+    expect(editorMetas()).toHaveLength(1);
+
+    // A plain "New Tunnel" is a different editor.
+    open(null);
+    expect(editorMetas()).toEqual([
+      { tunnelId: null, sshConnectionId: "conn-1" },
+      { tunnelId: null },
+    ]);
+  });
+
+  it("ignores the prefill when editing an existing tunnel", () => {
+    useAppStore.setState({ tunnels: [makeTunnel("tun-1", "My Tunnel")] });
+    useAppStore.getState().openTunnelEditorTab("tun-1", { sshConnectionId: "conn-9" });
+    expect(editorMetas()).toEqual([{ tunnelId: "tun-1" }]);
+  });
+});
+
 describe("appStore — openWorkspaceEditorTab focus-existing / title branches", () => {
   it("titles the tab 'Edit: <name>' when the referenced workspace exists", () => {
     useAppStore.setState({ workspaces: [workspaceSummary("ws-1", "Prod")] });

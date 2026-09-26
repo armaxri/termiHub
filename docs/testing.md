@@ -2857,6 +2857,16 @@ To verify SSH tunnels actually work on macOS, do this manually against the tunne
 4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
 5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
 
+#### Per-connection port forwards (PROD-023, #3449)
+
+The section CRUD, the `startWithConnection` flag, the on-connect trigger and the backend selection are unit-tested (`ConnectionPortForwardingSection.test.tsx`, `TunnelEditor.startWithConnection.test.tsx`, `tunnelSlice.startForConnection.test.ts`, `tunnel_manager.rs` `connection_bound_tunnel_ids_*`). The live "forward comes up when the terminal connects" path is manual, against the same `ssh-tunnel-target` fixture as above:
+
+1. Edit the SSH connection to `127.0.0.1:2207` → **Port Forwarding** → **Add port forward**. The Tunnel editor opens with that connection pre-selected and **Start when a session to this SSH connection opens** on. Create a Local forward `127.0.0.1:18084` → `localhost:8080` and **Save** (not Save & Start).
+2. The connection editor's Port Forwarding section and the **Tunnels** sidebar both list the forward, stopped.
+3. Open a terminal to the connection. Once it connects, the forward turns running and `curl http://127.0.0.1:18084` returns `TUNNEL_TEST_OK`.
+4. Open a second terminal to the same connection — the forward is not restarted (no status flicker).
+5. Turn the row's **Start with connection** toggle off, stop the forward, reconnect the terminal — the forward stays stopped. **Remove** it from the section — it disappears from the Tunnels sidebar too.
+
 ### SSH keyboard-interactive / OTP prompts (#3371)
 
 SSH **keyboard-interactive** authentication (OTP / 2FA / PAM challenge prompts)

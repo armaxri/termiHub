@@ -58,6 +58,15 @@ export interface TunnelConfig {
    */
   host?: RunLocation;
   autoStart: boolean;
+  /**
+   * Start this tunnel whenever a terminal session for its SSH connection
+   * (`sshConnectionId`) connects — the per-connection port-forward binding set
+   * from the connection editor's "Port Forwarding" section (PROD-023).
+   * Independent of {@link autoStart} (app launch). Optional for backward
+   * compatibility: absent means `false`; the Rust side defaults it on load, so
+   * the projection always sends it.
+   */
+  startWithConnection?: boolean;
   reconnectOnDisconnect: boolean;
   /**
    * For a chained **companion** tunnel — the desktop-hosted hop created by

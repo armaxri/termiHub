@@ -88,6 +88,7 @@ interface TunnelFormState {
   tunnelType: TunnelType;
   host: RunLocation;
   autoStart: boolean;
+  startWithConnection: boolean;
   reconnectOnDisconnect: boolean;
 }
 
@@ -115,6 +116,7 @@ const tunnelFormSchema = z
     tunnelType: z.custom<TunnelType>(),
     host: z.custom<RunLocation>(),
     autoStart: z.boolean(),
+    startWithConnection: z.boolean(),
     reconnectOnDisconnect: z.boolean(),
   })
   .superRefine((form, ctx) => {
@@ -170,12 +172,24 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const { control, getValues, setValue, reset } = useForm<TunnelFormState>({
     defaultValues: {
       name: existingTunnel?.name ?? "",
-      sshConnectionId: existingTunnel?.sshConnectionId ?? sshConnections[0]?.id ?? "",
+      // A new tunnel opened from a connection's "Port Forwarding" section
+      // (PROD-023) pre-selects that connection when it is a saved SSH one.
+      sshConnectionId:
+        existingTunnel?.sshConnectionId ??
+        (meta.sshConnectionId && sshConnections.some((c) => c.id === meta.sshConnectionId)
+          ? meta.sshConnectionId
+          : undefined) ??
+        sshConnections[0]?.id ??
+        "",
       tunnelType: existingTunnel?.tunnelType ?? defaultTunnelType("local"),
       // Which machine hosts this tunnel (S3, #2155). New tunnels default to This
       // computer — agent hosting is opt-in.
       host: existingTunnel?.host ?? THIS_COMPUTER,
       autoStart: existingTunnel?.autoStart ?? false,
+      // Opened from a connection's section: binding it to that connection's
+      // sessions is the point, so default the flag on (PROD-023).
+      startWithConnection:
+        existingTunnel?.startWithConnection ?? (!existingTunnel && !!meta.sshConnectionId),
       reconnectOnDisconnect: existingTunnel?.reconnectOnDisconnect ?? false,
     },
     resolver: zodResolver(tunnelFormSchema),
@@ -191,6 +205,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
         tunnelType: existingTunnel.tunnelType,
         host: existingTunnel.host ?? THIS_COMPUTER,
         autoStart: existingTunnel.autoStart,
+        startWithConnection: existingTunnel.startWithConnection ?? false,
         reconnectOnDisconnect: existingTunnel.reconnectOnDisconnect,
       });
     }
@@ -263,6 +278,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
     tunnelType: values.tunnelType,
     host: values.host,
     autoStart: values.autoStart,
+    startWithConnection: values.startWithConnection,
     reconnectOnDisconnect: values.reconnectOnDisconnect,
     companionOf: existingTunnel?.companionOf,
   });
@@ -724,6 +740,26 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
           />
           <label className="tunnel-editor__checkbox-label" htmlFor={`auto-start-${tabId}`}>
             Auto-start when app launches
+          </label>
+        </div>
+
+        <div className="tunnel-editor__checkbox-row">
+          <Controller
+            name="startWithConnection"
+            control={control}
+            render={({ field }) => (
+              <Toggle
+                id={`start-with-connection-${tabId}`}
+                checked={field.value}
+                onCheckedChange={field.onChange}
+              />
+            )}
+          />
+          <label
+            className="tunnel-editor__checkbox-label"
+            htmlFor={`start-with-connection-${tabId}`}
+          >
+            Start when a session to this SSH connection opens
           </label>
         </div>
 

@@ -1475,6 +1475,43 @@ impl TunnelManager {
         }
     }
 
+    /// Start every tunnel bound to `connection_id` with `start_with_connection`
+    /// set, skipping any that are already active, connecting or reconnecting
+    /// (PROD-023).
+    ///
+    /// Called when a terminal session for that saved SSH connection connects, so
+    /// the per-connection forwards come up with the session. Idempotent: a second
+    /// session for the same connection (or a reconnect) does not restart a tunnel
+    /// that is already up. Returns the ids a start was attempted for. Each start
+    /// runs through [`start_tunnel`](Self::start_tunnel), so status, errors and
+    /// the tunnels projection behave exactly as for a manual start.
+    pub fn start_connection_tunnels(&self, connection_id: &str) -> Vec<String> {
+        let tunnels = match self.get_tunnels() {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!("Failed to load tunnels for connection start: {}", e);
+                return Vec::new();
+            }
+        };
+
+        let mut started = Vec::new();
+        for id in connection_bound_tunnel_ids(&tunnels, connection_id) {
+            if self.is_tunnel_active(&id) {
+                continue;
+            }
+            if let Err(e) = self.start_tunnel(&id) {
+                tracing::warn!(
+                    tunnel_id = %id,
+                    connection_id,
+                    "Failed to start connection-bound tunnel: {}",
+                    e
+                );
+            }
+            started.push(id);
+        }
+        started
+    }
+
     /// Resolve an SSH connection ID to its SshConfig.
     fn resolve_ssh_config(
         &self,
@@ -1553,6 +1590,25 @@ fn type_supports_tunneling(types: &[ConnectionTypeInfo], type_id: &str) -> bool 
         .iter()
         .find(|t| t.type_id == type_id)
         .is_some_and(|t| t.capabilities.tunneling)
+}
+
+/// The ids of the tunnels that should start when a session for the saved SSH
+/// connection `connection_id` connects (PROD-023): bound to that connection and
+/// flagged `start_with_connection`.
+///
+/// Chained companions (`companion_of`) are excluded — their lifecycle follows
+/// their parent's (#2597), which brings them up in order once it connects. Pure
+/// so the selection is unit-testable without a live `AppHandle`.
+fn connection_bound_tunnel_ids(tunnels: &[TunnelConfig], connection_id: &str) -> Vec<String> {
+    tunnels
+        .iter()
+        .filter(|t| {
+            t.start_with_connection
+                && t.companion_of.is_none()
+                && t.ssh_connection_id == connection_id
+        })
+        .map(|t| t.id.clone())
+        .collect()
 }
 
 /// Why a supervised tunnel died, for the recorded `Error` message.
@@ -1897,11 +1953,11 @@ mod tests {
 
     use super::super::connecting::{ConnectingTracker, FinishOutcome};
     use super::{
-        clear_last_error, companion_action, find_companion, last_error_for, record_last_error,
-        resolve_managed_arc, resolve_tunnel_host, resting_status, run_reconnect_loop,
-        snapshot_active_stats, stats_from_status_reply, type_supports_tunneling,
-        wait_forwarder_death, wait_session_death, ActiveTunnel, CompanionAction, ReconnectOutcome,
-        TunnelStatsUpdate, TUNNEL_BACKOFF,
+        clear_last_error, companion_action, connection_bound_tunnel_ids, find_companion,
+        last_error_for, record_last_error, resolve_managed_arc, resolve_tunnel_host,
+        resting_status, run_reconnect_loop, snapshot_active_stats, stats_from_status_reply,
+        type_supports_tunneling, wait_forwarder_death, wait_session_death, ActiveTunnel,
+        CompanionAction, ReconnectOutcome, TunnelStatsUpdate, TUNNEL_BACKOFF,
     };
     use crate::run_location::{ResolvedLocation, RunLocation};
     use crate::tunnel::config::{LocalForwardConfig, TunnelConfig, TunnelStatus, TunnelType};
@@ -2681,9 +2737,39 @@ mod tests {
             }),
             host: RunLocation::ThisComputer,
             auto_start: false,
+            start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: companion_of.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn connection_bound_tunnel_ids_selects_flagged_tunnels_of_that_connection() {
+        let mut bound = tunnel("bound", None);
+        bound.start_with_connection = true;
+        // Same connection, but not flagged: stays manual.
+        let manual = tunnel("manual", None);
+        // Flagged, but bound to a different SSH connection.
+        let mut other = tunnel("other", None);
+        other.start_with_connection = true;
+        other.ssh_connection_id = "conn-2".to_string();
+        // Flagged companion: follows its parent, never started directly.
+        let mut companion = tunnel("companion", Some("bound"));
+        companion.start_with_connection = true;
+        // App-launch auto-start alone does not bind a tunnel to the session.
+        let mut launch_only = tunnel("launch-only", None);
+        launch_only.auto_start = true;
+
+        let tunnels = vec![bound, manual, other, companion, launch_only];
+        assert_eq!(
+            connection_bound_tunnel_ids(&tunnels, "conn-1"),
+            vec!["bound".to_string()]
+        );
+        assert_eq!(
+            connection_bound_tunnel_ids(&tunnels, "conn-2"),
+            vec!["other".to_string()]
+        );
+        assert!(connection_bound_tunnel_ids(&tunnels, "conn-missing").is_empty());
     }
 
     #[test]

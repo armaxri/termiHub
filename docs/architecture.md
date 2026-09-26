@@ -715,6 +715,30 @@ sequenceDiagram
 
 Tunnels are persisted in `tunnels.json` alongside connections. The SSH Session Pool reuses SSH connections across multiple tunnels targeting the same host, avoiding redundant authentication.
 
+#### Per-connection port forwards (PROD-023)
+
+A tunnel can be bound to its SSH connection's sessions: the **Port Forwarding** section of the SSH connection editor lists the tunnels whose `sshConnectionId` is that connection (the same `tunnels` projection the Tunnels sidebar renders — there is no second store), with add / edit (both open the regular Tunnel editor, a new one pre-bound to the connection) and remove. Each tunnel carries a `startWithConnection` flag (serde-defaulted, so older `tunnels.json` files load unchanged), independent of `autoStart` (app launch).
+
+```mermaid
+sequenceDiagram
+    participant Term as Terminal tab (connectionId)
+    participant Store as Zustand Store
+    participant Disp as Projection dispatcher
+    participant TM as Tunnel Manager
+
+    Term->>Store: setTabSessionId(tab, session) — session connected
+    Store->>Store: any tunnel bound to connectionId with startWithConnection?
+    Store->>Disp: tunnel.startForConnection { connectionId }
+    Disp->>TM: start_connection_tunnels(connectionId) (spawn_blocking)
+    loop each bound, flagged, non-companion tunnel
+        TM->>TM: skip if active / connecting / reconnecting
+        TM->>TM: start_tunnel(id)
+    end
+    TM-->>Store: status diffs on the `tunnels` region
+```
+
+The forwards do **not** share the terminal's SSH transport: the terminal session is owned by the session manager, while a tunnel runs on the Tunnel Manager's own pooled endpoint session (jump-host gateways are shared process-wide). Starting is idempotent — a second tab or a reconnect does not restart a running forward — and forwards keep running after the terminal closes until stopped, like any tunnel. Chained companions (#2597) are never started directly; they follow their parent. Deleting the SSH connection does not yet cascade to its bound tunnels (tracked in #2850); a bound tunnel whose connection was deleted fails to start with "SSH connection not found", exactly as a manually started one does.
+
 ### Remote Session Creation (via Agent)
 
 ```mermaid
