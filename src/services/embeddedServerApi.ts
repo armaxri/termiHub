@@ -3,7 +3,12 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import { EmbeddedServerConfig, NetworkInterface, ServerState } from "@/types/embeddedServer";
+import {
+  EmbeddedServerConfig,
+  NetworkInterface,
+  ServerActivity,
+  ServerState,
+} from "@/types/embeddedServer";
 import type { RunLocation } from "@/types/tunnel";
 
 /** Return all saved embedded server configurations. */
@@ -37,6 +42,27 @@ export async function deleteEmbeddedServer(serverId: string): Promise<void> {
 /** Get the current runtime state of all configured servers. */
 export async function getEmbeddedServerStates(): Promise<ServerState[]> {
   return await invoke<ServerState[]>("get_embedded_server_states");
+}
+
+/**
+ * Read a server's access log and detailed stats (PROD-034/036). Only entries
+ * with a sequence number above `sinceSeq` are returned, so callers can poll
+ * incrementally. Resolves `null` when the server has no desktop-hosted log
+ * (never started on this computer, or hosted on an agent).
+ */
+export async function getEmbeddedServerActivity(
+  serverId: string,
+  sinceSeq?: number
+): Promise<ServerActivity | null> {
+  return await invoke<ServerActivity | null>("get_embedded_server_activity", {
+    serverId,
+    sinceSeq: sinceSeq ?? null,
+  });
+}
+
+/** Clear a server's access log and its request/error/top counters. */
+export async function clearEmbeddedServerActivity(serverId: string): Promise<void> {
+  await invoke("clear_embedded_server_activity", { serverId });
 }
 
 /** Start a server by ID. */
