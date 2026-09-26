@@ -14,7 +14,8 @@ use termihub_core::network::{
 };
 
 use crate::network::agent_stream::{self, StreamTool};
-use crate::network::http_monitor::{HttpMonitorConfig, HttpMonitorState};
+use crate::network::http_monitor::{HttpCheckResult, HttpMonitorConfig, HttpMonitorState};
+use crate::network::monitor_history_manager::HttpMonitorHistoryManager;
 use crate::network::tool_history::{NetworkHistoryTool, NetworkToolRun};
 use crate::network::tool_history_manager::NetworkToolHistoryManager;
 use crate::network::{agent_tools, events, NetworkManager};
@@ -974,4 +975,27 @@ pub fn clear_network_tool_history(
     manager: State<'_, NetworkToolHistoryManager>,
 ) -> Result<(), TerminalError> {
     manager.clear(tool)
+}
+
+// ── HTTP monitor check history (#3462) ───────────────────────────────────────
+
+/// A monitor's recorded checks, oldest first. With `limit`, only the newest
+/// `limit` checks (the panel's chart window); without it, all of them (CSV).
+#[tauri::command]
+pub fn list_http_monitor_checks(
+    monitor_id: String,
+    limit: Option<usize>,
+    manager: State<'_, HttpMonitorHistoryManager>,
+) -> Result<Vec<HttpCheckResult>, TerminalError> {
+    manager.list(&monitor_id, limit)
+}
+
+/// Clear the check history — of one `monitor_id`, or of every monitor when
+/// omitted (the Settings clear-all).
+#[tauri::command]
+pub fn clear_http_monitor_history(
+    monitor_id: Option<String>,
+    manager: State<'_, HttpMonitorHistoryManager>,
+) -> Result<(), TerminalError> {
+    manager.clear(monitor_id.as_deref())
 }

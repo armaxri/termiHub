@@ -114,6 +114,12 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
             json!({"version": "1", "runs": []}),
         ),
         (
+            "http-monitor-history.json",
+            json!({"version": "1", "monitors": [{"id": "h1", "checks": [
+                {"timestampMs": 1, "statusCode": 200, "latencyMs": 12, "ok": true}
+            ]}]}),
+        ),
+        (
             "ssh_known_hosts.json",
             json!({"server.example:22": ["SHA256:AAAA", "SHA256:BBBB"]}),
         ),
@@ -1060,6 +1066,7 @@ fn every_section_version_is_its_stores_current_version() {
     use crate::embedded_servers::config::EmbeddedServerStore;
     use crate::macros::config::MacroStore;
     use crate::network::http_monitor_storage::HttpMonitorsFile;
+    use crate::network::monitor_history::HttpMonitorHistoryStore;
     use crate::network::tool_history::NetworkToolHistoryStore;
     use crate::network::wol_storage::WolDevicesFile;
     use crate::tunnel::config::TunnelStore;
@@ -1090,6 +1097,10 @@ fn every_section_version_is_its_stores_current_version() {
         (
             "networkToolHistory",
             <NetworkToolHistoryStore as VersionedStore>::CURRENT_VERSION,
+        ),
+        (
+            "httpMonitorHistory",
+            <HttpMonitorHistoryStore as VersionedStore>::CURRENT_VERSION,
         ),
     ];
     for (id, store_version) in store_versions {

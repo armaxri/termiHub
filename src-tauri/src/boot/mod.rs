@@ -1042,6 +1042,23 @@ pub(crate) fn init_secondary_managers(
         }
     }
 
+    // Initialize the HTTP monitor check-history manager (#3462). On failure the
+    // app still starts; monitors run as before, their checks just aren't kept.
+    match network::monitor_history_manager::HttpMonitorHistoryManager::new(app.handle()) {
+        Ok(manager) => {
+            recovery_warnings.extend(manager.take_recovery_warnings());
+            app.manage(manager);
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize HTTP monitor history manager: {e}");
+            recovery_warnings.push(RecoveryWarning {
+                file_name: "http-monitor-history.json".to_string(),
+                message: "Could not initialize HTTP monitor history storage. Monitor check history is unavailable until the app is restarted.".to_string(),
+                details: Some(e.to_string()),
+            });
+        }
+    }
+
     // Initialize the workflow run-history manager with recovery loading
     // (PROD-0046). On failure, the app still starts but run history is
     // unavailable (recording is fire-and-forget on the frontend regardless).
