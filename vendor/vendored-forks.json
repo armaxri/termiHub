@@ -66,6 +66,10 @@
         {
           "summary": "16-bit high colour: RGB565 PixelFormat, full-PIXEL Tight TPIXELs (fill/copy/palette/gradient), cursor shapes decoded to RGBA8888 for every true-colour format; Tight JPEG-quality / compression-level pseudo-encodings",
           "refs": ["https://github.com/armaxri/termiHub/issues/3464"]
+        },
+        {
+          "summary": "ExtendedDesktopSize pseudo-encoding (-308) with a bounded layout parser (<=16 screens, accepted sizes <=8192), DesktopLayout/DesktopLayoutUnsupported events, a validated SetDesktopSize client message (251), and refresh requests that follow the current framebuffer size",
+          "refs": ["https://github.com/armaxri/termiHub/issues/3463"]
         }
       ],
       "watch": {

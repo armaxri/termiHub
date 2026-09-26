@@ -881,7 +881,10 @@ pub trait GraphicalBackend: Send + Sync {
     /// Request a new session resolution in pixels.
     ///
     /// Backends that cannot resize the remote keep the negotiated resolution and
-    /// return `Ok(())`; the frontend scales the canvas instead.
+    /// return `Ok(())`; the frontend scales the canvas instead. A backend whose
+    /// remote refused (or turned out not to support) a client resize may return
+    /// an error carrying the user-facing reason (VNC, #3463); the session keeps
+    /// running at its current size either way.
     async fn resize(&self, width_px: u16, height_px: u16) -> Result<(), SessionError>;
 
     /// Ask the backend to re-emit a full framebuffer frame.

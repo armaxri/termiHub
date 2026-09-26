@@ -9,10 +9,16 @@
 use serde::Deserialize;
 
 use crate::config::SshConfig;
+use crate::connection::graphical_resolution::{
+    normalize_fixed_size, server_resolution_fields, DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH,
+    RESOLUTION_MODE_DYNAMIC, RESOLUTION_MODE_SERVER,
+};
 use crate::connection::schema::{
     Condition, FieldType, FilePathKind, SelectOption, SettingsField, SettingsGroup,
 };
-use crate::connection::{shared_field_base, SettingsSchema};
+use crate::connection::{is_fixed_mode, shared_field_base, SettingsSchema};
+
+use super::desktop_size::ResolutionMode;
 
 /// Default RFB display 0 → port 5900.
 pub const VNC_BASE_PORT: u16 = 5900;
@@ -70,6 +76,16 @@ pub struct VncConfig {
     /// sub-rects at a decreasing quality and increasing zlib compression.
     /// Unknown values mean lossless.
     pub quality: String,
+    /// Remote resolution (#3463): `"server"` (the default — keep the size the
+    /// server chose, the only behavior before #3463), `"dynamic"` (follow the
+    /// tab via RFB `SetDesktopSize`) or `"fixed"` (request
+    /// [`width`](Self::width) x [`height`](Self::height) once connected).
+    /// Unknown values mean `"server"`.
+    pub resolution_mode: String,
+    /// Fixed desktop width in pixels (fixed resolution mode only).
+    pub width: Option<u16>,
+    /// Fixed desktop height in pixels (fixed resolution mode only).
+    pub height: Option<u16>,
     /// Connect through an SSH tunnel when `true` (reuses the SSH backend).
     pub use_ssh_tunnel: bool,
     /// SSH gateway host for the tunnel.
@@ -105,6 +121,9 @@ impl Default for VncConfig {
             preferred_encoding: "zrle".to_string(),
             color_depth: "32".to_string(),
             quality: QUALITY_LOSSLESS.to_string(),
+            resolution_mode: RESOLUTION_MODE_SERVER.to_string(),
+            width: None,
+            height: None,
             use_ssh_tunnel: false,
             ssh_host: String::new(),
             ssh_port: 22,
@@ -126,6 +145,24 @@ impl VncConfig {
         match self.display {
             Some(d) => VNC_BASE_PORT.saturating_add(d),
             None => self.port,
+        }
+    }
+
+    /// The remote-resolution mode (#3463). A fixed size is normalized into the
+    /// shared 200..=8192 range; anything other than `"dynamic"` / `"fixed"`
+    /// keeps the server's size.
+    pub fn resolution_mode(&self) -> ResolutionMode {
+        let mode = self.resolution_mode.trim();
+        if is_fixed_mode(mode) {
+            let (width, height) = normalize_fixed_size(
+                self.width.unwrap_or(DEFAULT_FIXED_WIDTH),
+                self.height.unwrap_or(DEFAULT_FIXED_HEIGHT),
+            );
+            ResolutionMode::Fixed { width, height }
+        } else if mode.eq_ignore_ascii_case(RESOLUTION_MODE_DYNAMIC) {
+            ResolutionMode::Dynamic
+        } else {
+            ResolutionMode::Server
         }
     }
 
@@ -309,6 +346,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
     let mut groups = shared_field_base(VNC_BASE_PORT);
     if let Some(display) = groups.iter_mut().find(|g| g.key == "display") {
         display.fields.push(color_depth_field());
+        display.fields.extend(server_resolution_fields());
     }
 
     groups.push(SettingsGroup {
@@ -680,20 +718,82 @@ mod tests {
     }
 
     #[test]
-    fn schema_exposes_no_display_options_vnc_cannot_honor() {
-        // PROD-026: vnc-rs has no client-initiated SetDesktopSize, so a
-        // fixed-resolution row would be a control with no effect.
+    fn schema_exposes_server_dynamic_and_fixed_resolution() {
         let schema = vnc_settings_schema();
-        for key in ["resolutionMode", "width", "height"] {
-            assert!(
-                !schema
-                    .groups
-                    .iter()
-                    .flat_map(|g| &g.fields)
-                    .any(|f| f.key == key),
-                "VNC must not expose {key}"
-            );
+        let display = schema
+            .groups
+            .iter()
+            .find(|g| g.key == "display")
+            .expect("display group");
+        let mode = display
+            .fields
+            .iter()
+            .find(|f| f.key == "resolutionMode")
+            .expect("VNC exposes a resolution mode (#3463)");
+        assert_eq!(mode.default, Some(serde_json::json!("server")));
+        let FieldType::Select { options } = &mode.field_type else {
+            panic!("resolutionMode must be a select");
+        };
+        let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(values, vec!["server", "dynamic", "fixed"]);
+        for key in ["width", "height"] {
+            let f = display.fields.iter().find(|f| f.key == key).unwrap();
+            let cond = f.visible_when.as_ref().expect("gated on fixed");
+            assert_eq!(cond.equals, serde_json::json!("fixed"));
         }
+    }
+
+    #[test]
+    fn resolution_mode_defaults_to_server_for_old_configs() {
+        // A config saved before #3463 carries no resolution keys at all.
+        let cfg: VncConfig = serde_json::from_value(serde_json::json!({ "host": "h" })).unwrap();
+        assert_eq!(cfg.resolution_mode(), ResolutionMode::Server);
+        assert_eq!(
+            VncConfig::default().resolution_mode(),
+            ResolutionMode::Server
+        );
+        for stale in ["", "bogus", "auto"] {
+            let cfg = VncConfig {
+                resolution_mode: stale.to_string(),
+                ..Default::default()
+            };
+            assert_eq!(cfg.resolution_mode(), ResolutionMode::Server, "{stale:?}");
+        }
+    }
+
+    #[test]
+    fn resolution_mode_parses_dynamic_and_normalized_fixed() {
+        let parse = |v: serde_json::Value| {
+            serde_json::from_value::<VncConfig>(v)
+                .unwrap()
+                .resolution_mode()
+        };
+        assert_eq!(
+            parse(serde_json::json!({ "resolutionMode": "Dynamic", "width": 800 })),
+            ResolutionMode::Dynamic
+        );
+        assert_eq!(
+            parse(serde_json::json!({ "resolutionMode": "fixed", "width": 1280, "height": 720 })),
+            ResolutionMode::Fixed {
+                width: 1280,
+                height: 720
+            }
+        );
+        // Missing size → the editor's defaults; out-of-range → clamped.
+        assert_eq!(
+            parse(serde_json::json!({ "resolutionMode": "fixed" })),
+            ResolutionMode::Fixed {
+                width: 1920,
+                height: 1080
+            }
+        );
+        assert_eq!(
+            parse(serde_json::json!({ "resolutionMode": "fixed", "width": 10, "height": 9000 })),
+            ResolutionMode::Fixed {
+                width: 200,
+                height: 8192
+            }
+        );
     }
 
     #[test]
@@ -705,7 +805,16 @@ mod tests {
             .find(|g| g.key == "display")
             .expect("display group");
         let keys: Vec<&str> = display.fields.iter().map(|f| f.key.as_str()).collect();
-        assert_eq!(keys, vec!["scaleMode", "colorDepth"]);
+        assert_eq!(
+            keys,
+            vec![
+                "scaleMode",
+                "colorDepth",
+                "resolutionMode",
+                "width",
+                "height"
+            ]
+        );
         let depth = &display.fields[1];
         assert_eq!(depth.default, Some(serde_json::json!("32")));
         let FieldType::Select { options } = &depth.field_type else {

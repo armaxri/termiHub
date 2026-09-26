@@ -15,6 +15,7 @@
 
 mod budget;
 mod config;
+mod desktop_size;
 mod frame;
 mod jpeg;
 mod keymap;
@@ -47,6 +48,7 @@ use crate::monitoring::MonitoringProvider;
 
 use budget::{ByteBudgetSender, MAX_QUEUED_CURSOR_BYTES, MAX_QUEUED_FRAME_BYTES};
 use config::VncConfig;
+use desktop_size::{DesktopSize, ResizeOutcome};
 use frame::FrameShadow;
 use pixel::PixelConverter;
 
@@ -78,9 +80,35 @@ struct VncShared {
     /// drops the frame sender, so it is set by the time the supervisor sees the
     /// stream close. `None` for a transport drop or a user disconnect.
     failure: StdMutex<Option<String>>,
+    /// Remote-resolution negotiation (ExtendedDesktopSize, #3463), touched by
+    /// the driver (layout events) and [`GraphicalBackend::resize`].
+    desktop: StdMutex<DesktopSize>,
 }
 
 impl VncShared {
+    /// Feed a decoded event to the remote-resolution state; returns the
+    /// `SetDesktopSize` it made due, if any (#3463).
+    fn desktop_event(&self, event: &VncEvent) -> Option<X11Event> {
+        let mut desktop = self.desktop.lock().ok()?;
+        desktop
+            .on_event(event, std::time::Instant::now())
+            .map(X11Event::SetDesktopSize)
+    }
+
+    /// A dynamic resize request from the frontend (#3463).
+    fn desktop_request(&self, width: u16, height: u16) -> ResizeOutcome {
+        match self.desktop.lock() {
+            Ok(mut desktop) => desktop.request(width, height, std::time::Instant::now()),
+            Err(_) => ResizeOutcome::default(),
+        }
+    }
+
+    fn supports_dynamic_resize(&self) -> bool {
+        self.desktop
+            .lock()
+            .is_ok_and(|desktop| desktop.supports_dynamic_resize())
+    }
+
     /// Record the first fatal reason; later ones are consequences of it.
     fn record_failure(&self, message: String) {
         if let Ok(mut slot) = self.failure.lock() {
@@ -162,7 +190,9 @@ fn dom_buttons_to_rfb(buttons: u8) -> u8 {
 /// Encode the chosen client encodings for `cfg`, honoring the raw/ZRLE
 /// preference and whether the remote cursor is wanted. `Raw` is always included
 /// (RFC requirement); `DesktopSizePseudo` lets the server announce resolution
-/// changes.
+/// changes. `ExtendedDesktopSizePseudo` is added only for the dynamic and fixed
+/// resolution modes (#3463), so the default server mode negotiates exactly as
+/// before.
 ///
 /// `Tight` is advertised ahead of ZRLE when compression is wanted — it is the
 /// most bandwidth-efficient common encoding, and its photographic sub-rects
@@ -187,6 +217,9 @@ fn encodings_for(cfg: &VncConfig) -> Vec<VncEncoding> {
         encs.push(VncEncoding::CursorPseudo);
     }
     encs.push(VncEncoding::DesktopSizePseudo);
+    if cfg.resolution_mode().negotiates_layout() {
+        encs.push(VncEncoding::ExtendedDesktopSizePseudo);
+    }
     encs
 }
 
@@ -366,10 +399,19 @@ async fn drive(
             _ = cancel.cancelled() => break,
             _ = ticker.tick() => {
                 let mut got_event = false;
+                let mut full_refresh = false;
                 loop {
                     match client.poll_event().await {
                         Ok(Some(event)) => {
                             got_event = true;
+                            // #3463: a changed framebuffer is undefined until the
+                            // server repaints it, so ask for a full update.
+                            full_refresh |= resizes_shadow(&event, &shadow);
+                            if let Some(request) = shared.desktop_event(&event) {
+                                if let Err(e) = client.input(request).await {
+                                    warn!(error = %e, "vnc SetDesktopSize not sent");
+                                }
+                            }
                             if !handle_event(event, &mut shadow, &shared, &mut frame_tx, &mut cursor_tx).await {
                                 return; // channel closed downstream — session gone
                             }
@@ -390,6 +432,12 @@ async fn drive(
                 if got_event {
                     request_outstanding = false;
                 }
+                if full_refresh {
+                    if client.input(X11Event::FullRefresh).await.is_err() {
+                        return;
+                    }
+                    request_outstanding = true;
+                }
                 if !request_outstanding {
                     if client.input(X11Event::Refresh).await.is_err() {
                         return;
@@ -398,6 +446,19 @@ async fn drive(
                 }
             }
         }
+    }
+}
+
+/// Whether `event` changes the size of an already-sized shadow framebuffer
+/// (#3463). The first `SetResolution` (from `ServerInit`) is not a change: the
+/// driver primes that frame itself.
+fn resizes_shadow(event: &VncEvent, shadow: &FrameShadow) -> bool {
+    match event {
+        VncEvent::SetResolution(screen) => {
+            let size = (u32::from(screen.width), u32::from(screen.height));
+            shadow.width() != 0 && size != (shadow.width(), shadow.height())
+        }
+        _ => false,
     }
 }
 
@@ -688,6 +749,7 @@ impl ConnectionType for Vnc {
             show_remote_cursor: cfg.show_remote_cursor,
             pixels,
             failure: StdMutex::new(None),
+            desktop: StdMutex::new(DesktopSize::new(cfg.resolution_mode())),
         });
         let cancel = CancellationToken::new();
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
@@ -791,9 +853,12 @@ impl GraphicalBackend for Vnc {
                 AuthKind::Password,
                 AuthKind::UsernamePassword,
             ],
-            // vnc-rs offers no client-initiated SetDesktopSize; the frontend
-            // scales the canvas instead.
-            supports_dynamic_resize: false,
+            // Dynamic mode on a server that has not refused or lacked RFB
+            // ExtendedDesktopSize (#3463); otherwise the frontend scales.
+            supports_dynamic_resize: self
+                .runtime
+                .as_ref()
+                .is_some_and(|rt| rt.shared.supports_dynamic_resize()),
             supports_clipboard: true,
             // The standard RFB clipboard (ServerCutText / ClientCutText) is
             // Latin-1 text only; vnc-rs has no Extended Clipboard support.
@@ -829,12 +894,26 @@ impl GraphicalBackend for Vnc {
         Self::forward_input(rt, event).await
     }
 
-    async fn resize(&self, _width_px: u16, _height_px: u16) -> Result<(), SessionError> {
-        // No client-initiated remote resize; the shared frontend scales.
-        if self.runtime.is_none() {
+    /// Follow the tab in the dynamic resolution mode through RFB
+    /// `SetDesktopSize` (#3463); a no-op in the server and fixed modes. A
+    /// server without ExtendedDesktopSize, or one that refused a request, is
+    /// reported as an error so the frontend can tell the user it scales
+    /// locally instead; the session itself continues unchanged.
+    async fn resize(&self, width_px: u16, height_px: u16) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
             return Err(SessionError::NotRunning("vnc not connected".to_string()));
+        };
+        let outcome = rt.shared.desktop_request(width_px, height_px);
+        if let Some(request) = outcome.request {
+            rt.client
+                .input(X11Event::SetDesktopSize(request))
+                .await
+                .map_err(map_vnc_err)?;
         }
-        Ok(())
+        match outcome.notice {
+            Some(notice) => Err(SessionError::ProtocolError(notice)),
+            None => Ok(()),
+        }
     }
 
     async fn get_clipboard(&self) -> Option<String> {
@@ -926,6 +1005,65 @@ mod tests {
     }
 
     #[test]
+    fn extended_desktop_size_is_advertised_only_for_dynamic_and_fixed() {
+        let with_mode = |mode: &str| {
+            encodings_for(&VncConfig {
+                resolution_mode: mode.to_string(),
+                ..Default::default()
+            })
+        };
+        // The default server mode negotiates exactly as before #3463.
+        assert!(
+            !encodings_for(&VncConfig::default()).contains(&VncEncoding::ExtendedDesktopSizePseudo)
+        );
+        assert!(!with_mode("server").contains(&VncEncoding::ExtendedDesktopSizePseudo));
+        for mode in ["dynamic", "fixed"] {
+            let encs = with_mode(mode);
+            assert!(
+                encs.contains(&VncEncoding::ExtendedDesktopSizePseudo),
+                "{mode}"
+            );
+            assert!(encs.contains(&VncEncoding::DesktopSizePseudo), "{mode}");
+        }
+    }
+
+    #[test]
+    fn only_a_real_size_change_asks_for_a_full_refresh() {
+        let res = |width, height| VncEvent::SetResolution(vnc::Screen { width, height });
+        let mut shadow = FrameShadow::new();
+        // The ServerInit size is not a change: the driver primes that frame.
+        assert!(!resizes_shadow(&res(640, 480), &shadow));
+        shadow.resize(640, 480);
+        assert!(!resizes_shadow(&res(640, 480), &shadow));
+        assert!(resizes_shadow(&res(800, 600), &shadow));
+        assert!(!resizes_shadow(&VncEvent::Bell, &shadow));
+    }
+
+    #[test]
+    fn shared_state_turns_a_due_layout_request_into_set_desktop_size() {
+        let shared = VncShared {
+            desktop: StdMutex::new(DesktopSize::new(desktop_size::ResolutionMode::Fixed {
+                width: 1280,
+                height: 720,
+            })),
+            ..Arc::into_inner(test_shared()).unwrap()
+        };
+        let layout = VncEvent::DesktopLayout(vnc::ExtendedDesktopSize {
+            reason: vnc::DesktopSizeReason::Server,
+            status: vnc::DesktopSizeStatus::Ok,
+            width: 1024,
+            height: 768,
+            screens: vec![],
+        });
+        match shared.desktop_event(&layout) {
+            Some(X11Event::SetDesktopSize(req)) => assert_eq!((req.width, req.height), (1280, 720)),
+            other => panic!("expected SetDesktopSize, got {other:?}"),
+        }
+        assert!(!shared.supports_dynamic_resize());
+        assert_eq!(shared.desktop_request(900, 700), ResizeOutcome::default());
+    }
+
+    #[test]
     fn encodings_offer_tight_when_compressed() {
         // Tight is advertised under the default (compressed) preference, ahead of
         // ZRLE, so a Tight-capable server can use the most efficient encoding.
@@ -952,6 +1090,7 @@ mod tests {
             show_remote_cursor: true,
             pixels: PixelConverter::new(format).unwrap(),
             failure: StdMutex::new(None),
+            desktop: StdMutex::new(DesktopSize::new(desktop_size::ResolutionMode::Server)),
         })
     }
 
