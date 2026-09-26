@@ -1,13 +1,14 @@
-use std::collections::HashMap;
-
 use tauri::{Emitter, Manager, State};
 use tauri_plugin_cli::CliExt;
 
+use crate::connection::config::SavedConnection;
 use crate::connection::manager::ConnectionManager;
 use crate::utils::errors::TerminalError;
 use crate::workspace::config::{
-    WorkspaceDefinition, WorkspaceImportPreview, WorkspaceImportResult, WorkspaceSummary,
+    WorkspaceDefinition, WorkspaceExportResult, WorkspaceImportPreview, WorkspaceImportResult,
+    WorkspaceSummary,
 };
+use crate::workspace::connection_refs::ConnectionRefMap;
 use crate::workspace::last_session::{LastSession, LastSessionManager};
 use crate::workspace::manager::WorkspaceManager;
 use crate::workspace::settings::{ActiveWorkspaceInfo, ACTIVE_WORKSPACE_CHANGED_EVENT};
@@ -161,55 +162,41 @@ pub fn get_cli_workspace(
     Ok(None)
 }
 
-/// Build a connection ID → name mapping from the connection manager.
-fn build_id_to_name_map(
+/// The saved connections workspace references resolve against: the main store
+/// plus every enabled external connection file (#3625) — the same unified view
+/// the connection tree and the jump-host resolver use.
+fn unified_connections(
     connection_manager: &ConnectionManager,
-) -> Result<HashMap<String, String>, TerminalError> {
-    let flat = connection_manager
-        .get_all()
-        .map_err(|e| TerminalError::WorkspaceError(format!("Cannot read connections: {e}")))?;
-    Ok(flat
-        .connections
-        .iter()
-        .map(|c| (c.id.clone(), c.name.clone()))
-        .collect())
-}
-
-/// Build a connection name → ID mapping from the connection manager.
-fn build_name_to_id_map(
-    connection_manager: &ConnectionManager,
-) -> Result<HashMap<String, String>, TerminalError> {
-    let flat = connection_manager
-        .get_all()
-        .map_err(|e| TerminalError::WorkspaceError(format!("Cannot read connections: {e}")))?;
-    Ok(flat
-        .connections
-        .iter()
-        .map(|c| (c.name.clone(), c.id.clone()))
-        .collect())
+) -> Result<Vec<SavedConnection>, TerminalError> {
+    connection_manager
+        .load_unified_view()
+        .map(|view| view.connections)
+        .map_err(|e| TerminalError::WorkspaceError(format!("Cannot read connections: {e}")))
 }
 
 /// Export all workspaces as portable JSON (connection IDs replaced with names).
+/// Returns the JSON plus any non-fatal warnings (e.g. a tab bound to an id that
+/// several connection files hold, exported without a portable name).
 #[tauri::command]
 pub fn export_workspaces(
     workspace_manager: State<'_, WorkspaceManager>,
     connection_manager: State<'_, ConnectionManager>,
-) -> Result<String, TerminalError> {
-    let id_to_name = build_id_to_name_map(&connection_manager)?;
-    workspace_manager.export_json(&id_to_name)
+) -> Result<WorkspaceExportResult, TerminalError> {
+    let connections = unified_connections(&connection_manager)?;
+    workspace_manager.export_json(&ConnectionRefMap::for_export(&connections))
 }
 
 /// Import workspaces from portable JSON (connection names resolved to IDs).
 /// Returns the number of workspaces imported plus any non-fatal warnings
-/// (e.g. dangling connection references) for the UI to surface.
+/// (e.g. dangling or ambiguous connection references) for the UI to surface.
 #[tauri::command]
 pub fn import_workspaces(
     json: String,
     workspace_manager: State<'_, WorkspaceManager>,
     connection_manager: State<'_, ConnectionManager>,
 ) -> Result<WorkspaceImportResult, TerminalError> {
-    let name_to_id = build_name_to_id_map(&connection_manager)?;
-    workspace_manager.import_json(&json, &name_to_id)
+    let connections = unified_connections(&connection_manager)?;
+    workspace_manager.import_json(&json, &ConnectionRefMap::for_import(&connections))
 }
 
 /// Preview a workspace import file without importing.
