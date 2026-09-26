@@ -1,0 +1,36 @@
+# cargo-about configuration (PKG-009): drives the Rust half of the generated
+# third-party notices (THIRD_PARTY_NOTICES.txt), which collect the full license
+# text of every crate compiled into the desktop app, the agent and the RDP
+# sidecar. Generate with `pnpm notices:generate` (see docs/licensing.md).
+#
+# `accepted` MUST equal deny.toml's [licenses] `allow` list — cargo-deny is the
+# gate that rejects an unapproved license, cargo-about only renders the texts.
+# `pnpm notices:check` (CI) fails if the two lists drift.
+accepted = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+# Only code that ends up in a shipped binary needs attribution: build scripts'
+# and tests' dependencies are not redistributed.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# First-party, never-published crates (termihub, termihub-core, termihub-agent,
+# termihub-plugin-api, termihub-rdp-sidecar, ...) are covered by the repository's
+# own MIT LICENSE, not third-party notices. Mirrors deny.toml's `private` setting.
+private = { ignore = true }
