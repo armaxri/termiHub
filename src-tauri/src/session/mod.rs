@@ -13,4 +13,5 @@ pub mod remote_proxy;
 pub mod retained_request;
 pub mod session_log;
 pub mod ssh_host_key_verifier;
+pub mod ssh_keyboard_interactive;
 pub mod ssh_trust_store;

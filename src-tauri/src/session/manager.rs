@@ -937,9 +937,12 @@ impl SessionManager {
                     // give-up is not yet source-foldable); and **agent** connects (this is
                     // the non-agent branch — an agent connect silently auto-retries
                     // client-side without an intent). Additive, shadow-only.
+                    // A dismissed keyboard-interactive prompt (#3371) is a user
+                    // cancel too, not a connect failure.
                     let cancelled = cancel_token
                         .as_ref()
-                        .is_some_and(CancellationToken::is_cancelled);
+                        .is_some_and(CancellationToken::is_cancelled)
+                        || matches!(e, termihub_core::errors::SessionError::AuthCancelled);
                     if !cancelled {
                         if let Some(tab_id) = initial_connect_failed_tab_id(connect_id) {
                             // Classify the auth rejection from the typed core error
