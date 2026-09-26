@@ -859,7 +859,7 @@ fn register_connection_attach(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         };
         attached.map_err(|msg| {
             rpc_err_data(
-                errors::SESSION_NOT_FOUND,
+                attach_error_code(&msg),
                 msg,
                 json!({"session_id": p.session_id}),
             )
@@ -868,6 +868,21 @@ fn register_connection_attach(module: &mut RpcModule<Mutex<HandlerState>>) -> an
         Ok::<_, ErrorObjectOwned>(json!({}))
     })?;
     Ok(())
+}
+
+/// The JSON-RPC error code for a failed `connection.attach`.
+///
+/// A plain attach refused because another desktop holds the session (SM-003,
+/// #3395) carries the dedicated [`errors::SESSION_HELD_BY_OTHER`] code so the
+/// desktop classifies it structurally — folding the tab `Evicted` with Reclaim —
+/// rather than parsing the message (#3404). Every other failure keeps
+/// [`errors::SESSION_NOT_FOUND`].
+fn attach_error_code(msg: &str) -> i64 {
+    if msg == crate::session::manager::SESSION_HELD_BY_OTHER {
+        errors::SESSION_HELD_BY_OTHER
+    } else {
+        errors::SESSION_NOT_FOUND
+    }
 }
 
 fn register_connection_detach(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
@@ -3300,6 +3315,43 @@ mod tests {
         assert_eq!(result["error"]["code"], errors::SESSION_NOT_FOUND);
     }
 
+    /// Session id the mock session manager refuses as held by another desktop.
+    const HELD_BY_PEER_SESSION_ID: &str = "held-by-peer";
+
+    /// A plain attach refused because another desktop holds the session carries
+    /// the dedicated typed code, not the generic not-found one (#3404), so the
+    /// desktop can fold the tab `Evicted` without parsing the message.
+    #[tokio::test]
+    async fn session_attach_held_by_other_desktop_has_its_own_code() {
+        let handler = make_handler();
+        init_handler(&handler).await;
+
+        let result = dispatch(
+            &handler,
+            "connection.attach",
+            json!({"session_id": HELD_BY_PEER_SESSION_ID}),
+            2,
+        )
+        .await;
+        assert_eq!(result["error"]["code"], errors::SESSION_HELD_BY_OTHER);
+        assert_eq!(
+            result["error"]["message"],
+            crate::session::manager::SESSION_HELD_BY_OTHER
+        );
+    }
+
+    #[test]
+    fn attach_error_code_classifies_only_the_held_refusal() {
+        assert_eq!(
+            attach_error_code(crate::session::manager::SESSION_HELD_BY_OTHER),
+            errors::SESSION_HELD_BY_OTHER
+        );
+        assert_eq!(
+            attach_error_code("Session not found"),
+            errors::SESSION_NOT_FOUND
+        );
+    }
+
     #[tokio::test]
     async fn session_detach_not_found() {
         let handler = make_handler();
@@ -5260,6 +5312,10 @@ mod tests {
         }
 
         async fn attach(&self, session_id: &str) -> Result<(), String> {
+            // A fixed id standing for a session another desktop holds (#3404).
+            if session_id == HELD_BY_PEER_SESSION_ID {
+                return Err(crate::session::manager::SESSION_HELD_BY_OTHER.to_string());
+            }
             let sessions = self.sessions.lock().await;
             if sessions.iter().any(|s| s.id == session_id) {
                 Ok(())
