@@ -50,7 +50,8 @@ use super::package::{
     MAX_DECOMPRESSED_TOTAL_BYTES, MAX_PACKAGE_ENTRIES,
 };
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
-use super::signature::{self, VerifiedArchive};
+use super::signature::{self, PackageSignature, VerifiedArchive};
+use super::signer_change::{classify_signer_change, InstalledSigner, PackageSigner, SignerChange};
 use super::trust_store::{TrustStore, TrustStoreError, TrustedPublisher};
 use super::version_change::{classify_version_change, InstalledSnapshot, VersionChange};
 
@@ -216,6 +217,27 @@ pub enum PluginManagerError {
         .0.kind
     )]
     VersionChangeUnconfirmed(Box<VersionChange>),
+
+    /// Installing the package would replace the installed plugin with one signed
+    /// by a **different** key, an **unsigned** package replacing a signed one, or
+    /// a package whose installed signer cannot be determined — and the caller did
+    /// not confirm it (#3489). Nothing was changed; re-issue the install with
+    /// [`InstallOptions::confirm_signer_change`] set once the user has agreed.
+    ///
+    /// When the same install *also* needs an unconfirmed version change, that
+    /// change rides along in `version` so the UI can ask for both in one prompt
+    /// (and must then set [`InstallOptions::confirm_version_change`] too).
+    #[error(
+        "installing {} over the installed copy requires confirmation: the publisher key changed ({:?})",
+        .signer.plugin_id,
+        .signer.kind
+    )]
+    SignerChangeUnconfirmed {
+        /// Both signer fingerprints and the kind of change.
+        signer: Box<SignerChange>,
+        /// A pending (unconfirmed) version change for the same install, if any.
+        version: Option<Box<VersionChange>>,
+    },
 }
 
 /// The caller's consent flags for [`PluginManager::install_with`].
@@ -234,6 +256,11 @@ pub struct InstallOptions {
     /// (PLG-012). Without it such an install is refused with
     /// [`PluginManagerError::VersionChangeUnconfirmed`].
     pub confirm_version_change: bool,
+    /// The user confirmed replacing the installed plugin with a package signed
+    /// by a different key, an unsigned package replacing a signed one, or a
+    /// package whose installed signer is unknown (#3489). Without it such an
+    /// install is refused with [`PluginManagerError::SignerChangeUnconfirmed`].
+    pub confirm_signer_change: bool,
 }
 
 /// Per-plugin record persisted in `plugin-state.json`.
@@ -249,6 +276,12 @@ struct PluginStateRecord {
     /// from a different build. Absent for installs that predate it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     package_sha256: Option<String>,
+    /// Who signed the package this plugin was installed from (#3489), so a later
+    /// replace can tell "same publisher" from "the publisher key changed". Absent
+    /// for installs that predate it — those fall back to the `signature.json`
+    /// extracted into the plugin directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    signer: Option<PackageSigner>,
 }
 
 /// The whole `plugin-state.json` document.
@@ -432,6 +465,7 @@ impl PluginManager {
                 accept_untrusted,
                 trust_publisher,
                 confirm_version_change: false,
+                confirm_signer_change: false,
             },
         )
     }
@@ -447,6 +481,15 @@ impl PluginManager {
     /// Fresh installs, upgrades, and byte-identical reinstalls proceed. The
     /// version gate runs under the install lock, before anything is pinned or
     /// extracted.
+    ///
+    /// It is also signer-gated (#3489): replacing a plugin signed by key A with a
+    /// package signed by key B, an unsigned package, or over an installed copy
+    /// whose signer is unknown is refused with
+    /// [`PluginManagerError::SignerChangeUnconfirmed`] (carrying both
+    /// fingerprints, plus any still-pending version change) unless
+    /// [`InstallOptions::confirm_signer_change`] is set. The same key, a newly
+    /// signed replacement for an unsigned install, and unsigned-over-unsigned
+    /// proceed; the incoming signer is recorded for the next comparison.
     pub fn install_with(
         &self,
         package_path: &Path,
@@ -456,6 +499,7 @@ impl PluginManager {
             accept_untrusted,
             trust_publisher,
             confirm_version_change,
+            confirm_signer_change,
         } = options;
         // Reject an oversize (compressed) package up front, before trust
         // assessment opens and reads the archive. The compressed-size gate used to
@@ -486,6 +530,40 @@ impl PluginManager {
         // the lock so the installed copy cannot change between compare and swap.
         let package_sha256 = signature::sha256_file(package_path)?;
         let change = self.classify_against_installed(&manifest, &package_sha256)?;
+        let version_pending = change.requires_confirmation() && !confirm_version_change;
+
+        // Signer gate (#3489): replacing a signed plugin with a package from a
+        // different key, or with an unsigned package, needs its own explicit
+        // confirmation. The incoming signer is the key the trust gate verified
+        // (and extraction below re-binds to), so it cannot be swapped afterwards.
+        let incoming_signer = PackageSigner::from_key_id(match &assessment.level {
+            TrustLevel::Verified { .. } | TrustLevel::Signed { .. } => assessment.key_id.as_deref(),
+            TrustLevel::Untrusted | TrustLevel::Tampered => None,
+        });
+        let signer_change = self.classify_signer_against_installed(&manifest, &incoming_signer)?;
+        if signer_change.requires_confirmation() {
+            if !confirm_signer_change {
+                tracing::info!(
+                    plugin_id = %signer_change.plugin_id,
+                    installed_key_id = signer_change.installed_key_id.as_deref().unwrap_or("none"),
+                    incoming_key_id = signer_change.incoming_key_id.as_deref().unwrap_or("unsigned"),
+                    kind = ?signer_change.kind,
+                    "plugin install refused pending publisher-key-change confirmation"
+                );
+                return Err(PluginManagerError::SignerChangeUnconfirmed {
+                    signer: Box::new(signer_change),
+                    version: version_pending.then(|| Box::new(change)),
+                });
+            }
+            tracing::warn!(
+                plugin_id = %signer_change.plugin_id,
+                installed_key_id = signer_change.installed_key_id.as_deref().unwrap_or("none"),
+                incoming_key_id = signer_change.incoming_key_id.as_deref().unwrap_or("unsigned"),
+                kind = ?signer_change.kind,
+                "replacing installed plugin with a confirmed publisher-key change"
+            );
+        }
+
         if change.requires_confirmation() {
             if !confirm_version_change {
                 tracing::info!(
@@ -559,6 +637,7 @@ impl PluginManager {
                 enabled: true,
                 installed_at: now_millis(),
                 package_sha256: Some(package_sha256),
+                signer: Some(incoming_signer),
             },
         );
         self.write_state_store(&state)?;
@@ -722,6 +801,7 @@ impl PluginManager {
                 enabled,
                 installed_at: now_millis(),
                 package_sha256: None,
+                signer: None,
             });
         record.enabled = enabled;
         self.write_state_store(&state)?;
@@ -832,6 +912,52 @@ impl PluginManager {
             plugin_name: manifest.name.clone(),
             installed_version: installed_manifest.map(|m| m.version),
             incoming_version: manifest.version.clone(),
+            kind,
+        })
+    }
+
+    /// Classify installing a package signed by `incoming` (or unsigned) against
+    /// the signer of the currently installed plugin of the same id (#3489). The
+    /// caller holds the install lock.
+    ///
+    /// The installed signer comes from the state record when one was written;
+    /// installs that predate the record fall back to the `signature.json` that
+    /// extraction left in the plugin directory (its absence means the installed
+    /// package was unsigned). A `signature.json` that cannot be read or parsed
+    /// makes the installed signer unknown, which fails closed to "confirm".
+    fn classify_signer_against_installed(
+        &self,
+        manifest: &PluginManifest,
+        incoming: &PackageSigner,
+    ) -> Result<SignerChange, PluginManagerError> {
+        let dir = self.plugin_dir(&manifest.id);
+        let state = self.read_state_store()?;
+        let recorded = state
+            .plugins
+            .get(&manifest.id)
+            .and_then(|r| r.signer.clone());
+        let fallback;
+        let installed = if !dir.exists() {
+            InstalledSigner::Absent
+        } else if let Some(signer) = &recorded {
+            InstalledSigner::Known(signer)
+        } else {
+            fallback = installed_signer_from_dir(&dir);
+            match &fallback {
+                Some(signer) => InstalledSigner::Known(signer),
+                None => InstalledSigner::Unknown,
+            }
+        };
+        let installed_key_id = match installed {
+            InstalledSigner::Known(s) => s.key_id().map(str::to_owned),
+            InstalledSigner::Absent | InstalledSigner::Unknown => None,
+        };
+        let kind = classify_signer_change(installed, incoming);
+        Ok(SignerChange {
+            plugin_id: manifest.id.clone(),
+            plugin_name: manifest.name.clone(),
+            installed_key_id,
+            incoming_key_id: incoming.key_id().map(str::to_owned),
             kind,
         })
     }
@@ -1026,6 +1152,36 @@ fn read_manifest(dir: &Path) -> Option<PluginManifest> {
     let manifest = parse_manifest(&json).ok()?;
     manifest.validate().ok()?;
     Some(manifest)
+}
+
+/// Recover who signed an installed plugin from the `signature.json` extraction
+/// left in its directory — the fallback for installs whose state record predates
+/// signer tracking (#3489).
+///
+/// * no `signature.json` → the installed package was unsigned;
+/// * a parseable `signature.json` whose `keyId` matches its public key → signed
+///   by that key;
+/// * anything else (unreadable, malformed, inconsistent) → `None`: the signer is
+///   unknown, and the caller fails closed to "confirm".
+fn installed_signer_from_dir(dir: &Path) -> Option<PackageSigner> {
+    use base64::Engine;
+
+    let path = dir.join(signature::SIGNATURE_FILE_NAME);
+    let json = match std::fs::read_to_string(&path) {
+        Ok(json) => json,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Some(PackageSigner::Unsigned);
+        }
+        Err(_) => return None,
+    };
+    let sig: PackageSignature = serde_json::from_str(&json).ok()?;
+    let public = base64::engine::general_purpose::STANDARD
+        .decode(sig.public_key.as_bytes())
+        .ok()?;
+    if signature::key_id_from_public_key(&public) != sig.key_id {
+        return None;
+    }
+    Some(PackageSigner::Signed { key_id: sig.key_id })
 }
 
 /// Sanitize a caller-supplied relative path to one that stays inside a plugin
@@ -1232,7 +1388,9 @@ fn write_json_atomic<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::plugin::VersionChangeKind;
+    use crate::plugin::{
+        SignerChangeKind, VersionChangeKind, SIGNATURE_FILE_NAME as SIGNATURE_FILE,
+    };
     use std::io::{Read, Write};
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
@@ -1456,11 +1614,13 @@ mod tests {
         accept_untrusted: true,
         trust_publisher: false,
         confirm_version_change: false,
+        confirm_signer_change: false,
     };
     const CONFIRMED: InstallOptions = InstallOptions {
         accept_untrusted: true,
         trust_publisher: false,
         confirm_version_change: true,
+        confirm_signer_change: false,
     };
 
     #[test]
@@ -1593,6 +1753,329 @@ mod tests {
         install_version(&mgr, "vc", "1.4.0", UNCONFIRMED).unwrap();
         mgr.uninstall("vc").unwrap();
         install_version(&mgr, "vc", "1.2.0", UNCONFIRMED).unwrap();
+    }
+
+    // --- signer continuity (#3489) ---------------------------------------
+
+    /// Build version `version` of plugin `id` (with a version-named marker file),
+    /// signed by `key` when given. Returns the temp dir keeping the package alive.
+    fn signer_pkg(
+        id: &str,
+        version: &str,
+        key: Option<&crate::plugin::SigningKeyFile>,
+    ) -> (TempDir, PathBuf) {
+        let tmp = TempDir::new().unwrap();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json_v(id, "1.0", version),
+            &[(&format!("v-{version}.txt"), version.as_bytes())],
+        );
+        if let Some(key) = key {
+            crate::plugin::sign_package(&pkg, key).unwrap();
+        }
+        (tmp, pkg)
+    }
+
+    /// Accepts unsigned packages but confirms nothing else.
+    const PLAIN: InstallOptions = InstallOptions {
+        accept_untrusted: true,
+        trust_publisher: false,
+        confirm_version_change: false,
+        confirm_signer_change: false,
+    };
+    const SIGNER_CONFIRMED: InstallOptions = InstallOptions {
+        confirm_signer_change: true,
+        ..PLAIN
+    };
+
+    fn expect_signer_refusal(
+        err: PluginManagerError,
+    ) -> (SignerChange, Option<Box<VersionChange>>) {
+        match err {
+            PluginManagerError::SignerChangeUnconfirmed { signer, version } => (*signer, version),
+            other => panic!("expected SignerChangeUnconfirmed, got {other:?}"),
+        }
+    }
+
+    fn recorded_signer(mgr: &PluginManager, id: &str) -> Option<PackageSigner> {
+        mgr.read_state_store()
+            .unwrap()
+            .plugins
+            .get(id)
+            .and_then(|r| r.signer.clone())
+    }
+
+    #[test]
+    fn same_key_update_needs_no_signer_confirmation() {
+        let (mgr, _tmp) = manager();
+        let key = crate::plugin::generate_keypair("A");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", Some(&key));
+        mgr.install_with(&v1, PLAIN).unwrap();
+        assert_eq!(
+            recorded_signer(&mgr, "sc"),
+            Some(PackageSigner::Signed {
+                key_id: key.key_id.clone()
+            })
+        );
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", Some(&key));
+        let up = mgr.install_with(&v2, PLAIN).unwrap();
+        assert_eq!(up.manifest.version, "1.1.0");
+    }
+
+    #[test]
+    fn key_change_requires_confirmation_and_leaves_install_untouched() {
+        let (mgr, _tmp) = manager();
+        let key_a = crate::plugin::generate_keypair("A");
+        let key_b = crate::plugin::generate_keypair("B");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", Some(&key_a));
+        mgr.install_with(&v1, PLAIN).unwrap();
+
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", Some(&key_b));
+        // Even an upgrade (which the version gate allows) is refused, and even
+        // with every other consent flag set — only the signer flag unlocks it.
+        let all_but_signer = InstallOptions {
+            accept_untrusted: true,
+            trust_publisher: true,
+            confirm_version_change: true,
+            confirm_signer_change: false,
+        };
+        let (change, version) =
+            expect_signer_refusal(mgr.install_with(&v2, all_but_signer).unwrap_err());
+        assert_eq!(change.kind, SignerChangeKind::KeyChanged);
+        assert_eq!(
+            change.installed_key_id.as_deref(),
+            Some(key_a.key_id.as_str())
+        );
+        assert_eq!(
+            change.incoming_key_id.as_deref(),
+            Some(key_b.key_id.as_str())
+        );
+        assert_eq!(change.plugin_id, "sc");
+        assert!(
+            version.is_none(),
+            "an upgrade has no pending version change"
+        );
+
+        // Nothing changed: old version on disk, key B not pinned, record intact.
+        assert_eq!(mgr.get("sc").unwrap().manifest.version, "1.0.0");
+        assert!(!mgr.root().join("sc/v-1.1.0.txt").exists());
+        assert!(!mgr
+            .trusted_publishers()
+            .unwrap()
+            .iter()
+            .any(|p| p.key_id == key_b.key_id));
+        assert_eq!(
+            recorded_signer(&mgr, "sc").and_then(|s| s.key_id().map(str::to_owned)),
+            Some(key_a.key_id.clone())
+        );
+
+        // Confirmed: proceeds and records key B as the new signer…
+        mgr.install_with(&v2, SIGNER_CONFIRMED).unwrap();
+        assert_eq!(mgr.get("sc").unwrap().manifest.version, "1.1.0");
+        assert_eq!(
+            recorded_signer(&mgr, "sc").and_then(|s| s.key_id().map(str::to_owned)),
+            Some(key_b.key_id.clone())
+        );
+        // …so going back to key A is itself a key change.
+        let (_t3, v3) = signer_pkg("sc", "1.2.0", Some(&key_a));
+        let (change, _) = expect_signer_refusal(mgr.install_with(&v3, PLAIN).unwrap_err());
+        assert_eq!(change.kind, SignerChangeKind::KeyChanged);
+    }
+
+    #[test]
+    fn legacy_install_api_cannot_skip_the_signer_gate() {
+        let (mgr, _tmp) = manager();
+        let key_a = crate::plugin::generate_keypair("A");
+        let key_b = crate::plugin::generate_keypair("B");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", Some(&key_a));
+        mgr.install(&v1, true, true).unwrap();
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", Some(&key_b));
+        expect_signer_refusal(mgr.install(&v2, true, true).unwrap_err());
+    }
+
+    #[test]
+    fn signature_removed_requires_confirmation() {
+        let (mgr, _tmp) = manager();
+        let key = crate::plugin::generate_keypair("A");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", Some(&key));
+        mgr.install_with(&v1, PLAIN).unwrap();
+
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", None);
+        let (change, _) = expect_signer_refusal(mgr.install_with(&v2, PLAIN).unwrap_err());
+        assert_eq!(change.kind, SignerChangeKind::SignatureRemoved);
+        assert_eq!(
+            change.installed_key_id.as_deref(),
+            Some(key.key_id.as_str())
+        );
+        assert_eq!(change.incoming_key_id, None);
+        assert_eq!(mgr.get("sc").unwrap().manifest.version, "1.0.0");
+
+        mgr.install_with(&v2, SIGNER_CONFIRMED).unwrap();
+        assert_eq!(recorded_signer(&mgr, "sc"), Some(PackageSigner::Unsigned));
+        // Unsigned over (now) unsigned proceeds.
+        let (_t3, v3) = signer_pkg("sc", "1.2.0", None);
+        mgr.install_with(&v3, PLAIN).unwrap();
+    }
+
+    #[test]
+    fn newly_signed_proceeds_and_records_the_key() {
+        let (mgr, _tmp) = manager();
+        let key_a = crate::plugin::generate_keypair("A");
+        let key_b = crate::plugin::generate_keypair("B");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", None);
+        mgr.install_with(&v1, PLAIN).unwrap();
+        assert_eq!(recorded_signer(&mgr, "sc"), Some(PackageSigner::Unsigned));
+
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", Some(&key_a));
+        mgr.install_with(&v2, PLAIN).unwrap();
+        assert_eq!(
+            recorded_signer(&mgr, "sc").and_then(|s| s.key_id().map(str::to_owned)),
+            Some(key_a.key_id.clone())
+        );
+        // The recorded key is now what later updates are compared against.
+        let (_t3, v3) = signer_pkg("sc", "1.2.0", Some(&key_b));
+        let (change, _) = expect_signer_refusal(mgr.install_with(&v3, PLAIN).unwrap_err());
+        assert_eq!(change.kind, SignerChangeKind::KeyChanged);
+    }
+
+    /// Strip the `signer` field from a plugin's state record, as a state file
+    /// written before #3489 would look.
+    fn forget_signer(mgr: &PluginManager, id: &str) {
+        let mut state = mgr.read_state_store().unwrap();
+        state.plugins.get_mut(id).unwrap().signer = None;
+        mgr.write_state_store(&state).unwrap();
+    }
+
+    #[test]
+    fn legacy_signed_install_falls_back_to_the_extracted_signature() {
+        let (mgr, _tmp) = manager();
+        let key_a = crate::plugin::generate_keypair("A");
+        let key_b = crate::plugin::generate_keypair("B");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", Some(&key_a));
+        mgr.install_with(&v1, PLAIN).unwrap();
+        forget_signer(&mgr, "sc");
+        assert!(mgr.root().join("sc").join(SIGNATURE_FILE).exists());
+
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", Some(&key_b));
+        let (change, _) = expect_signer_refusal(mgr.install_with(&v2, PLAIN).unwrap_err());
+        assert_eq!(change.kind, SignerChangeKind::KeyChanged);
+        assert_eq!(
+            change.installed_key_id.as_deref(),
+            Some(key_a.key_id.as_str())
+        );
+
+        // Same key on a legacy install proceeds, and the first replace records it.
+        let (_t3, v3) = signer_pkg("sc", "1.2.0", Some(&key_a));
+        mgr.install_with(&v3, PLAIN).unwrap();
+        assert_eq!(
+            recorded_signer(&mgr, "sc").and_then(|s| s.key_id().map(str::to_owned)),
+            Some(key_a.key_id.clone())
+        );
+    }
+
+    #[test]
+    fn legacy_unsigned_install_is_recognised_as_unsigned() {
+        let (mgr, _tmp) = manager();
+        let key = crate::plugin::generate_keypair("A");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", None);
+        mgr.install_with(&v1, PLAIN).unwrap();
+        forget_signer(&mgr, "sc");
+
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", Some(&key));
+        mgr.install_with(&v2, PLAIN).unwrap();
+        assert!(recorded_signer(&mgr, "sc").is_some());
+    }
+
+    #[test]
+    fn legacy_install_with_unreadable_signature_is_unverifiable() {
+        let (mgr, _tmp) = manager();
+        let key_a = crate::plugin::generate_keypair("A");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", Some(&key_a));
+        mgr.install_with(&v1, PLAIN).unwrap();
+        forget_signer(&mgr, "sc");
+        std::fs::write(mgr.root().join("sc").join(SIGNATURE_FILE), b"not json").unwrap();
+
+        // Even the same key cannot be proven — fail closed.
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", Some(&key_a));
+        let (change, _) = expect_signer_refusal(mgr.install_with(&v2, PLAIN).unwrap_err());
+        assert_eq!(change.kind, SignerChangeKind::Unverifiable);
+        assert_eq!(change.installed_key_id, None);
+        mgr.install_with(&v2, SIGNER_CONFIRMED).unwrap();
+    }
+
+    #[test]
+    fn inconsistent_legacy_signature_is_unverifiable() {
+        let (mgr, _tmp) = manager();
+        let key_a = crate::plugin::generate_keypair("A");
+        let key_b = crate::plugin::generate_keypair("B");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", Some(&key_a));
+        mgr.install_with(&v1, PLAIN).unwrap();
+        forget_signer(&mgr, "sc");
+        // Rewrite the on-disk keyId to claim key B while keeping key A's public key.
+        let path = mgr.root().join("sc").join(SIGNATURE_FILE);
+        let mut sig: PackageSignature =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        sig.key_id = key_b.key_id.clone();
+        std::fs::write(&path, serde_json::to_string(&sig).unwrap()).unwrap();
+
+        let (_t2, v2) = signer_pkg("sc", "1.1.0", Some(&key_b));
+        let (change, _) = expect_signer_refusal(mgr.install_with(&v2, PLAIN).unwrap_err());
+        assert_eq!(change.kind, SignerChangeKind::Unverifiable);
+    }
+
+    #[test]
+    fn key_change_combined_with_downgrade_needs_both_confirmations() {
+        let (mgr, _tmp) = manager();
+        let key_a = crate::plugin::generate_keypair("A");
+        let key_b = crate::plugin::generate_keypair("B");
+        let (_t1, v1) = signer_pkg("sc", "1.4.0", Some(&key_a));
+        mgr.install_with(&v1, PLAIN).unwrap();
+        let (_t2, older) = signer_pkg("sc", "1.2.0", Some(&key_b));
+
+        // Nothing confirmed: one refusal carrying both changes.
+        let (signer, version) = expect_signer_refusal(mgr.install_with(&older, PLAIN).unwrap_err());
+        assert_eq!(signer.kind, SignerChangeKind::KeyChanged);
+        let version = version.expect("the pending downgrade rides along");
+        assert_eq!(version.kind, VersionChangeKind::Downgrade);
+
+        // Version confirmed only: still refused on the signer, no pending version.
+        let version_only = InstallOptions {
+            confirm_version_change: true,
+            ..PLAIN
+        };
+        let (_, version) =
+            expect_signer_refusal(mgr.install_with(&older, version_only).unwrap_err());
+        assert!(version.is_none());
+
+        // Signer confirmed only: the version gate still refuses.
+        let err = mgr.install_with(&older, SIGNER_CONFIRMED).unwrap_err();
+        assert!(
+            matches!(&err, PluginManagerError::VersionChangeUnconfirmed(c)
+                if c.kind == VersionChangeKind::Downgrade),
+            "{err:?}"
+        );
+        assert_eq!(mgr.get("sc").unwrap().manifest.version, "1.4.0");
+
+        // Both confirmed: proceeds.
+        let both = InstallOptions {
+            confirm_version_change: true,
+            confirm_signer_change: true,
+            ..PLAIN
+        };
+        mgr.install_with(&older, both).unwrap();
+        assert_eq!(mgr.get("sc").unwrap().manifest.version, "1.2.0");
+    }
+
+    #[test]
+    fn uninstall_then_install_other_key_is_fresh() {
+        let (mgr, _tmp) = manager();
+        let key_a = crate::plugin::generate_keypair("A");
+        let key_b = crate::plugin::generate_keypair("B");
+        let (_t1, v1) = signer_pkg("sc", "1.0.0", Some(&key_a));
+        mgr.install_with(&v1, PLAIN).unwrap();
+        mgr.uninstall("sc").unwrap();
+        let (_t2, v2) = signer_pkg("sc", "1.0.0", Some(&key_b));
+        mgr.install_with(&v2, PLAIN).unwrap();
     }
 
     #[test]
