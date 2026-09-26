@@ -190,6 +190,18 @@ impl AgentServiceRegistry {
             .is_some_and(|rs| rs.service.clear_access_activity())
     }
 
+    /// The address instance `instance_id`'s listener actually bound, or `None`
+    /// when it is not hosted or cannot report it. Lets a test start a server on
+    /// port `0` and learn the OS-assigned port, instead of reserving one by
+    /// binding and dropping it first (#3533).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub async fn local_addr(&self, instance_id: &str) -> Option<std::net::SocketAddr> {
+        let running = self.running.lock().await;
+        running
+            .get(instance_id)
+            .and_then(|rs| rs.service.local_addr())
+    }
+
     /// Number of currently-hosted instances.
     #[cfg_attr(not(test), allow(dead_code))]
     pub async fn active_count(&self) -> usize {

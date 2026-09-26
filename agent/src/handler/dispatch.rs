@@ -183,6 +183,10 @@ pub struct AgentHandler {
     /// This connection's keyboard-interactive prompt relay binding (#3375),
     /// wired by [`with_ki_prompt_relay`](Self::with_ki_prompt_relay).
     ki_binding: Arc<KiBinding>,
+    /// Shared with [`HandlerState`] so tests can read a hosted server's bound
+    /// address (a server started on port `0`, #3533) without an RPC for it.
+    #[cfg_attr(not(test), allow(dead_code))]
+    service_registry: Arc<AgentServiceRegistry>,
 }
 
 impl AgentHandler {
@@ -222,7 +226,7 @@ impl AgentHandler {
             registry_client: registry_client.clone(),
             shutdown_flag: shutdown_flag.clone(),
             tool_registry,
-            service_registry,
+            service_registry: service_registry.clone(),
             tunnel_registry,
             tool_runs: tool_runs.clone(),
             ki_binding: ki_binding.clone(),
@@ -240,6 +244,7 @@ impl AgentHandler {
             registry_client,
             tool_runs,
             ki_binding,
+            service_registry,
         })
     }
 
@@ -4824,11 +4829,6 @@ mod tests {
         let handler = make_handler();
         init_handler(&handler).await;
 
-        // Reserve an ephemeral loopback port, then free it for the server.
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-
         let start = dispatch(
             &handler,
             "service.start",
@@ -4841,7 +4841,10 @@ mod tests {
                     "serverType": "http",
                     "rootDirectory": ".",
                     "bindHost": "127.0.0.1",
-                    "port": port,
+                    // Port 0: the server binds an OS-assigned port itself and
+                    // the test reads it back, so no other test can take it in
+                    // between (#3533).
+                    "port": 0,
                     "readOnly": true,
                     "directoryListing": true
                 }
@@ -4853,6 +4856,12 @@ mod tests {
             start["result"]["status"]["state"], "running",
             "service.start must report running: {start}"
         );
+        let port = handler
+            .service_registry
+            .local_addr("srv-1")
+            .await
+            .expect("hosted HTTP server reports its bound address")
+            .port();
 
         // The hosted server actually accepts connections on its bound port.
         assert!(
@@ -4903,10 +4912,6 @@ mod tests {
             "{init}"
         );
 
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-
         let start = dispatch(
             &handler,
             "service.start",
@@ -4919,7 +4924,10 @@ mod tests {
                     "serverType": "http",
                     "rootDirectory": ".",
                     "bindHost": "127.0.0.1",
-                    "port": port,
+                    // Port 0: the server binds an OS-assigned port itself and
+                    // the test reads it back, so no other test can take it in
+                    // between (#3533).
+                    "port": 0,
                     "readOnly": true,
                     "directoryListing": true
                 }
@@ -4928,6 +4936,12 @@ mod tests {
         )
         .await;
         assert_eq!(start["result"]["status"]["state"], "running", "{start}");
+        let port = handler
+            .service_registry
+            .local_addr("srv-log")
+            .await
+            .expect("hosted HTTP server reports its bound address")
+            .port();
 
         // Empty log before any request.
         let empty = dispatch(
