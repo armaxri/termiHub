@@ -2,9 +2,9 @@ use std::borrow::Cow;
 
 use ironrdp_core::{Decode as _, EncodeResult, ReadCursor, cast_length, impl_as_any};
 use ironrdp_pdu::gcc::ChannelName;
-use ironrdp_pdu::{PduResult, decode_err, encode_err, pdu_other_err};
+use ironrdp_pdu::{PduResult, encode_err, pdu_other_err};
 use ironrdp_svc::{CompressionCondition, SvcClientProcessor, SvcMessage, SvcProcessor};
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::pdu::{self, AudioFormat, PitchPdu, ServerAudioFormatPdu, TrainingPdu, VolumePdu};
 use crate::server::RdpsndSvcMessages;
@@ -97,14 +97,14 @@ impl Rdpsnd {
         }
     }
 
+    /// The negotiated format a server `wFormatNo` refers to.
+    ///
+    /// termiHub vendored-fork change (#3499, upstream `2d9a9bf1`): MS-RDPEA's
+    /// `wFormatNo` indexes the *client* format list; upstream 0.9.0 indexed the
+    /// server's advertised list, which differs as soon as the client drops a
+    /// format.
     pub fn get_format(&self, format_no: u16) -> PduResult<&AudioFormat> {
-        let server_format = self
-            .server_format
-            .as_ref()
-            .ok_or_else(|| pdu_other_err!("invalid state - no format"))?;
-
-        server_format
-            .formats
+        self.negotiated_formats
             .get(usize::from(format_no))
             .ok_or_else(|| pdu_other_err!("invalid format"))
     }
@@ -203,7 +203,18 @@ impl SvcProcessor for Rdpsnd {
     }
 
     fn process(&mut self, payload: &[u8]) -> PduResult<Vec<SvcMessage>> {
-        let pdu = pdu::ServerAudioOutputPdu::decode(&mut ReadCursor::new(payload)).map_err(|e| decode_err!(e))?;
+        // termiHub vendored-fork change (#3499, upstream `c87ab68e` "isolate
+        // malformed encrypted waves"): a malformed audio PDU is dropped and the
+        // channel state kept, so later valid audio still plays. Upstream 0.9.0
+        // returned the decode error, which the session treats as fatal — one bad
+        // RDPSND PDU tore down the whole desktop connection.
+        let pdu = match pdu::ServerAudioOutputPdu::decode(&mut ReadCursor::new(payload)) {
+            Ok(pdu) => pdu,
+            Err(error) => {
+                error!(?error, "Ignoring malformed RDPSND PDU");
+                return Ok(vec![]);
+            }
+        };
 
         debug!(?pdu, ?self.state);
         let msg = match self.state {
@@ -268,8 +279,17 @@ impl SvcProcessor for Rdpsnd {
                         }
                         return Ok(msgs);
                     }
-                    _ => {
-                        error!("Invalid PDU");
+                    // termiHub vendored-fork change (#3499, upstream `2d9a9bf1`):
+                    // optional PDUs this client does not implement keep the
+                    // channel alive instead of silencing audio for the session.
+                    pdu::ServerAudioOutputPdu::CryptKey(_) | pdu::ServerAudioOutputPdu::WaveEncrypt(_) => {
+                        warn!(?pdu, "Ignoring unsupported RDPSND PDU");
+                    }
+                    // Pre-v8 WaveInfo + bare Wave transfers are not supported by
+                    // this fork (upstream added them in `2d9a9bf1`, tracked as a
+                    // termiHub follow-up #3510); stop as upstream 0.9.0 did.
+                    pdu::ServerAudioOutputPdu::Wave(_) => {
+                        error!("Unsupported pre-v8 Wave PDU");
                         self.state = RdpsndState::Stop;
                         return Ok(vec![]);
                     }
