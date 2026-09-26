@@ -63,12 +63,7 @@ pub enum InitialCommandStrategy {
 pub fn detect_default_shell() -> Option<String> {
     #[cfg(unix)]
     {
-        if let Ok(shell_path) = std::env::var("SHELL") {
-            if let Some(name) = Path::new(&shell_path).file_name() {
-                return Some(name.to_string_lossy().to_string());
-            }
-        }
-        return None;
+        return shell_name_from_env(std::env::var("SHELL").ok().as_deref());
     }
 
     #[cfg(windows)]
@@ -78,6 +73,18 @@ pub fn detect_default_shell() -> Option<String> {
 
     #[allow(unreachable_code)]
     None
+}
+
+/// Extract the bare shell name from a `$SHELL` value (e.g. `/bin/zsh` -> `"zsh"`).
+///
+/// Split out of [`detect_default_shell`] so tests can exercise the parsing
+/// without mutating the process-global `SHELL`, which concurrently running
+/// local-shell PTY tests read to pick the shell they spawn (#3419).
+#[cfg(unix)]
+fn shell_name_from_env(shell_path: Option<&str>) -> Option<String> {
+    Path::new(shell_path?)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
 }
 
 /// Resolve a shell name to the executable path and arguments.
@@ -751,17 +758,20 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn detect_default_shell_reads_shell_env() {
-        let orig = std::env::var("SHELL").ok();
-        std::env::set_var("SHELL", "/usr/bin/fish");
-
-        let result = detect_default_shell();
-        assert_eq!(result, Some("fish".to_string()));
-
-        if let Some(val) = orig {
-            std::env::set_var("SHELL", val);
-        } else {
-            std::env::remove_var("SHELL");
-        }
+        // Exercise the `$SHELL` parsing on injected values rather than mutating
+        // the process-global `SHELL`: local-shell PTY tests running in parallel
+        // read it to choose the shell they spawn (#3419).
+        assert_eq!(
+            shell_name_from_env(Some("/usr/bin/fish")),
+            Some("fish".to_string())
+        );
+        assert_eq!(shell_name_from_env(Some("zsh")), Some("zsh".to_string()));
+        assert_eq!(shell_name_from_env(None), None);
+        // And the real entry point agrees with the parser on the live value.
+        assert_eq!(
+            detect_default_shell(),
+            shell_name_from_env(std::env::var("SHELL").ok().as_deref())
+        );
     }
 
     #[cfg(windows)]

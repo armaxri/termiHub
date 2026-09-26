@@ -92,18 +92,10 @@ mod tests {
         );
     }
 
-    #[cfg(not(target_os = "windows"))]
-    #[test]
-    fn check_ssh_agent_status_stopped_when_sock_unset() {
-        // This is a thin delegation to the core status check, which reads the
-        // env — there is no local seam to inject. `temp-env` scopes the unset to
-        // the closure, restores the original afterwards, and serializes with
-        // other `temp-env` users, so the process-global `SSH_AUTH_SOCK` is no
-        // longer mutated in a way that races sibling tests (#2127).
-        temp_env::with_var("SSH_AUTH_SOCK", None::<&str>, || {
-            assert_eq!(check_ssh_agent_status(), "stopped");
-        });
-    }
+    // The unset/empty/set `SSH_AUTH_SOCK` → running/stopped mapping is covered
+    // by value in core (`agent_status_for_sock_maps_each_case`). It is not
+    // re-tested here by unsetting the process-global `SSH_AUTH_SOCK`: that
+    // mutation is visible to every concurrently running test (#3419).
 
     /// Regression guard for #828.
     ///
