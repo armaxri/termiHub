@@ -1319,8 +1319,10 @@ a downgrade loses no secret.
 list (id, name, kind — no secret) of only the credentials the exported connections and agents
 reference, and — with an export password — their secrets in a separate `$namedCredentialSecrets`
 envelope sealed like the per-connection `$encrypted` one. Without a password only the references
-travel. In OS-keychain mode an export with credentials requires OS user verification first (the
-same fail-closed gate as the vault export). Before the connections are imported, each referenced
+travel. An export with credentials re-authenticates through the same
+`credential::vault::authorize_export` rule as the vault export and the backup's credentials
+section: the master password is re-entered (and verified server-side) in master-password mode
+(#3598), and OS user verification is required in OS-keychain mode (fail closed, #3433). Before the connections are imported, each referenced
 credential is mapped: the **same id** already present is kept untouched (only a missing local
 secret is filled in); a local credential with the **same name, kind and identical secret** is
 reused and the references re-pointed; otherwise it is **created** under its id with an
