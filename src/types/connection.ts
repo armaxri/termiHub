@@ -507,6 +507,12 @@ export interface AppSettings {
    */
   askOpenSavedFileInTab?: boolean;
   /**
+   * Show a subtle success/failure mark in the terminal's left gutter next to
+   * each finished command, when the shell emits OSC 133 command marks (shell
+   * integration). Defaults to true (#3415).
+   */
+  terminalCommandDecorations?: boolean;
+  /**
    * Show a warning before starting a Port Scanner scan whose estimated probe
    * count is very large (many host/port combinations). Defaults to true. The
    * warning dialog's "Don't warn again" opt-out flips this off; it can be
