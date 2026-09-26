@@ -1,5 +1,5 @@
 import type React from "react";
-import { Play, Pencil, Copy, Download, Trash2 } from "lucide-react";
+import { Play, Pencil, Copy, Download, Trash2, CalendarClock } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Macro } from "@/types/macro";
@@ -9,6 +9,8 @@ interface MacroListItemProps {
   macro: Macro;
   onPlay: (macroId: string) => void;
   onEdit: (macroId: string) => void;
+  /** Open the schedule editor for this macro (PROD-043). */
+  onSchedule?: (macroId: string) => void;
   onDuplicate: (macroId: string) => void;
   onExport: (macroId: string) => void;
   onDelete: (macroId: string) => void;
@@ -28,6 +30,7 @@ export function MacroListItem({
   macro,
   onPlay,
   onEdit,
+  onSchedule,
   onDuplicate,
   onExport,
   onDelete,
@@ -77,6 +80,22 @@ export function MacroListItem({
               }}
             />
           </Tooltip>
+          {onSchedule ? (
+            <Tooltip content="Schedule…" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                iconOnly
+                aria-label="Schedule"
+                data-testid={`macro-schedule-${macro.id}`}
+                icon={<CalendarClock size={12} />}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onSchedule(macro.id);
+                }}
+              />
+            </Tooltip>
+          ) : null}
           <Tooltip content="Duplicate" side="top">
             <Button
               variant="ghost"

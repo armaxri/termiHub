@@ -7,7 +7,8 @@ import {
   setScheduleEnabled as apiSetScheduleEnabled,
   setSchedulesPaused as apiSetSchedulesPaused,
 } from "@/services/scheduleApi";
-import type { ScheduleInput, ScheduleView } from "@/types/schedule";
+import type { ScheduleAction, ScheduleInput, ScheduleView } from "@/types/schedule";
+import { newId } from "@/services/transport/ids";
 import { errorMessage } from "@/utils/errorMessage";
 import { frontendLog } from "@/utils/frontendLog";
 
@@ -41,6 +42,25 @@ export interface SchedulesSlice {
   ) => Promise<ScheduleView>;
   /** Pause or resume all schedules. */
   setSchedulesPaused: (paused: boolean) => Promise<void>;
+  /**
+   * The open schedule editor: an existing schedule (`scheduleId`) or a new one,
+   * optionally pre-targeting a workflow/macro. `null` when closed.
+   */
+  scheduleEditor: ScheduleEditorState | null;
+  /** Open the schedule editor (from the schedules list or a workflow/macro row). */
+  openScheduleEditor: (opts?: ScheduleEditorState) => void;
+  /** Close the schedule editor. */
+  closeScheduleEditor: () => void;
+}
+
+/** What the schedule editor is editing. */
+export interface ScheduleEditorState {
+  /** The schedule to edit; absent for a new schedule. */
+  scheduleId?: string;
+  /** For a new schedule: the workflow/macro to pre-select. */
+  action?: ScheduleAction;
+  /** The id a new schedule is saved under (minted when the editor opens). */
+  draftId?: string;
 }
 
 export const createSchedulesSlice: StateCreator<AppState, [], [], SchedulesSlice> = (set) => {
@@ -89,5 +109,12 @@ export const createSchedulesSlice: StateCreator<AppState, [], [], SchedulesSlice
       const state = await apiSetSchedulesPaused(paused);
       set({ schedules: state.schedules, schedulesPaused: state.paused });
     },
+
+    scheduleEditor: null,
+    openScheduleEditor: (opts) =>
+      set({
+        scheduleEditor: { ...opts, draftId: opts?.scheduleId ?? newId("schedule") },
+      }),
+    closeScheduleEditor: () => set({ scheduleEditor: null }),
   };
 };

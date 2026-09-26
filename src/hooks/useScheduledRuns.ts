@@ -42,7 +42,9 @@ export function useScheduledRuns(): void {
 
     void onScheduleFire((fire) => void handleScheduleFire(fire))
       .then(keep)
-      .catch((err) => frontendLog("schedules", `schedule-fire listen failed: ${errorMessage(err)}`));
+      .catch((err) =>
+        frontendLog("schedules", `schedule-fire listen failed: ${errorMessage(err)}`)
+      );
     void onSchedulesChanged(() => void loadSchedules())
       .then(keep)
       .catch((err) =>

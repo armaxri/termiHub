@@ -56,6 +56,7 @@ import { severityLevel } from "./monitoringSeverity";
 import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
+import { ScheduleStatus } from "./ScheduleStatus";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
 import { monitorOfflineLabel, monitorOfflineReasonText } from "@/utils/monitorStatusReason";
 import "./StatusBar.css";
@@ -124,6 +125,7 @@ export function StatusBar() {
       <div className="status-bar__section status-bar__section--left">
         <WindowIndicator />
         <BroadcastStatus />
+        <ScheduleStatus />
         <PortableBadge />
         <JumpHostStatus />
         <RemoteDesktopStatus />

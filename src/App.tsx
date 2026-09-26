@@ -10,6 +10,7 @@ import { SshHostKeyPrompt } from "@/components/SshHostKeyPrompt/SshHostKeyPrompt
 import { SshKeyboardInteractivePrompt } from "@/components/SshKeyboardInteractivePrompt/SshKeyboardInteractivePrompt";
 import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProcessAuthDialog";
 import { WorkflowParamPromptDialog } from "@/components/WorkflowSidebar/WorkflowParamPromptDialog";
+import { ScheduleEditorHost } from "@/components/Schedules";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
@@ -333,6 +334,7 @@ function App() {
           <SshKeyboardInteractivePrompt />
           <LocalProcessAuthDialog />
           <WorkflowParamPromptDialog />
+          <ScheduleEditorHost />
           <CustomizeLayoutDialog />
           <ExportDialog />
           <ImportDialog />
