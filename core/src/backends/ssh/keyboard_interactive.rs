@@ -19,9 +19,14 @@
 //! Exactly like host-key verification ([`host_key`](super::host_key)), the host
 //! application registers one process-wide [`KeyboardInteractivePrompter`] at
 //! startup via [`set_keyboard_interactive_prompter`]. The desktop's prompter
-//! emits an event and awaits the dialog's answer; headless paths (the remote
-//! agent, bare-`core` tests) register none, in which case only the auto-answer
-//! heuristic below can respond and any other prompt fails the connect cleanly.
+//! emits an event and awaits the dialog's answer. The remote agent registers a
+//! relay prompter that forwards each round to its attached desktop as an
+//! `ssh.keyboard_interactive.prompt` notification (#3375) — but only reports
+//! itself [available](KeyboardInteractivePrompter::is_available) when that
+//! desktop advertised support. Headless paths (bare-`core` tests, an agent
+//! driven by an older desktop) have no available prompter, in which case only
+//! the auto-answer heuristic below can respond and any other prompt fails the
+//! connect cleanly.
 //!
 //! ## Auto-answer heuristic (documented contract)
 //!
@@ -109,6 +114,10 @@ pub struct KbdInteractiveRequest {
     pub prompts: Vec<KbdInteractivePrompt>,
     /// 1-based round number within this exchange.
     pub round: u32,
+    /// Display label of the remote agent that relays this prompt (#3375), e.g.
+    /// the agent's SSH host. `None` for a connection the desktop authenticates
+    /// itself; set by the desktop when it shows an agent-relayed round.
+    pub via: Option<String>,
 }
 
 /// The user's reply to a [`KbdInteractiveRequest`].
@@ -137,6 +146,17 @@ impl std::fmt::Debug for KbdInteractiveAnswer {
 pub trait KeyboardInteractivePrompter: Send + Sync {
     /// Ask the user; return their responses or [`KbdInteractiveAnswer::Cancelled`].
     async fn prompt(&self, request: &KbdInteractiveRequest) -> KbdInteractiveAnswer;
+
+    /// Whether this prompter can reach a user right now.
+    ///
+    /// A registered prompter that reports `false` is treated exactly like no
+    /// prompter at all: only the auto-answer heuristic applies and any other
+    /// prompt fails the connect with the "no prompt is available here" error.
+    /// The remote agent's relay prompter uses this to keep today's behavior
+    /// when the attached desktop predates the prompt relay (#3375).
+    fn is_available(&self) -> bool {
+        true
+    }
 }
 
 static PROMPTER: OnceLock<Arc<dyn KeyboardInteractivePrompter>> = OnceLock::new();
@@ -366,6 +386,7 @@ where
                 instructions,
                 prompts,
                 round,
+                via: None,
             };
             let answer = excluded_from_connect_timeout(tokio::time::timeout(
                 PROMPT_TIMEOUT,

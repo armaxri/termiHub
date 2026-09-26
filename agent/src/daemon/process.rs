@@ -134,10 +134,19 @@ pub async fn run_daemon(session_id: &str) -> anyhow::Result<()> {
         anyhow::anyhow!("Failed to create connection type '{}': {e}", config.type_id)
     })?;
 
-    connection
-        .connect(config.settings.clone())
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to connect: {e}"))?;
+    // Relay SSH keyboard-interactive (OTP / 2FA) prompts to the spawning worker
+    // — and through it to the desktop — when the worker exported a relay
+    // endpoint, i.e. when a prompt-capable desktop is attached (#3375).
+    let ki_relay_endpoint = crate::ki_prompt::relay::install_daemon_prompter_from_env();
+
+    if let Err(e) = connection.connect(config.settings.clone()).await {
+        // Tell the worker *why* when the desktop must see the reason typed (a
+        // cancelled prompt, a rejected one-time code); it cannot read our exit.
+        if let Some(endpoint) = ki_relay_endpoint.as_deref() {
+            crate::ki_prompt::relay::report_connect_failure(endpoint, &e).await;
+        }
+        return Err(anyhow::anyhow!("Failed to connect: {e}"));
+    }
 
     info!("Connection established: type={}", config.type_id);
 

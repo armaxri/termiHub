@@ -21,4 +21,10 @@ instructions: string, prompts: Array<SshKeyboardInteractivePromptItem>,
 /**
  * 1-based round number within the exchange.
  */
-round: number, };
+round: number, 
+/**
+ * The remote agent relaying this prompt (its host), when the connection
+ * is authenticated by an agent rather than the desktop (#3375). `null`
+ * for a direct connection. Shown as "via …" in the dialog.
+ */
+via: string | null, };

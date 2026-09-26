@@ -13,6 +13,7 @@ mod files;
 mod fs;
 mod handler;
 mod io;
+mod ki_prompt;
 mod monitoring;
 mod network;
 mod protocol;

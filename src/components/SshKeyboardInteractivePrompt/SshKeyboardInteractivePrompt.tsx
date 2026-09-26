@@ -28,7 +28,8 @@ function promptLabel(prompt: string, index: number): string {
  *
  * Any SSH connect path (terminal, tunnel, SFTP, jump host, Test Connection)
  * can raise a prompt, so this mounts once at the app root and shows queued
- * prompts one at a time.
+ * prompts one at a time. Prompts of SSH connections a remote agent
+ * authenticates (#3375) arrive the same way, with `via` naming the agent.
  */
 export function SshKeyboardInteractivePrompt() {
   const [queue, setQueue] = useState<SshKeyboardInteractivePromptPayload[]>([]);
@@ -113,6 +114,11 @@ export function SshKeyboardInteractivePrompt() {
               </span>
             )}
             {`${current.username}@${current.host}:${current.port}`}
+            {current.via && (
+              <span className="kbd-interactive-prompt__via" data-testid="kbd-interactive-via">
+                {` via agent ${current.via}`}
+              </span>
+            )}
           </p>
           {current.instructions && (
             <p

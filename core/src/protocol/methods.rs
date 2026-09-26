@@ -138,6 +138,19 @@ pub const TOOL_CANCEL: &str = "tool.cancel";
 pub const TOOL_EVENT: &str = "tool.event";
 /// Notification (agent → desktop): a streaming run finished (exactly once).
 pub const TOOL_DONE: &str = "tool.done";
+/// Notification (agent → desktop): an SSH connection the **agent** authenticates
+/// needs a keyboard-interactive (OTP / 2FA / PAM) round answered by the user
+/// (#3375). Params: [`KbdInteractivePromptNotification`]. Sent only to a desktop
+/// that advertised [`ClientCapabilities::keyboard_interactive_prompts`].
+pub const SSH_KEYBOARD_INTERACTIVE_PROMPT: &str = "ssh.keyboard_interactive.prompt";
+/// Request (desktop → agent): answer (or cancel) a
+/// [`SSH_KEYBOARD_INTERACTIVE_PROMPT`] round (#3375). Params:
+/// [`KbdInteractiveRespondParams`]; result: [`KbdInteractiveRespondResult`].
+pub const SSH_KEYBOARD_INTERACTIVE_RESPOND: &str = "ssh.keyboard_interactive.respond";
+/// Notification (agent → desktop): a prompt is no longer awaited — it timed
+/// out, or the connect that asked was abandoned (#3375). Params:
+/// [`KbdInteractiveClosedNotification`]. The desktop closes the dialog.
+pub const SSH_KEYBOARD_INTERACTIVE_CLOSED: &str = "ssh.keyboard_interactive.closed";
 
 // Notification methods (agent → desktop; no id, no response).
 pub const CONNECTION_OUTPUT: &str = "connection.output";
@@ -205,6 +218,24 @@ pub struct InitializeParams {
     /// Runtime preferences from the desktop; applied on startup.
     #[serde(default)]
     pub agent_settings: AgentSettings,
+    /// Optional features the desktop supports (#3375). Absent on older
+    /// desktops, which read as "supports nothing optional".
+    #[serde(default)]
+    pub client_capabilities: ClientCapabilities,
+}
+
+/// Optional features a desktop advertises in `initialize` (#3375).
+///
+/// Every flag defaults to `false`, so an older desktop that sends no
+/// `clientCapabilities` keeps today's behavior.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ClientCapabilities {
+    /// The desktop can show agent-relayed SSH keyboard-interactive prompts
+    /// ([`SSH_KEYBOARD_INTERACTIVE_PROMPT`]) and answers them with
+    /// [`SSH_KEYBOARD_INTERACTIVE_RESPOND`].
+    #[serde(default)]
+    pub keyboard_interactive_prompts: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -224,6 +255,89 @@ pub struct Capabilities {
     /// Absent (read as `false`) on older agents, which only offer the
     /// collect-and-return `tool.run`.
     pub tool_streaming: bool,
+    /// Whether the agent relays SSH keyboard-interactive prompts to a desktop
+    /// that advertised [`ClientCapabilities::keyboard_interactive_prompts`]
+    /// (#3375). Absent (read as `false`) on older agents.
+    pub keyboard_interactive_prompts: bool,
+}
+
+/// One prompt of a [`KbdInteractivePromptNotification`] round.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KbdInteractivePromptItem {
+    /// Prompt text as sent by the SSH server.
+    pub prompt: String,
+    /// `false` → the input must be masked.
+    pub echo: bool,
+}
+
+/// `ssh.keyboard_interactive.prompt` params (#3375): one info-request round of
+/// an SSH connection the agent authenticates.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KbdInteractivePromptNotification {
+    /// Correlates the desktop's [`SSH_KEYBOARD_INTERACTIVE_RESPOND`].
+    pub request_id: String,
+    /// Agent session being created, when the round belongs to one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    /// Host being authenticated to (for a jump-host hop: that hop).
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    /// Server-supplied challenge name (often empty).
+    #[serde(default)]
+    pub name: String,
+    /// Server-supplied instruction text (often empty).
+    #[serde(default)]
+    pub instructions: String,
+    /// The prompts to answer, in order.
+    pub prompts: Vec<KbdInteractivePromptItem>,
+    /// 1-based round number within the exchange.
+    pub round: u32,
+}
+
+/// `ssh.keyboard_interactive.respond` params (#3375).
+///
+/// `responses: null` cancels the round. The responses are secrets: this type's
+/// `Debug` never prints them, and receivers move them into zeroizing storage.
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KbdInteractiveRespondParams {
+    pub request_id: String,
+    /// One response per prompt, in order; `None` = the user cancelled.
+    pub responses: Option<Vec<String>>,
+}
+
+impl std::fmt::Debug for KbdInteractiveRespondParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KbdInteractiveRespondParams")
+            .field("request_id", &self.request_id)
+            .field(
+                "responses",
+                &self
+                    .responses
+                    .as_ref()
+                    .map(|r| format!("<{} redacted>", r.len())),
+            )
+            .finish()
+    }
+}
+
+/// `ssh.keyboard_interactive.respond` result (#3375).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KbdInteractiveRespondResult {
+    /// `false` when no round with that id was waiting (already answered, timed
+    /// out, or abandoned) — a stale reply, not an error.
+    pub accepted: bool,
+}
+
+/// `ssh.keyboard_interactive.closed` params (#3375).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct KbdInteractiveClosedNotification {
+    pub request_id: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1966,6 +2080,7 @@ mod tests {
                 max_sessions: 20,
                 monitoring_supported: false,
                 tool_streaming: true,
+                keyboard_interactive_prompts: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2858,6 +2973,88 @@ mod tests {
         };
         let v = serde_json::to_value(&result).unwrap();
         assert_eq!(v["detached_sessions"], 3);
+    }
+
+    // ── Keyboard-interactive prompt relay (#3375) ───────────────────
+
+    #[test]
+    fn ki_method_names_are_stable() {
+        assert_eq!(
+            SSH_KEYBOARD_INTERACTIVE_PROMPT,
+            "ssh.keyboard_interactive.prompt"
+        );
+        assert_eq!(
+            SSH_KEYBOARD_INTERACTIVE_RESPOND,
+            "ssh.keyboard_interactive.respond"
+        );
+        assert_eq!(
+            SSH_KEYBOARD_INTERACTIVE_CLOSED,
+            "ssh.keyboard_interactive.closed"
+        );
+    }
+
+    #[test]
+    fn initialize_params_without_client_capabilities_default_to_none() {
+        let p: InitializeParams = serde_json::from_value(json!({
+            "protocolVersion": "0.9.0",
+            "client": "old-desktop",
+            "clientVersion": "0.0.1",
+        }))
+        .unwrap();
+        assert!(!p.client_capabilities.keyboard_interactive_prompts);
+    }
+
+    #[test]
+    fn initialize_params_parse_client_capabilities() {
+        let p: InitializeParams = serde_json::from_value(json!({
+            "protocolVersion": "0.10.0",
+            "client": "termihub-desktop",
+            "clientVersion": "1.0.0",
+            "clientCapabilities": {"keyboardInteractivePrompts": true},
+        }))
+        .unwrap();
+        assert!(p.client_capabilities.keyboard_interactive_prompts);
+    }
+
+    #[test]
+    fn ki_prompt_notification_wire_shape() {
+        let n = KbdInteractivePromptNotification {
+            request_id: "r1".into(),
+            session_id: None,
+            host: "bastion".into(),
+            port: 22,
+            username: "alice".into(),
+            name: String::new(),
+            instructions: "Enter code".into(),
+            prompts: vec![KbdInteractivePromptItem {
+                prompt: "Verification code: ".into(),
+                echo: false,
+            }],
+            round: 1,
+        };
+        let v = serde_json::to_value(&n).unwrap();
+        assert_eq!(v["requestId"], "r1");
+        assert!(v.get("sessionId").is_none(), "absent session id is omitted");
+        assert_eq!(v["prompts"][0]["prompt"], "Verification code: ");
+        assert_eq!(v["prompts"][0]["echo"], false);
+        let back: KbdInteractivePromptNotification = serde_json::from_value(v).unwrap();
+        assert_eq!(back, n);
+    }
+
+    #[test]
+    fn ki_respond_params_null_is_cancel_and_debug_redacts() {
+        let cancel: KbdInteractiveRespondParams =
+            serde_json::from_value(json!({"requestId": "r1", "responses": null})).unwrap();
+        assert_eq!(cancel.responses, None);
+
+        let answer: KbdInteractiveRespondParams =
+            serde_json::from_value(json!({"requestId": "r1", "responses": ["123456"]})).unwrap();
+        let dbg = format!("{answer:?}");
+        assert!(
+            !dbg.contains("123456"),
+            "responses must never be printed: {dbg}"
+        );
+        assert!(dbg.contains("redacted"));
     }
 
     // ── Method-name constants (DUP-002) ─────────────────────────────

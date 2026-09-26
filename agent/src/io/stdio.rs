@@ -5,7 +5,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 
 use crate::handler::dispatch::AgentHandler;
-use crate::io::transport::run_transport_loop;
+use crate::io::transport::run_transport_loop_with_priority;
+use crate::ki_prompt::KiPromptHub;
 use crate::monitoring::{MonitoringManager, MonitoringManagerApi};
 use crate::protocol::messages::JsonRpcNotification;
 use crate::registry::build_registry;
@@ -24,6 +25,8 @@ pub async fn run_stdio_loop(
     update_strategy: crate::update::UpdateStrategy,
 ) -> anyhow::Result<()> {
     let (notification_tx, mut notification_rx) =
+        tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
+    let (priority_tx, mut priority_rx) =
         tokio::sync::mpsc::unbounded_channel::<JsonRpcNotification>();
 
     let registry = Arc::new(build_registry());
@@ -84,7 +87,10 @@ pub async fn run_stdio_loop(
         monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
     )?
     .with_registry_client(registry_client)
-    .with_notification_sender(tool_tx);
+    .with_notification_sender(tool_tx)
+    // SSH keyboard-interactive prompts (#3375) travel on a priority channel the
+    // loop drains even while the `connection.create` awaiting the answer runs.
+    .with_ki_prompt_relay(KiPromptHub::global(), priority_tx);
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();
@@ -92,11 +98,12 @@ pub async fn run_stdio_loop(
 
     info!("Stdio transport loop started, waiting for input");
 
-    let loop_result = run_transport_loop(
+    let loop_result = run_transport_loop_with_priority(
         &mut reader,
         &mut stdout,
         &handler,
         &mut notification_rx,
+        &mut priority_rx,
         shutdown,
     )
     .await;

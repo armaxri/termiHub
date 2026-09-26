@@ -25,6 +25,7 @@ use tokio_util::sync::CancellationToken;
 use crate::client_registry::ConnectionRegistry;
 use crate::files::FileError;
 use crate::io::transport::NotificationSender;
+use crate::ki_prompt::{is_secret_bearing_request, KiBinding, KiPromptHub};
 use crate::monitoring::MonitoringManagerApi;
 use crate::network;
 use crate::network::streaming::{RunLimits, StartError, ToolRunManager};
@@ -52,6 +53,7 @@ use crate::protocol::methods::{
     TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdatePendingNotification,
     AGENT_UPDATE_PENDING,
 };
+use termihub_core::protocol::methods::{KbdInteractiveRespondParams, KbdInteractiveRespondResult};
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
 // in the `register_async_method` calls so agent and desktop cannot drift.
 use crate::protocol::methods as pm;
@@ -85,7 +87,11 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// Bumped to 0.9.0 for the additive streaming `tool.start` / `tool.cancel`
 /// methods, the `tool.event` / `tool.done` notifications and the
 /// `toolStreaming` capability (#3353).
-const AGENT_PROTOCOL_VERSION: &str = "0.9.0";
+/// Bumped to 0.10.0 for the additive SSH keyboard-interactive prompt relay: the
+/// `clientCapabilities` initialize param, the `keyboardInteractivePrompts`
+/// capability, the `ssh.keyboard_interactive.prompt` / `.closed` notifications
+/// and the `ssh.keyboard_interactive.respond` method (#3375).
+const AGENT_PROTOCOL_VERSION: &str = "0.10.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -134,6 +140,9 @@ struct HandlerState {
     /// Streaming tool runs of this connection (`tool.start` / `tool.cancel`,
     /// #3353). Shared with [`AgentHandler::tool_runs`] so disconnect cancels them.
     tool_runs: Arc<ToolRunManager>,
+    /// This connection's keyboard-interactive prompt relay binding (#3375).
+    /// Shared with [`AgentHandler::ki_binding`] so disconnect detaches it.
+    ki_binding: Arc<KiBinding>,
 }
 
 // ── AgentHandler ───────────────────────────────────────────────────
@@ -167,6 +176,9 @@ pub struct AgentHandler {
     /// [`with_notification_sender`](Self::with_notification_sender); cancelled
     /// wholesale by [`deregister_client`](Self::deregister_client).
     tool_runs: Arc<ToolRunManager>,
+    /// This connection's keyboard-interactive prompt relay binding (#3375),
+    /// wired by [`with_ki_prompt_relay`](Self::with_ki_prompt_relay).
+    ki_binding: Arc<KiBinding>,
 }
 
 impl AgentHandler {
@@ -192,6 +204,7 @@ impl AgentHandler {
         let service_registry = Arc::new(AgentServiceRegistry::new(service_factories));
         let tunnel_registry = Arc::new(AgentTunnelRegistry::new());
         let tool_runs = ToolRunManager::new(RunLimits::default());
+        let ki_binding = KiBinding::new();
 
         let state = Mutex::new(HandlerState {
             session_manager,
@@ -208,6 +221,7 @@ impl AgentHandler {
             service_registry,
             tunnel_registry,
             tool_runs: tool_runs.clone(),
+            ki_binding: ki_binding.clone(),
         });
 
         let mut module: RpcModule<Mutex<HandlerState>> = RpcModule::new(state);
@@ -221,7 +235,25 @@ impl AgentHandler {
             client_id,
             registry_client,
             tool_runs,
+            ki_binding,
         })
+    }
+
+    /// Relay SSH keyboard-interactive (OTP / 2FA) prompts of connects this agent
+    /// performs to this connection's desktop through `hub` (#3375).
+    ///
+    /// `priority_tx` must be a notification channel the transport loop drains
+    /// **even while a request is in flight** — the prompt is sent while the
+    /// `connection.create` that needs the answer is still running. A handler
+    /// without it (unit tests) advertises `keyboardInteractivePrompts: false`.
+    /// The desktop is only attached once it advertises support in `initialize`.
+    pub fn with_ki_prompt_relay(
+        self,
+        hub: Arc<KiPromptHub>,
+        priority_tx: NotificationSender,
+    ) -> Self {
+        self.ki_binding.wire(hub, priority_tx);
+        self
     }
 
     /// Wire this connection's notification channel so streaming tool runs
@@ -279,6 +311,8 @@ impl AgentHandler {
         // The client is gone: cancel its streaming tool runs so none outlives
         // the connection or notifies the next client (#3353).
         self.tool_runs.shutdown();
+        // Nobody can answer this desktop's prompts any more: cancel them (#3375).
+        self.ki_binding.detach();
         self.client_registry.remove(&self.client_id);
         if let Some(registry) = self.registry() {
             registry.deregister();
@@ -290,7 +324,15 @@ impl AgentHandler {
     /// Also returns a boolean indicating whether `agent.shutdown` was called
     /// and the transport loop should stop after sending the response.
     pub async fn call_raw(&self, request: &str) -> (String, bool) {
-        debug!("Dispatching: {}", request);
+        if is_secret_bearing_request(request) {
+            // Carries one-time codes / passwords: never log the body (#3375).
+            debug!(
+                "Dispatching: <redacted {}>",
+                pm::SSH_KEYBOARD_INTERACTIVE_RESPOND
+            );
+        } else {
+            debug!("Dispatching: {}", request);
+        }
         let result = self
             .module
             .raw_json_request(request, MAX_RESPONSE_BODY_SIZE)
@@ -563,6 +605,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_tool_run(module)?;
     register_tool_start(module)?;
     register_tool_cancel(module)?;
+    register_ssh_keyboard_interactive_respond(module)?;
     register_service_list(module)?;
     register_service_start(module)?;
     register_service_stop(module)?;
@@ -613,7 +656,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 },
             )?;
 
-        let (session_manager, connection_store, buffer_size, client_id, tool_streaming) = {
+        let (session_manager, connection_store, buffer_size, client_id, tool_streaming, ki_prompts) = {
             let mut s = ctx.lock().await;
             s.initialized = true;
             s.agent_settings = p.agent_settings.clone();
@@ -648,6 +691,13 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 });
             }
 
+            // Relay SSH keyboard-interactive prompts to this desktop only when
+            // it said it can show them; an older desktop keeps the
+            // auto-answer-only behavior (#3375).
+            if p.client_capabilities.keyboard_interactive_prompts {
+                s.ki_binding.attach();
+            }
+
             let buffer_size = mb_to_bytes(p.agent_settings.persistent_scrollback_buffer_size_mb);
             (
                 s.session_manager.clone(),
@@ -655,6 +705,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 buffer_size,
                 client_id,
                 s.tool_runs.is_available(),
+                s.ki_binding.is_wired(),
             )
         };
 
@@ -708,6 +759,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 available_docker_images,
                 monitoring_supported: detect_monitoring_supported(),
                 tool_streaming,
+                keyboard_interactive_prompts: ki_prompts,
             },
         })
     })?;
@@ -748,6 +800,10 @@ fn register_connection_create(module: &mut RpcModule<Mutex<HandlerState>>) -> an
                 }
                 SessionCreateError::BackendFailed(msg) => {
                     rpc_err(errors::SESSION_CREATION_FAILED, msg)
+                }
+                SessionCreateError::AuthCancelled(msg) => rpc_err(errors::AUTH_CANCELLED, msg),
+                SessionCreateError::SecondFactorFailed(msg) => {
+                    rpc_err(errors::SECOND_FACTOR_FAILED, msg)
                 }
             })?;
 
@@ -1872,6 +1928,43 @@ fn register_tool_cancel(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::
             cancelled: tool_runs.cancel(&p.run_id),
         })
     })?;
+    Ok(())
+}
+
+// ── ssh.keyboard_interactive.* (#3375) ──────────────────────────────
+
+/// `ssh.keyboard_interactive.respond`: the desktop's answer (or cancel) for a
+/// relayed prompt round. The transport loop dispatches it even while the
+/// `connection.create` waiting on it is in flight, and never logs it.
+fn register_ssh_keyboard_interactive_respond(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::SSH_KEYBOARD_INTERACTIVE_RESPOND,
+        |params, ctx, _ext| async move {
+            let hub = {
+                let s = ctx.lock().await;
+                if !s.initialized {
+                    return Err(not_initialized());
+                }
+                s.ki_binding.hub()
+            };
+            // Deliberately not `invalid_params(.., e)`: a parse error message
+            // could echo the secret-bearing params.
+            let p: KbdInteractiveRespondParams = params.parse().map_err(|_| {
+                rpc_err(
+                    errors::INVALID_PARAMS,
+                    "Invalid params for ssh.keyboard_interactive.respond",
+                )
+            })?;
+            let reply = p
+                .responses
+                .map(|r| r.into_iter().map(zeroize::Zeroizing::new).collect());
+            to_result_value(&KbdInteractiveRespondResult {
+                accepted: hub.respond(&p.request_id, reply),
+            })
+        },
+    )?;
     Ok(())
 }
 
@@ -3015,11 +3108,11 @@ mod tests {
     /// which additive capabilities (`agent.update_pending`, the `agent.forward.*`
     /// ssh-agent relay, the `tunnel.*` agent-hosted forwarding methods, the
     /// `service.*` agent-hosted embedded servers, the `service.pause/resume`
-    /// in-place monitor pause, and the streaming `tool.start/cancel` runs) may
-    /// now arrive.
+    /// in-place monitor pause, the streaming `tool.start/cancel` runs, and the
+    /// SSH keyboard-interactive prompt relay) may now arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.9.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.10.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -5206,6 +5299,9 @@ mod tests {
         registry: ConnectionTypeRegistry,
         create_error: Option<SessionCreateError>,
         sessions: Arc<AsyncMutex<Vec<SessionSnapshot>>>,
+        /// When set, `create` asks this hub one OTP round first, standing in
+        /// for an SSH connect that needs a keyboard-interactive answer (#3375).
+        ki_hub: Option<Arc<KiPromptHub>>,
     }
 
     impl MockSessionManager {
@@ -5214,6 +5310,7 @@ mod tests {
                 registry: crate::registry::build_registry(),
                 create_error: None,
                 sessions: Arc::new(AsyncMutex::new(Vec::new())),
+                ki_hub: None,
             }
         }
 
@@ -5222,6 +5319,14 @@ mod tests {
                 registry: crate::registry::build_registry(),
                 create_error: Some(error),
                 sessions: Arc::new(AsyncMutex::new(Vec::new())),
+                ki_hub: None,
+            }
+        }
+
+        fn with_ki_prompt(hub: Arc<KiPromptHub>) -> Self {
+            Self {
+                ki_hub: Some(hub),
+                ..Self::new()
             }
         }
     }
@@ -5239,6 +5344,9 @@ mod tests {
             _settings: serde_json::Value,
             definition_id: Option<String>,
         ) -> Result<SessionSnapshot, SessionCreateError> {
+            if let Some(hub) = &self.ki_hub {
+                ki_prompt_tests::mock_otp_round(hub).await?;
+            }
             if let Some(ref e) = self.create_error {
                 return Err(match e {
                     SessionCreateError::LimitReached => SessionCreateError::LimitReached,
@@ -5247,6 +5355,12 @@ mod tests {
                     }
                     SessionCreateError::BackendFailed(m) => {
                         SessionCreateError::BackendFailed(m.clone())
+                    }
+                    SessionCreateError::AuthCancelled(m) => {
+                        SessionCreateError::AuthCancelled(m.clone())
+                    }
+                    SessionCreateError::SecondFactorFailed(m) => {
+                        SessionCreateError::SecondFactorFailed(m.clone())
                     }
                 });
             }
@@ -5529,4 +5643,7 @@ mod tests {
         )));
         assert_eq!(err.code() as i64, errors::DEFERRED_UPDATE_FAILED);
     }
+
+    /// Keyboard-interactive prompt relay through dispatch + transport (#3375).
+    mod ki_prompt_tests;
 }
