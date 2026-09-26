@@ -41,6 +41,9 @@ import {
   remoteDesktopGetClipboard,
   remoteDesktopRemoteClipboardFiles,
   remoteDesktopBindClipboardFiles,
+  remoteDesktopClipboardImageStatus,
+  remoteDesktopCopyClipboardImage,
+  remoteDesktopSendClipboardImage,
   remoteDesktopCertDecision,
   remoteDesktopDisconnect,
   // session file browsing
@@ -427,6 +430,40 @@ describe("api pass-through wrappers (#2975)", () => {
         sessionId: "rd-1",
       });
       expect(result).toBe(2);
+    });
+
+    it("remoteDesktopClipboardImageStatus returns support and the remote image", async () => {
+      const status = { supported: true, image: { width: 4, height: 2 } };
+      mockedInvoke.mockResolvedValue(status);
+
+      const result = await remoteDesktopClipboardImageStatus("rd-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_clipboard_image_info", {
+        sessionId: "rd-1",
+      });
+      expect(result).toEqual(status);
+    });
+
+    it("remoteDesktopCopyClipboardImage returns the copied image's size", async () => {
+      mockedInvoke.mockResolvedValue({ width: 4, height: 2 });
+
+      const result = await remoteDesktopCopyClipboardImage("rd-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_copy_clipboard_image", {
+        sessionId: "rd-1",
+      });
+      expect(result).toEqual({ width: 4, height: 2 });
+    });
+
+    it("remoteDesktopSendClipboardImage returns null when nothing was sent", async () => {
+      mockedInvoke.mockResolvedValue(null);
+
+      const result = await remoteDesktopSendClipboardImage("rd-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_send_clipboard_image", {
+        sessionId: "rd-1",
+      });
+      expect(result).toBeNull();
     });
 
     it("remoteDesktopCertDecision forwards accept and remember", async () => {

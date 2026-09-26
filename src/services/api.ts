@@ -12,7 +12,12 @@ import {
   LineEnding,
 } from "@/types/terminal";
 import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
-import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesktop";
+import type {
+  ClipboardImageInfo,
+  ClipboardImageStatus,
+  RemoteClipboardFile,
+  RemoteDesktopInput,
+} from "@/types/remoteDesktop";
 import type { RunLocation } from "@/types/tunnel";
 import type { KillSignal, ProcessInfo } from "@/types/monitoring";
 import type {
@@ -715,6 +720,44 @@ export async function remoteDesktopSendClipboard(
 /** Read the remote clipboard text, if any. */
 export async function remoteDesktopGetClipboard(sessionId: SessionId): Promise<string | null> {
   return await invoke<string | null>("remote_desktop_get_clipboard", { sessionId });
+}
+
+/**
+ * Whether the session supports an image clipboard (PROD-021: RDP yes, VNC no)
+ * and the dimensions of the image the remote most recently copied, if any.
+ * Ownership-gated in the backend: a non-owning window never sees the image.
+ */
+export async function remoteDesktopClipboardImageStatus(
+  sessionId: SessionId
+): Promise<ClipboardImageStatus> {
+  return await invoke<ClipboardImageStatus>("remote_desktop_clipboard_image_info", {
+    sessionId,
+  });
+}
+
+/**
+ * Copy the image the remote most recently copied onto the local OS clipboard
+ * (PROD-021). Resolves to its dimensions, or null when there is no remote image.
+ */
+export async function remoteDesktopCopyClipboardImage(
+  sessionId: SessionId
+): Promise<ClipboardImageInfo | null> {
+  return await invoke<ClipboardImageInfo | null>("remote_desktop_copy_clipboard_image", {
+    sessionId,
+  });
+}
+
+/**
+ * Send the image on the local OS clipboard to the remote (PROD-021). Resolves to
+ * its dimensions, or null when the local clipboard holds no image. Rejects when
+ * the image exceeds the size caps or the protocol has no image clipboard (VNC).
+ */
+export async function remoteDesktopSendClipboardImage(
+  sessionId: SessionId
+): Promise<ClipboardImageInfo | null> {
+  return await invoke<ClipboardImageInfo | null>("remote_desktop_send_clipboard_image", {
+    sessionId,
+  });
 }
 
 /**
