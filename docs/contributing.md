@@ -252,6 +252,23 @@ periodically so new lints are adopted on purpose rather than by surprise:
    `rdp-sidecar/`). Fix new lints in the same PR; the PR's CI then proves build, tests and lints on
    the new version.
 
+### uv version
+
+CI installs [uv](https://docs.astral.sh/uv/) (the Python system-test harness runner) at **one**
+exact version stored in [`.github/uv-version`](../.github/uv-version). Every workflow installs it
+through the [`setup-uv`](../.github/actions/setup-uv/action.yml) composite action. uv is pinned
+because `astral-sh/setup-uv` without an explicit version resolves "latest" through the GitHub
+Releases API, which flakes and fails jobs unrelated to the PR (#1552).
+
+[`scripts/internal/check-uv-version.mjs`](../scripts/internal/check-uv-version.mjs) (run by the
+System-Test Harness job and `./scripts/check.sh`) fails if the file is not an exact `X.Y.Z` or if
+any workflow or other composite action calls `astral-sh/setup-uv` directly — a direct call would
+reintroduce a duplicated pin that drifts.
+
+**Bumping uv** is part of the same periodic toolchain chore as the Rust bump: write the new version
+to `.github/uv-version`, run `node scripts/internal/check-uv-version.mjs`, and let the harness jobs
+prove it. The harness's Python dependencies stay pinned separately in `tests/system/uv.lock`.
+
 ### Git hooks
 
 Committed git hooks (in [`scripts/hooks/`](../scripts/hooks/)) are enabled by `./scripts/setup.sh`
@@ -400,7 +417,7 @@ git checkout -b feature/my-feature
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>(<scope>): <subject>
 
 <body>
@@ -423,7 +440,7 @@ Messages fails. Use `fix(config): resolve the dev port collision`, not
 
 **Examples:**
 
-```
+```text
 feat(terminal): add horizontal scrolling option
 
 Add per-connection horizontal scroll toggle with runtime
@@ -432,7 +449,7 @@ switching via tab context menu.
 Closes #42
 ```
 
-```
+```text
 fix(ssh): handle connection timeout gracefully
 
 Previously, a connection timeout would crash the app.
@@ -580,14 +597,14 @@ The preferred approach for all bug fixes and feature work is **test-driven devel
 
 **Example commit sequence for a bug fix:**
 
-```
+```text
 test(scope): add regression test for <bug description>
 fix(scope): fix <bug description> (Closes #N)
 ```
 
 **Example commit sequence for a new feature:**
 
-```
+```text
 test(scope): add tests for <feature name>
 feat(scope): implement <feature name> (Closes #N)
 ```
@@ -719,7 +736,7 @@ scripts\build-agents.cmd          # Windows
 
 Binaries are placed in:
 
-```
+```text
 agent/target/<triple>/release/termihub-agent
 ```
 
@@ -963,7 +980,7 @@ Then verify:
 
 ### WebKitGTK not found (Linux)
 
-```
+```text
 error: could not find system library 'webkit2gtk-4.1'
 ```
 
@@ -978,7 +995,7 @@ Install the WebKitGTK development package for your distribution (see [Linux](#li
 
 ### Serial port compilation errors (Linux)
 
-```
+```text
 error: could not find system library 'libudev'
 ```
 

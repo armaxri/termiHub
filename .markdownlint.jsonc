@@ -1,0 +1,27 @@
+// markdownlint config for `pnpm run markdownlint` (docs/**/*.md and root *.md).
+// Every rule is on (`default: true`) except the ones below; each exception says
+// why it stays off or relaxed (WA-CI-026). Prefer a per-file
+// `<!-- markdownlint-disable-next-line MDxxx -->` over widening this list.
+{
+  "default": true,
+
+  // Line length: Prettier owns prose wrapping, and long table rows, URLs and
+  // command lines cannot be wrapped without breaking them (~4k hits if on).
+  "MD013": false,
+
+  // Duplicate headings are fine under different parents (e.g. "Rust" under
+  // several setup sections; "### Fixed" under each release in CHANGELOG.md) —
+  // only same-level siblings must differ.
+  "MD024": { "siblings_only": true },
+
+  // Inline HTML: <kbd> key caps (keyboard-shortcuts.md, change fragments) and
+  // the centered <p>/<img>/<a>/<h1> header in README.md are intentional, and
+  // some audit notes / fragments carry unescaped <placeholder> tokens (~55
+  // hits across 10 files if on).
+  "MD033": false,
+
+  // First line must be an H1: per-branch change fragments under docs/changes/
+  // deliberately start at "### Added"/"### Fixed" so they concatenate into
+  // CHANGELOG.md release sections (~660 fragments).
+  "MD041": false,
+}

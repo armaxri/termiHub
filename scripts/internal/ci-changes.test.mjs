@@ -14,6 +14,10 @@ describe("classify", () => {
     ]);
   });
 
+  it("runs only the markdown checks for a markdownlint-config-only PR", () => {
+    expect(on(classify([".markdownlint.jsonc"]))).toEqual(["markdown"]);
+  });
+
   it("treats a frontend-only PR as frontend (no Rust)", () => {
     expect(on(classify(["src/components/Foo.tsx", "src/store/appStore.ts"]))).toEqual(["frontend"]);
   });
