@@ -47,6 +47,11 @@ export interface TerminalBackendExtension {
   displayName: string;
   /** JSON Schema describing the backend's connection config. */
   configSchema: JsonSchema;
+  /**
+   * Multi-platform native libraries (PLG-011): Rust target triple → library
+   * path inside the package. Absent for a legacy single-platform package.
+   */
+  libraries?: Record<string, string>;
 }
 
 /** A protocol-parser extension point. Mirrors Rust `ProtocolParserExtension`. */
