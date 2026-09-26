@@ -20,7 +20,7 @@
 
 import { isSshKeyEncrypted } from "@/services/api";
 import type { SettingsSchema } from "@/types/schema";
-import type { PasswordPromptKind } from "@/store/slices/passwordPromptSlice";
+import type { PasswordPromptKind, PasswordPromptOptions } from "@/store/slices/passwordPromptSlice";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { findKeyPassphrasePromptInfo, findPasswordPromptInfo } from "@/utils/schemaDefaults";
@@ -57,8 +57,16 @@ export interface ResolveConnectSecretOptions {
     host: string,
     username: string,
     notice?: string,
-    kind?: PasswordPromptKind
+    kind?: PasswordPromptKind,
+    options?: PasswordPromptOptions
   ) => Promise<string | null>;
+  /**
+   * Whether the prompt may offer its "Save" control. Defaults to `true` (Save &
+   * Connect persists a checked Save box itself). Test Connection passes `false`
+   * because it never persists a secret, so a Save box there would be a no-op
+   * (#3316).
+   */
+  allowSave?: boolean;
 }
 
 /**
@@ -70,6 +78,7 @@ export async function resolveConnectSecret({
   settings,
   connectionId,
   requestPassword,
+  allowSave = true,
 }: ResolveConnectSecretOptions): Promise<ConnectSecretResult> {
   if (!schema) return { status: "none" };
 
@@ -107,7 +116,10 @@ export async function resolveConnectSecret({
     }
   }
 
-  const entered = await requestPassword(host, username, "", credentialType);
+  // Only pass options when opting out, so the default call shape is unchanged.
+  const entered = allowSave
+    ? await requestPassword(host, username, "", credentialType)
+    : await requestPassword(host, username, "", credentialType, { allowSave: false });
   if (entered === null) return { status: "canceled" };
   return {
     status: "resolved",
