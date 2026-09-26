@@ -54,8 +54,9 @@ pub fn section_infos(config_dir: &Path) -> Vec<BackupSectionInfo> {
 /// Read one store file for a backup. `Ok(None)` when the store does not exist
 /// yet (nothing to back up).
 ///
-/// The document is taken verbatim (not re-serialized) so the backup preserves
-/// exactly what the store wrote, and stamped with the store's schema version.
+/// A current-version document is taken verbatim (not re-serialized) so the
+/// backup preserves exactly what the store wrote, and stamped with the store's
+/// schema version. An older document is migrated forward first.
 fn read_section(
     spec: &SectionSpec,
     config_dir: &Path,
@@ -82,7 +83,18 @@ fn read_section(
         sections::strip_connection_passwords(&mut data);
     }
     // A file with no version field predates versioning and is schema v1.
-    let schema_version = read_version(&data).unwrap_or(1);
+    let mut schema_version = read_version(&data).unwrap_or(1);
+    if schema_version < spec.current_version {
+        // The file predates this build's schema (the store has not re-saved it
+        // since an upgrade). Back it up already migrated through the store's own
+        // forward migration, so a backup made by this build restores on this
+        // build as current rather than as "migrated". A file the store cannot
+        // read is kept verbatim and reported on restore instead.
+        if let Ok(migrated) = spec.normalize(data.clone()) {
+            schema_version = read_version(&migrated).unwrap_or(schema_version);
+            data = migrated;
+        }
+    }
     Ok(Some(BackupSection {
         id: spec.id.to_string(),
         schema_version,

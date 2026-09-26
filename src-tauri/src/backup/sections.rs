@@ -75,7 +75,9 @@ pub struct SectionSpec {
     pub description: &'static str,
     /// The store's file name in the config directory.
     pub file_name: &'static str,
-    /// The schema version this build reads and writes.
+    /// The schema version this build reads and writes. Always the owning
+    /// store's own `CURRENT_VERSION` constant — never a literal here — so a
+    /// store's version bump reaches the backup automatically.
     pub current_version: u32,
     pub shape: Shape,
     /// The store holds secrets in its own file (e.g. embedded-server
@@ -146,19 +148,23 @@ fn normalize_versioned<T: VersionedStore + Serialize>(
     }
 }
 
-/// Normalize a store that has no migration layer (schema version 1): refuse a
-/// newer `version`, otherwise validate through the typed model.
-fn normalize_plain<T: DeserializeOwned + Serialize>(data: Value) -> Result<Value, NormalizeError> {
+/// Normalize a store that has no migration layer: refuse a `version` newer
+/// than `CURRENT` (the store's own `CURRENT_VERSION`), otherwise validate
+/// through the typed model. The document's `version` is left as-is — such a
+/// store's own loader owns any upgrade of an older file.
+fn normalize_plain<T: DeserializeOwned + Serialize, const CURRENT: u32>(
+    data: Value,
+) -> Result<Value, NormalizeError> {
     if !data.is_object() {
         return Err(NormalizeError::Invalid(
             "expected a JSON object".to_string(),
         ));
     }
     if let Some(found) = read_version(&data) {
-        if found > 1 {
+        if found > CURRENT {
             return Err(NormalizeError::Newer {
                 found,
-                supported: 1,
+                supported: CURRENT,
             });
         }
     }
@@ -249,10 +255,10 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Macros",
         description: "Terminal macros.",
         file_name: "macros.json",
-        current_version: 1,
+        current_version: MacroStore::CURRENT_VERSION,
         shape: Shape::List { field: "macros" },
         contains_secrets: false,
-        normalize: normalize_plain::<MacroStore>,
+        normalize: normalize_plain::<MacroStore, { MacroStore::CURRENT_VERSION }>,
         default_doc: || to_doc(&MacroStore::default()),
     },
     SectionSpec {
@@ -271,10 +277,10 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Tunnels",
         description: "SSH tunnel definitions.",
         file_name: "tunnels.json",
-        current_version: 1,
+        current_version: TunnelStore::CURRENT_VERSION,
         shape: Shape::List { field: "tunnels" },
         contains_secrets: false,
-        normalize: normalize_plain::<TunnelStore>,
+        normalize: normalize_plain::<TunnelStore, { TunnelStore::CURRENT_VERSION }>,
         default_doc: || to_doc(&TunnelStore::default()),
     },
     SectionSpec {
@@ -282,10 +288,10 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Embedded servers",
         description: "Embedded HTTP/FTP/TFTP server definitions (includes their passwords).",
         file_name: "embedded_servers.json",
-        current_version: 1,
+        current_version: EmbeddedServerStore::CURRENT_VERSION,
         shape: Shape::List { field: "servers" },
         contains_secrets: true,
-        normalize: normalize_plain::<EmbeddedServerStore>,
+        normalize: normalize_plain::<EmbeddedServerStore, { EmbeddedServerStore::CURRENT_VERSION }>,
         default_doc: || to_doc(&EmbeddedServerStore::default()),
     },
     SectionSpec {
@@ -293,10 +299,10 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "Wake-on-LAN devices",
         description: "Saved Wake-on-LAN devices.",
         file_name: "wol-devices.json",
-        current_version: 1,
+        current_version: WolDevicesFile::CURRENT_VERSION,
         shape: Shape::List { field: "devices" },
         contains_secrets: false,
-        normalize: normalize_plain::<WolDevicesFile>,
+        normalize: normalize_plain::<WolDevicesFile, { WolDevicesFile::CURRENT_VERSION }>,
         default_doc: || to_doc(&WolDevicesFile::default()),
     },
     SectionSpec {
@@ -304,10 +310,10 @@ pub static SECTIONS: &[SectionSpec] = &[
         label: "HTTP monitors",
         description: "HTTP monitor definitions.",
         file_name: "http-monitors.json",
-        current_version: 1,
+        current_version: HttpMonitorsFile::CURRENT_VERSION,
         shape: Shape::List { field: "monitors" },
         contains_secrets: false,
-        normalize: normalize_plain::<HttpMonitorsFile>,
+        normalize: normalize_plain::<HttpMonitorsFile, { HttpMonitorsFile::CURRENT_VERSION }>,
         default_doc: || to_doc(&HttpMonitorsFile::default()),
     },
     SectionSpec {
