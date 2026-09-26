@@ -96,6 +96,17 @@ pub const TOOL_RUN_REJECTED: i64 = -32022;
 /// instead of treating this as a failure or retrying.
 pub const SESSION_HELD_BY_OTHER: i64 = -32023;
 
+/// The user cancelled an SSH keyboard-interactive (OTP / 2FA) prompt the agent
+/// relayed while authenticating (#3375). The desktop treats it as a quiet
+/// cancel, exactly like a cancelled prompt on a direct SSH connection.
+pub const AUTH_CANCELLED: i64 = -32024;
+
+/// An agent-authenticated SSH connection's **second factor** (a user-typed
+/// one-time code entered after an earlier factor was accepted) was rejected
+/// (#3375, #3376). The saved password was not what failed, so the desktop must
+/// keep it.
+pub const SECOND_FACTOR_FAILED: i64 = -32025;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -131,6 +142,8 @@ mod tests {
             UPDATE_SIGNATURE_REJECTED,
             TOOL_RUN_REJECTED,
             SESSION_HELD_BY_OTHER,
+            AUTH_CANCELLED,
+            SECOND_FACTOR_FAILED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -179,6 +192,8 @@ mod tests {
             UPDATE_SIGNATURE_REJECTED,
             TOOL_RUN_REJECTED,
             SESSION_HELD_BY_OTHER,
+            AUTH_CANCELLED,
+            SECOND_FACTOR_FAILED,
         ];
         for code in app_codes {
             assert!(
