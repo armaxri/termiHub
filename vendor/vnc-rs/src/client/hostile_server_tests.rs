@@ -331,14 +331,68 @@ async fn stop_cancels_a_decoder_blocked_mid_message() {
 
 // ------------------------------------------------------------------ cursor --
 
+fn cursor_pixels(events: &[VncEvent]) -> Option<Vec<u8>> {
+    events.iter().find_map(|e| match e {
+        VncEvent::SetCursor(_, data) => Some(data.clone()),
+        _ => None,
+    })
+}
+
 #[tokio::test]
-async fn cursor_in_16bpp_is_skipped_and_stream_stays_in_sync() {
-    // Upstream hit `unreachable!()` (and out-of-bounds writes) for this.
+async fn cursor_in_16bpp_decodes_to_rgba_and_stream_stays_in_sync() {
+    // Upstream hit `unreachable!()` (and out-of-bounds writes) for this; #3473
+    // skipped it; #3464 decodes it.
     let pf = pf_16bpp();
     let mut bytes = fb_update(1);
     bytes.extend(rect(1, 1, 3, 2, CURSOR));
-    bytes.extend_from_slice(&[0x55; 3 * 2 * 2]); // pixels, 2 bytes each
-    bytes.extend_from_slice(&[0xFF; 2]); // mask: 1 byte per row
+    // Little-endian RGB565: red, green, blue / white, black, mid-grey.
+    for px in [0xF800u16, 0x07E0, 0x001F, 0xFFFF, 0x0000, 0x8410] {
+        bytes.extend_from_slice(&px.to_le_bytes());
+    }
+    bytes.extend_from_slice(&[0b1010_0000, 0b0100_0000]); // mask: 1 byte per row
+    bytes.push(BELL);
+    let (result, events) = run(&bytes, &pf).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(has_bell(&events), "stream desynchronised");
+    assert_eq!(
+        cursor_pixels(&events).expect("cursor decoded"),
+        vec![
+            255, 0, 0, 255, //
+            0, 255, 0, 0, //
+            0, 0, 255, 255, //
+            255, 255, 255, 0, //
+            0, 0, 0, 255, //
+            132, 130, 132, 0,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn cursor_in_big_endian_16bpp_uses_the_format_byte_order() {
+    let mut pf = pf_16bpp();
+    pf.big_endian_flag = 1;
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 2, 1, CURSOR));
+    bytes.extend_from_slice(&0xF800u16.to_be_bytes());
+    bytes.extend_from_slice(&0x001Fu16.to_be_bytes());
+    bytes.push(0xC0);
+    let (_, events) = run(&bytes, &pf).await;
+    assert_eq!(
+        cursor_pixels(&events).expect("cursor decoded"),
+        vec![255, 0, 0, 255, 0, 0, 255, 255]
+    );
+}
+
+#[tokio::test]
+async fn cursor_in_a_colour_map_format_is_skipped_and_stream_stays_in_sync() {
+    let mut pf = PixelFormat::rgba();
+    pf.bits_per_pixel = 8;
+    pf.depth = 8;
+    pf.true_color_flag = 0;
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 3, 1, CURSOR));
+    bytes.extend_from_slice(&[7; 3]);
+    bytes.push(0xE0);
     bytes.push(BELL);
     let (result, events) = run(&bytes, &pf).await;
     assert!(is_eof(&result), "{result:?}");

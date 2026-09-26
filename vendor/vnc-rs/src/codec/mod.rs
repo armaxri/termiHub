@@ -121,6 +121,41 @@ pub(crate) fn pixel_mask(format: &PixelFormat) -> u32 {
         | shl_or_zero(format.blue_max as u32, format.blue_shift)
 }
 
+/// The value of one `format` pixel stored in `bytes` (its `bits_per_pixel / 8`
+/// wire bytes), honouring the format's big-endian flag (termiHub fork, #3464).
+pub(crate) fn pixel_value(format: &PixelFormat, bytes: &[u8]) -> u32 {
+    let fold = |acc: u32, b: &u8| (acc << 8) | u32::from(*b);
+    if format.big_endian_flag != 0 {
+        bytes.iter().take(4).fold(0, fold)
+    } else {
+        bytes.iter().take(4).rev().fold(0, fold)
+    }
+}
+
+/// Scale a colour channel `value` in `0..=max` to `0..=255`, rounding to the
+/// nearest step (`31 -> 255`, `63 -> 255`, `0 -> 0`). A zero `max` yields 0.
+pub(crate) fn scale_channel(value: u32, max: u16) -> u8 {
+    let max = u32::from(max);
+    if max == 0 {
+        return 0;
+    }
+    ((value.min(max) * 255 + max / 2) / max) as u8
+}
+
+/// The 8-bit `[r, g, b]` of a true-colour pixel `value`, extracted with the
+/// format's own shifts and maxima (never hard-coded masks).
+pub(crate) fn pixel_rgb(format: &PixelFormat, value: u32) -> [u8; 3] {
+    let channel = |max: u16, shift: u8| {
+        let raw = value.checked_shr(u32::from(shift)).unwrap_or(0) & u32::from(max);
+        scale_channel(raw, max)
+    };
+    [
+        channel(format.red_max, format.red_shift),
+        channel(format.green_max, format.green_shift),
+        channel(format.blue_max, format.blue_shift),
+    ]
+}
+
 /// For a 32-bpp pixel format whose RGB channels are three 8-bit lanes, the bit
 /// shift of the remaining (alpha) byte. Any other format is unsupported by the
 /// decoders that emit RGBA directly (Tight, cursor) — upstream hit
@@ -193,6 +228,45 @@ mod tests {
         pf.blue_shift = 255;
         assert_eq!(pixel_mask(&pf), 0);
         assert!(alpha_shift(&pf).is_err());
+    }
+
+    #[test]
+    fn pixel_value_honours_the_endianness_flag() {
+        let mut pf = PixelFormat::rgb565();
+        assert_eq!(pixel_value(&pf, &[0x34, 0x12]), 0x1234);
+        pf.big_endian_flag = 1;
+        assert_eq!(pixel_value(&pf, &[0x12, 0x34]), 0x1234);
+        let rgba = PixelFormat::rgba();
+        assert_eq!(pixel_value(&rgba, &[1, 2, 3, 4]), 0x0403_0201);
+    }
+
+    #[test]
+    fn pixel_rgb_uses_the_format_shifts_and_maxima() {
+        let pf = PixelFormat::rgb565();
+        assert_eq!(pixel_rgb(&pf, 0xF800), [255, 0, 0]);
+        assert_eq!(pixel_rgb(&pf, 0x07E0), [0, 255, 0]);
+        assert_eq!(pixel_rgb(&pf, 0x001F), [0, 0, 255]);
+        assert_eq!(pixel_rgb(&pf, 0xFFFF), [255, 255, 255]);
+        // Mid-scale: red 16/31, green 32/63, blue 8/31.
+        assert_eq!(pixel_rgb(&pf, (16 << 11) | (32 << 5) | 8), [132, 130, 66]);
+        // A BGR565 layout is decoded from its own shifts, not RGB565 masks.
+        let mut bgr = pf;
+        bgr.red_shift = 0;
+        bgr.blue_shift = 11;
+        assert_eq!(pixel_rgb(&bgr, 0x001F), [255, 0, 0]);
+        // 32-bpp RGBA passes channels through unchanged.
+        let rgba = PixelFormat::rgba();
+        assert_eq!(pixel_rgb(&rgba, 0x0003_0201), [1, 2, 3]);
+    }
+
+    #[test]
+    fn scale_channel_is_exact_at_the_ends_and_tolerates_bad_maxima() {
+        assert_eq!(scale_channel(0, 31), 0);
+        assert_eq!(scale_channel(31, 31), 255);
+        assert_eq!(scale_channel(63, 63), 255);
+        assert_eq!(scale_channel(255, 255), 255);
+        assert_eq!(scale_channel(99, 31), 255);
+        assert_eq!(scale_channel(5, 0), 0);
     }
 
     #[test]
