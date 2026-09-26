@@ -1,0 +1,172 @@
+name: Plugin Packaging
+
+# Per-OS package-then-load for native plugins (PLG-011). Each OS builds the
+# `echo-backend` example with the real packer (`--target host`, i.e. the
+# multi-platform format), installs the package through PluginManager and loads
+# it with the real PluginHost (core/tests/plugin_host_roundtrip's packaged
+# sibling, core/tests/plugin_package_load.rs). A merge job then combines the
+# per-OS packages into one fat package, verifies every platform entry's hash
+# against the library each OS built, and loads the fat package on Linux.
+#
+# Lane policy (#3325/#3326): on a PR this runs only when the plugin surface
+# changes, and only on ubuntu + windows (macOS runners are the scarcest in the
+# pool). Every push to develop/main runs it on all three platforms.
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'plugin-api/**'
+      - 'core/src/plugin/**'
+      - 'core/src/bin/plugin_*.rs'
+      - 'core/tests/plugin_package_load.rs'
+      - 'core/tests/fixtures/test-plugin/**'
+      - 'core/build.rs'
+      - 'examples/plugins/**'
+      - 'scripts/package-plugin.*'
+      - '.github/workflows/plugin-packaging.yml'
+  push:
+    branches: [ main, develop ]
+
+concurrency:
+  group: plugin-packaging-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege token (CI-010): checkout, build, test and the artifact API
+# (which does not use the GITHUB_TOKEN's contents scope).
+permissions:
+  contents: read
+
+jobs:
+  package-and-load:
+    name: Package + load (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: >-
+          ${{ fromJSON(github.event_name == 'pull_request'
+          && '["ubuntu-latest","windows-latest"]'
+          || '["ubuntu-latest","windows-latest","macos-latest"]') }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      # The .sh wrapper on Linux/macOS and the .cmd twin on Windows, so both
+      # halves of the script pair are exercised for real.
+      - name: Package echo-backend for this host (package-plugin.sh)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: ./scripts/package-plugin.sh examples/plugins/echo-backend --target host --out target/plugin-dist
+
+      - name: Package echo-backend for this host (package-plugin.cmd)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\package-plugin.cmd examples\plugins\echo-backend --target host --out target\plugin-dist
+
+      # The hash of the library cargo built, recorded independently of the
+      # packer, so the load test and the merge job can check the package carries
+      # (and the host selects) exactly those bytes.
+      - name: Record the built library's hash
+        id: lib
+        shell: bash
+        run: |
+          set -euo pipefail
+          triple="$(rustc -vV | sed -n 's/^host: //p')"
+          dir="target/$triple/release"
+          lib=""
+          for name in libecho_backend.so libecho_backend.dylib echo_backend.dll; do
+            if [ -f "$dir/$name" ]; then lib="$dir/$name"; fi
+          done
+          test -n "$lib"
+          if command -v sha256sum >/dev/null 2>&1; then
+            sum="$(sha256sum "$lib" | cut -d' ' -f1)"
+          else
+            sum="$(shasum -a 256 "$lib" | cut -d' ' -f1)"
+          fi
+          echo "$triple $sum" > "target/plugin-dist/expected-$triple.sha256"
+          echo "Built $lib for $triple: sha256 $sum"
+          {
+            echo "triple=$triple"
+            echo "sha256=$sum"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install + load the package with the real host
+        shell: bash
+        env:
+          TERMIHUB_PLUGIN_PACKAGE: ${{ github.workspace }}/target/plugin-dist/echo-backend-1.0.0.termihub-plugin
+          TERMIHUB_PLUGIN_LIBRARY_SHA256: ${{ steps.lib.outputs.sha256 }}
+        run: cargo test -p termihub-core --features plugin --test plugin_package_load -- --nocapture
+
+      - name: Upload the per-platform package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plugin-package-${{ steps.lib.outputs.triple }}
+          path: |
+            target/plugin-dist/echo-backend-1.0.0.termihub-plugin
+            target/plugin-dist/expected-*.sha256
+          retention-days: 7
+          if-no-files-found: error
+
+  merge:
+    name: Merge into a multi-platform package
+    needs: package-and-load
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Rust toolchain
+        uses: ./.github/actions/setup-rust
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/develop' || github.ref == 'refs/heads/main' }}
+
+      - name: Download the per-platform packages
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: plugin-package-*
+          path: target/per-os
+
+      - name: Merge and verify every platform entry's hash
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=()
+          for pkg in target/per-os/*/echo-backend-1.0.0.termihub-plugin; do
+            args+=(--merge "$pkg")
+          done
+          test "${#args[@]}" -ge 4 # at least two platforms
+          ./scripts/package-plugin.sh "${args[@]}" --out target/plugin-fat
+          fat=target/plugin-fat/echo-backend-1.0.0.termihub-plugin
+          cargo run --quiet -p termihub-core --features plugin --bin termihub-plugin-pack -- \
+            --inspect "$fat" > target/entries.txt
+          cat target/per-os/*/expected-*.sha256 | sort > target/expected.txt
+          awk '{ sub(/^sha256:/, "", $2); print $1, $2 }' target/entries.txt | sort > target/actual.txt
+          echo "--- expected (built per OS)"; cat target/expected.txt
+          echo "--- actual (merged package)"; cat target/actual.txt
+          diff -u target/expected.txt target/actual.txt
+
+      - name: Load the fat package on Linux (selects its own entry)
+        shell: bash
+        run: |
+          set -euo pipefail
+          triple="$(rustc -vV | sed -n 's/^host: //p')"
+          sum="$(awk -v t="$triple" '$1 == t { print $2 }' target/expected.txt)"
+          test -n "$sum"
+          TERMIHUB_PLUGIN_PACKAGE="$PWD/target/plugin-fat/echo-backend-1.0.0.termihub-plugin" \
+          TERMIHUB_PLUGIN_LIBRARY_SHA256="$sum" \
+            cargo test -p termihub-core --features plugin --test plugin_package_load -- --nocapture
