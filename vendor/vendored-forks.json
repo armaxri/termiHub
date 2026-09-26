@@ -44,6 +44,13 @@
             "https://github.com/armaxri/termiHub/issues/3473",
             "https://github.com/armaxri/termiHub/pull/3480"
           ]
+        },
+        {
+          "summary": "VncEvent::Error carries the typed Arc<VncError> instead of rendered text",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/3479",
+            "https://github.com/armaxri/termiHub/pull/3496"
+          ]
         }
       ],
       "watch": {

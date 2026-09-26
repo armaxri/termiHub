@@ -85,10 +85,10 @@ see the upstream crate again: an upstream security fix is not pulled in and a Ru
 against the upstream crate is not reported. Both forks sit on untrusted-input paths, so the
 upstream crate is watched explicitly instead.
 
-| Fork                                | Upstream                                                                              | Base                            | Why it is forked                                                             |
-| ----------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------------------- |
-| `vendor/vnc-rs`                     | [HsuJv/vnc-rs](https://github.com/HsuJv/vnc-rs)                                       | 0.5.3 (`f8ac0ee`)               | VeNCrypt (#1714), bounded cut-text (#3474), hostile-server hardening (#3473) |
-| `rdp-sidecar/vendor/ironrdp-rdpsnd` | [Devolutions/IronRDP](https://github.com/Devolutions/IronRDP) `crates/ironrdp-rdpsnd` | 0.9.0 (`ironrdp-rdpsnd-v0.9.0`) | Concrete negotiated audio format (#1773), `accepts_format` (#1812)           |
+| Fork                                | Upstream                                                                              | Base                            | Why it is forked                                                                                        |
+| ----------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `vendor/vnc-rs`                     | [HsuJv/vnc-rs](https://github.com/HsuJv/vnc-rs)                                       | 0.5.3 (`f8ac0ee`)               | VeNCrypt (#1714), bounded cut-text (#3474), hostile-server hardening (#3473), typed error event (#3479) |
+| `rdp-sidecar/vendor/ironrdp-rdpsnd` | [Devolutions/IronRDP](https://github.com/Devolutions/IronRDP) `crates/ironrdp-rdpsnd` | 0.9.0 (`ironrdp-rdpsnd-v0.9.0`) | Concrete negotiated audio format (#1773), `accepts_format` (#1812)                                      |
 
 The machine-readable register is [`vendor/vendored-forks.json`](../vendor/vendored-forks.json):
 per fork the upstream repository and crate name, the fork base (version **and** commit), how far
