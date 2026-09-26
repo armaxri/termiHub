@@ -339,6 +339,39 @@ async fn ftp_transfer_config_reports_unknown_session() {
     );
 }
 
+/// A non-Docker session must not resolve a Docker transfer target, so the
+/// queued Docker path only ever drives a real container (PARITY-004, #3567).
+#[tokio::test]
+async fn docker_transfer_target_rejects_non_docker_session() {
+    use crate::session::file_ops::FileOps;
+    let sessions = sessions_with_local_browser("sess-local").await;
+    let ops = FileOps::new(&sessions);
+    let err = ops
+        .docker_transfer_target("sess-local")
+        .await
+        .expect_err("a local browser must not yield a Docker transfer target");
+    assert!(
+        matches!(err, crate::utils::errors::TerminalError::RemoteError(_)),
+        "expected RemoteError for a non-Docker session, got {err:?}"
+    );
+}
+
+/// An unknown session surfaces SessionNotFound, not a misleading "not Docker".
+#[tokio::test]
+async fn docker_transfer_target_reports_unknown_session() {
+    use crate::session::file_ops::FileOps;
+    let sessions: Arc<Mutex<HashMap<String, SessionEntry>>> = Arc::new(Mutex::new(HashMap::new()));
+    let ops = FileOps::new(&sessions);
+    let err = ops
+        .docker_transfer_target("ghost")
+        .await
+        .expect_err("unknown session must error");
+    assert!(
+        matches!(err, crate::utils::errors::TerminalError::SessionNotFound(_)),
+        "expected SessionNotFound, got {err:?}"
+    );
+}
+
 /// Test that looking up a nonexistent session returns SessionNotFound.
 #[tokio::test]
 async fn nonexistent_session_returns_not_found() {

@@ -47,19 +47,19 @@ import { joinDirPath, pasteVerbLabels, type PasteOptions } from "@/utils/fileDra
  *
  * Two transport shapes back a session (mirroring the editor split in #2420):
  *
- * - A **queue-capable** session — SFTP-backed (SSH) or FTP-backed — drives the
+ * - A **queue-capable** session — SFTP-backed (SSH), FTP-backed or Docker — drives the
  *   rich transfer-queue engine: `session_download` / `session_upload` register a
  *   background transfer that keeps the listing live and feeds the Transfer Queue
  *   with progress/ETA/pause/resume/retry. The backend resolves the executor from
  *   the live session, so FTP credentials never cross into the frontend (PROD-010).
- * - A **byte-based** backend (Docker / remote-agent) cannot drive the queue, so
+ * - A **byte-based** backend (remote-agent) cannot drive the queue, so
  *   transfers fall back to a blocking `session_read_file` / `session_write_file`
  *   round-trip.
  *
  * Two capability signals gate this:
  *
  * - {@link transferQueueCapable} — from the `session_supports_transfer_queue`
- *   probe (`true` for SFTP or FTP) — routes download/upload/local-paste-upload
+ *   probe (`true` for SFTP, FTP or Docker) — routes download/upload/local-paste-upload
  *   through the queue engine vs the byte-based fallback.
  * - {@link sftpCapable} — from the `session_has_exec_capability` probe, which
  *   **resolves** only for an SFTP-backed session — gates the SFTP-only features:
@@ -116,10 +116,10 @@ export function useSessionFileSystem() {
     };
   }, [sessionFileBrowserId]);
 
-  // Whether the current session can drive the rich transfer-queue engine — SFTP
-  // or FTP (PROD-010). Gates whether download/upload route through the queue
-  // (progress/ETA/pause/resume/retry) or the blocking byte-based fallback that a
-  // Docker/remote-agent session uses. Determined by the
+  // Whether the current session can drive the rich transfer-queue engine — SFTP,
+  // FTP (PROD-010) or Docker (#3567). Gates whether download/upload route through
+  // the queue (progress/ETA/pause/resume/retry) or the blocking byte-based
+  // fallback that a remote-agent session uses. Determined by the
   // `session_supports_transfer_queue` probe; `false` until it resolves, so the
   // brief pre-probe window (and a byte-based backend) stays on the fallback.
   const [transferQueueCapable, setTransferQueueCapable] = useState(false);
@@ -212,7 +212,7 @@ export function useSessionFileSystem() {
       );
       if (!localPath) return;
       if (transferQueueCapable) {
-        // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
+        // Queue-capable (SFTP/FTP/Docker): register a tracked transfer on the rich queue
         // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
         await runTransfer(
           "Download",
@@ -221,7 +221,7 @@ export function useSessionFileSystem() {
         );
         return;
       }
-      // Byte-based fallback (Docker / remote-agent): blocking round-trip
+      // Byte-based fallback (remote-agent): blocking round-trip
       // with no transfer-progress event, so surface its own feedback (UX-017)
       // rather than resolving silently.
       await runBlockingTransfer(
@@ -251,7 +251,7 @@ export function useSessionFileSystem() {
     const remotePath =
       sessionCurrentPath === "/" ? `/${fileName}` : `${sessionCurrentPath}/${fileName}`;
     if (transferQueueCapable) {
-      // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
+      // Queue-capable (SFTP/FTP/Docker): register a tracked transfer on the rich queue
       // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
       const ok = await runTransfer(
         "Upload",
@@ -261,7 +261,7 @@ export function useSessionFileSystem() {
       if (ok) refreshSession();
       return;
     }
-    // Byte-based fallback (Docker / remote-agent): blocking round-trip
+    // Byte-based fallback (remote-agent): blocking round-trip
     // with no transfer-progress event, so surface its own feedback (#2906)
     // rather than resolving silently.
     const ok = await runBlockingTransfer(
@@ -287,7 +287,7 @@ export function useSessionFileSystem() {
       const remotePath =
         sessionCurrentPath === "/" ? `/${fileName}` : `${sessionCurrentPath}/${fileName}`;
       if (transferQueueCapable) {
-        // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
+        // Queue-capable (SFTP/FTP/Docker): register a tracked transfer on the rich queue
         // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
         const ok = await runTransfer(
           "Upload",
@@ -297,7 +297,7 @@ export function useSessionFileSystem() {
         if (ok) refreshSession();
         return;
       }
-      // Byte-based fallback (Docker / remote-agent): blocking round-trip
+      // Byte-based fallback (remote-agent): blocking round-trip
       // with no transfer-progress event, so surface its own feedback (#2906)
       // rather than resolving silently.
       const ok = await runBlockingTransfer(
@@ -495,12 +495,12 @@ export function useSessionFileSystem() {
         }
         // local→session: upload the local file to the remote destination.
         if (transferQueueCapable) {
-          // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
+          // Queue-capable (SFTP/FTP/Docker): register a tracked transfer on the rich queue
           // engine (#2421, PROD-010).
           await startUpload(destSession, srcPath, destPath);
           return true;
         }
-        // Byte-based fallback (Docker / remote-agent): blocking round-trip with no
+        // Byte-based fallback (remote-agent): blocking round-trip with no
         // transfer-progress event.
         const { readFile } = await import("@tauri-apps/plugin-fs");
         const data = await readFile(srcPath);
@@ -631,9 +631,9 @@ export function useSessionFileSystem() {
     supportsPermissions: sftpCapable,
     supportsOwner: sftpCapable,
     supportsSymlink: sftpCapable,
-    // Picks the remote drag-out staging path: a queue-capable (SFTP / FTP)
-    // session stages through the transfer queue (#3457); byte-based sessions
-    // (Docker / agent) are staged by the backend instead (#3491).
+    // Picks the remote drag-out staging path: a queue-capable (SFTP / FTP /
+    // Docker) session stages through the transfer queue (#3457); byte-based
+    // (agent) sessions are staged by the backend instead (#3491).
     supportsDragOut: transferQueueCapable,
     openInVscode,
     copyEntry,

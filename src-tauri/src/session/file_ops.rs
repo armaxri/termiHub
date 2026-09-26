@@ -266,6 +266,29 @@ impl<'a> FileOps<'a> {
         })
     }
 
+    /// Resolve the streaming [`DockerTransferTarget`] behind a Docker session's
+    /// file browser, cloned so a background transfer runs its own `docker exec`
+    /// without holding the sessions lock — the Docker analogue of
+    /// [`sftp_browser`](Self::sftp_browser) (PARITY-004, #3567).
+    ///
+    /// Fails with [`TerminalError::RemoteError`] when the session has no file
+    /// browser or its browser is not Docker-backed.
+    ///
+    /// [`DockerTransferTarget`]: termihub_core::backends::docker::DockerTransferTarget
+    pub(super) async fn docker_transfer_target(
+        &self,
+        session_id: &str,
+    ) -> Result<termihub_core::backends::docker::DockerTransferTarget, TerminalError> {
+        let sessions = self.sessions.lock().await;
+        let browser = Self::browser(&sessions, session_id)?;
+        termihub_core::backends::docker::docker_transfer_target_of(browser).ok_or_else(|| {
+            TerminalError::RemoteError(
+                "Session file browser is not Docker-backed; queued transfer unavailable"
+                    .to_string(),
+            )
+        })
+    }
+
     /// Resolve a remote path to its canonical absolute form via SFTP realpath.
     ///
     /// Session-path mirror of the standalone `sftp_realpath` command; errors are

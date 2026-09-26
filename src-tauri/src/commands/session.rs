@@ -857,41 +857,41 @@ enum SessionTransferTarget {
     /// server-resolved [`FtpConfig`](termihub_core::config::FtpConfig).
     #[cfg(feature = "ftp")]
     Ftp(termihub_core::config::FtpConfig),
+    /// Docker-backed session: streams through its own `docker exec` per attempt
+    /// (PARITY-004, #3567).
+    Docker(termihub_core::backends::docker::DockerTransferTarget),
 }
 
-/// Resolve how a session's queued transfer should run: SFTP (dedicated channel)
-/// or FTP (server-resolved settings, credentials never leaving the backend).
+/// Resolve how a session's queued transfer should run: SFTP (dedicated channel),
+/// FTP (server-resolved settings, credentials never leaving the backend), or
+/// Docker (a streaming `docker exec` per attempt).
 ///
-/// Tries the SFTP browser first (the fast, unchanged path); an SFTP-incapable
-/// session then tries the FTP config. A byte-based backend (Docker / remote-agent)
-/// supports neither and surfaces the SFTP "not supported" error, so the queue
-/// path stays reserved for backends that can actually drive it (PROD-010).
+/// Tries the SFTP browser first (the fast, unchanged path), then the FTP config,
+/// then the Docker target. A backend that supports none of them (a remote-agent
+/// session) surfaces the SFTP "not supported" error, so the queue path stays
+/// reserved for backends that can actually drive it (PROD-010).
 async fn resolve_session_transfer_target(
     manager: &SessionManager,
     session_id: &str,
 ) -> Result<SessionTransferTarget, TerminalError> {
-    match manager.sftp_transfer_browser(session_id).await {
-        Ok(browser) => Ok(SessionTransferTarget::Sftp(browser)),
-        Err(sftp_err) => {
-            #[cfg(feature = "ftp")]
-            {
-                match manager.ftp_transfer_config(session_id).await {
-                    Ok(config) => Ok(SessionTransferTarget::Ftp(config)),
-                    // Neither SFTP- nor FTP-backed: preserve the SFTP
-                    // "not supported" error shape the callers expect.
-                    Err(_) => Err(sftp_err),
-                }
-            }
-            #[cfg(not(feature = "ftp"))]
-            {
-                Err(sftp_err)
-            }
-        }
+    let sftp_err = match manager.sftp_transfer_browser(session_id).await {
+        Ok(browser) => return Ok(SessionTransferTarget::Sftp(browser)),
+        Err(e) => e,
+    };
+    #[cfg(feature = "ftp")]
+    if let Ok(config) = manager.ftp_transfer_config(session_id).await {
+        return Ok(SessionTransferTarget::Ftp(config));
+    }
+    match manager.docker_transfer_target(session_id).await {
+        Ok(target) => Ok(SessionTransferTarget::Docker(target)),
+        // None of the queue-capable backends: preserve the SFTP
+        // "not supported" error shape the callers expect.
+        Err(_) => Err(sftp_err),
     }
 }
 
 /// Spawn the background executor for a resolved transfer target, driving the
-/// shared [`TransferHandle`] the same way for SFTP and FTP.
+/// shared [`TransferHandle`] the same way for SFTP, FTP and Docker.
 fn spawn_session_transfer(
     target: SessionTransferTarget,
     direction: TransferDirection,
@@ -938,6 +938,21 @@ fn spawn_session_transfer(
                 .await;
             });
         }
+        SessionTransferTarget::Docker(target) => {
+            tauri::async_runtime::spawn(async move {
+                transfer::docker::run_docker_transfer(
+                    target,
+                    direction,
+                    remote_path,
+                    local_path,
+                    handle,
+                    registry,
+                    sink,
+                    0,
+                )
+                .await;
+            });
+        }
     }
 }
 
@@ -945,7 +960,7 @@ fn spawn_session_transfer(
 /// background executor, returning the `transfer_id` immediately.
 ///
 /// The shared body of [`session_download`] / [`session_upload`]: it resolves the
-/// SFTP-or-FTP executor up front (so an unsupported / unreachable session errors
+/// SFTP / FTP / Docker executor up front (so an unsupported / unreachable session errors
 /// here rather than silently on the queue), enqueues on the rich queue model,
 /// records durable metadata (paths and references only — never credentials,
 /// PROD-0011), and hands off to [`spawn_session_transfer`]. The copy does not
@@ -1003,10 +1018,11 @@ async fn start_session_transfer(
 /// the background on its own channel/connection, returning the id immediately —
 /// the copy does not hold the session lock, so listing / navigating the same
 /// session stays live during the transfer (#1245). Progress and completion are
-/// reported via `transfer-progress` events. Supports SFTP (dedicated channel)
-/// and FTP (server-resolved settings, credentials never crossing into the
-/// frontend — PROD-010); pause/resume/retry work via the generic `transfer_*`
-/// commands, with byte-verified offset resume for SFTP (PROD-0012).
+/// reported via `transfer-progress` events. Supports SFTP (dedicated channel),
+/// FTP (server-resolved settings, credentials never crossing into the
+/// frontend — PROD-010) and Docker (streaming `docker exec`, #3567);
+/// pause/resume/retry work via the generic `transfer_*` commands, with
+/// byte-verified offset resume for SFTP (PROD-0012) and Docker.
 #[tauri::command]
 pub async fn session_download(
     session_id: String,
@@ -1033,8 +1049,9 @@ pub async fn session_download(
 ///
 /// Enqueues a `transfer_id` on the rich transfer-queue model and runs it in the
 /// background on its own channel/connection, returning the id immediately
-/// (#1245). Mirrors [`session_download`]: SFTP uses a dedicated channel and FTP a
-/// server-resolved connection (credentials never leaving the backend — PROD-010).
+/// (#1245). Mirrors [`session_download`]: SFTP uses a dedicated channel, FTP a
+/// server-resolved connection (credentials never leaving the backend — PROD-010)
+/// and Docker a streaming `docker exec` (#3567).
 #[tauri::command]
 pub async fn session_upload(
     session_id: String,
@@ -1062,10 +1079,11 @@ pub async fn session_upload(
 /// pausable/resumable transfer for it rather than the frontend's blocking
 /// byte-based fallback.
 ///
-/// Returns `true` for an SFTP-backed (SSH) or FTP-backed session and `false` for
-/// a byte-based backend (Docker / remote-agent) or an unknown session. The
-/// frontend uses this to route FTP transfers through the queue exactly like SFTP
-/// while leaving Docker/agent on the byte-based path (PROD-010).
+/// Returns `true` for an SFTP-backed (SSH), FTP-backed or Docker-backed session
+/// and `false` for a byte-based backend (remote-agent) or an unknown session.
+/// The frontend uses this to route FTP and Docker transfers through the queue
+/// exactly like SFTP while leaving agent sessions on the byte-based path
+/// (PROD-010, #3567).
 #[tauri::command]
 pub async fn session_supports_transfer_queue(
     session_id: String,

@@ -45,6 +45,10 @@ pub mod sftp {
     pub use termihub_core::files::transfer::sftp::*;
 }
 
+pub mod docker {
+    pub use termihub_core::files::transfer::docker::*;
+}
+
 #[cfg(feature = "ftp")]
 pub mod ftp {
     pub use termihub_core::files::transfer::ftp::*;
