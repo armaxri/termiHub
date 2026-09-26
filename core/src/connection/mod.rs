@@ -92,7 +92,8 @@ pub struct Capabilities {
     /// [`ConnectionType::graphical()`].
     #[serde(default)]
     pub graphical: bool,
-    /// Whether terminal resize is supported (false for serial/telnet).
+    /// Whether terminal resize is supported (false for serial; telnet
+    /// propagates it via NAWS).
     pub resize: bool,
     /// Whether sessions of this type can persist across agent reconnections.
     pub persistent: bool,

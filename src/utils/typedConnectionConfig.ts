@@ -87,6 +87,21 @@ export interface TelnetConnectionConfigFields {
   host?: string;
   port?: number;
   connectTimeoutSecs?: number;
+  /** Terminal type reported via TERMINAL-TYPE (RFC 1091); default `xterm-256color`. */
+  terminalType?: string;
+  /** `"none"` (manual login, default) or `"password"` (prompt-driven auto-login). */
+  authMethod?: string;
+  /** Auto-login username. */
+  username?: string;
+  /** Auto-login password — resolved from the credential store, never persisted. */
+  password?: string;
+  savePassword?: boolean;
+  /** `|`-separated, case-insensitive login-prompt patterns. */
+  loginPrompt?: string;
+  /** `|`-separated, case-insensitive password-prompt patterns. */
+  passwordPrompt?: string;
+  /** Seconds to wait for each auto-login prompt. */
+  autoLoginTimeoutSecs?: number;
 }
 
 /** Built-in Docker config fields (Rust `DockerConfig`, `type: "docker"`). */
