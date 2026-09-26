@@ -708,12 +708,22 @@ scripts\build-agents.cmd          # Windows
 - All targets use `cross-rs` (Docker/Podman-based) which builds inside containers with the correct musl toolchain and libudev-dev
 - Docker Desktop or Podman Desktop must be running before building
 
-### Build Options (Unix)
+### Build Options
+
+`build-agents.sh` and `build-agents.cmd` accept the same flags (`--targets`, `--sequential`,
+`--native`, `--dev`, `--features`, `--sign-key`; run either with `--help`), and both write a
+`<binary>.sha256` checksum sidecar next to every built binary, failing the build if they cannot.
+The script-parity CI gate (`scripts/internal/check-script-parity.sh`) fails when the flags the two
+halves of a `.sh`/`.cmd` pair accept drift apart.
 
 ```bash
 # Build specific target only
 ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl
+scripts\build-agents.cmd --targets aarch64-unknown-linux-musl
 ```
+
+On Windows, `--sign-key` runs the same `scripts/internal/agent-update-signing.sh` pipeline as
+release CI, so it needs Git Bash with OpenSSL 3 (both ship with Git for Windows).
 
 ### Output
 
