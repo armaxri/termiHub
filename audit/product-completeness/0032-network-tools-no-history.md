@@ -10,7 +10,7 @@ evidence:
   - src/components/NetworkTools/HttpMonitorPanel.tsx:24
   - src/components/NetworkTools/WolPanel.tsx:34
 status: fixed
-resolution: "#3461 — persisted bounded run history for all one-shot network tools (50/tool, 30d, 32KiB/run) with view/re-run/export/clear + setting; HTTP monitor series #3462"
+resolution: "#3461, #3541 — persisted bounded run history for all one-shot network tools (50/tool, 30d, 32KiB/run) with view/re-run/export/clear + setting; HTTP monitor per-monitor check history persisted + CSV export via #3541"
 ---
 
 ## What
