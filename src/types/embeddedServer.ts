@@ -4,7 +4,12 @@ export type ServerType = "http" | "ftp" | "tftp";
 /** Current lifecycle status of an embedded server. */
 export type ServerStatus = "stopped" | "starting" | "running" | "stopping" | "error";
 
-/** FTP authentication configuration. */
+/**
+ * FTP authentication configuration.
+ *
+ * `password` is write-only (#3514): the backend keeps it in the credential
+ * store and always returns `""` here. Saving `""` keeps the stored password.
+ */
 export type FtpAuth =
   | { type: "anonymous" }
   | { type: "credentials"; username: string; password: string };
@@ -14,6 +19,8 @@ export type FtpAuth =
  * (PROD-0035). When set, the server challenges every request until matching
  * credentials are supplied; when absent, the directory is served
  * unauthenticated.
+ *
+ * `password` is write-only (#3514), exactly like {@link FtpAuth}'s.
  */
 export interface HttpBasicAuth {
   username: string;

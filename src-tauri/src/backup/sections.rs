@@ -13,12 +13,16 @@ use std::path::Path;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
+use zeroize::Zeroizing;
 
 use crate::connection::config::{ConnectionStore, SavedRemoteAgent};
 use crate::connection::settings::AppSettings;
 use crate::connection::tree::{build_tree, flatten_tree};
+use crate::credential::types::CredentialKey;
 use crate::credential::vault::ConflictStrategy;
 use crate::embedded_servers::config::EmbeddedServerStore;
+use crate::embedded_servers::secrets::{credential_key, take_passwords};
+use crate::embedded_servers::storage::remove_password_keys;
 use crate::macros::config::MacroStore;
 use crate::network::http_monitor_storage::HttpMonitorsFile;
 use crate::network::tool_history::NetworkToolHistoryStore;
@@ -90,8 +94,10 @@ pub struct SectionSpec {
     /// store's version bump reaches the backup automatically.
     pub current_version: u32,
     pub shape: Shape,
-    /// The store holds secrets in its own file (e.g. embedded-server
-    /// passwords), so it is only exported inside an encrypted backup.
+    /// The store holds secrets in its own file, so it is only exported inside
+    /// an encrypted backup. (No store does today: connection and — since #3514
+    /// — embedded-server passwords live in the credential store and travel in
+    /// the credentials section.)
     pub contains_secrets: bool,
     /// The store holds **trust decisions** (trusted host keys) whose integrity
     /// matters: an injected entry could enable a man-in-the-middle. It is only
@@ -100,6 +106,10 @@ pub struct SectionSpec {
     pub integrity_sensitive: bool,
     /// Validate + migrate a document to the current schema.
     normalize: fn(Value) -> Result<Value, NormalizeError>,
+    /// Read the plaintext passwords an older schema of this store kept in its
+    /// own file (see [`LegacySecret`]). [`Self::normalize`] strips them; a
+    /// restore moves them into the credential store instead.
+    pub legacy_secrets: Option<fn(&Value) -> Vec<LegacySecret>>,
     /// The store's empty default document.
     default_doc: fn() -> Value,
 }
@@ -149,6 +159,27 @@ impl SectionSpec {
             });
         }
         self.normalize(section.data.clone())
+    }
+}
+
+/// A password an older store schema kept in plaintext in its own file (e.g.
+/// `embedded_servers.json` v1, before #3514). It is never written back to a
+/// file: a backup leaves it out and a restore moves it into the credential
+/// store.
+pub struct LegacySecret {
+    /// The id of the store item (e.g. the embedded server) that owns it.
+    pub item_id: String,
+    /// Where the credential store keeps it.
+    pub key: CredentialKey,
+    pub value: Zeroizing<String>,
+}
+
+impl LegacySecret {
+    /// The legacy secrets in a (raw, not yet normalized) section document.
+    pub fn read(spec: &SectionSpec, doc: &Value) -> Vec<LegacySecret> {
+        spec.legacy_secrets
+            .map(|read| read(doc))
+            .unwrap_or_default()
     }
 }
 
@@ -278,6 +309,42 @@ fn normalize_connections(data: Value) -> Result<Value, NormalizeError> {
     Ok(doc)
 }
 
+/// `embedded_servers.json`: v1 files may carry plaintext FTP / HTTP Basic
+/// passwords; v2 (#3514) keeps them in the credential store. Migrating a
+/// document forward is exactly removing them — the same `password` keys the
+/// store's own writer removes — so the result is always a v2 document. The
+/// passwords themselves are read separately ([`embedded_server_secrets`]).
+fn normalize_embedded_servers(data: Value) -> Result<Value, NormalizeError> {
+    let mut doc = normalize_plain::<EmbeddedServerStore>(data)?;
+    remove_password_keys(&mut doc);
+    if let Some(obj) = doc.as_object_mut() {
+        obj.insert(
+            "version".to_string(),
+            Value::String(EmbeddedServerStore::CURRENT_VERSION.to_string()),
+        );
+    }
+    Ok(doc)
+}
+
+/// The plaintext passwords in a (v1) `embedded_servers.json` document, keyed
+/// as the embedded-server manager keeps them in the credential store.
+fn embedded_server_secrets(doc: &Value) -> Vec<LegacySecret> {
+    let Ok(mut store) = serde_json::from_value::<EmbeddedServerStore>(doc.clone()) else {
+        return Vec::new();
+    };
+    let mut secrets = Vec::new();
+    for config in &mut store.servers {
+        for (slot, value) in take_passwords(config) {
+            secrets.push(LegacySecret {
+                item_id: config.id.clone(),
+                key: credential_key(&config.id, slot),
+                value,
+            });
+        }
+    }
+    secrets
+}
+
 /// Every section a backup can carry, in display order.
 pub static SECTIONS: &[SectionSpec] = &[
     SectionSpec {
@@ -290,6 +357,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_connections,
+        legacy_secrets: None,
         default_doc: || to_doc(&ConnectionStore::default()),
     },
     SectionSpec {
@@ -302,6 +370,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_versioned::<AppSettings>,
+        legacy_secrets: None,
         default_doc: || to_doc(&AppSettings::default()),
     },
     SectionSpec {
@@ -316,6 +385,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_versioned::<WorkspaceStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&WorkspaceStore::default()),
     },
     SectionSpec {
@@ -328,6 +398,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_plain::<MacroStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&MacroStore::default()),
     },
     SectionSpec {
@@ -340,6 +411,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_versioned::<WorkflowStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&WorkflowStore::default()),
     },
     SectionSpec {
@@ -352,18 +424,21 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_plain::<TunnelStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&TunnelStore::default()),
     },
     SectionSpec {
         id: "embeddedServers",
         label: "Embedded servers",
-        description: "Embedded HTTP/FTP/TFTP server definitions (includes their passwords).",
+        description:
+            "Embedded HTTP/FTP/TFTP server definitions (passwords are in the credentials).",
         file_name: "embedded_servers.json",
         current_version: EmbeddedServerStore::CURRENT_VERSION,
         shape: Shape::List { field: "servers" },
-        contains_secrets: true,
+        contains_secrets: false,
         integrity_sensitive: false,
-        normalize: normalize_plain::<EmbeddedServerStore>,
+        normalize: normalize_embedded_servers,
+        legacy_secrets: Some(embedded_server_secrets),
         default_doc: || to_doc(&EmbeddedServerStore::default()),
     },
     SectionSpec {
@@ -376,6 +451,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_plain::<WolDevicesFile>,
+        legacy_secrets: None,
         default_doc: || to_doc(&WolDevicesFile::default()),
     },
     SectionSpec {
@@ -388,6 +464,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_plain::<HttpMonitorsFile>,
+        legacy_secrets: None,
         default_doc: || to_doc(&HttpMonitorsFile::default()),
     },
     SectionSpec {
@@ -400,6 +477,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: false,
         normalize: normalize_versioned::<NetworkToolHistoryStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&NetworkToolHistoryStore::default()),
     },
     SectionSpec {
@@ -412,6 +490,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: true,
         normalize: normalize_trust_map,
+        legacy_secrets: None,
         default_doc: || Value::Object(serde_json::Map::new()),
     },
     SectionSpec {
@@ -424,6 +503,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         contains_secrets: false,
         integrity_sensitive: true,
         normalize: normalize_trust_map,
+        legacy_secrets: None,
         default_doc: || Value::Object(serde_json::Map::new()),
     },
 ];
@@ -656,4 +736,20 @@ pub fn read_current(spec: &SectionSpec, config_dir: &Path) -> CurrentDoc {
         Err(NormalizeError::Newer { found, supported }) => CurrentDoc::Newer { found, supported },
         Err(NormalizeError::Invalid(detail)) => CurrentDoc::Unreadable(detail),
     }
+}
+
+/// The legacy plaintext passwords still in a section's current store file
+/// (e.g. embedded-server passwords whose move into a locked credential store
+/// is pending, #3514). Empty when the file is missing or unreadable.
+pub fn read_current_legacy_secrets(spec: &SectionSpec, config_dir: &Path) -> Vec<LegacySecret> {
+    if spec.legacy_secrets.is_none() {
+        return Vec::new();
+    }
+    let Ok(raw) = std::fs::read_to_string(config_dir.join(spec.file_name)) else {
+        return Vec::new();
+    };
+    let raw = Zeroizing::new(raw);
+    serde_json::from_str::<Value>(&raw)
+        .map(|doc| LegacySecret::read(spec, &doc))
+        .unwrap_or_default()
 }

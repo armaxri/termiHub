@@ -1317,6 +1317,16 @@ changed underneath it (and cannot overwrite the restored data with stale in-memo
 startup swap snapshots the originals before touching anything, so a crash mid-swap resumes from the
 original snapshot, and the manifest may only name known store files.
 
+##### Embedded-server passwords (#3514, #3520)
+
+`embedded_servers.json` v2 keeps no password (they live in the credential store), so the
+embedded-servers section is not encryption-only: it never carries a password, and the passwords
+travel in the sealed credentials section like connection passwords. Plaintext a v1 file or an older
+backup's v1 section still holds is never written to a file: export migrates the section (stripping
+it, with a warning), and restore moves the passwords of the items it keeps into the credential store
+in the same all-or-nothing batch as the credentials — refusing while the store is locked, and
+dropping them (the preview says so) when credential storage is off.
+
 ##### Trusted host keys and plugins (#3515)
 
 - **Trust stores** — `ssh_known_hosts.json` and `rdp_known_hosts.json` are sections of shape

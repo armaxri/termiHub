@@ -8,13 +8,13 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
-use super::restore::{prepare, OpenedBackup, PreparedRestore};
+use super::restore::{prepare, OpenedBackup, PendingSecret, PreparedRestore};
 use super::{BackupRestoreRequest, BackupRestoreResult};
 use crate::credential::types::CredentialKey;
-use crate::credential::vault::{self, OpenedVault, VaultError};
-use crate::credential::CredentialStore;
+use crate::credential::vault::{self, VaultError};
+use crate::credential::{CredentialStore, CredentialStoreStatus};
 use crate::utils::fs::write_atomic;
 
 /// Staging directory for a restore that is being written (not yet committed).
@@ -155,11 +155,12 @@ fn stage(config_dir: &Path, prepared: &PreparedRestore) -> Result<Staged, VaultE
 struct CredentialSnapshot(Vec<(CredentialKey, Option<Zeroizing<String>>)>);
 
 impl CredentialSnapshot {
-    fn take(vault: &OpenedVault, store: &dyn CredentialStore) -> Result<Self, VaultError> {
-        vault
-            .entries
-            .iter()
-            .map(|(key, _)| {
+    fn take<'a>(
+        keys: impl IntoIterator<Item = &'a CredentialKey>,
+        store: &dyn CredentialStore,
+    ) -> Result<Self, VaultError> {
+        keys.into_iter()
+            .map(|key| {
                 store
                     .get(key)
                     .map(|v| (key.clone(), v.map(Zeroizing::new)))
@@ -183,12 +184,90 @@ impl CredentialSnapshot {
     }
 }
 
+/// Move the legacy plaintext passwords of the restored items into the
+/// credential store (#3514) — they are never written to a restored file.
+///
+/// Keys the credentials section already restores are left to it. With an
+/// unlocked store they are written as one batch (a snapshot of the values they
+/// replace is pushed to `snapshots` first); a locked store refuses the restore
+/// with an "unlock first" error; with credential storage off they cannot be
+/// kept and are dropped (the restore preview says so).
+fn import_legacy_secrets(
+    secrets: &[PendingSecret],
+    covered: &[&CredentialKey],
+    store: Option<&dyn CredentialStore>,
+    snapshots: &mut Vec<CredentialSnapshot>,
+) -> Result<(), VaultError> {
+    let secrets: Vec<&PendingSecret> = secrets
+        .iter()
+        .filter(|s| !covered.contains(&&s.key))
+        .collect();
+    if secrets.is_empty() {
+        return Ok(());
+    }
+    let store = match store {
+        Some(store) if store.status() == CredentialStoreStatus::Unlocked => store,
+        Some(store) if store.status() == CredentialStoreStatus::Locked => {
+            return Err(VaultError::StoreLocked {
+                message: "This backup keeps embedded server passwords in the old plain-text \
+                          format. Unlock the credential store so they can be moved into it, then \
+                          restore again."
+                    .to_string(),
+            })
+        }
+        _ => {
+            warn!(
+                count = secrets.len(),
+                "Credential storage is off; plaintext passwords from the backup are not restored"
+            );
+            return Ok(());
+        }
+    };
+    let mut entries: Vec<(CredentialKey, String)> = Vec::new();
+    for secret in secrets {
+        if !secret.overwrite {
+            let existing = store
+                .get(&secret.key)
+                .map_err(|e| other(format!("Could not read the current credential store: {e}")))?
+                .map(Zeroizing::new);
+            if existing.is_some_and(|v| !v.is_empty()) {
+                continue;
+            }
+        }
+        entries.push((secret.key.clone(), secret.value.as_str().to_owned()));
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    let snapshot = CredentialSnapshot::take(entries.iter().map(|(key, _)| key), store);
+    let result = snapshot.and_then(|snapshot| {
+        snapshots.push(snapshot);
+        store.set_many(&entries).map_err(|e| {
+            other(format!(
+                "Could not move the backup's plaintext passwords into the credential store: {e}"
+            ))
+        })
+    });
+    for (_, value) in entries.iter_mut() {
+        value.zeroize();
+    }
+    if result.is_ok() {
+        info!(
+            count = entries.len(),
+            "Moved plaintext passwords from the backup into the credential store"
+        );
+    }
+    result
+}
+
 /// Apply a restore: stage the chosen stores, import the credentials, then
 /// commit. All-or-nothing: on any failure nothing is committed and the
 /// credential store is rolled back.
 ///
 /// `store` must be the (already authorized) credential store when
-/// `request.credentials` is set.
+/// `request.credentials` is set. It is also where legacy plaintext passwords
+/// in a restored section go (see [`import_legacy_secrets`]); without it they
+/// are dropped.
 pub fn apply(
     opened: &OpenedBackup,
     config_dir: &Path,
@@ -202,38 +281,47 @@ pub fn apply(
         Some(stage(config_dir, &prepared)?)
     };
 
-    let mut credentials_result = None;
-    let mut snapshot = None;
-    if let (Some(strategy), Some(vault)) = (request.credentials, opened.credentials.as_ref()) {
-        let outcome = (|| {
+    let mut snapshots: Vec<CredentialSnapshot> = Vec::new();
+    let roll_back = |snapshots: &[CredentialSnapshot]| {
+        if let Some(store) = store {
+            for snapshot in snapshots.iter().rev() {
+                snapshot.restore(store);
+            }
+        }
+    };
+    let outcome = (|| {
+        let mut credentials_result = None;
+        let mut covered: Vec<&CredentialKey> = Vec::new();
+        if let (Some(strategy), Some(vault)) = (request.credentials, opened.credentials.as_ref()) {
             let store = store.ok_or_else(|| VaultError::StoreUnavailable {
                 message: "There is no credential store to restore the credentials into."
                     .to_string(),
             })?;
-            let snap = CredentialSnapshot::take(vault, store)?;
-            let result = vault::apply_import(vault, store, strategy)?;
-            Ok::<_, VaultError>((snap, result))
-        })();
-        match outcome {
-            Ok((snap, result)) => {
-                snapshot = Some(snap);
-                credentials_result = Some(result);
-            }
-            Err(e) => {
-                if let Some(staged) = staged {
-                    staged.discard();
-                }
-                return Err(e);
-            }
+            snapshots.push(CredentialSnapshot::take(
+                vault.entries.iter().map(|(key, _)| key),
+                store,
+            )?);
+            credentials_result = Some(vault::apply_import(vault, store, strategy)?);
+            covered.extend(vault.entries.iter().map(|(key, _)| key));
         }
-    }
+        import_legacy_secrets(&prepared.secrets, &covered, store, &mut snapshots)?;
+        Ok::<_, VaultError>(credentials_result)
+    })();
+    let credentials_result = match outcome {
+        Ok(result) => result,
+        Err(e) => {
+            roll_back(&snapshots);
+            if let Some(staged) = staged {
+                staged.discard();
+            }
+            return Err(e);
+        }
+    };
 
     let restart_required = staged.is_some();
     if let Some(staged) = staged {
         if let Err(e) = staged.commit() {
-            if let (Some(snapshot), Some(store)) = (&snapshot, store) {
-                snapshot.restore(store);
-            }
+            roll_back(&snapshots);
             return Err(e);
         }
     }

@@ -8,7 +8,7 @@ use serde_json::Value;
 use zeroize::Zeroizing;
 
 use super::plugins;
-use super::sections::{self, keyed_items, CurrentDoc, SectionSpec, Shape, SECTIONS};
+use super::sections::{self, keyed_items, CurrentDoc, LegacySecret, SectionSpec, Shape, SECTIONS};
 use super::{
     BackupContents, BackupExportOptions, BackupFile, BackupSection, BackupSectionInfo,
     BACKUP_FORMAT_ID, BACKUP_FORMAT_VERSION,
@@ -60,9 +60,15 @@ pub fn section_infos(config_dir: &Path) -> Vec<BackupSectionInfo> {
 ///
 /// The document is taken verbatim (not re-serialized) so the backup preserves
 /// exactly what the store wrote, and stamped with the store's schema version.
+///
+/// Plaintext passwords an older schema of the store still holds (legacy
+/// embedded-server passwords awaiting their move into a locked credential
+/// store, #3514) are never backed up: the section is migrated, which strips
+/// them, and a warning in `warnings` says so.
 fn read_section(
     spec: &SectionSpec,
     config_dir: &Path,
+    warnings: &mut Vec<String>,
 ) -> Result<Option<BackupSection>, VaultError> {
     let path = config_dir.join(spec.file_name);
     let raw = match std::fs::read_to_string(&path) {
@@ -82,7 +88,21 @@ fn read_section(
         ))
     })?;
     let mut data = data;
-    if read_version(&data).unwrap_or(1) < spec.current_version {
+    let legacy = LegacySecret::read(spec, &data).len();
+    if legacy > 0 {
+        data = spec.normalize(data).map_err(|e| {
+            other(format!(
+                "{} cannot be backed up without its plaintext passwords: {}",
+                spec.label,
+                e.message(spec.label)
+            ))
+        })?;
+        warnings.push(format!(
+            "{}: {legacy} password(s) are still waiting to move into the credential store and \
+             were left out of the backup. Unlock the credential store, then back up again.",
+            spec.label
+        ));
+    } else if read_version(&data).unwrap_or(1) < spec.current_version {
         // The file predates this build's schema (the store has not re-saved it
         // since an upgrade). Back it up already migrated through the store's own
         // forward migration, so a backup made by this build restores on this
@@ -209,7 +229,7 @@ pub fn build(
     let mut backup_sections = Vec::new();
     let mut warnings = Vec::new();
     for spec in specs {
-        if let Some(section) = read_section(spec, config_dir)? {
+        if let Some(section) = read_section(spec, config_dir, &mut warnings)? {
             written.push(spec.id.to_string());
             backup_sections.push(section);
         }
