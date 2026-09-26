@@ -118,6 +118,8 @@ impl PendingAccess {
     /// Record the entry. `completed` is false when the body was dropped before
     /// its end (e.g. the client disconnected mid-download).
     fn finish(self, completed: bool) {
+        // A HEAD response carries no body, so hyper may drop it unpolled.
+        let completed = completed || self.method == "HEAD";
         let code = self.status.as_u16().to_string();
         let ok = completed && !(self.status.is_client_error() || self.status.is_server_error());
         let status = if completed {
