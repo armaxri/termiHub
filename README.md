@@ -74,6 +74,8 @@ gh attestation verify termiHub-0.1.0-macos-arm64.dmg --repo armaxri/termiHub
 
 Each release also ships CycloneDX software bills of materials (`termiHub-<version>-sbom-*.cdx.json`
 for the desktop app, the agent, the RDP sidecar and the frontend) listing every bundled dependency.
+The third-party license notices for everything termiHub ships are bundled with the app (**About →
+Third-Party Licenses**) and attached to each release as `termiHub-<version>-THIRD_PARTY_NOTICES.txt`.
 See [Verifying release artifacts](docs/contributing.md#verifying-release-artifacts) for details.
 
 ### Known limitations (beta)

@@ -1134,6 +1134,8 @@ Pushing the `vX.Y.Z` tag triggers the [Release workflow](../.github/workflows/re
    checksum and a `.sig` update signature
 5. Attest build provenance for every installer, agent binary and SBOM, and publish
    CycloneDX SBOMs (see [Verifying release artifacts](#verifying-release-artifacts))
+   plus the generated third-party license notices, which every installer also bundles
+   (see [Licensing](licensing.md#generated-third-party-notices))
 6. Verify the complete asset set, including SBOMs and a valid attestation on every artifact
    (`verify-release`) — a release missing either fails here
 7. Mark a stable release as GitHub's **Latest release** (`mark-latest`), only after
@@ -1196,6 +1198,12 @@ The release workflow adds two supply-chain records to every release (CI-022,
   vulnerability response. The frontend SBOM is generated from a `node-linker=hoisted` install
   of the frozen lockfile because `cyclonedx-npm` cannot read pnpm's symlinked store; the job
   fails if any direct production dependency is missing from it.
+
+- **Third-party license notices.** `termiHub-X.Y.Z-THIRD_PARTY_NOTICES.txt` holds the full
+  license text of every Rust crate and npm production package shipped in the desktop app,
+  the agent and the RDP sidecar (the same file every installer bundles for **About →
+  Third-Party Licenses**). Regenerate it with `pnpm notices:generate`; see
+  [Licensing → Generated third-party notices](licensing.md#generated-third-party-notices).
 
 To reproduce the SBOMs locally (no build needed; generated files land next to each crate):
 

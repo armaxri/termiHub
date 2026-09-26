@@ -2,19 +2,28 @@
 
 termiHub itself is licensed under the [MIT License](LICENSE).
 
-This file documents third-party programs that termiHub **installs and invokes**
-(but does **not** bundle or redistribute), together with their license texts and
-upstream source pointers. It is the canonical attribution surface referenced
-from the in-app **About → Open Source Licenses** entry.
+termiHub's third-party attribution has two parts:
 
-> **Scope note.** This file covers external _binary programs_ whose licenses
-> merit attribution — today, the X servers used for SSH X11 forwarding (see the
+1. **Bundled dependencies — generated.** The desktop app, the remote agent and the
+   RDP sidecar are built from hundreds of Rust crates and npm packages whose
+   licenses require their copyright notice and license text to accompany the
+   binary. These notices are **generated from the real dependency graph**
+   (`Cargo.lock`, `rdp-sidecar/Cargo.lock`, `pnpm-lock.yaml`) into
+   `THIRD_PARTY_NOTICES.txt` by `pnpm notices:generate` at release time. Every
+   installer bundles that file — it is what the in-app **About → Third-Party
+   Licenses** viewer shows — and each release publishes it as
+   `termiHub-<version>-THIRD_PARTY_NOTICES.txt` next to the agent binaries.
+2. **External programs — this file.** The sections below document third-party
+   programs that termiHub **installs and invokes** (but does **not** bundle or
+   redistribute), together with their license texts and upstream source
+   pointers. This content is also copied into the generated notices.
+
+> **Scope note.** The external programs are the X servers used for SSH X11
+> forwarding (see the
 > [X server provisioning concept](docs/concepts/implemented/x-server-provisioning.html)
 > and Epic #1047). termiHub installs these via a package manager (winget /
 > Homebrew) or the user installs them, and runs them as separate processes;
-> termiHub ships no X-server binary of its own (#1318). Ordinary build-time Rust
-> crates and npm packages are covered by their own license metadata in
-> `Cargo.toml` / `package.json`.
+> termiHub ships no X-server binary of its own (#1318).
 
 See [`docs/licensing.md`](docs/licensing.md) for the process-boundary rationale
 (why bundling these GPL/APSL programs does **not** change termiHub's own MIT
@@ -87,3 +96,8 @@ When the install command or upstream source for any X server changes:
 2. Update the corresponding entry and source link in this file to match.
 3. If the upstream license changed, refresh the text under `licenses/`.
 4. Re-run the compliance checklist in [`docs/licensing.md`](docs/licensing.md).
+
+The generated `THIRD_PARTY_NOTICES.txt` needs no manual upkeep: it is rebuilt
+from the lockfiles on every release. See
+[`docs/licensing.md`](docs/licensing.md#generated-third-party-notices) for the
+regeneration command.
