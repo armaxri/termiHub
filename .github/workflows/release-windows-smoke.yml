@@ -1,0 +1,385 @@
+name: Release Windows Smoke
+
+# Post-release install + launch smoke for the Windows x64 MSI (PKG-006, TIN-010,
+# #3481) — the Windows counterpart of release-linux-smoke.yml. After the "Release"
+# workflow finishes publishing a tag's artifacts, this downloads the
+# just-published MSI and, on windows-latest:
+#
+#   1. verifies the MSI's build-provenance attestation (the same check users run),
+#   2. installs it silently (`msiexec /i … /qn /l*v`), exactly as an unattended
+#      deployment would,
+#   3. asserts the "Add/Remove Programs" uninstall entry exists with the release
+#      version and that the install directory holds termihub.exe and the bundled
+#      RDP helper,
+#   4. runs `termihub.exe --version` (headless pre-init path, #2655),
+#   5. launches the app, waits for the frontend's first IPC call to reach the
+#      backend (logged to the durable app log), asserts it stays alive, then
+#      stops it,
+#   6. downloads the standalone agent binary, checks its .sha256 sidecar and
+#      attestation, and runs `termihub-agent --version`,
+#   7. uninstalls silently and asserts the uninstall entry and binaries are gone.
+#
+# The msiexec install/uninstall logs and app logs are uploaded as an artifact on
+# every run, so a failed install is diagnosable without a re-run.
+#
+# Like the Linux smokes this is a SEPARATE workflow triggered by the completion of
+# the "Release" run (not `release: published`), because release.yml publishes the
+# release BEFORE its build matrix uploads the assets.
+
+on:
+  # Fire after the Release workflow completes. workflow_run runs the copy of this
+  # file on the default branch, which is the correct behavior for release
+  # automation (releases are cut from the default branch's tags).
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  # Manual re-run against any already-published release, for verification without
+  # cutting a new release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # `gh attestation verify` fetches the provenance bundles.
+  attestations: read
+
+jobs:
+  windows-install-smoke:
+    name: Windows x64 install + launch smoke (MSI)
+    # Only run for a manual dispatch, or for a Release run that was triggered by a
+    # tag push AND succeeded — a failed/cancelled Release has no assets to test.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    env:
+      LOG_DIR: ${{ github.workspace }}\smoke-logs
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        shell: bash
+        env:
+          GH_EVENT: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GH_EVENT" = "workflow_dispatch" ]; then
+            TAG="${DISPATCH_TAG:-}"
+          else
+            # For a tag-triggered upstream run, head_branch is the tag name.
+            TAG="${RUN_TAG:-}"
+            case "$TAG" in
+              v*.*.*) ;;
+              *)
+                # Fallback: resolve the version tag pointing at the release commit.
+                echo "head_branch '$TAG' is not a version tag; resolving from head_sha"
+                TAG="$(gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate \
+                        --jq "map(select(.commit.sha==\"${RUN_SHA:-}\")) | .[].name" \
+                        | grep -E '^v[0-9]' | head -n1 || true)"
+                ;;
+            esac
+          fi
+          case "$TAG" in
+            v*.*.*) ;;
+            *) echo "::error::could not resolve a version tag (got '$TAG')"; exit 1 ;;
+          esac
+          echo "Resolved release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download MSI and agent binary
+        id: download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # RUNNER_TEMP is a Windows path; use its POSIX form inside Git Bash.
+          dist="$(cygpath -u "$RUNNER_TEMP")/dist"
+          mkdir -p "$dist"
+          MSI_NAME="termiHub-${VERSION}-windows-x64.msi"
+          AGENT_NAME="termihub-agent-windows-x64.exe"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$dist" \
+            --pattern "$MSI_NAME" \
+            --pattern "$AGENT_NAME" \
+            --pattern "${AGENT_NAME}.sha256"
+          ls -la "$dist"
+          for f in "$MSI_NAME" "$AGENT_NAME" "${AGENT_NAME}.sha256"; do
+            [ -f "$dist/$f" ] || { echo "::error::release asset $f not found for $TAG"; exit 1; }
+          done
+          # Windows-style paths for the PowerShell steps below.
+          echo "msi=$(cygpath -w "$dist/$MSI_NAME")" >> "$GITHUB_OUTPUT"
+          echo "agent=$(cygpath -w "$dist/$AGENT_NAME")" >> "$GITHUB_OUTPUT"
+
+      - name: Verify provenance and checksums
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          MSI: ${{ steps.download.outputs.msi }}
+          AGENT: ${{ steps.download.outputs.agent }}
+        run: |
+          set -euo pipefail
+          # Same attestation check as release.yml's verify-release job: signed by
+          # release.yml at exactly this tag.
+          for f in "$MSI" "$AGENT"; do
+            gh attestation verify "$(cygpath -u "$f")" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+              --source-ref "refs/tags/${TAG}" >/dev/null
+            echo "attested: $(basename "$(cygpath -u "$f")")"
+          done
+          # The agent's .sha256 sidecar is what the desktop checks before install.
+          # Git Bash provides sha256sum (#1350).
+          AGENT_U="$(cygpath -u "$AGENT")"
+          ( cd "$(dirname "$AGENT_U")" && sha256sum -c "$(basename "$AGENT_U").sha256" )
+
+      - name: Install MSI silently
+        id: install
+        shell: pwsh
+        env:
+          MSI: ${{ steps.download.outputs.msi }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force -Path $env:LOG_DIR | Out-Null
+          $log = Join-Path $env:LOG_DIR 'msi-install.log'
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/i', "`"$env:MSI`"", '/qn', '/norestart', '/l*v', "`"$log`""
+          )
+          # 3010 = success, reboot required.
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
+            Write-Output "::error::msiexec install failed with exit code $($p.ExitCode) (see msi-install.log)"
+            exit 1
+          }
+          Write-Output "msiexec install exit code: $($p.ExitCode)"
+
+          # The MSI is per-machine, so its Add/Remove Programs entry lives under
+          # HKLM (64-bit view); the WOW6432Node and HKCU views are searched too so
+          # a scope regression is still found and reported.
+          $roots = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+          )
+          $entry = Get-ItemProperty $roots -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq 'termiHub' } | Select-Object -First 1
+          if (-not $entry) {
+            Write-Output "::error::no 'termiHub' uninstall registry entry after install"
+            exit 1
+          }
+          Write-Output "uninstall entry: $($entry.PSPath)"
+          Write-Output "  DisplayVersion:  $($entry.DisplayVersion)"
+          Write-Output "  InstallLocation: $($entry.InstallLocation)"
+          Write-Output "  Publisher:       $($entry.Publisher)"
+
+          # MSI ProductVersion is numeric-only, so compare the X.Y.Z core of the
+          # release version (a v0.2.0-beta.1 tag ships ProductVersion 0.2.0[.N]).
+          $core = ($env:VERSION -split '-')[0]
+          if (-not ("$($entry.DisplayVersion)" -eq $core -or "$($entry.DisplayVersion)".StartsWith("$core."))) {
+            Write-Output "::error::installed DisplayVersion '$($entry.DisplayVersion)' does not match release $env:VERSION"
+            exit 1
+          }
+
+          # The template sets ARPINSTALLLOCATION; fall back to its default dir.
+          $dir = "$($entry.InstallLocation)"
+          if ([string]::IsNullOrWhiteSpace($dir)) { $dir = Join-Path $env:ProgramFiles 'termiHub' }
+          $dir = $dir.TrimEnd('\')
+          Write-Output "install dir: $dir"
+          Get-ChildItem -Force $dir | Format-Table -AutoSize | Out-String | Write-Output
+
+          # NTFS is case-insensitive, so this finds termihub.exe or termiHub.exe.
+          $exe = Join-Path $dir 'termihub.exe'
+          if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            Write-Output "::error::main executable not found at $exe"
+            exit 1
+          }
+          # The RDP sidecar is bundled as an externalBin (#1747).
+          $helper = Join-Path $dir 'termihub-rdp-helper.exe'
+          if (-not (Test-Path -LiteralPath $helper -PathType Leaf)) {
+            Write-Output "::error::bundled RDP helper not found at $helper"
+            exit 1
+          }
+
+          # The uninstall key of an MSI install is named after its ProductCode.
+          $productCode = $entry.PSChildName
+          "exe=$exe" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          "dir=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+          "product_code=$productCode" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+      - name: Run termihub.exe --version
+        shell: pwsh
+        env:
+          EXE: ${{ steps.install.outputs.exe }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The release exe is a GUI-subsystem binary (windows_subsystem =
+          # "windows"), so its stdout only reaches us through an explicitly
+          # redirected handle — hence Start-Process with a redirect file.
+          $out = Join-Path $env:LOG_DIR 'version.log'
+          $p = Start-Process -FilePath $env:EXE -ArgumentList '--version' -NoNewWindow -PassThru `
+            -RedirectStandardOutput $out -RedirectStandardError (Join-Path $env:LOG_DIR 'version.err.log')
+          # Touch Handle so ExitCode is populated after exit (Start-Process quirk).
+          $null = $p.Handle
+          if (-not $p.WaitForExit(60000)) {
+            Stop-Process -Id $p.Id -Force
+            Write-Output "::error::termihub.exe --version did not exit within 60s"
+            exit 1
+          }
+          $text = (Get-Content -Raw $out).Trim()
+          Write-Output "--version exit code $($p.ExitCode), printed: $text"
+          if ($p.ExitCode -ne 0) { Write-Output "::error::--version exited $($p.ExitCode)"; exit 1 }
+          if ($text -ne "termiHub $env:VERSION") {
+            Write-Output "::error::unexpected --version output '$text'"
+            exit 1
+          }
+
+      - name: Launch the app and confirm the frontend reaches the backend
+        shell: pwsh
+        env:
+          EXE: ${{ steps.install.outputs.exe }}
+          DIR: ${{ steps.install.outputs.dir }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The durable app log (utils/file_log.rs). The frontend invokes the
+          # `load_connections_and_folders` IPC command on startup, which logs
+          # $marker (commands/connection.rs) — seeing it proves WebView2 loaded
+          # the bundled frontend and an IPC round-trip reached the backend.
+          $appLog = Join-Path $env:LOCALAPPDATA 'com.termihub.app\logs\termihub.log'
+          $marker = 'Loading connections and folders'
+          Remove-Item -Force -ErrorAction SilentlyContinue $appLog
+
+          $p = Start-Process -FilePath $env:EXE -PassThru `
+            -RedirectStandardOutput (Join-Path $env:LOG_DIR 'launch.log') `
+            -RedirectStandardError (Join-Path $env:LOG_DIR 'launch.err.log')
+          $null = $p.Handle  # keep ExitCode readable after exit (Start-Process quirk)
+          Write-Output "launched pid $($p.Id)"
+
+          $timeout = 90
+          $seen = $false
+          for ($i = 0; $i -lt $timeout; $i++) {
+            if ($p.HasExited) {
+              Write-Output "::error::app exited (code $($p.ExitCode)) before the frontend reached the backend"
+              exit 1
+            }
+            if ((Test-Path -LiteralPath $appLog) -and (Select-String -Quiet -SimpleMatch -Path $appLog -Pattern $marker)) {
+              $seen = $true
+              break
+            }
+            Start-Sleep -Seconds 1
+          }
+          if (-not $seen) {
+            Write-Output "::error::no frontend IPC ('$marker') within ${timeout}s of launch"
+            Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue
+            exit 1
+          }
+          Write-Output "frontend -> backend IPC observed"
+
+          # Stay up past startup: a crash right after first paint still fails here.
+          Start-Sleep -Seconds 10
+          if ($p.HasExited) {
+            Write-Output "::error::app exited (code $($p.ExitCode)) shortly after startup"
+            exit 1
+          }
+          if (Select-String -Quiet -SimpleMatch -Path (Join-Path $env:LOG_DIR 'launch.*log') -Pattern 'panicked at') {
+            Write-Output "::error::app logged a panic during startup"
+            exit 1
+          }
+          Write-Output "app still alive after startup"
+
+          Stop-Process -Id $p.Id -Force
+          if (-not $p.WaitForExit(15000)) {
+            Write-Output "::error::app did not exit within 15s of being stopped"
+            exit 1
+          }
+          # Anything still running out of the install dir would block uninstall.
+          Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($env:DIR, 'OrdinalIgnoreCase') } |
+            Stop-Process -Force -ErrorAction SilentlyContinue
+          Write-Output "app stopped"
+          Copy-Item -LiteralPath $appLog -Destination (Join-Path $env:LOG_DIR 'app.log')
+
+      - name: Run termihub-agent --version
+        shell: pwsh
+        env:
+          AGENT: ${{ steps.download.outputs.agent }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $text = (& $env:AGENT --version 2>&1 | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0) { Write-Output "::error::agent --version exited $LASTEXITCODE"; exit 1 }
+          Write-Output "agent --version printed: $text"
+          $text | Out-File -Encoding utf8 (Join-Path $env:LOG_DIR 'agent-version.log')
+          # A release build may append "(branch: …)"; the version prefix is the gate.
+          if (-not ($text -eq "termihub-agent $env:VERSION" -or $text.StartsWith("termihub-agent $env:VERSION "))) {
+            Write-Output "::error::unexpected agent --version output '$text'"
+            exit 1
+          }
+
+      - name: Uninstall MSI silently and verify removal
+        shell: pwsh
+        env:
+          PRODUCT_CODE: ${{ steps.install.outputs.product_code }}
+          EXE: ${{ steps.install.outputs.exe }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $log = Join-Path $env:LOG_DIR 'msi-uninstall.log'
+          $p = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @(
+            '/x', $env:PRODUCT_CODE, '/qn', '/norestart', '/l*v', "`"$log`""
+          )
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
+            Write-Output "::error::msiexec uninstall failed with exit code $($p.ExitCode) (see msi-uninstall.log)"
+            exit 1
+          }
+          Write-Output "msiexec uninstall exit code: $($p.ExitCode)"
+
+          $roots = @(
+            'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+            'HKCU:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*'
+          )
+          $left = Get-ItemProperty $roots -ErrorAction SilentlyContinue |
+            Where-Object { $_.DisplayName -eq 'termiHub' }
+          if ($left) {
+            Write-Output "::error::'termiHub' uninstall entry still present after uninstall"
+            exit 1
+          }
+          if (Test-Path -LiteralPath $env:EXE) {
+            Write-Output "::error::$env:EXE still present after uninstall"
+            exit 1
+          }
+          Write-Output "uninstall removed the registry entry and the binaries"
+
+      - name: Summary
+        if: always()
+        shell: bash
+        env:
+          TAG: ${{ steps.tag.outputs.tag }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### Windows x64 install-smoke (${TAG:-unresolved})"
+            echo ""
+            echo "- result: \`${JOB_STATUS}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload msiexec and smoke logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-x64-install-smoke-logs
+          path: smoke-logs/
+          if-no-files-found: ignore
+          retention-days: 14

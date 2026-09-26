@@ -1,0 +1,362 @@
+name: Release macOS Smoke
+
+# Post-release install + launch smoke for the two macOS DMGs (PKG-006, TIN-010,
+# #3481) — the macOS counterpart of release-linux-smoke.yml. After the "Release"
+# workflow finishes publishing a tag's artifacts, each matrix leg downloads the
+# just-published DMG for its architecture and, on a NATIVE runner of that
+# architecture:
+#
+#   1. verifies the DMG's build-provenance attestation (the same check users run),
+#   2. mounts it with hdiutil and copies termiHub.app out,
+#   3. asserts the bundle is consistently ad-hoc signed
+#      (`codesign --verify --deep --strict`) — the "damaged" guard (PKG-005),
+#   4. asserts Info.plist carries the release version and the main executable is
+#      built for the runner's architecture,
+#   5. runs `termihub --version` (headless pre-init path, #2655),
+#   6. launches the app, waits for the frontend's first IPC call to reach the
+#      backend (logged to the durable app log), asserts it stays alive, then
+#      terminates it and asserts it exits,
+#   7. downloads the matching standalone agent binary, checks its .sha256 sidecar
+#      and attestation, and runs `termihub-agent --version`.
+#
+# The Intel leg matters most: release.yml cross-compiles the macos-x64 DMG on an
+# Apple-Silicon runner, so without this leg the Intel binary is never executed on
+# CI at all. It runs on GitHub's Intel macOS image (macos-15-intel; macos-13 is
+# retired) and asserts `uname -m` is x86_64 so it cannot silently run under
+# Rosetta on an arm64 host.
+#
+# Unsigned beta (maintainer decision): the bundle is ad-hoc signed, not Developer
+# ID signed or notarized, so Gatekeeper (`spctl`) always rejects it. spctl's
+# verdict is logged as advisory only — it is not a gate.
+#
+# The GUI launch check does not use scripts/smoke-test.sh: its macOS path drives
+# the app through System Events (osascript), which needs Accessibility/Automation
+# consent a hosted runner cannot grant interactively. Launching the bundle's
+# executable directly, waiting for its frontend to make an IPC call, and asserting
+# it survives startup catches the failure modes that matter for a release
+# (dyld/signature kill at exec, early panic, webview/frontend load failure)
+# without that dependency.
+#
+# Like the Linux smokes this is a SEPARATE workflow triggered by the completion of
+# the "Release" run (not `release: published`), because release.yml publishes the
+# release BEFORE its build matrix uploads the assets.
+
+on:
+  # Fire after the Release workflow completes. workflow_run runs the copy of this
+  # file on the default branch, which is the correct behavior for release
+  # automation (releases are cut from the default branch's tags).
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
+  # Manual re-run against any already-published release, for verification without
+  # cutting a new release.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to smoke-test (e.g. v0.1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # `gh attestation verify` fetches the provenance bundles.
+  attestations: read
+
+jobs:
+  macos-install-smoke:
+    name: macOS ${{ matrix.arch }} install + launch smoke (DMG)
+    # Only run for a manual dispatch, or for a Release run that was triggered by a
+    # tag push AND succeeded — a failed/cancelled Release has no assets to test.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      # Report both architectures even if one fails.
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+            platform: macos-arm64
+            uname: arm64
+          - arch: x64
+            runner: macos-15-intel
+            platform: macos-x64
+            uname: x86_64
+
+    steps:
+      - name: Resolve release tag
+        id: tag
+        env:
+          GH_EVENT: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ github.event.inputs.tag }}
+          RUN_TAG: ${{ github.event.workflow_run.head_branch }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ "$GH_EVENT" = "workflow_dispatch" ]; then
+            TAG="${DISPATCH_TAG:-}"
+          else
+            # For a tag-triggered upstream run, head_branch is the tag name.
+            TAG="${RUN_TAG:-}"
+            case "$TAG" in
+              v*.*.*) ;;
+              *)
+                # Fallback: resolve the version tag pointing at the release commit.
+                echo "head_branch '$TAG' is not a version tag; resolving from head_sha"
+                TAG="$(gh api "repos/${GITHUB_REPOSITORY}/tags" --paginate \
+                        --jq "map(select(.commit.sha==\"${RUN_SHA:-}\")) | .[].name" \
+                        | grep -E '^v[0-9]' | head -n1 || true)"
+                ;;
+            esac
+          fi
+          case "$TAG" in
+            v*.*.*) ;;
+            *) echo "::error::could not resolve a version tag (got '$TAG')"; exit 1 ;;
+          esac
+          echo "Resolved release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Assert native runner architecture
+        env:
+          WANT: ${{ matrix.uname }}
+        run: |
+          set -euo pipefail
+          HAVE="$(uname -m)"
+          echo "runner architecture: $HAVE (want $WANT)"
+          [ "$HAVE" = "$WANT" ] || { echo "::error::runner is $HAVE, not $WANT"; exit 1; }
+
+      - name: Download DMG and agent binary
+        id: download
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          set -euo pipefail
+          dist="$RUNNER_TEMP/dist"
+          mkdir -p "$dist"
+          DMG_NAME="termiHub-${VERSION}-${PLATFORM}.dmg"
+          AGENT_NAME="termihub-agent-${PLATFORM}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir "$dist" \
+            --pattern "$DMG_NAME" \
+            --pattern "$AGENT_NAME" \
+            --pattern "${AGENT_NAME}.sha256"
+          ls -la "$dist"
+          for f in "$DMG_NAME" "$AGENT_NAME" "${AGENT_NAME}.sha256"; do
+            [ -f "$dist/$f" ] || { echo "::error::release asset $f not found for $TAG"; exit 1; }
+          done
+          echo "dmg=$dist/$DMG_NAME" >> "$GITHUB_OUTPUT"
+          echo "agent=$dist/$AGENT_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Verify provenance and checksums
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          DMG: ${{ steps.download.outputs.dmg }}
+          AGENT: ${{ steps.download.outputs.agent }}
+        run: |
+          set -euo pipefail
+          # Same attestation check as release.yml's verify-release job: signed by
+          # release.yml at exactly this tag.
+          for f in "$DMG" "$AGENT"; do
+            gh attestation verify "$f" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "${GITHUB_REPOSITORY}/.github/workflows/release.yml" \
+              --source-ref "refs/tags/${TAG}" >/dev/null
+            echo "attested: $(basename "$f")"
+          done
+          # The agent's .sha256 sidecar is what the desktop checks before install.
+          ( cd "$(dirname "$AGENT")" && shasum -a 256 -c "$(basename "$AGENT").sha256" )
+
+      - name: Mount DMG and copy the app bundle
+        id: app
+        env:
+          DMG: ${{ steps.download.outputs.dmg }}
+        run: |
+          set -euo pipefail
+          mount="$RUNNER_TEMP/dmg-mount"
+          dest="$RUNNER_TEMP/install"
+          mkdir -p "$mount" "$dest"
+          hdiutil attach "$DMG" -mountpoint "$mount" -nobrowse -readonly -quiet
+          ls -la "$mount"
+          APP_NAME="$(find "$mount" -maxdepth 1 -name '*.app' -exec basename {} \; | head -n1)"
+          [ -n "$APP_NAME" ] || { echo "::error::no .app bundle in the DMG"; exit 1; }
+          # ditto preserves the bundle's signatures and extended attributes, the
+          # way a Finder drag-install does.
+          ditto "$mount/$APP_NAME" "$dest/$APP_NAME"
+          hdiutil detach "$mount" -quiet
+          APP="$dest/$APP_NAME"
+          EXE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$APP/Contents/Info.plist")"
+          {
+            echo "app=$APP"
+            echo "exe=$APP/Contents/MacOS/$EXE_NAME"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Verify bundle signature, version and architecture
+        env:
+          APP: ${{ steps.app.outputs.app }}
+          EXE: ${{ steps.app.outputs.exe }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          WANT_ARCH: ${{ matrix.uname }}
+        run: |
+          set -euo pipefail
+          echo "=== codesign --verify --deep --strict (hard gate) ==="
+          if ! codesign --verify --deep --strict --verbose=2 "$APP"; then
+            echo "::error::$APP is inconsistently signed — Gatekeeper would report it as damaged"
+            exit 1
+          fi
+          codesign -dv "$APP" 2>&1
+
+          echo "=== Gatekeeper assessment (advisory: unsigned beta, no Developer ID) ==="
+          if ! spctl --assess --type exec --verbose=2 "$APP" 2>&1; then
+            echo "::notice::spctl rejected the ad-hoc bundle (expected without a Developer ID)"
+          fi
+
+          PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
+          echo "Info.plist version: $PLIST_VERSION (want $VERSION)"
+          [ "$PLIST_VERSION" = "$VERSION" ] || { echo "::error::bundle version $PLIST_VERSION != release $VERSION"; exit 1; }
+
+          ARCHS="$(lipo -archs "$EXE")"
+          echo "main executable architectures: $ARCHS"
+          case " $ARCHS " in
+            *" $WANT_ARCH "*) ;;
+            *) echo "::error::main executable is [$ARCHS], expected $WANT_ARCH"; exit 1 ;;
+          esac
+
+          # The RDP sidecar is bundled as an externalBin (#1747); it must ship
+          # next to the main executable and be executable.
+          HELPER="$(dirname "$EXE")/termihub-rdp-helper"
+          [ -x "$HELPER" ] || { echo "::error::bundled RDP helper missing or not executable at $HELPER"; exit 1; }
+          echo "RDP helper architectures: $(lipo -archs "$HELPER")"
+
+      - name: Run termihub --version
+        env:
+          EXE: ${{ steps.app.outputs.exe }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          # macOS has no coreutils `timeout`; perl's alarm is the portable stand-in.
+          OUT="$(perl -e 'alarm shift; exec @ARGV' 60 "$EXE" --version 2>&1 | tee version.log)"
+          echo "--version printed: $OUT"
+          [ "$OUT" = "termiHub ${VERSION}" ] || { echo "::error::unexpected --version output '$OUT'"; exit 1; }
+
+      - name: Launch the app and confirm the frontend reaches the backend
+        env:
+          EXE: ${{ steps.app.outputs.exe }}
+        run: |
+          set -euo pipefail
+          # The durable app log (utils/file_log.rs). The frontend invokes the
+          # `load_connections_and_folders` IPC command on startup, which logs
+          # IPC_MARKER (commands/connection.rs) — seeing it proves the webview
+          # loaded the bundled frontend and an IPC round-trip reached the backend.
+          APP_LOG="$HOME/Library/Logs/com.termihub.app/termihub.log"
+          IPC_MARKER="Loading connections and folders"
+          rm -f "$APP_LOG"
+
+          # Launch the bundle's executable directly so its stdout/stderr (including
+          # any panic) is captured in launch.log. Hosted macOS runners have a
+          # logged-in GUI session, so the window really opens.
+          "$EXE" > launch.log 2>&1 &
+          PID=$!
+          echo "launched pid $PID"
+
+          died() {
+            set +e
+            wait "$PID"
+            local code=$?
+            set -e
+            echo "::error::app exited $1 (exit code $code)"
+            cat launch.log
+            exit 1
+          }
+
+          IPC_TIMEOUT=90
+          seen=0
+          for _ in $(seq 1 "$IPC_TIMEOUT"); do
+            kill -0 "$PID" 2>/dev/null || died "before the frontend reached the backend"
+            if [ -f "$APP_LOG" ] && grep -q "$IPC_MARKER" "$APP_LOG"; then
+              seen=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$seen" -ne 1 ]; then
+            echo "::error::no frontend IPC ('$IPC_MARKER') within ${IPC_TIMEOUT}s of launch"
+            cat launch.log
+            kill -KILL "$PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "frontend -> backend IPC observed"
+
+          # Stay up past startup: a crash right after first paint still fails here.
+          for _ in $(seq 1 10); do
+            kill -0 "$PID" 2>/dev/null || died "shortly after startup"
+            sleep 1
+          done
+          if grep -qi 'panicked at' launch.log; then
+            echo "::error::app logged a panic during startup"
+            cat launch.log
+            exit 1
+          fi
+          echo "app still alive after startup"
+
+          # Terminate and assert the process actually goes away.
+          kill -TERM "$PID"
+          for _ in $(seq 1 15); do
+            kill -0 "$PID" 2>/dev/null || break
+            sleep 1
+          done
+          if kill -0 "$PID" 2>/dev/null; then
+            echo "::error::app did not exit within 15s of SIGTERM"
+            kill -KILL "$PID" 2>/dev/null || true
+            exit 1
+          fi
+          echo "app exited after SIGTERM"
+          cp "$APP_LOG" app.log
+
+      - name: Run termihub-agent --version
+        env:
+          AGENT: ${{ steps.download.outputs.agent }}
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: |
+          set -euo pipefail
+          chmod +x "$AGENT"
+          OUT="$(perl -e 'alarm shift; exec @ARGV' 60 "$AGENT" --version 2>&1 | tee agent-version.log)"
+          echo "agent --version printed: $OUT"
+          # A release build may append "(branch: …)"; the version prefix is the gate.
+          case "$OUT" in
+            "termihub-agent ${VERSION}"|"termihub-agent ${VERSION} "*) ;;
+            *) echo "::error::unexpected agent --version output '$OUT'"; exit 1 ;;
+          esac
+
+      - name: Summary
+        if: always()
+        env:
+          ARCH: ${{ matrix.arch }}
+          TAG: ${{ steps.tag.outputs.tag }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          {
+            echo "### macOS ${ARCH} install-smoke (${TAG:-unresolved})"
+            echo ""
+            echo "- result: \`${JOB_STATUS}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload smoke logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: macos-${{ matrix.arch }}-install-smoke-logs
+          path: |
+            version.log
+            launch.log
+            app.log
+            agent-version.log
+          if-no-files-found: ignore
+          retention-days: 14
