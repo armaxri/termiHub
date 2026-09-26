@@ -66,6 +66,11 @@ export interface RemoteDesktopSession {
   /** Manually reconnect after a failure or the auto-retry cap. */
   reconnect: () => void;
   /**
+   * Stop an in-progress backend auto-reconnect (#3364): tears the session down
+   * and rests on the manual-reconnect prompt instead of dialling again.
+   */
+  cancelReconnect: () => void;
+  /**
    * True while a session adopted from another window (a cross-window tab move,
    * #1904) is waiting for its first repaint. The tab shows the "reconnecting
    * view…" placeholder over the still-blank destination canvas until then.
@@ -325,6 +330,23 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     setRetryNonce((n) => n + 1);
   }, []);
 
+  const cancelReconnect = useCallback(() => {
+    // Disconnecting aborts the backend's reconnect loop (and any pending
+    // attempt); the tab then shows the manual Reconnect prompt.
+    const id = sessionIdRef.current;
+    sessionIdRef.current = null;
+    setState("closed");
+    setReconnectAttempt(0);
+    setMessage(null);
+    if (id) {
+      fireAndForget(
+        remoteDesktopDisconnect(id),
+        `cancel reconnect of remote-desktop session ${id}`
+      );
+      setTabSessionId(tabId, null);
+    }
+  }, [tabId, setTabSessionId]);
+
   const noteFirstFrame = useCallback(() => {
     // The destination canvas painted a frame after a cross-window adoption
     // (#1904): drop the "reconnecting view…" placeholder.
@@ -347,6 +369,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     remoteClipboardFiles,
     bindClipboardFiles,
     reconnect,
+    cancelReconnect,
     awaitingFirstFrame,
     noteFirstFrame,
   };
