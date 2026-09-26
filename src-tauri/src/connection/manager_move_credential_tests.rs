@@ -296,23 +296,37 @@ fn deleting_a_folder_migrates_rehomed_connections_without_clobbering() {
     let store = Arc::new(RecordingStore::with(&[("F/a", PW, "FA"), ("a", PW, "RA")]));
     let (mgr, _recorded) = manager(dir.path(), store.clone());
     mgr.save_folder(folder("F", "F", None)).unwrap();
-    mgr.save_connection(ssh("a", "a", None)).unwrap();
+    let mut root = ssh("a", "a", None);
+    root.config.settings["host"] = serde_json::json!("root-host");
+    mgr.save_connection(root).unwrap();
     mgr.save_connection(ssh("new-a", "a", Some("F"))).unwrap();
     assert_eq!(main_ids(&mgr), vec!["F/a", "a"]);
 
     mgr.delete_folder("F").unwrap();
 
-    // The root `a` keeps its name and secret; the re-homed one yields.
+    // Both end up at the root as `a` and `a (1)`; whichever name each gets,
+    // its own secret follows it and neither is clobbered.
     assert_eq!(main_ids(&mgr), vec!["a", "a (1)"]);
-    assert_eq!(store.value("a", PW).as_deref(), Some("RA"));
-    assert_eq!(store.value("a (1)", PW).as_deref(), Some("FA"));
+    let all = mgr.get_all().unwrap();
+    let root_id = &all
+        .connections
+        .iter()
+        .find(|c| c.config.settings["host"] == "root-host")
+        .unwrap()
+        .id;
+    let other_id = if root_id == "a" { "a (1)" } else { "a" };
+    assert_eq!(store.value(root_id, PW).as_deref(), Some("RA"));
+    assert_eq!(store.value(other_id, PW).as_deref(), Some("FA"));
+    assert_eq!(store.value("F/a", PW), None);
 }
 
 #[test]
 fn id_changes_of_connections_without_auth_never_touch_the_store() {
     let dir = tempfile::tempdir().unwrap();
-    let mut locked = RecordingStore::default();
-    locked.fail_gets = true;
+    let locked = RecordingStore {
+        fail_gets: true,
+        ..Default::default()
+    };
     let store = Arc::new(locked);
     let (mgr, _recorded) = manager(dir.path(), store.clone());
     mgr.save_folder(folder("W", "W", None)).unwrap();
@@ -344,4 +358,25 @@ fn a_named_credential_is_untouched_by_a_rename() {
         .all(|call| !call.contains("named-credential:") || call.starts_with("get")));
     let snapshot = store.snapshot();
     assert_eq!(snapshot.len(), 1, "{snapshot:?}");
+}
+
+#[test]
+fn renaming_an_external_connection_keeps_a_main_connections_same_id_secret() {
+    // Credential keys are not scoped by file, so a main-store `x` shares the
+    // key `x` with an external `x`. Renaming the external one must copy, not
+    // take away, the main connection's secret.
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(RecordingStore::with(&[("x", PW, "X")]));
+    let (mgr, _recorded) = manager(dir.path(), store.clone());
+    mgr.save_connection(ssh("x", "x", None)).unwrap();
+    let file = external_path(dir.path(), "shared.json");
+    let mut c = ssh("x", "x", None);
+    c.source_file = Some(file);
+    mgr.save_connection_routed(c.clone()).unwrap();
+
+    c.name = "y".to_string();
+    mgr.save_connection_routed(c).unwrap();
+
+    assert_eq!(store.value("x", PW).as_deref(), Some("X"));
+    assert_eq!(store.value("y", PW).as_deref(), Some("X"));
 }

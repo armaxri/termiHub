@@ -1,7 +1,9 @@
 pub mod config;
+pub(crate) mod credential_migration;
 pub mod id_changes;
 pub mod jump_host_resolver;
 pub mod manager;
+mod placement;
 pub mod plugin_type_ids;
 #[cfg(test)]
 pub(crate) mod recording_credential_store;

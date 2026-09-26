@@ -9,8 +9,10 @@ use super::config::{
     ExternalConnectionStore, FlatConnectionStore, ImportPreview, ImportResult, SavedConnection,
     SavedRemoteAgent,
 };
-use super::id_changes::{diff_connection_ids, reloaded_connection_id};
+use super::credential_migration::follow_id_changes;
+use super::id_changes::diff_connection_ids;
 pub use super::id_changes::{ConnectionIdChange, ConnectionIdChangeListener};
+use super::placement::{place_connection, PlaceMode};
 use super::plugin_type_ids::migrate_connections;
 use super::recovery::RecoveryWarning;
 use super::settings::{default_serial_port_scan_prefixes, AppSettings, SettingsStorage};
@@ -82,24 +84,6 @@ pub(crate) fn prepare_agent_for_storage(
         agent.config.password = None;
     }
     Ok(agent)
-}
-
-/// Migrate credentials when a connection's path-based ID changes
-/// (due to rename or move).
-fn migrate_credential(old_id: &str, new_id: &str, store: &dyn CredentialStore) -> Result<()> {
-    if old_id == new_id {
-        return Ok(());
-    }
-    // Try migrating both credential types
-    for cred_type in &[CredentialType::Password, CredentialType::KeyPassphrase] {
-        let old_key = CredentialKey::new(old_id, cred_type.clone());
-        if let Ok(Some(value)) = store.get(&old_key) {
-            let new_key = CredentialKey::new(new_id, cred_type.clone());
-            store.set(&new_key, &value)?;
-            store.remove(&old_key)?;
-        }
-    }
-    Ok(())
 }
 
 /// Result of loading a single external connection file (flattened).
@@ -215,6 +199,30 @@ impl ConnectionManager {
             .clone();
         if let Some(listener) = listener {
             listener(changes);
+        }
+    }
+
+    /// Carry stored secrets along `changes`, which are already persisted in the
+    /// tree `connections` / `folders` (#3578). A failure leaves every secret
+    /// under its old key, so it is logged rather than failing the operation.
+    fn follow_credentials(
+        &self,
+        changes: &[ConnectionIdChange],
+        connections: &[SavedConnection],
+        folders: &[ConnectionFolder],
+        also_in_use: &HashSet<String>,
+    ) {
+        if let Err(e) = follow_id_changes(
+            changes,
+            connections,
+            folders,
+            also_in_use,
+            &*self.credential_store,
+        ) {
+            tracing::warn!(
+                error = %e,
+                "Failed to migrate credentials to changed connection ids; they stay under the old ids"
+            );
         }
     }
 
@@ -414,63 +422,35 @@ impl ConnectionManager {
     /// the window in which a credential could be stored under the stale id.
     pub fn save_connection(&self, connection: SavedConnection) -> Result<String> {
         let connection = prepare_for_storage(connection, &*self.credential_store)?;
-        let old_id = connection.id.clone();
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
-        let ids_before = connection_ids(&store.connections);
         let FlatConnectionStore {
             connections,
             folders,
             ..
         } = &mut *store;
-
-        // Find and replace, or add new — track the index so we can read
-        // the final ID after deduplication.
-        let save_idx = if let Some(idx) = connections.iter().position(|c| c.id == connection.id) {
-            connections[idx] = connection;
-            idx
-        } else {
-            connections.push(connection);
-            connections.len() - 1
-        };
-
-        // Recompute ID to match current folder_id + name.
-        // This is needed when a connection is moved to a different folder
-        // via drag-and-drop — the frontend only updates folder_id, not id.
-        connections[save_idx].id = compute_connection_id(
-            connections[save_idx].folder_id.as_deref(),
-            &connections[save_idx].name,
+        // Replace or add, re-home when its folder is gone, recompute the id from
+        // folder + name and deduplicate sibling names (which may rename it or a
+        // sibling). A move by drag-and-drop only updates `folder_id`, not `id`.
+        let placement = place_connection(
+            connections,
+            folders,
+            connection,
+            PlaceMode::ReplaceById,
+            &[],
         );
-
-        // Deduplicate sibling names (may rename the connection and change its ID)
-        deduplicate_sibling_names(connections, folders);
-
-        // Migrate credentials from old path-ID to new path-ID (if changed).
-        // Only attempt migration for connections that use authMethod-based auth
-        // (i.e. SSH). Other types (serial, local, telnet, …) never store
-        // credentials, so calling get() on a locked store would spuriously
-        // emit credential-store-unlock-needed and open the unlock dialog.
-        let new_id = &connections[save_idx].id;
-        let might_have_credentials = connections[save_idx]
-            .config
-            .settings
-            .get("authMethod")
-            .is_some();
-        if *new_id != old_id && might_have_credentials {
-            let _ = migrate_credential(&old_id, new_id, &*self.credential_store);
-        }
-
-        let persisted_id = connections[save_idx].id.clone();
-        let mut id_changes = diff_connection_ids(&ids_before, connections, folders);
-        if save_idx >= ids_before.len() && old_id != persisted_id {
-            // Not found under the id it came with: still carry that id's data over.
-            id_changes.push(ConnectionIdChange::new(old_id, persisted_id.clone()));
-        }
+        let persisted_id = connections[placement.index].id.clone();
         self.storage
             .save_flat(&store)
             .context("Failed to persist connection")?;
+        self.follow_credentials(
+            &placement.changes,
+            &store.connections,
+            &store.folders,
+            &HashSet::new(),
+        );
         drop(store);
-        self.notify_id_changes(&id_changes);
+        self.notify_id_changes(&placement.changes);
         Ok(persisted_id)
     }
 
@@ -532,13 +512,7 @@ impl ConnectionManager {
                 folders,
                 ..
             } = &mut *store;
-            recompute_descendant_ids(
-                connections,
-                folders,
-                &old_id,
-                &new_id,
-                &*self.credential_store,
-            )?;
+            recompute_descendant_ids(connections, folders, &old_id, &new_id);
         }
 
         // Ensure unique folder names within parent
@@ -553,6 +527,12 @@ impl ConnectionManager {
         self.storage
             .save_flat(&store)
             .context("Failed to persist folder")?;
+        self.follow_credentials(
+            &id_changes,
+            &store.connections,
+            &store.folders,
+            &HashSet::new(),
+        );
         drop(store);
         self.notify_id_changes(&id_changes);
         Ok(())
@@ -575,12 +555,8 @@ impl ConnectionManager {
         // Move child connections to parent (or root)
         for conn in store.connections.iter_mut() {
             if conn.folder_id.as_deref() == Some(id) {
-                let old_id = conn.id.clone();
                 conn.folder_id = parent_id.clone();
                 conn.id = compute_connection_id(parent_id.as_deref(), &conn.name);
-                if conn.config.settings.get("authMethod").is_some() {
-                    let _ = migrate_credential(&old_id, &conn.id, &*self.credential_store);
-                }
             }
         }
 
@@ -610,13 +586,7 @@ impl ConnectionManager {
                 folders,
                 ..
             } = &mut *store;
-            let _ = recompute_descendant_ids(
-                connections,
-                folders,
-                &old_id,
-                &new_id,
-                &*self.credential_store,
-            );
+            recompute_descendant_ids(connections, folders, &old_id, &new_id);
         }
 
         store.folders.retain(|f| f.id != id);
@@ -636,6 +606,12 @@ impl ConnectionManager {
         self.storage
             .save_flat(&store)
             .context("Failed to persist after folder delete")?;
+        self.follow_credentials(
+            &id_changes,
+            &store.connections,
+            &store.folders,
+            &HashSet::new(),
+        );
         drop(store);
         self.notify_id_changes(&id_changes);
         Ok(())
@@ -832,10 +808,22 @@ impl ConnectionManager {
                 let conn_id = connection.id.clone();
                 let mut conn = prepare_for_storage(connection, &*self.credential_store)?;
                 conn.source_file = None; // Strip before writing to disk
-                let reloaded_id = save_or_update_in_external_file(&file_path, conn)?;
-                if let Some(new_id) = reloaded_id.filter(|id| *id != conn_id) {
-                    self.notify_id_changes(&[ConnectionIdChange::new(conn_id.clone(), new_id)]);
-                }
+                let main_folders = self.main_folders();
+                let written = place_in_external_file(
+                    &file_path,
+                    conn,
+                    PlaceMode::ReplaceById,
+                    &main_folders,
+                )?;
+                // Credential keys are not scoped by file: keep a secret whose old
+                // id a main-store connection still uses.
+                self.follow_credentials(
+                    &written.changes,
+                    &written.connections,
+                    &written.folders,
+                    &self.main_ids(),
+                );
+                self.notify_id_changes(&written.changes);
                 Ok(conn_id)
             }
         }
@@ -852,7 +840,7 @@ impl ConnectionManager {
                         "Failed to remove credentials for connection in external file (best-effort, proceeding with delete): {e}"
                     );
                 }
-                remove_from_external_file(file_path, id)
+                remove_from_external_file(file_path, id).map(|_| ())
             }
         }
     }
@@ -1018,62 +1006,143 @@ impl ConnectionManager {
         })
     }
 
-    /// Move a connection between files. Removes from source, adds to target.
+    /// The main store's connection ids, as last loaded.
+    fn main_ids(&self) -> HashSet<String> {
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        store.connections.iter().map(|c| c.id.clone()).collect()
+    }
+
+    /// The main store's folders, as last loaded.
+    fn main_folders(&self) -> Vec<ConnectionFolder> {
+        let store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        store.folders.clone()
+    }
+
+    /// Move a connection between files and return it as written to the target.
+    ///
+    /// The connection is written to the target first and removed from the
+    /// source only after that succeeded, so a failed move never loses it
+    /// (#3577). In the target it is re-homed when its folder is missing — into
+    /// a copy of the main store's folder chain for an external file, to the
+    /// root of the main store otherwise — and deduplicated against its new
+    /// siblings. Its id change is reported and its credentials follow.
     pub fn move_connection_to_file(
         &self,
         connection_id: &str,
         current_source: Option<&str>,
         target_source: Option<String>,
     ) -> Result<SavedConnection> {
-        // 1. Find and remove the connection from its current location
-        let mut connection = match current_source {
+        if current_source == target_source.as_deref() {
+            // Already there: nothing to move.
+            let mut connection = self.read_connection(connection_id, current_source)?;
+            connection.source_file = target_source;
+            return Ok(connection);
+        }
+        let connection = self.read_connection(connection_id, current_source)?;
+        let disk_conn = prepare_for_storage(connection, &*self.credential_store)?;
+
+        let written = match &target_source {
+            None => self.place_in_main_store(disk_conn)?,
+            Some(file_path) => {
+                let main_folders = self.main_folders();
+                place_in_external_file(file_path, disk_conn, PlaceMode::Append, &main_folders)?
+            }
+        };
+
+        let source_ids = match current_source {
+            None => self.remove_from_main_store(connection_id),
+            Some(file_path) => remove_from_external_file(file_path, connection_id),
+        }
+        .with_context(|| {
+            format!(
+                "Connection {connection_id} was copied to its new file but could not be \
+                 removed from its old one"
+            )
+        })?;
+
+        // Credential keys are not scoped by file: keep a secret whose old id the
+        // source file or the main store still uses.
+        let mut in_use = self.main_ids();
+        in_use.extend(source_ids);
+        self.follow_credentials(
+            &written.changes,
+            &written.connections,
+            &written.folders,
+            &in_use,
+        );
+        self.notify_id_changes(&written.changes);
+
+        let mut moved = written.connections[written.index].clone();
+        moved.source_file = target_source;
+        Ok(moved)
+    }
+
+    /// A copy of a connection from the main store or an external file.
+    fn read_connection(&self, id: &str, source: Option<&str>) -> Result<SavedConnection> {
+        match source {
             None => {
                 let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
                 self.sync_from_disk(&mut store);
-                let idx = store
+                store
                     .connections
                     .iter()
-                    .position(|c| c.id == connection_id)
-                    .context("Connection not found in main store")?;
-                let conn = store.connections.remove(idx);
-                self.storage
-                    .save_flat(&store)
-                    .context("Failed to persist removal from main store")?;
-                conn
-            }
-            Some(file_path) => remove_and_return_from_external_file(file_path, connection_id)?,
-        };
-
-        // 2. Add to the target location
-        connection.source_file = target_source.clone();
-        let reloaded_id = match &target_source {
-            None => {
-                let mut disk_conn =
-                    prepare_for_storage(connection.clone(), &*self.credential_store)?;
-                disk_conn.source_file = None;
-                let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
-                self.sync_from_disk(&mut store);
-                let reloaded_id = reloaded_connection_id(&disk_conn, &store.folders);
-                store.connections.push(disk_conn);
-                self.storage
-                    .save_flat(&store)
-                    .context("Failed to persist addition to main store")?;
-                reloaded_id
+                    .find(|c| c.id == id)
+                    .cloned()
+                    .context("Connection not found in main store")
             }
             Some(file_path) => {
-                let mut disk_conn =
-                    prepare_for_storage(connection.clone(), &*self.credential_store)?;
-                disk_conn.source_file = None;
-                save_or_update_in_external_file(file_path, disk_conn)?
+                let ext_store = read_external_store(file_path)?;
+                let (conns, _) = flatten_tree(&ext_store.children, None);
+                conns
+                    .into_iter()
+                    .find(|c| c.id == id)
+                    .with_context(|| format!("Connection {id} not found in {file_path}"))
             }
-        };
-        // The target file recomputes the id from its own folder tree (#3569).
-        if let Some(new_id) = reloaded_id.filter(|id| id != connection_id) {
-            self.notify_id_changes(&[ConnectionIdChange::new(connection_id, new_id)]);
         }
-
-        Ok(connection)
     }
+
+    /// Append a connection arriving from another file to the main store.
+    fn place_in_main_store(&self, connection: SavedConnection) -> Result<WrittenTree> {
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        self.sync_from_disk(&mut store);
+        let FlatConnectionStore {
+            connections,
+            folders,
+            ..
+        } = &mut *store;
+        let placement = place_connection(connections, folders, connection, PlaceMode::Append, &[]);
+        self.storage
+            .save_flat(&store)
+            .context("Failed to persist addition to main store")?;
+        Ok(WrittenTree {
+            index: placement.index,
+            changes: placement.changes,
+            connections: store.connections.clone(),
+            folders: store.folders.clone(),
+        })
+    }
+
+    /// Remove a connection from the main store; returns the remaining ids.
+    fn remove_from_main_store(&self, id: &str) -> Result<Vec<String>> {
+        let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+        self.sync_from_disk(&mut store);
+        store.connections.retain(|c| c.id != id);
+        self.storage
+            .save_flat(&store)
+            .context("Failed to persist removal from main store")?;
+        Ok(connection_ids(&store.connections))
+    }
+}
+
+/// One file's tree after a connection was placed into it and written.
+#[derive(Debug)]
+struct WrittenTree {
+    /// Where the placed connection sits in `connections`.
+    index: usize,
+    /// Every id change the write caused.
+    changes: Vec<ConnectionIdChange>,
+    connections: Vec<SavedConnection>,
+    folders: Vec<ConnectionFolder>,
 }
 
 /// Every connection's id, by position — the "before" side of an id diff.
@@ -1087,10 +1156,9 @@ fn recompute_descendant_ids(
     folders: &mut [ConnectionFolder],
     old_folder_id: &str,
     new_folder_id: &str,
-    credential_store: &dyn CredentialStore,
-) -> Result<()> {
+) {
     if old_folder_id == new_folder_id {
-        return Ok(());
+        return;
     }
 
     // Update the folder itself
@@ -1101,12 +1169,8 @@ fn recompute_descendant_ids(
     // Update direct child connections
     for conn in connections.iter_mut() {
         if conn.folder_id.as_deref() == Some(old_folder_id) {
-            let old_conn_id = conn.id.clone();
             conn.folder_id = Some(new_folder_id.to_string());
             conn.id = compute_connection_id(Some(new_folder_id), &conn.name);
-            if conn.config.settings.get("authMethod").is_some() {
-                let _ = migrate_credential(&old_conn_id, &conn.id, credential_store);
-            }
         }
     }
 
@@ -1130,16 +1194,8 @@ fn recompute_descendant_ids(
 
     // Recursively update grandchildren
     for (old_child_id, new_child_id) in child_updates {
-        recompute_descendant_ids(
-            connections,
-            folders,
-            &old_child_id,
-            &new_child_id,
-            credential_store,
-        )?;
+        recompute_descendant_ids(connections, folders, &old_child_id, &new_child_id);
     }
-
-    Ok(())
 }
 
 /// Parse an import JSON string and return a summary of its contents
@@ -1296,39 +1352,29 @@ fn empty_external_store() -> ExternalConnectionStore {
     }
 }
 
-/// Save or update a single connection in an external file (by name+folder path).
-///
-/// Returns the id the connection gets when the file is loaded again — the
-/// file's folder chain plus the connection's name, which differs from the
-/// incoming id after a rename (#3569) — or `None` when its folder is not part
-/// of the file, so it is not written.
-fn save_or_update_in_external_file(
+/// Place a connection into an external file (see [`place_connection`]) and
+/// write the file. `folder_source` supplies a folder chain the file lacks.
+fn place_in_external_file(
     file_path: &str,
     connection: SavedConnection,
-) -> Result<Option<String>> {
+    mode: PlaceMode,
+    folder_source: &[ConnectionFolder],
+) -> Result<WrittenTree> {
     let mut ext_store = read_external_store(file_path)?;
-
-    // Flatten, update, rebuild
-    let (mut conns, folders) = flatten_tree(&ext_store.children, None);
-    let reloaded_id = reloaded_connection_id(&connection, &folders);
-
-    if let Some(existing) = conns.iter_mut().find(|c| c.id == connection.id) {
-        *existing = connection;
-    } else {
-        conns.push(connection);
-    }
-
+    let (mut conns, mut folders) = flatten_tree(&ext_store.children, None);
+    let placement = place_connection(&mut conns, &mut folders, connection, mode, folder_source);
     ext_store.children = build_tree(&conns, &folders);
-
-    let data = serde_json::to_string_pretty(&ext_store)
-        .context("Failed to serialize external connection file")?;
-    write_atomic(std::path::Path::new(file_path), &data)
-        .with_context(|| format!("Failed to write external file: {}", file_path))?;
-    Ok(reloaded_id)
+    write_external_store(file_path, &ext_store)?;
+    Ok(WrittenTree {
+        index: placement.index,
+        changes: placement.changes,
+        connections: conns,
+        folders,
+    })
 }
 
-/// Remove a connection from an external file by ID.
-fn remove_from_external_file(file_path: &str, connection_id: &str) -> Result<()> {
+/// Remove a connection from an external file by ID; returns the remaining ids.
+fn remove_from_external_file(file_path: &str, connection_id: &str) -> Result<Vec<String>> {
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
 
@@ -1338,41 +1384,15 @@ fn remove_from_external_file(file_path: &str, connection_id: &str) -> Result<()>
     let (mut conns, folders) = flatten_tree(&ext_store.children, None);
     conns.retain(|c| c.id != connection_id);
     ext_store.children = build_tree(&conns, &folders);
-
-    let data = serde_json::to_string_pretty(&ext_store)
-        .context("Failed to serialize external connection file")?;
-    write_atomic(std::path::Path::new(file_path), &data)
-        .with_context(|| format!("Failed to write external file: {}", file_path))?;
-    Ok(())
+    write_external_store(file_path, &ext_store)?;
+    Ok(connection_ids(&conns))
 }
 
-/// Remove a connection from an external file and return it.
-fn remove_and_return_from_external_file(
-    file_path: &str,
-    connection_id: &str,
-) -> Result<SavedConnection> {
-    let data = std::fs::read_to_string(file_path)
-        .with_context(|| format!("Failed to read external file: {}", file_path))?;
-
-    let mut ext_store: ExternalConnectionStore = serde_json::from_str(&data)
-        .with_context(|| format!("Failed to parse external file: {}", file_path))?;
-
-    let (mut conns, folders) = flatten_tree(&ext_store.children, None);
-
-    let idx = conns
-        .iter()
-        .position(|c| c.id == connection_id)
-        .with_context(|| format!("Connection {} not found in {}", connection_id, file_path))?;
-
-    let conn = conns.remove(idx);
-    ext_store.children = build_tree(&conns, &folders);
-
-    let data = serde_json::to_string_pretty(&ext_store)
+fn write_external_store(file_path: &str, ext_store: &ExternalConnectionStore) -> Result<()> {
+    let data = serde_json::to_string_pretty(ext_store)
         .context("Failed to serialize external connection file")?;
     write_atomic(std::path::Path::new(file_path), &data)
-        .with_context(|| format!("Failed to write external file: {}", file_path))?;
-
-    Ok(conn)
+        .with_context(|| format!("Failed to write external file: {}", file_path))
 }
 
 /// Write an `ExternalConnectionStore` to a given file path.
@@ -1407,6 +1427,13 @@ mod tests {
     use crate::credential::{CredentialKey, CredentialStoreStatus, CredentialType};
     use crate::terminal::backend::{ConnectionConfig, RemoteAgentConfig};
     use std::sync::Mutex;
+
+    fn save_or_update_in_external_file(
+        file_path: &str,
+        connection: SavedConnection,
+    ) -> Result<WrittenTree> {
+        place_in_external_file(file_path, connection, PlaceMode::ReplaceById, &[])
+    }
 
     /// Simple mock credential store that records `set` and `remove_all_for_connection` calls.
     struct MockStore {
@@ -1896,28 +1923,6 @@ mod tests {
         assert!(!preview.has_encrypted_credentials);
     }
 
-    // Regression: migrate_credential itself calls get() on the store for every
-    // ID change. On a locked master-password store, get() fails and emits
-    // credential-store-unlock-needed, opening the unlock dialog spuriously.
-    // The callers of migrate_credential must guard the call with an authMethod
-    // check so credential-free connections (serial, local, …) never touch the
-    // store.
-    #[test]
-    fn migrate_credential_calls_get_on_store() {
-        let store = SpyStore::new();
-        migrate_credential("old-id", "new-id", &store).unwrap();
-        // Two get() calls: one for Password, one for KeyPassphrase
-        assert_eq!(
-            store.get_call_count(),
-            2,
-            "migrate_credential must call get() — callers must guard it for non-SSH types"
-        );
-    }
-
-    // Regression (#863): save_connection returns the *persisted* id (recomputed
-    // from the name), not the optimistic `conn-<ts>` id the editor sends. The
-    // frontend relies on this to reconcile its in-memory copy so a credential
-    // stored during a connect is not orphaned under the stale optimistic id.
     #[test]
     fn save_connection_returns_recomputed_persisted_id() {
         let dir = tempfile::tempdir().unwrap();
