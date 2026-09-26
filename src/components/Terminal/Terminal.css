@@ -176,3 +176,29 @@
 .xterm * {
   letter-spacing: 0;
 }
+
+/* OSC 133 command marks (#3415): a thin success/failure bar for each finished
+   command, drawn in the .xterm left padding next to the command's prompt line.
+   xterm positions decorations inside .xterm-screen and sets an inline cell
+   width, so the bar is pulled left into the padding and narrowed here. */
+.terminal-container .xterm-decoration.terminal-command-mark {
+  left: calc(var(--spacing-sm) * -1 + 2px);
+  width: 3px !important;
+  border-radius: 2px;
+  opacity: 0.75;
+  pointer-events: none;
+}
+
+.terminal-container .xterm-decoration.terminal-command-mark--success {
+  background-color: var(--color-success);
+}
+
+.terminal-container .xterm-decoration.terminal-command-mark--failure {
+  background-color: var(--color-error);
+}
+
+/* Brief highlight of the prompt row after "Jump to Previous/Next Prompt". */
+.terminal-container .xterm-decoration.terminal-prompt-flash {
+  background-color: var(--bg-selected);
+  pointer-events: none;
+}

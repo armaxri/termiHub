@@ -188,6 +188,27 @@ describe("TerminalSettings", () => {
     expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ cursorBlink: false }));
   });
 
+  it("renders the command status marks toggle, on by default, and flips onChange (#3415)", () => {
+    const onChange = renderWith(defaultSettings);
+    const toggle = container.querySelector(
+      '[data-testid="settings-terminal-command-decorations"]'
+    ) as HTMLElement | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle!.getAttribute("aria-checked")).toBe("true");
+    act(() => toggle!.click());
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ terminalCommandDecorations: false })
+    );
+  });
+
+  it("reflects a disabled command status marks setting", () => {
+    renderWith({ ...defaultSettings, terminalCommandDecorations: false });
+    const toggle = container.querySelector(
+      '[data-testid="settings-terminal-command-decorations"]'
+    ) as HTMLElement;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+  });
+
   it("hint text mentions memory", () => {
     renderWith(defaultSettings);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));

@@ -28,19 +28,47 @@ single-modifier readline / tmux range.
 
 ## Windows / Linux defaults vs. the keys termiHub avoids
 
-| termiHub action    | Default (Win/Linux) | Was avoided                                                                      |
-| ------------------ | ------------------- | -------------------------------------------------------------------------------- |
-| Toggle Sidebar     | `Ctrl+Shift+B`      | `Ctrl+B` — tmux default prefix                                                   |
-| Close Tab          | `Ctrl+Shift+W`      | `Ctrl+W` — readline `delete-word-backward`, vim `<C-w>` window prefix            |
-| Close Tab Group    | `Ctrl+Shift+Q`      | (relocated to free `Ctrl+Shift+W` for Close Tab)                                 |
-| Split Right        | `Alt+Shift+\`       | `Ctrl+\` — sends `SIGQUIT` (force-kill)                                          |
-| Split Down         | `Alt+Shift+-`       | (paired with Split Right)                                                        |
-| Focus Panel ↑↓←→   | `Alt+Shift+<Arrow>` | `Ctrl+Alt+<Arrow>` — GNOME/KDE workspace switching, Intel driver screen rotation |
-| Keyboard Shortcuts | `F1`                | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
+| termiHub action    | Default (Win/Linux)  | Was avoided                                                                      |
+| ------------------ | -------------------- | -------------------------------------------------------------------------------- |
+| Toggle Sidebar     | `Ctrl+Shift+B`       | `Ctrl+B` — tmux default prefix                                                   |
+| Close Tab          | `Ctrl+Shift+W`       | `Ctrl+W` — readline `delete-word-backward`, vim `<C-w>` window prefix            |
+| Close Tab Group    | `Ctrl+Shift+Q`       | (relocated to free `Ctrl+Shift+W` for Close Tab)                                 |
+| Split Right        | `Alt+Shift+\`        | `Ctrl+\` — sends `SIGQUIT` (force-kill)                                          |
+| Split Down         | `Alt+Shift+-`        | (paired with Split Right)                                                        |
+| Focus Panel ↑↓←→   | `Alt+Shift+<Arrow>`  | `Ctrl+Alt+<Arrow>` — GNOME/KDE workspace switching, Intel driver screen rotation |
+| Keyboard Shortcuts | `F1`                 | `Ctrl+K Ctrl+S` chord — `Ctrl+K` is readline `kill-to-end-of-line`               |
+| Jump to Prompt ↑↓  | `Ctrl+Shift+<Up/Dn>` | `Ctrl+<Up/Down>` — word/paragraph movement in shells and editors                 |
 
 macOS keeps the more conventional single-modifier forms (`Cmd+B`, `Cmd+W`,
 `Cmd+\`, `Cmd+K Cmd+S`, `Cmd+Alt+<Arrow>`) because `Cmd` does not appear in the
 shell keymap and cannot collide with `Ctrl+<key>` shell shortcuts.
+
+## Prompt navigation and command output (OSC 133)
+
+When the shell emits **OSC 133** semantic-prompt marks, termiHub knows where
+each prompt, command and command output starts and ends. termiHub's shell
+integration (the per-connection **Shell Integration** toggle) emits them for
+bash, zsh, PowerShell and fish 3.x, and prompt marks only for cmd; fish 4+ and
+other shell integrations (starship, VS Code's scripts, …) emit them natively.
+
+| Action                     | macOS             | Windows / Linux   |
+| -------------------------- | ----------------- | ----------------- |
+| Jump to Previous Prompt    | `Cmd+Up`          | `Ctrl+Shift+Up`   |
+| Jump to Next Prompt        | `Cmd+Down`        | `Ctrl+Shift+Down` |
+| Select Last Command Output | unbound (palette) | unbound (palette) |
+| Copy Last Command Output   | unbound (palette) | unbound (palette) |
+
+- Jumping scrolls the prompt to the top of the viewport and briefly highlights
+  its row; repeated presses keep walking from the prompt last jumped to. "Next"
+  past the last prompt returns to the bottom.
+- Each finished command gets a thin green (exit code 0) or red (non-zero) mark
+  in the left gutter next to its prompt. Turn it off with **Settings →
+  Terminal → Command Status Marks**.
+- **No marks, no change:** if the shell emits no OSC 133, the palette entries are
+  disabled and the prompt-jump keys are passed through to the shell exactly as
+  before.
+- Marks live in the terminal buffer: a prompt that scrolls out of the scrollback
+  (or is cleared) is forgotten, and marks are not restored after a reconnect.
 
 ## Terminal-focus pass-through
 

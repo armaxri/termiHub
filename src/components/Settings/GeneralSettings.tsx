@@ -253,7 +253,7 @@ export function GeneralSettings({ settings, onChange, visibleFields }: GeneralSe
           {show("defaultShellIntegration") && (
             <SettingsField
               label="Shell Integration by Default"
-              hint="Pre-enable Shell Integration (OSC 7 CWD tracking) for new SSH connections."
+              hint="Pre-enable Shell Integration (OSC 7 CWD tracking and OSC 133 command marks) for new SSH connections."
             >
               <Toggle
                 checked={settings.defaultShellIntegration ?? true}

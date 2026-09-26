@@ -399,14 +399,17 @@ impl<S: LocalShellSpawner> ConnectionType for LocalShell<S> {
                         key: "shellIntegration".to_string(),
                         label: "Shell Integration".to_string(),
                         description: Some(
-                            "Inject OSC 7 CWD tracking at startup (used by the file browser)"
+                            "Inject CWD tracking and command marks at startup (OSC 7 / OSC 133)"
                                 .to_string(),
                         ),
                         help_text: Some(concat!(
                             "When enabled, termiHub injects a small shell function at startup ",
-                            "that emits OSC 7 (current working directory) sequences on every prompt.\n\n",
+                            "that emits OSC 7 (current working directory) and OSC 133 (command ",
+                            "boundary) sequences on every prompt.\n\n",
                             "This lets the file browser automatically follow the current directory ",
-                            "as you navigate in the shell.\n\n",
+                            "as you navigate in the shell, and enables jumping between prompts, ",
+                            "selecting or copying a command's output, and the success/failure ",
+                            "marker next to each finished command.\n\n",
                             "The setup runs visibly in the terminal — you can always see what ",
                             "termiHub is doing. Disable this if you manage your own shell ",
                             "integration or prefer a clean terminal start.",

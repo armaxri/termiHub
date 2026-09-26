@@ -672,6 +672,46 @@ describe("getDefaultBindings", () => {
     expect(actions).not.toContain("focus-prev-panel");
   });
 
+  it("declares the OSC 133 command-mark actions as terminal-scoped (#3415)", () => {
+    const byAction = new Map(DEFAULT_BINDINGS.map((b) => [b.action, b]));
+    const prev = byAction.get("jump-prev-prompt")!;
+    const next = byAction.get("jump-next-prompt")!;
+    expect(prev.macDefault).toEqual({ key: "ArrowUp", meta: true });
+    expect(prev.winLinuxDefault).toEqual({ key: "ArrowUp", ctrl: true, shift: true });
+    expect(next.macDefault).toEqual({ key: "ArrowDown", meta: true });
+    expect(next.winLinuxDefault).toEqual({ key: "ArrowDown", ctrl: true, shift: true });
+    for (const action of [
+      "jump-prev-prompt",
+      "jump-next-prompt",
+      "select-last-command-output",
+      "copy-last-command-output",
+    ]) {
+      const binding = byAction.get(action);
+      expect(binding, action).toBeDefined();
+      expect(binding!.scope).toBe("terminal");
+      expect(binding!.category).toBe("terminal");
+      expect(binding!.configurable).toBe(true);
+    }
+    // Output selection/copy ship unbound; users can bind them in Settings.
+    expect(byAction.get("select-last-command-output")!.macDefault).toBeNull();
+    expect(byAction.get("copy-last-command-output")!.winLinuxDefault).toBeNull();
+  });
+
+  it("prompt-jump defaults collide with no other default binding", () => {
+    for (const action of ["jump-prev-prompt", "jump-next-prompt"]) {
+      const binding = DEFAULT_BINDINGS.find((b) => b.action === action)!;
+      for (const platformCombo of [binding.macDefault, binding.winLinuxDefault]) {
+        const combo = platformCombo as KeyCombo;
+        const clash = DEFAULT_BINDINGS.filter((other) => other.action !== action).find((other) =>
+          [other.macDefault, other.winLinuxDefault].some(
+            (c) => c && !Array.isArray(c) && serializeCombo(c) === serializeCombo(combo)
+          )
+        );
+        expect(clash?.action, `${action} ${serializeCombo(combo)}`).toBeUndefined();
+      }
+    }
+  });
+
   it("clear-terminal macOS binding uses Shift to avoid chord conflict", () => {
     const binding = DEFAULT_BINDINGS.find((b) => b.action === "clear-terminal");
     expect(binding).toBeDefined();

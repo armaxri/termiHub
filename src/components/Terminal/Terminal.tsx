@@ -56,6 +56,12 @@ import { toast } from "@/components/ui";
 import { createTerminalScrollbar, type TerminalScrollbarController } from "./terminalScrollbar";
 import { isFitReady, isProposedFitSafe, MIN_FIT_PX } from "./safeFit";
 import { getRenderedCellWidth } from "./xtermDimensions";
+import {
+  CommandMarkTracker,
+  COMMAND_MARK_ACTIONS,
+  OSC_133,
+  registerCommandMarkTracker,
+} from "@/services/commandMarks";
 import { SyntaxHighlightingEngine } from "@/services/syntaxHighlighting";
 import { resolveHighlightingConfig, resolveActiveRules } from "@/services/syntaxHighlightingConfig";
 import {
@@ -325,6 +331,7 @@ export function Terminal({
   // bump re-runs the creation effect) rebuilds it cleanly. Null while no xterm
   // exists.
   const highlightEngineRef = useRef<SyntaxHighlightingEngine | null>(null);
+  const commandMarksRef = useRef<CommandMarkTracker | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   // Serialized scrollback of the previous xterm instance, captured just before
   // it is disposed on a reconnect (retryCount bump re-runs the creation effect
@@ -1503,6 +1510,10 @@ export function Terminal({
     const scrollbar = createTerminalScrollbar({ xterm, gutter, thumb });
     scrollbarRef.current = scrollbar;
 
+    const commandMarks = new CommandMarkTracker(xterm, {
+      decorations: currentSettingsView().terminalCommandDecorations !== false,
+    });
+
     // Intercept application shortcuts before xterm processes them
     xterm.attachCustomKeyEventHandler((e: KeyboardEvent) => {
       if (e.type !== "keydown") return true;
@@ -1548,6 +1559,13 @@ export function Terminal({
         return false;
       }
 
+      // Prompt-navigation / command-output shortcuts only mean something when
+      // the shell emits OSC 133 marks. Without them, let the key reach the
+      // shell exactly as before (#3415) — the global handler's run is a no-op.
+      if (action && COMMAND_MARK_ACTIONS.has(action) && !commandMarks.hasMarks()) {
+        return true;
+      }
+
       // Block any other app shortcut from reaching xterm
       if (isAppShortcut(e)) {
         return false;
@@ -1588,6 +1606,13 @@ export function Terminal({
       }
       return true;
     });
+
+    // OSC 133 semantic-prompt marks (#3415, PROD-059): prompt navigation,
+    // command-output selection and the exit-status gutter. Inert when the shell
+    // never emits OSC 133.
+    const osc133Disposable = xterm.parser.registerOscHandler(OSC_133, commandMarks.handleOsc);
+    const unregisterCommandMarks = registerCommandMarkTracker(tabId, commandMarks);
+    commandMarksRef.current = commandMarks;
 
     // Track whether the user has scrolled away from the bottom.
     // Auto-scroll on new output is suppressed while the user is scrolled up.
@@ -1735,6 +1760,10 @@ export function Terminal({
       onScrollDisposable.dispose();
       osc7Disposable.dispose();
       osc9Disposable.dispose();
+      osc133Disposable.dispose();
+      unregisterCommandMarks();
+      commandMarks.dispose();
+      if (commandMarksRef.current === commandMarks) commandMarksRef.current = null;
       unregister(tabId);
       if (cleanupRef.current) {
         cleanupRef.current();
@@ -1951,6 +1980,12 @@ export function Terminal({
     sessionHighlightingOverride,
     existingSessionId,
   ]);
+
+  // Toggle the OSC 133 exit-status gutter live (#3415).
+  const commandDecorations = projectedSettings.terminalCommandDecorations;
+  useEffect(() => {
+    commandMarksRef.current?.setDecorationsEnabled(commandDecorations !== false);
+  }, [commandDecorations]);
 
   // Keep the backend's per-session line ending in sync when the global default
   // or this connection's override changes while the terminal is open.

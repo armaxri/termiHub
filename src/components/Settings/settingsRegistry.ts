@@ -71,7 +71,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "defaultShellIntegration",
     label: "Shell Integration by Default",
-    description: "Pre-enable Shell Integration (OSC 7 CWD tracking) for new SSH connections",
+    description:
+      "Pre-enable Shell Integration (OSC 7 CWD tracking and OSC 133 command marks) for new SSH connections",
     category: "general",
     keywords: [
       "ssh",
@@ -181,6 +182,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     description: "Terminal right-click action: context menu or quick copy/paste",
     category: "terminal",
     keywords: ["right-click", "context menu", "copy", "paste", "quick action", "mouse"],
+  },
+  {
+    id: "terminalCommandDecorations",
+    label: "Command Status Marks",
+    description:
+      "Show a success/failure mark next to each finished command (needs shell integration)",
+    category: "terminal",
+    keywords: [
+      "osc 133",
+      "command",
+      "prompt",
+      "exit code",
+      "status",
+      "success",
+      "failure",
+      "gutter",
+      "decoration",
+      "shell integration",
+    ],
   },
   {
     id: "askOpenSavedFileInTab",

@@ -1733,6 +1733,29 @@ stays manual. See PR for #1823.
 5. Regression check: dragging the split-view splitter to resize a terminal must
    still reflow and repaint as before.
 
+### OSC 133 command marks: gutter marks and prompt jumps (#3415)
+
+The OSC 133 parser, marker tracking, navigation, selection and the per-shell
+snippets are unit-tested (`src/services/commandMarks.test.ts`,
+`core/src/session/shell.rs`), but the gutter mark's rendering in the `.xterm`
+padding and the jump highlight are visual, so they stay manual.
+
+1. Open a local **zsh** or **bash** terminal (Shell Integration on — the default).
+2. Run `true`, `false`, and `ls /nonexistent`.
+3. **Expected:** a thin **green** bar sits in the left padding next to the
+   `true` prompt, **red** bars next to `false` and `ls /nonexistent`; no bar next
+   to the current (unfinished) prompt. Text is not overlapped.
+4. Run `seq 1 200`, then press **Cmd+Up** (macOS) / **Ctrl+Shift+Up**: the view
+   scrolls to the `seq` prompt and its row is briefly highlighted. Press again to
+   reach earlier prompts; **Cmd+Down** / **Ctrl+Shift+Down** walks back and
+   finally returns to the bottom.
+5. Command palette → **Copy Last Command Output** and paste elsewhere:
+   **Expected:** exactly `1`…`200`, without the prompt or command line.
+6. Settings → Terminal → **Command Status Marks** off: the bars disappear
+   immediately; on: they come back.
+7. Open a shell with Shell Integration **off** (or `sh`): **Expected:** no bars,
+   the palette entries are disabled, and Cmd+Up / Ctrl+Shift+Up reach the shell.
+
 ### Terminal output stays in order under scrolling output (#1849)
 
 Verifies that command output paints top-to-bottom in buffer order, with no later
