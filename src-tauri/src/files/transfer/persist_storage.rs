@@ -92,6 +92,7 @@ mod tests {
             resume_offset: 10,
             created_at_ms: 1,
             updated_at_ms: 2,
+            docker: None,
         }
     }
 
