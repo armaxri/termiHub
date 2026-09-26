@@ -196,6 +196,26 @@ describe("useRemoteDesktopSession", () => {
     expect(h.get().sessionId).toBe("rd-1");
   });
 
+  it("keeps authFailed when the first connect is rejected as an auth failure (#3390)", async () => {
+    mockedConnect.mockRejectedValueOnce("[thub-code:auth_failed] Authentication failed");
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    expect(h.get().state).toBe("authFailed");
+    expect(h.get().message).toBe("Authentication failed");
+  });
+
+  it("reports connectFailed for a non-auth first-connect error", async () => {
+    mockedConnect.mockRejectedValueOnce("Connection failed: refused");
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+
+    expect(h.get().state).toBe("connectFailed");
+    expect(h.get().message).toBe("Connection failed: refused");
+  });
+
   it("reflects lifecycle state events: active → resizing → reconnecting", async () => {
     const tabId = addTab();
     const h = renderSession(tabId);

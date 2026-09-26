@@ -24,6 +24,7 @@ import type {
   RemoteDesktopCertPromptPayload,
   ScaleMode,
 } from "@/types/remoteDesktop";
+import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 
 /** Everything a RemoteDesktopTab needs to drive one graphical session. */
@@ -171,8 +172,10 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
         frontendLog("remote_desktop", `session ${id} opened for tab ${tabId}`);
       } catch (err) {
         if (canceled) return;
-        setState("connectFailed");
-        setMessage(String(err));
+        // A rejected credential (typed `auth_failed`, #3390) keeps the
+        // "Authentication failed" overlay instead of the generic connect error.
+        setState(isAuthFailure(err) ? "authFailed" : "connectFailed");
+        setMessage(backendErrorMessage(err));
       }
     };
 

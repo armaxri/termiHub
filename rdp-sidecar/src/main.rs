@@ -21,6 +21,7 @@ mod audio;
 mod cert;
 mod clipboard;
 mod drive;
+mod failure;
 mod folder_watch;
 mod host_clipboard;
 mod host_clipboard_watch;
@@ -64,8 +65,17 @@ async fn main() -> Result<()> {
     };
 
     if let Err(e) = rdp::run_session(cfg, &mut stdin, &mut stdout).await {
-        // Surface the failure to the host, then exit non-zero.
-        let _ = write_message(&mut stdout, &SidecarMessage::Error(format!("{e:#}"))).await;
+        // Surface the failure to the host, then exit non-zero. The typed
+        // `Failure` (auth vs connect, #3390) goes first so a current desktop
+        // records the reason before the terminal `Error`; an older desktop
+        // cannot decode it and ends the session exactly as the `Error` would.
+        let message = format!("{e:#}");
+        let failure = SidecarMessage::Failure {
+            kind: failure::classify(&e),
+            message: message.clone(),
+        };
+        let _ = write_message(&mut stdout, &failure).await;
+        let _ = write_message(&mut stdout, &SidecarMessage::Error(message)).await;
         return Err(e);
     }
 

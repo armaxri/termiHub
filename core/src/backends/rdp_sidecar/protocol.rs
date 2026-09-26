@@ -163,6 +163,37 @@ pub enum SidecarMessage {
     },
     /// A fatal error; the sidecar exits after sending it.
     Error(String),
+    /// The **typed** reason the session is about to end fatally (#3390). The
+    /// sidecar sends it immediately before the terminal [`Error`](Self::Error)
+    /// so the desktop can tell a rejected credential (never worth an
+    /// auto-reconnect) from a transport / negotiation failure — the RDP
+    /// negotiation runs asynchronously inside the sidecar, after the desktop's
+    /// `connect()` already returned, so this is the only place that signal can
+    /// travel.
+    ///
+    /// **Append-only compatibility.** This variant is new; the enum is never
+    /// reordered. An older desktop cannot decode it, treats the undecodable
+    /// frame like any read error and ends the session — exactly its behavior on
+    /// the `Error` it would otherwise have read. A newer desktop talking to an
+    /// older sidecar simply never receives it and keeps today's behavior.
+    Failure {
+        /// What kind of failure ended the session.
+        kind: SidecarFailureKind,
+        /// Human-readable detail, for logs and the error overlay.
+        message: String,
+    },
+}
+
+/// Classification carried by [`SidecarMessage::Failure`] (#3390).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SidecarFailureKind {
+    /// The server rejected the credentials: a CredSSP / NLA logon failure, or a
+    /// server logon / access error reported through an `ERRINFO` code. Retrying
+    /// with the same credentials can never succeed.
+    Auth,
+    /// The session could not be established for any other reason (TCP / TLS /
+    /// X.224 negotiation, a refused certificate, an unsupported desktop size).
+    Connect,
 }
 
 /// Serialize `msg` and write it as one length-prefixed MessagePack frame.
@@ -331,6 +362,52 @@ mod tests {
 
         let state = SidecarMessage::State(GraphicalState::Active);
         assert_eq!(round_trip_sidecar(state.clone()).await, state);
+    }
+
+    #[tokio::test]
+    async fn typed_failure_round_trips() {
+        for kind in [SidecarFailureKind::Auth, SidecarFailureKind::Connect] {
+            let msg = SidecarMessage::Failure {
+                kind,
+                message: "logon failure".to_string(),
+            };
+            assert_eq!(round_trip_sidecar(msg.clone()).await, msg);
+        }
+    }
+
+    /// The pre-#3390 `SidecarMessage` shape: an older desktop's decoder.
+    #[derive(Debug, PartialEq, Deserialize, Serialize)]
+    enum LegacySidecarMessage {
+        State(GraphicalState),
+        Error(String),
+    }
+
+    /// Append-only compatibility (#3390): an older desktop cannot decode the new
+    /// `Failure` frame, so its reader takes the ordinary read-error exit — the
+    /// same session end as the `Error` it used to get. Frames an older sidecar
+    /// sends still decode on the newer desktop.
+    #[tokio::test]
+    async fn failure_frame_degrades_to_a_read_error_on_an_older_desktop() {
+        let (mut w, mut r) = tokio::io::duplex(1024 * 1024);
+        write_message(
+            &mut w,
+            &SidecarMessage::Failure {
+                kind: SidecarFailureKind::Auth,
+                message: "denied".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+        let err = read_message::<_, LegacySidecarMessage>(&mut r)
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+
+        write_message(&mut w, &LegacySidecarMessage::Error("boom".to_string()))
+            .await
+            .unwrap();
+        let got = read_message::<_, SidecarMessage>(&mut r).await.unwrap();
+        assert_eq!(got, SidecarMessage::Error("boom".to_string()));
     }
 
     #[tokio::test]
