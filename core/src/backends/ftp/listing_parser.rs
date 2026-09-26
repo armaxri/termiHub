@@ -65,9 +65,12 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
     let mut type_val: Option<String> = None;
     let mut size: u64 = 0;
     let mut modified = String::new();
-    // MLSD carries machine-readable permissions; default to `rwxrwxrwx` when no
-    // `UNIX.mode` fact is present (mirroring the previous behaviour).
-    let mut permissions = "rwxrwxrwx".to_string();
+    // POSIX mode bits, only when the server sends a `UNIX.mode` fact. Absent
+    // otherwise — never fabricated (PROD-015: a made-up `rwxrwxrwx` claimed
+    // every entry writable).
+    let mut permissions: Option<String> = None;
+    // The RFC 3659 `perm` fact: the logged-in user's own rights on the entry.
+    let mut perm_fact: Option<String> = None;
 
     for fact in facts.split(';') {
         let Some((key, value)) = fact.split_once('=') else {
@@ -79,9 +82,10 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
             "modify" => modified = parse_mlsx_time(value),
             "unix.mode" => {
                 if let Ok(mode) = u32::from_str_radix(value.trim(), 8) {
-                    permissions = format_permissions(mode & 0o777);
+                    permissions = Some(format_permissions(mode & 0o777));
                 }
             }
+            "perm" => perm_fact = Some(value.trim().to_string()),
             _ => {}
         }
     }
@@ -97,18 +101,40 @@ pub(crate) fn parse_mlsd_line(raw: &[u8], dir: &str) -> Option<FileEntry> {
     // target stays `None`.
     let is_symlink = type_val.as_deref() == Some("link");
 
-    let writable = writable_from_permissions(&permissions);
+    // Prefer the `perm` fact (the connecting user's actual rights); fall back to
+    // the coarse any-class hint from `UNIX.mode`; otherwise unknown.
+    let writable = perm_fact
+        .as_deref()
+        .map(|perm| writable_from_mlsd_perm(perm, is_directory))
+        .or_else(|| permissions.as_deref().and_then(writable_from_permissions));
     Some(FileEntry {
         name: name.to_string(),
         path: join_path(dir, name),
         is_directory,
         size,
         modified,
-        permissions: Some(permissions),
+        permissions,
         writable,
         is_symlink,
         symlink_target: None,
     })
+}
+
+/// Derive writability from an RFC 3659 §7.5.5 `perm` fact value.
+///
+/// Unlike POSIX mode bits (which describe owner/group/other, not *us*), the
+/// `perm` fact states what the **logged-in FTP user** may do with the entry, so
+/// it is the authoritative writability signal FTP offers:
+///
+/// * a **file** is writable when `w` is present (`STOR` may overwrite it);
+///   `a` (append) alone is not enough, because a save replaces the whole file;
+/// * a **directory** is writable when `c` is present (files may be created in
+///   it).
+///
+/// Matching is case-insensitive; an empty value means "no rights" → `false`.
+pub(crate) fn writable_from_mlsd_perm(perm: &str, is_directory: bool) -> bool {
+    let wanted = if is_directory { 'c' } else { 'w' };
+    perm.chars().any(|c| c.eq_ignore_ascii_case(&wanted))
 }
 
 /// Reformat an MLSD `modify` fact (`YYYYMMDDHHMMSS`, optionally with a
@@ -407,25 +433,26 @@ mod tests {
     #[test]
     fn parses_mlsd_lines() {
         let cases = [
-            // File with default (777) permissions.
+            // File with neither `perm` nor `UNIX.mode` → permissions and
+            // writability are unknown, never fabricated (PROD-015).
             Case {
                 line: b"type=file;size=8192;modify=20181105163248; omar.txt",
                 name: Some("omar.txt"),
                 is_dir: false,
                 size: 8192,
                 modified: "2018-11-05T16:32:48Z",
-                perms: Some("rwxrwxrwx"),
-                writable: Some(true),
+                perms: None,
+                writable: None,
             },
-            // Directory.
+            // Directory without permission facts → unknown.
             Case {
                 line: b"type=dir;size=4096;modify=20181105163248; docs",
                 name: Some("docs"),
                 is_dir: true,
                 size: 4096,
                 modified: "2018-11-05T16:32:48Z",
-                perms: Some("rwxrwxrwx"),
-                writable: Some(true),
+                perms: None,
+                writable: None,
             },
             // File carrying an explicit unix.mode fact.
             Case {
@@ -454,8 +481,8 @@ mod tests {
                 is_dir: false,
                 size: 0,
                 modified: "2018-11-05T16:32:48Z",
-                perms: Some("rwxrwxrwx"),
-                writable: Some(true),
+                perms: None,
+                writable: None,
             },
             // Unknown type → malformed, skipped.
             Case {
@@ -510,7 +537,9 @@ mod tests {
                 perms: None,
                 writable: None,
             },
-            // Directory with a four-digit UNIX.mode.
+            // Directory with a four-digit UNIX.mode. `perm=fle` has no `c`, so
+            // the logged-in user cannot create files here even though the
+            // mode bits show an owner write bit — the `perm` fact wins.
             Case {
                 line: b"modify=20260712220726;perm=fle;type=dir;unique=43U1459CB7;UNIX.group=0;UNIX.groupname=ftpuser;UNIX.mode=0755;UNIX.owner=0;UNIX.ownername=ftpuser; data",
                 name: Some("data"),
@@ -518,9 +547,11 @@ mod tests {
                 size: 0,
                 modified: "2026-07-12T22:07:26Z",
                 perms: Some("rwxr-xr-x"),
-                writable: Some(true),
+                writable: Some(false),
             },
-            // Regular file with size + four-digit UNIX.mode.
+            // Regular file with size + four-digit UNIX.mode. `perm=adfr` has no
+            // `w` (append/delete/rename/read only) → not writable for this user,
+            // although `0644` alone would have suggested writable.
             Case {
                 line: b"modify=20260712220726;perm=adfr;size=61;type=file;unique=43U100032A;UNIX.group=0;UNIX.groupname=ftpuser;UNIX.mode=0644;UNIX.owner=0;UNIX.ownername=ftpuser; readme.txt",
                 name: Some("readme.txt"),
@@ -528,7 +559,7 @@ mod tests {
                 size: 61,
                 modified: "2026-07-12T22:07:26Z",
                 perms: Some("rw-r--r--"),
-                writable: Some(true),
+                writable: Some(false),
             },
             // MLST (single-entry) echoes the full pathname as the name; it must
             // be reduced to the base name (DIR here is the entry's parent).
@@ -545,6 +576,88 @@ mod tests {
         for case in &cases {
             check(parse_mlsd_line(case.line, DIR), case);
         }
+    }
+
+    /// PROD-015: the RFC 3659 `perm` fact is the preferred writability signal;
+    /// `UNIX.mode` bits are only the fallback, and neither → unknown.
+    #[test]
+    fn mlsd_perm_fact_drives_writability() {
+        let cases = [
+            // File with `w` → writable, even when the mode bits say read-only.
+            Case {
+                line: b"type=file;size=10;modify=20260712220726;perm=adfrw;UNIX.mode=0444; a.txt",
+                name: Some("a.txt"),
+                is_dir: false,
+                size: 10,
+                modified: "2026-07-12T22:07:26Z",
+                perms: Some("r--r--r--"),
+                writable: Some(true),
+            },
+            // Upper-case facts/values are accepted.
+            Case {
+                line: b"Type=file;Size=10;Modify=20260712220726;Perm=RW; b.txt",
+                name: Some("b.txt"),
+                is_dir: false,
+                size: 10,
+                modified: "2026-07-12T22:07:26Z",
+                perms: None,
+                writable: Some(true),
+            },
+            // Append-only is not enough for a whole-file save.
+            Case {
+                line: b"type=file;size=10;modify=20260712220726;perm=ar; c.log",
+                name: Some("c.log"),
+                is_dir: false,
+                size: 10,
+                modified: "2026-07-12T22:07:26Z",
+                perms: None,
+                writable: Some(false),
+            },
+            // An empty `perm` fact means no rights at all.
+            Case {
+                line: b"type=file;size=10;modify=20260712220726;perm=; d.bin",
+                name: Some("d.bin"),
+                is_dir: false,
+                size: 10,
+                modified: "2026-07-12T22:07:26Z",
+                perms: None,
+                writable: Some(false),
+            },
+            // Directory: `c` (create) makes it writable.
+            Case {
+                line: b"type=dir;modify=20260712220726;perm=flcdmpe; uploads",
+                name: Some("uploads"),
+                is_dir: true,
+                size: 0,
+                modified: "2026-07-12T22:07:26Z",
+                perms: None,
+                writable: Some(true),
+            },
+            // Directory with `w`-less, `c`-less perms → not writable.
+            Case {
+                line: b"type=dir;modify=20260712220726;perm=el; pub",
+                name: Some("pub"),
+                is_dir: true,
+                size: 0,
+                modified: "2026-07-12T22:07:26Z",
+                perms: None,
+                writable: Some(false),
+            },
+        ];
+        for case in &cases {
+            check(parse_mlsd_line(case.line, DIR), case);
+        }
+    }
+
+    #[test]
+    fn writable_from_mlsd_perm_rules() {
+        assert!(writable_from_mlsd_perm("adfrw", false));
+        assert!(!writable_from_mlsd_perm("adfr", false));
+        assert!(!writable_from_mlsd_perm("", false));
+        assert!(writable_from_mlsd_perm("cmp", true));
+        // `w` on a directory is meaningless per RFC 3659; `c` is what counts.
+        assert!(!writable_from_mlsd_perm("w", true));
+        assert!(!writable_from_mlsd_perm("c", false));
     }
 
     /// I18N-006: a `LIST` line with a localized (non-English) month name cannot
