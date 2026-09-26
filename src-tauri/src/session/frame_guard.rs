@@ -15,10 +15,16 @@
 //! guard asks the pump to abort, which surfaces a typed `Disconnected` state
 //! carrying [`REJECTED_FRAMES_MESSAGE`]. The guard never panics and never
 //! allocates from the untrusted sizes.
+//!
+//! Cursor updates get the same treatment at the cursor pump via [`CursorGuard`]
+//! (#3333): a cursor bitmap outside the shared bound ([`MAX_CURSOR_DIMENSION`],
+//! hotspot inside the image, exact `width * height * 4` length — see
+//! [`CursorUpdate::sanitize`]) has its shape stripped, while the position and
+//! visibility still reach the frontend. A bad cursor never ends the session.
 
-use termihub_core::connection::FrameUpdate;
+use termihub_core::connection::{CursorUpdate, FrameUpdate};
 #[cfg(doc)]
-use termihub_core::connection::MAX_FRAMEBUFFER_DIMENSION;
+use termihub_core::connection::{MAX_CURSOR_DIMENSION, MAX_FRAMEBUFFER_DIMENSION};
 use tracing::{debug, warn};
 
 /// Consecutive fully-rejected frames after which the session is dropped.
@@ -107,10 +113,54 @@ impl FrameGuard {
     }
 }
 
+/// Stateful per-session guard applying the shared cursor-bitmap bound.
+///
+/// Unlike [`FrameGuard`] it never aborts: an invalid shape is dropped and the
+/// rest of the update (position / visibility) is still emitted. The state only
+/// throttles logging so a hostile stream cannot flood the log.
+#[derive(Debug, Default)]
+pub struct CursorGuard {
+    consecutive_rejected: u32,
+}
+
+impl CursorGuard {
+    /// A fresh guard with no rejection history.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Validate one untrusted cursor update from a backend, returning the
+    /// update that is safe to emit (with any invalid shape removed).
+    pub fn admit(&mut self, session_id: &str, cursor: CursorUpdate) -> CursorUpdate {
+        let (cursor, violation) = cursor.sanitize();
+        match violation {
+            Some(violation) => {
+                let reason = violation.to_string();
+                if self.consecutive_rejected == 0 {
+                    warn!(session_id, reason, "dropped invalid graphical cursor shape");
+                } else {
+                    debug!(
+                        session_id,
+                        reason,
+                        streak = self.consecutive_rejected.saturating_add(1),
+                        "dropped invalid graphical cursor shape"
+                    );
+                }
+                self.consecutive_rejected = self.consecutive_rejected.saturating_add(1);
+            }
+            None if cursor.shape.is_some() => self.consecutive_rejected = 0,
+            None => {}
+        }
+        cursor
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use termihub_core::connection::{DirtyRect, MAX_FRAMEBUFFER_DIMENSION};
+    use termihub_core::connection::{
+        CursorShape, DirtyRect, MAX_CURSOR_DIMENSION, MAX_FRAMEBUFFER_DIMENSION,
+    };
 
     fn rect(x: u32, y: u32, w: u32, h: u32) -> DirtyRect {
         DirtyRect {
@@ -192,5 +242,53 @@ mod tests {
         assert_eq!(g.admit("s", ok.clone()), FrameVerdict::Emit(ok));
         // The streak restarted: one more bad frame is only a drop.
         assert_eq!(g.admit("s", oversize()), FrameVerdict::Drop);
+    }
+
+    // ── Cursor guard (#3333) ───────────────────────────────────────────
+
+    fn cursor(shape: Option<CursorShape>) -> CursorUpdate {
+        CursorUpdate {
+            x: 5,
+            y: 6,
+            visible: true,
+            shape,
+        }
+    }
+
+    fn shape(w: u32, h: u32) -> CursorShape {
+        CursorShape {
+            width: w,
+            height: h,
+            hotspot_x: 0,
+            hotspot_y: 0,
+            data: vec![0u8; (w as usize) * (h as usize) * 4],
+        }
+    }
+
+    #[test]
+    fn valid_cursor_shape_passes_unchanged() {
+        let mut g = CursorGuard::new();
+        let c = cursor(Some(shape(32, 32)));
+        assert_eq!(g.admit("s", c.clone()), c);
+    }
+
+    #[test]
+    fn invalid_cursor_shape_is_stripped_keeping_position() {
+        let mut g = CursorGuard::new();
+        let oversize = CursorShape {
+            width: MAX_CURSOR_DIMENSION + 1,
+            height: 1,
+            hotspot_x: 0,
+            hotspot_y: 0,
+            data: Vec::new(),
+        };
+        assert_eq!(g.admit("s", cursor(Some(oversize))), cursor(None));
+        let mut short = shape(4, 4);
+        short.data.truncate(3);
+        assert_eq!(g.admit("s", cursor(Some(short))), cursor(None));
+        assert_eq!(g.consecutive_rejected, 2);
+        // A valid shape resets the log-throttle streak.
+        g.admit("s", cursor(Some(shape(4, 4))));
+        assert_eq!(g.consecutive_rejected, 0);
     }
 }

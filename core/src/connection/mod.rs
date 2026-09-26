@@ -34,10 +34,10 @@ pub use clipboard_image::{
 };
 pub use graphical::{
     rgba_len, shared_field_base, AuthKind, CertPrompt, CertPromptReceiver, CursorReceiver,
-    CursorShape, CursorUpdate, DirtyRect, FrameReceiver, FrameUpdate, FrameViolation,
-    GraphicalBackend, GraphicalCapabilities, GraphicalState, InputEvent, RectViolation,
-    RemoteClipboardFile, SanitizedFrame, SessionStateMachine, MAX_FRAMEBUFFER_DIMENSION,
-    MAX_RECONNECT_ATTEMPTS,
+    CursorShape, CursorUpdate, CursorViolation, DirtyRect, FrameReceiver, FrameUpdate,
+    FrameViolation, GraphicalBackend, GraphicalCapabilities, GraphicalState, InputEvent,
+    RectViolation, RemoteClipboardFile, SanitizedFrame, SessionStateMachine, MAX_CURSOR_DIMENSION,
+    MAX_FRAMEBUFFER_DIMENSION, MAX_RECONNECT_ATTEMPTS,
 };
 pub use graphical_resolution::{
     fixed_resolution_fields, fixed_resolution_requested, is_fixed_mode, normalize_fixed_size,
