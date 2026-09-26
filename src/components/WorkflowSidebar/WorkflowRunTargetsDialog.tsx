@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Modal, Button, Checkbox } from "@/components/ui";
-import type { RunnableTarget } from "@/store/slices/workflowFanout";
+import { WORKFLOW_FANOUT_CONCURRENCY, type RunnableTarget } from "@/store/slices/workflowFanout";
 import "./WorkflowRunTargetsDialog.css";
 
 /** Props for {@link WorkflowRunTargetsDialog}. */
@@ -17,15 +17,19 @@ export interface WorkflowRunTargetsDialogProps {
   initialSelection: string[];
   /** Called when the dialog should open/close. */
   onOpenChange: (open: boolean) => void;
-  /** Called with the chosen tab ids (in display order) when the user runs. */
-  onRun: (tabIds: string[]) => void;
+  /**
+   * Called with the chosen tab ids (in display order) when the user runs, and
+   * whether to run them in parallel (#3418; the default) or one after another.
+   */
+  onRun: (tabIds: string[], options: { parallel: boolean }) => void;
 }
 
 /**
  * "Run on…" picker for a manual multi-target workflow run (PROD-047): a
  * checkbox per connected terminal, shortcuts to select all or the active
  * broadcast group, and a Run button that is disabled until at least one
- * terminal is chosen. The workflow then runs on each chosen terminal in turn.
+ * terminal is chosen. The workflow then runs on the chosen terminals in parallel
+ * (#3418), or one after another when "Run in parallel" is unticked.
  */
 export function WorkflowRunTargetsDialog({
   open,
@@ -37,10 +41,14 @@ export function WorkflowRunTargetsDialog({
   onRun,
 }: WorkflowRunTargetsDialogProps) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [parallel, setParallel] = useState(true);
 
   // Re-seed the selection each time the dialog opens so a prior pick never leaks in.
   useEffect(() => {
-    if (open) setSelected(new Set(initialSelection));
+    if (open) {
+      setSelected(new Set(initialSelection));
+      setParallel(true);
+    }
   }, [open, initialSelection]);
 
   const broadcastCandidates = candidates.filter((c) => broadcastTabIds.includes(c.id));
@@ -57,7 +65,7 @@ export function WorkflowRunTargetsDialog({
   const handleRun = () => {
     const ids = candidates.filter((c) => selected.has(c.id)).map((c) => c.id);
     if (ids.length === 0) return;
-    onRun(ids);
+    onRun(ids, { parallel });
     onOpenChange(false);
   };
 
@@ -68,7 +76,7 @@ export function WorkflowRunTargetsDialog({
       open={open}
       onOpenChange={onOpenChange}
       title={`Run "${workflowName}" on…`}
-      description="Choose the terminals to run the workflow on. They run one after another."
+      description="Choose the terminals to run the workflow on."
       data-testid="workflow-run-targets-dialog"
       footer={
         <>
@@ -129,6 +137,17 @@ export function WorkflowRunTargetsDialog({
               </li>
             ))}
           </ul>
+          <div className="workflow-run-targets__item workflow-run-targets__mode">
+            <Checkbox
+              id="workflow-run-targets-parallel"
+              checked={parallel}
+              onCheckedChange={setParallel}
+              data-testid="workflow-run-targets-parallel"
+            />
+            <label htmlFor="workflow-run-targets-parallel">
+              Run in parallel (up to {WORKFLOW_FANOUT_CONCURRENCY} at a time)
+            </label>
+          </div>
         </>
       )}
     </Modal>

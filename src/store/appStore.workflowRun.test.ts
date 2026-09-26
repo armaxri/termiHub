@@ -122,19 +122,23 @@ import { registerTerminalInputInjector } from "@/services/macroPlayback";
 import { serializeWorkflows } from "@/services/workflowIo";
 import { resetOnConnectDispatchState } from "@/services/workflowTriggers";
 import { toast } from "@/components/ui";
+import { WORKFLOW_FANOUT_CONCURRENCY } from "./slices/workflowFanout";
 
 setupSettingsRegion();
 
 // ── In-memory twin of the Rust WorkflowRunStore (client-scoped) ────────────────
 
 interface Run {
+  runId: string;
   workflowId: string;
   workflowName: string;
   tabId: string;
+  label: string | null;
   total: number;
   completed: number;
 }
 interface Output {
+  runId: string | null;
   workflowId: string;
   workflowName: string;
   program: string;
@@ -143,11 +147,12 @@ interface Output {
   error: string | null;
 }
 interface ClientState {
-  run: Run | null;
+  runs: Run[];
   output: Output | null;
 }
 interface RegionView {
   run: Run | null;
+  runs: Run[];
   output: Output | null;
 }
 
@@ -175,7 +180,7 @@ class WorkflowStoreTransport implements Transport {
   private state(clientId: string): ClientState {
     let s = this.clients.get(clientId);
     if (!s) {
-      s = { run: null, output: null };
+      s = { runs: [], output: null };
       this.clients.set(clientId, s);
     }
     return s;
@@ -186,28 +191,38 @@ class WorkflowStoreTransport implements Transport {
     const s = this.state(intent.clientId);
     switch (intent.kind) {
       case "workflow.runStarted": {
-        s.run = {
+        const runId = (p.runId as string | undefined) ?? "legacy";
+        const run: Run = {
+          runId,
           workflowId: p.workflowId as string,
           workflowName: p.workflowName as string,
           tabId: p.tabId as string,
+          label: (p.label as string | undefined) ?? null,
           total: p.total as number,
           completed: 0,
         };
-        s.output = null;
+        if (p.runId === undefined) s.runs = [run];
+        else {
+          const at = s.runs.findIndex((r) => r.runId === runId);
+          if (at >= 0) s.runs[at] = run;
+          else s.runs.push(run);
+        }
+        if (!p.preserveOutput) s.output = null;
         break;
       }
       case "workflow.stepAdvanced": {
-        if (
-          s.run &&
-          s.run.workflowId === (p.workflowId as string) &&
-          s.run.tabId === (p.tabId as string)
-        ) {
-          s.run.completed = p.completed as number;
+        for (const r of s.runs) {
+          const matches =
+            p.runId !== undefined
+              ? r.runId === p.runId
+              : r.workflowId === p.workflowId && r.tabId === p.tabId;
+          if (matches) r.completed = p.completed as number;
         }
         break;
       }
       case "workflow.outputOpened": {
         s.output = {
+          runId: (p.runId as string | undefined) ?? null,
           workflowId: p.workflowId as string,
           workflowName: p.workflowName as string,
           program: p.program as string,
@@ -218,13 +233,13 @@ class WorkflowStoreTransport implements Transport {
         break;
       }
       case "workflow.runCompleted":
-        this.finishRun(s, "completed", null);
+        this.finishRun(s, p.runId as string | undefined, "completed", null);
         break;
       case "workflow.runCancelled":
-        this.finishRun(s, "cancelled", null);
+        this.finishRun(s, p.runId as string | undefined, "cancelled", null);
         break;
       case "workflow.runFailed":
-        this.finishRun(s, "failed", (p.error as string | undefined) ?? null);
+        this.finishRun(s, p.runId as string | undefined, "failed", (p.error as string) ?? null);
         break;
       case "workflow.dismissOutput":
         s.output = null;
@@ -236,12 +251,17 @@ class WorkflowStoreTransport implements Transport {
 
   private finishRun(
     s: ClientState,
+    runId: string | undefined,
     outcome: "completed" | "cancelled" | "failed",
     error: string | null
   ): void {
-    if (s.run === null) return; // no active run → leave the panel as-is
-    s.run = null;
-    if (s.output) {
+    const settled = s.runs.filter((r) => runId === undefined || r.runId === runId);
+    if (settled.length === 0) return; // not in flight → leave the panel as-is
+    s.runs = s.runs.filter((r) => !settled.includes(r));
+    const owned =
+      s.output !== null &&
+      (s.output.runId === null || settled.some((r) => r.runId === s.output?.runId));
+    if (s.output && owned) {
       s.output.status = outcome;
       s.output.error = outcome === "failed" ? error : null;
     }
@@ -249,7 +269,11 @@ class WorkflowStoreTransport implements Transport {
 
   regionView(clientId: string): RegionView {
     const s = this.state(clientId);
-    return structuredClone({ run: s.run, output: s.output });
+    return structuredClone({
+      run: s.runs[s.runs.length - 1] ?? null,
+      runs: s.runs,
+      output: s.output,
+    });
   }
 
   /** The single client's region view (there is one per-session client id). */
@@ -1100,7 +1124,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       return sends;
     }
 
-    it("runs the workflow on every selected terminal in order, one history record each", async () => {
+    it("runs the workflow on every selected terminal, one history record each", async () => {
       seedTwoTerminals();
       const sends = captureSends();
       useAppStore.setState({ workflows: [workflow("w1", [cmd("uptime")])] });
@@ -1158,7 +1182,7 @@ describe("appStore — workflow run slice (#1852)", () => {
       );
     });
 
-    it("cancelling stops the remaining targets", async () => {
+    it("cancel-all stops every target", async () => {
       seedTwoTerminals();
       const sends: [string, string][] = [];
       registerTerminalInputInjector(async (tabId, data) => {
@@ -1193,6 +1217,188 @@ describe("appStore — workflow run slice (#1852)", () => {
         'Ran workflow "Workflow w1" with 1 tolerated step failure',
         expect.anything()
       );
+    });
+
+    /** Seed `n` connected terminal tabs `tab-0..tab-(n-1)` titled `host-<i>`. */
+    function seedTerminals(n: number): string[] {
+      const tabs: TerminalTab[] = Array.from({ length: n }, (_, i) => ({
+        id: `tab-${i}`,
+        sessionId: `sess-${i}`,
+        title: `host-${i}`,
+        connectionType: "local",
+        contentType: "terminal",
+        config: { type: "local", config: {} },
+        panelId: "leaf-1",
+        isActive: i === 0,
+      }));
+      const leaf: LeafPanel = { type: "leaf", id: "leaf-1", tabs, activeTabId: "tab-0" };
+      seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
+      return tabs.map((t) => t.id);
+    }
+
+    /** An injector that holds every `hold` send until released, tracking how many
+     * targets are inside a held send at once. */
+    function holdingInjector() {
+      const sends: [string, string][] = [];
+      let inFlight = 0;
+      let maxInFlight = 0;
+      let release!: () => void;
+      const gate = new Promise<void>((r) => (release = r));
+      registerTerminalInputInjector(async (tabId, data) => {
+        sends.push([tabId, data]);
+        if (data === "hold\n") {
+          inFlight++;
+          maxInFlight = Math.max(maxInFlight, inFlight);
+          await gate;
+          inFlight--;
+        }
+        return true;
+      });
+      return {
+        sends,
+        release: () => release(),
+        inFlight: () => inFlight,
+        maxInFlight: () => maxInFlight,
+      };
+    }
+
+    it("runs the targets concurrently, each keyed in the region (#3418)", async () => {
+      seedTwoTerminals();
+      const inj = holdingInjector();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("hold"), cmd("after")])] });
+
+      const done = useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+      // Both targets are inside their first step at the same time.
+      await vi.waitFor(() => expect(inj.inFlight()).toBe(2));
+      await vi.waitFor(() => expect(regionView().runs).toHaveLength(2));
+      const runs = regionView().runs;
+      expect(runs.map((r) => r.tabId)).toEqual(["tab-a", "tab-b"]);
+      expect(runs.map((r) => r.label)).toEqual(["web-1", "web-2"]);
+      expect(new Set(runs.map((r) => r.runId)).size).toBe(2);
+      expect(toast.loading).toHaveBeenCalledWith(
+        'Running workflow "Workflow w1" on 2 terminals…',
+        expect.objectContaining({ description: "2 running" })
+      );
+
+      inj.release();
+      await done;
+      expect(inj.sends.filter(([, d]) => d === "after\n")).toHaveLength(2);
+      expect(regionView().runs).toEqual([]);
+      expect(vi.mocked(apiRecordWorkflowRun)).toHaveBeenCalledTimes(2);
+    });
+
+    it("caps concurrency at WORKFLOW_FANOUT_CONCURRENCY and queues the rest", async () => {
+      const ids = seedTerminals(WORKFLOW_FANOUT_CONCURRENCY + 2);
+      const inj = holdingInjector();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("hold")])] });
+
+      const done = useAppStore.getState().runWorkflow("w1", { targetTabIds: ids });
+      await vi.waitFor(() => expect(inj.inFlight()).toBe(WORKFLOW_FANOUT_CONCURRENCY));
+      // The two extra targets are queued, not started.
+      expect(regionView().runs).toHaveLength(WORKFLOW_FANOUT_CONCURRENCY);
+      expect(toast.loading).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ description: "8 running · 2 queued" })
+      );
+
+      inj.release();
+      await done;
+      expect(inj.maxInFlight()).toBe(WORKFLOW_FANOUT_CONCURRENCY);
+      expect(inj.sends).toHaveLength(ids.length);
+      expect(toast.success).toHaveBeenCalledWith(
+        `Ran workflow "Workflow w1" on ${ids.length} terminal(s)`,
+        expect.anything()
+      );
+    });
+
+    it("runs one target at a time with concurrency 1", async () => {
+      const ids = seedTerminals(3);
+      const inj = holdingInjector();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("hold")])] });
+
+      const done = useAppStore.getState().runWorkflow("w1", { targetTabIds: ids, concurrency: 1 });
+      await vi.waitFor(() => expect(inj.inFlight()).toBe(1));
+      inj.release();
+      await done;
+      expect(inj.maxInFlight()).toBe(1);
+      expect(inj.sends.map(([tabId]) => tabId)).toEqual(ids);
+    });
+
+    it("cancel-all mid-run stops running targets and starts no queued one", async () => {
+      const ids = seedTerminals(WORKFLOW_FANOUT_CONCURRENCY + 2);
+      const inj = holdingInjector();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("hold"), cmd("after")])] });
+
+      const done = useAppStore.getState().runWorkflow("w1", { targetTabIds: ids });
+      await vi.waitFor(() => expect(inj.inFlight()).toBe(WORKFLOW_FANOUT_CONCURRENCY));
+      useAppStore.getState().cancelWorkflowRun();
+      inj.release();
+      await done;
+
+      // No target reached its second step, and the queued two never started.
+      expect(inj.sends.filter(([, d]) => d === "after\n")).toEqual([]);
+      expect(inj.sends).toHaveLength(WORKFLOW_FANOUT_CONCURRENCY);
+      expect(regionView().runs).toEqual([]);
+      const statuses = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.status);
+      expect(statuses).toEqual(Array(WORKFLOW_FANOUT_CONCURRENCY).fill("cancelled"));
+      expect(toast.info).toHaveBeenCalledWith(
+        'Workflow "Workflow w1" cancelled',
+        expect.objectContaining({ description: expect.stringContaining("10 not finished") })
+      );
+    });
+
+    it("cancels one target by run id while its siblings keep going", async () => {
+      seedTwoTerminals();
+      const inj = holdingInjector();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("hold"), cmd("after")])] });
+
+      const done = useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+      await vi.waitFor(() => expect(regionView().runs).toHaveLength(2));
+      await vi.waitFor(() => expect(inj.inFlight()).toBe(2));
+      const runA = regionView().runs.find((r) => r.tabId === "tab-a");
+      useAppStore.getState().cancelWorkflowRun(runA?.runId);
+      inj.release();
+      await done;
+
+      expect(inj.sends.filter(([, d]) => d === "after\n")).toEqual([["tab-b", "after\n"]]);
+      const byTab = Object.fromEntries(
+        vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => [r.tabId, r.status])
+      );
+      expect(byTab).toEqual({ "tab-a": "cancelled", "tab-b": "completed" });
+    });
+
+    it("keeps the other targets running when one fails mid-run", async () => {
+      seedTwoTerminals();
+      const sends = captureSends((tabId, data) => tabId === "tab-a" && data === "one\n");
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("one"), cmd("two")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+
+      expect(sends).toContainEqual(["tab-b", "two\n"]);
+      expect(sends).not.toContainEqual(["tab-a", "two\n"]);
+      const byTab = Object.fromEntries(
+        vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => [r.tabId, r.status])
+      );
+      expect(byTab).toEqual({ "tab-a": "failed", "tab-b": "completed" });
+    });
+
+    it("asks for local-process authorization once for all concurrent targets", async () => {
+      seedTwoTerminals();
+      captureSends();
+      seedSettings({ workflowLocalProcessEnabled: true, workflowLocalProcessAllowlist: [] });
+      useAppStore.setState({
+        workflows: [workflow("w1", [{ kind: "run-local-process", program: "echo", args: ["hi"] }])],
+      });
+
+      const done = useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+      await vi.waitFor(() => expect(useAppStore.getState().localProcessPrompt).not.toBeNull());
+      useAppStore.getState().resolveLocalProcessPrompt("once");
+      await done;
+
+      expect(useAppStore.getState().localProcessPrompt).toBeNull();
+      expect(invokeRunLocalProcess).toHaveBeenCalledTimes(2);
+      const statuses = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.status);
+      expect(statuses).toEqual(["completed", "completed"]);
     });
 
     it("retries a failing step and shows the attempt in the progress toast", async () => {

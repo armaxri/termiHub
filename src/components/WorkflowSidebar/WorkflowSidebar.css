@@ -53,6 +53,37 @@
   white-space: nowrap;
 }
 
+/* Per-target progress of a concurrent "Run on…" fan-out (#3418). */
+.workflow-item__targets {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 2px 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workflow-item__target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.workflow-item__target-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-item__target-progress {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
 .workflow-item__preview {
   display: block;
   color: var(--text-secondary);

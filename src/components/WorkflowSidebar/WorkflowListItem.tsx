@@ -3,6 +3,7 @@ import { Play, Pencil, Copy, Download, Trash2, Zap, Square, ListChecks } from "l
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Workflow } from "@/types/workflow";
+import type { WorkflowRunState } from "@/store/appStore";
 import { summariseWorkflowSteps } from "./workflowStepMeta";
 
 interface WorkflowListItemProps {
@@ -12,7 +13,15 @@ interface WorkflowListItemProps {
   onRun: (workflowId: string) => void;
   /** Open the "Run on…" multi-terminal picker (PROD-047). */
   onRunOn: (workflowId: string) => void;
+  /** Stop every in-flight run of this workflow (cancel-all, #3418). */
   onCancel: () => void;
+  /**
+   * This workflow's in-flight runs (#3418). With more than one — a concurrent
+   * "Run on…" fan-out — the row lists each target's progress with its own stop.
+   */
+  runs?: WorkflowRunState[];
+  /** Stop one target's run by id, leaving its siblings running (#3418). */
+  onCancelRun?: (runId: string) => void;
   onEdit: (workflowId: string) => void;
   onDuplicate: (workflowId: string) => void;
   onExport: (workflowId: string) => void;
@@ -41,6 +50,8 @@ export function WorkflowListItem({
   onRun,
   onRunOn,
   onCancel,
+  runs,
+  onCancelRun,
   onEdit,
   onDuplicate,
   onExport,
@@ -65,12 +76,12 @@ export function WorkflowListItem({
       actions={
         <>
           {running ? (
-            <Tooltip content="Stop" side="top">
+            <Tooltip content={runs && runs.length > 1 ? "Stop all" : "Stop"} side="top">
               <Button
                 variant="ghost"
                 size="sm"
                 iconOnly
-                aria-label="Stop"
+                aria-label={runs && runs.length > 1 ? "Stop all" : "Stop"}
                 data-testid={`workflow-stop-${workflow.id}`}
                 icon={<Square size={12} fill="currentColor" />}
                 onClick={(e) => {
@@ -172,6 +183,40 @@ export function WorkflowListItem({
         <>
           {workflow.description ? (
             <span className="workflow-item__description">{workflow.description}</span>
+          ) : null}
+          {runs && runs.length > 1 ? (
+            <ul
+              className="workflow-item__targets"
+              aria-label="Running terminals"
+              data-testid={`workflow-targets-${workflow.id}`}
+            >
+              {runs.map((run) => (
+                <li
+                  key={run.runId}
+                  className="workflow-item__target"
+                  data-testid={`workflow-target-${run.runId}`}
+                >
+                  <span className="workflow-item__target-name">{run.label || run.tabId}</span>
+                  <span className="workflow-item__target-progress">
+                    {run.completed} / {run.total}
+                  </span>
+                  {onCancelRun ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      iconOnly
+                      aria-label={`Stop on ${run.label || run.tabId}`}
+                      data-testid={`workflow-target-stop-${run.runId}`}
+                      icon={<Square size={10} fill="currentColor" />}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onCancelRun(run.runId);
+                      }}
+                    />
+                  ) : null}
+                </li>
+              ))}
+            </ul>
           ) : null}
           {preview ? (
             <code

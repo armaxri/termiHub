@@ -24,3 +24,10 @@
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
+
+/* "Run in parallel" toggle (#3418), set apart from the terminal list. */
+.workflow-run-targets__mode {
+  margin-top: var(--spacing-sm);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-primary);
+}
