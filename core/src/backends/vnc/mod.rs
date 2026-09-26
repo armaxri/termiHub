@@ -330,6 +330,44 @@ async fn drive(
     }
 }
 
+/// Poll a future inside [`std::panic::catch_unwind`], turning a panic into an
+/// `Err` carrying the panic message (#3473).
+struct CatchUnwind<F>(std::pin::Pin<Box<F>>);
+
+impl<F: std::future::Future> std::future::Future for CatchUnwind<F> {
+    type Output = Result<F::Output, String>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        let inner = self.0.as_mut();
+        match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| inner.poll(cx))) {
+            Ok(std::task::Poll::Pending) => std::task::Poll::Pending,
+            Ok(std::task::Poll::Ready(out)) => std::task::Poll::Ready(Ok(out)),
+            Err(panic) => {
+                let msg = panic
+                    .downcast_ref::<&str>()
+                    .map(|s| (*s).to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "unknown panic".to_string());
+                std::task::Poll::Ready(Err(msg))
+            }
+        }
+    }
+}
+
+/// Task boundary for the VNC driver (#3473, belt-and-braces): the vendored
+/// client no longer panics on server input, but if anything in the driver ever
+/// does, contain it here and end the session cleanly. Unwinding drops the
+/// frame/cursor senders, so the graphical manager sees the stream close and
+/// moves the session to `Disconnected` exactly as for a network drop.
+async fn drive_guarded<F: std::future::Future<Output = ()>>(driver: F) {
+    if let Err(msg) = CatchUnwind(Box::pin(driver)).await {
+        warn!(panic = %msg, "vnc driver panicked — session ended");
+    }
+}
+
 /// Decode a Tight JPEG sub-rect at `(x, y)`, blit it into the shadow, and return
 /// the [`DirtyRect`] to emit downstream — or `None` when the JPEG is malformed or
 /// lands out of bounds, in which case it is logged and dropped so a bad update
@@ -578,13 +616,13 @@ impl ConnectionType for Vnc {
         let (frame_tx, frame_rx) = mpsc::channel(CHANNEL_DEPTH);
         let (cursor_tx, cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
 
-        let task = tokio::spawn(drive(
+        let task = tokio::spawn(drive_guarded(drive(
             client.clone(),
             shared.clone(),
             cancel.clone(),
             frame_tx,
             cursor_tx,
-        ));
+        )));
 
         self.frame_rx = StdMutex::new(Some(frame_rx));
         self.cursor_rx = StdMutex::new(Some(cursor_rx));
@@ -811,6 +849,24 @@ mod tests {
 
     /// A solid 16×16 red Tight JPEG sub-rect fixture (shared with `jpeg` tests).
     const RED_JPEG_16X16: &[u8] = include_bytes!("testdata/red_16x16.jpg");
+
+    #[tokio::test]
+    async fn drive_guard_contains_a_panicking_driver() {
+        let (tx, mut rx) = mpsc::channel::<u8>(1);
+        let task = tokio::spawn(drive_guarded(async move {
+            let _tx = tx;
+            panic!("hostile server");
+        }));
+        // The task completes normally (no JoinError) and the channel closes.
+        task.await.expect("panic must not escape the driver task");
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn drive_guard_passes_through_a_normal_driver() {
+        let task = tokio::spawn(drive_guarded(async {}));
+        task.await.expect("normal completion");
+    }
 
     #[test]
     fn jpeg_dirty_rect_decodes_and_blits_into_shadow() {
