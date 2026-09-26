@@ -52,6 +52,7 @@ use termihub_core::protocol::methods::{
     MonitoringSubscribeParams, MonitoringUnsubscribeParams, ProcessesListResult,
 };
 
+use crate::session::ssh_keyboard_interactive::current_prompt_owner;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::terminal::backend::OUTPUT_CHANNEL_CAPACITY;
 use crate::utils::errors::TerminalError;
@@ -263,9 +264,10 @@ impl ConnectionType for RemoteProxy {
         }
 
         // Tracks the session ID created on the agent so a mid-handshake cancel
-        // can close it (no orphan). Populated by the handshake immediately after
-        // `create_session` succeeds.
-        let created_sid: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        // can close it (no orphan). Populated by the handshake as soon as
+        // `create_session` succeeds — or, when the create completes only after
+        // the connect was abandoned, closed right there (#3437).
+        let created_sid: Arc<Mutex<CreateSlot>> = Arc::new(Mutex::new(CreateSlot::default()));
 
         let agent_id = self.agent_id.clone();
         let agent_manager = self.agent_manager.clone();
@@ -276,7 +278,7 @@ impl ConnectionType for RemoteProxy {
                 // Cancellation fired first: drop the handshake future (releasing
                 // its &mut self borrow), then tear down any session the agent
                 // already created so it does not linger.
-                let sid = created_sid.lock().ok().and_then(|g| g.clone());
+                let sid = created_sid.lock().ok().and_then(|mut slot| slot.abandon());
                 if let Some(sid) = sid {
                     let _ = agent_manager.unregister_session_output(&agent_id, &sid);
                     // close_session's internal blocking_recv must not run on a
@@ -400,6 +402,34 @@ impl ConnectionType for RemoteProxy {
     }
 }
 
+/// The agent session a cancellable connect created, shared between the
+/// handshake and its cancel branch so exactly one side closes a session the
+/// connect no longer wants (#1122, #3437).
+#[derive(Debug, Default)]
+pub(crate) struct CreateSlot {
+    sid: Option<String>,
+    abandoned: bool,
+}
+
+impl CreateSlot {
+    /// Record the created session. Returns `false` when the connect was
+    /// already abandoned — the caller must then close the session itself.
+    pub(crate) fn publish(&mut self, sid: &str) -> bool {
+        if self.abandoned {
+            return false;
+        }
+        self.sid = Some(sid.to_string());
+        true
+    }
+
+    /// Mark the connect abandoned, returning the session to close (if one was
+    /// already created).
+    pub(crate) fn abandon(&mut self) -> Option<String> {
+        self.abandoned = true;
+        self.sid.clone()
+    }
+}
+
 impl RemoteProxy {
     /// Run the agent connect handshake (create session, register + attach
     /// output, query capabilities) and populate the proxy's state.
@@ -411,7 +441,7 @@ impl RemoteProxy {
     async fn run_connect_handshake(
         &mut self,
         settings: Value,
-        created_sid: Option<Arc<Mutex<Option<String>>>>,
+        created_sid: Option<Arc<Mutex<CreateSlot>>>,
     ) -> Result<(), SessionError> {
         if self.connected.load(Ordering::SeqCst) {
             return Err(SessionError::AlreadyExists(
@@ -475,28 +505,41 @@ impl RemoteProxy {
         let title_owned = title.clone();
         let config_owned = config.clone();
         let definition_id_owned = definition_id.clone();
+        // The desktop connect this create runs for (#3437): an OTP round the
+        // agent relays while it runs belongs to that connect's tab.
+        let owner = current_prompt_owner();
+        let slot_blocking = created_sid.clone();
         let session_info = tokio::task::spawn_blocking(move || {
-            mgr.create_session(
+            let info = mgr.create_session_owned(
                 &agent_id_owned,
                 &session_type_owned,
                 config_owned,
                 title_owned.as_deref(),
                 definition_id_owned.as_deref(),
-            )
+                owner.as_deref(),
+            )?;
+            // Publish the created session ID so a concurrent cancellation can
+            // tear it down (no orphan) even though we have not finished
+            // attaching yet. Done here, not after the `.await`: a cancel drops
+            // the awaiting future, but this blocking create still completes —
+            // when the connect was already abandoned, close the session now.
+            if let Some(cell) = &slot_blocking {
+                let abandoned = cell
+                    .lock()
+                    .map(|mut slot| !slot.publish(&info.session_id))
+                    .unwrap_or(false);
+                if abandoned {
+                    let _ = mgr.close_session(&agent_id_owned, &info.session_id);
+                    return Err(TerminalError::Cancelled);
+                }
+            }
+            Ok(info)
         })
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("spawn_blocking join: {e}")))?
         .map_err(|e| SessionError::SpawnFailed(e.to_string()))?;
 
         let remote_sid = session_info.session_id.clone();
-
-        // Publish the created session ID so a concurrent cancellation can tear
-        // it down (no orphan) even though we have not finished attaching yet.
-        if let Some(cell) = &created_sid {
-            if let Ok(mut slot) = cell.lock() {
-                *slot = Some(remote_sid.clone());
-            }
-        }
 
         // Set up output channel: std sync channel for agent_manager,
         // which we'll bridge to tokio in subscribe_output().
@@ -2429,6 +2472,10 @@ mod tests {
         attach_gate: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
         /// Remote session IDs passed to `close_session`, in order.
         closed_sessions: std::sync::Mutex<Vec<String>>,
+        /// When set, `create_session_owned` blocks on it (#3437).
+        create_gate: std::sync::Mutex<Option<std::sync::mpsc::Receiver<()>>>,
+        /// The prompt owner each `create_session_owned` ran for.
+        create_owners: std::sync::Mutex<Vec<Option<String>>>,
     }
 
     impl HangingAttachMockAgentRpcClient {
@@ -2436,6 +2483,8 @@ mod tests {
             Self {
                 attach_gate: std::sync::Mutex::new(Some(attach_gate)),
                 closed_sessions: std::sync::Mutex::new(Vec::new()),
+                create_gate: std::sync::Mutex::new(None),
+                create_owners: std::sync::Mutex::new(Vec::new()),
             }
         }
     }
@@ -2492,6 +2541,25 @@ mod tests {
                 attached: false,
                 definition_id: None,
             })
+        }
+        fn create_session_owned(
+            &self,
+            agent_id: &str,
+            session_type: &str,
+            config: serde_json::Value,
+            title: Option<&str>,
+            definition_id: Option<&str>,
+            owner: Option<&str>,
+        ) -> Result<AgentSessionInfo, TerminalError> {
+            self.create_owners
+                .lock()
+                .unwrap()
+                .push(owner.map(str::to_string));
+            let gate = self.create_gate.lock().unwrap().take();
+            if let Some(gate) = gate {
+                let _ = gate.recv();
+            }
+            self.create_session(agent_id, session_type, config, title, definition_id)
         }
         fn attach_session(
             &self,
@@ -2675,6 +2743,66 @@ mod tests {
             closed.iter().any(|s| s == "mock-session-1"),
             "the partially established remote session must be closed on cancel, got: {closed:?}"
         );
+    }
+
+    /// #3437: the agent create runs on behalf of the connect scoped with
+    /// `with_prompt_owner` (so its relayed OTP rounds belong to that tab), and a
+    /// create that completes only *after* the connect was cancelled — the tab
+    /// was closed while the agent waited on the OTP — is closed on the agent,
+    /// leaving no orphan session behind.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn create_completing_after_cancel_is_closed_and_carries_the_owner() {
+        use crate::session::ssh_keyboard_interactive::with_prompt_owner;
+        use tokio_util::sync::CancellationToken;
+
+        let (_attach_tx, attach_rx) = std::sync::mpsc::channel::<()>();
+        let (create_tx, create_rx) = std::sync::mpsc::channel::<()>();
+        let mock = Arc::new(HangingAttachMockAgentRpcClient::new(attach_rx));
+        *mock.create_gate.lock().unwrap() = Some(create_rx);
+        let mut proxy = RemoteProxy::new("agent-1".to_string(), mock.clone());
+
+        let token = CancellationToken::new();
+        let cancel_token = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            cancel_token.cancel();
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            with_prompt_owner(
+                Some("tab-a:0"),
+                proxy.connect_cancellable(json!({ "type": "ssh", "config": {} }), Some(token)),
+            ),
+        )
+        .await
+        .expect("connect_cancellable must not hang after cancellation");
+        assert!(result.is_err(), "a cancelled remote connect must fail");
+        assert_eq!(
+            *mock.create_owners.lock().unwrap(),
+            vec![Some("tab-a:0".to_string())]
+        );
+        assert!(
+            mock.closed_sessions.lock().unwrap().is_empty(),
+            "the create has not completed yet"
+        );
+
+        // The agent's create now completes (e.g. the OTP was answered just as
+        // the tab closed): the abandoned session must be closed, not orphaned.
+        create_tx.send(()).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while mock.closed_sessions.lock().unwrap().is_empty() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "late-created session was never closed"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            *mock.closed_sessions.lock().unwrap(),
+            vec!["mock-session-1".to_string()]
+        );
+        assert!(!proxy.is_connected());
     }
 
     // ── connection.files.* wire-contract round-trip (AGT-001, AGT-009, TBE-009) ──

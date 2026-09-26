@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Field, Input, Modal } from "@/components/ui";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import {
@@ -7,6 +7,7 @@ import {
 } from "@/services/events";
 import { sshKeyboardInteractiveRespond } from "@/services/api";
 import type { SshKeyboardInteractivePromptPayload } from "@/types/sshKeyboardInteractive";
+import { isTabOpen, promptOwnerTabId, subscribeToTabs } from "./promptOwnerTab";
 import "./SshKeyboardInteractivePrompt.css";
 
 /** Server prompts usually end in ": " — drop that for the field label. */
@@ -30,6 +31,12 @@ function promptLabel(prompt: string, index: number): string {
  * can raise a prompt, so this mounts once at the app root and shows queued
  * prompts one at a time. Prompts of SSH connections a remote agent
  * authenticates (#3375) arrive the same way, with `via` naming the agent.
+ *
+ * A prompt carries the `connect_id` of the connect that raised it (`owner`).
+ * Closing that tab cancels the connect and its prompt in the backend, which
+ * closes the dialog (#3437); as a safety net, a prompt whose owning tab was
+ * open when it arrived and has since been closed is also dropped here and
+ * answered with `null`, so a stale dialog never outlives its tab.
  */
 export function SshKeyboardInteractivePrompt() {
   const [queue, setQueue] = useState<SshKeyboardInteractivePromptPayload[]>([]);
@@ -37,6 +44,8 @@ export function SshKeyboardInteractivePrompt() {
   const current = queue[0] ?? null;
   const currentId = current?.prompt_id ?? null;
   const promptCount = current?.prompts.length ?? 0;
+  // prompt_id → owning tab id, for prompts whose tab was open on arrival.
+  const tabOwned = useRef(new Map<string, string>());
 
   useEffect(() => {
     let active = true;
@@ -45,14 +54,30 @@ export function SshKeyboardInteractivePrompt() {
       if (active) unlisteners.push(fn);
       else fn();
     };
+    const owned = tabOwned.current;
     void onSshKeyboardInteractivePrompt((payload) => {
+      const tabId = promptOwnerTabId(payload.owner);
+      if (tabId && isTabOpen(tabId)) owned.set(payload.prompt_id, tabId);
       setQueue((q) => [...q, payload]);
     }).then(keep);
     void onSshKeyboardInteractivePromptClosed(({ prompt_id }) => {
+      owned.delete(prompt_id);
       setQueue((q) => q.filter((p) => p.prompt_id !== prompt_id));
     }).then(keep);
+    // Drop (and cancel) prompts whose owning tab was closed (#3437).
+    const unsubscribeTabs = subscribeToTabs(() => {
+      if (owned.size === 0) return;
+      const gone = [...owned].filter(([, tabId]) => !isTabOpen(tabId)).map(([id]) => id);
+      if (gone.length === 0) return;
+      for (const id of gone) {
+        owned.delete(id);
+        void sshKeyboardInteractiveRespond(id, null);
+      }
+      setQueue((q) => q.filter((p) => !gone.includes(p.prompt_id)));
+    });
     return () => {
       active = false;
+      unsubscribeTabs();
       unlisteners.forEach((fn) => fn());
     };
   }, []);
@@ -65,6 +90,7 @@ export function SshKeyboardInteractivePrompt() {
   const reply = useCallback(
     (responses: string[] | null) => {
       if (!current) return;
+      tabOwned.current.delete(current.prompt_id);
       void sshKeyboardInteractiveRespond(current.prompt_id, responses);
       setAnswers([]);
       setQueue((q) => q.filter((p) => p.prompt_id !== current.prompt_id));

@@ -3978,3 +3978,184 @@ async fn test_connection_is_cancellable_when_the_connect_hangs() {
 
 /// Tab close vs. session ownership (#3401).
 mod close_ownership;
+
+// ── tab close cancels the connect's OTP prompt (#3437) ─────────────────
+
+mod ki_prompt_owner {
+    use super::*;
+    use crate::session::ssh_keyboard_interactive::{
+        SshKeyboardInteractiveEventSink, SshKeyboardInteractivePromptClosedEvent,
+        SshKeyboardInteractivePromptEvent, SshKeyboardInteractivePrompter,
+    };
+    use termihub_core::backends::ssh::keyboard_interactive::{
+        KbdInteractiveAnswer, KbdInteractivePrompt, KbdInteractiveRequest,
+        KeyboardInteractivePrompter,
+    };
+
+    #[derive(Default)]
+    struct RecordingSink {
+        prompts: std::sync::Mutex<Vec<SshKeyboardInteractivePromptEvent>>,
+        closed: std::sync::Mutex<Vec<String>>,
+    }
+
+    impl SshKeyboardInteractiveEventSink for RecordingSink {
+        fn emit_prompt(&self, event: &SshKeyboardInteractivePromptEvent) {
+            self.prompts.lock().unwrap().push(event.clone());
+        }
+        fn emit_closed(&self, event: &SshKeyboardInteractivePromptClosedEvent) {
+            self.closed.lock().unwrap().push(event.prompt_id.clone());
+        }
+    }
+
+    /// An SSH-like connect whose auth waits (up to the 300 s prompt timeout)
+    /// on a keyboard-interactive answer. It deliberately ignores the cancel
+    /// token, so only cancelling the owned prompt can end it early.
+    struct PromptingConnect {
+        prompter: Arc<SshKeyboardInteractivePrompter>,
+    }
+
+    #[async_trait::async_trait]
+    impl ConnectionType for PromptingConnect {
+        fn type_id(&self) -> &str {
+            "prompting"
+        }
+        fn display_name(&self) -> &str {
+            "Prompting"
+        }
+        fn settings_schema(&self) -> SettingsSchema {
+            SettingsSchema { groups: vec![] }
+        }
+        fn capabilities(&self) -> Capabilities {
+            BlockingConnect.capabilities()
+        }
+        async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+            let request = KbdInteractiveRequest {
+                host: "bastion".to_string(),
+                port: 22,
+                username: "alice".to_string(),
+                name: String::new(),
+                instructions: String::new(),
+                prompts: vec![KbdInteractivePrompt {
+                    prompt: "Verification code: ".to_string(),
+                    echo: false,
+                }],
+                round: 1,
+                via: None,
+            };
+            match tokio::time::timeout(Duration::from_secs(300), self.prompter.prompt(&request))
+                .await
+            {
+                Ok(KbdInteractiveAnswer::Responses(_)) => Ok(()),
+                Ok(KbdInteractiveAnswer::Cancelled) => Err(SessionError::AuthCancelled),
+                Err(_) => Err(SessionError::SpawnFailed("prompt timed out".to_string())),
+            }
+        }
+        async fn connect_cancellable(
+            &mut self,
+            settings: serde_json::Value,
+            _cancel: Option<CancellationToken>,
+        ) -> Result<(), SessionError> {
+            self.connect(settings).await
+        }
+        async fn disconnect(&mut self) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn is_connected(&self) -> bool {
+            true
+        }
+        fn write(&self, _data: &[u8]) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
+            Ok(())
+        }
+        fn subscribe_output(&self) -> OutputReceiver {
+            let (_tx, rx) = tokio::sync::mpsc::channel(1);
+            rx
+        }
+        fn monitoring(&self) -> Option<&dyn MonitoringProvider> {
+            None
+        }
+        fn file_browser(&self) -> Option<&dyn FileBrowser> {
+            None
+        }
+    }
+
+    /// Closing a tab whose direct SSH connect waits on an OTP prompt (the
+    /// `cancel_connecting` command: token + owned-prompt cancel) cancels that
+    /// prompt, closes its dialog and returns the connect as cancelled at once —
+    /// not after the 300 s prompt timeout. Another tab's prompt is untouched.
+    #[tokio::test(start_paused = true)]
+    async fn tab_close_cancels_only_its_own_prompt_and_aborts_the_connect() {
+        let sink = Arc::new(RecordingSink::default());
+        let prompter = Arc::new(SshKeyboardInteractivePrompter::new(sink.clone()));
+        let mut registry = termihub_core::connection::ConnectionTypeRegistry::new();
+        let factory_prompter = prompter.clone();
+        registry.register(
+            "prompting",
+            "Prompting",
+            "mock",
+            Box::new(move || {
+                Box::new(PromptingConnect {
+                    prompter: factory_prompter.clone(),
+                })
+            }),
+        );
+        let manager = Arc::new(SessionManager::new(registry, Arc::new(NullAgent)));
+
+        let connect = |connect_id: &'static str| {
+            let manager = manager.clone();
+            tokio::spawn(async move {
+                manager
+                    .create_connection(
+                        "prompting",
+                        serde_json::json!({}),
+                        None,
+                        Some(connect_id),
+                        false,
+                        false,
+                        MockEventEmitter::new(),
+                    )
+                    .await
+            })
+        };
+        let closing = connect("tab-a:0");
+        let other = connect("tab-b:0");
+        while sink.prompts.lock().unwrap().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+        let owner_of = |owner: &str| {
+            sink.prompts
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|p| p.owner.as_deref() == Some(owner))
+                .map(|p| p.prompt_id.clone())
+                .expect("prompt carries its owning connect id")
+        };
+        let closing_prompt = owner_of("tab-a:0");
+        let other_prompt = owner_of("tab-b:0");
+
+        // What the `cancel_connecting` command does on tab close.
+        let started = tokio::time::Instant::now();
+        assert!(manager.cancel_connecting("tab-a:0"));
+        assert_eq!(prompter.cancel_owned_by("tab-a:0"), 1);
+
+        let result = closing.await.expect("join");
+        assert!(
+            matches!(result, Err(TerminalError::Cancelled)),
+            "the connect ends as a user cancel, got {result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "cancelled promptly, not after the prompt timeout"
+        );
+        assert_eq!(*sink.closed.lock().unwrap(), vec![closing_prompt]);
+
+        // The other tab's prompt is still waiting — and still answerable.
+        assert!(!other.is_finished());
+        assert!(prompter.resolve(&other_prompt, Some(vec!["123456".into()])));
+        let session = other.await.expect("join").expect("other tab connects");
+        manager.close_session(&session).await.ok();
+    }
+}

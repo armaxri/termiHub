@@ -225,3 +225,84 @@ async fn request_wait_times_out_without_prompts() {
     let result = recv_excluding_prompts(rx, Duration::from_secs(60), &activity).await;
     assert!(result.is_err());
 }
+
+// ── tab close cancels the owning connect's prompt (#3437) ──────────────
+
+/// A round raised while an owned create is in flight is shown under that
+/// owner; cancelling the owner answers the agent `null` and closes the dialog.
+#[tokio::test]
+async fn cancelling_the_owner_sends_null_to_the_agent_and_closes_the_dialog() {
+    let (relay, prompter, sink, mut answers, activity) = setup();
+    let _create = activity.begin_owned_create("tab-a:0");
+    relay.handle_notification(SSH_KEYBOARD_INTERACTIVE_PROMPT, &prompt_params("r-7"));
+
+    let event = shown(&sink).await;
+    assert_eq!(event.owner.as_deref(), Some("tab-a:0"));
+
+    assert_eq!(prompter.cancel_owned_by("tab-a:0"), 1);
+    assert_eq!(answers.recv().await.unwrap(), ("r-7".to_string(), None));
+    assert_eq!(*sink.closed.lock().unwrap(), vec![event.prompt_id]);
+    assert_eq!(relay.open_rounds(), 0);
+}
+
+/// Cancelling one tab leaves another tab's prompt open.
+#[tokio::test]
+async fn cancelling_another_owner_leaves_the_prompt_open() {
+    let (relay, prompter, sink, mut answers, activity) = setup();
+    let _create = activity.begin_owned_create("tab-b:0");
+    relay.handle_notification(SSH_KEYBOARD_INTERACTIVE_PROMPT, &prompt_params("r-8"));
+    let event = shown(&sink).await;
+
+    assert_eq!(prompter.cancel_owned_by("tab-other:0"), 0);
+    tokio::task::yield_now().await;
+    assert!(answers.try_recv().is_err(), "nothing sent to the agent");
+    assert!(sink.closed.lock().unwrap().is_empty(), "dialog still open");
+    assert_eq!(relay.open_rounds(), 1);
+
+    assert!(prompter.resolve(&event.prompt_id, Some(vec!["42".into()])));
+    assert_eq!(
+        answers.recv().await.unwrap(),
+        ("r-8".to_string(), Some(vec!["42".to_string()]))
+    );
+}
+
+/// A round that arrives after its tab was closed (the notification was still
+/// on the wire) is answered `null` at once — no dialog opens.
+#[tokio::test]
+async fn round_of_an_already_cancelled_owner_is_cancelled_without_a_dialog() {
+    let (relay, _prompter, sink, mut answers, activity) = setup();
+    let _create = activity.begin_owned_create("tab-c:0");
+    assert!(activity.cancel_owner("tab-c:0"));
+    relay.handle_notification(SSH_KEYBOARD_INTERACTIVE_PROMPT, &prompt_params("r-9"));
+
+    assert_eq!(answers.recv().await.unwrap(), ("r-9".to_string(), None));
+    assert!(sink.prompts.lock().unwrap().is_empty(), "no dialog shown");
+    assert_eq!(relay.open_rounds(), 0);
+}
+
+/// Rounds are attributed to the earliest in-flight owned create (the one the
+/// agent is executing); a finished create no longer owns rounds; with none in
+/// flight a round is unowned.
+#[test]
+fn round_owner_is_the_earliest_in_flight_owned_create() {
+    let activity = AgentPromptActivity::new();
+    assert_eq!(activity.current_owner(), None);
+    let first = activity.begin_owned_create("tab-1:0");
+    let _second = activity.begin_owned_create("tab-2:0");
+    assert_eq!(
+        activity.current_owner().map(|o| o.owner),
+        Some("tab-1:0".to_string())
+    );
+    drop(first);
+    assert_eq!(
+        activity.current_owner(),
+        Some(RoundOwner {
+            owner: "tab-2:0".to_string(),
+            cancelled: false,
+        })
+    );
+    assert!(
+        !activity.cancel_owner("tab-1:0"),
+        "finished create not found"
+    );
+}

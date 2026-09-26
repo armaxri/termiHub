@@ -3,7 +3,8 @@
  * keyboard-interactive (OTP / 2FA) dialog (#3371). Verifies instruction/name
  * rendering, one field per prompt masked by the echo flag, submit/cancel
  * routing through `sshKeyboardInteractiveRespond`, queueing, and that a
- * backend "closed" notice drops the prompt.
+ * backend "closed" notice drops the prompt, and that closing the owning tab
+ * drops (and cancels) only that tab's prompt (#3437).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import React, { act } from "react";
@@ -35,7 +36,30 @@ vi.mock("@/services/api", () => ({
     respondMock(promptId, responses),
 }));
 
+const openTabs = new Set<string>();
+let notifyTabs: (() => void) | undefined;
+
+vi.mock("./promptOwnerTab", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./promptOwnerTab")>();
+  return {
+    promptOwnerTabId: actual.promptOwnerTabId,
+    isTabOpen: (tabId: string) => openTabs.has(tabId),
+    subscribeToTabs: (cb: () => void) => {
+      notifyTabs = cb;
+      return () => {
+        notifyTabs = undefined;
+      };
+    },
+  };
+});
+
+function closeTab(tabId: string) {
+  openTabs.delete(tabId);
+  act(() => notifyTabs?.());
+}
+
 import { SshKeyboardInteractivePrompt } from "./SshKeyboardInteractivePrompt";
+import { promptOwnerTabId } from "./promptOwnerTab";
 
 let container: HTMLDivElement;
 let root: Root;
@@ -85,6 +109,7 @@ const otpPrompt: SshKeyboardInteractivePromptPayload = {
   ],
   round: 1,
   via: null,
+  owner: null,
 };
 
 const secondPrompt: SshKeyboardInteractivePromptPayload = {
@@ -97,6 +122,7 @@ const secondPrompt: SshKeyboardInteractivePromptPayload = {
   prompts: [{ prompt: "Verification code: ", echo: false }],
   round: 1,
   via: null,
+  owner: null,
 };
 
 const agentPrompt: SshKeyboardInteractivePromptPayload = {
@@ -112,6 +138,7 @@ describe("SshKeyboardInteractivePrompt", () => {
     root = createRoot(container);
     emitPrompt = undefined;
     emitClosed = undefined;
+    openTabs.clear();
   });
 
   afterEach(() => {
@@ -214,5 +241,56 @@ describe("SshKeyboardInteractivePrompt", () => {
 
     expect(q("kbd-interactive-submit")).toBeNull();
     expect(respondMock).not.toHaveBeenCalled();
+  });
+
+  it("drops and cancels a prompt when its owning tab closes", async () => {
+    openTabs.add("tab-a");
+    openTabs.add("tab-b");
+    render(<SshKeyboardInteractivePrompt />);
+    await fire({ ...otpPrompt, owner: "tab-a:0" });
+    await fire({ ...secondPrompt, owner: "tab-b:0" });
+    expect(q("kbd-interactive-target")?.textContent).toContain("alice@bastion.example:22");
+
+    closeTab("tab-a");
+
+    expect(respondMock).toHaveBeenCalledTimes(1);
+    expect(respondMock).toHaveBeenCalledWith("ki-1", null);
+    // The other tab's prompt is now shown, untouched.
+    expect(q("kbd-interactive-target")?.textContent).toContain("bob@db.internal:2222");
+  });
+
+  it("leaves other tabs' prompts open when an unrelated tab closes", async () => {
+    openTabs.add("tab-a");
+    openTabs.add("tab-b");
+    render(<SshKeyboardInteractivePrompt />);
+    await fire({ ...otpPrompt, owner: "tab-a:0" });
+
+    closeTab("tab-b");
+
+    expect(respondMock).not.toHaveBeenCalled();
+    expect(q("kbd-interactive-submit")).not.toBeNull();
+  });
+
+  it("never cancels a prompt whose owner was not an open tab", async () => {
+    render(<SshKeyboardInteractivePrompt />);
+    await fire({ ...otpPrompt, owner: "test-connection-1" });
+
+    closeTab("test-connection-1");
+
+    expect(respondMock).not.toHaveBeenCalled();
+    expect(q("kbd-interactive-submit")).not.toBeNull();
+  });
+});
+
+describe("promptOwnerTabId", () => {
+  it("strips the retry count from a tab connect id", () => {
+    expect(promptOwnerTabId("tab-1:0")).toBe("tab-1");
+    expect(promptOwnerTabId("a:b:3")).toBe("a:b");
+  });
+
+  it("keeps an id without a retry count and maps no owner to null", () => {
+    expect(promptOwnerTabId("probe")).toBe("probe");
+    expect(promptOwnerTabId(null)).toBeNull();
+    expect(promptOwnerTabId("")).toBeNull();
   });
 });
