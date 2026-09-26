@@ -115,8 +115,8 @@ pub fn assess_plugin_trust(
 pub enum InstallPluginResult {
     /// The plugin was installed.
     Installed {
-        /// The installed plugin record.
-        plugin: InstalledPlugin,
+        /// The installed plugin record (boxed: it dwarfs the other variant).
+        plugin: Box<InstalledPlugin>,
     },
     /// Nothing was changed; re-issue the install with `confirm_version_change`
     /// once the user has confirmed replacing `installed_version` with
@@ -134,7 +134,9 @@ fn install_outcome(
     result: Result<InstalledPlugin, PluginManagerError>,
 ) -> Result<InstallPluginResult, String> {
     match result {
-        Ok(plugin) => Ok(InstallPluginResult::Installed { plugin }),
+        Ok(plugin) => Ok(InstallPluginResult::Installed {
+            plugin: Box::new(plugin),
+        }),
         Err(PluginManagerError::VersionChangeUnconfirmed(change)) => {
             Ok(InstallPluginResult::ConfirmationRequired { change: *change })
         }
