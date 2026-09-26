@@ -309,6 +309,25 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     keywords: ["auto-lock", "timeout", "lock", "inactivity", "minutes"],
   },
   {
+    id: "credentialVaultBackup",
+    label: "Credential Vault Backup",
+    description:
+      "Export or import your saved credentials as an encrypted, passphrase-protected file",
+    category: "security",
+    keywords: [
+      "credential",
+      "vault",
+      "export",
+      "import",
+      "backup",
+      "restore",
+      "migrate",
+      "passphrase",
+      "password",
+      "encrypted",
+    ],
+  },
+  {
     id: "rdpTrustedCertificates",
     label: "Remembered RDP Certificates",
     description: "Review and revoke RDP server certificates you chose to trust",

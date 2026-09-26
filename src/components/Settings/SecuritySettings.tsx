@@ -7,6 +7,7 @@ import { switchCredentialStore, changeMasterPassword, setAutoLockTimeout } from 
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
+import { CredentialVaultBackup } from "./CredentialVaultBackup";
 import { errorMessage } from "@/utils/errorMessage";
 
 interface SecuritySettingsProps {
@@ -533,6 +534,10 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
             </div>
           )}
         </>
+      )}
+
+      {show("credentialVaultBackup") && (
+        <CredentialVaultBackup modeLabel={modeLabel(currentMode)} />
       )}
 
       {show("workflowLocalProcess") && (
