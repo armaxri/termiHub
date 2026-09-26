@@ -1371,11 +1371,13 @@ mod tests {
             .unwrap();
         assert!(auth.required);
         if let FieldType::Select { ref options } = auth.field_type {
-            assert_eq!(options.len(), 3);
+            assert_eq!(options.len(), 4);
             let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
             assert!(values.contains(&"key"));
             assert!(values.contains(&"password"));
             assert!(values.contains(&"agent"));
+            // OTP / 2FA via the in-app prompt (#3371).
+            assert!(values.contains(&"keyboard-interactive"));
         } else {
             panic!("expected Select field type");
         }
