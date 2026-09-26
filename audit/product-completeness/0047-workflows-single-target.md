@@ -9,7 +9,8 @@ subsystem: src/store/appStore
 evidence:
   - src/store/appStore.ts:7266
   - src/store/appStore.ts:3943
-status: open
+status: partial
+resolution: "#3421 — manual run on selected sessions / broadcast group (sequential); concurrent fan-out #3418"
 ---
 
 ## What

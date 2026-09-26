@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/services/workflowRunner
 evidence:
   - src/services/workflowRunner.ts:353
-status: open
+status: fixed
+resolution: "#3421 — per-step continueOnError + bounded retry/backoff; run log; editor with zod limits"
 ---
 
 ## What
