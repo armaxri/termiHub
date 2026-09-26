@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src-tauri/tauri.conf.json
 evidence:
   - src-tauri/tauri.conf.json:25
-status: open
+status: fixed
+resolution: "#3633 — per-OS plugin script origin (http://plugin.localhost Windows-only), font-src data: dropped; wasm-unsafe-eval + style-src unsafe-inline kept with documented evidence; allow-list guard test; zod jitless"
 ---
 
 ## What
