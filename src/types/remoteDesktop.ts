@@ -20,6 +20,41 @@ export const MAX_FRAMEBUFFER_DIMENSION = 8192;
 /** How the remote framebuffer fills the tab. */
 export type ScaleMode = "fit" | "pixel" | "match";
 
+/** Every scale mode, in toolbar cycle order. */
+const ALL_SCALE_MODES: readonly ScaleMode[] = ["fit", "pixel", "match"];
+
+/**
+ * Scale modes a fixed-resolution session may use (PROD-026). "Match Window"
+ * asks the remote to resize to the tab, which a fixed session never does, so it
+ * only toggles between local scaling (Fit) and 1:1 pixels.
+ */
+const FIXED_SCALE_MODES: readonly ScaleMode[] = ["fit", "pixel"];
+
+/**
+ * Whether a graphical connection's settings pin the remote to a fixed
+ * resolution (mirrors Rust `fixed_resolution_requested`, PROD-026). Anything
+ * other than `resolutionMode: "fixed"` — including a connection saved before
+ * the option existed — is dynamic.
+ */
+export function isFixedResolution(settings: Record<string, unknown>): boolean {
+  const mode = settings.resolutionMode;
+  return typeof mode === "string" && mode.trim().toLowerCase() === "fixed";
+}
+
+/** The scale modes the toolbar cycles through for a session. */
+export function scaleModesFor(fixedResolution: boolean): readonly ScaleMode[] {
+  return fixedResolution ? FIXED_SCALE_MODES : ALL_SCALE_MODES;
+}
+
+/**
+ * The scale mode actually applied: a fixed-resolution session that was saved
+ * with "Match Window" falls back to "Fit", so it scales locally instead of
+ * requesting remote resizes (PROD-026).
+ */
+export function effectiveScaleMode(mode: ScaleMode, fixedResolution: boolean): ScaleMode {
+  return scaleModesFor(fixedResolution).includes(mode) ? mode : "fit";
+}
+
 // The core graphical DTOs are generated from their Rust source of truth
 // (core/src/connection/graphical.rs) via ts-rs (audit DUP-030 / MOCK-010, ts-rs
 // rollout #3088). `FrameUpdate`/`CursorUpdate`/`GraphicalSessionState` are also

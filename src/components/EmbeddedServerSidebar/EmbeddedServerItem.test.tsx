@@ -31,7 +31,9 @@ vi.mock("@/services/embeddedServerApi", () => ({
   clearEmbeddedServerActivity: vi.fn(() => Promise.resolve()),
 }));
 
-import { EmbeddedServerItem } from "./EmbeddedServerItem";
+import { EmbeddedServerItem, hostAgentFor } from "./EmbeddedServerItem";
+import type { RemoteAgentDefinition } from "@/types/connection";
+import { THIS_COMPUTER } from "@/utils/runLocation";
 import { TooltipProvider } from "@/components/ui";
 import { EmbeddedServerConfig, ServerState } from "@/types/embeddedServer";
 
@@ -245,5 +247,39 @@ describe("EmbeddedServerItem", () => {
 
     click(toggle!);
     expect(container.querySelector('[data-testid="server-activity-srv-1"]')).toBeNull();
+  });
+
+  it("tells an old agent apart in the activity panel (#3453)", async () => {
+    const oldAgent = {
+      id: "agent-1",
+      name: "Lab Pi",
+      capabilities: { connectionTypes: [], maxSessions: 1 },
+    } as unknown as RemoteAgentDefinition;
+    render(
+      <EmbeddedServerItem
+        {...baseProps({
+          state: runningState,
+          agents: [oldAgent],
+          runLocation: { kind: "agent", agentId: "agent-1" },
+        })}
+      />
+    );
+    click(container.querySelector('[data-testid="server-activity-toggle-srv-1"]')!);
+    await flush();
+    expect(container.textContent).toContain("not supported by this agent version");
+  });
+
+  it("derives the host agent's access-log support from its capabilities", () => {
+    const agent = (caps?: object) =>
+      ({ id: "a", name: "Pi", capabilities: caps }) as unknown as RemoteAgentDefinition;
+    const loc = { kind: "agent" as const, agentId: "a" };
+    expect(hostAgentFor(THIS_COMPUTER, [agent()])).toBeUndefined();
+    expect(hostAgentFor(loc, [agent({ embeddedServerActivity: true })])).toEqual({
+      name: "Pi",
+      supportsActivity: true,
+    });
+    expect(hostAgentFor(loc, [agent({ maxSessions: 1 })])?.supportsActivity).toBe(false);
+    // Unknown capabilities (agent not connected) are not flagged unsupported.
+    expect(hostAgentFor(loc, [agent()])?.supportsActivity).toBe(true);
   });
 });

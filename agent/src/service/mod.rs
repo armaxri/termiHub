@@ -16,6 +16,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
 use serde_json::Value;
+use termihub_core::embedded_servers::activity::ActivitySnapshot;
 use termihub_core::service::{
     drain_broadcast, Service, ServiceError, ServiceEvent, ServiceInfo, ServiceRegistry,
     ServiceStatus,
@@ -164,6 +165,29 @@ impl AgentServiceRegistry {
             status: rs.service.status(),
             state: rs.latest.lock().ok().and_then(|s| s.clone()),
         })
+    }
+
+    /// Access log (entries newer than `since`) + detailed stats of instance
+    /// `instance_id` (#3453). `None` when no such instance is hosted, or it is a
+    /// service that keeps no access log (e.g. the HTTP monitor).
+    pub async fn activity(
+        &self,
+        instance_id: &str,
+        since: Option<u64>,
+    ) -> Option<ActivitySnapshot> {
+        let running = self.running.lock().await;
+        running
+            .get(instance_id)
+            .and_then(|rs| rs.service.access_activity(since))
+    }
+
+    /// Clear the access log + counters of instance `instance_id` (#3453).
+    /// Returns whether a hosted instance that keeps a log was found.
+    pub async fn clear_activity(&self, instance_id: &str) -> bool {
+        let running = self.running.lock().await;
+        running
+            .get(instance_id)
+            .is_some_and(|rs| rs.service.clear_access_activity())
     }
 
     /// Number of currently-hosted instances.
@@ -331,6 +355,20 @@ mod tests {
         assert!(reg.resume("mon-1").await.expect("resume"));
         assert_eq!(reg.active_count().await, 1);
 
+        reg.stop("mon-1").await;
+    }
+
+    /// A hosted service that keeps no access log (the HTTP monitor) reads as
+    /// `None` and is not "cleared" (#3453) — only the embedded servers log.
+    #[tokio::test]
+    async fn activity_is_none_for_a_service_without_an_access_log() {
+        let reg = monitor_registry();
+        reg.start("mon-1", "http_monitor", monitor_config())
+            .await
+            .expect("monitor hosts on the agent");
+        assert!(reg.activity("mon-1", None).await.is_none());
+        assert!(!reg.clear_activity("mon-1").await);
+        assert!(reg.activity("ghost", None).await.is_none());
         reg.stop("mon-1").await;
     }
 

@@ -16,6 +16,7 @@
 pub mod auto_reconnect;
 pub mod clipboard_image;
 pub mod graphical;
+pub mod graphical_resolution;
 pub mod lifecycle;
 pub mod plugin_type_id;
 pub mod registry;
@@ -37,6 +38,10 @@ pub use graphical::{
     GraphicalBackend, GraphicalCapabilities, GraphicalState, InputEvent, RectViolation,
     RemoteClipboardFile, SanitizedFrame, SessionStateMachine, MAX_FRAMEBUFFER_DIMENSION,
     MAX_RECONNECT_ATTEMPTS,
+};
+pub use graphical_resolution::{
+    fixed_resolution_fields, fixed_resolution_requested, is_fixed_mode, normalize_fixed_size,
+    RESOLUTION_MODE_KEY,
 };
 pub use lifecycle::SessionStatus;
 pub use plugin_type_id::{

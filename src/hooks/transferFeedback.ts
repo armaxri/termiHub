@@ -99,6 +99,28 @@ export async function runTransfer(
 }
 
 /**
+ * Open a native file picker (Save-as / Open) for a file-browser action, turning
+ * a failure to open it into an error toast instead of a silent unhandled
+ * rejection (#3458). Resolves to the picked path, or `null` when the user
+ * cancelled or the picker failed.
+ */
+export async function pickPathOrReport(
+  label: string,
+  pick: () => Promise<string | string[] | null>
+): Promise<string | null> {
+  try {
+    const picked = await pick();
+    if (Array.isArray(picked)) return picked[0] ?? null;
+    return picked;
+  } catch (error) {
+    const message = transferErrorMessage(error);
+    frontendLog("file_transfer", `${label}: file picker failed: ${message}`);
+    toast.error(`${label} failed: ${message}`);
+    return null;
+  }
+}
+
+/**
  * Run a **blocking** transfer that produces NO `transfer-progress` events — a
  * local Save-as copy or a byte-based (Docker / FTP / remote-agent)
  * download/upload round-trip — with self-contained feedback (audit UX-017:

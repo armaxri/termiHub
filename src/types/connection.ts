@@ -220,6 +220,11 @@ export interface AgentCapabilities {
   monitoringSupported?: boolean;
   /** Whether the agent streams network-tool runs live (`tool.start`, #3353). */
   toolStreaming?: boolean;
+  /**
+   * Whether the agent serves an agent-hosted embedded server's access log and
+   * detailed stats (`embedded_server.activity`, #3453). Absent on older agents.
+   */
+  embeddedServerActivity?: boolean;
   /** Agent binary version string, e.g. "1.4.2". */
   agentVersion?: string;
 }
@@ -584,6 +589,11 @@ export interface AppSettings {
   sessionHistoryLimit?: number;
   /** When true (default), the "Recent Sessions" sidebar panel is shown. */
   showRecentSessions?: boolean;
+  /**
+   * Record finished network-tool runs (ping, traceroute, port scan, …) to the
+   * local run history (PROD-032). Unset → on.
+   */
+  networkToolHistoryEnabled?: boolean;
   layout?: LayoutConfig;
   credentialStorageMode?: "master_password" | "os_keychain" | "none";
   credentialAutoLockMinutes?: number;

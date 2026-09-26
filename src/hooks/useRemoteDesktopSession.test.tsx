@@ -111,13 +111,13 @@ afterEach(async () => {
 });
 
 /** Add a remote-desktop tab and return its id. */
-function addTab(viewOnly = false): string {
+function addTab(viewOnly = false, extra: Record<string, unknown> = {}): string {
   return useAppStore.getState().addTab(
     "Mock RD",
     "mock-remote-desktop",
     {
       type: "mock-remote-desktop",
-      config: { host: "mock.local", viewOnly, scaleMode: "fit" },
+      config: { host: "mock.local", viewOnly, scaleMode: "fit", ...extra },
     },
     { contentType: "remote-desktop" }
   );
@@ -570,6 +570,63 @@ describe("useRemoteDesktopSession — window takeover (#3388)", () => {
     await flush();
     takeOverFromOtherWindow();
     act(() => useAppStore.setState({ sessionOwners: {} }));
+    expect(mockedRequestFullFrame).toHaveBeenCalledWith("rd-1");
+    expect(mockedResize).not.toHaveBeenCalled();
+  });
+});
+
+describe("useRemoteDesktopSession — fixed resolution (PROD-026)", () => {
+  const FIXED = { resolutionMode: "fixed", width: 1920, height: 1080 };
+
+  it("is dynamic by default and keeps Match Window", async () => {
+    const tabId = addTab(false, { scaleMode: "match" });
+    const h = renderSession(tabId);
+    await flush();
+    expect(h.get().fixedResolution).toBe(false);
+    expect(h.get().scaleMode).toBe("match");
+  });
+
+  it("reports a fixed session and falls back from Match Window to Fit", async () => {
+    const tabId = addTab(false, { ...FIXED, scaleMode: "match" });
+    const h = renderSession(tabId);
+    await flush();
+    expect(h.get().fixedResolution).toBe(true);
+    expect(h.get().scaleMode).toBe("fit");
+  });
+
+  it("never requests a remote resize for a fixed session", async () => {
+    const tabId = addTab(false, FIXED);
+    const h = renderSession(tabId);
+    await flush();
+    act(() => h.get().resize(640, 480));
+    expect(mockedResize).not.toHaveBeenCalled();
+  });
+
+  it("reconnects with the same fixed settings and still sends no resize", async () => {
+    const tabId = addTab(false, FIXED);
+    const h = renderSession(tabId);
+    await flush();
+    act(() => h.get().resize(800, 600));
+
+    act(() => h.get().reconnect());
+    await flush();
+
+    expect(mockedConnect).toHaveBeenCalledTimes(2);
+    expect(mockedConnect).toHaveBeenLastCalledWith(
+      "mock-remote-desktop",
+      expect.objectContaining(FIXED)
+    );
+    act(() => h.get().resize(1024, 768));
+    expect(mockedResize).not.toHaveBeenCalled();
+  });
+
+  it("re-asserts no size when a fixed session is reclaimed from another window", async () => {
+    const tabId = addTab(false, FIXED);
+    const h = renderSession(tabId);
+    await flush();
+    act(() => useAppStore.setState({ windowLabel: "main", sessionOwners: { "rd-1": "win-2" } }));
+    act(() => h.get().resize(1024, 768));
+    act(() => useAppStore.setState({ sessionOwners: { "rd-1": "main" } }));
     expect(mockedRequestFullFrame).toHaveBeenCalledWith("rd-1");
     expect(mockedResize).not.toHaveBeenCalled();
   });

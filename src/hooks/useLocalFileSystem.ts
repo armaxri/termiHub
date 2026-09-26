@@ -15,8 +15,14 @@ import {
   vscodeOpenLocal,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
-import { runBlockingTransfer } from "./transferFeedback";
-import { joinDirPath, type PasteOptions } from "@/utils/fileDragMove";
+import { pickPathOrReport, runBlockingTransfer } from "./transferFeedback";
+import { toast } from "@/components/ui";
+import {
+  describeEntries,
+  joinDirPath,
+  pasteVerbLabels,
+  type PasteOptions,
+} from "@/utils/fileDragMove";
 
 /**
  * Hook for local filesystem operations.
@@ -140,14 +146,22 @@ export function useLocalFileSystem() {
       const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
       const destPath = base ? `${base}/${fileName}` : `/${fileName}`;
       if (localPath === destPath) return;
-      await localCopyFile(localPath, destPath, false);
-      refreshLocal();
+      // An OS drop onto the local pane is a blocking copy with no transfer event;
+      // own its feedback so a failure never becomes a silent unhandled rejection.
+      const ok = await runBlockingTransfer(() => localCopyFile(localPath, destPath, false), {
+        loading: `Copying ${fileName}…`,
+        success: `Copied ${fileName}`,
+        errorLabel: `Copy "${fileName}"`,
+      });
+      if (ok) void refreshLocal();
     },
     [currentPath, refreshLocal]
   );
 
   const downloadFile = useCallback(async (filePath: string, fileName: string) => {
-    const localPath = await save({ title: "Save file as...", defaultPath: fileName });
+    const localPath = await pickPathOrReport(`Save "${fileName}"`, () =>
+      save({ title: "Save file as...", defaultPath: fileName })
+    );
     if (!localPath) return;
     const isDir =
       currentFileBrowsersView().local.entries.find((e) => e.path === filePath)?.isDirectory ??
@@ -192,30 +206,50 @@ export function useLocalFileSystem() {
       const clipboard = options?.clipboard ?? currentFileBrowsersView().clipboard;
       if (!clipboard) return;
 
-      const destDir = options?.destDir ?? currentPath;
-
-      for (const clipEntry of clipboard.entries) {
-        const destPath = joinDirPath(destDir, clipEntry.name);
-
-        if (clipboard.sourceMode === "local") {
-          // local→local
-          if (clipboard.operation === "cut") {
-            await localRename(clipEntry.path, destPath);
-          } else {
-            await localCopyFile(clipEntry.path, destPath, clipEntry.isDirectory);
-          }
-        }
+      if (clipboard.sourceMode !== "local") {
         // A session→local paste is not supported here (the remote source lives on
         // the session transport, not the local disk); the session pane handles its
         // own paste. The legacy sftp→local download path was retired with the
-        // standalone SFTP browser (#2422).
+        // standalone SFTP browser (#2422). Say so instead of doing nothing.
+        toast.error("Pasting remote items into a local folder is not supported");
+        return;
       }
 
-      if (clipboard.operation === "cut" && !options?.clipboard) {
+      const destDir = options?.destDir ?? currentPath;
+      const verb = options?.verb ?? "Paste";
+      const labels = pasteVerbLabels(verb);
+      const what = describeEntries(clipboard.entries);
+      const where = options?.destDir ? ` to ${destDir}` : "";
+
+      // A local rename/copy is a blocking round-trip with no transfer-progress
+      // event, so own the loading → success/error feedback here (#3458) — one
+      // summary toast for the whole paste. The first failure aborts the rest,
+      // and the rejection is swallowed so no caller sees an unhandled rejection.
+      const ok = await runBlockingTransfer(
+        async () => {
+          for (const clipEntry of clipboard.entries) {
+            const destPath = joinDirPath(destDir, clipEntry.name);
+            if (clipboard.operation === "cut") {
+              await localRename(clipEntry.path, destPath);
+            } else {
+              await localCopyFile(clipEntry.path, destPath, clipEntry.isDirectory);
+            }
+          }
+        },
+        {
+          loading: `${labels.loading} ${what}…`,
+          success: `${labels.done} ${what}${where}`,
+          errorLabel: `${verb} ${what}`,
+        }
+      );
+
+      // Keep a cut clipboard after a failure so the user can retry.
+      if (ok && clipboard.operation === "cut" && !options?.clipboard) {
         useAppStore.getState().setFileClipboard(null);
       }
 
-      refreshLocal();
+      // Refresh either way: a partial paste may already have changed the folder.
+      void refreshLocal();
     },
     [currentPath, refreshLocal]
   );

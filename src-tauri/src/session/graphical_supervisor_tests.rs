@@ -71,6 +71,8 @@ struct Control {
     resizes: StdMutex<Vec<(u32, u16, u16)>>,
     /// `(dial number, event)` of every input event a backend received (#3402).
     inputs: StdMutex<Vec<(u32, InputEvent)>>,
+    /// The settings every dial connected with (PROD-026).
+    dial_settings: StdMutex<Vec<serde_json::Value>>,
 }
 
 impl Control {
@@ -153,7 +155,8 @@ impl ConnectionType for FakeDesktop {
             tunneling: false,
         }
     }
-    async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
+    async fn connect(&mut self, settings: serde_json::Value) -> Result<(), SessionError> {
+        self.ctl.dial_settings.lock().unwrap().push(settings);
         self.dial = self.ctl.dials.fetch_add(1, Ordering::SeqCst) + 1;
         let step = self
             .ctl
@@ -434,6 +437,37 @@ async fn drop_reconnects_reattaches_pumps_and_resends_size() {
     h.ctl.drop_stream();
     wait_until("second re-dial", || h.ctl.dials() == 3).await;
     assert_eq!(h.sink.tail(before), vec![(GraphicalState::Reconnecting, 1)]);
+    h.mgr.disconnect(&h.sid, h.sink.clone()).await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn fixed_resolution_survives_reconnect_without_any_resize() {
+    // PROD-026: a fixed session refuses resize requests, so an auto-reconnect
+    // has no size to replay and re-dials with the same fixed settings.
+    let fixed = serde_json::json!({ "resolutionMode": "fixed", "width": 1024, "height": 768 });
+    let h = open(fixed.clone(), vec![Dial::Ok]).await;
+    h.ctl.send_frame().await;
+    wait_until("first frame", || h.sink.frames.load(Ordering::SeqCst) == 1).await;
+    h.mgr
+        .resize(&h.sid, 640, 480, h.sink.clone())
+        .await
+        .expect("a refused resize is not an error");
+
+    h.ctl.drop_stream();
+    wait_until("re-dial", || h.ctl.dials() == 2).await;
+    h.ctl.send_frame().await;
+    wait_until("reconnected frame", || {
+        h.sink.frames.load(Ordering::SeqCst) == 2
+    })
+    .await;
+
+    assert!(
+        h.ctl.resizes.lock().unwrap().is_empty(),
+        "a fixed session must never resize the remote, before or after reconnect"
+    );
+    let dials = h.ctl.dial_settings.lock().unwrap().clone();
+    assert_eq!(dials.len(), 2);
+    assert_eq!(dials[1], fixed, "the re-dial keeps the fixed resolution");
     h.mgr.disconnect(&h.sid, h.sink.clone()).await.unwrap();
 }
 

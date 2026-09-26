@@ -83,6 +83,7 @@ describe("settingsRegistry", () => {
         "sessionHistoryEnabled",
         "sessionHistoryLimit",
         "showRecentSessions",
+        "networkToolHistoryEnabled",
       ]) {
         expect(categoryOf(id)).toBe("sessions");
       }

@@ -573,6 +573,25 @@ mod tests {
     }
 
     #[test]
+    fn schema_exposes_no_display_options_vnc_cannot_honor() {
+        // PROD-026: vnc-rs negotiates only 32-bit true-color (its cursor decoder
+        // cannot handle other pixel formats) and has no client-initiated
+        // SetDesktopSize, so a color-depth or fixed-resolution row would be a
+        // control with no effect.
+        let schema = vnc_settings_schema();
+        for key in ["colorDepth", "resolutionMode", "width", "height"] {
+            assert!(
+                !schema
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.fields)
+                    .any(|f| f.key == key),
+                "VNC must not expose {key}"
+            );
+        }
+    }
+
+    #[test]
     fn schema_port_defaults_to_5900() {
         let schema = vnc_settings_schema();
         let port = schema.groups[0]

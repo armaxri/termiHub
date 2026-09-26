@@ -9,6 +9,9 @@ pub mod agent_tools;
 pub mod events;
 pub mod http_monitor;
 pub mod http_monitor_storage;
+pub mod tool_history;
+pub mod tool_history_manager;
+pub mod tool_history_storage;
 pub mod wol_storage;
 
 use std::collections::HashMap;

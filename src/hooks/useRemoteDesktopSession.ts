@@ -25,6 +25,7 @@ import type {
   RemoteDesktopCertPromptPayload,
   ScaleMode,
 } from "@/types/remoteDesktop";
+import { effectiveScaleMode, isFixedResolution } from "@/types/remoteDesktop";
 import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
 import { fireAndForget, frontendLog } from "@/utils/frontendLog";
 
@@ -46,8 +47,16 @@ export interface RemoteDesktopSession {
   respondCert: (accept: boolean, remember: boolean) => void;
   /** Whether the session is configured view-only (input suppressed). */
   viewOnly: boolean;
-  /** Configured scale mode (Fit / 1:1 / Match Window). */
+  /**
+   * Configured scale mode (Fit / 1:1 / Match Window). Never "match" for a
+   * fixed-resolution session — that falls back to "fit" (PROD-026).
+   */
   scaleMode: ScaleMode;
+  /**
+   * Whether the connection pins the remote to a fixed resolution (PROD-026):
+   * the canvas then only scales locally and {@link resize} is a no-op.
+   */
+  fixedResolution: boolean;
   /** Send a protocol-agnostic input event (no-op while view-only/not-active). */
   sendInput: (event: RemoteDesktopInput) => void;
   /**
@@ -56,7 +65,10 @@ export interface RemoteDesktopSession {
    * releases an evicted window's input itself on takeover).
    */
   releaseInput: () => void;
-  /** Request a new pixel resolution (Match Window / dynamic resize). */
+  /**
+   * Request a new pixel resolution (Match Window / dynamic resize). No-op for a
+   * fixed-resolution session.
+   */
   resize: (width: number, height: number) => void;
   /** Push local clipboard text to the remote. */
   sendClipboard: (text: string) => void;
@@ -152,7 +164,11 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
   const tabConfig = readTab()?.config;
   const settings = (tabConfig?.config ?? {}) as Record<string, unknown>;
   const viewOnly = settings.viewOnly === true;
-  const scaleMode = (settings.scaleMode as ScaleMode | undefined) ?? "fit";
+  const fixedResolution = isFixedResolution(settings);
+  const scaleMode = effectiveScaleMode(
+    (settings.scaleMode as ScaleMode | undefined) ?? "fit",
+    fixedResolution
+  );
 
   // Resolve the adopt-on-move decision exactly once (#1904). A tab hydrated by
   // `moveTabToWindow` carries a live `sessionId` and the `pendingScrollbackReplay`
@@ -339,18 +355,23 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     );
   }, [viewOnly]);
 
-  const resize = useCallback((width: number, height: number) => {
-    const id = sessionIdRef.current;
-    if (!id || width <= 0 || height <= 0) return;
-    const size = { width: Math.round(width), height: Math.round(height) };
-    desiredSizeRef.current = size;
-    // Another window sizes the remote while it controls the session (#3388);
-    // the recorded size is re-asserted on Reclaim instead.
-    if (isWindowEvicted(id)) return;
-    void remoteDesktopResize(id, size.width, size.height).catch((err) =>
-      frontendLog("remote_desktop", `resize failed: ${err}`)
-    );
-  }, []);
+  const resize = useCallback(
+    (width: number, height: number) => {
+      const id = sessionIdRef.current;
+      // A fixed-resolution session never asks the remote to resize (PROD-026);
+      // nothing is recorded either, so a Reclaim does not re-assert a size.
+      if (!id || fixedResolution || width <= 0 || height <= 0) return;
+      const size = { width: Math.round(width), height: Math.round(height) };
+      desiredSizeRef.current = size;
+      // Another window sizes the remote while it controls the session (#3388);
+      // the recorded size is re-asserted on Reclaim instead.
+      if (isWindowEvicted(id)) return;
+      void remoteDesktopResize(id, size.width, size.height).catch((err) =>
+        frontendLog("remote_desktop", `resize failed: ${err}`)
+      );
+    },
+    [fixedResolution]
+  );
 
   const sendClipboard = useCallback((text: string) => {
     const id = sessionIdRef.current;
@@ -426,6 +447,7 @@ export function useRemoteDesktopSession(tabId: string): RemoteDesktopSession {
     respondCert,
     viewOnly,
     scaleMode,
+    fixedResolution,
     sendInput,
     releaseInput,
     resize,

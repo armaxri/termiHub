@@ -1328,6 +1328,26 @@ the app at it.
    the helper before connecting surfaces an actionable "failed to launch RDP
    helper" error that names `scripts/build-rdp-sidecar.sh` / `TERMIHUB_RDP_HELPER`.
 
+#### Fixed resolution and color depth (#3460, PROD-026)
+
+The config mapping, resize suppression and reconnect behavior are unit-tested
+(`graphical_resolution`, `rdp_sidecar::config`, the sidecar connector config,
+`graphical_manager` / `graphical_supervisor`, `useRemoteDesktopSession`,
+`RemoteDesktopTab.scaling`); what the server actually renders needs a live host:
+
+1. In the RDP connection editor set **Resolution** to _Fixed size_, **Width**
+   `1366`, **Height** `768`, **Color Depth** _16-bit (high color)_; connect.
+   **Expected:** the status bar shows `1366×768 · 16-bit`; the remote desktop is
+   1366×768 (check the remote's display settings).
+2. Resize the tab / window. **Expected:** the canvas rescales locally; the remote
+   resolution stays 1366×768 (no reflow on the remote).
+3. Click the toolbar scaling button repeatedly. **Expected:** it toggles only
+   between _Fit to Tab_ and _1:1 Pixel_ (never _Match Window_).
+4. Drop the network briefly (with Auto-Reconnect on). **Expected:** the session
+   reconnects at 1366×768.
+5. Switch **Resolution** back to _Dynamic_ and reconnect with _Match Window_
+   scaling. **Expected:** the remote follows the tab size as before.
+
 #### Drive redirection (RDPDR, #1757)
 
 Drive redirection is off by default and opt-in per connection. The RDPDR
@@ -3725,6 +3745,27 @@ app. The fix portals these into the dialog's own content node (via the shared
 2. Reorder, edit, and delete steps as normal to confirm the fix changed nothing
    else about the editor's behavior.
 3. Save the workflow and confirm it persists with the steps you added.
+
+### Network tool run history (PROD-032, #3456)
+
+Recording, the bounds, the History view and the setting are covered by unit and
+component tests (`tool_history*.rs`, `runHistory.test.tsx`,
+`NetworkToolHistory.test.tsx`, `NetworkTools.history.test.tsx`,
+`networkToolHistoryStore.test.ts`, `SessionSettings.test.tsx`). This pass
+confirms history survives a real app restart.
+
+1. Open **Network Tools → Ping**, ping `127.0.0.1` with Count `3` → after it
+   completes, expand **History** → one row "Completed … 3/3 received …, This
+   computer".
+2. Click the row's **View** (eye) → a read-only dialog shows the host, interval,
+   count, status, summary and the three replies. **Export CSV** writes the
+   replies; close the dialog.
+3. Quit and relaunch the app (`./scripts/dev.sh`), reopen **Ping → History** →
+   the run is still listed. **Re-run** → the Host/Count fields refill and a new
+   run starts and is recorded on top.
+4. **Settings → Sessions → Network Tool History**: turn recording off, run a DNS
+   lookup → its **History** says recording is off and lists no new run. Turn it
+   back on; **Clear Network Tool History** empties every tool's History.
 
 ### Run-location "Run on" selector — Network Tools & Servers (#2191)
 
