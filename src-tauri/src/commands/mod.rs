@@ -11,6 +11,7 @@ pub mod inventory_import;
 pub mod local_process;
 pub mod logs;
 pub mod macros;
+pub mod named_credential;
 pub mod network;
 pub mod os_auth;
 pub mod plugin;

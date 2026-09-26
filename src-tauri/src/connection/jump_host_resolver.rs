@@ -18,6 +18,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
 use super::config::SavedConnection;
+use crate::credential::named;
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 
 /// Maximum reference-expansion depth, a runaway guard independent of the editor's
@@ -199,7 +200,7 @@ fn build_inline_hop(
 
     // Resolve the saved credential. Core reads `password` as the SSH password
     // (password auth) or the private-key passphrase (key auth).
-    if let Some(secret) = resolve_credential(ref_id, auth_method, creds)? {
+    if let Some(secret) = resolve_credential(ref_id, s, auth_method, creds)? {
         obj.insert("password".into(), json!(secret));
     } else if auth_method == "password" {
         bail!(
@@ -217,8 +218,14 @@ fn build_inline_hop(
 /// Password auth needs a saved password (the caller errors if it is missing);
 /// key auth uses a saved passphrase only when the key is encrypted (absence is
 /// fine); agent auth needs nothing.
+///
+/// A connection that references a shared named credential (#3557) resolves
+/// **only** that credential — never its own per-connection secret — under the
+/// same precedence as the desktop connect flow. A named credential of the
+/// other kind has no secret under this type, so it resolves to nothing.
 fn resolve_credential(
     ref_id: &str,
+    settings: &Value,
     auth_method: &str,
     creds: &dyn CredentialStore,
 ) -> Result<Option<String>> {
@@ -227,8 +234,12 @@ fn resolve_credential(
         "key" => CredentialType::KeyPassphrase,
         _ => return Ok(None),
     };
+    let owner = match named::settings_ref(settings) {
+        Some(named_id) => named::owner_id(named_id),
+        None => ref_id.to_string(),
+    };
     creds
-        .get(&CredentialKey::new(ref_id, cred_type))
+        .get(&CredentialKey::new(&owner, cred_type))
         .with_context(|| format!("Failed to read saved credential for connection '{ref_id}'"))
 }
 
@@ -381,6 +392,55 @@ mod tests {
         resolve_proxy_jump_refs(&mut settings, &[gw], &creds, None).unwrap();
 
         assert_eq!(hops(&settings)[0]["password"], "s3cret");
+    }
+
+    #[test]
+    fn named_credential_reference_wins_over_per_connection_secret() {
+        // #3557: a hop connection that references a shared credential resolves
+        // only that credential, never its stale per-connection copy.
+        let gw = ssh_conn(
+            "gw",
+            "gateway",
+            json!({
+                "host": "gw.example.com",
+                "username": "ops",
+                "authMethod": "password",
+                "credentialRef": "nc-1",
+            }),
+        );
+        let creds = MemStore::with(&[
+            ("gw", CredentialType::Password, "stale-own"),
+            ("named-credential:nc-1", CredentialType::Password, "shared"),
+        ]);
+        let mut settings = settings_with_hops(json!([{ "connectionId": "gw" }]));
+
+        resolve_proxy_jump_refs(&mut settings, &[gw], &creds, None).unwrap();
+
+        assert_eq!(hops(&settings)[0]["password"], "shared");
+    }
+
+    #[test]
+    fn named_credential_of_wrong_kind_resolves_nothing() {
+        // A passphrase credential referenced by a password-auth hop has no
+        // password secret, so the hop reports the missing password.
+        let gw = ssh_conn(
+            "gw",
+            "gateway",
+            json!({
+                "host": "gw.example.com",
+                "username": "ops",
+                "authMethod": "password",
+                "credentialRef": "nc-1",
+            }),
+        );
+        let creds = MemStore::with(&[
+            ("gw", CredentialType::Password, "own"),
+            ("named-credential:nc-1", CredentialType::KeyPassphrase, "p"),
+        ]);
+        let mut settings = settings_with_hops(json!([{ "connectionId": "gw" }]));
+        let err = resolve_proxy_jump_refs(&mut settings, &[gw], &creds, None)
+            .expect_err("wrong-kind credential must not resolve");
+        assert!(err.to_string().contains("No saved password"));
     }
 
     #[test]

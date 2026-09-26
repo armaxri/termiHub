@@ -79,6 +79,13 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
     vec![
         ("connections.json", connections_doc()),
         (
+            "named_credentials.json",
+            // Metadata only; the secrets are in the credentials section (#3557).
+            json!({"version": "1", "credentials": [{
+                "id": "nc-1", "name": "Bastion", "kind": "password", "createdAt": "t"
+            }]}),
+        ),
+        (
             "settings.json",
             json!({"version": "1", "theme": "dark", "credentialStorageMode": "none",
                    "customThemes": [{"id": "t1", "name": "Mine"}],
@@ -1199,6 +1206,10 @@ fn every_section_version_is_its_stores_current_version() {
         ),
         ("tunnels", TunnelStore::CURRENT_VERSION),
         ("embeddedServers", EmbeddedServerStore::CURRENT_VERSION),
+        (
+            "namedCredentials",
+            <crate::credential::named::NamedCredentialStore as VersionedStore>::CURRENT_VERSION,
+        ),
         ("wolDevices", WolDevicesFile::CURRENT_VERSION),
         ("httpMonitors", HttpMonitorsFile::CURRENT_VERSION),
         (

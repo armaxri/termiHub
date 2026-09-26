@@ -33,6 +33,7 @@ use crate::connection::tree::flatten_tree;
 use crate::credential::crypto::{
     classify_envelope_version, decrypt_with_password, DecryptError, VersionSupport,
 };
+use crate::credential::named::{self, NamedCredentialStore};
 use crate::credential::types::CredentialKey;
 use crate::credential::vault::{self, OpenedVault, VaultError};
 use crate::embedded_servers::config::EmbeddedServerStore;
@@ -238,7 +239,38 @@ pub fn backup_owner_names(opened: &OpenedBackup) -> HashMap<String, String> {
     {
         owners.extend(vault_owners(&store.servers));
     }
+    owners.extend(named_credential_owner_names(opened));
     owners
+}
+
+/// Labels for the shared named credentials (#3557) in the backup's
+/// `namedCredentials` section.
+fn named_credential_owner_names(opened: &OpenedBackup) -> Vec<(String, String)> {
+    let Some(doc) = opened
+        .sections
+        .iter()
+        .find(|s| s.id == "namedCredentials")
+        .and_then(|section| {
+            sections::spec("namedCredentials")?
+                .normalize(section.data.clone())
+                .ok()
+        })
+    else {
+        return Vec::new();
+    };
+    let Ok(store) = serde_json::from_value::<NamedCredentialStore>(doc) else {
+        return Vec::new();
+    };
+    store
+        .credentials
+        .into_iter()
+        .map(|c| {
+            (
+                named::owner_id(&c.id),
+                format!("{} (shared credential)", c.name),
+            )
+        })
+        .collect()
 }
 
 fn connection_owner_names(opened: &OpenedBackup) -> HashMap<String, String> {

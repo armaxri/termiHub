@@ -13,6 +13,7 @@ use tracing::{info, warn};
 use zeroize::Zeroizing;
 
 use crate::connection::manager::ConnectionManager;
+use crate::credential::named::NamedCredentialRegistry;
 use crate::credential::vault::{
     self, ConflictStrategy, VaultError, VaultImportPreview, VaultImportResult,
 };
@@ -25,7 +26,9 @@ use crate::embedded_servers::server_manager::EmbeddedServerManager;
 /// export and to label conflicts in the import preview.
 ///
 /// Embedded-server passwords (#3514) are owned by their server, labelled
-/// "<server name> (FTP login | HTTP Basic auth)".
+/// "<server name> (FTP login | HTTP Basic auth)". Shared named credentials
+/// (#3557) are owned by `named-credential:<id>`, labelled
+/// "<name> (shared credential)".
 pub(crate) fn known_owners(
     connection_manager: &ConnectionManager,
     app_handle: &AppHandle,
@@ -40,6 +43,10 @@ pub(crate) fn known_owners(
     }
     if let Some(servers) = app_handle.try_state::<EmbeddedServerManager>() {
         owners.extend(servers.vault_owners());
+    }
+    // Shared named credentials (#3557), labelled "<name> (shared credential)".
+    if let Some(named) = app_handle.try_state::<Arc<NamedCredentialRegistry>>() {
+        owners.extend(named.owner_labels());
     }
     Ok(owners)
 }

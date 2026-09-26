@@ -3,6 +3,7 @@ pub mod biometric_unlock;
 pub mod crypto;
 pub mod manager;
 pub mod master_password;
+pub mod named;
 pub mod null;
 pub mod os_auth;
 pub mod os_keychain;

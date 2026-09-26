@@ -5,6 +5,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{debug, info, warn};
 
 use crate::connection::manager::ConnectionManager;
+use crate::credential::named::NamedCredentialRegistry;
 use crate::credential::types::{build_status_info, CredentialStoreStatusInfo};
 use crate::credential::{
     CredentialKey, CredentialManager, CredentialStore, CredentialType, LockedEventPayload,
@@ -98,13 +99,23 @@ fn unreadable_source_error(current_mode: &StorageMode, detail: &str) -> String {
 ///   look like total credential loss while the data still sits in the old store).
 /// - A genuinely empty source (0 keys) yields an empty vec — a legitimate switch.
 /// - A key that lists but reads back as `None` (a benign list/get race) is skipped.
+/// - `probe_keys` are read in addition to the listed keys (deduplicated): the
+///   OS keychain cannot enumerate its items, so shared named credentials
+///   (#3557), whose keys are known from their metadata, are probed explicitly
+///   and migrate in both directions.
 fn collect_credentials_for_migration(
     manager: &CredentialManager,
     current_mode: &StorageMode,
+    probe_keys: &[CredentialKey],
 ) -> Result<Vec<(CredentialKey, String)>, String> {
-    let keys_to_migrate = manager
+    let mut keys_to_migrate = manager
         .list_keys()
         .map_err(|e| unreadable_source_error(current_mode, &e.to_string()))?;
+    for key in probe_keys {
+        if !keys_to_migrate.contains(key) {
+            keys_to_migrate.push(key.clone());
+        }
+    }
 
     let mut credentials_to_migrate = Vec::new();
     for key in &keys_to_migrate {
@@ -432,6 +443,7 @@ pub async fn switch_credential_store(
     app_handle: AppHandle,
     manager: State<'_, Arc<CredentialManager>>,
     connection_manager: State<'_, ConnectionManager>,
+    named: State<'_, Arc<NamedCredentialRegistry>>,
 ) -> Result<SwitchResult, String> {
     let target_mode = StorageMode::from_settings_str(Some(&new_mode));
     let current_mode = manager.get_mode();
@@ -455,7 +467,8 @@ pub async fn switch_credential_store(
     // switch (leaving the source untouched) if the source cannot be read in
     // full, so an unreadable store never silently becomes an empty new store
     // that looks like total credential loss (TAURI-011).
-    let credentials_to_migrate = collect_credentials_for_migration(&manager, &current_mode)?;
+    let credentials_to_migrate =
+        collect_credentials_for_migration(&manager, &current_mode, &named.secret_keys())?;
 
     // Notify auto-lock timer when leaving master password mode
     if current_mode == StorageMode::MasterPassword {
@@ -777,7 +790,7 @@ mod tests {
         mgr.with_master_password_store(|s| s.lock()).unwrap();
 
         // Locked source: collection must error, NOT return an empty vec.
-        let result = collect_credentials_for_migration(&mgr, &StorageMode::MasterPassword);
+        let result = collect_credentials_for_migration(&mgr, &StorageMode::MasterPassword, &[]);
         assert!(
             result.is_err(),
             "a locked/unreadable source must abort migration, got {result:?}"
@@ -811,7 +824,7 @@ mod tests {
         mgr.set(&kp, "secret-2").unwrap();
 
         let collected =
-            collect_credentials_for_migration(&mgr, &StorageMode::MasterPassword).unwrap();
+            collect_credentials_for_migration(&mgr, &StorageMode::MasterPassword, &[]).unwrap();
         assert_eq!(collected.len(), 2, "both credentials must be collected");
         assert!(collected.iter().any(|(k, v)| *k == pw && v == "secret-1"));
         assert!(collected.iter().any(|(k, v)| *k == kp && v == "secret-2"));
@@ -824,11 +837,67 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mgr = CredentialManager::new(StorageMode::None, dir.path().to_path_buf());
 
-        let collected = collect_credentials_for_migration(&mgr, &StorageMode::None).unwrap();
+        let collected = collect_credentials_for_migration(&mgr, &StorageMode::None, &[]).unwrap();
         assert!(
             collected.is_empty(),
             "an empty source must yield an empty migration set, not an error"
         );
+    }
+
+    /// #3557: the OS keychain cannot enumerate its items, so shared named
+    /// credentials are probed by key and migrate keychain -> master password
+    /// (and back) with the storage mode.
+    #[test]
+    fn named_credentials_migrate_between_keychain_and_master_password() {
+        use crate::credential::named::{NamedCredentialKind, NamedCredentialRegistry};
+        let _mock = crate::credential::os_keychain::test_support::install_mock();
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf());
+        let (registry, _) = NamedCredentialRegistry::load(dir.path());
+        let cred = registry
+            .create(
+                &mgr,
+                &StorageMode::OsKeychain,
+                "Bastion",
+                NamedCredentialKind::Password,
+                "shared-secret",
+            )
+            .unwrap();
+
+        // Without probing, the keychain lists nothing.
+        let unprobed =
+            collect_credentials_for_migration(&mgr, &StorageMode::OsKeychain, &[]).unwrap();
+        assert!(unprobed.is_empty());
+
+        let collected = collect_credentials_for_migration(
+            &mgr,
+            &StorageMode::OsKeychain,
+            &registry.secret_keys(),
+        )
+        .unwrap();
+        assert_eq!(collected.len(), 1);
+
+        mgr.switch_store(StorageMode::MasterPassword).unwrap();
+        mgr.with_master_password_store(|s| s.setup("master-pw"))
+            .unwrap()
+            .unwrap();
+        let outcome = migrate_credentials(&mgr, &collected);
+        assert_eq!(outcome.status, MigrationStatus::Success);
+        assert_eq!(
+            registry
+                .resolve(&mgr, &cred.id, &CredentialType::Password)
+                .unwrap(),
+            Some("shared-secret".to_string())
+        );
+
+        // And back: master password lists it; probing must not duplicate it.
+        let back = collect_credentials_for_migration(
+            &mgr,
+            &StorageMode::MasterPassword,
+            &registry.secret_keys(),
+        )
+        .unwrap();
+        assert_eq!(back.len(), 1);
     }
 
     #[test]
