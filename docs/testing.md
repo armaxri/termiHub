@@ -34,7 +34,7 @@ The system/E2E layer is the **Python bridge harness** under `tests/system/`. It 
 
 ### Platform Support
 
-The only remaining `tauri-driver` consumer is the smoke test (`scripts/smoke-test.sh`), which drives it directly over the W3C WebDriver protocol on Linux/Windows and falls back to process/`osascript` checks on macOS. `tauri-driver` still has no macOS WKWebView driver ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)); macOS-specific rendering behavior (WKWebView quirks) must be verified via [manual testing](#manual-testing). See ADR-5 in [architecture.md](architecture.md).
+The only remaining `tauri-driver` consumer is the smoke test (`scripts/smoke-test.sh`), which drives it directly over the W3C WebDriver protocol on Linux/Windows and falls back to process and app-log checks on macOS. `tauri-driver` still has no macOS WKWebView driver ([tauri-apps/tauri#7068](https://github.com/tauri-apps/tauri/issues/7068)); macOS-specific rendering behavior (WKWebView quirks) must be verified via [manual testing](#manual-testing). See ADR-5 in [architecture.md](architecture.md).
 
 ### Running System / E2E Tests
 
@@ -1133,21 +1133,21 @@ scripts\smoke-test.cmd src-tauri\target\release\termihub.exe
 
 ### What It Checks
 
-| Check | Description            | Linux/Windows (WebDriver)                | Linux/Windows (fallback) | macOS                  |
-| ----- | ---------------------- | ---------------------------------------- | ------------------------ | ---------------------- |
-| 1     | App launches           | WebDriver session create                 | Process start            | `open` + pgrep         |
-| 2     | Window/UI visible      | Activity bar element found               | Process stable after 10s | osascript window query |
-| 3     | Create local shell     | Click new-connection, fill form, connect | Skipped                  | Skipped                |
-| 4     | Terminal I/O           | Send `echo smoke-test-ok`, verify output | Skipped                  | Skipped                |
-| 5     | Open Settings          | Click activity-bar-settings              | Skipped                  | Skipped                |
-| 6     | Open connection editor | Click new-connection button              | Skipped                  | Skipped                |
-| 7     | Clean shutdown         | WebDriver session delete                 | SIGTERM + verify exit    | osascript quit         |
+| Check | Description            | Linux/Windows (WebDriver)                | Linux/Windows (fallback) | macOS                 |
+| ----- | ---------------------- | ---------------------------------------- | ------------------------ | --------------------- |
+| 1     | App launches           | WebDriver session create                 | Process start            | Run bundle executable |
+| 2     | Window/UI visible      | Activity bar element found               | Process stable after 10s | IPC marker in app log |
+| 3     | Create local shell     | Click new-connection, fill form, connect | Skipped                  | Skipped               |
+| 4     | Terminal I/O           | Send `echo smoke-test-ok`, verify output | Skipped                  | Skipped               |
+| 5     | Open Settings          | Click activity-bar-settings              | Skipped                  | Skipped               |
+| 6     | Open connection editor | Click new-connection button              | Skipped                  | Skipped               |
+| 7     | Clean shutdown         | WebDriver session delete                 | SIGTERM + verify exit    | SIGTERM + verify exit |
 
 ### Platform Details
 
 - **Linux/Windows with tauri-driver**: Full 7-check suite using W3C WebDriver protocol via `curl` (no Node.js required). Requires `tauri-driver` installed (`cargo install tauri-driver`).
 - **Linux/Windows without tauri-driver**: Falls back to process-based checks — verifies app launches, stays alive, and exits cleanly. UI interaction checks (3-6) are skipped.
-- **macOS**: Uses `osascript` for window verification. UI interaction checks (3-6) are skipped because tauri-driver does not support macOS (no WKWebView driver). See [E2E platform constraint](testing.md#platform-support).
+- **macOS**: Reads the process name from the bundle's `Info.plist` (`CFBundleExecutable`, which is `termihub` — lowercase, unlike the display name) and runs `Contents/MacOS/<executable>` directly, so the script owns the PID. Check 2 waits for the frontend's first IPC call (`Loading connections and folders`) to appear in the durable app log (`~/Library/Logs/<CFBundleIdentifier>/termihub.log`), the same signal the release smokes use; an `osascript` System Events window query is added as a best-effort extra and skipped when Automation permission is unavailable (e.g. hosted CI runners). The script refuses to run while any instance of the app is already running, so quit termiHub first. UI interaction checks (3-6) are skipped because tauri-driver does not support macOS (no WKWebView driver). See [E2E platform constraint](testing.md#platform-support).
 
 ### Release Install Smokes (CI)
 

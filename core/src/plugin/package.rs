@@ -195,6 +195,59 @@ pub enum PluginPackageError {
         /// ([`CURRENT_PLUGIN_ABI_VERSION`](termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION)).
         supported: String,
     },
+
+    /// The manifest maps a target triple to a library path the archive does not
+    /// contain (PLG-011).
+    #[error("plugin package maps platform `{triple}` to `{path}`, which is not in the package")]
+    MissingPlatformLibrary {
+        /// The target triple whose library is missing.
+        triple: String,
+        /// The in-package path the manifest names.
+        path: String,
+    },
+
+    /// The package is well-formed but ships no native library for this host's
+    /// platform (PLG-011), so it cannot be installed here.
+    #[error(
+        "plugin `{id}` is not available for this platform ({host}); it ships native libraries \
+         for: {available}"
+    )]
+    PlatformUnavailable {
+        /// The plugin id.
+        id: String,
+        /// This host's Rust target triple.
+        host: String,
+        /// The target triples the package does carry, sorted, comma-joined.
+        available: String,
+    },
+}
+
+/// Refuse a multi-platform package (PLG-011) that carries no native library for
+/// this host's target triple, with a clear "not available for this platform"
+/// error. Legacy single-platform packages (no `libraries` map) and packages
+/// without a native backend always pass: their platform is not declared by
+/// triple, so there is nothing to check before extraction.
+///
+/// Deliberately **not** part of [`validate_package`]: the packer validates (and
+/// merges) packages for platforms other than the one it runs on.
+pub fn check_host_platform(manifest: &PluginManifest) -> Result<(), PluginPackageError> {
+    let Some(backend) = &manifest.extensions.terminal_backend else {
+        return Ok(());
+    };
+    let host = super::platform::host_target_triple();
+    if backend.libraries.is_empty() || backend.libraries.contains_key(host) {
+        return Ok(());
+    }
+    Err(PluginPackageError::PlatformUnavailable {
+        id: manifest.id.clone(),
+        host: host.to_owned(),
+        available: backend
+            .libraries
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", "),
+    })
 }
 
 /// Open and fully validate a `.termihub-plugin` package at `path`, returning its
@@ -260,6 +313,20 @@ fn validate_package_with_limits(
 
     let manifest = parse_manifest(&manifest_json)?;
     manifest.validate()?;
+
+    // Every platform library the manifest maps must be a file in the archive
+    // (PLG-011), so a fat package can never name a library it does not carry.
+    if let Some(backend) = &manifest.extensions.terminal_backend {
+        for (triple, path) in &backend.libraries {
+            let present = archive.by_name(path).map(|e| e.is_file()).unwrap_or(false);
+            if !present {
+                return Err(PluginPackageError::MissingPlatformLibrary {
+                    triple: triple.clone(),
+                    path: path.clone(),
+                });
+            }
+        }
+    }
 
     match manifest.api_compatibility() {
         ApiCompatibility::Compatible => Ok(manifest),

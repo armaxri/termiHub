@@ -42,6 +42,8 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use super::manifest::parse_manifest;
+use super::package::MANIFEST_FILE_NAME;
 use super::signature::now_rfc3339;
 
 /// The file, alongside the manager's other plugin state files under the plugins
@@ -232,18 +234,34 @@ impl NativeTrustStore {
 /// would load, so callers can bind a trust acknowledgment to the exact bytes.
 ///
 /// Resolves the plugin's backend library the same way the host loader does
-/// ([`super::host::find_backend_library`]) under `plugins_root/<id>/backend/`,
-/// then hashes it. Fails when the plugin has no backend library (not a native
-/// plugin, or an ambiguous/missing library) or the file cannot be read — callers
-/// must treat a failure as "cannot acknowledge", never as consent.
+/// ([`super::host::select_backend_library`]) under `plugins_root/<id>/`: for a
+/// multi-platform package (PLG-011) that is the entry for **this host's** target
+/// triple from the installed manifest, so the acknowledgment binds to the
+/// library that will actually be loaded — never another platform's. A plugin
+/// dir without a `manifest.json` falls back to the legacy extension scan. Fails
+/// when the manifest is unreadable, the plugin has no backend library (not a
+/// native plugin, an ambiguous/missing library, or no entry for this platform)
+/// or the file cannot be read — callers must treat a failure as "cannot
+/// acknowledge", never as consent.
 pub fn native_library_hash(plugins_root: &Path, id: &str) -> Result<String, NativeTrustError> {
     let plugin_dir = plugins_root.join(id);
-    let lib_path = super::host::find_backend_library(&plugin_dir).map_err(|e| {
-        NativeTrustError::Io(std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            e.to_string(),
-        ))
-    })?;
+    let not_found =
+        |msg: String| NativeTrustError::Io(std::io::Error::new(std::io::ErrorKind::NotFound, msg));
+    let lib_path = match std::fs::read_to_string(plugin_dir.join(MANIFEST_FILE_NAME)) {
+        Ok(json) => {
+            let manifest = parse_manifest(&json).map_err(|e| not_found(e.to_string()))?;
+            let backend = manifest
+                .extensions
+                .terminal_backend
+                .ok_or_else(|| not_found(format!("plugin `{id}` declares no native backend")))?;
+            super::host::select_backend_library(&plugin_dir, &backend)
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            super::host::find_backend_library(&plugin_dir)
+        }
+        Err(e) => return Err(NativeTrustError::Io(e)),
+    }
+    .map_err(|e| not_found(e.to_string()))?;
     super::signature::sha256_file(&lib_path).map_err(NativeTrustError::Io)
 }
 

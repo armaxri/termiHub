@@ -9,7 +9,19 @@ use tokio::sync::oneshot;
 
 use super::connection::asycn_vnc_read_loop;
 use super::messages::ServerMsg;
-use crate::{PixelFormat, VncError, VncEvent};
+use crate::{PixelFormat, VncEncoding, VncError, VncEvent};
+
+/// Every encoding the decoder implements — what `run` treats as negotiated.
+const ALL_ENCODINGS: [VncEncoding; 8] = [
+    VncEncoding::Raw,
+    VncEncoding::CopyRect,
+    VncEncoding::Tight,
+    VncEncoding::Trle,
+    VncEncoding::Zrle,
+    VncEncoding::CursorPseudo,
+    VncEncoding::DesktopSizePseudo,
+    VncEncoding::LastRectPseudo,
+];
 
 /// Encoding numbers on the wire.
 const RAW: i32 = 0;
@@ -48,15 +60,30 @@ fn zlib(data: &[u8]) -> Vec<u8> {
 
 /// Run the real decoding loop over `bytes` with pixel format `pf`, returning
 /// the loop's result and every event it emitted. A panic fails the test.
+///
+/// Every encoding counts as negotiated and the framebuffer is the full 16-bit
+/// space, so the per-rectangle checks exercised are the decoders' own; see
+/// [`run_with`] for the negotiation / on-screen checks (#3499).
 async fn run(bytes: &[u8], pf: &PixelFormat) -> (Result<(), VncError>, Vec<VncEvent>) {
+    run_with(bytes, pf, &ALL_ENCODINGS, (u16::MAX, u16::MAX)).await
+}
+
+/// [`run`] with an explicit negotiated-encoding list and framebuffer size.
+async fn run_with(
+    bytes: &[u8],
+    pf: &PixelFormat,
+    encodings: &[VncEncoding],
+    screen: (u16, u16),
+) -> (Result<(), VncError>, Vec<VncEvent>) {
     let events = Mutex::new(Vec::new());
     let output = |e: VncEvent| {
         events.lock().unwrap().push(e);
         std::future::ready(Ok::<(), VncError>(()))
     };
-    let (_stop_tx, stop_rx) = oneshot::channel();
+    let (_stop_tx, mut stop_rx) = oneshot::channel();
     let mut reader = bytes;
-    let result = asycn_vnc_read_loop(&mut reader, pf, &output, stop_rx).await;
+    let result =
+        asycn_vnc_read_loop(&mut reader, pf, &output, &mut stop_rx, encodings, screen).await;
     (result, events.into_inner().unwrap())
 }
 
@@ -174,6 +201,132 @@ async fn truncated_raw_rect_is_an_eof_error() {
     bytes.extend_from_slice(&[0; 10]);
     let (result, _) = run(&bytes, &PixelFormat::rgba()).await;
     assert!(is_eof(&result), "{result:?}");
+}
+
+// ------------------------------------ negotiation and framebuffer (#3499) --
+// Ported from vnc-rs 0.6.0 (upstream 623b894 / dea233d).
+
+#[tokio::test]
+async fn rect_outside_the_framebuffer_is_rejected() {
+    for enc in [RAW, COPY_RECT, TIGHT, TRLE, ZRLE] {
+        let mut bytes = fb_update(1);
+        bytes.extend(rect(630, 0, 16, 1, enc));
+        let (result, _) = run_with(&bytes, &PixelFormat::rgba(), &ALL_ENCODINGS, (640, 480)).await;
+        assert!(
+            matches!(result, Err(VncError::Protocol(_))),
+            "{enc}: {result:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn rect_on_the_framebuffer_edge_still_decodes() {
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(638, 479, 2, 1, RAW));
+    bytes.extend_from_slice(&[0; 8]);
+    bytes.push(BELL);
+    let (result, events) = run_with(&bytes, &PixelFormat::rgba(), &ALL_ENCODINGS, (640, 480)).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(events.iter().any(|e| matches!(e, VncEvent::RawImage(..))));
+    assert!(has_bell(&events));
+}
+
+#[tokio::test]
+async fn copy_rect_source_outside_the_framebuffer_is_rejected() {
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 16, 16, COPY_RECT));
+    bytes.extend_from_slice(&630_u16.to_be_bytes());
+    bytes.extend_from_slice(&0_u16.to_be_bytes());
+    let (result, _) = run_with(&bytes, &PixelFormat::rgba(), &ALL_ENCODINGS, (640, 480)).await;
+    assert!(matches!(result, Err(VncError::Protocol(_))), "{result:?}");
+}
+
+#[tokio::test]
+async fn encoding_the_client_did_not_negotiate_is_rejected() {
+    let negotiated = [VncEncoding::Raw, VncEncoding::Zrle];
+    for enc in [COPY_RECT, TIGHT, TRLE, CURSOR] {
+        let mut bytes = fb_update(1);
+        bytes.extend(rect(0, 0, 1, 1, enc));
+        let (result, _) = run_with(&bytes, &PixelFormat::rgba(), &negotiated, (640, 480)).await;
+        assert!(
+            matches!(result, Err(VncError::Protocol(_))),
+            "{enc}: {result:?}"
+        );
+    }
+    // Raw is always allowed, even when not listed.
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 1, 1, RAW));
+    bytes.extend_from_slice(&[0; 4]);
+    let (result, _) = run_with(
+        &bytes,
+        &PixelFormat::rgba(),
+        &[VncEncoding::Zrle],
+        (640, 480),
+    )
+    .await;
+    assert!(is_eof(&result), "{result:?}");
+}
+
+#[tokio::test]
+async fn desktop_size_grows_the_framebuffer_for_later_rects() {
+    let mut bytes = fb_update(2);
+    bytes.extend(rect(0, 0, 1024, 768, -223));
+    bytes.extend(rect(1000, 700, 2, 1, RAW));
+    bytes.extend_from_slice(&[0; 8]);
+    let (result, events) = run_with(&bytes, &PixelFormat::rgba(), &ALL_ENCODINGS, (640, 480)).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(events.iter().any(|e| matches!(e, VncEvent::RawImage(..))));
+}
+
+#[tokio::test]
+async fn desktop_size_shrink_rejects_rects_beyond_the_new_edge() {
+    let mut bytes = fb_update(2);
+    bytes.extend(rect(0, 0, 320, 200, -223));
+    bytes.extend(rect(400, 0, 1, 1, RAW));
+    let (result, _) = run_with(&bytes, &PixelFormat::rgba(), &ALL_ENCODINGS, (640, 480)).await;
+    assert!(matches!(result, Err(VncError::Protocol(_))), "{result:?}");
+}
+
+#[tokio::test]
+async fn oversize_desktop_size_is_rejected() {
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 8193, 16, -223));
+    let (result, events) = run(&bytes, &PixelFormat::rgba()).await;
+    assert!(matches!(result, Err(VncError::Protocol(_))), "{result:?}");
+    assert!(!events
+        .iter()
+        .any(|e| matches!(e, VncEvent::SetResolution(..))));
+}
+
+#[tokio::test]
+async fn stop_cancels_a_decoder_blocked_mid_message() {
+    // A server that sends half a rectangle header and then goes silent: the
+    // decoder is parked inside `read_exact`. Upstream only checked the stop
+    // signal between messages, so `close()` could not end it.
+    let (mut server, mut client) = tokio::io::duplex(64);
+    use tokio::io::AsyncWriteExt;
+    let mut bytes = fb_update(1);
+    bytes.extend_from_slice(&[0, 0, 0, 0]);
+    server.write_all(&bytes).await.unwrap();
+    let (stop_tx, mut stop_rx) = oneshot::channel();
+    let output = |_e: VncEvent| std::future::ready(Ok::<(), VncError>(()));
+    let pf = PixelFormat::rgba();
+    let decoder = asycn_vnc_read_loop(
+        &mut client,
+        &pf,
+        &output,
+        &mut stop_rx,
+        &ALL_ENCODINGS,
+        (640, 480),
+    );
+    tokio::pin!(decoder);
+    assert!(futures::poll!(decoder.as_mut()).is_pending());
+    stop_tx.send(()).unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), decoder)
+        .await
+        .expect("stop must cancel a blocked decoder");
+    assert!(result.is_ok(), "{result:?}");
+    drop(server);
 }
 
 // ------------------------------------------------------------------ cursor --
@@ -461,6 +614,17 @@ async fn random_server_streams_never_panic_the_decoder() {
         let pf = &formats[i % formats.len()];
         // Any Ok/Err is fine; a panic fails the test.
         let _ = run(&stream, pf).await;
+    }
+    // The same streams against a small framebuffer and a narrow negotiated
+    // encoding list, so the #3499 negotiation / on-screen checks are fuzzed too.
+    let narrow = [
+        VncEncoding::Raw,
+        VncEncoding::Zrle,
+        VncEncoding::DesktopSizePseudo,
+    ];
+    for _ in 0..1000 {
+        let stream = hostile_stream(&mut rng);
+        let _ = run_with(&stream, &PixelFormat::rgba(), &narrow, (16, 16)).await;
     }
     // Pure noise too.
     for _ in 0..2000 {

@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { Cpu, Package, ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import type { PluginManifest, PluginTrustInfo, PluginVersionChange } from "@/types/plugin";
+import type {
+  PluginInstallConfirmations,
+  PluginInstallPendingConfirmation,
+  PluginManifest,
+  PluginTrustInfo,
+} from "@/types/plugin";
 import { Button, Checkbox, Modal } from "@/components/ui";
 import {
   PERMISSION_DESCRIPTIONS,
@@ -10,6 +15,7 @@ import {
   pluginTypeLabel,
   trustBanner,
 } from "./pluginPresentation";
+import { PluginSignerChangeDialog } from "./PluginSignerChangeDialog";
 import { PluginVersionChangeDialog } from "./PluginVersionChangeDialog";
 import "./Plugins.css";
 
@@ -66,6 +72,15 @@ function installButtonLabel(level: PluginTrustInfo["level"], trustPublisher: boo
  * different build of the same version, or an uncomparable version, the backend
  * refuses and the dialog swaps to a {@link PluginVersionChangeDialog}; only an
  * explicit confirmation there re-issues the install (PLG-012).
+ *
+ * When the package is signed by a different key than the installed copy, is
+ * unsigned where the installed copy was signed, or the installed copy's signer
+ * is unknown, the backend refuses and the dialog swaps to a danger-styled
+ * {@link PluginSignerChangeDialog} showing both fingerprints (#3489). If the
+ * same install is also a downgrade / rebuild, that dialog covers both, and its
+ * single explicit confirmation re-issues the install with both flags. This
+ * applies equally to manual installs and to update-check installs, which hand
+ * the downloaded package to this dialog.
  */
 export function PluginInstallDialog({
   filePath,
@@ -78,24 +93,25 @@ export function PluginInstallDialog({
   const selectPlugin = useAppStore((s) => s.selectPlugin);
 
   const [trustPublisher, setTrustPublisher] = useState(false);
-  const [pendingChange, setPendingChange] = useState<PluginVersionChange | null>(null);
+  const [pending, setPending] = useState<PluginInstallPendingConfirmation | null>(null);
 
   const banner = trustBanner(trust);
   const BannerIcon = banner.icon;
   const blocked = trust.isBlocked;
   const isNative = pluginHasNativeCode(manifest.extensions);
 
-  const runInstall = async (confirmVersionChange: boolean) => {
+  const runInstall = async (confirmations: PluginInstallConfirmations) => {
     // installPlugin / enablePlugin own their own pending → success/error toasts
     // and re-throw on failure, so the async Button keeps the dialog open (and
     // shows the error) when either step fails. `acceptUntrusted` acknowledges an
     // unsigned package's risk; `trustPublisher` pins a signed key on first use.
     const acceptUntrusted = trust.level === "untrusted";
     const doTrust = trust.level === "signed" && trustPublisher;
-    const change = await installPlugin(filePath, acceptUntrusted, doTrust, confirmVersionChange);
-    if (change) {
-      // Downgrade / same-version rebuild: nothing was installed; ask first.
-      setPendingChange(change);
+    const next = await installPlugin(filePath, acceptUntrusted, doTrust, confirmations);
+    if (next) {
+      // Downgrade / rebuild and/or publisher-key change: nothing was installed;
+      // ask first. Confirmations already given stay given on the re-issue.
+      setPending(next);
       return;
     }
     await enablePlugin(manifest.id);
@@ -103,13 +119,26 @@ export function PluginInstallDialog({
     onClose();
   };
 
-  const handleInstall = () => runInstall(false);
+  const handleInstall = () => runInstall({});
 
-  if (pendingChange) {
+  if (pending?.signer) {
+    // The signer confirmation also covers any version change shown with it.
+    const confirmVersionChange = pending.version !== null;
+    return (
+      <PluginSignerChangeDialog
+        signer={pending.signer}
+        version={pending.version}
+        onConfirm={() => runInstall({ confirmSignerChange: true, confirmVersionChange })}
+        onCancel={onClose}
+      />
+    );
+  }
+
+  if (pending?.version) {
     return (
       <PluginVersionChangeDialog
-        change={pendingChange}
-        onConfirm={() => runInstall(true)}
+        change={pending.version}
+        onConfirm={() => runInstall({ confirmVersionChange: true })}
         onCancel={onClose}
       />
     );

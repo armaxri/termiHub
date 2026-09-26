@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 use thiserror::Error;
 use zip::write::{SimpleFileOptions, ZipWriter};
 
+use super::fat_pack::{inject_library_map, MultiPlatformPackError};
 use super::manifest::{
     parse_manifest, ManifestParseError, ManifestValidationError, PluginManifest,
 };
@@ -81,6 +82,10 @@ pub enum PluginPackError {
     /// path, surfaced loudly rather than shipping a broken signature.
     #[error("the signed package did not verify: {0:?}")]
     SigningRoundTripFailed(PackageVerification),
+
+    /// A multi-platform layout, merge or verification problem (PLG-011).
+    #[error(transparent)]
+    MultiPlatform(#[from] MultiPlatformPackError),
 }
 
 impl From<zip::result::ZipError> for PluginPackError {
@@ -97,9 +102,11 @@ impl From<zip::result::ZipError> for PluginPackError {
 /// 1. read and fully validate `source_dir/manifest.json` (reusing the same
 ///    parser and validator the host applies), so a broken manifest fails *before*
 ///    any archive is written;
-/// 2. write a ZIP containing `manifest.json`, an optional `README.md`, and the
+/// 2. derive the multi-platform `libraries` map from a `backend/<triple>/`
+///    tree, if present, and inject it into the packaged manifest (PLG-011);
+/// 3. write a ZIP containing `manifest.json`, an optional `README.md`, and the
 ///    `backend/`, `frontend/` and `themes/` subtrees if present — nothing else;
-/// 3. re-open the written archive with [`validate_package`] and propagate any
+/// 4. re-open the written archive with [`validate_package`] and propagate any
 ///    failure as [`PluginPackError::ProducedPackageInvalid`].
 ///
 /// The output file is named `<id>-<version>.termihub-plugin` from the manifest's
@@ -113,6 +120,11 @@ pub fn pack_plugin(source_dir: &Path, output_dir: &Path) -> Result<PathBuf, Plug
     // Validate the manifest up front so we never write a package for a manifest
     // the host would reject.
     let manifest_json = fs::read_to_string(&manifest_path)?;
+    let manifest = parse_manifest(&manifest_json)?;
+    manifest.validate()?;
+    // A `backend/<target-triple>/` tree becomes the manifest `libraries` map
+    // (PLG-011); a legacy flat `backend/` leaves the manifest untouched.
+    let manifest_json = inject_library_map(source_dir, &manifest_json)?;
     let manifest = parse_manifest(&manifest_json)?;
     manifest.validate()?;
 

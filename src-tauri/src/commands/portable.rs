@@ -86,9 +86,11 @@ pub fn resolve_portable_path_cmd(path: String, app_mode: tauri::State<'_, AppMod
 /// Copy config files from `src_dir` to `dest_dir`.
 ///
 /// Only copies files that exist in `src_dir`. Returns the list of copied
-/// file names and any non-fatal warnings.
-#[tauri::command]
-pub fn export_config(
+/// file names and any non-fatal warnings. Shared helper behind
+/// [`export_config_to_portable`] and [`import_config_from_portable`]; it is
+/// deliberately not an IPC command, since it would let the frontend copy
+/// between arbitrary directories.
+fn copy_config_files(
     src_dir: String,
     dest_dir: String,
     files: Vec<String>,
@@ -134,7 +136,7 @@ pub fn export_config_to_portable(
         .to_string_lossy()
         .into_owned();
 
-    export_config(src_dir, dest_dir, files)
+    copy_config_files(src_dir, dest_dir, files)
 }
 
 /// Import config from a portable `data/` directory into the current config directory.
@@ -152,7 +154,7 @@ pub fn import_config_from_portable(
         .to_string_lossy()
         .into_owned();
 
-    export_config(src_dir, dest_dir, files)
+    copy_config_files(src_dir, dest_dir, files)
 }
 
 #[cfg(test)]
@@ -194,14 +196,14 @@ mod tests {
     }
 
     #[test]
-    fn export_config_copies_existing_files() {
+    fn copy_config_files_copies_existing_files() {
         let src = TempDir::new().unwrap();
         let dest = TempDir::new().unwrap();
 
         std::fs::write(src.path().join("connections.json"), "[1,2,3]").unwrap();
         std::fs::write(src.path().join("settings.json"), "{\"v\":1}").unwrap();
 
-        let result = export_config(
+        let result = copy_config_files(
             src.path().to_string_lossy().into_owned(),
             dest.path().to_string_lossy().into_owned(),
             vec!["connections.json".to_string(), "settings.json".to_string()],
@@ -215,11 +217,11 @@ mod tests {
     }
 
     #[test]
-    fn export_config_warns_on_missing_files() {
+    fn copy_config_files_warns_on_missing_files() {
         let src = TempDir::new().unwrap();
         let dest = TempDir::new().unwrap();
 
-        let result = export_config(
+        let result = copy_config_files(
             src.path().to_string_lossy().into_owned(),
             dest.path().to_string_lossy().into_owned(),
             vec!["credentials.enc".to_string()],

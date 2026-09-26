@@ -12,7 +12,6 @@ use termihub_core::network::{
     defaults, dns, open_ports, ping, ping_sweep, port_scan, traceroute, wol, DnsRecordType,
     ParseDnsRecordTypeError, PingSweepResult, PortScanResult, WolDevice,
 };
-use termihub_core::service::ServiceInfo;
 
 use crate::network::agent_stream::{self, StreamTool};
 use crate::network::http_monitor::{HttpMonitorConfig, HttpMonitorState};
@@ -936,17 +935,6 @@ pub fn network_http_monitor_list(
     manager: State<'_, Arc<NetworkManager>>,
 ) -> Result<Vec<HttpMonitorState>, TerminalError> {
     Ok(manager.list_http_monitors())
-}
-
-/// List the run-location-routable services registered on the desktop.
-///
-/// Backs discovery for the future run-location selector (S-track, #2139). The
-/// HTTP monitor is the S2 pilot (#2157) — the first existing service lifted onto
-/// the core `Service` trait — so it appears here with its schema and
-/// capabilities.
-#[tauri::command]
-pub fn network_services_list(manager: State<'_, Arc<NetworkManager>>) -> Vec<ServiceInfo> {
-    manager.available_services()
 }
 
 // ── Run history (PROD-032) ───────────────────────────────────────────────────

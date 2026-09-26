@@ -3,11 +3,11 @@
 //! Each configured server is an [`EmbeddedServerService`] behind the core
 //! [`Service`](termihub_core::service::Service) trait (#2154, following the
 //! HTTP-monitor pilot #2157/#2172). The manager owns the persisted configs, a
-//! map of live services, a [`ServiceRegistry`] for run-location discovery, and a
-//! [`RunLocationResolver`] deciding where a server runs. Each service emits its
-//! status transitions on a core [`EventChannel`](termihub_core::service::EventChannel);
-//! the manager bridges those to the existing `embedded-server-status-changed`
-//! Tauri event, so the frontend contract is unchanged.
+//! map of live services, and a [`RunLocationResolver`] deciding where a server
+//! runs. Each service emits its status transitions on a core
+//! [`EventChannel`](termihub_core::service::EventChannel); the manager bridges
+//! those to the existing `embedded-server-status-changed` Tauri event, so the
+//! frontend contract is unchanged.
 //!
 //! # Agent-hosted servers (#2214)
 //!
@@ -48,7 +48,7 @@ use termihub_core::protocol::methods::{
     ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
     ServiceStopParams, EMBEDDED_SERVER_ACTIVITY, EMBEDDED_SERVER_CLEAR_ACTIVITY,
 };
-use termihub_core::service::{Service, ServiceInfo, ServiceRegistry, ServiceStatus};
+use termihub_core::service::{Service, ServiceStatus};
 
 /// Tauri event forwarded to the frontend for each embedded server status change.
 ///
@@ -86,9 +86,8 @@ impl AgentHosted for AgentServerHandle {
 
 /// Central manager for embedded HTTP/FTP/TFTP servers.
 ///
-/// Follows the same pattern as `NetworkManager` (#2172): holds the services,
-/// registers their types in a [`ServiceRegistry`], and routes each start through
-/// the [`RunLocationResolver`].
+/// Follows the same pattern as `NetworkManager` (#2172): holds the services and
+/// routes each start through the [`RunLocationResolver`].
 pub struct EmbeddedServerManager {
     configs: Mutex<EmbeddedServerStore>,
     storage: EmbeddedServerStorage,
@@ -107,9 +106,6 @@ pub struct EmbeddedServerManager {
     /// choice is a later S-phase. An absent entry means
     /// [`RunLocation::ThisComputer`] (the desktop), today's behaviour.
     run_locations: Mutex<HashMap<String, RunLocation>>,
-    /// Registry of run-location-routable server types (discovery, schema,
-    /// capabilities). Backs the run-location selector UI (a later S-phase).
-    service_registry: ServiceRegistry,
     /// Resolver deciding where a server runs (local vs agent). Honours the
     /// per-server preference in `run_locations`; a server with no recorded
     /// preference resolves local, so users see no behaviour change.
@@ -136,18 +132,11 @@ impl EmbeddedServerManager {
             services: Mutex::new(HashMap::new()),
             agent_servers: AgentInstances::new(),
             run_locations: Mutex::new(HashMap::new()),
-            service_registry: build_service_registry(),
             run_location: RunLocationResolver::new(),
             agent_status_poller: AgentStatusPoller::new(),
             app_handle: app_handle.clone(),
             recovery_warnings: Mutex::new(result.warnings),
         })
-    }
-
-    /// The server types registered for run-location routing (HTTP/FTP/TFTP).
-    /// Backs discovery and the run-location selector UI.
-    pub fn available_services(&self) -> Vec<ServiceInfo> {
-        self.service_registry.available_services()
     }
 
     /// Drain and return any recovery warnings collected during initialisation.
@@ -672,15 +661,6 @@ fn clear_agent_activity_via(
     }
 }
 
-/// Build the [`ServiceRegistry`] with the run-location-routable server types.
-///
-/// Delegates to [`termihub_core::embedded_servers::build_service_registry`] so
-/// the desktop host and the agent register identical server-type factories from
-/// one source of truth (#2192).
-fn build_service_registry() -> ServiceRegistry {
-    termihub_core::embedded_servers::build_service_registry()
-}
-
 /// A synthetic `Stopped` [`ServerState`] for a server that is not running.
 fn stopped_state(server_id: &str) -> ServerState {
     ServerState {
@@ -926,22 +906,6 @@ mod tests {
             http_auth: None,
             max_transfer_bytes: None,
         }
-    }
-
-    /// The desktop manager sources its server-type registry from the shared core
-    /// factory (#2192). The factory's contents are tested in
-    /// `termihub_core::embedded_servers`; here we only confirm the desktop wires
-    /// through to it and exposes the three run-location-routable types.
-    #[test]
-    fn build_service_registry_delegates_to_core_and_lists_the_three_types() {
-        let ids: Vec<String> = build_service_registry()
-            .available_services()
-            .into_iter()
-            .map(|s| s.service_id)
-            .collect();
-        assert!(ids.contains(&"http_server".to_string()));
-        assert!(ids.contains(&"ftp_server".to_string()));
-        assert!(ids.contains(&"tftp_server".to_string()));
     }
 
     /// The `service.start` params carry the instance id (the config id), the

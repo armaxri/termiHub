@@ -1,5 +1,4 @@
 use tauri::State;
-use termihub_core::service::ServiceInfo;
 
 use crate::embedded_servers::activity::ActivitySnapshot;
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState};
@@ -50,18 +49,6 @@ pub fn list_network_interfaces() -> Vec<NetworkInterface> {
     });
 
     interfaces
-}
-
-/// List the embedded server types available for run-location routing
-/// (HTTP/FTP/TFTP), with their schema and capabilities.
-///
-/// Backs the run-location selector UI (a later S-phase); mirrors
-/// `network_services_list` (#2172).
-#[tauri::command]
-pub fn embedded_servers_services_list(
-    manager: State<'_, EmbeddedServerManager>,
-) -> Vec<ServiceInfo> {
-    manager.available_services()
 }
 
 /// Return all saved embedded server configurations.
