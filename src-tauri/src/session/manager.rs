@@ -38,6 +38,7 @@ use super::persistent_controller::PersistentController;
 use super::remote_proxy::{ReattachOutcome, RemoteProxy};
 use super::retained_request::{RetainedConnectionRequest, RetainedRequestStore};
 use super::session_log::{default_session_log_path, desktop_clock};
+use super::ssh_keyboard_interactive::with_prompt_owner;
 
 /// Maximum number of concurrent sessions.
 const MAX_SESSIONS: usize = 50;
@@ -740,7 +741,13 @@ impl SessionManager {
     ///
     /// Fires the registered cancellation token so a connecting SSH session aborts
     /// its handshake promptly. Returns `true` if a matching connect was in flight.
+    ///
+    /// Also marks agent creates owned by `connect_id` cancelled, so an OTP round
+    /// an agent relays for it from now on is answered `null` (#3437). Its
+    /// already-open prompts are cancelled by the command through the desktop
+    /// prompter.
     pub fn cancel_connecting(&self, connect_id: &str) -> bool {
+        self.agent_manager.cancel_owned_creates(connect_id);
         let token = self
             .connecting
             .lock()
@@ -823,9 +830,11 @@ impl SessionManager {
                 "type": type_id,
                 "config": settings,
             });
-            proxy
-                .connect_cancellable(remote_settings, cancel_token.clone())
-                .await?;
+            with_prompt_owner(
+                connect_id,
+                proxy.connect_cancellable(remote_settings, cancel_token.clone()),
+            )
+            .await?;
             Box::new(proxy)
         } else {
             let mut conn = {
@@ -834,8 +843,11 @@ impl SessionManager {
                     .create(type_id)
                     .map_err(|e| termihub_core::errors::SessionError::SpawnFailed(e.to_string()))?
             };
-            conn.connect_cancellable(settings, cancel_token.clone())
-                .await?;
+            with_prompt_owner(
+                connect_id,
+                conn.connect_cancellable(settings, cancel_token.clone()),
+            )
+            .await?;
             conn
         };
 
@@ -931,10 +943,14 @@ impl SessionManager {
                     "type": type_id,
                     "config": settings,
                 });
-                proxy
-                    .connect_cancellable(remote_settings, cancel_token.clone())
-                    .await
-                    .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                // Scoped to the connect id so an OTP prompt it raises is owned
+                // by this tab and cancelled when the tab closes (#3437).
+                with_prompt_owner(
+                    connect_id,
+                    proxy.connect_cancellable(remote_settings, cancel_token.clone()),
+                )
+                .await
+                .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
                 let remote_sid = proxy.remote_session_id();
                 (Box::new(proxy), remote_sid)
             } else {
@@ -947,9 +963,11 @@ impl SessionManager {
                         .create(type_id)
                         .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?
                 };
-                if let Err(e) = conn
-                    .connect_cancellable(settings.clone(), cancel_token.clone())
-                    .await
+                if let Err(e) = with_prompt_owner(
+                    connect_id,
+                    conn.connect_cancellable(settings.clone(), cancel_token.clone()),
+                )
+                .await
                 {
                     // Server-authority fold (#2439, part of #2205): a **genuine**
                     // (non-cancelled) **initial** direct-connect failure is a terminal

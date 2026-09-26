@@ -16,6 +16,7 @@ import { frontendLog } from "@/utils/frontendLog";
 import { getAllLeaves } from "@/utils/panelTree";
 import { getEditorTabDisplayTitle } from "@/utils/editorTabTitle";
 import { deriveTabStatus } from "@/utils/tabStatus";
+import { macroReceivingInfo } from "@/utils/macroTabMarker";
 import { tabHasLiveSession } from "@/utils/tabLiveSession";
 import { reopenPayloadForTab, showReopenToast } from "@/utils/reopenTab";
 import { ConfirmDialog } from "@/components/ui";
@@ -67,6 +68,10 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
   const broadcast = useProjectedBroadcast();
   const broadcastActive = broadcast.active;
   const broadcastTargetTabIds = broadcast.targetTabIds;
+  // Multi-target macro playback (#3446): every receiving tab gets a marker. The
+  // playback state is this window's own, and the strip only renders this
+  // window's tabs, so only the window showing a target tab marks it.
+  const macroPlayback = useAppStore((s) => s.macroPlayback);
   // "Controlled by another window" badge (#2872): a session has a single owning
   // window (backend `session → window` map, mirrored into `sessionOwners` and
   // kept fresh by `session-ownership-changed`). A tab rendering a session this
@@ -256,6 +261,7 @@ export function TabBar({ panelId, tabs }: TabBarProps) {
               onMoveToWindow={(label) => handleMoveTabToWindow(tab.id, { kind: "existing", label })}
               displayTitle={getEditorTabDisplayTitle(tab, allTabs)}
               isBroadcast={broadcastActive && broadcastTargetTabIds.has(tab.id)}
+              macroReceiving={macroReceivingInfo(macroPlayback, tab.id)}
               controlledByWindow={resolveControllingWindow({
                 sessionId: tab.sessionId,
                 sessionOwners,

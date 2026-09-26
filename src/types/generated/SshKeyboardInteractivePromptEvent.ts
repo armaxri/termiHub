@@ -27,4 +27,10 @@ round: number,
  * is authenticated by an agent rather than the desktop (#3375). `null`
  * for a direct connection. Shown as "via …" in the dialog.
  */
-via: string | null, };
+via: string | null, 
+/**
+ * The `connect_id` of the connect that raised this prompt (for a terminal
+ * tab `${tabId}:${retryCount}`), when known (#3437). Closing that tab
+ * cancels the prompt. `null` for a prompt with no owning connect.
+ */
+owner: string | null, };

@@ -36,6 +36,17 @@
   color: var(--broadcast-accent);
 }
 
+/*
+ * Per-tab "receiving macro" badge (#3446): marks every terminal a multi-target
+ * macro is typing into while the run is in flight. Distinct icon and colour from
+ * the broadcast Radio badge so the two are never confused when both are on.
+ */
+.tab__macro-badge {
+  display: inline-flex;
+  align-items: center;
+  color: var(--macro-accent);
+}
+
 /* Status-bar pill: orange while healthy. */
 .status-bar__item--broadcast {
   color: var(--broadcast-accent);
