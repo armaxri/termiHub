@@ -31,6 +31,7 @@ import {
   seedTransferQueueRow,
 } from "./transferFeedback";
 import { errorMessage } from "@/utils/errorMessage";
+import { joinDirPath, pasteVerbLabels, type PasteOptions } from "@/utils/fileDragMove";
 
 /**
  * Hook for session-based file system operations.
@@ -417,12 +418,15 @@ export function useSessionFileSystem() {
     [sessionCurrentPath, sessionFileBrowserId]
   );
 
-  const pasteEntry = useCallback(async () => {
-    const clipboard = currentFileBrowsersView().clipboard;
+  const pasteEntry = useCallback(async (options?: PasteOptions) => {
+    // An explicit clipboard (drag-to-move / Move to… dialog) is a one-shot
+    // transfer that never touches — or clears — the user's copy/cut clipboard.
+    const clipboard = options?.clipboard ?? currentFileBrowsersView().clipboard;
     if (!clipboard || !sessionFileBrowserId) return;
 
     const destSession = sessionFileBrowserId;
-    const destDir = sessionCurrentPath;
+    const destDir = options?.destDir ?? sessionCurrentPath;
+    const labels = pasteVerbLabels(options?.verb);
 
     // The clipboard's source session (and whether it is SFTP-backed) is constant
     // across every entry, so resolve it once rather than probing per file. A
@@ -555,7 +559,7 @@ export function useSessionFileSystem() {
 
     // Resolves to whether the leg drove the dedicated (event-emitting) channel.
     const pasteOne = async (clipEntry: FileEntry): Promise<boolean> => {
-      const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
+      const destPath = joinDirPath(destDir, clipEntry.name);
       return clipEntry.isDirectory
         ? pasteDirectory(clipEntry.path, destPath)
         : pasteFile(clipEntry.path, destPath, true);
@@ -566,16 +570,16 @@ export function useSessionFileSystem() {
       // success toast) or fall back to a byte-based round-trip that emits no
       // event; runMaybeTrackedTransfer surfaces the byte-based success itself
       // without double-toasting the SFTP path (#2906).
-      const ok = await runMaybeTrackedTransfer("Paste", () => pasteOne(clipEntry), {
-        loading: `Pasting ${clipEntry.name}…`,
-        success: `Pasted ${clipEntry.name}`,
+      const ok = await runMaybeTrackedTransfer(options?.verb ?? "Paste", () => pasteOne(clipEntry), {
+        loading: `${labels.loading} ${clipEntry.name}…`,
+        success: `${labels.done} ${clipEntry.name}`,
       });
       // Abort on first failure so a cut clipboard is not cleared and the user is
       // not left with a partial, silently-incomplete paste.
       if (!ok) return;
     }
 
-    if (clipboard.operation === "cut") {
+    if (clipboard.operation === "cut" && !options?.clipboard) {
       useAppStore.getState().setFileClipboard(null);
     }
 

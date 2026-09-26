@@ -2,6 +2,7 @@ import { useLocalFileSystem } from "./useLocalFileSystem";
 import { useSessionFileSystem } from "./useSessionFileSystem";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
 import type { FileBrowserPaneView } from "@/store/fileBrowsersBridge";
+import type { PasteOptions } from "@/utils/fileDragMove";
 
 /**
  * The per-pane UI-state fields a browser renders, sourced from the projected
@@ -71,7 +72,7 @@ export function useFileBrowser() {
     openInVscode: async () => {},
     copyEntry: () => {},
     cutEntry: () => {},
-    pasteEntry: async () => {},
+    pasteEntry: async (_options?: PasteOptions) => {},
     mode: "none" as const,
   };
 }

@@ -1,4 +1,5 @@
 import type { FileEntry } from "@/types/connection";
+import type { FileClipboard } from "@/store/appStore";
 
 /**
  * Pure planning helpers for moving/copying file-browser entries into another
@@ -101,4 +102,32 @@ export function findNameConflicts(entries: FileEntry[], existingNames: Iterable<
 /** Human summary of the entries for toasts/dialogs ("a.txt" or "3 items"). */
 export function describeEntries(entries: FileEntry[]): string {
   return entries.length === 1 ? `"${entries[0].name}"` : `${entries.length} items`;
+}
+
+/**
+ * Optional overrides for a browser's `pasteEntry`, letting drag-to-move and the
+ * "Move to… / Copy to…" dialog reuse the paste plumbing without touching the
+ * user's copy/cut clipboard: `clipboard` replaces the stored clipboard for this
+ * one call (and is never cleared afterwards), `destDir` replaces the current
+ * folder as the destination, and `verb` words the progress toasts.
+ */
+export interface PasteOptions {
+  clipboard?: FileClipboard;
+  destDir?: string;
+  verb?: "Paste" | "Move" | "Copy";
+}
+
+/** Progress/success toast wording for a paste-like action. */
+export function pasteVerbLabels(verb: PasteOptions["verb"] = "Paste"): {
+  loading: string;
+  done: string;
+} {
+  switch (verb) {
+    case "Move":
+      return { loading: "Moving", done: "Moved" };
+    case "Copy":
+      return { loading: "Copying", done: "Copied" };
+    default:
+      return { loading: "Pasting", done: "Pasted" };
+  }
 }
