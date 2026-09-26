@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: .markdownlint.json
 evidence:
   - .markdownlint.json
-status: open
+status: fixed
+resolution: "#3483 — MD040/MD034 re-enabled (+MD024 siblings_only); remaining disables documented inline"
 ---
 
 ## What

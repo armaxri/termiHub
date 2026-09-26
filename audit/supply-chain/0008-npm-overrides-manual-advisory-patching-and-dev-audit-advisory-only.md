@@ -10,7 +10,8 @@ evidence:
   - package.json:68
   - .github/workflows/code-quality.yml:300
   - .github/workflows/code-quality.yml:309
-status: open
+status: fixed
+resolution: "#3483 — overrides register + prod audit gate kept blocking + dev audit summary; advisories cleanup #3482"
 ---
 
 ## What

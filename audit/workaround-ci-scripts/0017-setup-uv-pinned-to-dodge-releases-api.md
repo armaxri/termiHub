@@ -9,7 +9,8 @@ subsystem: .github/workflows
 evidence:
   - .github/workflows/code-quality.yml:253
   - .github/workflows/system-integration.yml:175
-status: open
+status: fixed
+resolution: "#3483 — .github/uv-version + setup-uv composite action + consistency check"
 ---
 
 ## What

@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: package.json
 evidence:
   - package.json
-status: open
+status: fixed
+resolution: "#3483 — overrides register docs/supply-chain.md + check; 4 dead overrides removed"
 ---
 
 ## What

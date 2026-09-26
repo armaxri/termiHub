@@ -9,7 +9,8 @@ subsystem: agent/src/handler
 evidence:
   - agent/src/handler/dispatch.rs:2066
   - .github/workflows/agent-integration-windows-serial-grade.yml:113
-status: open
+status: fixed
+resolution: "#3483 — TERMIHUB_AGENT_SKIP_DOCKER_PROBE honoured only in debug/test-hooks builds; documented"
 ---
 
 ## What
