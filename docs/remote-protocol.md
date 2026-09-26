@@ -562,6 +562,78 @@ List all sessions on the agent.
 | `sessions[].last_activity` | `string`        | ISO 8601 last I/O timestamp            |
 | `sessions[].attached`      | `boolean`       | Whether a client is currently attached |
 
+Besides the sessions this client's worker holds, the list includes daemon sessions running
+**unattached** on the host (`attached: false`) — for example orphans a worker's start-up recovery
+left running (see [Tab-less recovery](#tab-less-recovery-3369)) — so a returning desktop still
+finds the session its tab refers to and re-attaches it. Sessions another desktop holds are not
+listed here; use [`connection.list_host_sessions`](#connectionlist_host_sessions).
+
+---
+
+### `connection.list_host_sessions`
+
+List **every** session running on the agent host for this user — the ones this client holds, the
+ones running unattached, and the ones another desktop holds — each with who controls it (#3369).
+This is what lets a desktop open an orphaned session, or explicitly take over one another desktop
+holds ([`connection.attach`](#connectionattach) with `takeover: true`).
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.list_host_sessions",
+  "params": {},
+  "id": 3
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "sessions": [
+      {
+        "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+        "title": "Build session",
+        "type": "local",
+        "status": "running",
+        "created_at": "2026-02-14T10:30:00Z",
+        "last_activity": "2026-02-14T10:30:00Z",
+        "holder": "other"
+      }
+    ]
+  },
+  "id": 3
+}
+```
+
+| Result Field               | Type      | Description                                                                                   |
+| -------------------------- | --------- | --------------------------------------------------------------------------------------------- |
+| `sessions[].session_id`    | `string`  | UUID session identifier                                                                       |
+| `sessions[].title`         | `string`  | Display title                                                                                 |
+| `sessions[].type`          | `string`  | Connection type ID                                                                            |
+| `sessions[].status`        | `string`  | `"running"` or `"exited"`                                                                     |
+| `sessions[].created_at`    | `string`  | ISO 8601 creation timestamp                                                                   |
+| `sessions[].last_activity` | `string`  | ISO 8601 last I/O timestamp; equals `created_at` for a session this client does not hold      |
+| `sessions[].holder`        | `string`  | `"self"` (this client), `"none"` (running unattached) or `"other"` (another desktop holds it) |
+| `sessions[].definition_id` | `string?` | Saved connection definition the session was created from, when known                          |
+
+The agent classifies a session it does not hold with a short ownership probe of the session
+daemon: a recovery-intent connect (refused while another worker is attached, AGT-015) that is
+detached again immediately. A daemon that no longer answers is reclaimed (its files and state
+entry are removed) and omitted.
+
+Opening a `"none"` session is a plain `connection.attach`; taking over an `"other"` session is
+`connection.attach` with `takeover: true`, which evicts the other desktop
+([`connection.evicted`](#connectionevicted) `takeover`). Clients must only take over on an
+explicit, confirmed user action.
+
+**Compatibility:** new, append-only method. An older agent answers `-32601` (method not found);
+the desktop then disables its Running Sessions entry point with a reason.
+
 ---
 
 ### `connection.attach`
@@ -624,6 +696,17 @@ cannot ping-pong between desktops.
   "id": 5
 }
 ```
+
+#### Tab-less recovery (#3369)
+
+A worker's start-up recovery does **not** adopt orphaned sessions (maintainer decision,
+2026-09-26). A surviving daemon that nobody holds keeps running **unattached** under its usual
+lifetime/exit rules; nobody owns it until a desktop attaches to it. A plain `connection.attach` of
+such a session adopts it (a recovery-intent connect, so it never evicts another desktop); if
+another desktop holds it, the attach fails with "Session is held by another desktop" and the
+worker sends [`connection.evicted`](#connectionevicted) `heldByPeer`, so a tab bound to it shows
+the evicted state with Reclaim. Unattached orphans still count as active sessions for the deferred
+self-update idle check.
 
 **Compatibility:** the field is append-only. An agent that predates it ignores it, so a Reclaim
 of a session that agent does not hold fails with `-32001` (the desktop keeps the tab in its
@@ -2392,14 +2475,15 @@ with `takeover: true`) and must not auto-reconnect it.
 }
 ```
 
-| Param        | Type     | Description                                                                                                                                                                         |
-| ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `session_id` | `string` | Affected session UUID                                                                                                                                                               |
-| `reason`     | `string` | `takeover` — another worker attached and the daemon evicted this one; `heldByPeer` — at worker start-up, recovery found the session owned by another live worker (it is not listed) |
+| Param        | Type     | Description                                                                                                                                                                                     |
+| ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_id` | `string` | Affected session UUID                                                                                                                                                                           |
+| `reason`     | `string` | `takeover` — another worker attached and the daemon evicted this one; `heldByPeer` — recovery or a plain attach found the session owned by another live worker (it is not in `connection.list`) |
 
 Append-only: an older desktop ignores the unknown notification. `heldByPeer` notifications are
-emitted during start-up recovery, before `initialize` is answered; a desktop with no tab for the
-session ignores them.
+emitted during start-up recovery, before `initialize` is answered, and when a plain
+`connection.attach` is refused because another desktop holds the session; a desktop with no tab
+for the session ignores them.
 
 **Session-daemon frame:** the daemon signals the eviction to the incumbent worker with
 `MSG_EVICTED` (`0x86`, daemon → agent, empty payload), written immediately before it drops that
@@ -2683,7 +2767,7 @@ For serial sessions:
 2. **On I/O activity**: Update `last_activity` timestamp
 3. **On process exit**: Update `status = "exited"`, set `exit_code`
 4. **On `connection.close`**: Delete the row
-5. **On agent restart**: Persistent sessions (daemon-based) are recovered automatically; non-persistent sessions are marked `status = "exited"` and reported in `connection.list`
+5. **On agent restart**: Persistent sessions (daemon-based) keep running; a worker's recovery leaves orphans unattached (listed, adopted only when a desktop attaches, #3369); non-persistent sessions are marked `status = "exited"` and reported in `connection.list`
 
 ---
 

@@ -51,6 +51,10 @@ pub const INITIALIZE: &str = "initialize";
 // Live session lifecycle (transient sessions on the agent).
 pub const CONNECTION_CREATE: &str = "connection.create";
 pub const CONNECTION_LIST: &str = "connection.list";
+/// Every session running on the agent host for this user — including ones held
+/// by another desktop or by nobody — with who controls each (#3369). Added
+/// append-only: an older agent answers "method not found".
+pub const CONNECTION_LIST_HOST_SESSIONS: &str = "connection.list_host_sessions";
 pub const CONNECTION_ATTACH: &str = "connection.attach";
 pub const CONNECTION_DETACH: &str = "connection.detach";
 pub const CONNECTION_WRITE: &str = "connection.write";
@@ -322,6 +326,40 @@ pub struct SessionListEntry {
     pub created_at: String,
     pub last_activity: String,
     pub attached: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub definition_id: Option<String>,
+}
+
+// ── connection.list_host_sessions ───────────────────────────────────
+
+/// `connection.list_host_sessions` result (#3369).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostSessionListResult {
+    pub sessions: Vec<HostSessionEntry>,
+}
+
+/// `holder`: the requesting desktop's worker holds the session.
+pub const SESSION_HOLDER_SELF: &str = "self";
+/// `holder`: nobody holds the session; it runs unattached.
+pub const SESSION_HOLDER_NONE: &str = "none";
+/// `holder`: another desktop's worker holds the session.
+pub const SESSION_HOLDER_OTHER: &str = "other";
+
+/// One session running on the agent host (#3369): the `connection.list` entry
+/// fields plus who controls it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostSessionEntry {
+    pub session_id: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub session_type: String,
+    pub status: String,
+    pub created_at: String,
+    /// Last activity seen by the holding worker; equals `created_at` for a
+    /// session this worker does not hold (the shared state records no activity).
+    pub last_activity: String,
+    /// [`SESSION_HOLDER_SELF`] | [`SESSION_HOLDER_NONE`] | [`SESSION_HOLDER_OTHER`].
+    pub holder: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub definition_id: Option<String>,
 }
@@ -2119,6 +2157,31 @@ mod tests {
     }
 
     #[test]
+    fn host_session_entry_wire_shape() {
+        let entry = HostSessionEntry {
+            session_id: "s1".to_string(),
+            title: "Shell".to_string(),
+            session_type: "shell".to_string(),
+            status: "running".to_string(),
+            created_at: "2026-09-26T00:00:00Z".to_string(),
+            last_activity: "2026-09-26T00:00:00Z".to_string(),
+            holder: SESSION_HOLDER_OTHER.to_string(),
+            definition_id: None,
+        };
+        let value = serde_json::to_value(HostSessionListResult {
+            sessions: vec![entry],
+        })
+        .unwrap();
+        assert_eq!(value["sessions"][0]["type"], "shell");
+        assert_eq!(value["sessions"][0]["holder"], "other");
+        assert!(value["sessions"][0].get("definition_id").is_none());
+        let back: HostSessionListResult = serde_json::from_value(value).unwrap();
+        assert_eq!(back.sessions[0].holder, SESSION_HOLDER_OTHER);
+        assert_eq!(SESSION_HOLDER_SELF, "self");
+        assert_eq!(SESSION_HOLDER_NONE, "none");
+    }
+
+    #[test]
     fn session_attach_params_serde() {
         let json = json!({"session_id": "abc-123"});
         let params: SessionAttachParams = serde_json::from_value(json).unwrap();
@@ -2807,6 +2870,10 @@ mod tests {
         assert_eq!(INITIALIZE, "initialize");
         assert_eq!(CONNECTION_CREATE, "connection.create");
         assert_eq!(CONNECTION_LIST, "connection.list");
+        assert_eq!(
+            CONNECTION_LIST_HOST_SESSIONS,
+            "connection.list_host_sessions"
+        );
         assert_eq!(CONNECTION_ATTACH, "connection.attach");
         assert_eq!(CONNECTION_DETACH, "connection.detach");
         assert_eq!(CONNECTION_WRITE, "connection.write");

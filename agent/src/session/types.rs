@@ -109,6 +109,39 @@ pub struct SessionSnapshot {
     pub definition_id: Option<String>,
 }
 
+/// Who currently controls a session on this host (SM-003 follow-up, #3369).
+///
+/// Sessions are single-attach: at most one desktop's worker holds the daemon
+/// writer at a time. Since #3369 a worker's start-up recovery no longer adopts
+/// orphaned sessions, so a running session can also be held by nobody.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionHolder {
+    /// This worker (the requesting desktop) holds the session.
+    Me,
+    /// Nobody holds it: it runs unattached until a desktop opens it.
+    Nobody,
+    /// Another live worker (another desktop) holds it; taking it over evicts it.
+    Other,
+}
+
+impl SessionHolder {
+    /// Wire value of the `holder` field in `connection.list_host_sessions`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Me => "self",
+            Self::Nobody => "none",
+            Self::Other => "other",
+        }
+    }
+}
+
+/// A session running on this host together with who controls it (#3369).
+#[derive(Debug, Clone)]
+pub struct HostSessionSnapshot {
+    pub snapshot: SessionSnapshot,
+    pub holder: SessionHolder,
+}
+
 impl SessionInfo {
     /// Create a read-only snapshot of this session's state.
     pub fn snapshot(&self) -> SessionSnapshot {
@@ -128,6 +161,13 @@ impl SessionInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_holder_wire_values() {
+        assert_eq!(SessionHolder::Me.as_str(), "self");
+        assert_eq!(SessionHolder::Nobody.as_str(), "none");
+        assert_eq!(SessionHolder::Other.as_str(), "other");
+    }
 
     #[test]
     fn session_status_as_str() {

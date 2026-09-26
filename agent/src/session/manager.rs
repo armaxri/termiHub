@@ -19,7 +19,9 @@ use tracing::{info, warn};
 
 use crate::io::transport::NotificationSender;
 use crate::session::agent_forward::AgentForwardRelay;
-use crate::session::types::{SessionBackend, SessionInfo, SessionSnapshot, SessionStatus};
+use crate::session::types::{
+    HostSessionSnapshot, SessionBackend, SessionHolder, SessionInfo, SessionSnapshot, SessionStatus,
+};
 use crate::transport::JsonRpcOutputSink;
 use termihub_core::buffer::DEFAULT_BUFFER_CAPACITY;
 use termihub_core::connection::{ConnectionTypeRegistry, OutputReceiver};
@@ -28,7 +30,7 @@ use termihub_core::session::traits::OutputSink;
 
 use crate::daemon::client::{
     evicted_notification, DaemonClient, DaemonWriterHandle, ExitHook, ExitHookFuture,
-    OwnedByLivePeer, EVICTED_REASON_HELD_BY_PEER,
+    OwnedByLivePeer, ProbeOutcome, EVICTED_REASON_HELD_BY_PEER,
 };
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
@@ -69,6 +71,25 @@ pub trait SessionManagerApi: Send + Sync + 'static {
 
     /// List all sessions as snapshots.
     async fn list(&self) -> Vec<SessionSnapshot>;
+
+    /// List every session running on this host for this user — including ones
+    /// another desktop holds or nobody holds — with who controls each (#3369).
+    /// Defaults to [`list`](Self::list) classified by its `attached` flag so test
+    /// doubles need not implement it.
+    async fn list_host(&self) -> Vec<HostSessionSnapshot> {
+        self.list()
+            .await
+            .into_iter()
+            .map(|snapshot| HostSessionSnapshot {
+                holder: if snapshot.attached {
+                    SessionHolder::Me
+                } else {
+                    SessionHolder::Nobody
+                },
+                snapshot,
+            })
+            .collect()
+    }
 
     /// Return the type ID for an active session.
     async fn get_session_type_id(&self, session_id: &str) -> Option<String>;
@@ -444,6 +465,35 @@ const DEFAULT_PERSISTENT_BUFFER_SIZE: usize = DEFAULT_BUFFER_CAPACITY;
 /// (SM-003, single-attach) until the user explicitly reclaims it.
 pub const SESSION_TAKEN_OVER: &str = "Session was taken over by another desktop";
 
+/// Error returned by a plain `connection.attach` of a session another desktop
+/// currently holds (#3369). Only an explicit takeover may evict that desktop.
+pub const SESSION_HELD_BY_OTHER: &str = "Session is held by another desktop";
+
+/// How often a plain (non-takeover) adoption retries a recovery connect that was
+/// refused as "held by a live peer" before giving up (#3369). Another worker's
+/// ownership probe ([`DaemonClient::probe_holder`]) briefly holds the daemon for
+/// a few milliseconds, so a single refusal is not proof another desktop owns it.
+const ADOPT_PEER_RETRIES: u32 = 3;
+
+/// Delay between the [`ADOPT_PEER_RETRIES`] attempts.
+const ADOPT_PEER_RETRY_DELAY: Duration = Duration::from_millis(150);
+
+/// The shared per-user `state.json` path.
+#[cfg(not(test))]
+fn default_state_path() -> PathBuf {
+    AgentState::default_path()
+}
+
+/// Under test, every manager built without an explicit state path gets its own
+/// throwaway `state.json`: since #3369 listing reads and probes the shared state,
+/// so tests must never see (or reclaim entries in) the developer's real one.
+#[cfg(test)]
+fn default_state_path() -> PathBuf {
+    std::env::temp_dir()
+        .join(format!("termihub-agent-test-{}", uuid::Uuid::new_v4()))
+        .join("state.json")
+}
+
 /// In-memory session manager.
 ///
 /// Tracks sessions in a `HashMap` protected by a `tokio::sync::Mutex`
@@ -461,6 +511,12 @@ pub struct SessionManager {
     /// under the `sessions` lock) and removes it once the session is registered
     /// or the create fails. Lock order is always `sessions → pending_creates`.
     pending_creates: Mutex<HashSet<String>>,
+    /// Orphaned daemon sessions start-up recovery found running with no holder
+    /// and deliberately left **unattached** (#3369): nobody owns them until a
+    /// desktop explicitly opens or takes one over. They are not in `sessions`,
+    /// but still count as active for the deferred self-update idle check, exactly
+    /// as they did when recovery adopted them.
+    unattached: Mutex<HashSet<String>>,
     notification_tx: NotificationSender,
     registry: Arc<ConnectionTypeRegistry>,
     launcher: Arc<dyn DaemonLauncher>,
@@ -496,7 +552,7 @@ impl SessionManager {
             notification_tx,
             registry,
             Arc::new(SystemDaemonLauncher),
-            AgentState::default_path(),
+            default_state_path(),
             Arc::new(SystemUpdateApplier),
         )
     }
@@ -512,7 +568,7 @@ impl SessionManager {
             notification_tx,
             registry,
             launcher,
-            AgentState::default_path(),
+            default_state_path(),
             Arc::new(SystemUpdateApplier),
         )
     }
@@ -576,6 +632,7 @@ impl SessionManager {
         Self {
             sessions: Mutex::new(HashMap::new()),
             pending_creates: Mutex::new(HashSet::new()),
+            unattached: Mutex::new(HashSet::new()),
             notification_tx,
             registry,
             launcher,
@@ -865,10 +922,153 @@ impl SessionManager {
     /// Settles any session whose backend has exited on its own to
     /// [`SessionStatus::Exited`] first, so the desktop never sees a naturally
     /// dead session reported as `Running` (#2369).
+    ///
+    /// Also includes orphaned daemon sessions that run **unattached** on this host
+    /// (no worker holds them, #3369) as `attached: false` entries, so a returning
+    /// desktop's post-reconnect check still finds the session its tab refers to
+    /// and re-attaches it (which adopts it — see [`attach`](Self::attach)).
+    /// Sessions another desktop holds are not listed here; see
+    /// [`list_host`](Self::list_host).
     pub async fn list(&self) -> Vec<SessionSnapshot> {
-        let mut sessions = self.sessions.lock().await;
-        settle_exited(&mut sessions);
-        sessions.values().map(|s| s.snapshot()).collect()
+        let mut out: Vec<SessionSnapshot> = {
+            let mut sessions = self.sessions.lock().await;
+            settle_exited(&mut sessions);
+            sessions.values().map(|s| s.snapshot()).collect()
+        };
+        out.extend(
+            self.foreign_host_sessions()
+                .await
+                .into_iter()
+                .filter(|h| h.holder == SessionHolder::Nobody)
+                .map(|h| h.snapshot),
+        );
+        out
+    }
+
+    /// List every session running on this host for this user with who controls
+    /// it (#3369): sessions this worker holds (`Me`), ones running unattached
+    /// (`Nobody`) and ones another desktop's worker holds (`Other`).
+    ///
+    /// Sessions not held by this worker are classified with a short ownership
+    /// probe ([`DaemonClient::probe_holder`]); dead daemons found on the way are
+    /// reclaimed exactly like start-up recovery does (AGT-019).
+    pub async fn list_host(&self) -> Vec<HostSessionSnapshot> {
+        // Snapshot this worker's map without holding the lock across a probe.
+        let (mut out, to_probe) = {
+            let mut sessions = self.sessions.lock().await;
+            settle_exited(&mut sessions);
+            let mut out = Vec::new();
+            let mut to_probe = Vec::new();
+            for info in sessions.values() {
+                let snapshot = info.snapshot();
+                match &info.backend {
+                    SessionBackend::Daemon(client) if client.is_evicted() => {
+                        out.push(HostSessionSnapshot {
+                            snapshot,
+                            holder: SessionHolder::Other,
+                        });
+                    }
+                    SessionBackend::Daemon(client)
+                        if !info.attached && info.status == SessionStatus::Running =>
+                    {
+                        // Detached by this desktop: another worker may have
+                        // adopted it since — ask the daemon.
+                        to_probe.push((snapshot, client.endpoint().to_string()));
+                    }
+                    _ => out.push(HostSessionSnapshot {
+                        holder: if info.attached {
+                            SessionHolder::Me
+                        } else {
+                            SessionHolder::Nobody
+                        },
+                        snapshot,
+                    }),
+                }
+            }
+            (out, to_probe)
+        };
+        for (snapshot, endpoint) in to_probe {
+            let holder = match DaemonClient::probe_holder(&snapshot.id, &endpoint).await {
+                Ok(ProbeOutcome::HeldByPeer) => SessionHolder::Other,
+                _ => SessionHolder::Nobody,
+            };
+            out.push(HostSessionSnapshot { snapshot, holder });
+        }
+        out.extend(self.foreign_host_sessions().await);
+        out
+    }
+
+    /// The persisted daemon sessions this worker does **not** hold, classified by
+    /// an ownership probe as `Nobody` (running unattached) or `Other` (held by
+    /// another desktop's worker). Dead entries are reclaimed and omitted.
+    ///
+    /// Reads the shared `state.json` fresh from disk so sessions another desktop
+    /// created after this worker started are included.
+    async fn foreign_host_sessions(&self) -> Vec<HostSessionSnapshot> {
+        let persisted = self.fresh_persisted_sessions().await;
+        let held: HashSet<String> = self.sessions.lock().await.keys().cloned().collect();
+        let mut out = Vec::new();
+        for (id, session) in persisted {
+            if held.contains(&id) {
+                continue;
+            }
+            let Some(holder) = self.classify_persisted(&id, &session).await else {
+                continue;
+            };
+            out.push(HostSessionSnapshot {
+                snapshot: persisted_snapshot(&id, &session),
+                holder,
+            });
+        }
+        out
+    }
+
+    /// Classify a persisted session this worker does not hold (#3369). Returns
+    /// `None` — after reclaiming its files and state entry (AGT-019) — when the
+    /// daemon is gone.
+    async fn classify_persisted(
+        &self,
+        id: &str,
+        session: &PersistedSession,
+    ) -> Option<SessionHolder> {
+        let Some(endpoint) = session
+            .daemon_socket
+            .as_deref()
+            .filter(|e| endpoint_alive(e))
+        else {
+            self.forget_dead_session(id).await;
+            return None;
+        };
+        match DaemonClient::probe_holder(id, endpoint).await {
+            Ok(ProbeOutcome::Free) => Some(SessionHolder::Nobody),
+            Ok(ProbeOutcome::HeldByPeer) => Some(SessionHolder::Other),
+            Err(e) => {
+                warn!("Session {id} daemon is not answering ({e}); reclaiming it");
+                self.forget_dead_session(id).await;
+                None
+            }
+        }
+    }
+
+    /// Reclaim a dead persisted session: its socket/relay/log files and its
+    /// shared `state.json` entry (AGT-019).
+    async fn forget_dead_session(&self, id: &str) {
+        remove_session_files(id);
+        self.unattached.lock().await.remove(id);
+        self.persist_state_delta(|s| {
+            s.sessions.remove(id);
+        })
+        .await;
+    }
+
+    /// The persisted sessions in the shared per-user `state.json`, read fresh
+    /// from disk (writes are atomic, so a plain read never sees a torn file).
+    async fn fresh_persisted_sessions(&self) -> HashMap<String, PersistedSession> {
+        let path = self.state_path.clone();
+        match tokio::task::spawn_blocking(move || AgentState::load_from(&path)).await {
+            Ok(state) => state.sessions,
+            Err(_) => self.state.lock().await.sessions.clone(),
+        }
     }
 
     /// Return the `type_id` for an active session, or `None` if not found.
@@ -881,7 +1081,15 @@ impl SessionManager {
     ///
     /// Disconnects the backend before removing the session.
     /// Returns `true` if the session was found and removed.
+    ///
+    /// A session running unattached on this host (not held by this worker,
+    /// #3369) is adopted first so it can be killed; one another desktop holds is
+    /// left alone (reported as not found).
     pub async fn close(&self, session_id: &str) -> bool {
+        let held = self.sessions.lock().await.contains_key(session_id);
+        if !held && self.adopt_persisted(session_id, false).await.is_err() {
+            return false;
+        }
         {
             let mut sessions = self.sessions.lock().await;
             match sessions.remove(session_id) {
@@ -924,7 +1132,7 @@ impl SessionManager {
             !sessions
                 .values()
                 .any(|s| s.status == SessionStatus::Running)
-        };
+        } && self.live_unattached_count().await == 0;
         if idle {
             if let Err(e) = self.apply_pending_update().await {
                 warn!("Deferred agent update failed to apply on last disconnect: {e:#}");
@@ -987,7 +1195,17 @@ impl SessionManager {
     }
 
     /// Attach a client to an existing session.
+    ///
+    /// A session this worker does not hold yet — an orphan left running
+    /// unattached by start-up recovery, or one another desktop detached from —
+    /// is adopted from the shared `state.json` (#3369). The adoption never
+    /// evicts another desktop: if one holds the session the attach fails with
+    /// [`SESSION_HELD_BY_OTHER`] and the desktop is told via `connection.evicted`
+    /// (`heldByPeer`) so a tab bound to it folds `Evicted` (with Take over).
     pub async fn attach(&self, session_id: &str) -> Result<(), String> {
+        if !self.sessions.lock().await.contains_key(session_id) {
+            return self.adopt_persisted(session_id, false).await;
+        }
         let mut sessions = self.sessions.lock().await;
         let info = sessions
             .get_mut(session_id)
@@ -1022,12 +1240,32 @@ impl SessionManager {
         if self.sessions.lock().await.contains_key(session_id) {
             return self.attach(session_id).await;
         }
+        self.adopt_persisted(session_id, true).await
+    }
 
-        let persisted = {
-            let state = self.state.lock().await;
-            state.sessions.get(session_id).cloned()
-        }
-        .ok_or_else(|| "Session not found".to_string())?;
+    /// Adopt a daemon session this worker does not hold from the shared
+    /// per-user `state.json` and register it here, attached (#3369).
+    ///
+    /// - `takeover == true` (explicit Take over / Reclaim, SM-003): a takeover
+    ///   connect; the daemon evicts whichever worker holds it, which is notified
+    ///   with `connection.evicted` in turn.
+    /// - `takeover == false` (plain open / re-attach): a recovery-intent connect
+    ///   that the daemon refuses while another live worker holds the session
+    ///   (AGT-015). A refusal is retried briefly — another worker's ownership
+    ///   probe holds the daemon for a moment — then reported as
+    ///   [`SESSION_HELD_BY_OTHER`] together with a `heldByPeer` eviction notice.
+    async fn adopt_persisted(&self, session_id: &str, takeover: bool) -> Result<(), String> {
+        let persisted = match self.fresh_persisted_sessions().await.remove(session_id) {
+            Some(p) => p,
+            None => self
+                .state
+                .lock()
+                .await
+                .sessions
+                .get(session_id)
+                .cloned()
+                .ok_or_else(|| "Session not found".to_string())?,
+        };
         let endpoint = persisted
             .daemon_socket
             .clone()
@@ -1036,15 +1274,19 @@ impl SessionManager {
             return Err("Session not found".to_string());
         }
 
-        // A takeover connect (not the recovery intent): the daemon evicts the
-        // worker that currently holds the session.
-        let client = DaemonClient::connect(
-            session_id.to_string(),
-            endpoint,
-            self.notification_tx.clone(),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+        let client = if takeover {
+            // A takeover connect (not the recovery intent): the daemon evicts the
+            // worker that currently holds the session.
+            DaemonClient::connect(
+                session_id.to_string(),
+                endpoint,
+                self.notification_tx.clone(),
+            )
+            .await
+            .map_err(|e| e.to_string())?
+        } else {
+            self.connect_unless_held(session_id, &endpoint).await?
+        };
         if let Some(hook) = self.deferred_update_exit_hook() {
             client.set_exit_hook(hook);
         }
@@ -1064,13 +1306,60 @@ impl SessionManager {
             backend: SessionBackend::Daemon(client),
             definition_id: persisted.definition_id.clone(),
         };
-        let mut sessions = self.sessions.lock().await;
-        // A concurrent reclaim of the same id may have registered it meanwhile.
-        // This connect is the later takeover (current on the daemon), so it
-        // replaces that entry; dropping the loser only closes its own connection.
-        sessions.insert(session_id.to_string(), info);
-        info!("Reclaimed session {session_id} from another connection (SM-003)");
+        let replaced = {
+            let mut sessions = self.sessions.lock().await;
+            // A concurrent adoption of the same id may have registered it
+            // meanwhile. This connect is the later one (current on the daemon), so
+            // it replaces that entry.
+            sessions.insert(session_id.to_string(), info)
+        };
+        if let Some(mut old) = replaced {
+            // Stop the superseded connection's reader; the daemon already moved on.
+            detach_backend(&mut old.backend).await;
+        }
+        self.unattached.lock().await.remove(session_id);
+        if takeover {
+            info!("Took over session {session_id} from another connection (SM-003)");
+        } else {
+            info!("Adopted unattached session {session_id} (#3369)");
+        }
         Ok(())
+    }
+
+    /// Recovery-intent connect for a plain adoption, retrying a transient
+    /// "held by a live peer" refusal (see [`ADOPT_PEER_RETRIES`]).
+    async fn connect_unless_held(
+        &self,
+        session_id: &str,
+        endpoint: &str,
+    ) -> Result<DaemonClient, String> {
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+            match DaemonClient::connect_for_recovery(
+                session_id.to_string(),
+                endpoint.to_string(),
+                self.notification_tx.clone(),
+            )
+            .await
+            {
+                Ok(client) => return Ok(client),
+                Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
+                    if attempt < ADOPT_PEER_RETRIES {
+                        tokio::time::sleep(ADOPT_PEER_RETRY_DELAY).await;
+                        continue;
+                    }
+                    // SM-003: a tab bound to this session folds `Evicted` (with
+                    // Take over) instead of an unexplained failure.
+                    let _ = self.notification_tx.send(evicted_notification(
+                        session_id,
+                        EVICTED_REASON_HELD_BY_PEER,
+                    ));
+                    return Err(SESSION_HELD_BY_OTHER.to_string());
+                }
+                Err(e) => return Err(e.to_string()),
+            }
+        }
     }
 
     /// Detach the client from a session.
@@ -1087,125 +1376,77 @@ impl SessionManager {
         Ok(())
     }
 
-    /// Recover sessions from persistent state by reconnecting to
-    /// surviving daemon processes.
+    /// Start-up recovery: reconcile the shared `state.json` with the daemons
+    /// still running on this host.
+    ///
+    /// **Tab-less recovery policy (#3369, maintainer decision 2026-09-26):** a
+    /// worker no longer adopts orphaned sessions. A surviving daemon that nobody
+    /// holds is left running **unattached** — it keeps running under its usual
+    /// lifetime/exit rules, is listed (`connection.list` /
+    /// `connection.list_host_sessions`) and is adopted only when a desktop
+    /// actually attaches to it (a returning desktop re-attaching its tab, or a
+    /// user opening / taking it over). Previously every worker adopted every
+    /// orphan, so desktop B silently became the owner of desktop A's session
+    /// while A was offline.
+    ///
+    /// Each surviving daemon is classified with an ownership probe:
+    /// - free → left unattached (returned);
+    /// - held by a live peer (AGT-015) → left alone and reported to the desktop
+    ///   as `connection.evicted` (`heldByPeer`, SM-003) so a tab bound to it folds
+    ///   `Evicted` rather than "session lost";
+    /// - dead (missing endpoint, or a socket file that merely lingers) → its
+    ///   files and state entry are reclaimed (AGT-019).
+    ///
+    /// Returns the ids of the sessions left running unattached.
     pub async fn recover_sessions(&self) -> Vec<String> {
-        let state = self.state.lock().await;
-        let persisted = state.sessions.clone();
-        drop(state);
+        let persisted = self.state.lock().await.sessions.clone();
 
-        let mut recovered = Vec::new();
+        let mut unattached = Vec::new();
 
         for (id, session) in &persisted {
-            let endpoint = match &session.daemon_socket {
-                Some(p) => p.clone(),
-                None => {
-                    warn!("Session {id} has no daemon endpoint, removing");
-                    // AGT-019: reclaim any stray log left under this id as well,
-                    // not just the state entry.
-                    remove_session_files(id);
-                    self.persist_state_delta(|s| {
-                        s.sessions.remove(id);
-                    })
-                    .await;
-                    continue;
+            match self.classify_persisted(id, session).await {
+                Some(SessionHolder::Nobody) => {
+                    info!(
+                        "Session {id} (type={}) is running unattached; leaving it for a \
+                         desktop to open (#3369)",
+                        session.type_id
+                    );
+                    unattached.push(id.clone());
                 }
-            };
-
-            if !endpoint_alive(&endpoint) {
-                info!("Daemon endpoint gone for session {id}, removing from state");
-                // AGT-019: the socket is already gone; sweep any lingering
-                // sibling files (e.g. the daemon log) rather than orphaning them.
-                remove_session_files(id);
-                self.persist_state_delta(|s| {
-                    s.sessions.remove(id);
-                })
-                .await;
-                continue;
-            }
-
-            // Recovery must fast-fail a dead daemon whose socket file merely
-            // lingers (the `endpoint_alive` file check above cannot tell a live
-            // daemon from a stale socket file). Using the spawn-path connect here
-            // would retry `ConnectionRefused` for the full 30s per dead session,
-            // stalling the fresh agent's startup — and thus the desktop's
-            // `initialize` handshake — after a reconnect (#2476).
-            match DaemonClient::connect_for_recovery(
-                id.clone(),
-                endpoint,
-                self.notification_tx.clone(),
-            )
-            .await
-            {
-                Ok(client) => {
-                    // A recovered daemon session must also promptly apply a
-                    // staged self-update when it later exits on its own (#2381).
-                    if let Some(hook) = self.deferred_update_exit_hook() {
-                        client.set_exit_hook(hook);
-                    }
-
-                    let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)
-                        .map(|dt| dt.with_timezone(&Utc))
-                        .unwrap_or_else(|_| Utc::now());
-
-                    let info = SessionInfo {
-                        id: id.clone(),
-                        title: session.title.clone(),
-                        type_id: session.type_id.clone(),
-                        status: SessionStatus::Running,
-                        settings: session.settings.clone(),
-                        created_at,
-                        last_activity: Utc::now(),
-                        attached: false,
-                        backend: SessionBackend::Daemon(client),
-                        definition_id: session.definition_id.clone(),
-                    };
-
-                    let mut sessions = self.sessions.lock().await;
-                    sessions.insert(id.clone(), info);
-                    recovered.push(id.clone());
-                    info!("Recovered session {id} (type={})", session.type_id);
-                }
-                Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
+                Some(_) => {
                     // AGT-015: another live worker (another attached desktop) still
-                    // owns this session. Skip it and — crucially — leave it in the
-                    // shared `state.json` so its live owner is undisturbed and can
-                    // still recover it later. Removing it here would corrupt the
-                    // shared recovery map for the peer.
+                    // owns this session. Leave it — and its shared `state.json`
+                    // entry — for its live owner.
                     info!(
                         "Session {id} is held by a live connection on this host; \
                          leaving it for its owner (AGT-015)"
                     );
                     // SM-003: tell the desktop the session is controlled elsewhere
                     // so a tab that was attached to it folds an explicit `Evicted`
-                    // state (with Reclaim) rather than "session lost" — the process
-                    // is alive, just owned by another desktop. A desktop with no tab
-                    // for this session ignores it.
+                    // state (with Reclaim) rather than "session lost". A desktop
+                    // with no tab for this session ignores it.
                     let _ = self
                         .notification_tx
                         .send(evicted_notification(id, EVICTED_REASON_HELD_BY_PEER));
-                    continue;
                 }
-                Err(e) => {
-                    warn!("Failed to recover session {id}: {e}");
-                    // AGT-019: a recovery-intent connect failed, so this is a
-                    // dead daemon whose socket file merely lingers (the classic
-                    // SIGKILL leak) — reclaim its socket/relay/log files instead
-                    // of removing only the state entry and orphaning them.
-                    remove_session_files(id);
-                    self.persist_state_delta(|s| {
-                        s.sessions.remove(id);
-                    })
-                    .await;
+                None => {
+                    info!("Session {id} is gone; reclaimed its state and files");
                 }
             }
         }
 
-        if !recovered.is_empty() {
-            info!("Recovered {} session(s)", recovered.len());
+        if !unattached.is_empty() {
+            info!(
+                "{} orphaned session(s) left running unattached",
+                unattached.len()
+            );
+            self.unattached
+                .lock()
+                .await
+                .extend(unattached.iter().cloned());
         }
 
-        recovered
+        unattached
     }
 
     /// Return the number of sessions with status `Running`.
@@ -1214,12 +1455,40 @@ impl SessionManager {
     /// [`SessionStatus::Exited`] first, so a naturally dead session is not
     /// counted as active (#2369) — this keeps the deferred-update "is idle"
     /// check and any leak detection honest.
+    ///
+    /// Orphans start-up recovery left running unattached (#3369) whose daemon is
+    /// still up also count, exactly as they did when recovery adopted them — so a
+    /// staged self-update keeps deferring while they run.
     pub async fn active_count(&self) -> u32 {
-        let mut sessions = self.sessions.lock().await;
-        settle_exited(&mut sessions);
-        sessions
-            .values()
-            .filter(|s| s.status == SessionStatus::Running)
+        let held = {
+            let mut sessions = self.sessions.lock().await;
+            settle_exited(&mut sessions);
+            sessions
+                .values()
+                .filter(|s| s.status == SessionStatus::Running)
+                .count() as u32
+        };
+        held + self.live_unattached_count().await
+    }
+
+    /// Number of recovery-found unattached orphans (#3369) whose daemon endpoint
+    /// is still present and that this worker has not since adopted.
+    async fn live_unattached_count(&self) -> u32 {
+        let ids: Vec<String> = self.unattached.lock().await.iter().cloned().collect();
+        if ids.is_empty() {
+            return 0;
+        }
+        let held: HashSet<String> = self.sessions.lock().await.keys().cloned().collect();
+        let state = self.state.lock().await;
+        ids.iter()
+            .filter(|id| !held.contains(*id))
+            .filter(|id| {
+                state
+                    .sessions
+                    .get(*id)
+                    .and_then(|p| p.daemon_socket.as_deref())
+                    .is_some_and(endpoint_alive)
+            })
             .count() as u32
     }
 
@@ -1412,6 +1681,25 @@ impl SessionManager {
     }
 }
 
+/// A [`SessionSnapshot`] for a persisted session this worker does not hold
+/// (#3369). `state.json` records no activity time, so `last_activity` is the
+/// creation time.
+fn persisted_snapshot(id: &str, session: &PersistedSession) -> SessionSnapshot {
+    let created_at = chrono::DateTime::parse_from_rfc3339(&session.created_at)
+        .map(|dt| dt.with_timezone(&Utc))
+        .unwrap_or_else(|_| Utc::now());
+    SessionSnapshot {
+        id: id.to_string(),
+        title: session.title.clone(),
+        type_id: session.type_id.clone(),
+        status: SessionStatus::Running,
+        created_at,
+        last_activity: created_at,
+        attached: false,
+        definition_id: session.definition_id.clone(),
+    }
+}
+
 // ── Backend operations ─────────────────────────────────────────────
 
 async fn close_backend(backend: &mut SessionBackend) {
@@ -1583,6 +1871,10 @@ impl SessionManagerApi for SessionManager {
 
     async fn list(&self) -> Vec<SessionSnapshot> {
         SessionManager::list(self).await
+    }
+
+    async fn list_host(&self) -> Vec<HostSessionSnapshot> {
+        SessionManager::list_host(self).await
     }
 
     async fn get_session_type_id(&self, session_id: &str) -> Option<String> {
@@ -1953,6 +2245,156 @@ mod tests {
             SessionManagerApi::write_input(&mgr, &id, b"x")
                 .await
                 .expect("control restored after Reclaim");
+        }
+
+        // ── #3369: tab-less recovery leaves orphans unattached + listable ──
+
+        fn holder_of(listed: &[HostSessionSnapshot], id: &str) -> Option<SessionHolder> {
+            listed
+                .iter()
+                .find(|h| h.snapshot.id == id)
+                .map(|h| h.holder)
+        }
+
+        /// Maintainer decision 2026-09-26: start-up recovery does NOT adopt an
+        /// orphan. It stays running with no holder (another desktop can still
+        /// recover-connect it), is listed as unattached, counts as active for the
+        /// deferred-update check, and is adopted only when a desktop attaches.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn recovery_leaves_orphan_unattached_until_a_desktop_attaches() {
+            let id = unique("orphan");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, _rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            let unattached = mgr.recover_sessions().await;
+            assert_eq!(unattached, vec![id.clone()]);
+
+            // Not adopted: nobody holds the daemon writer.
+            assert_eq!(
+                DaemonClient::probe_holder(&id, &endpoint).await.unwrap(),
+                ProbeOutcome::Free,
+                "recovery must not hold an orphan's daemon"
+            );
+            let listed = mgr.list().await;
+            let entry = listed.iter().find(|s| s.id == id).expect("orphan listed");
+            assert!(!entry.attached);
+            assert_eq!(entry.status, SessionStatus::Running);
+            assert_eq!(
+                holder_of(&mgr.list_host().await, &id),
+                Some(SessionHolder::Nobody)
+            );
+            assert_eq!(
+                mgr.active_count().await,
+                1,
+                "an orphan still defers updates"
+            );
+
+            // A desktop opening it (plain attach) adopts it.
+            mgr.attach(&id).await.expect("open adopts the orphan");
+            assert_eq!(
+                holder_of(&mgr.list_host().await, &id),
+                Some(SessionHolder::Me)
+            );
+            assert_eq!(
+                DaemonClient::probe_holder(&id, &endpoint).await.unwrap(),
+                ProbeOutcome::HeldByPeer,
+                "the opening worker now holds the daemon"
+            );
+            SessionManagerApi::write_input(&mgr, &id, b"echo\n")
+                .await
+                .expect("the opening worker controls the session");
+            assert_eq!(mgr.active_count().await, 1, "no double count once adopted");
+        }
+
+        /// `list_host` reports a session another desktop holds as `Other`; plain
+        /// `list` (the returning-desktop reattach check) does not include it.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn list_host_reports_sessions_held_by_another_desktop() {
+            let id = unique("other");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+            let _peer = DaemonClient::connect(id.clone(), endpoint.clone(), test_notification_tx())
+                .await
+                .expect("peer attaches");
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, _rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            assert_eq!(
+                holder_of(&mgr.list_host().await, &id),
+                Some(SessionHolder::Other)
+            );
+            assert!(
+                !mgr.list().await.iter().any(|s| s.id == id),
+                "connection.list only lists sessions this desktop can attach"
+            );
+            // The probe did not disturb the holder.
+            assert_eq!(
+                DaemonClient::probe_holder(&id, &endpoint).await.unwrap(),
+                ProbeOutcome::HeldByPeer
+            );
+        }
+
+        /// Take over from the list: an explicit takeover attach evicts the holder
+        /// and flips the listing to `Me`.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn take_over_from_list_evicts_the_holder() {
+            let id = unique("takeover");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+            let peer = DaemonClient::connect(id.clone(), endpoint.clone(), test_notification_tx())
+                .await
+                .expect("peer attaches");
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, _rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            assert_eq!(
+                holder_of(&mgr.list_host().await, &id),
+                Some(SessionHolder::Other)
+            );
+            mgr.reclaim(&id).await.expect("take over");
+            assert!(eventually(|| peer.is_evicted()).await, "holder evicted");
+            assert_eq!(
+                holder_of(&mgr.list_host().await, &id),
+                Some(SessionHolder::Me)
+            );
+        }
+
+        /// A dead daemon whose state entry lingers is dropped from the listing
+        /// and reclaimed rather than offered to the user.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn list_host_omits_and_reclaims_dead_sessions() {
+            let id = unique("dead");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, _rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            assert!(holder_of(&mgr.list_host().await, &id).is_none());
+            assert!(!mgr.fresh_persisted_sessions().await.contains_key(&id));
+        }
+
+        /// Closing an unattached orphan (e.g. Stop from the sidebar) adopts and
+        /// kills it; one another desktop holds is left alone.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn close_adopts_an_orphan_but_not_a_held_session() {
+            let id = unique("close-held");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+            let peer = DaemonClient::connect(id.clone(), endpoint.clone(), test_notification_tx())
+                .await
+                .expect("peer attaches");
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, _rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            assert!(!mgr.close(&id).await, "a held session is not closed");
+            assert!(!peer.is_evicted());
+
+            let id2 = unique("close-orphan");
+            let endpoint2 = crate::daemon::transport::session_endpoint(&id2);
+            let _daemon2 = spawn_daemon(&endpoint2).await;
+            let tmp2 = tempfile::tempdir().unwrap();
+            let (mgr2, _rx2) = manager_with_session(tmp2.path(), &id2, &endpoint2);
+            assert!(mgr2.close(&id2).await, "an orphan can be stopped");
+            assert!(!mgr2.fresh_persisted_sessions().await.contains_key(&id2));
         }
     }
 

@@ -2127,6 +2127,49 @@ export async function listAgentSessions(agentId: string): Promise<AgentSessionIn
   return await invoke<AgentSessionInfo[]>("list_agent_sessions", { agentId });
 }
 
+/**
+ * Who controls a session running on an agent host (#3369): this desktop
+ * (`"self"`), nobody — it runs unattached (`"none"`), or another desktop
+ * (`"other"`; opening it is an explicit takeover).
+ */
+export type AgentSessionHolder = "self" | "none" | "other";
+
+/** A session running on an agent host, with who controls it (#3369). */
+export interface AgentHostSessionInfo {
+  sessionId: string;
+  title: string;
+  type: string;
+  status: string;
+  createdAt: string;
+  lastActivity: string;
+  holder: AgentSessionHolder;
+  definitionId?: string | null;
+}
+
+/** Result of {@link listAgentHostSessions}. */
+export interface AgentHostSessionsResult {
+  /** `false` when the agent predates the listing (update the agent to use it). */
+  supported: boolean;
+  sessions: AgentHostSessionInfo[];
+}
+
+/**
+ * List every session running on an agent's host — including ones another
+ * desktop holds and orphans nobody holds — with who controls each (#3369).
+ */
+export async function listAgentHostSessions(agentId: string): Promise<AgentHostSessionsResult> {
+  return await invoke<AgentHostSessionsResult>("list_agent_host_sessions", { agentId });
+}
+
+/**
+ * Explicitly take over an agent session another desktop holds (#3369, SM-003):
+ * the other desktop is evicted ("Taken over by another desktop" + Reclaim).
+ * Only call this from a confirmed user action; then open a tab bound to it.
+ */
+export async function takeOverAgentSession(agentId: string, sessionId: string): Promise<void> {
+  await invoke("take_over_agent_session", { agentId, sessionId });
+}
+
 /** Close a specific session on a remote agent (frees serial port, SSH channel, etc.). */
 export async function closeAgentSession(agentId: string, sessionId: string): Promise<void> {
   await invoke("close_agent_session", { agentId, sessionId });

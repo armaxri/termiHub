@@ -302,6 +302,19 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// List sessions on the agent.
     fn list_sessions(&self, agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError>;
 
+    /// List every session running on the agent host with who controls it
+    /// (`connection.list_host_sessions`, #3369). Defaults to "unsupported" so
+    /// test doubles need not implement it.
+    fn list_host_sessions(
+        &self,
+        _agent_id: &str,
+    ) -> Result<AgentHostSessionsResult, TerminalError> {
+        Ok(AgentHostSessionsResult {
+            supported: false,
+            sessions: Vec::new(),
+        })
+    }
+
     /// List saved connections and folders on the agent.
     fn list_connections_and_folders(
         &self,
@@ -1419,6 +1432,19 @@ impl<R: Runtime> AgentConnectionManager<R> {
         Ok(sessions)
     }
 
+    /// List every session running on the agent host with who controls it
+    /// (#3369). An older agent without the method yields `supported: false`.
+    pub fn list_host_sessions(
+        &self,
+        agent_id: &str,
+    ) -> Result<AgentHostSessionsResult, TerminalError> {
+        parse_host_sessions_reply(self.send_request(
+            agent_id,
+            termihub_core::protocol::methods::CONNECTION_LIST_HOST_SESSIONS,
+            serde_json::json!({}),
+        ))
+    }
+
     /// List saved connections and folders on the agent.
     pub fn list_connections_and_folders(
         &self,
@@ -1917,6 +1943,10 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn list_sessions(&self, agent_id: &str) -> Result<Vec<AgentSessionInfo>, TerminalError> {
         AgentConnectionManager::list_sessions(self, agent_id)
+    }
+
+    fn list_host_sessions(&self, agent_id: &str) -> Result<AgentHostSessionsResult, TerminalError> {
+        AgentConnectionManager::list_host_sessions(self, agent_id)
     }
 
     fn list_connections_and_folders(

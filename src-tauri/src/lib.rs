@@ -745,6 +745,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::agent::request_agent_deferred_update,
             commands::agent::request_agent_update,
             commands::agent::list_agent_sessions,
+            commands::agent::list_agent_host_sessions,
+            commands::agent::take_over_agent_session,
             commands::agent::close_agent_session,
             commands::agent::list_agent_definitions,
             commands::agent::list_agent_connections,

@@ -82,6 +82,15 @@ async fn write_frame_timed(
 #[error("session daemon refused recovery: a live connection is already attached")]
 pub struct OwnedByLivePeer;
 
+/// Result of [`DaemonClient::probe_holder`] on a live daemon (#3369).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeOutcome {
+    /// No worker holds the session; it runs unattached.
+    Free,
+    /// Another live worker (another desktop) holds the session.
+    HeldByPeer,
+}
+
 /// Future returned by an [`ExitHook`].
 pub type ExitHookFuture = Pin<Box<dyn Future<Output = ()> + Send>>;
 
@@ -208,6 +217,32 @@ impl DaemonClient {
         notification_tx: NotificationSender,
     ) -> Result<Self, anyhow::Error> {
         Self::connect_inner(session_id, endpoint, notification_tx, true).await
+    }
+
+    /// Probe who controls a still-running daemon **without keeping it**
+    /// (#3369, tab-less recovery policy).
+    ///
+    /// Performs a recovery-intent connect (refused while a live writer — another
+    /// desktop's worker — is attached, AGT-015) and, when it succeeds, detaches
+    /// straight away so the session stays running unattached. The handshake's
+    /// buffer replay goes to a throwaway channel, never to the desktop.
+    ///
+    /// - `Ok(ProbeOutcome::Free)`: nobody holds the session.
+    /// - `Ok(ProbeOutcome::HeldByPeer)`: another live worker holds it.
+    /// - `Err(_)`: the daemon is dead (e.g. its socket file merely lingers).
+    pub async fn probe_holder(
+        session_id: &str,
+        endpoint: &str,
+    ) -> Result<ProbeOutcome, anyhow::Error> {
+        let (sink, _discard) = tokio::sync::mpsc::unbounded_channel();
+        match Self::connect_for_recovery(session_id.to_string(), endpoint.to_string(), sink).await {
+            Ok(mut client) => {
+                client.detach().await;
+                Ok(ProbeOutcome::Free)
+            }
+            Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => Ok(ProbeOutcome::HeldByPeer),
+            Err(e) => Err(e),
+        }
     }
 
     async fn connect_inner(
