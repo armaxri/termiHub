@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { useAppStore } from "@/store/appStore";
 import { onTransferProgress, onSessionOwnershipChanged } from "@/services/events";
 import { toast } from "@/components/ui";
-import type { TransferProgress } from "@/services/api";
+import { LOCAL_TRANSFER_SESSION, type TransferProgress } from "@/services/api";
 
 /**
  * Raise the single terminal-phase toast for a settled transfer (#1286).
@@ -14,7 +14,8 @@ import type { TransferProgress } from "@/services/api";
  * pending toast and dismisses it, deferring the terminal toast here (see
  * `useFileSystem.ts`).
  *
- * - `done`      → `toast.success` ("Downloaded …" / "Uploaded …").
+ * - `done`      → `toast.success` ("Downloaded …" / "Uploaded …"; "Copied …"
+ *   for a queued local copy).
  * - `error`     → recoverable `toast.error` carrying the backend `message`.
  * - `cancelled` → stay quiet: the user initiated the cancel, and the Cancel
  *   button already raises its own "Transfer cancelled" confirmation
@@ -24,11 +25,13 @@ import type { TransferProgress } from "@/services/api";
  */
 function toastTerminalPhase(progress: TransferProgress): void {
   const { phase, direction, fileName, message } = progress;
+  // A queued local-disk copy (#3567) is neither a download nor an upload.
+  const isLocalCopy = progress.sessionId === LOCAL_TRANSFER_SESSION;
   if (phase === "done") {
-    const verb = direction === "download" ? "Downloaded" : "Uploaded";
+    const verb = isLocalCopy ? "Copied" : direction === "download" ? "Downloaded" : "Uploaded";
     toast.success(`${verb} ${fileName}`);
   } else if (phase === "error") {
-    const verb = direction === "download" ? "Download" : "Upload";
+    const verb = isLocalCopy ? "Copy" : direction === "download" ? "Download" : "Upload";
     toast.error(`${verb} of ${fileName} failed: ${message ?? "Transfer failed"}`);
   }
   // `cancelled` and `transferring` intentionally emit no toast.

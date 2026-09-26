@@ -62,6 +62,8 @@ import {
   sessionHasExecCapability,
   sessionSupportsTransferQueue,
   sessionDownload,
+  localCopyStart,
+  TransferTerminalError,
   sessionUpload,
   sessionVscodeOpenRemote,
   vscodeAvailable,
@@ -1288,6 +1290,54 @@ describe("api service", () => {
         path: "theme.json",
       });
       expect(Array.from(result)).toEqual(Array.from(bytes));
+    });
+  });
+
+  // Queued local copies (PARITY-004, #3567).
+  describe("localCopyStart", () => {
+    it("resolves false without waiting when the backend copied directly", async () => {
+      mockedInvoke.mockResolvedValue(null);
+      const onRegistered = vi.fn();
+
+      await expect(localCopyStart("/a/small.txt", "/b/small.txt", onRegistered)).resolves.toBe(
+        false
+      );
+      expect(mockedInvoke).toHaveBeenCalledWith("local_copy_start", {
+        srcPath: "/a/small.txt",
+        destPath: "/b/small.txt",
+      });
+      expect(onRegistered).not.toHaveBeenCalled();
+      expect(transferListener).toBeUndefined();
+    });
+
+    it("never misses a copy that settles before the command returns", async () => {
+      // The listener is live before the command runs, so a `done` emitted while
+      // it is still in flight is kept and settles the copy.
+      mockedInvoke.mockImplementation(async () => {
+        transferListener?.({
+          payload: { transferId: "local-1", phase: "done", transferred: 9_000_000 },
+        });
+        return "local-1";
+      });
+      const onRegistered = vi.fn();
+
+      await expect(localCopyStart("/a/big.iso", "/b/big.iso", onRegistered)).resolves.toBe(true);
+      expect(onRegistered).toHaveBeenCalledWith("local-1");
+      expect(transferListener).toBeUndefined();
+    });
+
+    it("rejects with a TransferTerminalError when the queued copy is cancelled", async () => {
+      mockedInvoke.mockResolvedValue("local-2");
+
+      const pending = localCopyStart("/a/big.iso", "/b/big.iso");
+      for (let i = 0; i < 50 && !mockedInvoke.mock.calls.length; i++) {
+        await flushMacrotask();
+      }
+      await flushMacrotask();
+      transferListener?.({ payload: { transferId: "other", phase: "done", transferred: 1 } });
+      transferListener?.({ payload: { transferId: "local-2", phase: "cancelled" } });
+
+      await expect(pending).rejects.toBeInstanceOf(TransferTerminalError);
     });
   });
 });

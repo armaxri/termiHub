@@ -366,6 +366,11 @@ docker = [
     "tokio-util/io",
 ]
 wsl = ["dep:portable-pty", "dep:tracing", "dep:uuid"]
+# Queued local-disk file copies (files/transfer/local.rs, PARITY-004 #3567):
+# the chunked, pausable/resumable copy behind local and local <-> WSL (UNC)
+# copies. Needs `tokio/fs` for the streaming and `tracing` for the shared
+# attempt orchestration's logs.
+local-transfer = ["dep:tracing", "tokio/fs"]
 ftp = [
     "dep:suppaftp",
     "dep:tokio-rustls",

@@ -45,7 +45,8 @@
 //! transfers carry their credentials inline in a frontend-supplied config that is
 //! not persisted and has no credential-store re-sourcing seam yet — both surface
 //! an honest Failed state rather than a half-working resume (follow-up tracked
-//! separately).
+//! separately). Queued **local-disk copies** (PARITY-004, #3567) need no session
+//! and always relaunch from their temp file.
 
 use tauri::{AppHandle, Manager};
 
@@ -67,6 +68,14 @@ pub(crate) enum RelaunchPlan {
         direction: TransferDirection,
         remote_path: String,
         local_path: String,
+        offset: u64,
+        total: u64,
+    },
+    /// A queued local-disk copy (PARITY-004, #3567): needs no session at all, so
+    /// it always relaunches, continuing from its temp file behind the resume gate.
+    Local {
+        src_path: String,
+        dest_path: String,
         offset: u64,
         total: u64,
     },
@@ -94,6 +103,14 @@ pub(crate) enum ResumeDecision {
 /// session/path — so it cannot be relaunched after a restart.
 pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
     match &record.local_path {
+        Some(dest_path) if record.session_id == super::local::LOCAL_TRANSFER_SESSION => {
+            RelaunchPlan::Local {
+                src_path: record.remote_path.clone(),
+                dest_path: dest_path.clone(),
+                offset: record.resume_offset,
+                total: record.total,
+            }
+        }
         Some(local_path) => RelaunchPlan::Sftp {
             session_id: record.session_id.clone(),
             direction: record.direction,
@@ -227,11 +244,51 @@ async fn relaunch_record(
                 }
             }
         }
+        RelaunchPlan::Local {
+            src_path,
+            dest_path,
+            offset,
+            total,
+        } => {
+            spawn_local_relaunch(
+                src_path, dest_path, offset, total, &record, registry, app_handle,
+            );
+            true
+        }
         RelaunchPlan::Unsupported { reason } => {
             fail_row(app_handle, &record, reason);
             true
         }
     }
+}
+
+/// Re-enqueue and spawn the local-copy executor for a rehydrated local copy,
+/// resuming from its persisted offset (race-safe like [`spawn_sftp_relaunch`]).
+fn spawn_local_relaunch(
+    src_path: String,
+    dest_path: String,
+    offset: u64,
+    total: u64,
+    record: &PersistedTransfer,
+    registry: &TransferRegistry,
+    app_handle: &AppHandle,
+) {
+    let Some(handle) = registry.enqueue_if_absent(
+        &record.transfer_id,
+        &record.session_id,
+        TransferDirection::Download,
+        &record.file_name,
+        &src_path,
+        total,
+    ) else {
+        registry.resume(&record.transfer_id);
+        return;
+    };
+    let registry = registry.clone();
+    let sink = super::app_progress_sink(app_handle.clone());
+    tauri::async_runtime::spawn(async move {
+        super::local::run_local_transfer(src_path, dest_path, handle, registry, sink, offset).await;
+    });
 }
 
 /// Re-enqueue and spawn the SFTP executor for a rehydrated transfer, resuming from
@@ -329,6 +386,22 @@ mod tests {
                 total: 8192,
             },
             "the relaunch plan resumes from the persisted checkpoint offset"
+        );
+    }
+
+    #[test]
+    fn plan_for_a_local_copy_relaunches_without_a_session() {
+        let mut rec = record("t3", Some("/backup/data.csv"));
+        rec.session_id = crate::files::transfer::local::LOCAL_TRANSFER_SESSION.to_string();
+        rec.remote_path = "/home/user/data.csv".to_string();
+        assert_eq!(
+            plan_from_record(&rec),
+            RelaunchPlan::Local {
+                src_path: "/home/user/data.csv".to_string(),
+                dest_path: "/backup/data.csv".to_string(),
+                offset: 4096,
+                total: 8192,
+            }
         );
     }
 

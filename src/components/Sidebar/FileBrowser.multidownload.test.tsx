@@ -3,9 +3,9 @@
  *
  * Selecting several entries and choosing "Download" from the multi-select
  * context menu must enqueue a download for each selected entry by reusing the
- * existing single-download path (local Save-as → `local_copy`), passing
- * `isDirectory` through so a selected directory recurses the same way the
- * single download does. No new transfer plumbing is introduced.
+ * existing single-download path (local Save-as → `local_copy_start`, which
+ * detects a selected directory and copies it recursively the same way the
+ * single download does). No new transfer plumbing is introduced.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
@@ -157,17 +157,13 @@ describe("FileBrowser — multi-download (PROD-005)", () => {
     await flushAsync();
     await flushAsync();
 
-    // Each selected entry reused the single-download path (Save-as + local_copy).
-    const copyCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "local_copy");
+    // Each selected entry reused the single-download path (Save-as +
+    // local_copy_start); the backend detects the directory and copies it
+    // recursively (#3567), so the frontend passes no isDirectory flag.
+    const copyCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "local_copy_start");
     expect(copyCalls).toHaveLength(3);
     const bySrc = new Map(copyCalls.map(([, args]) => [argSrcPath(args), args]));
     expect(new Set(bySrc.keys())).toEqual(new Set(["/home/a.txt", "/home/sub", "/home/b.txt"]));
-
-    // The selected directory recurses via the same isDirectory flag the single
-    // download uses; files download as files.
-    expect((bySrc.get("/home/sub") as Record<string, unknown>).isDirectory).toBe(true);
-    expect((bySrc.get("/home/a.txt") as Record<string, unknown>).isDirectory).toBe(false);
-    expect((bySrc.get("/home/b.txt") as Record<string, unknown>).isDirectory).toBe(false);
   });
 
   it("downloads nothing when the Save-as dialog is cancelled for every entry", async () => {
@@ -193,6 +189,6 @@ describe("FileBrowser — multi-download (PROD-005)", () => {
     });
     await flushAsync();
 
-    expect(mockedInvoke).not.toHaveBeenCalledWith("local_copy", expect.anything());
+    expect(mockedInvoke).not.toHaveBeenCalledWith("local_copy_start", expect.anything());
   });
 });
