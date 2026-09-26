@@ -85,7 +85,7 @@
 | Themes & layouts        | Dark / Light / System themes; Default / Focus / Zen layout presets  | Stable       |
 | Connection management   | Folder hierarchies, search, import/export, external files, `${VAR}` | Stable       |
 | Log viewer              | In-app filterable/searchable log tab + durable rotated log file     | Stable       |
-| Macros                  | Record and replay terminal input sequences                          | Stable       |
+| Macros                  | Record, hand-author and replay terminal input sequences             | Stable       |
 | Plugin system           | Installable plugins, including signed native (cdylib) backends      | Beta         |
 | Workflow automation     | Authored multi-step workflows with triggers                         | Experimental |
 
