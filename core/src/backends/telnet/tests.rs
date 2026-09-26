@@ -100,7 +100,13 @@ fn schema_has_all_fields() {
         .collect();
     assert_eq!(
         keys,
-        vec!["host", "port", "connectTimeoutSecs", "terminalType"]
+        vec![
+            "host",
+            "port",
+            "connectTimeoutSecs",
+            "terminalType",
+            "inputMode"
+        ]
     );
     assert_eq!(schema.groups[1].key, "login");
     let login_keys: Vec<&str> = schema.groups[1]
@@ -732,7 +738,7 @@ fn filter_runaway_subnegotiation_is_bounded() {
 
 /// Read from `peer` until `expected` appears in the accumulated bytes (or the
 /// 5 s read timeout fires). Returns everything read.
-fn read_until(peer: &mut TcpStream, expected: &[u8]) -> Vec<u8> {
+pub(super) fn read_until(peer: &mut TcpStream, expected: &[u8]) -> Vec<u8> {
     peer.set_read_timeout(Some(Duration::from_secs(5)))
         .expect("set timeout");
     let mut acc = Vec::new();
@@ -749,7 +755,7 @@ fn read_until(peer: &mut TcpStream, expected: &[u8]) -> Vec<u8> {
 }
 
 /// Connect a [`Telnet`] to a local fake server and return both ends.
-async fn connect_fake(extra: serde_json::Value) -> (Telnet, TcpStream) {
+pub(super) async fn connect_fake(extra: serde_json::Value) -> (Telnet, TcpStream) {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
     let port = listener.local_addr().expect("local_addr").port();
     let accept = std::thread::spawn(move || listener.accept());
@@ -767,7 +773,7 @@ async fn connect_fake(extra: serde_json::Value) -> (Telnet, TcpStream) {
 async fn e2e_naws_offer_accept_and_resize() {
     let (telnet, mut peer) = connect_fake(serde_json::json!({})).await;
     // The client proactively offers NAWS.
-    read_until(&mut peer, &[IAC, WILL, 31]);
+    read_until(&mut peer, &[IAC, WILL, 31, IAC, DO, 3]);
     // Server agrees; client reports the default size without re-sending WILL.
     peer.write_all(&[IAC, DO, 31]).expect("write");
     let got = read_until(&mut peer, &[IAC, SE]);
@@ -781,7 +787,7 @@ async fn e2e_naws_offer_accept_and_resize() {
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_naws_refused_resize_sends_nothing() {
     let (telnet, mut peer) = connect_fake(serde_json::json!({})).await;
-    read_until(&mut peer, &[IAC, WILL, 31]);
+    read_until(&mut peer, &[IAC, WILL, 31, IAC, DO, 3]);
     peer.write_all(&[IAC, DONT, 31]).expect("write");
     // Give the reader thread time to process the refusal.
     std::thread::sleep(Duration::from_millis(300));
@@ -797,7 +803,7 @@ async fn e2e_naws_refused_resize_sends_nothing() {
 #[tokio::test(flavor = "multi_thread")]
 async fn e2e_ttype_reports_configured_type() {
     let (_telnet, mut peer) = connect_fake(serde_json::json!({"terminalType": "vt100"})).await;
-    read_until(&mut peer, &[IAC, WILL, 31]);
+    read_until(&mut peer, &[IAC, WILL, 31, IAC, DO, 3]);
     peer.write_all(&[IAC, DO, 24]).expect("write");
     read_until(&mut peer, &[IAC, WILL, 24]);
     peer.write_all(&[IAC, SB, 24, 1, IAC, SE]).expect("write");
@@ -817,7 +823,7 @@ async fn e2e_auto_login_sends_username_and_password() {
     }))
     .await;
     let mut rx = telnet.subscribe_output();
-    read_until(&mut peer, &[IAC, WILL, 31]);
+    read_until(&mut peer, &[IAC, WILL, 31, IAC, DO, 3]);
     peer.write_all(b"Welcome\r\nrouter login: ").expect("write");
     read_until(&mut peer, b"admin\r\n");
     peer.write_all(b"Password: ").expect("write");
@@ -841,7 +847,7 @@ async fn e2e_manual_login_sends_nothing_at_prompt() {
         "password": "hunter2",
     }))
     .await;
-    read_until(&mut peer, &[IAC, WILL, 31]);
+    read_until(&mut peer, &[IAC, WILL, 31, IAC, DO, 3]);
     peer.write_all(b"login: ").expect("write");
     std::thread::sleep(Duration::from_millis(300));
     telnet.write(b"!").expect("write marker");
