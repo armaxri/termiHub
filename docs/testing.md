@@ -2796,6 +2796,36 @@ To verify SSH tunnels actually work on macOS, do this manually against the tunne
 4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
 5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
 
+### SSH keyboard-interactive / OTP prompts (#3371)
+
+SSH **keyboard-interactive** authentication (OTP / 2FA / PAM challenge prompts)
+is answered through the global **SSH Authentication** dialog. The exchange is
+covered by **Rust unit tests** against an in-process russh server
+(`core/src/backends/ssh/keyboard_interactive_tests.rs`, `auth.rs` — multi-round,
+echo flags, password auto-answer heuristic, cancel → `AuthCancelled`, wrong
+answer → `AuthFailed`, password fallback, partial-success second factor), the
+desktop prompter by `src-tauri/src/session/ssh_keyboard_interactive.rs` tests,
+the prompt-aware connect timeout by `prompt_clock.rs` tests, and the dialog by
+**Vitest/RTL** (`SshKeyboardInteractivePrompt.test.tsx`). A live check needs an
+sshd with keyboard-interactive enabled (e.g. `KbdInteractiveAuthentication yes`,
+`PasswordAuthentication no`, `UsePAM yes`; for a real 2FA add
+`AuthenticationMethods publickey,keyboard-interactive` with a PAM OTP module):
+
+1. Create an SSH connection with **Method → Keyboard-Interactive (OTP / 2FA)**
+   and connect. The dialog shows `user@host:port`, any server instruction text,
+   and one field per prompt; a password prompt is masked. Answer → the terminal
+   connects.
+2. With **Method → Password** and a saved password against the same
+   `PasswordAuthentication no` server: the connection succeeds **without** a
+   dialog (the single masked "Password:" prompt is auto-answered).
+3. Against a password + OTP server: only the OTP field is shown (never
+   auto-filled); a wrong code fails with "Authentication failed".
+4. Click **Cancel** in the dialog → the connect stops without an
+   "Authentication failed" error. Wait longer than the connect timeout (45 s)
+   before answering → the connect still succeeds (prompt time is excluded).
+5. Repeat step 1 through a `ProxyJump` hop whose method is keyboard-interactive,
+   and via **Test Connection** in the editor — both show the same dialog.
+
 ### SSH agent forwarding (#1699)
 
 SSH **agent forwarding** (OpenSSH `ForwardAgent`) makes the operator's local
