@@ -1356,7 +1356,7 @@ connection-editor UI, which the integration lane does not drive:
 The RDP backend decodes through the separately-built `termihub-rdp-helper`
 sidecar (workspace-excluded crate; see #1747 / #1725). The wire path is covered by
 unit tests (`termihub-core` `backends::rdp_sidecar` + the sidecar crate) and, since
-#3609, by the **automated live suite** `core/tests/rdp.rs` against the `rdp-server`
+issue #3609, by the **automated live suite** `core/tests/rdp.rs` against the `rdp-server`
 fixture (xrdp + a FreeRDP NLA server; see [Test Suites](#test-suites)), which runs
 on the nightly Docker-fixture lane. It now covers what the steps below used to check
 by hand: logon and the first painted frame through the real sidecar, fixed
