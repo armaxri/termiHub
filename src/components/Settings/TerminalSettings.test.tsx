@@ -209,6 +209,25 @@ describe("TerminalSettings", () => {
     expect(toggle.getAttribute("aria-checked")).toBe("false");
   });
 
+  it("renders the inline images toggle, on by default, and flips onChange (PROD-057)", () => {
+    const onChange = renderWith(defaultSettings);
+    const toggle = container.querySelector(
+      '[data-testid="settings-terminal-inline-images"]'
+    ) as HTMLElement | null;
+    expect(toggle).not.toBeNull();
+    expect(toggle!.getAttribute("aria-checked")).toBe("true");
+    act(() => toggle!.click());
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ terminalInlineImages: false }));
+  });
+
+  it("reflects a disabled inline images setting", () => {
+    renderWith({ ...defaultSettings, terminalInlineImages: false });
+    const toggle = container.querySelector(
+      '[data-testid="settings-terminal-inline-images"]'
+    ) as HTMLElement;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+  });
+
   it("hint text mentions memory", () => {
     renderWith(defaultSettings);
     const labels = Array.from(container.querySelectorAll(".settings-form__label"));

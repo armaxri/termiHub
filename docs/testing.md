@@ -1805,6 +1805,24 @@ Run on **Windows** against a **local CMD** session (the ConPTY path):
    (e.g. a large file dump) must still render and scroll normally with no
    visible slowdown.
 
+### Terminal inline images render (SIXEL / iTerm2, PROD-057, PR #3442)
+
+The image addon's wiring, limits and lifecycle are unit-tested
+(`inlineImages.test.ts`, `Terminal.inline-images.test.tsx`), but actual pixel
+rendering needs a real WebView, so it stays manual.
+
+1. In a local shell tab, install a SIXEL encoder (`brew install libsixel chafa`
+   or `apt install libsixel-bin chafa`) and run `img2sixel <some.png>`.
+   **Expected:** the picture renders inline, followed by the prompt.
+2. Run `chafa -f sixel <some.png>` and an iTerm2 `imgcat <some.png>`.
+   **Expected:** both render as pictures, not escape-sequence noise.
+3. Turn **Settings > Terminal > Inline Images** off and repeat step 1.
+   **Expected:** no image renders and the terminal stays usable.
+4. Turn it back on, render an image, then scroll it out of view and back.
+   **Expected:** it scrolls with the text, on both WebGL and DOM renderers.
+5. Disconnect and reconnect the tab. **Expected:** the text scrollback is
+   replayed; the earlier image is gone (by design); the terminal stays usable.
+
 ### Right-click paste inserts the clipboard exactly once (Windows/WebView2, #2595)
 
 A single right-click paste in the terminal used to insert the clipboard **twice**
