@@ -3702,6 +3702,27 @@ app. The fix portals these into the dialog's own content node (via the shared
    else about the editor's behavior.
 3. Save the workflow and confirm it persists with the steps you added.
 
+### Network tool run history (PROD-032, #3456)
+
+Recording, the bounds, the History view and the setting are covered by unit and
+component tests (`tool_history*.rs`, `runHistory.test.tsx`,
+`NetworkToolHistory.test.tsx`, `NetworkTools.history.test.tsx`,
+`networkToolHistoryStore.test.ts`, `SessionSettings.test.tsx`). This pass
+confirms history survives a real app restart.
+
+1. Open **Network Tools → Ping**, ping `127.0.0.1` with Count `3` → after it
+   completes, expand **History** → one row "Completed … 3/3 received …, This
+   computer".
+2. Click the row's **View** (eye) → a read-only dialog shows the host, interval,
+   count, status, summary and the three replies. **Export CSV** writes the
+   replies; close the dialog.
+3. Quit and relaunch the app (`./scripts/dev.sh`), reopen **Ping → History** →
+   the run is still listed. **Re-run** → the Host/Count fields refill and a new
+   run starts and is recorded on top.
+4. **Settings → Sessions → Network Tool History**: turn recording off, run a DNS
+   lookup → its **History** says recording is off and lists no new run. Turn it
+   back on; **Clear Network Tool History** empties every tool's History.
+
 ### Run-location "Run on" selector — Network Tools & Servers (#2191)
 
 The selector, its desktop-only gating, and the backend wiring are covered by

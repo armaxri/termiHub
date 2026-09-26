@@ -11,9 +11,12 @@ import {
   onSweepComplete,
   onSweepError,
 } from "@/services/networkApi";
-import type { PingSweepSummary } from "@/types/network";
+import type { NetworkToolRun, PingSweepSummary } from "@/types/network";
 import { resolveUiLocale } from "@/utils/locale";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
+import { pingSweepResultsTable } from "./exportResults";
+import { NetworkToolHistory } from "./NetworkToolHistory";
+import { paramNumber, paramString, useRecordRunOnFinish, useRerunAfterUpdate } from "./runHistory";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { countHosts } from "@/utils/scanEstimate";
 import { useNetworkTask, type NetworkTaskContext } from "@/hooks/useNetworkTask";
@@ -153,6 +156,31 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
     hostname: r.hostname ?? "—",
   }));
 
+  // Record every finished sweep to the local history (PROD-032).
+  useRecordRunOnFinish("ping-sweep", status, () => ({
+    params: {
+      host,
+      timeoutMs: timeoutMs === "" ? null : timeoutMs,
+      concurrency: concurrency === "" ? null : concurrency,
+    },
+    summary: summary
+      ? `${summary.up} up, ${summary.down} down of ${summary.total} host${summary.total === 1 ? "" : "s"}`
+      : `${results.length} up`,
+    table: pingSweepResultsTable(results),
+    error,
+  }));
+
+  const requestRerun = useRerunAfterUpdate(handleRun);
+  const handleRerun = useCallback(
+    (past: NetworkToolRun) => {
+      setHost(paramString(past, "host"));
+      setTimeoutMs(paramNumber(past, "timeoutMs"));
+      setConcurrency(paramNumber(past, "concurrency"));
+      requestRerun();
+    },
+    [requestRerun]
+  );
+
   return (
     <form className="network-panel" data-testid="ping-sweep-panel">
       <div className="network-panel__header">
@@ -264,6 +292,12 @@ export function PingSweepPanel({ prefillHost }: PingSweepPanelProps) {
               ? `Sweeping… ${results.length} up so far`
               : null
         }
+      />
+
+      <NetworkToolHistory
+        tool="ping-sweep"
+        onRerun={handleRerun}
+        rerunDisabled={status === "running"}
       />
 
       <ConfirmDialog

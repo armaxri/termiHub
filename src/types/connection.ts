@@ -584,6 +584,11 @@ export interface AppSettings {
   sessionHistoryLimit?: number;
   /** When true (default), the "Recent Sessions" sidebar panel is shown. */
   showRecentSessions?: boolean;
+  /**
+   * Record finished network-tool runs (ping, traceroute, port scan, …) to the
+   * local run history (PROD-032). Unset → on.
+   */
+  networkToolHistoryEnabled?: boolean;
   layout?: LayoutConfig;
   credentialStorageMode?: "master_password" | "os_keychain" | "none";
   credentialAutoLockMinutes?: number;

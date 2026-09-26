@@ -1,7 +1,9 @@
 import { useState, useCallback } from "react";
 import { Download, Play, StopCircle } from "lucide-react";
 import { Button, Field, Input, NumberInput } from "@/components/ui";
-import { exportNetworkResults, tracerouteHopsToCsv } from "./exportResults";
+import { exportNetworkResults, tracerouteHopsTable, tracerouteHopsToCsv } from "./exportResults";
+import { NetworkToolHistory } from "./NetworkToolHistory";
+import { paramNumber, paramString, useRecordRunOnFinish, useRerunAfterUpdate } from "./runHistory";
 import {
   networkTraceroute,
   networkTracerouteCancel,
@@ -9,7 +11,7 @@ import {
   onTracerouteComplete,
   onTracerouteError,
 } from "@/services/networkApi";
-import type { TracerouteHop } from "@/types/network";
+import type { NetworkToolRun, TracerouteHop } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
@@ -89,6 +91,24 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
     lastValidRtts.length > 0
       ? lastValidRtts.reduce((a, b) => a + b, 0) / lastValidRtts.length
       : null;
+
+  // Record every finished run to the local history (PROD-032).
+  useRecordRunOnFinish("traceroute", status, () => ({
+    params: { host, maxHops: maxHops === "" ? null : maxHops },
+    summary: `${hops.length} hop${hops.length === 1 ? "" : "s"}${avgRtt != null ? `, last hop avg ${avgRtt.toFixed(0)}ms` : ""}`,
+    table: tracerouteHopsTable(hops),
+    error,
+  }));
+
+  const requestRerun = useRerunAfterUpdate(run);
+  const handleRerun = useCallback(
+    (past: NetworkToolRun) => {
+      setHost(paramString(past, "host"));
+      setMaxHops(paramNumber(past, "maxHops"));
+      requestRerun();
+    },
+    [requestRerun]
+  );
 
   return (
     <form className="network-panel" data-testid="traceroute-panel">
@@ -182,6 +202,12 @@ export function TraceroutePanel({ prefillHost }: TraceroutePanelProps) {
                 ? `Tracing… hop ${hops.length}`
                 : null
         }
+      />
+
+      <NetworkToolHistory
+        tool="traceroute"
+        onRerun={handleRerun}
+        rerunDisabled={status === "running"}
       />
     </form>
   );

@@ -244,15 +244,6 @@
   color: var(--color-error);
 }
 
-/* History rows */
-.network-panel__history-row {
-  display: flex;
-  gap: var(--spacing-md);
-  font-size: var(--font-size-sm);
-  font-family: var(--font-mono);
-  color: var(--text-secondary);
-}
-
 /* ===================================================================
    WoL device row
    =================================================================== */
@@ -413,4 +404,121 @@
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
   color: var(--color-warning);
+}
+
+/* ===================================================================
+   Run history (PROD-032)
+   =================================================================== */
+
+.network-history {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-secondary);
+}
+
+.network-history__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.network-history__toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+}
+
+.network-history__toggle:hover {
+  color: var(--text-primary);
+}
+
+.network-history__toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.network-history__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.network-history__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 2px 0;
+  font-size: var(--font-size-sm);
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.network-history__status {
+  flex: 0 0 auto;
+  min-width: 72px;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.network-history__status--completed {
+  color: var(--color-success);
+}
+
+.network-history__status--error {
+  color: var(--color-error);
+}
+
+.network-history__time {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  color: var(--text-secondary);
+}
+
+.network-history__summary {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+}
+
+.network-history__location {
+  flex: 0 0 auto;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.network-run-detail__meta {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--spacing-xs) var(--spacing-md);
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+}
+
+.network-run-detail__meta dt {
+  color: var(--text-secondary);
+}
+
+.network-run-detail__meta dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+.network-run-detail__param {
+  display: contents;
 }

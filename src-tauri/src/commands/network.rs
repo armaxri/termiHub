@@ -16,6 +16,8 @@ use termihub_core::service::ServiceInfo;
 
 use crate::network::agent_stream::{self, StreamTool};
 use crate::network::http_monitor::{HttpMonitorConfig, HttpMonitorState};
+use crate::network::tool_history::{NetworkHistoryTool, NetworkToolRun};
+use crate::network::tool_history_manager::NetworkToolHistoryManager;
 use crate::network::{agent_tools, events, NetworkManager};
 use crate::run_location::{ResolvedLocation, RunLocation};
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -945,4 +947,43 @@ pub fn network_http_monitor_list(
 #[tauri::command]
 pub fn network_services_list(manager: State<'_, Arc<NetworkManager>>) -> Vec<ServiceInfo> {
     manager.available_services()
+}
+
+// ── Run history (PROD-032) ───────────────────────────────────────────────────
+
+/// List recorded network-tool runs, newest first — every tool, or one `tool`.
+#[tauri::command]
+pub fn list_network_tool_runs(
+    tool: Option<NetworkHistoryTool>,
+    manager: State<'_, NetworkToolHistoryManager>,
+) -> Result<Vec<NetworkToolRun>, TerminalError> {
+    manager.list(tool)
+}
+
+/// Record a finished network-tool run. The backend bounds it (per-tool count,
+/// age, per-run size) and returns the record as stored.
+#[tauri::command]
+pub fn record_network_tool_run(
+    run: NetworkToolRun,
+    manager: State<'_, NetworkToolHistoryManager>,
+) -> Result<NetworkToolRun, TerminalError> {
+    manager.record(run)
+}
+
+/// Delete one recorded run by id.
+#[tauri::command]
+pub fn delete_network_tool_run(
+    id: String,
+    manager: State<'_, NetworkToolHistoryManager>,
+) -> Result<(), TerminalError> {
+    manager.delete(&id)
+}
+
+/// Clear the run history — for one `tool`, or for every tool when omitted.
+#[tauri::command]
+pub fn clear_network_tool_history(
+    tool: Option<NetworkHistoryTool>,
+    manager: State<'_, NetworkToolHistoryManager>,
+) -> Result<(), TerminalError> {
+    manager.clear(tool)
 }

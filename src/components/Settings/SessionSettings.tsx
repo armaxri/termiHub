@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { AppSettings } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
+import { useNetworkToolHistoryStore } from "@/store/networkToolHistoryStore";
 import { resolveRestoreMode, type RestoreLastSessionMode } from "@/utils/restoreMode";
 import { Button, NumberInput, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
@@ -20,6 +21,7 @@ interface SessionSettingsProps {
 export function SessionSettings({ settings, onChange, visibleFields }: SessionSettingsProps) {
   const historyCount = useAppStore((s) => s.sessionHistory.length);
   const clearSessionHistory = useAppStore((s) => s.clearSessionHistory);
+  const clearNetworkToolHistory = useNetworkToolHistoryStore((s) => s.clear);
 
   // The restore-mode decision now lives in `core::restore_mode` (#2200), so the
   // dropdown value is resolved asynchronously via the `restore_resolve_mode`
@@ -146,6 +148,42 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
               </Button>
             </SettingsField>
           )}
+        </div>
+      )}
+
+      {show("networkToolHistoryEnabled") && (
+        <div className="settings-panel__category">
+          <h3 className="settings-panel__category-title">Network Tool History</h3>
+
+          <SettingsField
+            label="Record Network Tool History"
+            hint="Keep finished ping, traceroute, port scan, ping sweep, DNS, open-ports and Wake-on-LAN runs so they can be revisited, re-run and exported from each tool's History section. Results can contain hostnames and IP addresses; they are stored only on this computer. The newest 50 runs per tool are kept, for up to 30 days."
+          >
+            <Toggle
+              checked={settings.networkToolHistoryEnabled ?? true}
+              onCheckedChange={(checked) =>
+                onChange((prev) => ({ ...prev, networkToolHistoryEnabled: checked }))
+              }
+              data-testid="settings-network-tool-history-enabled"
+            />
+          </SettingsField>
+
+          <SettingsField
+            label="Clear Network Tool History"
+            hint="Remove every recorded network tool run for all tools."
+          >
+            <Button
+              variant="danger"
+              size="sm"
+              data-testid="settings-clear-network-tool-history"
+              onClick={async () => {
+                await clearNetworkToolHistory();
+                toast.success("Cleared network tool history");
+              }}
+            >
+              Clear Network Tool History
+            </Button>
+          </SettingsField>
         </div>
       )}
     </>

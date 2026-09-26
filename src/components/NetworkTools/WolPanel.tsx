@@ -8,16 +8,12 @@ import {
   networkWolDeviceSave,
   networkWolDeviceDelete,
 } from "@/services/networkApi";
-import type { WolDevice } from "@/types/network";
+import type { NetworkRunStatus, NetworkToolRun, WolDevice } from "@/types/network";
+import { NetworkToolHistory } from "./NetworkToolHistory";
+import { paramNumber, paramString, recordToolRun, useRerunAfterUpdate } from "./runHistory";
 import { validatePort, validateHost, validateMac } from "@/utils/fieldValidation";
-import { resolveUiLocale } from "@/utils/locale";
 import { frontendLog } from "@/utils/frontendLog";
 import { newId } from "@/services/transport/ids";
-
-interface WolHistoryEntry {
-  mac: string;
-  sentAt: string;
-}
 
 /** Wake-on-LAN diagnostic tab content. */
 export function WolPanel() {
@@ -32,7 +28,6 @@ export function WolPanel() {
   const broadcastError = validateHost(broadcast, "Broadcast address");
   const canSend = !macError && !portError && !broadcastError;
   const [savedDevices, setSavedDevices] = useState<WolDevice[]>([]);
-  const [history, setHistory] = useState<WolHistoryEntry[]>([]);
   const [sentMessage, setSentMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveModalOpen, setSaveModalOpen] = useState(false);
@@ -54,37 +49,46 @@ export function WolPanel() {
   }, [loadDevices]);
 
   const handleSend = useCallback(async () => {
+    const startedAt = new Date().toISOString();
     if (!canSend) return;
     setError(null);
     setSentMessage(null);
     try {
       await networkWolSend(mac, broadcast, Number(port));
       setSentMessage(`Magic packet sent to ${mac}`);
-      setHistory((prev) => [
-        { mac, sentAt: new Date().toLocaleTimeString(resolveUiLocale()) },
-        ...prev.slice(0, 9),
-      ]);
+      recordWol(startedAt, mac, broadcast, Number(port), "completed");
     } catch (err) {
       setError(String(err));
+      recordWol(startedAt, mac, broadcast, Number(port), "error", String(err));
       frontendLog("wol_panel", `WoL send failed: ${err}`);
       throw err; // keep the async Button in its error path (no false success flash)
     }
   }, [mac, broadcast, port, canSend]);
 
   const handleWakeDevice = useCallback(async (device: WolDevice) => {
+    const startedAt = new Date().toISOString();
     try {
       await networkWolSend(device.mac, device.broadcast, device.port);
-      setHistory((prev) => [
-        { mac: device.mac, sentAt: new Date().toLocaleTimeString(resolveUiLocale()) },
-        ...prev.slice(0, 9),
-      ]);
+      recordWol(startedAt, device.mac, device.broadcast, device.port, "completed");
       toast.success(`Magic packet sent to ${device.name}`);
     } catch (err) {
       setError(String(err));
+      recordWol(startedAt, device.mac, device.broadcast, device.port, "error", String(err));
       frontendLog("wol_panel", `WoL wake failed: ${err}`);
       toast.error(`Wake failed: ${err}`);
     }
   }, []);
+
+  const requestRerun = useRerunAfterUpdate(handleSend);
+  const handleRerun = useCallback(
+    (past: NetworkToolRun) => {
+      setMac(paramString(past, "mac"));
+      setBroadcast(paramString(past, "broadcast"));
+      setPort(paramNumber(past, "port"));
+      requestRerun();
+    },
+    [requestRerun]
+  );
 
   const openSaveModal = useCallback(() => {
     if (!canSend) return;
@@ -268,18 +272,27 @@ export function WolPanel() {
         </Field>
       </ConfirmDialog>
 
-      {/* History */}
-      {history.length > 0 && (
-        <>
-          <div className="network-panel__section-title">History</div>
-          {history.map((entry, i) => (
-            <div key={i} className="network-panel__history-row">
-              <span>{entry.sentAt}</span>
-              <span>Sent magic packet to {entry.mac}</span>
-            </div>
-          ))}
-        </>
-      )}
+      <NetworkToolHistory tool="wol" onRerun={handleRerun} />
     </form>
   );
+}
+
+/** Record one magic-packet send to the local run history (PROD-032). */
+function recordWol(
+  startedAt: string,
+  mac: string,
+  broadcast: string,
+  port: number,
+  status: NetworkRunStatus,
+  error?: string
+): void {
+  void recordToolRun({
+    tool: "wol",
+    status,
+    startedAt,
+    params: { mac, broadcast, port },
+    summary:
+      status === "completed" ? `Magic packet sent to ${mac}` : `Magic packet to ${mac} failed`,
+    error,
+  });
 }
