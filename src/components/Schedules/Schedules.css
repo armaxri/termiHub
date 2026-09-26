@@ -34,7 +34,7 @@
 .schedule-chip {
   display: inline-flex;
   align-items: center;
-  padding: var(--spacing-xxs) 10px;
+  padding: var(--spacing-xxs) var(--spacing-sm);
   border: 1px solid var(--border-primary);
   border-radius: var(--radius-full);
   background: var(--bg-input);
