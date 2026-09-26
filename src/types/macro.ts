@@ -27,3 +27,45 @@ export interface Macro {
   /** RFC 3339 timestamp of the macro's last update. */
   updatedAt: string;
 }
+
+/**
+ * The terminal state a macro playback ended in. Mirrors the playback service's
+ * `MacroPlaybackStatus` and the Rust `MacroRunStatus` enum.
+ */
+export type MacroRunStatus = "completed" | "cancelled" | "error";
+
+/** What launched a macro playback. Mirrors the Rust `MacroRunOrigin` enum. */
+export type MacroRunOrigin = "manual" | "palette" | "workflow-step" | "scheduled";
+
+/**
+ * A persisted, **metadata-only** record of a finished macro playback (#3543).
+ * Mirrors the Rust `MacroRun` in `src-tauri/src/macros/history.rs` over the wire
+ * (camelCase fields, string-valued enums). The macro's recorded input is
+ * deliberately **never** stored — only the outcome, timing, targets and origin.
+ */
+export interface MacroRun {
+  /** Unique identifier for this run record. */
+  id: string;
+  /** The id of the macro that was played. */
+  macroId: string;
+  /** The macro's name at run time (survives a later rename/deletion). */
+  macroName: string;
+  /** RFC 3339 timestamp of when the playback started. */
+  startedAt: string;
+  /** RFC 3339 timestamp of when the playback ended. */
+  endedAt: string;
+  /** The terminal state the playback ended in. */
+  status: MacroRunStatus;
+  /** Steps injected before the playback ended. */
+  stepsPlayed: number;
+  /** Total number of steps in the macro. */
+  totalSteps: number;
+  /** Number of terminals the playback was started on. */
+  targetCount: number;
+  /** Display labels (tab titles) of the targets; the backend keeps at most 10. */
+  targetLabels?: string[];
+  /** What launched the playback. */
+  origin: MacroRunOrigin;
+  /** For a cancelled / errored playback: a human-readable reason. */
+  error?: string;
+}

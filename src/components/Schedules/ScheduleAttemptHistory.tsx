@@ -37,10 +37,17 @@ function attemptDuration(attempt: ScheduleRunResult): string {
   return formatElapsed(Math.round(ms / 1000));
 }
 
-/** The "N workflow runs" note linking an attempt to the run history. */
-function runsNote(ids: readonly string[] | undefined): string {
-  if (!ids || ids.length === 0) return "";
-  return `${ids.length} workflow run${ids.length === 1 ? "" : "s"} in history`;
+/**
+ * The "N workflow runs" / "N macro runs" note linking an attempt to the
+ * workflow or macro run history (#3543), plus the linked ids for the tooltip.
+ * `null` when the attempt produced no run-history records.
+ */
+function linkedRuns(attempt: ScheduleRunResult): { note: string; ids: string[] } | null {
+  const [kind, ids] = attempt.workflowRunIds?.length
+    ? ["workflow", attempt.workflowRunIds]
+    : ["macro", attempt.macroRunIds ?? []];
+  if (ids.length === 0) return null;
+  return { note: `${ids.length} ${kind} run${ids.length === 1 ? "" : "s"} in history`, ids };
 }
 
 /** Props of {@link ScheduleAttemptHistory}. */
@@ -54,8 +61,8 @@ export interface ScheduleAttemptHistoryProps {
 /**
  * The recent run attempts of one schedule (#3528), newest first: outcome,
  * when it settled, how long it ran, whether it was a catch-up, the skip
- * reason / failure detail, and how many workflow run-history records it
- * produced (their ids are in the tooltip). Tokens only.
+ * reason / failure detail, and how many workflow or macro run-history records
+ * it produced (their ids are in the tooltip). Tokens only.
  */
 export function ScheduleAttemptHistory({ scheduleId, attempts }: ScheduleAttemptHistoryProps) {
   return (
@@ -66,7 +73,7 @@ export function ScheduleAttemptHistory({ scheduleId, attempts }: ScheduleAttempt
     >
       {attempts.map((attempt, index) => {
         const duration = attemptDuration(attempt);
-        const runs = runsNote(attempt.workflowRunIds);
+        const runs = linkedRuns(attempt);
         return (
           <li
             key={`${attempt.at}-${index}`}
@@ -93,10 +100,10 @@ export function ScheduleAttemptHistory({ scheduleId, attempts }: ScheduleAttempt
             {runs ? (
               <span
                 className="schedule-attempts__runs"
-                title={attempt.workflowRunIds?.join("\n")}
+                title={runs.ids.join("\n")}
                 data-testid={`schedule-attempt-runs-${scheduleId}-${index}`}
               >
-                {runs}
+                {runs.note}
               </span>
             ) : null}
           </li>

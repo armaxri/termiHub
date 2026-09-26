@@ -5,6 +5,8 @@ import {
   listMacros as apiListMacros,
   saveMacro as apiSaveMacro,
   deleteMacro as apiDeleteMacro,
+  listMacroRuns as apiListMacroRuns,
+  clearMacroRunHistory as apiClearMacroRunHistory,
 } from "@/services/macroApi";
 import { parseMacroEnvelope, resolveImportCollisions } from "@/services/macroIo";
 import {
@@ -15,7 +17,7 @@ import {
   type MacroPlaybackHandle,
   type MacroPlaybackStatus,
 } from "@/services/macroPlayback";
-import { Macro, MacroStep } from "@/types/macro";
+import { Macro, MacroRun, MacroRunOrigin, MacroStep } from "@/types/macro";
 import { frontendLog } from "@/utils/frontendLog";
 import { newId } from "@/services/transport/ids";
 
@@ -28,6 +30,7 @@ import {
   type AppState,
 } from "../appStore";
 import { createMacroFanoutInjector, describeMacroFanoutOutcome } from "./macroFanout";
+import { buildMacroRun, macroTargetLabel, recordMacroRun } from "./macroRunHistory";
 import { errorMessage } from "@/utils/errorMessage";
 
 /** UI-facing metadata describing an in-flight macro playback (#1675). */
@@ -68,6 +71,13 @@ export interface PlayMacroOptions {
   timingMode?: MacroTimingMode;
   /** Per-step delay (ms) for the `"fixed"` timing mode. */
   fixedDelayMs?: number;
+  /** What launched the playback, for the run history (#3543); defaults to `"manual"`. */
+  origin?: MacroRunOrigin;
+  /**
+   * Id for the playback's run-history record, so a caller (a scheduled run) can
+   * reference it. Generated when omitted.
+   */
+  runId?: string;
 }
 
 /**
@@ -144,6 +154,14 @@ export interface MacrosSlice {
   /** Close the save dialog and drop the captured buffer without persisting. */
   discardRecordedMacro: () => void;
 
+  // Macro run history (#3543)
+  /** Recorded playbacks, newest first. Metadata only — never the macro's input. */
+  macroRuns: MacroRun[];
+  /** Load the recorded playbacks from the backend. Logs (never throws) on failure. */
+  loadMacroRuns: () => Promise<void>;
+  /** Clear the whole macro run history. Rejects when the backend clear fails. */
+  clearMacroRunHistory: () => Promise<void>;
+
   // Macro playback (#1675)
   /** Metadata for the in-flight playback, or `null` when nothing is playing. */
   macroPlayback: MacroPlaybackState | null;
@@ -195,6 +213,8 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       filterConnectedTerminalTabIds(get(), ids)
     );
     const firstTab = targets[0];
+    const targetLabels = targets.map((id) => macroTargetLabel(get(), id));
+    const startedAt = new Date();
     const toastId = `macro-playback-${macro.id}-multi`;
     const total = macro.steps.length;
     const title = `Playing macro "${macro.name}" on ${targets.length} terminals…`;
@@ -253,6 +273,24 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       totalSteps: total,
     });
     toast[summary.kind](summary.message, { id: toastId, description: summary.description });
+    const dropped = fanout.dropped().length;
+    recordMacroRun(
+      set,
+      buildMacroRun({
+        id: opts?.runId,
+        macro,
+        startedAt,
+        endedAt: new Date(),
+        status: result.status,
+        stepsPlayed: result.stepsPlayed,
+        targetLabels,
+        origin: opts?.origin ?? "manual",
+        error:
+          dropped > 0
+            ? `${dropped} of ${targets.length} terminals stopped receiving input`
+            : undefined,
+      })
+    );
     return result.status;
   };
 
@@ -398,6 +436,23 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       });
     },
 
+    // Macro run history (#3543)
+    macroRuns: [],
+
+    loadMacroRuns: async () => {
+      try {
+        const runs = await apiListMacroRuns();
+        set({ macroRuns: Array.isArray(runs) ? runs : [] });
+      } catch (err) {
+        frontendLog("app_store", `Failed to load macro run history: ${errorMessage(err)}`);
+      }
+    },
+
+    clearMacroRunHistory: async () => {
+      const runs = await apiClearMacroRunHistory();
+      set({ macroRuns: Array.isArray(runs) ? runs : [] });
+    },
+
     // Macro playback (#1675)
     macroPlayback: null,
 
@@ -454,6 +509,8 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
 
       const toastId = `macro-playback-${macroId}-${targetTabId}`;
       const total = macro.steps.length;
+      const targetLabel = tab.title || "Terminal";
+      const startedAt = new Date();
       toast.loading(`Playing macro "${macro.name}"…`, {
         id: toastId,
         description: `0 / ${total} steps`,
@@ -512,6 +569,20 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
           id: toastId,
         });
       }
+      recordMacroRun(
+        set,
+        buildMacroRun({
+          id: opts?.runId,
+          macro,
+          startedAt,
+          endedAt: new Date(),
+          status: result.status,
+          stepsPlayed: result.stepsPlayed,
+          targetLabels: [targetLabel],
+          origin: opts?.origin ?? "manual",
+          error: result.status === "error" ? "The terminal stopped accepting input" : undefined,
+        })
+      );
       return result.status;
     },
 
