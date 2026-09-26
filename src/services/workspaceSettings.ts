@@ -22,7 +22,11 @@ import { applyTheme } from "@/themes";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import type { AppSettings } from "@/types/connection";
-import type { ActiveWorkspaceInfo, WorkspaceSettings } from "@/types/workspace";
+import type {
+  ActiveWorkspaceInfo,
+  WorkspaceEnvVar,
+  WorkspaceSettings,
+} from "@/types/workspace";
 import {
   getActiveWorkspace as apiGetActiveWorkspace,
   loadWorkspace as apiLoadWorkspace,
@@ -43,6 +47,10 @@ export const WORKSPACE_OVERRIDABLE_SETTINGS: readonly WorkspaceOverridableKey[] 
 ];
 
 export type { ActiveWorkspaceInfo };
+
+/** Accepted terminal font size override range (mirrors Settings and the backend). */
+export const MIN_FONT_SIZE = 8;
+export const MAX_FONT_SIZE = 32;
 
 /** Tauri event carrying the active workspace (or `null`) to every window. */
 export const ACTIVE_WORKSPACE_CHANGED_EVENT = "active-workspace-changed";
@@ -209,4 +217,50 @@ export function looksLikeSecretName(name: string): boolean {
 export function __resetActiveWorkspaceForTest(): void {
   active = null;
   listeners.clear();
+}
+
+/**
+ * Validation problem for env var row `index` of `envVars`, or `null` when the
+ * row is valid. A fully blank row is valid (it is dropped on save).
+ */
+export function envVarRowError(envVars: WorkspaceEnvVar[], index: number): string | null {
+  const row = envVars[index];
+  if (!row || (row.key === "" && row.value === "")) return null;
+  if (!isValidEnvVarName(row.key)) {
+    return "Use letters, digits and underscores; must not start with a digit";
+  }
+  if (envVars.findIndex((v) => v.key === row.key) !== index) {
+    return `Duplicate variable "${row.key}"`;
+  }
+  return null;
+}
+
+/**
+ * Normalize editor input for storage: trim text, drop blank values and blank
+ * env rows, and return `undefined` when nothing is overridden. Throws with a
+ * user-facing message when an env var row is invalid (mirrors the backend).
+ */
+export function normalizeWorkspaceSettings(
+  input: WorkspaceSettings
+): WorkspaceSettings | undefined {
+  const out: WorkspaceSettings = {};
+  if (input.theme) out.theme = input.theme;
+  const fontFamily = input.fontFamily?.trim();
+  if (fontFamily) out.fontFamily = fontFamily;
+  if (input.fontSize != null) {
+    if (input.fontSize < MIN_FONT_SIZE || input.fontSize > MAX_FONT_SIZE) {
+      throw new Error(`Font size must be between ${MIN_FONT_SIZE} and ${MAX_FONT_SIZE}`);
+    }
+    out.fontSize = input.fontSize;
+  }
+  const dir = input.defaultWorkingDirectory?.trim();
+  if (dir) out.defaultWorkingDirectory = dir;
+  const envVars = (input.envVars ?? []).map((v) => ({ key: v.key.trim(), value: v.value }));
+  for (let i = 0; i < envVars.length; i++) {
+    const problem = envVarRowError(envVars, i);
+    if (problem) throw new Error(`Environment variable "${envVars[i].key}": ${problem}`);
+  }
+  const kept = envVars.filter((v) => v.key !== "");
+  if (kept.length > 0) out.envVars = kept;
+  return Object.keys(out).length > 0 ? out : undefined;
 }
