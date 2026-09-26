@@ -39,6 +39,7 @@ pub(crate) fn unconnectable_tcp_addr() -> (Socket, SocketAddr) {
 /// surfaces on the sender as `WSAECONNRESET`) — while the held bind keeps the
 /// port from being reassigned to a concurrent test's server. This replaces the
 /// racy "bind a UDP socket, read its port, drop it" idiom (#3533).
+#[cfg_attr(not(feature = "embedded-servers"), allow(dead_code))]
 pub(crate) fn unreachable_udp_addr() -> (std::net::UdpSocket, SocketAddr) {
     let socket = std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("bind loopback UDP");
     let addr = socket.local_addr().expect("local addr");
