@@ -5,6 +5,8 @@ import { Button, Spinner, ContentOverlay } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
 import { activeTreeTabs } from "@/store/layoutSelectors";
 import { useRemoteDesktopSession } from "@/hooks/useRemoteDesktopSession";
+import { useWindowEviction } from "@/hooks/useWindowEviction";
+import { TerminalWindowEvictedOverlay } from "@/components/Terminal/TerminalEvictedOverlay";
 import { remoteDesktopGetClipboard } from "@/services/api";
 import { fireAndForget } from "@/utils/frontendLog";
 import { readConfigString } from "@/utils/connectionConfigFields";
@@ -45,6 +47,21 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
 
   const session = useRemoteDesktopSession(tabId);
   const scaleMode = scaleModeOverride ?? session.scaleMode;
+  // #3388 (SM-003 single-attach for windows): another window of this app has
+  // taken this graphical session over. The canvas stays mounted but frozen on
+  // its last frame (frames now go only to the controlling window), dimmed under
+  // the shared "Taken over by another window" overlay. Input, resize and
+  // clipboard are dropped (here and in the backend) until an explicit Reclaim.
+  //
+  // Precedence: the evicted overlay supersedes every other surface on this tab —
+  // the connection-state overlays (incl. "Reconnecting…" with its Cancel), the
+  // cert prompt, the cross-window "reconnecting view" placeholder, the toolbar
+  // and the clipboard panel — because their actions (Cancel / Reconnect /
+  // Disconnect / cert verdict) would drive a session this window no longer
+  // controls. After Reclaim the tab shows whatever state the session is in
+  // (lifecycle state events are still broadcast to every window).
+  const windowEviction = useWindowEviction(tabId);
+  const evicted = windowEviction !== null && session.sessionId !== null;
 
   const setRemoteDesktopResolution = useAppStore((s) => s.setRemoteDesktopResolution);
   const clearRemoteDesktopResolution = useAppStore((s) => s.clearRemoteDesktopResolution);
@@ -133,13 +150,15 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
       ref={surfaceRef}
       className={`rd-surface${isVisible ? "" : " rd-surface--hidden"}`}
       data-testid="remote-desktop-tab"
+      data-window-evicted={evicted ? "true" : undefined}
     >
       {session.sessionId && (
         <RemoteDesktopCanvas
           sessionId={session.sessionId}
           scaleMode={scaleMode}
-          viewOnly={session.viewOnly}
+          viewOnly={session.viewOnly || evicted}
           onInput={session.sendInput}
+          onReleaseAll={session.releaseInput}
           onResize={session.resize}
           onDimensions={(width, height) => {
             setResolution({ width, height });
@@ -151,7 +170,14 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         />
       )}
 
-      {session.awaitingFirstFrame && (
+      {evicted && session.sessionId && windowEviction && (
+        <TerminalWindowEvictedOverlay
+          sessionId={session.sessionId}
+          controllingWindowName={windowEviction.name}
+        />
+      )}
+
+      {!evicted && session.awaitingFirstFrame && (
         <div className="rd-overlay" data-testid="remote-desktop-reconnecting-view">
           <ContentOverlay
             icon={<Spinner size="lg" label={null} className="rd-overlay__icon" />}
@@ -161,7 +187,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         </div>
       )}
 
-      {(session.state === "active" || session.state === "resizing") && (
+      {!evicted && (session.state === "active" || session.state === "resizing") && (
         <RemoteDesktopToolbar
           host={host}
           resolution={resolution}
@@ -175,18 +201,22 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         />
       )}
 
-      <RemoteDesktopOverlay
-        state={session.state}
-        host={host}
-        reconnectAttempt={session.reconnectAttempt}
-        message={session.message}
-        onCancel={session.cancelReconnect}
-        onReconnect={session.reconnect}
-      />
+      {!evicted && (
+        <RemoteDesktopOverlay
+          state={session.state}
+          host={host}
+          reconnectAttempt={session.reconnectAttempt}
+          message={session.message}
+          onCancel={session.cancelReconnect}
+          onReconnect={session.reconnect}
+        />
+      )}
 
-      <RemoteDesktopCertPrompt prompt={session.certPrompt} onDecision={session.respondCert} />
+      {!evicted && (
+        <RemoteDesktopCertPrompt prompt={session.certPrompt} onDecision={session.respondCert} />
+      )}
 
-      {clipboardOpen && (
+      {!evicted && clipboardOpen && (
         <div className="rd-clipboard" data-testid="remote-desktop-clipboard-panel">
           <div className="rd-clipboard__header">
             <span>Clipboard</span>

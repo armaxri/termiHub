@@ -36,6 +36,7 @@ import {
   remoteDesktopResize,
   remoteDesktopRequestFullFrame,
   remoteDesktopSendInput,
+  remoteDesktopReleaseInput,
   remoteDesktopSendClipboard,
   remoteDesktopGetClipboard,
   remoteDesktopRemoteClipboardFiles,
@@ -370,6 +371,16 @@ describe("api pass-through wrappers (#2975)", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_send_input", {
         sessionId: "rd-1",
         event,
+      });
+    });
+
+    it("remoteDesktopReleaseInput forwards the session id", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await remoteDesktopReleaseInput("rd-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("remote_desktop_release_input", {
+        sessionId: "rd-1",
       });
     });
 

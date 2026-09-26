@@ -1367,6 +1367,62 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Drop this desktop's view of an agent session **another desktop took over**
+    /// (#3401, SM-003 single-attach) without ending the session itself.
+    ///
+    /// The tab is `Evicted`: this desktop no longer controls the remote session,
+    /// so a close of the tab must not send `connection.close` (that would kill the
+    /// process the other desktop is using) — and not `connection.detach` either,
+    /// which is not per-client on the agent and would detach the controlling
+    /// desktop. The evicted desktop owns nothing, so it releases only its local
+    /// state: the tab binding and retained request, the output reader, and its
+    /// output/monitoring routes on the agent client. The entry is dropped
+    /// **without** [`ConnectionType::disconnect`]. A session with no agent route
+    /// (not a remote proxy) has nothing remote to spare and falls back to
+    /// [`Self::close_session`].
+    #[tracing::instrument(skip_all, fields(session_id = %session_id))]
+    pub async fn release_evicted_session(&self, session_id: &str) -> Result<(), TerminalError> {
+        let remote_route = {
+            let sessions = self.sessions.lock().await;
+            sessions.get(session_id).and_then(|entry| {
+                Some((
+                    entry.info.agent_id.clone()?,
+                    entry.remote_session_id.clone()?,
+                ))
+            })
+        };
+        let Some((agent_id, remote_session_id)) = remote_route else {
+            return self.close_session(session_id).await;
+        };
+        if let Some(binding) = self
+            .session_tab_ids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(session_id)
+        {
+            self.retained_requests.clear(&binding.tab_id);
+        }
+        let removed = self.sessions.lock().await.remove(session_id);
+        if let Some(entry) = removed {
+            entry.reader_cancel.cancel();
+            // Local route bookkeeping only — no RPC reaches the agent.
+            let _ = self
+                .agent_manager
+                .unregister_monitoring_output(&agent_id, &remote_session_id);
+            let _ = self
+                .agent_manager
+                .unregister_session_output(&agent_id, &remote_session_id);
+            // Dropped without `disconnect()`: the remote session stays alive for
+            // the desktop that controls it.
+            drop(entry);
+            info!(
+                session_id,
+                "Released evicted session view; remote session left running"
+            );
+        }
+        Ok(())
+    }
+
     /// Drop + zeroize the retained connection request for a tab (#2454, retention
     /// Model A) — the per-tab primitive, without the per-agent transport-config
     /// scrub. The lifecycle scrub points now route through
@@ -1825,6 +1881,30 @@ impl SessionManager {
             }
             _ => type_id.to_string(),
         }
+    }
+
+    /// Insert a raw **agent-proxied** session entry for testing: like
+    /// [`Self::insert_test_session`], with an `agent_id` and remote session id.
+    #[cfg(test)]
+    pub async fn insert_test_remote_session(
+        &self,
+        session_id: &str,
+        connection: Box<dyn ConnectionType>,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) {
+        self.insert_test_session(session_id, connection).await;
+        let mut sessions = self.sessions.lock().await;
+        if let Some(entry) = sessions.get_mut(session_id) {
+            entry.info.agent_id = Some(agent_id.to_string());
+            entry.remote_session_id = Some(remote_session_id.to_string());
+        }
+    }
+
+    /// Whether a session entry exists (test introspection).
+    #[cfg(test)]
+    pub async fn has_session(&self, session_id: &str) -> bool {
+        self.sessions.lock().await.contains_key(session_id)
     }
 
     /// Insert a raw session entry for testing.

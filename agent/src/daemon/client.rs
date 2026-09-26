@@ -12,6 +12,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use base64::Engine;
+use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 use tracing::{debug, error, info, warn};
 
@@ -166,8 +167,9 @@ pub struct DaemonClient {
     endpoint: String,
     /// Writer half of the transport connection.
     writer: Arc<Mutex<Option<BoxedWriter>>>,
-    /// Background reader task handle.
-    reader_task: Option<tokio::task::JoinHandle<()>>,
+    /// Background reader task (stoppable, handing its read half back so
+    /// [`detach`](Self::detach) can await the daemon's release, #3410).
+    reader_task: Option<ReaderTask>,
     /// Whether this session is alive (daemon running, not exited).
     alive: Arc<AtomicBool>,
     /// Whether the daemon evicted this worker's connection because another
@@ -263,7 +265,10 @@ impl DaemonClient {
             notification_tx.clone(),
             pending_buffer_reply.clone(),
             on_exit.clone(),
-            for_recovery,
+            ConnectMode {
+                fast_fail: for_recovery,
+                recovery_intent: for_recovery,
+            },
             EvictionSink {
                 writer: writer.clone(),
                 evicted: evicted.clone(),
@@ -356,66 +361,147 @@ impl DaemonClient {
         Ok(())
     }
 
-    /// Reattach by reconnecting to the daemon socket.
+    /// Plain re-attach by reconnecting to the daemon socket (#3395).
     ///
-    /// The daemon sends a BufferReplay on every new connection, so
-    /// reconnecting gives us a fresh buffer replay.
+    /// The daemon sends a BufferReplay on every new connection, so reconnecting
+    /// gives us a fresh buffer replay. The reconnect declares **recovery** intent:
+    /// a plain re-attach never evicts another desktop (SM-003, single-attach —
+    /// taking over must always be an explicit user action). If another worker
+    /// holds the session the daemon refuses it and this returns an
+    /// [`OwnedByLivePeer`] error; the client is then left disconnected and marked
+    /// [evicted](Self::is_evicted) (another desktop holds it) until an explicit
+    /// [`take_over`](Self::take_over).
     pub async fn attach(&mut self) -> Result<(), anyhow::Error> {
-        // Disconnect current connection (triggers Detach on daemon side via EOF)
-        self.disconnect().await;
+        self.reconnect(false).await
+    }
 
-        // Reconnect to get a fresh buffer replay. Not the recovery path — the
-        // daemon is a live session being re-attached, so keep the long timeout.
-        // A (re)attach is a takeover: it re-takes control from any other worker
-        // (SM-003 Reclaim), so this connection is no longer evicted.
+    /// Explicit **takeover** re-attach (SM-003 Reclaim / Take over): reconnect
+    /// with takeover intent, so the daemon evicts whichever worker (another
+    /// desktop) currently holds the session. Only ever reached from a
+    /// user-initiated Reclaim — never from a plain attach.
+    pub async fn take_over(&mut self) -> Result<(), anyhow::Error> {
+        self.reconnect(true).await
+    }
+
+    /// Release this client's current connection (if any) and reconnect with the
+    /// given intent.
+    async fn reconnect(&mut self, takeover: bool) -> Result<(), anyhow::Error> {
+        // Release the current connection cleanly first: aborting the reader and
+        // sending `MSG_DETACH` makes the daemon drop us as its writer, so a
+        // recovery-intent reconnect is not refused on account of our own stale
+        // connection.
+        self.detach().await;
+
+        if takeover {
+            // A takeover re-takes control from any other worker, so this
+            // connection is no longer evicted.
+            self.evicted.store(false, Ordering::SeqCst);
+        }
+        // Not the start-up recovery path — the daemon is a live session being
+        // re-attached, so keep the long connect timeout. `detach` above already
+        // waited for the daemon to release our own connection (#3410), so a
+        // refusal here means another connection holds it. A plain re-attach still
+        // retries such a refusal briefly: another worker's ownership probe
+        // ([`probe_holder`](Self::probe_holder)) may hold it for a moment, and a
+        // wedged daemon may not have acknowledged our detach in time.
+        let mut attempt = 0;
+        let (reader_task, alive) = loop {
+            attempt += 1;
+            let connected = connect_and_start_reader(
+                &self.endpoint,
+                &self.session_id,
+                self.notification_tx.clone(),
+                self.pending_buffer_reply.clone(),
+                self.on_exit.clone(),
+                ConnectMode {
+                    fast_fail: false,
+                    recovery_intent: !takeover,
+                },
+                EvictionSink {
+                    writer: self.writer.clone(),
+                    evicted: self.evicted.clone(),
+                },
+            )
+            .await;
+            match connected {
+                Ok(ok) => break ok,
+                Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
+                    if attempt < PLAIN_REATTACH_RETRIES {
+                        tokio::time::sleep(PLAIN_REATTACH_RETRY_DELAY).await;
+                        continue;
+                    }
+                    // Another desktop holds the session: report it as held
+                    // elsewhere until the user explicitly takes it over.
+                    self.evicted.store(true, Ordering::SeqCst);
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            }
+        };
+
         self.evicted.store(false, Ordering::SeqCst);
-        let (reader_task, alive) = connect_and_start_reader(
-            &self.endpoint,
-            &self.session_id,
-            self.notification_tx.clone(),
-            self.pending_buffer_reply.clone(),
-            self.on_exit.clone(),
-            false,
-            EvictionSink {
-                writer: self.writer.clone(),
-                evicted: self.evicted.clone(),
-            },
-        )
-        .await?;
-
         self.reader_task = Some(reader_task);
         self.alive = alive;
 
-        info!("Reattached to session {}", self.session_id);
+        if takeover {
+            info!("Took over session {} (explicit takeover)", self.session_id);
+        } else {
+            info!("Reattached to session {}", self.session_id);
+        }
         Ok(())
     }
 
     /// Detach from the daemon without killing it.
     ///
-    /// Order matters here (#2437). A clean detach makes the daemon drop its
-    /// writer to us (`agent_writer = None` on `MSG_DETACH`), which surfaces to
-    /// our reader task as an EOF. If the reader observed that EOF it would run
-    /// the exit path and clear `alive` — even though the session is still very
-    /// much alive on the daemon — and `settle_exited` would then flip the
-    /// session to a *terminal* `Exited`, so the next re-attach fails with
-    /// "Session not running". The daemon only closes us in response to the
-    /// `MSG_DETACH` we send here, so aborting the reader *before* sending it
-    /// guarantees the reader is gone before that EOF can ever arrive. A genuine
-    /// `MSG_EXITED` that arrived earlier was already handled on its own, so this
-    /// ordering does not weaken natural-exit detection.
+    /// Returns only once the daemon has **processed** the detach (#3410): when it
+    /// handles `MSG_DETACH` it drops its writer to us (`agent_writer = None`) and
+    /// closes the connection, so the EOF on our own read half is the daemon's
+    /// acknowledgement that this worker no longer holds the session. Every daemon
+    /// version behaves this way, so no protocol change is needed. Without this
+    /// wait a probe or re-attach issued right after detach could reach the
+    /// daemon's accept before it processed our detach (its event loop polls
+    /// accept and agent commands concurrently) and be refused as "held by a live
+    /// peer" — reliably so on the slower Windows named-pipe transport.
+    ///
+    /// Order matters (#2437). That detach-induced EOF must never reach the reader
+    /// task: it would run the exit path and clear `alive` although the session is
+    /// still very much alive on the daemon, and `settle_exited` would then flip
+    /// the session to a *terminal* `Exited`. So the reader task is stopped — and
+    /// its read half taken back — **before** `MSG_DETACH` is sent; the EOF is then
+    /// consumed here, never by the reader. A genuine `MSG_EXITED` that arrived
+    /// earlier was already handled on its own, so this ordering does not weaken
+    /// natural-exit detection.
+    ///
+    /// The wait is bounded by [`DETACH_RELEASE_TIMEOUT`] so a wedged daemon can
+    /// never hang a detach; the plain re-attach keeps its short refusal retry as
+    /// a fallback for that case.
     pub async fn detach(&mut self) {
         // Stop observing the transport first, so the detach-induced EOF below is
         // never mistaken for the shell exiting.
-        if let Some(task) = self.reader_task.take() {
-            task.abort();
+        let reader = match self.reader_task.take() {
+            Some(task) => task.stop().await,
+            None => None,
+        };
+        // Ask the daemon to keep the session but drop this connection, then drop
+        // our writer half.
+        let sent = {
+            let mut writer_guard = self.writer.lock().await;
+            let sent = match writer_guard.as_mut() {
+                Some(writer) => write_frame_timed(writer, MSG_DETACH, &[]).await.is_ok(),
+                None => false,
+            };
+            *writer_guard = None;
+            sent
+        };
+        // Wait for the daemon to release us (its EOF on our read half).
+        if let (true, Some(reader)) = (sent, reader) {
+            if !await_daemon_release(reader).await {
+                warn!(
+                    "Session {} daemon did not acknowledge detach within {:?}",
+                    self.session_id, DETACH_RELEASE_TIMEOUT
+                );
+            }
         }
-        // Ask the daemon to keep the session but drop this connection.
-        let mut writer_guard = self.writer.lock().await;
-        if let Some(ref mut writer) = *writer_guard {
-            let _ = write_frame_timed(writer, MSG_DETACH, &[]).await;
-        }
-        // Drop our writer half (closes our end of the socket).
-        *writer_guard = None;
         debug!("Detached from session {}", self.session_id);
     }
 
@@ -557,6 +643,87 @@ impl termihub_core::session::traits::ProcessHandle for DaemonClient {
 /// Stores the writer half into `eviction.writer` (before the reader starts, so an
 /// eviction can never race ahead of it) and returns the reader task handle and
 /// the alive flag.
+/// How often a plain [`DaemonClient::attach`] retries a recovery connect that was
+/// refused as "held by a live peer" before reporting the session as held by
+/// another desktop (#3395). A refusal can be transient: another worker's
+/// ownership probe may hold the daemon for a few milliseconds. (This client's own
+/// `MSG_DETACH` is awaited by [`DaemonClient::detach`] since #3410, so it no longer
+/// causes one unless the daemon is too wedged to acknowledge it in time.)
+const PLAIN_REATTACH_RETRIES: u32 = 3;
+
+/// Delay between the [`PLAIN_REATTACH_RETRIES`] attempts.
+const PLAIN_REATTACH_RETRY_DELAY: Duration = Duration::from_millis(150);
+
+/// Upper bound on [`DaemonClient::detach`] waiting for the daemon to release the
+/// connection after `MSG_DETACH` (#3410). A responsive daemon closes it within
+/// milliseconds; the bound only keeps a wedged daemon from hanging a detach.
+const DETACH_RELEASE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Upper bound on a reader task honouring its stop signal. The task stops at its
+/// next poll, so this only guards against a task wedged inside an exit hook.
+const READER_STOP_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// A running daemon reader task, stoppable so the read half can be taken back
+/// (#3410): [`DaemonClient::detach`] needs it to observe the daemon releasing the
+/// connection without letting the reader mistake that EOF for an exit (#2437).
+struct ReaderTask {
+    handle: tokio::task::JoinHandle<Option<BoxedReader>>,
+    stop: tokio::sync::oneshot::Sender<()>,
+}
+
+impl ReaderTask {
+    /// Stop the task and take its read half back. `None` when the loop had
+    /// already ended on its own (exit, eviction, transport error) — its read half
+    /// is gone with it — or the task did not honour the stop in time.
+    async fn stop(mut self) -> Option<BoxedReader> {
+        let _ = self.stop.send(());
+        match tokio::time::timeout(READER_STOP_TIMEOUT, &mut self.handle).await {
+            Ok(Ok(reader)) => reader,
+            Ok(Err(_)) => None,
+            Err(_) => {
+                self.handle.abort();
+                None
+            }
+        }
+    }
+
+    /// Abort the task outright, dropping its read half.
+    fn abort(self) {
+        self.handle.abort();
+    }
+}
+
+/// Drain `reader` until the daemon closes the connection (EOF or a transport
+/// error), bounded by [`DETACH_RELEASE_TIMEOUT`]. Frames still in flight (output
+/// produced before the daemon processed the detach) are discarded, exactly as the
+/// stopped reader would have dropped them; the daemon's ring buffer still holds
+/// them for the next attach's replay. Returns whether the release was observed.
+async fn await_daemon_release(mut reader: BoxedReader) -> bool {
+    let drain = async move {
+        let mut buf = [0u8; 8192];
+        loop {
+            match reader.read(&mut buf).await {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+    };
+    tokio::time::timeout(DETACH_RELEASE_TIMEOUT, drain)
+        .await
+        .is_ok()
+}
+
+/// How [`connect_and_start_reader`] connects to a daemon.
+#[derive(Debug, Clone, Copy)]
+struct ConnectMode {
+    /// Use the short recovery connect timeout, fast-failing a dead-but-lingering
+    /// socket (#2476), instead of the long spawn-path one.
+    fast_fail: bool,
+    /// Declare [`INTENT_RECOVERY`] (refused while another live worker holds the
+    /// session, AGT-015) rather than [`INTENT_TAKEOVER`] (evicts the holder).
+    recovery_intent: bool,
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn connect_and_start_reader(
     endpoint: &str,
@@ -564,12 +731,12 @@ async fn connect_and_start_reader(
     notification_tx: NotificationSender,
     pending_buffer_reply: Arc<Mutex<Option<tokio::sync::oneshot::Sender<Vec<u8>>>>>,
     on_exit: ExitHookSlot,
-    for_recovery: bool,
+    mode: ConnectMode,
     eviction: EvictionSink,
-) -> Result<(tokio::task::JoinHandle<()>, Arc<AtomicBool>), anyhow::Error> {
+) -> Result<(ReaderTask, Arc<AtomicBool>), anyhow::Error> {
     // Recovery targets an already-bound daemon and must fast-fail a dead-but-
     // lingering socket rather than pay the long spawn-path connect timeout (#2476).
-    let (mut reader, mut writer) = if for_recovery {
+    let (mut reader, mut writer) = if mode.fast_fail {
         transport::connect_for_recovery(endpoint).await?
     } else {
         transport::connect(endpoint).await?
@@ -581,7 +748,7 @@ async fn connect_and_start_reader(
     // as before. A pre-AGT-015 daemon ignores this frame, so recovery of a
     // session hosted by an older daemon still works (the guard just does not
     // apply there).
-    let intent = if for_recovery {
+    let intent = if mode.recovery_intent {
         INTENT_RECOVERY
     } else {
         INTENT_TAKEOVER
@@ -655,20 +822,34 @@ async fn connect_and_start_reader(
     let session_id_owned = session_id.to_string();
     let tx = notification_tx.clone();
 
-    let reader_task = tokio::spawn(async move {
-        reader_loop_inner(
-            reader,
-            &session_id_owned,
-            &tx,
-            &alive_clone,
-            pending_buffer_reply,
-            on_exit,
-            Some(&eviction),
-        )
-        .await;
+    // Stoppable (#3410): `detach` stops the loop and takes the read half back
+    // to await the daemon's release. A dropped sender (the client was dropped
+    // without detaching) is not a stop request — keep reading, as before.
+    let (stop, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let handle = tokio::spawn(async move {
+        let mut reader = reader;
+        let stop_requested = async move {
+            if stop_rx.await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        };
+        let stopped = tokio::select! {
+            biased;
+            () = stop_requested => true,
+            () = reader_loop_inner(
+                &mut reader,
+                &session_id_owned,
+                &tx,
+                &alive_clone,
+                pending_buffer_reply,
+                on_exit,
+                Some(&eviction),
+            ) => false,
+        };
+        stopped.then_some(reader)
     });
 
-    Ok((reader_task, alive))
+    Ok((ReaderTask { handle, stop }, alive))
 }
 
 /// Background task that reads frames from the daemon and sends notifications.
@@ -677,7 +858,7 @@ async fn connect_and_start_reader(
 /// [`reader_loop_inner`] with one.
 #[cfg(test)]
 async fn reader_loop(
-    reader: BoxedReader,
+    mut reader: BoxedReader,
     session_id: &str,
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
@@ -685,7 +866,7 @@ async fn reader_loop(
     on_exit: ExitHookSlot,
 ) {
     reader_loop_inner(
-        reader,
+        &mut reader,
         session_id,
         notification_tx,
         alive,
@@ -698,7 +879,7 @@ async fn reader_loop(
 
 /// The reader loop proper. `eviction` receives an [`MSG_EVICTED`] frame (SM-003).
 async fn reader_loop_inner(
-    mut reader: BoxedReader,
+    reader: &mut BoxedReader,
     session_id: &str,
     notification_tx: &NotificationSender,
     alive: &AtomicBool,
@@ -712,7 +893,7 @@ async fn reader_loop_inner(
         // redrive takes over) instead of parking this reader task forever. The
         // wait for a frame's first byte stays unbounded, so an idle-but-alive
         // session — no output for hours — is never torn down.
-        match protocol::read_session_frame_timeout(&mut reader).await {
+        match protocol::read_session_frame_timeout(reader).await {
             Ok(Some(frame)) => match frame.msg_type {
                 MSG_OUTPUT => {
                     send_output_notification(notification_tx, session_id, &frame.payload);
@@ -990,7 +1171,7 @@ mod tests {
             drop(server_sock);
         });
 
-        let reader: BoxedReader = Box::new(client_sock);
+        let mut reader: BoxedReader = Box::new(client_sock);
         let (on_exit, ran) = recording_exit_hook();
         let alive = Arc::new(AtomicBool::new(true));
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -1003,7 +1184,7 @@ mod tests {
         tokio::time::timeout(
             Duration::from_secs(5),
             reader_loop_inner(
-                reader,
+                &mut reader,
                 "sess",
                 &tx,
                 &alive,
@@ -1161,48 +1342,25 @@ mod tests {
     /// Regression for #2437: a clean [`DaemonClient::detach`] must leave the
     /// daemon-backed session reported as **alive**.
     ///
-    /// The real daemon drops its writer to us the moment it receives
-    /// `MSG_DETACH` (`agent_writer = None`), which reaches the client's reader
-    /// task as an EOF. If the reader observed that EOF it would run the
-    /// natural-exit path and clear `alive`; `settle_exited` then flips the
-    /// session to a *terminal* `Exited`, and the next re-attach fails with
-    /// `-32001 Session not running`. `detach` aborts the reader **before**
-    /// sending `MSG_DETACH`, so the reader is gone before that EOF can arrive.
-    /// A genuine `MSG_EXITED` that arrived earlier is handled on its own, so
-    /// this ordering does not weaken natural-exit detection.
+    /// The real daemon drops its writer to us the moment it processes
+    /// `MSG_DETACH` (`agent_writer = None`), closing the connection. If the
+    /// client's reader task observed that EOF it would run the natural-exit path
+    /// and clear `alive`; `settle_exited` then flips the session to a *terminal*
+    /// `Exited`, and the next re-attach fails with `-32001 Session not running`.
+    /// `detach` stops the reader and takes its read half back **before** sending
+    /// `MSG_DETACH`, then consumes the EOF itself (#3410), so the reader never
+    /// sees it. The mock closes the instant it reads `MSG_DETACH` — production's
+    /// tightest schedule — which is deterministic now that the reader is stopped
+    /// synchronously rather than aborted asynchronously (the #2459 flake).
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn detach_keeps_session_alive_when_daemon_closes_connection() {
-        let session_id = format!(
-            "itest-detach-alive-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        );
+        let session_id = unique_session_id("itest-detach-alive");
         let endpoint = transport::session_endpoint(&session_id);
 
         let mut listener = transport::DaemonListener::bind(&endpoint)
             .await
             .expect("bind mock daemon");
 
-        // Mock daemon. The real daemon only closes the connection *in response* to
-        // MSG_DETACH, so the resulting EOF reaches the client well after detach's
-        // (asynchronous) reader-task abort has landed. The original mock instead
-        // dropped its halves the instant it saw MSG_DETACH — a tighter schedule
-        // than production that raced the abort and made this test flaky on macOS
-        // CI (#2459). Reproduce production's ordering *deterministically*: do not
-        // EOF the client until its reader task is actually gone. The reader task
-        // owns the client's read half, so once a correct detach aborts it (and
-        // detach has dropped the client's write half) the client socket is fully
-        // closed and any write from us fails; probe for exactly that. While the
-        // reader still lives, empty MSG_OUTPUT frames are accepted and ignored.
-        //
-        // `reader_gone` reports whether the reader was gone *before* we closed —
-        // the direct #2437 property. A correct detach makes it true quickly; the
-        // pre-#2437 ordering leaves the reader live, so the probe never fails and
-        // the generous deadline trips it to false.
-        let (reader_gone_tx, reader_gone_rx) = tokio::sync::oneshot::channel::<bool>();
         let server = tokio::spawn(async move {
             let (mut reader, mut writer) = listener.accept().await.expect("accept");
             protocol::write_frame_async(&mut writer, MSG_READY, &[])
@@ -1213,23 +1371,6 @@ mod tests {
                     break;
                 }
             }
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-            let reader_gone = loop {
-                if protocol::write_frame_async(&mut writer, MSG_OUTPUT, &[])
-                    .await
-                    .is_err()
-                {
-                    break true;
-                }
-                if tokio::time::Instant::now() >= deadline {
-                    break false;
-                }
-                tokio::time::sleep(Duration::from_millis(1)).await;
-            };
-            let _ = reader_gone_tx.send(reader_gone);
-            // Only now drop our halves. On a correct detach the client's reader is
-            // already gone, so this EOF reaches no one; on the pre-#2437 ordering
-            // it is what finally trips the still-live reader's exit path.
             drop(writer);
             drop(reader);
             listener.cleanup();
@@ -1244,17 +1385,8 @@ mod tests {
         assert!(client.is_alive(), "freshly connected session must be alive");
 
         client.detach().await;
+        server.await.expect("mock daemon task");
 
-        // Deterministic synchronization (replaces the old fixed 100 ms sleep): the
-        // mock only closes the connection once the reader task is gone, so it can
-        // never deliver a detach-induced EOF to a live reader.
-        let reader_gone = reader_gone_rx
-            .await
-            .expect("mock daemon reported reader state");
-        assert!(
-            reader_gone,
-            "detach must abort the reader before the daemon connection closes (#2437)"
-        );
         assert!(
             client.is_alive(),
             "a clean detach must not mark the still-alive session dead (#2437)"
@@ -1263,8 +1395,77 @@ mod tests {
             !exit_ran.load(Ordering::SeqCst),
             "the detach-induced EOF must not be mistaken for a natural exit (#2437)"
         );
+    }
+
+    /// Regression for #3410: [`DaemonClient::detach`] returns only once the
+    /// daemon has **processed** the detach, i.e. released this connection.
+    ///
+    /// The mock daemon deliberately takes a while to act on `MSG_DETACH` (as a
+    /// busy daemon whose event loop serves `accept` before the queued detach
+    /// does) and records when it releases the connection. Before #3410 `detach`
+    /// returned as soon as the frame was written, so a probe or re-attach issued
+    /// right after could still find this worker holding the session and be
+    /// refused as held by a live peer.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn detach_waits_for_daemon_to_release_connection() {
+        let session_id = unique_session_id("itest-detach-ack");
+        let endpoint = transport::session_endpoint(&session_id);
+        let mut listener = transport::DaemonListener::bind(&endpoint)
+            .await
+            .expect("bind mock daemon");
+
+        let released = Arc::new(AtomicBool::new(false));
+        let released_server = released.clone();
+        let server = tokio::spawn(async move {
+            let (mut reader, mut writer) = listener.accept().await.expect("accept");
+            protocol::write_frame_async(&mut writer, MSG_READY, &[])
+                .await
+                .expect("send ready");
+            while let Ok(Some(frame)) = protocol::read_frame_async(&mut reader).await {
+                if frame.msg_type == MSG_DETACH {
+                    break;
+                }
+            }
+            // A slow daemon: output still flows for a while before the detach is
+            // processed; the client must discard it and keep waiting.
+            for _ in 0..5 {
+                let _ = protocol::write_frame_async(&mut writer, MSG_OUTPUT, b"late").await;
+                tokio::time::sleep(Duration::from_millis(40)).await;
+            }
+            released_server.store(true, Ordering::SeqCst);
+            drop(writer);
+            drop(reader);
+            listener.cleanup();
+        });
+
+        let (on_exit, exit_ran) = recording_exit_hook();
+        let mut client =
+            DaemonClient::connect(session_id.clone(), endpoint.clone(), make_notification_tx())
+                .await
+                .expect("client connect");
+        client.set_exit_hook(on_exit.get().cloned().expect("hook installed"));
+
+        client.detach().await;
+        assert!(
+            released.load(Ordering::SeqCst),
+            "detach must not return before the daemon released the connection (#3410)"
+        );
+        assert!(client.is_alive(), "a detached session stays alive");
+        assert!(!exit_ran.load(Ordering::SeqCst), "detach is not an exit");
 
         server.await.expect("mock daemon task");
+    }
+
+    /// A per-test unique session id so parallel tests never share an endpoint.
+    fn unique_session_id(prefix: &str) -> String {
+        format!(
+            "{prefix}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        )
     }
 
     /// AGT-015 (client half): a recovery connect declares [`INTENT_RECOVERY`] as

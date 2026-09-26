@@ -676,8 +676,13 @@ After a successful attach, the agent immediately begins streaming output via `co
 #### Single-attach and Reclaim (SM-003)
 
 A persistent (daemon-backed) session is **single-attach**: only one desktop controls it at a time
-(maintainer decision, 2026-09-26). Every attach connects to the session daemon with _takeover_
-intent, so a second desktop attaching **evicts** the first. The evicted desktop's agent worker
+(maintainer decision, 2026-09-26), and taking a session over from another desktop is always an
+explicit, user-confirmed action. A plain `connection.attach` connects to the session daemon with
+_recovery_ intent and **never evicts** another desktop — including the re-attach of a session this
+worker still tracks after a `connection.detach` (#3395): if another desktop holds it, the attach
+fails with "Session is held by another desktop" and the worker sends
+[`connection.evicted`](#connectionevicted) `heldByPeer`. Only `takeover: true` connects with
+_takeover_ intent, so the desktop taking over **evicts** the current holder. The evicted desktop's agent worker
 receives a daemon `MSG_EVICTED` frame, stops writing to the session (input/resize now fail with
 "Session was taken over by another desktop") and sends the desktop a
 [`connection.evicted`](#connectionevicted) notification. The session stays alive and listed.
