@@ -7752,6 +7752,7 @@ dependencies = [
  "russh",
  "russh-sftp",
  "sec1",
+ "semver",
  "serde",
  "serde_json",
  "serial2",

@@ -203,7 +203,13 @@ mod tests {
             ("1.2.0", Some(H1), "1.2.0", H2, SameVersionChanged),
             ("1.2.0", None, "1.2.0", H1, SameVersionChanged),
             // Build metadata does not affect precedence.
-            ("1.2.0+build.1", Some(H1), "1.2.0+build.2", H2, SameVersionChanged),
+            (
+                "1.2.0+build.1",
+                Some(H1),
+                "1.2.0+build.2",
+                H2,
+                SameVersionChanged,
+            ),
             // Older.
             ("1.4.0", Some(H1), "1.2.0", H2, Downgrade),
             ("2.0.0", Some(H1), "1.9.9", H2, Downgrade),

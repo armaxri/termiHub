@@ -495,7 +495,9 @@ impl PluginManager {
                     kind = ?change.kind,
                     "plugin install refused pending version-change confirmation"
                 );
-                return Err(PluginManagerError::VersionChangeUnconfirmed(Box::new(change)));
+                return Err(PluginManagerError::VersionChangeUnconfirmed(Box::new(
+                    change,
+                )));
             }
             tracing::warn!(
                 plugin_id = %change.plugin_id,
