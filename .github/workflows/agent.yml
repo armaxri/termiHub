@@ -28,9 +28,14 @@ on:
       - '.github/workflows/agent.yml'
 
 # Cancel an in-flight agent build when a newer commit lands on the same PR.
+# Only PR runs cancel in-progress (#3588): a push to develop/main is a post-merge
+# correctness gate the slim PR lane (#3326) relies on. Cancelling on push left
+# develop's gate dark under frequent merges (no run ever finished). A push run now
+# always completes; GitHub still keeps only the newest *queued* run per group, so
+# merges landing mid-run are covered by the next completed run.
 concurrency:
   group: agent-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least-privilege token (CI-010). Each job checks out, cross-builds the agent,
 # runs tests, and uploads build artifacts via the artifact API (which does not

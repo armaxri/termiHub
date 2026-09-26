@@ -13,11 +13,16 @@ on:
   push:
     branches: [ main, develop ]
 
-# Cancel superseded runs on the same ref (a force-push or a newer commit on the
-# PR) so we don't burn runner minutes finishing checks for stale commits.
+# Cancel superseded PR runs (a force-push or a newer commit on the PR) so we
+# don't burn runner minutes finishing checks for stale commits.
+# Only PR runs cancel in-progress (#3588): a push to develop/main is a post-merge
+# correctness gate the slim PR lane (#3326) relies on. Cancelling on push left
+# develop's gate dark under frequent merges (no run ever finished). A push run now
+# always completes; GitHub still keeps only the newest *queued* run per group, so
+# merges landing mid-run are covered by the next completed run.
 concurrency:
   group: code-quality-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least-privilege token (CI-010). Every job here only checks out, builds, tests,
 # and lints the tree — none comment on the PR, publish check runs, push, or
