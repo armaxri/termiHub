@@ -26,11 +26,14 @@ fn pcm(channels: u16, rate: u32) -> AudioFormat {
     }
 }
 
-/// Records every `wave` call as `(format, data)`.
+/// Every `wave` call as `(format, data)`.
+type Waves = Arc<Mutex<Vec<(AudioFormat, Vec<u8>)>>>;
+
+/// Records every `wave` call into [`Waves`].
 #[derive(Debug)]
 struct Recorder {
     formats: Vec<AudioFormat>,
-    waves: Arc<Mutex<Vec<(AudioFormat, Vec<u8>)>>>,
+    waves: Waves,
 }
 
 impl RdpsndClientHandler for Recorder {
@@ -51,8 +54,6 @@ impl RdpsndClientHandler for Recorder {
 
     fn close(&mut self) {}
 }
-
-type Waves = Arc<Mutex<Vec<(AudioFormat, Vec<u8>)>>>;
 
 fn server_pdu(pdu: &ServerAudioOutputPdu<'_>) -> Vec<u8> {
     encode_vec(pdu).unwrap()

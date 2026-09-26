@@ -6,7 +6,7 @@ use super::{
 };
 use std::future::Future;
 use std::pin::Pin;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{info, trace};
 
 use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
