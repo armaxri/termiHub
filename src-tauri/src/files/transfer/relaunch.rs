@@ -250,7 +250,9 @@ async fn relaunch_record(
             offset,
             total,
         } => {
-            spawn_local_relaunch(src_path, dest_path, offset, total, &record, registry, app_handle);
+            spawn_local_relaunch(
+                src_path, dest_path, offset, total, &record, registry, app_handle,
+            );
             true
         }
         RelaunchPlan::Unsupported { reason } => {
@@ -285,8 +287,7 @@ fn spawn_local_relaunch(
     let registry = registry.clone();
     let sink = super::app_progress_sink(app_handle.clone());
     tauri::async_runtime::spawn(async move {
-        super::local::run_local_transfer(src_path, dest_path, handle, registry, sink, offset)
-            .await;
+        super::local::run_local_transfer(src_path, dest_path, handle, registry, sink, offset).await;
     });
 }
 

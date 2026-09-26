@@ -409,16 +409,9 @@ mod tests {
         let part = partial_path(&s(&dest), "t1");
 
         let mut reports = Vec::new();
-        let outcome = copy_attempt(
-            &s(&src),
-            &part,
-            &s(&dest),
-            0,
-            |t| reports.push(t),
-            || None,
-        )
-        .await
-        .expect("copy");
+        let outcome = copy_attempt(&s(&src), &part, &s(&dest), 0, |t| reports.push(t), || None)
+            .await
+            .expect("copy");
 
         assert_eq!(
             outcome,

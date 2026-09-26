@@ -57,10 +57,7 @@ pub(super) enum AttemptOutcome {
     /// restarts this stint from byte zero. Never produced by the local
     /// executor (a local file can always be seeked), so it is unused when
     /// `local-transfer` is the only executor compiled in.
-    #[cfg_attr(
-        not(any(feature = "ssh", feature = "docker")),
-        allow(dead_code)
-    )]
+    #[cfg_attr(not(any(feature = "ssh", feature = "docker")), allow(dead_code))]
     ResumeRejected,
 }
 

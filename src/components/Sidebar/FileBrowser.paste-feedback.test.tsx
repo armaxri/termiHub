@@ -185,9 +185,7 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
     await renderLocal();
     setClipboard("x.txt", "/src", "copy");
     await clickPaste();
-    expect(calls("local_copy_start")).toEqual([
-      { srcPath: "/src/x.txt", destPath: "/home/x.txt" },
-    ]);
+    expect(calls("local_copy_start")).toEqual([{ srcPath: "/src/x.txt", destPath: "/home/x.txt" }]);
     expect(toastSuccess).toHaveBeenCalledWith(
       'Pasted "x.txt" to /home',
       expect.objectContaining({ id: "toast-id" })
@@ -241,9 +239,7 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
       q("file-move-conflict-confirm").click();
     });
     await flushAsync();
-    expect(calls("local_copy_start")).toEqual([
-      { srcPath: "/src/a.txt", destPath: "/home/a.txt" },
-    ]);
+    expect(calls("local_copy_start")).toEqual([{ srcPath: "/src/a.txt", destPath: "/home/a.txt" }]);
     expect(toastSuccess).toHaveBeenCalledTimes(1);
   });
 
