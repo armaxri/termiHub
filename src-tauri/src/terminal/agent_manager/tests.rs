@@ -6,12 +6,7 @@ use termihub_core::protocol::methods::{ConnectionDefinition, FolderDefinition};
 /// (and the failure `error`) as **structured `tracing` fields**, not
 /// interpolated into the message. This is what lets a supporter filter
 /// `termihub.log` by agent across a reconnect instead of grepping message text.
-// Serialized against every other test that installs a thread-local `tracing`
-// default subscriber (see `utils::log_capture`, `session::manager`): a
-// concurrent guard drop transiently reverts the global max-level to OFF and
-// would drop our events (a well-known parallel-`tracing`-test race).
 #[test]
-#[serial_test::serial(tracing_default_subscriber)]
 fn agent_reconnect_logs_carry_structured_fields() {
     let (capture, guard) = super::tracing_capture::install();
     log_agent_connection_lost("agent-xyz");

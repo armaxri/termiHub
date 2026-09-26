@@ -256,10 +256,13 @@ fn round_trip_every_section_encrypted() {
     let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
     let json = build(src.path(), &options(&ids, true, false), None);
 
-    // Nothing but the header is readable.
+    // Nothing but the header is readable. Each needle is matched as a quoted
+    // JSON string, exactly as plaintext would serialize it: the ciphertext is
+    // random base64, so a bare short alphanumeric needle such as `NAS` occurs
+    // in it by chance (~1% of runs for this fixture) and made this flaky.
     for needle in [HOST_MARKER, SERVER_SECRET, "Deploy", "NAS"] {
         assert!(
-            !json.contains(needle),
+            !json.contains(&format!("\"{needle}\"")),
             "{needle} leaked into the encrypted backup"
         );
     }

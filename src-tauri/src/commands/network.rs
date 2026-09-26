@@ -551,37 +551,27 @@ mod tests {
 
     #[tokio::test]
     async fn probe_reports_closed_port_unreachable() {
-        // Claiming a "closed" port by binding on port 0 and dropping the listener is
-        // racy: under the full parallel suite the just-freed ephemeral port can be
-        // reassigned to another concurrent test's live listener before the probe
-        // fires, so the probe correctly reports it *open* and the assertion fails
-        // (#2008). Retry with a fresh port whenever a probe comes back reachable —
-        // that only happens when the port lost the reuse race, so retrying keeps the
-        // assertion meaningful (a genuinely closed port must read unreachable) while
-        // removing the timing dependence. Losing the race on every one of many
-        // independent ports is astronomically unlikely.
-        const ATTEMPTS: usize = 20;
-        for attempt in 1..=ATTEMPTS {
-            let port = {
-                let listener =
-                    std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
-                listener.local_addr().unwrap().port()
-            };
+        // Hold a bound, never-listening socket for the whole probe: its port
+        // cannot be connected to (Linux/Windows refuse, macOS drops the SYN) and,
+        // without `SO_REUSEADDR`, no concurrent test can bind it. The old
+        // bind-a-listener-then-drop-it port could be reassigned to another test's
+        // live listener before the probe fired (#2008, #3532).
+        use socket2::{Domain, Protocol, Socket, Type};
+        let held = Socket::new(Domain::IPV4, Type::STREAM, Some(Protocol::TCP))
+            .expect("create TCP socket");
+        held.bind(&std::net::SocketAddr::from(([127, 0, 0, 1], 0)).into())
+            .expect("bind loopback TCP socket");
+        let port = held
+            .local_addr()
+            .expect("local addr")
+            .as_socket()
+            .expect("an IP socket address")
+            .port();
 
-            let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(500))
-                .await
-                .expect("probe should not error");
-
-            if !reachable {
-                return; // A closed port was reported unreachable, as expected.
-            }
-
-            assert!(
-                attempt < ATTEMPTS,
-                "closed port {port} still reported reachable after {ATTEMPTS} attempts \
-                 (all lost the ephemeral-port-reuse race)",
-            );
-        }
+        let reachable = probe_target_reachable("127.0.0.1".to_string(), port, Some(500))
+            .await
+            .expect("probe should not error");
+        assert!(!reachable, "closed port {port} was reported reachable");
     }
 }
 
