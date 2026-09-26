@@ -36,6 +36,9 @@ pub mod state;
 // the desktop backend and the remote agent reuse one implementation. Gated on
 // the backend feature they depend on: `ftp` (`crate::backends::ftp`) and `ssh`
 // (`crate::backends::ssh`). The public executors return `()` — no error escapes.
+// Shared attempt orchestration for the offset-resuming executors (PARITY-004).
+#[cfg(any(feature = "ssh", feature = "docker"))]
+mod attempt;
 #[cfg(feature = "ftp")]
 pub mod ftp;
 #[cfg(feature = "ssh")]
