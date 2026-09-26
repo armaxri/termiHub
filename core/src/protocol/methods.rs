@@ -127,6 +127,11 @@ pub const SERVICE_STOP: &str = "service.stop";
 pub const SERVICE_PAUSE: &str = "service.pause";
 pub const SERVICE_RESUME: &str = "service.resume";
 pub const SERVICE_STATUS: &str = "service.status";
+/// Read an agent-hosted embedded server's access log + detailed stats (#3453).
+/// Added append-only and gated on the `embeddedServerActivity` capability.
+pub const EMBEDDED_SERVER_ACTIVITY: &str = "embedded_server.activity";
+/// Clear an agent-hosted embedded server's access log + counters (#3453).
+pub const EMBEDDED_SERVER_CLEAR_ACTIVITY: &str = "embedded_server.clear_activity";
 pub const TOOL_LIST: &str = "tool.list";
 pub const TOOL_RUN: &str = "tool.run";
 /// Start a streaming tool run (#3353): returns at once; results arrive as
@@ -259,6 +264,11 @@ pub struct Capabilities {
     /// that advertised [`ClientCapabilities::keyboard_interactive_prompts`]
     /// (#3375). Absent (read as `false`) on older agents.
     pub keyboard_interactive_prompts: bool,
+    /// Whether the agent serves an agent-hosted embedded server's access log
+    /// and detailed stats — [`EMBEDDED_SERVER_ACTIVITY`] /
+    /// [`EMBEDDED_SERVER_CLEAR_ACTIVITY`] (#3453). Absent (read as `false`) on
+    /// older agents, whose hosted servers show no log on the desktop.
+    pub embedded_server_activity: bool,
 }
 
 /// One prompt of a [`KbdInteractivePromptNotification`] round.
@@ -1546,6 +1556,52 @@ pub struct ServiceStatusResult {
     pub state: Option<Value>,
 }
 
+// ── embedded_server.activity / clear_activity (#3453) ───────────────
+//
+// The access log and detailed stats of an agent-hosted embedded server live on
+// the agent (in its `EmbeddedServerService`); these methods let the desktop
+// read and clear them. `serverId` is the `instanceId` the desktop started the
+// server under with `service.start`. The snapshot is the same core
+// `ActivitySnapshot` the desktop-hosted path returns, so it carries no
+// passwords, `Authorization` headers or HTTP query strings.
+
+/// Params for `embedded_server.activity`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedServerActivityParams {
+    /// The hosted server's instance id (the desktop config id).
+    pub server_id: String,
+    /// Return only entries with a larger `seq`; all retained entries when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since_seq: Option<u64>,
+}
+
+/// Result of `embedded_server.activity`.
+#[cfg(feature = "embedded-servers")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedServerActivityResult {
+    /// The server's activity, or `null` when no such server is hosted here.
+    #[serde(default)]
+    pub activity: Option<crate::embedded_servers::activity::ActivitySnapshot>,
+}
+
+/// Params for `embedded_server.clear_activity`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedServerClearActivityParams {
+    /// The hosted server's instance id (the desktop config id).
+    pub server_id: String,
+}
+
+/// Result of `embedded_server.clear_activity`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedServerClearActivityResult {
+    /// Whether a hosted server with that id was found and its log cleared.
+    pub cleared: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1853,6 +1909,41 @@ mod tests {
         assert_eq!(params.config["port"], 8080);
     }
 
+    /// Locks the `embedded_server.activity` / `.clear_activity` wire shape
+    /// (#3453): camelCase `serverId` / `sinceSeq`, `sinceSeq` optional.
+    #[test]
+    fn embedded_server_activity_params_wire_shape() {
+        let p: EmbeddedServerActivityParams =
+            serde_json::from_value(json!({ "serverId": "srv-1", "sinceSeq": 7 })).unwrap();
+        assert_eq!(p.server_id, "srv-1");
+        assert_eq!(p.since_seq, Some(7));
+        let p: EmbeddedServerActivityParams =
+            serde_json::from_value(json!({ "serverId": "srv-1" })).unwrap();
+        assert_eq!(p.since_seq, None);
+        assert_eq!(
+            serde_json::to_value(&p).unwrap(),
+            json!({ "serverId": "srv-1" })
+        );
+
+        let c: EmbeddedServerClearActivityParams =
+            serde_json::from_value(json!({ "serverId": "srv-2" })).unwrap();
+        assert_eq!(c.server_id, "srv-2");
+        let r = serde_json::to_value(EmbeddedServerClearActivityResult { cleared: true }).unwrap();
+        assert_eq!(r, json!({ "cleared": true }));
+    }
+
+    /// An unknown server reads back as `activity: null`; a missing member (a
+    /// defensive reading) parses the same way.
+    #[cfg(feature = "embedded-servers")]
+    #[test]
+    fn embedded_server_activity_result_null_and_missing_parse_as_none() {
+        let r: EmbeddedServerActivityResult =
+            serde_json::from_value(json!({ "activity": null })).unwrap();
+        assert!(r.activity.is_none());
+        let r: EmbeddedServerActivityResult = serde_json::from_value(json!({})).unwrap();
+        assert!(r.activity.is_none());
+    }
+
     #[test]
     fn service_start_result_serializes_camel_case_and_omits_absent_state() {
         let result = ServiceStartResult {
@@ -2081,6 +2172,7 @@ mod tests {
                 monitoring_supported: false,
                 tool_streaming: true,
                 keyboard_interactive_prompts: true,
+                embedded_server_activity: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2094,6 +2186,7 @@ mod tests {
         assert_eq!(v["capabilities"]["availableShells"][0], "/bin/bash");
         assert_eq!(v["capabilities"]["availableSerialPorts"][0], "/dev/ttyUSB0");
         assert_eq!(v["capabilities"]["dockerAvailable"], false);
+        assert_eq!(v["capabilities"]["embeddedServerActivity"], true);
         assert!(v["capabilities"]["availableDockerImages"]
             .as_array()
             .unwrap()
@@ -3139,6 +3232,11 @@ mod tests {
         assert_eq!(SERVICE_PAUSE, "service.pause");
         assert_eq!(SERVICE_RESUME, "service.resume");
         assert_eq!(SERVICE_STATUS, "service.status");
+        assert_eq!(EMBEDDED_SERVER_ACTIVITY, "embedded_server.activity");
+        assert_eq!(
+            EMBEDDED_SERVER_CLEAR_ACTIVITY,
+            "embedded_server.clear_activity"
+        );
         assert_eq!(TOOL_LIST, "tool.list");
         assert_eq!(TOOL_RUN, "tool.run");
         assert_eq!(TOOL_START, "tool.start");

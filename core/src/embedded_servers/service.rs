@@ -592,6 +592,15 @@ impl Service for EmbeddedServerService {
     fn subscribe_events(&self) -> ServiceEventReceiver {
         self.events.subscribe()
     }
+
+    fn access_activity(&self, since: Option<u64>) -> Option<ActivitySnapshot> {
+        Some(self.activity_snapshot(since))
+    }
+
+    fn clear_access_activity(&self) -> bool {
+        self.clear_activity();
+        true
+    }
 }
 
 /// Build a settings field with sensible defaults for the parts we don't use.
