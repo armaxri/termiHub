@@ -899,11 +899,11 @@ mod tests {
         assert_eq!(check_api_compatibility("1.0"), ApiCompatibility::Compatible);
         // A bare major is not a valid mirror of the ABI version.
         assert_eq!(check_api_compatibility("1"), ApiCompatibility::Incompatible);
-        // Lower minor within the same major is compatible.
-        // (host is 1.0, so only minor 0 qualifies here.)
+        // Lower minor within the same major is compatible (host is 1.1).
+        assert_eq!(check_api_compatibility("1.1"), ApiCompatibility::Compatible);
         // Higher minor is not.
         assert_eq!(
-            check_api_compatibility("1.1"),
+            check_api_compatibility("1.2"),
             ApiCompatibility::Incompatible
         );
         // Different major is incompatible in both directions.
