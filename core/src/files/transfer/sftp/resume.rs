@@ -136,8 +136,10 @@ pub(super) async fn local_size(path: &str) -> Option<u64> {
 /// in `russh-sftp`, and a channel that dies mid-upload never resolves them, so
 /// without this guard a dropped connection hangs the upload forever (and its
 /// pause/cancel with it). Every other SFTP request already times out after
-/// `russh-sftp`'s 10 s default, so this sits comfortably above that.
-pub const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+/// `russh-sftp`'s 10 s default. Progress advances once per 256 KiB chunk, so
+/// 60 s only trips below ~4 KiB/s — a link that slow is indistinguishable from
+/// a dead one, and a false trip merely retries from the verified offset.
+pub const STALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// How often [`guard_stall`] samples progress and the cancel flag.
 const STALL_TICK: std::time::Duration = std::time::Duration::from_millis(250);
