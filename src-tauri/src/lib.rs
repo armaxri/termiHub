@@ -251,6 +251,11 @@ fn handle_shell_integration_command(install: bool) -> ! {
 /// per-OS policy in [`window::should_teardown_on_last_window`] /
 /// [`window::should_prevent_exit`] (#1903).
 fn run_app_teardown(app_handle: &tauri::AppHandle) {
+    // Remove this process's drag-out staging dirs (#3457) synchronously, so the
+    // staged remote copies never outlive the app even if exit races the task below.
+    if let Some(staging) = app_handle.try_state::<files::drag_out::DragOutStaging>() {
+        staging.cleanup_all();
+    }
     let handle = app_handle.clone();
     tauri::async_runtime::spawn(async move {
         if let Some(mgr) = handle.try_state::<Arc<tunnel::tunnel_manager::TunnelManager>>() {
@@ -721,6 +726,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::transfer::session_copy_remote,
             commands::files::get_home_dir,
             commands::files::local_list_dir,
+            commands::files::drag_out_create_staging,
+            commands::files::drag_out_discard_staging,
+            commands::files::drag_out_start,
             commands::files::local_copy,
             commands::files::local_mkdir,
             commands::files::local_delete,
