@@ -34,6 +34,7 @@ vi.mock("@/services/api", () => ({
   localWriteFile: vi.fn(() => Promise.resolve()),
   localCopyStart: vi.fn(() => Promise.resolve(false)),
   LOCAL_TRANSFER_SESSION: "local",
+  TransferTerminalError: class TransferTerminalError extends Error {},
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   vscodeOpenLocal: vi.fn(() => Promise.resolve()),
   sftpDownload: vi.fn(() => Promise.resolve()),

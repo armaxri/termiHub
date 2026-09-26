@@ -1730,13 +1730,97 @@ export async function dragOutStart(paths: string[]): Promise<DragOutResult> {
   return await invoke<DragOutResult>("drag_out_start", { paths });
 }
 
-/** Copy a file or directory on the local filesystem. */
-export async function localCopyFile(
+/**
+ * The reserved session id queued local copies run under (Rust
+ * `LOCAL_TRANSFER_SESSION`, PARITY-004 #3567): they have no live session, so
+ * their Transfer Queue rows are keyed on this instead.
+ */
+export const LOCAL_TRANSFER_SESSION = "local";
+
+/**
+ * Copy a file or directory on the local filesystem, through the transfer queue
+ * when it is big enough to be worth tracking (PARITY-004, #3567).
+ *
+ * A file above the backend's direct-copy threshold (8 MiB) registers a queued
+ * transfer — progress, pause/resume, cancel, retry — whose id is handed to
+ * `onRegistered` (to seed its Transfer Queue row) before this resolves on
+ * completion. A smaller file or a directory is copied directly. Local ↔ WSL
+ * copies go through here too: WSL paths are host `//wsl$` UNC paths.
+ *
+ * Resolves to whether the copy was tracked by the queue (whose event path then
+ * owns the terminal toast); rejects with a {@link TransferTerminalError} when a
+ * tracked copy is cancelled or fails.
+ */
+export async function localCopyStart(
   srcPath: string,
   destPath: string,
-  isDirectory: boolean
-): Promise<void> {
-  await invoke("local_copy", { srcPath, destPath, isDirectory });
+  onRegistered?: (transferId: string) => void
+): Promise<boolean> {
+  // Listen *before* starting: a local copy just over the threshold can settle
+  // before a listener registered after the command returns would attach.
+  const watch = await watchTransferSettlements();
+  try {
+    const transferId = await invoke<string | null>("local_copy_start", { srcPath, destPath });
+    if (!transferId) return false;
+    onRegistered?.(transferId);
+    await watch.settled(transferId);
+    return true;
+  } finally {
+    watch.stop();
+  }
+}
+
+/** A running watch over terminal `transfer-progress` events. */
+interface TransferSettlementWatch {
+  /**
+   * Resolve with the bytes transferred once `transferId` is `done` (even if it
+   * settled before this was called); reject with a {@link TransferTerminalError}
+   * on `cancelled` / `error`.
+   */
+  settled: (transferId: string) => Promise<number>;
+  /** Stop listening. */
+  stop: () => void;
+}
+
+/**
+ * Start recording terminal `transfer-progress` events so a transfer's
+ * settlement is never missed, however fast it runs — the race
+ * {@link awaitTransfer} is exposed to when a transfer finishes before its
+ * listener attaches.
+ */
+async function watchTransferSettlements(): Promise<TransferSettlementWatch> {
+  const { listen } = await import("@tauri-apps/api/event");
+  const seen = new Map<string, TransferProgress>();
+  const waiters = new Map<string, (p: TransferProgress) => void>();
+  const unlisten = await listen<TransferProgress>("transfer-progress", (event) => {
+    const p = event.payload;
+    if (p.phase === "transferring") return;
+    const waiter = waiters.get(p.transferId);
+    if (waiter) waiter(p);
+    else seen.set(p.transferId, p);
+  });
+  const settle = (p: TransferProgress): number => {
+    if (p.phase === "done") return p.transferred;
+    if (p.phase === "cancelled") throw new TransferTerminalError("cancelled", "Transfer cancelled");
+    throw new TransferTerminalError("error", p.message ?? "Transfer failed");
+  };
+  return {
+    settled: (transferId) =>
+      new Promise<number>((resolve, reject) => {
+        const finish = (p: TransferProgress) => {
+          waiters.delete(transferId);
+          try {
+            resolve(settle(p));
+          } catch (err) {
+            reject(err);
+          }
+        };
+        const early = seen.get(transferId);
+        if (early) finish(early);
+        else waiters.set(transferId, finish);
+      }),
+    stop: unlisten,
+  };
 }
 
 /** Create a directory on the local filesystem. */
