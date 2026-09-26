@@ -1,7 +1,14 @@
 use futures::TryStreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
-use std::{future::Future, sync::Arc, vec};
+use std::{
+    future::Future,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    vec,
+};
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{
@@ -12,8 +19,11 @@ use tokio::{
 use tokio_util::compat::*;
 use tracing::*;
 
+use super::desktop_size::{read_extended_desktop_size, validate_request};
 use super::event_queue::{event_queue, EventReceiver, EventSender, MAX_QUEUED_EVENT_BYTES};
-use crate::{codec, PixelFormat, Rect, VncEncoding, VncError, VncEvent, X11Event};
+use crate::{
+    codec, DesktopSizeStatus, PixelFormat, Rect, VncEncoding, VncError, VncEvent, X11Event,
+};
 /// Count bound of the internal queues. The decoded-event queue is additionally
 /// bounded by bytes ([`MAX_QUEUED_EVENT_BYTES`], termiHub fork #3511).
 const CHANNEL_SIZE: usize = 4096;
@@ -61,6 +71,33 @@ impl ImageRect {
     }
 }
 
+/// The current framebuffer size, shared between the decoder (which tracks
+/// `DesktopSize` / `ExtendedDesktopSize` changes) and the client handle, whose
+/// refresh requests must cover the *current* framebuffer (termiHub fork,
+/// #3463). Upstream kept the `ServerInit` size forever, so after a resize every
+/// incremental request still named the old geometry.
+pub(super) struct ScreenCell(AtomicU32);
+
+impl ScreenCell {
+    pub(super) fn new(screen: (u16, u16)) -> Self {
+        let cell = Self(AtomicU32::new(0));
+        cell.set(screen);
+        cell
+    }
+
+    pub(super) fn get(&self) -> (u16, u16) {
+        let packed = self.0.load(Ordering::Acquire);
+        ((packed >> 16) as u16, packed as u16)
+    }
+
+    fn set(&self, (width, height): (u16, u16)) {
+        self.0.store(
+            (u32::from(width) << 16) | u32::from(height),
+            Ordering::Release,
+        );
+    }
+}
+
 /// Largest desktop name accepted in `ServerInit` (termiHub fork, #3473). The
 /// length is a server-chosen `u32`; upstream allocated it verbatim (up to 4 GiB).
 /// Lowered from 64 KiB to upstream 0.6.0's 4 KiB bound (#3499).
@@ -94,7 +131,7 @@ where
 
 struct VncInner {
     name: String,
-    screen: (u16, u16),
+    screen: Arc<ScreenCell>,
     input_ch: Sender<ClientMsg>,
     output_ch: EventReceiver,
     decoding_stop: Option<oneshot::Sender<()>>,
@@ -131,6 +168,9 @@ impl VncInner {
                 Ok(())
             })
             .await?;
+
+        let screen = Arc::new(ScreenCell::new((width, height)));
+        let decoder_screen = screen.clone();
 
         trace!("client encodings: {:?}", encodings);
         send_client_encoding(&mut stream, encodings.clone()).await?;
@@ -175,7 +215,7 @@ impl VncInner {
                     &output_func,
                     &mut decoding_stop_rx,
                     &encodings,
-                    (width, height),
+                    &decoder_screen,
                 )
                 .await;
                 // termiHub fork (#3499, upstream 6acf3da): release the network
@@ -210,7 +250,7 @@ impl VncInner {
         info!("VNC Client {name} starts");
         Ok(Self {
             name,
-            screen: (width, height),
+            screen,
             input_ch: input_ch_tx,
             output_ch: output_ch_rx,
             decoding_stop: Some(decoding_stop_tx),
@@ -224,30 +264,28 @@ impl VncInner {
         if self.closed {
             Err(VncError::ClientNotRunning)
         } else {
+            let (width, height) = self.screen.get();
+            let whole = Rect {
+                x: 0,
+                y: 0,
+                width,
+                height,
+            };
             let msg = match event {
-                X11Event::Refresh => ClientMsg::FramebufferUpdateRequest(
-                    Rect {
-                        x: 0,
-                        y: 0,
-                        width: self.screen.0,
-                        height: self.screen.1,
-                    },
-                    1,
-                ),
-                X11Event::FullRefresh => ClientMsg::FramebufferUpdateRequest(
-                    Rect {
-                        x: 0,
-                        y: 0,
-                        width: self.screen.0,
-                        height: self.screen.1,
-                    },
-                    0, // non-incremental: server sends entire framebuffer
-                ),
+                X11Event::Refresh => ClientMsg::FramebufferUpdateRequest(whole, 1),
+                // non-incremental: server sends entire framebuffer
+                X11Event::FullRefresh => ClientMsg::FramebufferUpdateRequest(whole, 0),
                 X11Event::KeyEvent(key) => ClientMsg::KeyEvent(key.keycode, key.down),
                 X11Event::PointerEvent(mouse) => {
                     ClientMsg::PointerEvent(mouse.position_x, mouse.position_y, mouse.bottons)
                 }
                 X11Event::CopyText(text) => ClientMsg::ClientCutText(text),
+                // termiHub fork (#3463): an invalid layout is refused here, so
+                // it is reported to the caller instead of reaching the socket.
+                X11Event::SetDesktopSize(req) => {
+                    validate_request(&req)?;
+                    ClientMsg::SetDesktopSize(req)
+                }
             };
             Ok(msg)
         }
@@ -519,15 +557,16 @@ async fn report_decoder_error(
 /// so a decoder blocked mid-message (or on a full output queue) ignored
 /// `close()`.
 ///
-/// `encodings` is the list the client sent in `SetEncodings`; `screen` is the
-/// framebuffer size from `ServerInit`, tracked through `DesktopSize` updates.
+/// `encodings` is the list the client sent in `SetEncodings`; `screen` holds the
+/// framebuffer size from `ServerInit`, updated through `DesktopSize` /
+/// `ExtendedDesktopSize` changes (#3463).
 pub(super) async fn asycn_vnc_read_loop<S, F, Fut>(
     stream: &mut S,
     pf: &PixelFormat,
     output_func: &F,
     stop_ch: &mut oneshot::Receiver<()>,
     encodings: &[VncEncoding],
-    screen: (u16, u16),
+    screen: &ScreenCell,
 ) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
@@ -546,7 +585,7 @@ async fn read_vnc_messages<S, F, Fut>(
     pf: &PixelFormat,
     output_func: &F,
     encodings: &[VncEncoding],
-    mut screen: (u16, u16),
+    screen_cell: &ScreenCell,
 ) -> Result<(), VncError>
 where
     S: AsyncRead + Unpin,
@@ -558,6 +597,13 @@ where
     let mut tight_decoder = codec::TightDecoder::new();
     let mut trle_decoder = codec::TrleDecoder::new();
     let mut cursor = codec::CursorDecoder::new();
+    let mut screen = screen_cell.get();
+    // termiHub fork (#3463): a server that understood ExtendedDesktopSize puts
+    // its layout into the first FramebufferUpdate after SetEncodings; one whose
+    // first update lacks it does not support the extension.
+    let layout_advertised = encodings.contains(&VncEncoding::ExtendedDesktopSizePseudo);
+    let mut layout_seen = false;
+    let mut first_update_done = false;
 
     // main decoding loop
     loop {
@@ -635,10 +681,25 @@ where
                             // size and track it for the on-screen checks above.
                             codec::validate_screen(rect.rect.width, rect.rect.height)?;
                             screen = (rect.rect.width, rect.rect.height);
+                            screen_cell.set(screen);
                             output_func(VncEvent::SetResolution(
                                 (rect.rect.width, rect.rect.height).into(),
                             ))
                             .await?;
+                        }
+                        VncEncoding::ExtendedDesktopSizePseudo => {
+                            // termiHub fork (#3463): a bounded layout report. Only
+                            // an accepted (status 0) change moves the framebuffer;
+                            // a refusal keeps the current size.
+                            let layout = read_extended_desktop_size(stream, &rect.rect).await?;
+                            layout_seen = true;
+                            let size = (layout.width, layout.height);
+                            if layout.status == DesktopSizeStatus::Ok && size != screen {
+                                screen = size;
+                                screen_cell.set(screen);
+                                output_func(VncEvent::SetResolution(size.into())).await?;
+                            }
+                            output_func(VncEvent::DesktopLayout(layout)).await?;
                         }
                         VncEncoding::LastRectPseudo => {
                             break;
@@ -651,6 +712,12 @@ where
                                 rect.encoding
                             )));
                         }
+                    }
+                }
+                if !first_update_done {
+                    first_update_done = true;
+                    if layout_advertised && !layout_seen {
+                        output_func(VncEvent::DesktopLayoutUnsupported).await?;
                     }
                 }
             }

@@ -1,4 +1,4 @@
-use crate::{PixelFormat, Rect, VncEncoding, VncError};
+use crate::{DesktopSizeRequest, PixelFormat, Rect, VncEncoding, VncError};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Largest `ServerCutText` payload accepted from the server (termiHub fork,
@@ -40,6 +40,8 @@ pub(super) enum ClientMsg {
     KeyEvent(u32, bool),
     PointerEvent(u16, u16, u8),
     ClientCutText(String),
+    /// termiHub fork (#3463): validated by `VncInner::input_message`.
+    SetDesktopSize(DesktopSizeRequest),
 }
 
 impl ClientMsg {
@@ -145,6 +147,11 @@ impl ClientMsg {
                 let mut payload = vec![6_u8, 0, 0, 0];
                 payload.write_u32(bytes.len() as u32).await?;
                 payload.write_all(&bytes).await?;
+                writer.write_all(&payload).await?;
+                Ok(())
+            }
+            ClientMsg::SetDesktopSize(req) => {
+                let payload = super::desktop_size::encode_set_desktop_size(&req);
                 writer.write_all(&payload).await?;
                 Ok(())
             }

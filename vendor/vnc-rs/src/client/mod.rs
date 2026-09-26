@@ -1,6 +1,9 @@
 mod auth;
 pub mod connection;
 pub mod connector;
+mod desktop_size;
+#[cfg(test)]
+mod desktop_size_tests;
 #[cfg(test)]
 mod event_budget_tests;
 mod event_queue;
