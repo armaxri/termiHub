@@ -2354,6 +2354,38 @@ Covers the pointer gesture, which the jsdom unit tests cannot hit-test.
 7. Right-click a file → **Move to…**, type a folder path, press **Enter** → the
    file moves there. You can do this from the keyboard alone.
 
+### File browser drag-out to the OS file manager (#3457)
+
+Covers the native OS drag, which unit tests can only exercise with the drag
+command mocked. Run on macOS, Windows and Linux (X11 and Wayland).
+
+1. Open the file browser on a local directory. Drag `a.txt` slowly out of the
+   termiHub window onto the desktop / a Finder or Explorer window → as the
+   pointer crosses the window edge the drag turns into an OS file drag (the
+   termiHub icon follows the pointer). Release → a copy of `a.txt` appears
+   there; the original stays in place.
+2. Ctrl/Cmd-click a file and a folder, drag them out together → both land in
+   the file manager (the folder with its contents).
+3. Drag a file out of the window and back over the termiHub file browser, then
+   release inside it → nothing is uploaded or copied (no toast, no new file).
+4. Drag a file onto a folder row without leaving the window → it moves there
+   exactly as before (drag-to-move is unchanged; only crossing the window edge
+   hands the drag to the OS).
+5. Open an SFTP session. Drag a small remote file out of the window and keep
+   holding the button → a `Preparing … to drag out…` toast and a Transfer
+   Queue row appear; once the download finishes the OS drag starts. Release
+   over the desktop → the file lands there with the remote name.
+6. Drag a large remote file out and release immediately → the download keeps
+   running in the Transfer Queue, then a `… ready — drag it out of the window
+again to save` toast appears. Drag it out again → the OS drag starts at once
+   without a second download. Cancel a staging download from the Transfer
+   Queue → no drag starts and no error toast appears.
+7. Drag a remote folder out, and a file out of a Docker / agent session → an
+   info toast explains it is not supported and suggests Download.
+8. While a staged copy exists, check its directory under the app cache
+   (`…/drag-out/<pid>-<uuid>`) is `drwx------`; quit termiHub → the
+   `drag-out` directory is empty.
+
 ### Network Tools shared field validation (#1381)
 
 Verifies every Network Tools text input shares one label + input + inline-error
