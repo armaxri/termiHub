@@ -6,6 +6,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { createInlineImagesController, type InlineImagesController } from "./inlineImages";
 import "@xterm/xterm/css/xterm.css";
 import "./Terminal.css";
 import { ConnectionConfig } from "@/types/terminal";
@@ -363,6 +364,9 @@ export function Terminal({
   // the DOM renderer mid-session. Lives at component scope so the output-flush
   // effect and the terminal-init effect (which owns the addon) share it.
   const webglRendererActiveRef = useRef(false);
+  // Inline-image controller for the live xterm (PROD-057). Created and disposed
+  // with the xterm instance; the settings effect below toggles it live.
+  const inlineImagesRef = useRef<InlineImagesController | null>(null);
   // Cancellation token for a teardown (persistent-detach / close) deferred on
   // unmount. Rather than a wall-clock `setTimeout(…, 50)` guess (FEC-014 /
   // WA-FE-009), the teardown is deferred to a microtask so a same-tick effect
@@ -1488,6 +1492,19 @@ export function Terminal({
       el.dataset.terminalRenderer = "dom";
     }
 
+    // Inline images (PROD-057): SIXEL + iTerm2 inline image protocol via the
+    // lazily-imported image addon, with conservative memory caps (see
+    // inlineImages.ts). Loaded after open() and after the renderer so its image
+    // layer sits over whichever renderer (WebGL or DOM) is live. Images are kept
+    // only in the addon's store, never in the text buffer, so the scrollback
+    // snapshot below carries no image data — a reconnect replays text only.
+    const inlineImages = createInlineImagesController(xterm, {
+      enabled: appSettings.terminalInlineImages !== false,
+      onError: (err) =>
+        frontendLog("terminal", `inline images unavailable tab=${tabId}: ${String(err)}`),
+    });
+    inlineImagesRef.current = inlineImages;
+
     // Instantiate the syntax-highlighting engine for this xterm and apply the
     // effective config. Created before the scrollback replay below so its
     // onWriteParsed hook (registered by `enable`) also scans replayed content.
@@ -1831,6 +1848,10 @@ export function Terminal({
       // context-loss fallback, in which case it is already disposed.
       webglAddon?.dispose();
       webglAddon = null;
+      // Dispose the inline-image addon (and cancel any in-flight lazy load) on
+      // the same boundary as the terminal (PROD-057).
+      inlineImages.dispose();
+      if (inlineImagesRef.current === inlineImages) inlineImagesRef.current = null;
       // Reset the renderer flag so a reconnect starts on the DOM-safe path
       // (refresh enabled) until the new xterm re-activates WebGL (#2107).
       webglRendererActiveRef.current = false;
@@ -2025,6 +2046,12 @@ export function Terminal({
   useEffect(() => {
     commandMarksRef.current?.setDecorationsEnabled(commandDecorations !== false);
   }, [commandDecorations]);
+
+  // Toggle inline images live (PROD-057).
+  const inlineImagesEnabled = projectedSettings.terminalInlineImages !== false;
+  useEffect(() => {
+    inlineImagesRef.current?.setEnabled(inlineImagesEnabled);
+  }, [inlineImagesEnabled]);
 
   // Keep the backend's per-session line ending in sync when the global default
   // or this connection's override changes while the terminal is open.

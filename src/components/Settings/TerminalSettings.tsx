@@ -144,6 +144,20 @@ export function TerminalSettings({ settings, onChange, visibleFields }: Terminal
             />
           </SettingsField>
         )}
+        {show("terminalInlineImages") && (
+          <SettingsField
+            label="Inline Images"
+            hint="Render images sent by the shell (SIXEL and the iTerm2 inline image protocol, e.g. img2sixel, imgcat). Oversized images are dropped and each terminal's image memory is capped; images are not kept across reconnects."
+          >
+            <Toggle
+              data-testid="settings-terminal-inline-images"
+              checked={settings.terminalInlineImages ?? true}
+              onCheckedChange={(checked) =>
+                onChange({ ...settings, terminalInlineImages: checked })
+              }
+            />
+          </SettingsField>
+        )}
         {show("askOpenSavedFileInTab") && (
           <SettingsField
             label="Open Saved File in Tab"
