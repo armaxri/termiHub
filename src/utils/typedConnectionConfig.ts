@@ -89,6 +89,8 @@ export interface TelnetConnectionConfigFields {
   connectTimeoutSecs?: number;
   /** Terminal type reported via TERMINAL-TYPE (RFC 1091); default `xterm-256color`. */
   terminalType?: string;
+  /** `"character"` (default: server echo, keystrokes sent immediately) or `"line"` (local echo + line editing). */
+  inputMode?: string;
   /** `"none"` (manual login, default) or `"password"` (prompt-driven auto-login). */
   authMethod?: string;
   /** Auto-login username. */
