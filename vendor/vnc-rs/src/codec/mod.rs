@@ -132,6 +132,22 @@ pub(crate) fn pixel_value(format: &PixelFormat, bytes: &[u8]) -> u32 {
     }
 }
 
+/// Append `value` to `out` as one `format` pixel of `bytes_per_pixel` wire
+/// bytes, honouring the big-endian flag — the inverse of [`pixel_value`].
+pub(crate) fn push_pixel(
+    format: &PixelFormat,
+    value: u32,
+    bytes_per_pixel: usize,
+    out: &mut Vec<u8>,
+) {
+    let n = bytes_per_pixel.min(4);
+    if format.big_endian_flag != 0 {
+        out.extend_from_slice(&value.to_be_bytes()[4 - n..]);
+    } else {
+        out.extend_from_slice(&value.to_le_bytes()[..n]);
+    }
+}
+
 /// Scale a colour channel `value` in `0..=max` to `0..=255`, rounding to the
 /// nearest step (`31 -> 255`, `63 -> 255`, `0 -> 0`). A zero `max` yields 0.
 pub(crate) fn scale_channel(value: u32, max: u16) -> u8 {
@@ -158,7 +174,7 @@ pub(crate) fn pixel_rgb(format: &PixelFormat, value: u32) -> [u8; 3] {
 
 /// For a 32-bpp pixel format whose RGB channels are three 8-bit lanes, the bit
 /// shift of the remaining (alpha) byte. Any other format is unsupported by the
-/// decoders that emit RGBA directly (Tight, cursor) — upstream hit
+/// decoders that emit RGBA directly (Tight's 24-bit TPIXEL path) — upstream hit
 /// `unreachable!()` here.
 pub(crate) fn alpha_shift(format: &PixelFormat) -> Result<u32, VncError> {
     if format.bits_per_pixel != 32 {
@@ -238,6 +254,21 @@ mod tests {
         assert_eq!(pixel_value(&pf, &[0x12, 0x34]), 0x1234);
         let rgba = PixelFormat::rgba();
         assert_eq!(pixel_value(&rgba, &[1, 2, 3, 4]), 0x0403_0201);
+    }
+
+    #[test]
+    fn push_pixel_round_trips_with_pixel_value() {
+        for big_endian in [0, 1] {
+            let mut pf = PixelFormat::rgb565();
+            pf.big_endian_flag = big_endian;
+            let mut out = Vec::new();
+            push_pixel(&pf, 0xABCD, 2, &mut out);
+            assert_eq!(out.len(), 2);
+            assert_eq!(pixel_value(&pf, &out), 0xABCD);
+        }
+        let mut out = Vec::new();
+        push_pixel(&PixelFormat::rgb565(), 0x1234, 2, &mut out);
+        assert_eq!(out, vec![0x34, 0x12]);
     }
 
     #[test]
