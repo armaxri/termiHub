@@ -1,9 +1,11 @@
 import { useState, useCallback, useRef } from "react";
 import { Download, Play, StopCircle } from "lucide-react";
 import { Button, Field, Input, Select } from "@/components/ui";
-import { dnsRecordsToCsv, exportNetworkResults } from "./exportResults";
+import { dnsRecordsTable, dnsRecordsToCsv, exportNetworkResults } from "./exportResults";
+import { NetworkToolHistory } from "./NetworkToolHistory";
+import { paramString, recordToolRun, useRerunAfterUpdate } from "./runHistory";
 import { networkDnsLookup } from "@/services/networkApi";
-import type { DnsRecord, DnsRecordType, DnsResult } from "@/types/network";
+import type { DnsRecord, DnsRecordType, DnsResult, NetworkToolRun } from "@/types/network";
 import { DiagnosticResultsTable } from "./DiagnosticResultsTable";
 import { validateHost } from "@/utils/fieldValidation";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
@@ -55,6 +57,9 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
     setQueryMs(null);
     setError(null);
     setRunning(true);
+    const startedAt = new Date().toISOString();
+    const params = { hostname, recordType, server: server.trim() };
+    let canceled = false;
 
     try {
       // Race the lookup against a bounded timeout and a user Cancel so a hung
@@ -65,6 +70,7 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
           reject(new Error(`DNS lookup timed out after ${DNS_TIMEOUT_MS / 1000}s`));
         }, DNS_TIMEOUT_MS);
         cancelRef.current = () => {
+          canceled = true;
           clearTimeout(timer);
           cancelRef.current = null;
           reject(new Error("DNS lookup canceled"));
@@ -83,14 +89,42 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
       });
       setRecords(result.records);
       setQueryMs(result.queryMs);
+      void recordToolRun({
+        tool: "dns-lookup",
+        status: "completed",
+        startedAt,
+        params,
+        summary: `${result.records.length} ${recordType} record(s) in ${result.queryMs}ms`,
+        table: dnsRecordsTable(result.records),
+      });
     } catch (err) {
       setError(String(err));
+      void recordToolRun({
+        tool: "dns-lookup",
+        status: canceled ? "canceled" : "error",
+        startedAt,
+        params,
+        summary: canceled ? "Lookup canceled" : "Lookup failed",
+        error: canceled ? undefined : String(err),
+      });
       frontendLog("dns_lookup", `DNS lookup failed: ${err}`);
       throw err; // keep the async Button in its error path (no false success flash)
     } finally {
       setRunning(false);
     }
   }, [hostname, recordType, server]);
+
+  const requestRerun = useRerunAfterUpdate(handleRun);
+  const handleRerun = useCallback(
+    (past: NetworkToolRun) => {
+      setHostname(paramString(past, "hostname"));
+      const type = paramString(past, "recordType") as DnsRecordType;
+      setRecordType(RECORD_TYPES.includes(type) ? type : "A");
+      setServer(paramString(past, "server"));
+      requestRerun();
+    },
+    [requestRerun]
+  );
 
   const handleCancel = useCallback(() => {
     cancelRef.current?.();
@@ -211,6 +245,8 @@ export function DnsLookupPanel({ prefillHost }: DnsLookupPanelProps) {
           queryMs != null ? `Query time: ${queryMs}ms · ${records.length} record(s) found` : null
         }
       />
+
+      <NetworkToolHistory tool="dns-lookup" onRerun={handleRerun} rerunDisabled={running} />
     </form>
   );
 }

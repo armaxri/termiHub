@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Download, Play, StopCircle } from "lucide-react";
 import { Button, Field, Input, NumberInput } from "@/components/ui";
-import { exportNetworkResults, pingResultsToCsv } from "./exportResults";
+import { exportNetworkResults, pingResultsTable, pingResultsToCsv } from "./exportResults";
+import { NetworkToolHistory } from "./NetworkToolHistory";
+import { paramNumber, paramString, useRecordRunOnFinish, useRerunAfterUpdate } from "./runHistory";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
   networkPingStart,
@@ -10,7 +12,7 @@ import {
   onPingComplete,
   onPingError,
 } from "@/services/networkApi";
-import type { PingResult, PingStats, DiagnosticStatus } from "@/types/network";
+import type { PingResult, PingStats, DiagnosticStatus, NetworkToolRun } from "@/types/network";
 import { LatencyChart } from "./LatencyChart";
 import { deriveLivePingStats } from "./pingStats";
 import { validateHost, validateIntRange } from "@/utils/fieldValidation";
@@ -150,6 +152,31 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
   const handleExport = useCallback(async () => {
     await exportNetworkResults(`ping-${host || "results"}`, pingResultsToCsv(results));
   }, [host, results]);
+
+  // Record every finished run to the local history (PROD-032).
+  useRecordRunOnFinish("ping", status, () => ({
+    params: {
+      host,
+      intervalMs: intervalMs === "" ? null : intervalMs,
+      count: count === "" ? null : count,
+    },
+    summary: stats
+      ? `${stats.received}/${stats.sent} received, ${stats.lossPercent.toFixed(1)}% loss, avg ${stats.avgMs.toFixed(0)}ms`
+      : `${results.length} repl${results.length === 1 ? "y" : "ies"}`,
+    table: pingResultsTable(results),
+    error,
+  }));
+
+  const requestRerun = useRerunAfterUpdate(handleStart);
+  const handleRerun = useCallback(
+    (run: NetworkToolRun) => {
+      setHost(paramString(run, "host"));
+      setIntervalMs(paramNumber(run, "intervalMs"));
+      setCount(paramNumber(run, "count"));
+      requestRerun();
+    },
+    [requestRerun]
+  );
 
   // Cleanup on unmount.
   useEffect(() => {
@@ -295,6 +322,8 @@ export function PingPanel({ prefillHost }: PingPanelProps) {
           <span>Waiting for first reply…</span>
         </div>
       )}
+
+      <NetworkToolHistory tool="ping" onRerun={handleRerun} rerunDisabled={status === "running"} />
     </form>
   );
 }
