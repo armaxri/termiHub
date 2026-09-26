@@ -33,6 +33,7 @@ use crate::service::{
     ServiceStatus,
 };
 
+use super::activity::{ActivitySnapshot, ServerActivity};
 use super::config::{
     AtomicServerStats, EmbeddedServerConfig, ServerState, ServerStats, ServerStatus, ServerType,
 };
@@ -200,6 +201,9 @@ pub struct EmbeddedServerService {
     status: ServiceStatus,
     /// Core event channel status transitions are emitted through.
     events: EventChannel,
+    /// Access log + detailed stats (PROD-034/036). Lives as long as the
+    /// service, so the log survives a stop/start of the server.
+    activity: Arc<ServerActivity>,
 }
 
 impl EmbeddedServerService {
@@ -211,7 +215,25 @@ impl EmbeddedServerService {
             active: None,
             status: ServiceStatus::Stopped,
             events: EventChannel::new(),
+            activity: ServerActivity::new(),
         }
+    }
+
+    /// Read access-log entries newer than `since` plus detailed statistics
+    /// (PROD-034, PROD-036). Works whether or not the server is running; the
+    /// live connection/byte counters are zero while stopped.
+    pub fn activity_snapshot(&self, since: Option<u64>) -> ActivitySnapshot {
+        let live = self
+            .active
+            .as_ref()
+            .map(|a| a.stats.snapshot())
+            .unwrap_or_default();
+        self.activity.snapshot(since, &live)
+    }
+
+    /// Clear the access log and its request/error/top counters.
+    pub fn clear_activity(&self) {
+        self.activity.clear();
     }
 
     /// Emit a [`ServerState`] on the event channel as a `status` [`ServiceEvent`].
@@ -296,7 +318,7 @@ impl EmbeddedServerService {
         self.set_status_and_emit(ServiceStatus::Starting, ServerStats::default(), None);
 
         let shutdown = ShutdownSignal::new();
-        let stats = AtomicServerStats::new();
+        let stats = AtomicServerStats::with_activity(Arc::clone(&self.activity));
         let error_slot: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
         // One-slot channel the server thread uses to confirm (or reject) its real
@@ -509,7 +531,7 @@ impl EmbeddedServerService {
         svc.active = Some(ActiveServer {
             shutdown: ShutdownSignal::new(),
             thread_handle: thread::spawn(|| {}),
-            stats: AtomicServerStats::new(),
+            stats: AtomicServerStats::with_activity(Arc::clone(&svc.activity)),
             started_at: chrono::Utc::now().to_rfc3339(),
             error: Arc::new(Mutex::new(None)),
         });
@@ -961,6 +983,39 @@ mod tests {
         cfg.server_type = ServerType::Ftp;
         let err = svc.start(serde_json::to_value(&cfg).unwrap()).await;
         assert!(matches!(err, Err(ServiceError::InvalidConfig(_))));
+    }
+
+    // ── access log / detailed stats (PROD-034, PROD-036) ───────────────────────
+
+    #[test]
+    fn activity_log_survives_restart_and_is_readable_when_stopped() {
+        use crate::embedded_servers::activity::AccessRecord;
+
+        let mut svc = EmbeddedServerService::new(ServerType::Http);
+        svc.start_with(http_config(0)).expect("start");
+        // The running server records into the service-owned log.
+        let running_stats = &svc.active.as_ref().expect("active").stats;
+        assert!(Arc::ptr_eq(&running_stats.activity, &svc.activity));
+        running_stats
+            .activity
+            .record(AccessRecord::new("GET", "200", true).path("/a"));
+        svc.shutdown();
+
+        // Readable while stopped; live counters are zero.
+        let stopped = svc.activity_snapshot(None);
+        assert_eq!(stopped.entries.len(), 1);
+        assert_eq!(stopped.stats.active_connections, 0);
+        assert_eq!(stopped.stats.total_requests, 1);
+
+        // A restart keeps the log.
+        svc.start_with(http_config(0)).expect("restart");
+        assert_eq!(svc.activity_snapshot(None).entries.len(), 1);
+
+        svc.clear_activity();
+        let cleared = svc.activity_snapshot(None);
+        assert!(cleared.entries.is_empty());
+        assert_eq!(cleared.epoch, stopped.epoch + 1);
+        svc.shutdown();
     }
 
     #[test]
