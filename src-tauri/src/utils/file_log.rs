@@ -197,6 +197,16 @@ pub fn log_file_path() -> Option<PathBuf> {
     log_dir().map(|d| d.join(format!("{LOG_STEM}.{LOG_EXT}")))
 }
 
+/// Every log generation (`termihub.log`, `termihub.1.log`, …) that currently
+/// exists in `dir`, newest first. Only termiHub's own app-log files — never the
+/// `sessions/` transcripts that live beside them (OBS-010 diagnostics export).
+pub fn existing_log_files_in(dir: &Path) -> Vec<PathBuf> {
+    (0..MAX_FILES)
+        .map(|generation| Rotator::path_in(dir, generation))
+        .filter(|p| p.is_file())
+        .collect()
+}
+
 /// A size-rotating, count-capped log file.
 ///
 /// Cloneable and cheap to clone: clones share one file handle and one lock, so

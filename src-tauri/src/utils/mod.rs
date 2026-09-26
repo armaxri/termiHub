@@ -1,4 +1,5 @@
 pub mod config_paths;
+pub mod diagnostics_bundle;
 pub mod docker_detect;
 pub mod download;
 pub mod errors;

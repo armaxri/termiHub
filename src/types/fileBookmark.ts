@@ -17,3 +17,12 @@ export interface FileBookmark {
   /** RFC 3339 timestamp of when the bookmark was added. */
   createdAt: string;
 }
+
+/**
+ * Bookmarks in scope `from` moved to scope `to` — a saved connection's id
+ * changed on a rename or move (#3569). Mirrors the backend `ScopeRekey`.
+ */
+export interface FileBookmarkScopeRekey {
+  from: string;
+  to: string;
+}

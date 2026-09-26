@@ -621,6 +621,24 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "showCrashReportNotice",
+    label: "Crash Report Notice",
+    description:
+      "Offer to view or export the local crash report on the next start after a crash; export a diagnostics bundle",
+    category: "general",
+    keywords: [
+      "crash",
+      "crash report",
+      "diagnostics",
+      "export diagnostics",
+      "bug report",
+      "notice",
+      "privacy",
+      "telemetry",
+      "troubleshoot",
+    ],
+  },
+  {
     id: "experimentalFeaturesEnabled",
     label: "Allow Experimental Features",
     description:

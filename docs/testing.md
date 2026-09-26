@@ -3972,6 +3972,31 @@ evidence exists on disk after the process is gone. Referenced by PR #1578.
    enough churn `termihub.2.log` is the oldest kept — `termihub.3.log` must
    **never** appear and the directory must stay under ~15 MiB.
 
+### Local crash reports and Export Diagnostics (#3571, OBS-010)
+
+Redaction, bounded retention, the notify-once marker and the bundle contents are
+unit-tested (`core/src/diagnostics/*_tests.rs`,
+`src-tauri/src/utils/diagnostics_bundle_tests.rs`, the panic-hook tests in
+`src-tauri/src/utils/panic_hook.rs` / `agent/src/panic_hook.rs`) and the UI is
+component-tested (`src/components/Diagnostics/*.test.tsx`). These steps check the
+real app. No step needs network access — run them offline to prove it.
+
+1. Quit termiHub. In the log directory (see _Application log file_ above) create
+   `crash-reports/crash-20990101T000000Z-1.txt` containing any text, e.g.
+   `message: test password=hunter2 from 10.1.2.3`.
+2. Launch via `./scripts/dev.sh`. The app starts normally and a notice
+   "termiHub closed unexpectedly last time" appears at the bottom — it must not
+   delay or block the window.
+3. Click **View Report**: the report opens in a dialog. Close it and restart the
+   app: the notice does **not** reappear (one notice per crash).
+4. Add a second, newer report file and restart; choose **Don't show again**.
+   Restart once more: no notice. **Settings → General → Diagnostics → Crash
+   Report Notice** is now off; turning it back on persists.
+5. Settings menu (gear) → **Export Diagnostics…**: the dialog lists `README.txt`,
+   `system-info.txt`, the `logs/termihub*.log` files and the crash reports —
+   nothing from `logs/sessions/`. Click **Save…**, pick a folder, and open the
+   zip: `hunter2`, `10.1.2.3`, your username and your hostname appear nowhere.
+
 ### Scheduled workflows and macros (#3523, PROD-043)
 
 The timing, missed-run, overlap, pause and confirmation rules are unit-tested

@@ -6,7 +6,11 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { FileBookmark } from "@/types/fileBookmark";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { FileBookmark, FileBookmarkScopeRekey } from "@/types/fileBookmark";
+
+/** Emitted by the backend after it moved bookmarks to another scope (#3569). */
+export const FILE_BOOKMARKS_REKEYED_EVENT = "file-bookmarks-rekeyed";
 
 /** Every bookmark in the order it was added — all scopes, or one `scope`. */
 export async function listFileBookmarks(scope?: string): Promise<FileBookmark[]> {
@@ -37,4 +41,16 @@ export async function renameFileBookmark(id: string, name: string): Promise<File
 /** Remove a bookmark. */
 export async function removeFileBookmark(id: string): Promise<void> {
   await invoke("remove_file_browser_bookmark", { id });
+}
+
+/**
+ * Subscribe to the backend moving bookmarks between scopes — it re-keys a
+ * saved connection's bookmarks when the connection's id changes (#3569).
+ */
+export async function onFileBookmarksRekeyed(
+  callback: (renames: FileBookmarkScopeRekey[]) => void
+): Promise<UnlistenFn> {
+  return await listen<FileBookmarkScopeRekey[]>(FILE_BOOKMARKS_REKEYED_EVENT, (event) =>
+    callback(event.payload)
+  );
 }

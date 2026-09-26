@@ -85,7 +85,7 @@ See [Verifying release artifacts](docs/contributing.md#verifying-release-artifac
 - **Serial port support** requires platform-specific drivers — see [Serial Port Setup](#serial-port-setup).
 - **Telnet connections are unencrypted** by protocol design; avoid them over untrusted networks.
 
-> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases. That is the only network call termiHub makes on its own — there is no telemetry or analytics. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
+> **What phones home:** On startup (and every 24 hours while running) termiHub queries the GitHub Releases API (`api.github.com/repos/armaxri/termiHub`) to notify you of new or security-relevant releases. That is the only network call termiHub makes on its own — there is no telemetry, analytics or crash reporting. If termiHub crashes, a redacted crash report is kept **only on your computer**; you can view it or export a diagnostics bundle yourself (Settings menu → **Export Diagnostics…**), and nothing leaves the machine unless you share that file. It never installs anything automatically; it only notifies and can open the Releases page in your browser. Disable the check under **Settings → Updates → Auto-check for updates → Never**.
 
 Prefer to build it yourself? See [Development](#development) below.
 

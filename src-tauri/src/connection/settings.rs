@@ -345,6 +345,11 @@ pub struct AppSettings {
     /// The `TERMIHUB_FILE_LOG` env var overrides it at startup.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_log_level: Option<String>,
+    /// Show the next-start notice after a crash (OBS-010). `None` → shown (the
+    /// default); the notice's "Don't show again" persists `false`. Owned by the
+    /// frontend `AppSettings.showCrashReportNotice`; the backend only persists it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub show_crash_report_notice: Option<bool>,
     /// Forward-compatibility catch-all (#2311).
     ///
     /// Preserves any field the frontend `AppSettings` interface
@@ -415,6 +420,7 @@ impl Default for AppSettings {
             workflow_local_process_enabled: false,
             workflow_local_process_allowlist: Vec::new(),
             file_log_level: None,
+            show_crash_report_notice: None,
             extra: serde_json::Map::new(),
         }
     }

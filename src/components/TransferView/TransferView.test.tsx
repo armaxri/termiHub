@@ -45,6 +45,7 @@ const bookmarksApi = vi.hoisted(() => ({
   addFileBookmark: vi.fn(),
   renameFileBookmark: vi.fn(),
   removeFileBookmark: vi.fn(),
+  onFileBookmarksRekeyed: vi.fn(() => Promise.resolve(() => {})),
 }));
 vi.mock("@/services/fileBookmarksApi", () => bookmarksApi);
 

@@ -128,6 +128,9 @@ quick-xml = "0.41"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry", "fmt", "env-filter"] }
 chrono = "0.4"
+# ZIP writer/reader: the "Export diagnostics" bundle (OBS-010, all platforms) and,
+# on Windows, VcXsrv acquisition (X server provisioning: download + extract).
+zip = "2"
 argon2 = "0.5"
 aes-gcm = "0.10"
 zeroize = { version = "1", features = ["derive"] }
@@ -214,10 +217,6 @@ windows-sys = { version = "0.59", features = [
 ] }
 # Windows Credential Manager backend for the `keyring` crate.
 keyring = { version = "3", default-features = false, features = ["windows-native"] }
-# VcXsrv acquisition (X server provisioning): download + extract. Windows-only —
-# the X server subsystem provisions VcXsrv, which does not exist on other
-# platforms. (SHA-256 hashing is a shared dependency; see `[dependencies]`.)
-zip = "2"
 # Windows Registry access for Explorer context-menu registration (#1368).
 # Writes user-level HKCU keys (no elevation); Windows-only by nature.
 winreg = "0.55"

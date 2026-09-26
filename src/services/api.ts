@@ -40,6 +40,11 @@ import type {
   BackupRestoreResult,
   BackupSectionInfo,
 } from "@/types/backup";
+import type {
+  CrashReportNotice,
+  DiagnosticsBundleEntry,
+  DiagnosticsExportResult,
+} from "@/types/diagnostics";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
 import type { ImportPreview } from "@/types/generated/ImportPreview";
@@ -1314,6 +1319,33 @@ export async function setFileLogLevel(
 /** Absolute path of the current application log file, or `null` if unresolved. */
 export async function getLogFilePath(): Promise<string | null> {
   return await invoke<string | null>("get_log_file_path");
+}
+
+/** The pending crash-report notice, or `null` when nothing crashed since last acknowledged (OBS-010). */
+export async function getCrashReportNotice(): Promise<CrashReportNotice | null> {
+  return await invoke<CrashReportNotice | null>("get_crash_report_notice");
+}
+
+/** Mark every current crash report as seen so the next-start notice does not repeat. */
+export async function acknowledgeCrashReports(): Promise<void> {
+  await invoke("acknowledge_crash_reports");
+}
+
+/** Read one (already redacted) crash report's text by file name. */
+export async function readCrashReport(name: string): Promise<string> {
+  return await invoke<string>("read_crash_report", { name });
+}
+
+/** List the files a diagnostics export would contain, before anything is written. */
+export async function previewDiagnosticsBundle(): Promise<DiagnosticsBundleEntry[]> {
+  return await invoke<DiagnosticsBundleEntry[]>("preview_diagnostics_bundle");
+}
+
+/** Write the redacted diagnostics zip to a user-chosen absolute `.zip` path. */
+export async function exportDiagnosticsBundle(
+  destination: string
+): Promise<DiagnosticsExportResult> {
+  return await invoke<DiagnosticsExportResult>("export_diagnostics_bundle", { destination });
 }
 
 /**
