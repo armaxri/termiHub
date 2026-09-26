@@ -63,6 +63,7 @@ pub mod pending;
 pub mod plugins;
 pub mod restore;
 pub mod sections;
+pub mod trust_map;
 
 #[cfg(test)]
 mod tests;

@@ -1283,7 +1283,7 @@ original snapshot, and the manifest may only name known store files.
   is versioned where it leaves the machine: the backup section records schema version 1
   (`TRUST_STORE_SCHEMA_VERSION`), and a section with a newer version is refused. The on-disk
   migration story itself is still open in [#2745](https://github.com/armaxri/termiHub/issues/2745).
-- **Plugins** (`backup/plugins.rs`) — one section with every installed plugin's files
+- **Plugins** (`backup/plugins/`) — one section with every installed plugin's files
   (base64), its `plugin-state.json` record (including the signer record, as-is), its settings and
   the pinned publisher keys (each must still hash to its `keyId`). Encrypted-only as well. Each
   restored plugin's manifest must validate and name its directory, and file paths must stay inside
