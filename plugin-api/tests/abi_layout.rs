@@ -1,4 +1,5 @@
-//! Layout freeze for native plugin ABI **1.0** (#3367, PLG-003).
+//! Layout freeze for native plugin ABI **1.0** (#3367, PLG-003), plus the
+//! **1.1** appends (#3576, PLG-013/PLG-014).
 //!
 //! The ABI is `major.minor` with an **append-only** rule for minors (see
 //! `termihub_plugin_api::version`). This test is what makes that rule
@@ -25,10 +26,11 @@ use termihub_plugin_api::symbols::{
     SYMBOL_PLUGIN_SHUTDOWN,
 };
 use termihub_plugin_api::{
-    AbiVersion, FfiByteSlice, FfiOwnedBytes, FfiStr, FfiString, PluginBackend, PluginBackendVTable,
-    PluginFileMetadata, PluginHostBridge, PluginHostBridgeVTable, PluginInfo, PluginOutputSender,
-    PluginSessionConfig, PluginStatus, PluginTcpStream, PluginTcpStreamVTable,
-    CURRENT_PLUGIN_ABI_VERSION,
+    AbiVersion, FfiByteSlice, FfiOwnedBytes, FfiStr, FfiString, PanicStrategy, PluginBackend,
+    PluginBackendVTable, PluginFileMetadata, PluginHostBridge, PluginHostBridgeVTable,
+    PluginHostContext, PluginHostServices, PluginHostServicesVTable, PluginInfo, PluginLogLevel,
+    PluginOutputSender, PluginSessionConfig, PluginStatus, PluginTcpStream, PluginTcpStreamVTable,
+    ABI_1_1, CURRENT_PLUGIN_ABI_VERSION,
 };
 
 /// Pointer width — every pointer, `usize`, and function pointer in the ABI.
@@ -39,6 +41,13 @@ fn abi_major_is_frozen_at_1() {
     // A major bump is a maintainer decision that re-baselines this whole file.
     assert_eq!(CURRENT_PLUGIN_ABI_VERSION.major, 1);
     assert_eq!(AbiVersion::new(1, 0).to_packed(), 0x0001_0000);
+}
+
+#[test]
+fn abi_minor_is_1_1() {
+    // Bump deliberately, together with a new "appended in 1.N" block below.
+    assert_eq!(CURRENT_PLUGIN_ABI_VERSION, AbiVersion::new(1, 1));
+    assert_eq!(ABI_1_1.to_packed(), 0x0001_0001);
 }
 
 #[test]
@@ -113,6 +122,47 @@ fn host_owned_structs_keep_their_1_0_prefix() {
     assert_eq!(offset_of!(PluginInfo, version), 8 * P);
     assert_eq!(offset_of!(PluginInfo, api_version), 12 * P);
     assert!(size_of::<PluginInfo>() >= 12 * P + 4);
+}
+
+#[test]
+fn abi_1_1_appends_sit_after_the_1_0_prefix() {
+    // PLG-013: the toolchain record is appended to the host-allocated
+    // PluginInfo, after `api_version` (padded to pointer alignment).
+    assert_eq!(offset_of!(PluginInfo, rustc), 13 * P);
+    assert_eq!(offset_of!(PluginInfo, panic_strategy), 17 * P);
+    assert!(size_of::<PluginInfo>() >= 17 * P + 4);
+    assert_eq!(PanicStrategy::WIRE_UNKNOWN, 0);
+    assert_eq!(PanicStrategy::WIRE_UNWIND, 1);
+    assert_eq!(PanicStrategy::WIRE_ABORT, 2);
+
+    // PLG-014: the host-context pointer is appended to the session config.
+    assert_eq!(offset_of!(PluginSessionConfig, host_context), 4 * P);
+    assert!(size_of::<PluginSessionConfig>() >= 5 * P);
+
+    // The context itself is host-owned and reached by pointer: prefix pinned,
+    // later minors may append.
+    assert_eq!(offset_of!(PluginHostContext, host_version), 0);
+    assert_eq!(offset_of!(PluginHostContext, data_dir), 2 * P);
+    assert_eq!(offset_of!(PluginHostContext, services_ctx), 4 * P);
+    assert_eq!(offset_of!(PluginHostContext, services_vtable), 5 * P);
+    assert!(size_of::<PluginHostContext>() >= 6 * P);
+
+    // The services table is a host static: prefix pinned, may grow.
+    assert_eq!(offset_of!(PluginHostServicesVTable, retain), 0);
+    assert_eq!(offset_of!(PluginHostServicesVTable, release), P);
+    assert_eq!(offset_of!(PluginHostServicesVTable, log), 2 * P);
+    assert_eq!(offset_of!(PluginHostServicesVTable, is_cancelled), 3 * P);
+    assert!(size_of::<PluginHostServicesVTable>() >= 4 * P);
+
+    // The services handle (ctx, vtable) is frozen from 1.1 on.
+    assert_eq!(size_of::<PluginHostServices>(), 2 * P);
+
+    // Log levels travel as u32 wire values.
+    assert_eq!(PluginLogLevel::Error.as_wire(), 1);
+    assert_eq!(PluginLogLevel::Warn.as_wire(), 2);
+    assert_eq!(PluginLogLevel::Info.as_wire(), 3);
+    assert_eq!(PluginLogLevel::Debug.as_wire(), 4);
+    assert_eq!(PluginLogLevel::Trace.as_wire(), 5);
 }
 
 #[test]
