@@ -9,7 +9,8 @@ subsystem: whole app
 evidence:
   - Cargo.toml
   - package.json
-status: open
+status: fixed
+resolution: "#3575 — no-phone-home decision recorded (ADR-16); local redacted crash reports (desktop+agent panic hooks), next-start notice, user-initiated diagnostics export"
 ---
 
 ## What
