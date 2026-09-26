@@ -59,7 +59,7 @@ jobs:
           ref: develop
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: ./.github/actions/setup-rust
 
       # Prebuilt binary download (~seconds) instead of compiling from source,
       # matching the Security Audit job. Used only for the advisory sanity

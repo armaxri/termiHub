@@ -67,18 +67,24 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      # Pin the clippy/rustfmt toolchain (issue #2549). A floating `@stable`
-      # lets any new Rust release introduce clippy lints that fire under the
-      # `-D warnings` gate below, reddening every PR with no code change (this
-      # blocked all PRs on 2026-08-24, #2547). A fixed version makes clippy
-      # results reproducible; bump it deliberately — treat it as a periodic
-      # "bump toolchain" chore so new lints are adopted on purpose, not by
-      # surprise. Only this lint job is pinned: the other cargo jobs build/test
-      # rather than lint with `-D warnings`, so a new stable release cannot red
-      # them the same way, and pinning them (or a repo-root rust-toolchain.toml)
-      # would needlessly freeze local dev and every other CI job on one version.
+      # Fails if `.github/rust-version` (the CI toolchain pin), the workspace
+      # `rust-version`, and rdp-sidecar's `rust-version` disagree, or if any
+      # workflow installs a toolchain without ./.github/actions/setup-rust
+      # (CI-005, SUP-011, WA-CI-016). Plain Node, preinstalled on the runner.
+      - name: Check Rust toolchain pin consistency
+        run: node scripts/internal/check-rust-version.mjs
+
+      # Pinned toolchain (#2549, CI-005): a floating `@stable` lets any new Rust
+      # release introduce clippy lints that fire under the `-D warnings` gate
+      # below, reddening every PR with no code change (this blocked all PRs on
+      # 2026-08-24, #2547). Every CI Rust job now installs the one version in
+      # `.github/rust-version` via this action, so lints, tests and shipped
+      # binaries all use the same rustc. Bump it deliberately as a "bump
+      # toolchain" chore — docs/contributing.md -> "Rust toolchain version".
+      # Deliberately NOT a repo-root rust-toolchain.toml (#2549): that would
+      # freeze local dev too.
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0 branch
+        uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
 
@@ -226,11 +232,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      # Same pinned clippy toolchain as `rust-quality` (issue #2549): a floating
-      # `@stable` would let a new Rust release red this gate with no code change.
-      # Bump both pins together.
+      # Same pinned toolchain as `rust-quality` (#2549): a floating `@stable`
+      # would let a new Rust release red this gate with no code change. The
+      # version lives only in `.github/rust-version`.
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0 branch
+        uses: ./.github/actions/setup-rust
         with:
           components: clippy
 
@@ -272,12 +278,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
-      # Pin the clippy/rustfmt toolchain to match the workspace rust-quality job
-      # (issue #2549): a floating `@stable` lets a new Rust release introduce
-      # clippy lints that fire under `-D warnings` and red the job with no code
-      # change. Bump deliberately as a "bump toolchain" chore.
+      # Same pinned toolchain as the workspace `rust-quality` job (#2549): a
+      # floating `@stable` lets a new Rust release introduce clippy lints that
+      # fire under `-D warnings` and red the job with no code change. The
+      # version lives only in `.github/rust-version`.
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@62ae3a85dbdd2bedbb5819da8ce45635129289a1 # 1.98.0 branch
+        uses: ./.github/actions/setup-rust
         with:
           components: rustfmt, clippy
 
@@ -514,7 +520,7 @@ jobs:
 
       - name: Setup Rust
         if: needs.changes.outputs.rust != 'false'
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: ./.github/actions/setup-rust
 
       - name: Setup pnpm
         # Only on a leg that runs vitest (see the frontend steps below); the Rust

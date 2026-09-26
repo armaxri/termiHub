@@ -50,7 +50,7 @@ jobs:
       # cargo-llvm-cov needs the llvm-tools-preview rustup component to
       # instrument and merge coverage (TOOL-003).
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        uses: ./.github/actions/setup-rust
         with:
           components: llvm-tools-preview
 

@@ -40,6 +40,12 @@ node scripts\internal\check-tauri-version-drift.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === Rust toolchain pin / rust-version consistency ===
+REM .github/rust-version vs workspace + rdp-sidecar rust-version (CI-005, SUP-011).
+node scripts\internal\check-rust-version.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 if %FAILED%==1 (
     echo SOME CHECKS FAILED. Run scripts\format.cmd to auto-fix formatting.
     exit /b 1
