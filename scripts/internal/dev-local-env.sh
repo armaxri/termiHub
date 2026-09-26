@@ -66,6 +66,8 @@ _thdl_port TERMIHUB_TEST_REMOTE_AGENT_PORT   2211
 _thdl_port TERMIHUB_TEST_TELNET_PORT         2301
 _thdl_port TERMIHUB_TEST_VNC_PORT            2501
 _thdl_port TERMIHUB_TEST_VNC_VENCRYPT_PORT   2502
+_thdl_port TERMIHUB_TEST_RDP_PORT            2601
+_thdl_port TERMIHUB_TEST_RDP_NLA_PORT        2602
 _thdl_port TERMIHUB_TEST_NETWORK_TARGET_PORT 8080
 # FTP fixtures (tests/docker/ftp-server). Control ports plus two passive-port
 # ranges; the ranges are advertised 1:1, so both the min AND max of each range

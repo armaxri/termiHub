@@ -75,6 +75,7 @@ podman compose -f tests/docker/docker-compose.yml up -d
 | `sftp-stress`         | 2210        | `stress` | Pre-populated SFTP stress test data           |
 | `ftp-server`          | 2401 / 2402 | `ftp`    | External FTP/FTPS server + seeded `/pub` tree |
 | `vnc-server`          | 2501        | `vnc`    | x11vnc + Xvfb, static four-quadrant pattern   |
+| `rdp-server`          | 2601 / 2602 | `rdp`    | xrdp (TLS) + FreeRDP shadow server (NLA)      |
 
 ## Networks
 
@@ -271,6 +272,40 @@ The app-level Rust integration test lives at
 and skipping cleanly when the fixture is not up (`require_docker!`). Because
 per-PR CI runs `-m "not integration"` and never brings up Docker, this live
 negotiate → authenticate → decode path is only exercised by a **local** run.
+
+## RDP server (profile: `rdp`)
+
+Two RDP servers in one container, both for user `testuser` / `testpass`:
+
+| Setting  | xrdp                                            | FreeRDP shadow server                  |
+| -------- | ----------------------------------------------- | -------------------------------------- |
+| Port     | `2601` (host) → `3389`                          | `2602` (host) → `3390`                 |
+| Security | TLS (xrdp has no NLA); PAM logon                | NLA/CredSSP against `/etc/winpr/SAM`   |
+| Desktop  | per-user Xorg session, root solid pure RED      | shared `Xvfb :1`, 1024×768, solid BLUE |
+| Extras   | Display Control resize, CLIPRDR `ping:`→`pong:` | —                                      |
+
+xrdp runs with `autorun=Xorg` + `require_credentials=true`
+([`rdp-server/xrdp.ini`](rdp-server/xrdp.ini)): the client's credentials log
+straight into the session, and a wrong password closes the connection instead
+of falling back to xrdp's login window. The session script
+([`rdp-server/startwm.sh`](rdp-server/startwm.sh)) paints the root and runs a
+clipboard echo loop — copying `ping:<x>` into the session makes it reply
+`pong:<x>`, a text round trip through the real server in both directions.
+
+### Verifying the fixture
+
+```bash
+# Build the sidecar the rdp backend spawns (workspace-excluded crate)
+./scripts/build-rdp-sidecar.sh
+
+# Bring the fixture up and drive the rdp backend against it
+docker compose -f tests/docker/docker-compose.yml --profile rdp up -d --wait rdp-server
+cargo test -p termihub-core --features rdp-sidecar --test rdp -- --test-threads=1
+```
+
+The suite ([`core/tests/rdp.rs`](../../core/tests/rdp.rs)) finds the helper via
+`$TERMIHUB_RDP_HELPER` or `rdp-sidecar/target/{debug,release}/`, and skips when
+the fixture or the helper is missing (hard-fails under `TERMIHUB_REQUIRE_DOCKER=1`).
 
 ## Requirements
 

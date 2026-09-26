@@ -121,7 +121,11 @@ fn build_connector_config(cfg: &RdpConfig) -> Result<ConnectorConfig> {
         hardware_id: None,
         license_cache: None,
         enable_server_pointer: true,
-        autologon: false,
+        // Ask the server to log on with the supplied credentials (Client Info
+        // INFO_AUTOLOGON), as mstsc does whenever a password is given. Without
+        // it a TLS-only server — no NLA/CredSSP, e.g. xrdp — ignores the
+        // password and shows its interactive login screen (#3609).
+        autologon: !cfg.password.is_empty(),
         // When off, IronRDP sets the NO_AUDIO_PLAYBACK client-info flag telling
         // the server to suppress audio; enabling it (opt-in per connection, #1764)
         // lets the server stream to our rdpsnd handler.
@@ -1319,6 +1323,25 @@ mod tests {
             conn.credentials,
             Credentials::UsernamePassword { .. }
         ));
+    }
+
+    #[test]
+    fn connector_config_requests_autologon_only_with_a_password() {
+        let with_password = RdpConfig {
+            host: "h".to_string(),
+            username: "user".to_string(),
+            password: "pw".to_string(),
+            security_mode: "tls".to_string(),
+            ..Default::default()
+        };
+        assert!(build_connector_config(&with_password).unwrap().autologon);
+
+        let without_password = RdpConfig {
+            host: "h".to_string(),
+            username: "user".to_string(),
+            ..Default::default()
+        };
+        assert!(!build_connector_config(&without_password).unwrap().autologon);
     }
 
     #[test]

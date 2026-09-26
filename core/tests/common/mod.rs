@@ -434,6 +434,14 @@ pub fn port_vnc() -> u16 {
 pub fn port_vnc_vencrypt() -> u16 {
     resolve_port("TERMIHUB_TEST_VNC_VENCRYPT_PORT", 2502)
 }
+/// rdp-server container (xrdp + xorgxrdp, TLS, `testuser`/`testpass`).
+pub fn port_rdp() -> u16 {
+    resolve_port("TERMIHUB_TEST_RDP_PORT", 2601)
+}
+/// rdp-server container's FreeRDP shadow server (NLA/CredSSP, same user).
+pub fn port_rdp_nla() -> u16 {
+    resolve_port("TERMIHUB_TEST_RDP_NLA_PORT", 2602)
+}
 /// ftp-server container control port (plain FTP + explicit FTPS on :21).
 pub fn port_ftp() -> u16 {
     resolve_port("TERMIHUB_TEST_FTP_PORT", 2401)
