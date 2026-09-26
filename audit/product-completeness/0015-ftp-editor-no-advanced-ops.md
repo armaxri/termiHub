@@ -9,7 +9,8 @@ subsystem: core/backends/ftp, core/backends/ssh/file_browser
 evidence:
   - core/src/backends/ssh/file_browser.rs:363
   - core/src/files/mod.rs:26
-status: open
+status: fixed
+resolution: "#3416 — FTP writability from MLSD perm / mode bits (no invented rwx); editor read-only + FTP limits badge; docs"
 ---
 
 ## What

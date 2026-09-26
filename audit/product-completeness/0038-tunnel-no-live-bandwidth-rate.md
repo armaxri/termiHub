@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/tunnel, src/components/TunnelSidebar
 evidence:
   - core/src/tunnel/config.rs:69
-status: open
+status: fixed
+resolution: "#3416 — tunnel live KB/s (EMA); transfer ETA published by projection + footer aggregate"
 ---
 
 ## What
