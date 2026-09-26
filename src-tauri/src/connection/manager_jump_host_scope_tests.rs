@@ -213,3 +213,72 @@ fn a_hop_that_exists_nowhere_is_not_found() {
     assert!(err.contains("'ghost' not found"), "{err}");
     assert!(!err.contains("disabled"), "{err}");
 }
+
+/// The jump-host reference ids of the connection `id` among `connections`.
+fn hop_ids(connections: &[SavedConnection], id: &str) -> Vec<String> {
+    let conn = connections
+        .iter()
+        .find(|c| c.id == id)
+        .unwrap_or_else(|| panic!("no connection {id}"));
+    conn.config.settings["proxyJump"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["connectionId"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn external_connections(file: &str) -> Vec<SavedConnection> {
+    let store = read_external_store(file).unwrap();
+    flatten_tree(&store.children, None).0
+}
+
+#[test]
+fn renaming_one_holder_of_an_ambiguous_id_leaves_other_files_references_alone() {
+    // `gw` exists in the main store and in an external file, so references to
+    // it are ambiguous. Renaming the main-store one re-points the main store's
+    // own references (they are rewritten in the same write), but must not drag
+    // the external file's references along to the main-store gateway — they
+    // now resolve, unambiguously, to the external file's own `gw`.
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+    let file = external_file(
+        dir.path(),
+        "shared",
+        vec![ssh("gw", "ext-host", &[]), ssh("ext-t", "ext-t", &["gw"])],
+    );
+    configure_external_files(&mgr, &[(&file, true)]);
+    mgr.save_connection(ssh("gw", "main-host", &[])).unwrap();
+    mgr.save_connection(ssh("main-t", "main-t", &["gw"]))
+        .unwrap();
+
+    let mut renamed = ssh("gw", "main-host", &[]);
+    renamed.name = "main-gw".to_string();
+    mgr.save_connection(renamed).unwrap();
+
+    assert_eq!(
+        hop_ids(&mgr.get_all().unwrap().connections, "main-t"),
+        ["main-gw"]
+    );
+    assert_eq!(hop_ids(&external_connections(&file), "ext-t"), ["gw"]);
+    assert_eq!(hop_hosts(&resolve(&mgr, &["gw"]).unwrap()), ["ext-host"]);
+    assert_eq!(
+        hop_hosts(&resolve(&mgr, &["main-gw"]).unwrap()),
+        ["main-host"]
+    );
+}
+
+#[test]
+fn renaming_the_only_holder_of_an_id_still_rewrites_every_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+    let file = external_file(dir.path(), "shared", vec![ssh("ext-t", "ext-t", &["gw"])]);
+    configure_external_files(&mgr, &[(&file, true)]);
+    mgr.save_connection(ssh("gw", "main-host", &[])).unwrap();
+
+    let mut renamed = ssh("gw", "main-host", &[]);
+    renamed.name = "main-gw".to_string();
+    mgr.save_connection(renamed).unwrap();
+
+    assert_eq!(hop_ids(&external_connections(&file), "ext-t"), ["main-gw"]);
+}
