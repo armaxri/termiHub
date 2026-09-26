@@ -3,15 +3,15 @@ use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
 use tracing::{debug, info};
+use zeroize::Zeroizing;
 
-use crate::connection::config::{
-    ConnectionFolder, ImportPreview, ImportResult, SavedConnection, SavedRemoteAgent,
-};
+use crate::connection::config::{ConnectionFolder, ImportPreview, SavedConnection, SavedRemoteAgent};
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::recovery::RecoveryWarning;
 use crate::connection::settings::AppSettings;
 use crate::credential::crypto::DecryptError;
-use crate::credential::CredentialManager;
+use crate::credential::named::{transfer, NamedCredentialRegistry};
+use crate::credential::{vault, CredentialManager, StorageMode};
 use crate::files::bookmarks_manager::FileBookmarkManager;
 use crate::utils::errors::TerminalError;
 
@@ -321,30 +321,60 @@ pub fn reorder_connections(
     Ok(())
 }
 
+/// Gate a connection export that carries credentials: in OS-keychain mode the
+/// OS must verify the user first (fail closed, #3433). termiHub reads its own
+/// keychain items without an OS prompt, so without this gate an unattended,
+/// unlocked session could export every saved secret. An export without a
+/// password carries no secret and is never gated.
+fn authorize_credential_export(
+    credentials: &CredentialManager,
+    export_password: Option<&str>,
+) -> Result<(), vault::VaultError> {
+    if export_password.is_some() && credentials.get_mode() == StorageMode::OsKeychain {
+        vault::authorize_export(credentials, None)?;
+    }
+    Ok(())
+}
+
 /// Export connections with optional encrypted credentials.
 ///
 /// If `export_password` is provided, credentials from the store are
 /// encrypted and included in the export. If `connection_ids` is provided,
 /// only those connections are exported.
+///
+/// Shared named credentials the exported connections / agents reference are
+/// carried too (#3564): their name and kind always, their secrets only with
+/// an export password (sealed like the per-connection ones). In OS-keychain
+/// mode an export with credentials first requires OS user verification — the
+/// same fail-closed gate as the credential-vault export (#3433).
+///
+/// This is async because Argon2id key derivation is CPU-intensive and OS
+/// verification waits for the user.
 #[tauri::command]
-pub fn export_connections_encrypted(
+pub async fn export_connections_encrypted(
     export_password: Option<String>,
     connection_ids: Option<Vec<String>>,
     manager: State<'_, ConnectionManager>,
+    credentials: State<'_, Arc<CredentialManager>>,
+    registry: State<'_, Arc<NamedCredentialRegistry>>,
 ) -> Result<String, TerminalError> {
-    info!(
-        "Exporting connections (encrypted={})",
-        export_password.is_some()
-    );
-    manager
-        .export_encrypted_json(export_password.as_deref(), connection_ids.as_deref())
-        .map_err(config_error)
+    let export_password = export_password.map(Zeroizing::new);
+    let password = export_password.as_deref().map(String::as_str);
+    info!("Exporting connections (encrypted={})", password.is_some());
+    authorize_credential_export(&credentials, password).map_err(config_error)?;
+    let json = manager
+        .export_encrypted_json(password, connection_ids.as_deref())
+        .map_err(config_error)?;
+    transfer::add_to_export(&json, password, &registry, &**credentials).map_err(config_error)
 }
 
 /// Preview the contents of an import file without performing the import.
 #[tauri::command]
 pub fn preview_import(json: String) -> Result<ImportPreview, TerminalError> {
-    manager::preview_import_json(&json).map_err(config_error)
+    let mut preview = manager::preview_import_json(&json).map_err(config_error)?;
+    // Sealed shared-credential secrets (#3564) need the password as well.
+    preview.has_encrypted_credentials |= transfer::has_sealed_secrets(&json);
+    Ok(preview)
 }
 
 /// A structured import failure surfaced to the frontend.
@@ -388,30 +418,68 @@ impl ImportError {
     }
 }
 
+/// Result of a connection import, including the shared named credentials it
+/// carried (#3564).
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../src/types/generated/"))]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectionImportResult {
+    pub connections_imported: usize,
+    pub credentials_imported: usize,
+    /// Shared credentials created, or given their missing secret.
+    pub shared_credentials_imported: usize,
+    /// Notes for the user (a renamed or secret-less shared credential, or
+    /// references dropped because credential storage is off).
+    pub warnings: Vec<String>,
+}
+
 /// Import connections with optional credential decryption.
 ///
 /// If the import file contains an `$encrypted` section and
 /// `import_password` is provided, credentials are decrypted and stored.
+/// Shared named credentials the file carries are recreated or mapped onto
+/// existing ones first and the connections' references rewritten (see
+/// [`transfer`]); if the connection import then fails, the credentials it
+/// created are removed again.
 ///
 /// A wrong decryption password surfaces as a typed
 /// [`ImportError::WrongPassword`] (stable `kind`), so the frontend can offer a
 /// tailored re-prompt without parsing the English message (I18N-010).
+///
+/// This is async because Argon2id key derivation is CPU-intensive.
 #[tauri::command]
-pub fn import_connections_with_credentials(
+pub async fn import_connections_with_credentials(
     json: String,
     import_password: Option<String>,
     app: AppHandle,
     manager: State<'_, ConnectionManager>,
-) -> Result<ImportResult, ImportError> {
+    credentials: State<'_, Arc<CredentialManager>>,
+    registry: State<'_, Arc<NamedCredentialRegistry>>,
+) -> Result<ConnectionImportResult, ImportError> {
+    let import_password = import_password.map(Zeroizing::new);
+    let password = import_password.as_deref().map(String::as_str);
     info!(
         "Importing connections (with_credentials={})",
-        import_password.is_some()
+        password.is_some()
     );
-    let result = manager
-        .import_encrypted_json(&json, import_password.as_deref())
+    let mode = credentials.get_mode();
+    let prepared = transfer::prepare_import(&json, password, &registry, &**credentials, &mode)
         .map_err(ImportError::from_import_failure)?;
+    let result = match manager.import_encrypted_json(&prepared.json, password) {
+        Ok(result) => result,
+        Err(e) => {
+            transfer::rollback(&prepared.created, &registry, &**credentials, &mode);
+            return Err(ImportError::from_import_failure(e));
+        }
+    };
     crate::connections_projection::projection::fold_connections_from_manager(&app);
-    Ok(result)
+    Ok(ConnectionImportResult {
+        connections_imported: result.connections_imported,
+        credentials_imported: result.credentials_imported,
+        shared_credentials_imported: prepared.imported_count,
+        warnings: prepared.warnings,
+    })
 }
 
 /// Drain and return any recovery warnings collected during app startup.
@@ -431,6 +499,65 @@ pub fn get_recovery_warnings(
 mod tests {
     use super::*;
     use crate::utils::errors::IpcErrorCode;
+
+    #[test]
+    fn keychain_export_with_credentials_requires_os_verification() {
+        use crate::credential::os_auth::mock::{MockOutcome, MockVerifier};
+        use crate::credential::os_auth::OsAuthError;
+
+        let dir = tempfile::tempdir().unwrap();
+        let verifier = Arc::new(MockVerifier::new([
+            MockOutcome::Error(OsAuthError::Cancelled),
+            MockOutcome::Success(None),
+        ]));
+        let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf())
+            .with_os_auth(Box::new(verifier.clone()));
+
+        // Without a password nothing secret is exported: no prompt.
+        assert!(authorize_credential_export(&mgr, None).is_ok());
+        assert!(verifier.calls().is_empty());
+        // Cancelled → refused; verified → allowed.
+        assert!(matches!(
+            authorize_credential_export(&mgr, Some("export-pass")),
+            Err(vault::VaultError::ReauthFailed { .. })
+        ));
+        assert!(authorize_credential_export(&mgr, Some("export-pass")).is_ok());
+        assert_eq!(verifier.calls().len(), 2);
+    }
+
+    #[test]
+    fn keychain_export_is_refused_where_os_verification_is_unavailable() {
+        use crate::credential::os_auth::mock::MockVerifier;
+
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf())
+            .with_os_auth(Box::new(MockVerifier::unavailable()));
+        assert!(matches!(
+            authorize_credential_export(&mgr, Some("export-pass")),
+            Err(vault::VaultError::ReauthUnavailable { .. })
+        ));
+    }
+
+    #[test]
+    fn master_password_export_is_not_os_gated() {
+        use crate::credential::os_auth::mock::MockVerifier;
+
+        let dir = tempfile::tempdir().unwrap();
+        let verifier = Arc::new(MockVerifier::new([]));
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf())
+            .with_os_auth(Box::new(verifier.clone()));
+        assert!(authorize_credential_export(&mgr, Some("export-pass")).is_ok());
+        assert!(verifier.calls().is_empty());
+    }
+
+    #[test]
+    fn preview_flags_sealed_shared_credential_secrets() {
+        let json = r#"{"version":"2","children":[],"agents":[],
+            "$namedCredentialSecrets":{"version":1}}"#;
+        assert!(preview_import(json.to_string()).unwrap().has_encrypted_credentials);
+        let plain = r#"{"version":"2","children":[],"agents":[]}"#;
+        assert!(!preview_import(plain.to_string()).unwrap().has_encrypted_credentials);
+    }
 
     #[test]
     fn classifies_wrong_password_through_context_wrapping() {
