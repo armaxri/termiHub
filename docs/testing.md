@@ -6,7 +6,7 @@ termiHub uses a multi-layered testing approach to ensure quality across the enti
 
 ## Testing Layers
 
-```
+```text
 ┌──────────────────────────────────────────┐
 │   System / E2E Tests (Python bridge)      │  ← User flows, click automation
 ├──────────────────────────────────────────┤
@@ -352,7 +352,7 @@ test("terminal UI should match baseline", async ({ page }) => {
 
 ### Naming Convention
 
-```
+```text
 data-testid="<component>-<element>-<action>"
 
 Examples:
@@ -522,7 +522,7 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
 
 ### 1. Test Pyramid
 
-```
+```text
         /\
        /  \     Few E2E tests (slow, expensive)
       /____\
@@ -743,6 +743,32 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 ### Skip Behavior
 
 All Rust integration tests use the `require_docker!` macro which checks TCP port connectivity at runtime. If the required Docker container is not running, the test prints a message and returns early (no failure). This means you can run `cargo test` without Docker and only the tests requiring containers will be skipped.
+
+#### Agent Docker-probe skip hatch (#2495)
+
+On every `initialize` the agent probes Docker (`docker info`, bounded by a 2 s
+timeout) to decide whether it advertises Docker container sessions. The
+live-agent integration tests (`agent/tests/local_agent_integration.rs`,
+`agent/tests/tcp_listener_readiness.rs`) spawn many agent processes at once, and
+one `docker info` child per connection oversubscribed the Windows CI runners
+(the `os error 10060` flake). Two environment variables tune the probe:
+
+| Variable                           | Effect                                                                                                                          |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `TERMIHUB_AGENT_SKIP_DOCKER_PROBE` | `1`/`true`/`yes` → skip the probe and report Docker **unavailable** without spawning a child. Any other value or unset → probe. |
+| `TERMIHUB_DOCKER_PROBE_TIMEOUT_MS` | Override the probe timeout in milliseconds (default 2000).                                                                      |
+
+- **Test/CI only (audit finding WA-CI-028).** The integration-test harness sets
+  `TERMIHUB_AGENT_SKIP_DOCKER_PROBE=1` on each agent it spawns; the Windows
+  serial-grade lane documents it too. None of those tests needs Docker.
+- **Ignored by release builds.** The skip variable is only honoured under
+  `debug_assertions` (every `cargo test` / dev build) or with the agent's
+  `test-hooks` cargo feature — the same gate as the deferred-update hook below.
+  A default `cargo build --release` agent always runs the real probe, so a stray
+  variable on a user's host can never silently hide Docker support.
+- **Unit tests skip unconditionally** (`cfg(test)`, CI-013 / #3350), with no
+  variable needed; the probe itself is covered by shim-binary tests that call it
+  directly.
 
 #### Agent deferred-update E2E hook (#1546)
 

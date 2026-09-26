@@ -29,6 +29,9 @@ on:
       - 'package.json'
       - 'pnpm-lock.yaml'
       - 'scripts/internal/pnpm-audit-prod-gate.sh'
+      - 'scripts/internal/check-pnpm-overrides.mjs'
+      - 'scripts/internal/pnpm-audit-summary.mjs'
+      - 'docs/supply-chain.md'
       - '.github/workflows/security-audit.yml'
       # Third-party notices gate (PKG-009): the generator, its config and inputs.
       - 'rdp-sidecar/Cargo.lock'
@@ -79,6 +82,12 @@ jobs:
         with:
           node-version: '22'
 
+      # Every package.json pnpm.overrides entry must have a row (advisory +
+      # removal condition) in docs/supply-chain.md, and none may be dead (its
+      # target gone from pnpm-lock.yaml). WA-CI-020 / SUP-008. Offline, no install.
+      - name: Check pnpm overrides are documented and live
+        run: node scripts/internal/check-pnpm-overrides.mjs
+
       # Blocking gate on the RUNTIME dependency tree only. A high/critical
       # advisory that ships to users must fail CI. Scoped to `--prod` so it does
       # not fire on the dev/build toolchain (see the advisory step below) — that
@@ -98,9 +107,16 @@ jobs:
       # which reach the shipped app. Kept non-blocking so they surface in the log
       # without gating the release; promote a fix to the blocking step above once
       # the upstream dev tool patches land.
+      #
+      # Not silent, though (SUP-008): the step writes a per-severity count to the
+      # job summary and raises a warning annotation when any high/critical
+      # advisory is present. See docs/supply-chain.md -> "Audit gates".
       - name: pnpm audit (full tree, advisory)
-        run: pnpm audit --audit-level=moderate
         continue-on-error: true  # Dev-only advisories: warn, do not fail
+        run: |
+          pnpm audit --audit-level=moderate || true
+          pnpm audit --json > "$RUNNER_TEMP/pnpm-audit-full.json" || true
+          node scripts/internal/pnpm-audit-summary.mjs "$RUNNER_TEMP/pnpm-audit-full.json"
 
       - name: Setup Rust
         uses: ./.github/actions/setup-rust

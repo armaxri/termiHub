@@ -272,12 +272,10 @@ where
     let result = stream.read_u32().await?;
     if result != 0 {
         if let VncVersion::RFB38 = rfb_version {
-            let len = stream.read_u32().await?;
-            let mut buf = vec![0u8; len as usize];
-            stream.read_exact(&mut buf).await?;
+            // Bounded read (termiHub fork, #3473): the length is server-chosen.
+            let reason = super::auth::read_reason(&mut stream).await?;
             return Err(VncError::Vencrypt(format!(
-                "VeNCrypt authentication failed: {}",
-                String::from_utf8_lossy(&buf)
+                "VeNCrypt authentication failed: {reason}"
             )));
         }
         return Err(VncError::WrongPassword);

@@ -72,6 +72,24 @@ else
 fi
 
 echo ""
+echo "=== pnpm overrides documented and live ==="
+# Every pnpm.overrides entry has a row in docs/supply-chain.md; none dead (WA-CI-020).
+if node scripts/internal/check-pnpm-overrides.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
+echo "=== uv version pin consistency ==="
+# .github/uv-version is the only uv pin; no direct astral-sh/setup-uv (WA-CI-017).
+if node scripts/internal/check-uv-version.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 if [ "$FAILED" -ne 0 ]; then
     echo "SOME CHECKS FAILED. Run ./scripts/format.sh to auto-fix formatting."
     exit 1

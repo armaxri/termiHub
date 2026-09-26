@@ -150,10 +150,9 @@ where
                                 // error message before closing the connection.
                                 return Err(VncError::WrongPassword);
                             } else {
-                                let _ = connector.stream.read_u32().await?;
-                                let mut err_msg = String::new();
-                                connector.stream.read_to_string(&mut err_msg).await?;
-                                return Err(VncError::General(err_msg));
+                                return Err(VncError::General(
+                                    super::auth::read_reason(&mut connector.stream).await?,
+                                ));
                             }
                         }
                     }
@@ -169,7 +168,11 @@ where
                         .await?,
                     ))
                 }
-                _ => unreachable!(),
+                // termiHub fork (#3473): driving an already-connected state is a
+                // caller error; report it rather than panicking.
+                VncState::Connected(_) => Err(VncError::General(
+                    "VNC connector already connected".to_string(),
+                )),
             }
         })
     }

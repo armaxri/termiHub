@@ -993,7 +993,7 @@ See [Remote Protocol](remote-protocol.md) for the full protocol specification an
 
 ### IPC Communication
 
-```
+```text
 Frontend → Backend:  Tauri Commands (request-response, JSON-serialized)
 Backend → Frontend:  Tauri Events (push-based, JSON-serialized)
 ```
@@ -1216,7 +1216,7 @@ deferred post-release — see the follow-up issue linked from that finding.)
 
 The CSP lives in `src-tauri/tauri.conf.json` (`app.security.csp`):
 
-```
+```text
 default-src 'self';
 script-src 'self' plugin://localhost http://plugin.localhost 'wasm-unsafe-eval';
 style-src 'self' 'unsafe-inline';
