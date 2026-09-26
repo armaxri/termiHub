@@ -158,6 +158,7 @@ fn done(h: &Harness) {
                 outcome: ScheduleRunOutcome::Completed,
                 message: None,
                 targets_run: 1,
+                workflow_run_ids: Vec::new(),
             },
             h.clock.now(),
         )

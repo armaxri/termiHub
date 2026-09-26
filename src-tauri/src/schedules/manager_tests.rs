@@ -8,12 +8,12 @@ use crate::schedules::config::{
 use chrono::Utc;
 use tempfile::TempDir;
 
-fn t(h: u32, m: u32) -> DateTime<Utc> {
+pub(super) fn t(h: u32, m: u32) -> DateTime<Utc> {
     Utc.with_ymd_and_hms(2026, 6, 1, h, m, 0).unwrap()
 }
 
 /// Tick with every given window registered as listening (the normal case).
-trait TickAll {
+pub(super) trait TickAll {
     fn tick_all<Tz: TimeZone>(&self, now: DateTime<Utc>, tz: &Tz, w: &[String]) -> TickResult;
 }
 
@@ -26,7 +26,7 @@ impl TickAll for ScheduleManager {
     }
 }
 
-fn windows(labels: &[&str]) -> Vec<String> {
+pub(super) fn windows(labels: &[&str]) -> Vec<String> {
     labels.iter().map(|s| s.to_string()).collect()
 }
 
@@ -49,24 +49,26 @@ fn every(m: u32) -> ScheduleRule {
     ScheduleRule::Interval { every_minutes: m }
 }
 
-fn completed(n: u32) -> WindowRunReport {
+pub(super) fn completed(n: u32) -> WindowRunReport {
     WindowRunReport {
         outcome: ScheduleRunOutcome::Completed,
         message: None,
         targets_run: n,
+        workflow_run_ids: Vec::new(),
     }
 }
 
-fn skip_report(msg: &str) -> WindowRunReport {
+pub(super) fn skip_report(msg: &str) -> WindowRunReport {
     WindowRunReport {
         outcome: ScheduleRunOutcome::Skipped,
         message: Some(msg.to_string()),
         targets_run: 0,
+        workflow_run_ids: Vec::new(),
     }
 }
 
 /// A manager with one enabled 10-minute schedule, enabled at 10:00.
-fn enabled_manager(dir: &TempDir, policy: MissedRunPolicy) -> ScheduleManager {
+pub(super) fn enabled_manager(dir: &TempDir, policy: MissedRunPolicy) -> ScheduleManager {
     let m = ScheduleManager::new_test(dir.path());
     let mut i = input("s1", every(10));
     i.missed_runs = policy;
@@ -324,6 +326,7 @@ fn a_failure_in_any_window_marks_the_run_failed() {
         outcome: ScheduleRunOutcome::Failed,
         message: Some("step 2 failed".into()),
         targets_run: 1,
+        workflow_run_ids: Vec::new(),
     };
     m.report(&token, "win-1", failed, t(10, 11)).unwrap();
     let res = last_result(&m);

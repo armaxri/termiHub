@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 
 use chrono::{DateTime, TimeZone, Utc};
 
-use super::config::{MissedRunPolicy, Schedule, ScheduleRunOutcome, ScheduleRunResult};
+use super::config::{MissedRunPolicy, Schedule, ScheduleRunOutcome};
+use super::history;
 use super::manager::{
     anchor_of, initial_due, ActiveRun, Runtime, ACK_TIMEOUT, MISSED_GRACE, STALE_RUN_TIMEOUT,
 };
@@ -49,17 +50,15 @@ fn settle_active(s: &mut Schedule, rt: &mut Runtime, ctx: &TickContext) -> bool 
         return false;
     }
     let settled = if stale {
-        ScheduleRunResult {
-            at: now.to_rfc3339(),
-            outcome: ScheduleRunOutcome::Failed,
-            message: Some("No completion was reported within 6 hours".to_string()),
-            catch_up: active.catch_up,
-        }
+        let mut r = aggregate(&active.reports, active.catch_up, active.fired_at, now);
+        r.outcome = ScheduleRunOutcome::Failed;
+        r.message = Some("No completion was reported within 6 hours".to_string());
+        r
     } else {
-        aggregate(&active.reports, active.catch_up, now)
+        aggregate(&active.reports, active.catch_up, active.fired_at, now)
     };
     tracing::info!("scheduled run of {} closed: {:?}", s.id, settled.outcome);
-    s.last_result = Some(settled);
+    history::record(s, settled);
     rt.active = None;
     true
 }
@@ -67,7 +66,7 @@ fn settle_active(s: &mut Schedule, rt: &mut Runtime, ctx: &TickContext) -> bool 
 /// Record a skipped due run.
 fn skip(s: &mut Schedule, now: DateTime<Utc>, msg: String, catch_up: bool) -> Step {
     tracing::info!("schedule {}: {msg}", s.id);
-    s.last_result = Some(skipped(now, msg, catch_up));
+    history::record(s, skipped(now, msg, catch_up));
     Step {
         fire: None,
         changed: true,

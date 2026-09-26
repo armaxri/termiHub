@@ -45,6 +45,9 @@ pub struct WindowRunReport {
     /// Terminals the run was started on in that window.
     #[serde(default)]
     pub targets_run: u32,
+    /// Workflow run-history record ids the run produced in that window.
+    #[serde(default)]
+    pub workflow_run_ids: Vec<String>,
 }
 
 /// A schedule plus its live scheduling state, as the UI shows it.
@@ -138,10 +141,12 @@ pub(crate) fn validate_input(input: &ScheduleInput) -> Result<(), TerminalError>
     validate_rule(&input.rule).map_err(err)
 }
 
-/// Fold the windows' reports into the run's recorded result.
+/// Fold the windows' reports into the run's recorded result: a run fired at
+/// `fired_at` that settled at `at`.
 pub(crate) fn aggregate(
     reports: &[WindowRunReport],
     catch_up: bool,
+    fired_at: DateTime<Utc>,
     at: DateTime<Utc>,
 ) -> ScheduleRunResult {
     let ran: Vec<&WindowRunReport> = reports
@@ -188,8 +193,31 @@ pub(crate) fn aggregate(
             (ScheduleRunOutcome::Completed, Some(summary))
         }
     };
+    let workflow_run_ids = reports
+        .iter()
+        .flat_map(|r| r.workflow_run_ids.iter().cloned())
+        .collect();
+    ScheduleRunResult {
+        workflow_run_ids,
+        ..fired_result(fired_at, at, outcome, message, catch_up)
+    }
+}
+
+/// The result of a run fired at `fired_at` that settled at `at`, with its
+/// start time and duration.
+fn fired_result(
+    fired_at: DateTime<Utc>,
+    at: DateTime<Utc>,
+    outcome: ScheduleRunOutcome,
+    message: Option<String>,
+    catch_up: bool,
+) -> ScheduleRunResult {
+    let duration_ms = u64::try_from((at - fired_at).num_milliseconds()).unwrap_or(0);
     ScheduleRunResult {
         at: at.to_rfc3339(),
+        started_at: Some(fired_at.to_rfc3339()),
+        duration_ms: Some(duration_ms),
+        workflow_run_ids: Vec::new(),
         outcome,
         message,
         catch_up,
@@ -203,6 +231,9 @@ pub(crate) fn skipped(
 ) -> ScheduleRunResult {
     ScheduleRunResult {
         at: at.to_rfc3339(),
+        started_at: None,
+        duration_ms: None,
+        workflow_run_ids: Vec::new(),
         outcome: ScheduleRunOutcome::Skipped,
         message: Some(message.into()),
         catch_up,

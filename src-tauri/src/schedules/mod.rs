@@ -18,6 +18,7 @@
 //! Scheduling only happens while the app runs; there is no OS service.
 
 pub mod config;
+pub mod history;
 pub mod manager;
 pub mod runner;
 pub mod storage;
