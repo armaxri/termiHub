@@ -718,6 +718,7 @@ describe("api response-validation (TFE-004)", () => {
         acceptUntrusted: true,
         trustPublisher: false,
         confirmVersionChange: false,
+        confirmSignerChange: false,
       });
       expect(result).toEqual(installed);
     });
@@ -732,6 +733,21 @@ describe("api response-validation (TFE-004)", () => {
         acceptUntrusted: false,
         trustPublisher: false,
         confirmVersionChange: true,
+        confirmSignerChange: false,
+      });
+    });
+
+    it("installPlugin forwards the signer-change confirmation (#3489)", async () => {
+      mockedInvoke.mockResolvedValue({ status: "installed", plugin: {} });
+
+      await installPlugin("/tmp/p1.termihub-plugin", false, false, false, true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("install_plugin", {
+        path: "/tmp/p1.termihub-plugin",
+        acceptUntrusted: false,
+        trustPublisher: false,
+        confirmVersionChange: false,
+        confirmSignerChange: true,
       });
     });
   });

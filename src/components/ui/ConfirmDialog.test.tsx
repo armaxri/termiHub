@@ -363,4 +363,33 @@ describe("ConfirmDialog", () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
+
+  it("never confirms on Enter when confirmOnEnter is false", () => {
+    const onConfirm = vi.fn();
+    const onChange = vi.fn();
+    render(
+      <ConfirmDialog
+        open
+        title="T"
+        message="M"
+        confirmOnEnter={false}
+        dontAskAgain={{ checked: false, onChange }}
+        onConfirm={onConfirm}
+        onCancel={vi.fn()}
+      />
+    );
+    const box = dontAskAgain();
+    act(() => box.focus());
+    act(() => {
+      box.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(onConfirm).not.toHaveBeenCalled();
+    // An explicit click still confirms.
+    act(() => {
+      (
+        document.querySelector('[data-testid="confirm-dialog-confirm"]') as HTMLButtonElement
+      ).click();
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
 });

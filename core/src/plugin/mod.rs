@@ -70,6 +70,7 @@ mod package;
 mod security;
 mod settings_migration;
 mod signature;
+mod signer_change;
 mod trust_store;
 mod update_check;
 mod version_change;
@@ -113,6 +114,9 @@ pub use signature::{
     PackageSignature, PackageVerification, SignatureError, SigningKeyFile, VerifiedArchive,
     VerifiedIdentity, VerifiedSignature, DIGEST_ALGORITHM, SIGNATURE_ALGORITHM,
     SIGNATURE_FILE_NAME, SIGNATURE_FORMAT_VERSION,
+};
+pub use signer_change::{
+    classify_signer_change, InstalledSigner, PackageSigner, SignerChange, SignerChangeKind,
 };
 /// The one authoritative plugin version: the native plugin ABI (PLG-002).
 pub use termihub_plugin_api::{AbiIncompatibility, AbiVersion, CURRENT_PLUGIN_ABI_VERSION};

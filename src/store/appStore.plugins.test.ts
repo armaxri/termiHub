@@ -261,6 +261,7 @@ describe("appStore — plugins (#1993)", () => {
       "/tmp/new-plugin.termihub-plugin",
       true,
       false,
+      false,
       false
     );
     expect(toastLoading).toHaveBeenCalledTimes(1);
@@ -285,7 +286,7 @@ describe("appStore — plugins (#1993)", () => {
       .getState()
       .installPlugin("/tmp/new-plugin.termihub-plugin", true, false);
 
-    expect(change).toEqual(pending);
+    expect(change).toEqual({ version: pending, signer: null });
     // Nothing installed: no refresh, no success toast.
     expect(apiListPlugins).not.toHaveBeenCalled();
     expect(toastSuccess).not.toHaveBeenCalled();
@@ -297,14 +298,65 @@ describe("appStore — plugins (#1993)", () => {
     vi.mocked(apiInstallPlugin).mockResolvedValueOnce({ status: "installed", plugin: installed });
     vi.mocked(apiListPlugins).mockResolvedValueOnce([installed]);
 
-    await useAppStore
-      .getState()
-      .installPlugin("/tmp/new-plugin.termihub-plugin", true, false, true);
+    await useAppStore.getState().installPlugin("/tmp/new-plugin.termihub-plugin", true, false, {
+      confirmVersionChange: true,
+    });
 
     expect(apiInstallPlugin).toHaveBeenCalledWith(
       "/tmp/new-plugin.termihub-plugin",
       true,
       false,
+      true,
+      false
+    );
+  });
+
+  it("installPlugin resolves signer and version changes together (#3489)", async () => {
+    const version = {
+      pluginId: "new-plugin",
+      pluginName: "Plugin new-plugin",
+      installedVersion: "1.4.0",
+      incomingVersion: "1.2.0",
+      kind: "downgrade" as const,
+    };
+    const signer = {
+      pluginId: "new-plugin",
+      pluginName: "Plugin new-plugin",
+      installedKeyId: "sha256:aa",
+      incomingKeyId: "sha256:bb",
+      kind: "keyChanged" as const,
+    };
+    vi.mocked(apiInstallPlugin).mockResolvedValueOnce({
+      status: "signerConfirmationRequired",
+      signer,
+      version,
+    });
+
+    const pending = await useAppStore
+      .getState()
+      .installPlugin("/tmp/new-plugin.termihub-plugin", false, false);
+
+    expect(pending).toEqual({ version, signer });
+    expect(apiListPlugins).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("installPlugin forwards an explicit signer-change confirmation (#3489)", async () => {
+    const installed = makePlugin("new-plugin", "active");
+    vi.mocked(apiInstallPlugin).mockResolvedValueOnce({ status: "installed", plugin: installed });
+    vi.mocked(apiListPlugins).mockResolvedValueOnce([installed]);
+
+    await useAppStore.getState().installPlugin("/tmp/new-plugin.termihub-plugin", false, false, {
+      confirmSignerChange: true,
+      confirmVersionChange: true,
+    });
+
+    expect(apiInstallPlugin).toHaveBeenCalledWith(
+      "/tmp/new-plugin.termihub-plugin",
+      false,
+      false,
+      true,
       true
     );
   });

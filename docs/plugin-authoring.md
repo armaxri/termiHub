@@ -491,6 +491,29 @@ Publishers**. Re-signing a package with a different key than a user pinned
 re-prompts them (a key rotation they must re-confirm), rather than trusting a
 silent swap.
 
+### Keep signing updates with the same key
+
+termiHub remembers which key signed each **installed** plugin and compares it
+with the key that signed an update (whether the user installs the file by hand
+or through the update check). Keep signing every release of a plugin with the
+same key:
+
+| Installed copy → update          | What the user sees                                                          |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| Key A → key A                    | Installs normally.                                                          |
+| Unsigned → key A                 | Installs normally; key A is remembered for the next update.                 |
+| Unsigned → unsigned              | Installs after the usual untrusted-source acknowledgement.                  |
+| Key A → **key B**                | **"The publisher key changed"** — both fingerprints, explicit confirmation. |
+| Key A → **unsigned**             | **"No longer signed"** — strongly worded, explicit confirmation.            |
+| Installed signer cannot be found | Treated like a key change: explicit confirmation.                           |
+
+These prompts cannot be skipped: the backend refuses the replace until the user
+confirms, and confirming requires ticking an acknowledgement and clicking the
+button (Enter does not confirm). If you must rotate your key, announce the new
+fingerprint through a channel your users already trust before shipping the
+first release signed with it. A publisher-key change that is also a downgrade
+is confirmed in the same prompt.
+
 ## Updates and the 0.1 distribution model
 
 For 0.1 there is **no plugin registry or store** and termiHub **never updates a
