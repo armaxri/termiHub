@@ -154,6 +154,56 @@ describe("SchedulesSection (PROD-043)", () => {
     );
   });
 
+  it("expands a schedule to its recent attempts, including skips and their reasons", () => {
+    const now = Date.now();
+    const iso = (minsAgo: number) => new Date(now - minsAgo * 60_000).toISOString();
+    const history = [
+      {
+        at: iso(1),
+        startedAt: iso(3),
+        durationMs: 125_000,
+        outcome: "completed" as const,
+        message: "Ran on 2 terminals",
+        workflowRunIds: ["run-a", "run-b"],
+      },
+      {
+        at: iso(10),
+        outcome: "skipped" as const,
+        message: "Skipped: the previous run was still in progress",
+        catchUp: true,
+      },
+      { at: iso(20), outcome: "skipped" as const, message: "Missed the run due at 09:00" },
+    ];
+    render([view({ lastResult: history[0], history })]);
+
+    expect(query("schedule-attempts-s1")).toBeNull();
+    const toggle = query("schedule-attempts-toggle-s1")!;
+    expect(toggle.textContent).toContain("Show recent attempts (3)");
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    act(() => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const items = query("schedule-attempts-s1")!.querySelectorAll("li");
+    expect(items).toHaveLength(3);
+    expect(items[0].textContent).toContain("Completed");
+    expect(items[0].textContent).toContain("2m 05s");
+    expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("2 workflow runs in history");
+    expect(query("schedule-attempt-runs-s1-0")!.getAttribute("title")).toBe("run-a\nrun-b");
+    expect(items[1].textContent).toContain("Skipped");
+    expect(items[1].textContent).toContain("catch-up");
+    expect(items[1].textContent).toContain("previous run was still in progress");
+    expect(items[2].textContent).toContain("Missed the run due at 09:00");
+    expect(query("schedule-attempt-runs-s1-1")).toBeNull();
+
+    act(() => toggle.click());
+    expect(query("schedule-attempts-s1")).toBeNull();
+  });
+
+  it("offers no attempts toggle before the first attempt", () => {
+    render([view()]);
+    expect(query("schedule-attempts-toggle-s1")).toBeNull();
+  });
+
   it("edits and deletes a schedule", async () => {
     render([view()]);
     act(() => query("schedule-edit-s1")!.click());

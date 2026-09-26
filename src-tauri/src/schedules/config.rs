@@ -133,12 +133,25 @@ pub enum ScheduleRunOutcome {
     Skipped,
 }
 
-/// The recorded result of a schedule's most recent run attempt.
+/// The recorded result of one run attempt of a schedule — a fired run or a
+/// skipped due slot. The most recent is `Schedule::last_result`; the last
+/// [`crate::schedules::history::MAX_ATTEMPTS`] are kept in `Schedule::history`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ScheduleRunResult {
     /// RFC 3339 time the attempt settled.
     pub at: String,
+    /// RFC 3339 time the run fired. Absent for a skipped due slot (nothing
+    /// started) and for results recorded before schema v2.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    /// Milliseconds from firing to settling (fired runs only).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    /// Ids of the workflow run-history records this attempt produced (one per
+    /// terminal a workflow ran on). Empty for macros and skips.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workflow_run_ids: Vec<String>,
     /// How it ended.
     pub outcome: ScheduleRunOutcome,
     /// Human-readable detail (the skip reason, the failure, the target count).
@@ -185,9 +198,13 @@ pub struct Schedule {
     /// RFC 3339 time the schedule last fired (the missed-run anchor).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_run_at: Option<String>,
-    /// The most recent run attempt's result.
+    /// The most recent run attempt's result (also `history[0]`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_result: Option<ScheduleRunResult>,
+    /// The recent run attempts, newest first, capped at
+    /// [`crate::schedules::history::MAX_ATTEMPTS`] (schema v2).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub history: Vec<ScheduleRunResult>,
     /// RFC 3339 creation time.
     #[serde(default)]
     pub created_at: String,
@@ -228,7 +245,19 @@ impl Default for ScheduleStore {
 
 impl crate::utils::migrate::VersionedStore for ScheduleStore {
     const STORE_NAME: &'static str = "schedules.json";
-    const CURRENT_VERSION: u32 = 1;
+    /// v2 (#3528) adds the per-schedule attempt `history`. The v1 → v2 step
+    /// seeds each schedule's history with its `lastResult`; the bump is what
+    /// makes the change downgrade-safe: a v1 build refuses to overwrite a v2
+    /// file (PER-004) instead of silently dropping every schedule's history.
+    const CURRENT_VERSION: u32 = 2;
+
+    fn migrate(value: serde_json::Value, from_version: u32) -> anyhow::Result<serde_json::Value> {
+        Ok(if from_version < 2 {
+            crate::schedules::history::migrate_v1_to_v2(value)
+        } else {
+            value
+        })
+    }
 
     /// Per-entry salvage (PER-004): drop only the corrupt schedules.
     fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
@@ -269,7 +298,7 @@ mod tests {
 
     #[test]
     fn store_preserves_unknown_top_level_keys() {
-        let json = r#"{"version":"1","paused":true,"schedules":[],"futureKey":{"a":1}}"#;
+        let json = r#"{"version":"2","paused":true,"schedules":[],"futureKey":{"a":1}}"#;
         let store: ScheduleStore = serde_json::from_str(json).unwrap();
         assert!(store.paused);
         let out = serde_json::to_value(&store).unwrap();
@@ -280,12 +309,18 @@ mod tests {
     fn run_result_omits_false_catch_up() {
         let r = ScheduleRunResult {
             at: "t".into(),
+            started_at: None,
+            duration_ms: None,
+            workflow_run_ids: Vec::new(),
             outcome: ScheduleRunOutcome::Skipped,
             message: Some("why".into()),
             catch_up: false,
         };
         let s = serde_json::to_string(&r).unwrap();
         assert!(!s.contains("catchUp"));
+        assert!(!s.contains("startedAt"));
+        assert!(!s.contains("durationMs"));
+        assert!(!s.contains("workflowRunIds"));
         assert!(s.contains("\"outcome\":\"skipped\""));
     }
 }

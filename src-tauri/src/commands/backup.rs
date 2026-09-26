@@ -41,8 +41,8 @@ pub fn list_backup_sections(app: AppHandle) -> Result<Vec<BackupSectionInfo>, Va
 /// `passphrase` is required when the backup is encrypted or includes the
 /// credential vault; it must meet the export-passphrase rules and differ from
 /// the master password. Including credentials needs the same re-authentication
-/// as a vault export (`master_password` in master-password mode; refused in
-/// OS-keychain mode until #3433).
+/// as a vault export (`master_password` in master-password mode; a fresh OS
+/// user verification — Touch ID / Windows Hello — in OS-keychain mode, #3433).
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
 #[tauri::command]

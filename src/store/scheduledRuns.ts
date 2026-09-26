@@ -157,6 +157,10 @@ async function runScheduledWorkflow(
     if (result) outcomes.push({ title: targets[index].title, result });
   });
   toastFanoutSummary(workflow.name, outcomes, targets.length, 0, toastId);
+  const workflowRunIds = outcomes.flatMap((o) =>
+    o.result.historyRunId ? [o.result.historyRunId] : []
+  );
+  const ids = workflowRunIds.length > 0 ? { workflowRunIds } : {};
 
   const failed = outcomes.find((o) => o.result.status === "failed");
   if (failed) {
@@ -164,12 +168,13 @@ async function runScheduledWorkflow(
       outcome: "failed",
       message: `${failed.title}: ${failed.result.error ?? "a step failed"}`,
       targetsRun: outcomes.length,
+      ...ids,
     };
   }
   if (outcomes.length < targets.length || outcomes.some((o) => o.result.status === "cancelled")) {
-    return { outcome: "cancelled", targetsRun: outcomes.length };
+    return { outcome: "cancelled", targetsRun: outcomes.length, ...ids };
   }
-  return { outcome: "completed", targetsRun: outcomes.length };
+  return { outcome: "completed", targetsRun: outcomes.length, ...ids };
 }
 
 /** Play a macro into this window's connected targets. */

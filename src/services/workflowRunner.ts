@@ -220,6 +220,11 @@ export interface WorkflowRunResult {
   /** For `failed`: a human-readable reason. */
   error?: string;
   /**
+   * Id of the persisted run-history record (PROD-0046) of this run. Set by the
+   * store-level runner once the record is written; the engine never sets it.
+   */
+  historyRunId?: string;
+  /**
    * Step failures tolerated via `continueOnError` (PROD-045), in the order they
    * happened. Absent when no failure was tolerated, so a run of a workflow that
    * uses no error handling reports exactly the same result shape as before.

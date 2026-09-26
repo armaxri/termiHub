@@ -4,7 +4,13 @@ import { createRoot, Root } from "react-dom/client";
 import { open as openFileDialog, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAppStore } from "@/store/appStore";
-import { CredentialVaultBackup, KEYCHAIN_EXPORT_BLOCKED_REASON } from "./CredentialVaultBackup";
+import {
+  CredentialVaultBackup,
+  KEYCHAIN_EXPORT_CHECKING_REASON,
+  KEYCHAIN_EXPORT_UNAVAILABLE_REASON,
+  keychainExportReason,
+} from "./CredentialVaultBackup";
+import { OS_AUTH_AVAILABLE, OS_AUTH_UNAVAILABLE } from "@/test/osAuthFixtures";
 import { importSummary } from "./CredentialVaultImportDialog";
 
 vi.mock("@/services/api", async () => {
@@ -12,6 +18,7 @@ vi.mock("@/services/api", async () => {
   return {
     ...actual,
     exportCredentialVault: vi.fn(),
+    getOsAuthInfo: vi.fn(),
     previewCredentialVaultImport: vi.fn(),
     importCredentialVault: vi.fn(),
   };
@@ -27,6 +34,7 @@ vi.mock("@/components/ui", async () => {
 
 import {
   exportCredentialVault,
+  getOsAuthInfo,
   importCredentialVault,
   previewCredentialVaultImport,
 } from "@/services/api";
@@ -79,6 +87,12 @@ function render(mode: "master_password" | "os_keychain" | "none", status = "unlo
   act(() => root.render(<CredentialVaultBackup modeLabel="Master Password" />));
 }
 
+/** Render and let the OS-auth capability query resolve. */
+async function renderLoaded(mode: "master_password" | "os_keychain" | "none", status = "unlocked") {
+  render(mode, status);
+  await act(async () => {});
+}
+
 describe("CredentialVaultBackup", () => {
   beforeEach(() => {
     container = document.createElement("div");
@@ -86,6 +100,7 @@ describe("CredentialVaultBackup", () => {
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
+    vi.mocked(getOsAuthInfo).mockResolvedValue(OS_AUTH_UNAVAILABLE);
   });
 
   afterEach(() => {
@@ -100,15 +115,14 @@ describe("CredentialVaultBackup", () => {
     expect(query("credential-vault-unavailable")).not.toBeNull();
   });
 
-  it("disables export (with the reason) but keeps import in OS keychain mode", async () => {
-    render("os_keychain");
+  it("keeps keychain export blocked (with the OS reason) when OS verification is unavailable", async () => {
+    await renderLoaded("os_keychain");
 
     const exportBtn = query("credential-vault-export-btn") as HTMLButtonElement;
     expect(exportBtn.disabled).toBe(true);
-    expect(query("credential-vault-export-blocked")?.textContent).toBe(
-      KEYCHAIN_EXPORT_BLOCKED_REASON
-    );
-    expect(KEYCHAIN_EXPORT_BLOCKED_REASON).toContain("#3433");
+    const blocked = query("credential-vault-export-blocked")?.textContent ?? "";
+    expect(blocked).toContain(KEYCHAIN_EXPORT_UNAVAILABLE_REASON);
+    expect(blocked).toContain("No supported system authentication.");
 
     // A click on the disabled button must not open the dialog or call the backend.
     await click("credential-vault-export-btn");
@@ -119,6 +133,55 @@ describe("CredentialVaultBackup", () => {
     expect(importBtn.disabled).toBe(false);
     await click("credential-vault-import-btn");
     expect(query("vault-import-title")).not.toBeNull();
+  });
+
+  it("fails closed while the OS capability is unknown", () => {
+    expect(keychainExportReason(null)).toBe(KEYCHAIN_EXPORT_CHECKING_REASON);
+    expect(keychainExportReason(OS_AUTH_AVAILABLE)).toBeNull();
+  });
+
+  it("enables keychain export behind OS verification when available", async () => {
+    vi.mocked(getOsAuthInfo).mockResolvedValue(OS_AUTH_AVAILABLE);
+    await renderLoaded("os_keychain");
+
+    const exportBtn = query("credential-vault-export-btn") as HTMLButtonElement;
+    expect(exportBtn.disabled).toBe(false);
+    expect(query("credential-vault-export-blocked")).toBeNull();
+    expect(query("credential-vault-export-os-auth")?.textContent).toContain(
+      "Touch ID or your Mac password"
+    );
+
+    await click("credential-vault-export-btn");
+    expect(query("vault-export-os-auth-note")?.textContent).toContain("Touch ID");
+    // No master password in keychain mode — the OS verifies the user instead.
+    expect(query("vault-export-master-password")).toBeNull();
+
+    mockedExport.mockResolvedValue(VAULT_JSON);
+    mockedSave.mockResolvedValue("/tmp/vault.json");
+    setInputValue("vault-export-passphrase", PASSPHRASE);
+    setInputValue("vault-export-confirm", PASSPHRASE);
+    await click("vault-export-submit");
+
+    expect(mockedExport).toHaveBeenCalledWith(null, PASSPHRASE);
+    expect(mockedWrite).toHaveBeenCalledWith("/tmp/vault.json", VAULT_JSON);
+  });
+
+  it("shows a cancelled OS verification and writes nothing", async () => {
+    vi.mocked(getOsAuthInfo).mockResolvedValue(OS_AUTH_AVAILABLE);
+    await renderLoaded("os_keychain");
+    await click("credential-vault-export-btn");
+
+    mockedExport.mockRejectedValue({
+      kind: "reauthFailed",
+      message: "System authentication was cancelled — nothing was exported.",
+    });
+    setInputValue("vault-export-passphrase", PASSPHRASE);
+    setInputValue("vault-export-confirm", PASSPHRASE);
+    await click("vault-export-submit");
+
+    expect(query("vault-export-error")?.textContent).toMatch(/cancelled/);
+    expect(mockedSave).not.toHaveBeenCalled();
+    expect(mockedWrite).not.toHaveBeenCalled();
   });
 
   it("unlocks a locked store before opening the export dialog", async () => {

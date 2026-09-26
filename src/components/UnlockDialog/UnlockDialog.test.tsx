@@ -3,12 +3,31 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import { UnlockDialog } from "./UnlockDialog";
 
-vi.mock("@/services/api", () => ({
-  unlockCredentialStore: vi.fn(),
-  resetCredentialStore: vi.fn(),
-}));
+vi.mock("@/services/api", async () => {
+  const actual = await vi.importActual<typeof import("@/services/api")>("@/services/api");
+  return {
+    isBiometricUnlockError: actual.isBiometricUnlockError,
+    unlockCredentialStore: vi.fn(),
+    resetCredentialStore: vi.fn(),
+    getOsAuthInfo: vi.fn(),
+    unlockCredentialStoreBiometric: vi.fn(),
+  };
+});
 
-import { unlockCredentialStore, resetCredentialStore } from "@/services/api";
+import {
+  unlockCredentialStore,
+  resetCredentialStore,
+  getOsAuthInfo,
+  unlockCredentialStoreBiometric,
+} from "@/services/api";
+import {
+  OS_AUTH_AVAILABLE,
+  OS_AUTH_BIOMETRIC_ENABLED,
+  OS_AUTH_UNAVAILABLE,
+} from "@/test/osAuthFixtures";
+
+const mockedOsAuth = vi.mocked(getOsAuthInfo);
+const mockedBiometric = vi.mocked(unlockCredentialStoreBiometric);
 
 const mockedUnlock = vi.mocked(unlockCredentialStore);
 const mockedReset = vi.mocked(resetCredentialStore);
@@ -26,6 +45,7 @@ describe("UnlockDialog", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     vi.clearAllMocks();
+    mockedOsAuth.mockResolvedValue(OS_AUTH_UNAVAILABLE);
   });
 
   afterEach(() => {
@@ -260,5 +280,60 @@ describe("UnlockDialog", () => {
 
     expect(mockedReset).not.toHaveBeenCalled();
     expect(query("unlock-dialog-reset-confirm")).toBeNull();
+  });
+
+  describe("biometric unlock (PROD-064)", () => {
+    async function renderOpen(onOpenChange = vi.fn()) {
+      await act(async () => {
+        root.render(<UnlockDialog open={true} onOpenChange={onOpenChange} />);
+      });
+      await act(async () => {});
+      return onOpenChange;
+    }
+
+    it("does not offer biometrics when not turned on", async () => {
+      mockedOsAuth.mockResolvedValue(OS_AUTH_AVAILABLE);
+      await renderOpen();
+      expect(query("unlock-dialog-biometric")).toBeNull();
+      expect(mockedBiometric).not.toHaveBeenCalled();
+    });
+
+    it("prompts for biometrics first and closes on success", async () => {
+      mockedOsAuth.mockResolvedValue(OS_AUTH_BIOMETRIC_ENABLED);
+      mockedBiometric.mockResolvedValue(undefined);
+      const onOpenChange = await renderOpen();
+      expect(mockedBiometric).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("falls back to the master password quietly when the prompt is cancelled", async () => {
+      mockedOsAuth.mockResolvedValue(OS_AUTH_BIOMETRIC_ENABLED);
+      mockedBiometric.mockRejectedValue({ kind: "cancelled", message: "cancelled" });
+      const onOpenChange = await renderOpen();
+      expect(mockedBiometric).toHaveBeenCalledTimes(1);
+      expect(onOpenChange).not.toHaveBeenCalled();
+      expect(query("unlock-dialog-error")).toBeNull();
+      expect(query("unlock-dialog-input")).not.toBeNull();
+      // Retry is offered, and prompts again.
+      expect(query("unlock-dialog-biometric")?.textContent).toContain("Touch ID");
+      await act(async () => {
+        (query("unlock-dialog-biometric") as HTMLButtonElement).click();
+      });
+      expect(mockedBiometric).toHaveBeenCalledTimes(2);
+    });
+
+    it("explains an invalidated enrollment and keeps the password path", async () => {
+      mockedOsAuth.mockResolvedValue(OS_AUTH_BIOMETRIC_ENABLED);
+      mockedBiometric.mockRejectedValue({
+        kind: "invalidated",
+        message:
+          "Your fingerprints or face data have changed. Biometric unlock has been turned off.",
+      });
+      await renderOpen();
+      expect(query("unlock-dialog-error")?.textContent).toMatch(/turned off/);
+      expect(query("unlock-dialog-input")).not.toBeNull();
+      // The capability is re-read so the stale button disappears.
+      expect(mockedOsAuth.mock.calls.length).toBeGreaterThan(1);
+    });
   });
 });

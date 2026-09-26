@@ -9,7 +9,8 @@ import { BackupRestoreSettings } from "./BackupRestoreSettings";
 import { credentialsExportBlockedReason, validateBackupExport } from "./BackupExportDialog";
 import { buildRestoreRequest, defaultChoices } from "./BackupRestoreDialog";
 import { sectionSummary } from "./BackupSectionRow";
-import { KEYCHAIN_EXPORT_BLOCKED_REASON } from "./CredentialVaultBackup";
+import { KEYCHAIN_EXPORT_UNAVAILABLE_REASON } from "./CredentialVaultBackup";
+import { OS_AUTH_AVAILABLE, OS_AUTH_UNAVAILABLE } from "@/test/osAuthFixtures";
 
 vi.mock("@/services/api", async () => {
   const actual = await vi.importActual<typeof import("@/services/api")>("@/services/api");
@@ -17,6 +18,7 @@ vi.mock("@/services/api", async () => {
     ...actual,
     listBackupSections: vi.fn(),
     exportBackup: vi.fn(),
+    getOsAuthInfo: vi.fn(),
     readBackupHeader: vi.fn(),
     previewBackupRestore: vi.fn(),
     applyBackupRestore: vi.fn(),
@@ -36,6 +38,7 @@ import { toast } from "@/components/ui";
 import {
   applyBackupRestore,
   exportBackup,
+  getOsAuthInfo,
   listBackupSections,
   previewBackupRestore,
   readBackupHeader,
@@ -186,12 +189,17 @@ async function openExport() {
 
 describe("backup export helpers", () => {
   it("explains why credentials cannot be included", () => {
-    expect(credentialsExportBlockedReason("os_keychain", "unlocked")).toBe(
-      KEYCHAIN_EXPORT_BLOCKED_REASON
+    expect(
+      credentialsExportBlockedReason("os_keychain", "unlocked", OS_AUTH_UNAVAILABLE)
+    ).toContain(KEYCHAIN_EXPORT_UNAVAILABLE_REASON);
+    // Unknown capability fails closed; available OS verification unblocks it.
+    expect(credentialsExportBlockedReason("os_keychain", "unlocked", null)).not.toBeNull();
+    expect(credentialsExportBlockedReason("os_keychain", "unlocked", OS_AUTH_AVAILABLE)).toBeNull();
+    expect(credentialsExportBlockedReason("none", undefined, null)).toMatch(/off/);
+    expect(credentialsExportBlockedReason("master_password", "unavailable", null)).toMatch(
+      /master/
     );
-    expect(credentialsExportBlockedReason("none", undefined)).toMatch(/off/);
-    expect(credentialsExportBlockedReason("master_password", "unavailable")).toMatch(/master/);
-    expect(credentialsExportBlockedReason("master_password", "locked")).toBeNull();
+    expect(credentialsExportBlockedReason("master_password", "locked", null)).toBeNull();
   });
 
   it("validates the export form", () => {
@@ -266,11 +274,41 @@ describe("BackupRestoreSettings", () => {
     useAppStore.setState(useAppStore.getInitialState());
     vi.clearAllMocks();
     vi.mocked(listBackupSections).mockResolvedValue(SECTIONS);
+    vi.mocked(getOsAuthInfo).mockResolvedValue(OS_AUTH_UNAVAILABLE);
   });
 
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+  });
+
+  it("includes keychain credentials behind OS verification when available", async () => {
+    vi.mocked(getOsAuthInfo).mockResolvedValue(OS_AUTH_AVAILABLE);
+    render("os_keychain");
+    await openExport();
+
+    expect(isChecked("backup-export-credentials")).toBe(true);
+    expect((query("backup-export-credentials") as HTMLButtonElement).disabled).toBe(false);
+    expect(query("backup-export-credentials-detail")?.textContent).toContain("Touch ID");
+    // The OS verifies the user — no master password field in keychain mode.
+    expect(query("backup-export-master-password")).toBeNull();
+
+    vi.mocked(exportBackup).mockResolvedValue({
+      json: BACKUP_JSON,
+      sections: ["connections"],
+      credentialCount: 2,
+      warnings: [],
+    });
+    vi.mocked(save).mockResolvedValue("/tmp/backup.json");
+    setInputValue("backup-export-passphrase", PASSPHRASE);
+    setInputValue("backup-export-confirm", PASSPHRASE);
+    await click("backup-export-submit");
+
+    expect(exportBackup).toHaveBeenCalledWith(
+      expect.objectContaining({ includeCredentials: true }),
+      PASSPHRASE,
+      null
+    );
   });
 
   it("blocks the credentials section in keychain mode but backs up the rest", async () => {
@@ -279,8 +317,8 @@ describe("BackupRestoreSettings", () => {
 
     expect(isChecked("backup-export-credentials")).toBe(false);
     expect((query("backup-export-credentials") as HTMLButtonElement).disabled).toBe(true);
-    expect(query("backup-export-credentials-detail")?.textContent).toBe(
-      KEYCHAIN_EXPORT_BLOCKED_REASON
+    expect(query("backup-export-credentials-detail")?.textContent).toContain(
+      KEYCHAIN_EXPORT_UNAVAILABLE_REASON
     );
     // Present sections are preselected; a store with nothing saved is not.
     expect(isChecked("backup-export-section-connections")).toBe(true);

@@ -1,7 +1,8 @@
 import { useState, useCallback } from "react";
 import { Download, Upload } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import type { CredentialStorageMode } from "@/types/credential";
+import type { CredentialStorageMode, OsAuthInfo } from "@/types/credential";
+import { useOsAuthInfo } from "@/hooks/useOsAuthInfo";
 import { Button } from "@/components/ui";
 import { CredentialVaultExportDialog } from "./CredentialVaultExportDialog";
 import { CredentialVaultImportDialog } from "./CredentialVaultImportDialog";
@@ -23,11 +24,30 @@ function unavailableReason(mode: CredentialStorageMode, status: string | undefin
 }
 
 /**
- * Why export is refused in OS-keychain mode. Mirrors the backend
- * `KEYCHAIN_EXPORT_BLOCKED_MESSAGE`; the backend enforces it independently.
+ * Why export is refused in OS-keychain mode when the OS cannot verify the
+ * user. Mirrors the backend `KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE`; the backend
+ * enforces the gate independently (#3433).
  */
-export const KEYCHAIN_EXPORT_BLOCKED_REASON =
-  "Export from the OS keychain requires system authentication — not yet available (tracked in #3433).";
+export const KEYCHAIN_EXPORT_UNAVAILABLE_REASON =
+  "Exporting from the OS keychain requires system authentication (Touch ID / Windows Hello), which is not available on this computer.";
+
+/** Shown while the OS-verification capability is still being read. */
+export const KEYCHAIN_EXPORT_CHECKING_REASON = "Checking system authentication…";
+
+/**
+ * Why an OS-keychain export is unavailable, or null when the OS can verify
+ * the user. `null` info (not loaded / query failed) fails closed.
+ */
+export function keychainExportReason(info: OsAuthInfo | null): string | null {
+  if (info === null) return KEYCHAIN_EXPORT_CHECKING_REASON;
+  if (info.exportReauth.available) return null;
+  return [KEYCHAIN_EXPORT_UNAVAILABLE_REASON, info.exportReauth.reason].filter(Boolean).join(" ");
+}
+
+/** The note telling the user an OS-keychain export asks the OS to verify them. */
+export function keychainExportNote(info: OsAuthInfo): string {
+  return `For your protection, termiHub asks you to confirm with ${info.exportReauth.methodLabel} each time you export.`;
+}
 
 /**
  * Settings → Security section for exporting and importing the encrypted
@@ -39,12 +59,13 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
   const requestUnlock = useAppStore((s) => s.requestUnlock);
   const [exportOpen, setExportOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const { info: osAuth } = useOsAuthInfo();
 
   const mode: CredentialStorageMode = credentialStoreStatus?.mode ?? "none";
   const status = credentialStoreStatus?.status;
   const reason = unavailableReason(mode, status);
-  // Import into the keychain is fine; export has no re-auth there yet (#3433).
-  const exportReason = reason ?? (mode === "os_keychain" ? KEYCHAIN_EXPORT_BLOCKED_REASON : null);
+  // Import into the keychain is fine; export needs OS user verification (#3433).
+  const exportReason = reason ?? (mode === "os_keychain" ? keychainExportReason(osAuth) : null);
 
   const ensureUnlocked = useCallback(async (): Promise<boolean> => {
     if (mode === "master_password" && status === "locked") {
@@ -101,7 +122,17 @@ export function CredentialVaultBackup({ modeLabel }: CredentialVaultBackupProps)
           Import vault…
         </Button>
       </div>
-      <CredentialVaultExportDialog open={exportOpen} onOpenChange={setExportOpen} mode={mode} />
+      {!exportReason && mode === "os_keychain" && osAuth && (
+        <p className="settings-panel__description" data-testid="credential-vault-export-os-auth">
+          {keychainExportNote(osAuth)}
+        </p>
+      )}
+      <CredentialVaultExportDialog
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+        mode={mode}
+        osAuthLabel={osAuth?.exportReauth.methodLabel}
+      />
       <CredentialVaultImportDialog
         open={importOpen}
         onOpenChange={setImportOpen}

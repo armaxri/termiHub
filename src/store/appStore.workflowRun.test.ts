@@ -1575,13 +1575,14 @@ describe("appStore — scheduled runs (PROD-043)", () => {
 
     const report = await executeScheduledRun(fire(), store);
 
-    expect(report).toEqual({ outcome: "completed", targetsRun: 1 });
     // Never the active ad-hoc tab, never the other connection.
     expect(injected).toEqual([{ tabId: "tab-a", data: "uptime\n" }]);
     await vi.waitFor(() => expect(apiRecordWorkflowRun).toHaveBeenCalledTimes(1));
     const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
     expect(run.triggeredBy).toBe("scheduled");
     expect(run.tabId).toBe("tab-a");
+    // The report links the schedule attempt to the run-history record (#3528).
+    expect(report).toEqual({ outcome: "completed", targetsRun: 1, workflowRunIds: [run.id] });
   });
 
   it("runs on every member of a broadcast group", async () => {
@@ -1595,7 +1596,8 @@ describe("appStore — scheduled runs (PROD-043)", () => {
       store
     );
 
-    expect(report).toEqual({ outcome: "completed", targetsRun: 2 });
+    expect(report).toMatchObject({ outcome: "completed", targetsRun: 2 });
+    expect(report.workflowRunIds).toHaveLength(2);
     expect(injected.map((i) => i.tabId).sort()).toEqual(["tab-a", "tab-b"]);
   });
 

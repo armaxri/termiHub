@@ -277,6 +277,7 @@ impl ScheduleManager {
                     enabled_at: None,
                     last_run_at: None,
                     last_result: None,
+                    history: Vec::new(),
                     created_at: stamp.clone(),
                     updated_at: stamp,
                 });
@@ -416,7 +417,7 @@ impl ScheduleManager {
         if !active.pending.is_empty() {
             return Ok(false);
         }
-        let result = aggregate(&active.reports, active.catch_up, now);
+        let result = aggregate(&active.reports, active.catch_up, active.fired_at, now);
         rt.active = None;
         tracing::info!(
             "scheduled run of {id} settled: {:?} ({})",
@@ -424,7 +425,7 @@ impl ScheduleManager {
             result.message.as_deref().unwrap_or("")
         );
         if let Some(s) = inner.store.schedules.iter_mut().find(|s| s.id == id) {
-            s.last_result = Some(result);
+            super::history::record(s, result);
         }
         if let Err(e) = self.persist(&inner.store) {
             tracing::warn!("failed to persist schedule result: {e}");
@@ -497,3 +498,7 @@ impl ScheduleManager {
 #[cfg(test)]
 #[path = "manager_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "manager_history_tests.rs"]
+mod history_tests;

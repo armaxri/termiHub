@@ -47,9 +47,11 @@ pub(crate) fn known_owners(
 /// Export every saved credential as an encrypted vault file.
 ///
 /// Requires re-authentication: in master-password mode the store must be
-/// unlocked and `master_password` must verify. In OS-keychain mode the export
-/// is refused (`reauthUnavailable`) until OS-level authentication lands (#3433). `export_passphrase` (entered
-/// twice in the UI) seals the file and must differ from the master password.
+/// unlocked and `master_password` must verify. In OS-keychain mode the OS must
+/// verify the user (Touch ID / Windows Hello) for this export (#3433) —
+/// refused as `reauthFailed` when cancelled or failed and `reauthUnavailable`
+/// where OS verification does not exist. `export_passphrase` (entered twice in
+/// the UI) seals the file and must differ from the master password.
 /// Returns the file's JSON text.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
@@ -66,11 +68,13 @@ pub async fn export_credential_vault(
     let mode = manager.get_mode();
     info!(mode = mode.to_settings_str(), "Exporting credential vault");
 
-    vault::authorize_export(&manager, master_password.as_deref().map(String::as_str))?;
+    // Validate the passphrase first so a weak one is rejected before the
+    // user is asked for Touch ID / Windows Hello.
     vault::validate_export_passphrase(
         &export_passphrase,
         master_password.as_deref().map(String::as_str),
     )?;
+    vault::authorize_export(&manager, master_password.as_deref().map(String::as_str))?;
 
     let owner_ids: Vec<String> = known_owners(&connection_manager, &app_handle)
         .map_err(|e| VaultError::Other {
