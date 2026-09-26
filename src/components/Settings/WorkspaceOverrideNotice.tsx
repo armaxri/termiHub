@@ -44,8 +44,8 @@ export function WorkspaceOverrideNotice({ settingKey, label }: WorkspaceOverride
     >
       <Layers className="workspace-override-notice__icon" size={13} aria-hidden="true" />
       <span className="workspace-override-notice__text">
-        Overridden in workspace <strong>{workspace.name}</strong> — the value below applies when
-        no workspace overrides it.
+        Overridden in workspace <strong>{workspace.name}</strong> — the value below applies when no
+        workspace overrides it.
       </span>
       <Button
         variant="ghost"

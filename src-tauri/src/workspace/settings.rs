@@ -281,7 +281,10 @@ mod tests {
         let mut settings = json!({ "shell": "zsh" });
         ws.apply_to_local_shell_settings(&mut settings);
         assert_eq!(settings["startingDirectory"], "/work/project");
-        assert_eq!(settings["envVars"], json!([{ "key": "STAGE", "value": "dev" }]));
+        assert_eq!(
+            settings["envVars"],
+            json!([{ "key": "STAGE", "value": "dev" }])
+        );
     }
 
     #[test]

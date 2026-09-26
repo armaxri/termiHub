@@ -22,11 +22,7 @@ import { applyTheme } from "@/themes";
 import { currentSettingsView } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import type { AppSettings } from "@/types/connection";
-import type {
-  ActiveWorkspaceInfo,
-  WorkspaceEnvVar,
-  WorkspaceSettings,
-} from "@/types/workspace";
+import type { ActiveWorkspaceInfo, WorkspaceEnvVar, WorkspaceSettings } from "@/types/workspace";
 import {
   getActiveWorkspace as apiGetActiveWorkspace,
   loadWorkspace as apiLoadWorkspace,
@@ -189,10 +185,7 @@ export function useActiveWorkspace(): ActiveWorkspaceInfo | null {
 export function useEffectiveSettings(): AppSettings {
   const global = useProjectedSettings();
   const workspace = useActiveWorkspace();
-  return useMemo(
-    () => resolveEffectiveSettings(global, workspace?.settings),
-    [global, workspace]
-  );
+  return useMemo(() => resolveEffectiveSettings(global, workspace?.settings), [global, workspace]);
 }
 
 // ── Environment variable helpers for the workspace settings editor ────────────

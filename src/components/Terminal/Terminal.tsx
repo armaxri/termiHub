@@ -32,10 +32,7 @@ import {
 import { currentBroadcastView } from "@/store/broadcastBridge";
 import { currentAgentsView } from "@/store/agentsBridge";
 import { currentSettingsView } from "@/store/settingsBridge";
-import {
-  currentEffectiveSettings,
-  useEffectiveSettings,
-} from "@/services/workspaceSettings";
+import { currentEffectiveSettings, useEffectiveSettings } from "@/services/workspaceSettings";
 import { getXtermTheme } from "@/themes";
 import {
   processKeyEvent,

@@ -126,7 +126,11 @@ export function WorkspaceSettingsSection({ value, onChange }: WorkspaceSettingsS
               <Field
                 label="Name"
                 error={error ?? undefined}
-                hint={secret ? "This looks like a secret — it would be stored in plain text." : undefined}
+                hint={
+                  secret
+                    ? "This looks like a secret — it would be stored in plain text."
+                    : undefined
+                }
                 hintVariant="warning"
                 data-testid={`workspace-settings-env-field-${index}`}
               >

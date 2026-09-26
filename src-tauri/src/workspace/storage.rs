@@ -84,7 +84,8 @@ impl WorkspaceStorage {
                 serde_json::Value::String(WorkspaceStore::CURRENT_VERSION.to_string()),
             );
         }
-        let data = serde_json::to_string_pretty(&value).context("Failed to serialize workspaces")?;
+        let data =
+            serde_json::to_string_pretty(&value).context("Failed to serialize workspaces")?;
 
         write_atomic(&self.file_path, &data).context("Failed to write workspaces file")?;
 

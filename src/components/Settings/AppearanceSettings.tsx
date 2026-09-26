@@ -294,7 +294,9 @@ export function AppearanceSettings({ settings, onChange, visibleFields }: Appear
           onCancel={closeEditor}
         />
       )}
-      {show("fontFamily") && <WorkspaceOverrideNotice settingKey="fontFamily" label="Font family" />}
+      {show("fontFamily") && (
+        <WorkspaceOverrideNotice settingKey="fontFamily" label="Font family" />
+      )}
       {show("fontFamily") && (
         <SettingsField
           label="Font Family"

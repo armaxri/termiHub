@@ -45,6 +45,8 @@ vi.mock("@/services/workspaceApi", () => ({
 const GLOBAL: AppSettings = {
   version: "1",
   externalConnectionFiles: [],
+  powerMonitoringEnabled: true,
+  fileBrowserEnabled: true,
   theme: "dark",
   fontFamily: "Menlo",
   fontSize: 14,
@@ -188,9 +190,9 @@ describe("environment variable validation", () => {
 
 describe("normalizeWorkspaceSettings", () => {
   it("trims, drops blanks and returns undefined when nothing is overridden", () => {
-    expect(normalizeWorkspaceSettings({ fontFamily: "  ", envVars: [{ key: "", value: "" }] })).toBe(
-      undefined
-    );
+    expect(
+      normalizeWorkspaceSettings({ fontFamily: "  ", envVars: [{ key: "", value: "" }] })
+    ).toBe(undefined);
     expect(
       normalizeWorkspaceSettings({
         theme: "light",

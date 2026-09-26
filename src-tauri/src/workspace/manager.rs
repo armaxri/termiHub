@@ -538,7 +538,10 @@ mod tests {
         }
     }
 
-    fn with_settings(mut def: WorkspaceDefinition, settings: WorkspaceSettings) -> WorkspaceDefinition {
+    fn with_settings(
+        mut def: WorkspaceDefinition,
+        settings: WorkspaceSettings,
+    ) -> WorkspaceDefinition {
         def.settings = Some(settings);
         def
     }
@@ -569,7 +572,10 @@ mod tests {
     fn save_drops_empty_settings_record() {
         let dir = TempDir::new().unwrap();
         let mgr = create_test_manager(&dir);
-        let def = with_settings(sample_definition("ws-1", "Empty"), WorkspaceSettings::default());
+        let def = with_settings(
+            sample_definition("ws-1", "Empty"),
+            WorkspaceSettings::default(),
+        );
         mgr.save_workspace(def).unwrap();
         assert!(mgr.load_workspace("ws-1").unwrap().settings.is_none());
     }
@@ -582,8 +588,11 @@ mod tests {
             default_working_directory: Some("/srv".into()),
             ..Default::default()
         };
-        mgr.save_workspace(with_settings(sample_definition("ws-1", "A"), settings.clone()))
-            .unwrap();
+        mgr.save_workspace(with_settings(
+            sample_definition("ws-1", "A"),
+            settings.clone(),
+        ))
+        .unwrap();
         mgr.save_workspace(sample_definition("ws-2", "B")).unwrap();
 
         assert!(mgr.active_settings().is_none(), "nothing active initially");
@@ -595,8 +604,11 @@ mod tests {
             default_working_directory: Some("/other".into()),
             ..Default::default()
         };
-        mgr.save_workspace(with_settings(sample_definition("ws-1", "A"), edited.clone()))
-            .unwrap();
+        mgr.save_workspace(with_settings(
+            sample_definition("ws-1", "A"),
+            edited.clone(),
+        ))
+        .unwrap();
         assert_eq!(mgr.active_settings(), Some(edited));
 
         // Switching to a workspace without overrides yields none.
@@ -636,10 +648,16 @@ mod tests {
             env_vars: vec![env("STAGE", "dev")],
             ..Default::default()
         };
-        mgr.save_workspace(with_settings(sample_definition("ws-1", "A"), settings.clone()))
-            .unwrap();
+        mgr.save_workspace(with_settings(
+            sample_definition("ws-1", "A"),
+            settings.clone(),
+        ))
+        .unwrap();
         let dup = mgr.duplicate_workspace("ws-1").unwrap();
-        assert_eq!(mgr.load_workspace(&dup).unwrap().settings, Some(settings.clone()));
+        assert_eq!(
+            mgr.load_workspace(&dup).unwrap().settings,
+            Some(settings.clone())
+        );
 
         let json = mgr.export_json(&HashMap::new()).unwrap();
         let dir2 = TempDir::new().unwrap();
@@ -666,7 +684,10 @@ mod tests {
         .to_string();
         let result = mgr.import_json(&json, &HashMap::new()).unwrap();
         assert_eq!(result.imported_count, 1);
-        assert!(result.warnings.iter().any(|w| w.contains("settings overrides")));
+        assert!(result
+            .warnings
+            .iter()
+            .any(|w| w.contains("settings overrides")));
         let id = mgr.get_workspaces().unwrap()[0].id.clone();
         assert!(mgr.load_workspace(&id).unwrap().settings.is_none());
     }

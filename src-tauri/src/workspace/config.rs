@@ -183,7 +183,10 @@ impl crate::utils::migrate::VersionedStore for WorkspaceStore {
     /// workspace's `settings` on its next save.
     const CURRENT_VERSION: u32 = 2;
 
-    fn migrate(mut value: serde_json::Value, from_version: u32) -> anyhow::Result<serde_json::Value> {
+    fn migrate(
+        mut value: serde_json::Value,
+        from_version: u32,
+    ) -> anyhow::Result<serde_json::Value> {
         if from_version < 2 {
             if let Some(obj) = value.as_object_mut() {
                 obj.insert("version".to_string(), serde_json::json!("2"));
