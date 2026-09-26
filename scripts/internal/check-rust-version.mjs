@@ -143,8 +143,8 @@ export function findProblems(repo) {
   if (pinned === null) {
     problems.push(
       `.github/rust-version must hold one exact X.Y.Z toolchain version (got ${JSON.stringify(
-        repo.pinnedFile,
-      )})`,
+        repo.pinnedFile
+      )})`
     );
     return problems;
   }
@@ -153,8 +153,8 @@ export function findProblems(repo) {
   if (workspaceVersion !== pinned) {
     problems.push(
       `Cargo.toml [workspace.package] rust-version is ${JSON.stringify(
-        workspaceVersion,
-      )}, expected "${pinned}" (.github/rust-version)`,
+        workspaceVersion
+      )}, expected "${pinned}" (.github/rust-version)`
     );
   }
 
@@ -172,8 +172,8 @@ export function findProblems(repo) {
     if (declared !== pinned) {
       problems.push(
         `${crate}/Cargo.toml [package] rust-version is ${JSON.stringify(
-          declared,
-        )}, expected "${pinned}" (.github/rust-version)`,
+          declared
+        )}, expected "${pinned}" (.github/rust-version)`
       );
     }
   }
@@ -181,7 +181,7 @@ export function findProblems(repo) {
   for (const hit of directToolchainUses(repo.workflows)) {
     problems.push(
       `${hit}: uses dtolnay/rust-toolchain directly — use ./.github/actions/setup-rust so the ` +
-        `pinned version in .github/rust-version applies`,
+        `pinned version in .github/rust-version applies`
     );
   }
   return problems;
@@ -200,16 +200,16 @@ function readOrNull(file) {
 export function loadRepo(root) {
   const rootManifest = readFileSync(path.join(root, "Cargo.toml"), "utf8");
   const memberManifests = Object.fromEntries(
-    workspaceMembers(rootManifest).map((m) => [m, readOrNull(path.join(root, m, "Cargo.toml"))]),
+    workspaceMembers(rootManifest).map((m) => [m, readOrNull(path.join(root, m, "Cargo.toml"))])
   );
   const standaloneManifests = Object.fromEntries(
-    STANDALONE_CRATES.map((c) => [c, readOrNull(path.join(root, c, "Cargo.toml"))]),
+    STANDALONE_CRATES.map((c) => [c, readOrNull(path.join(root, c, "Cargo.toml"))])
   );
   const workflowDir = path.join(root, ".github", "workflows");
   const workflows = Object.fromEntries(
     readdirSync(workflowDir)
       .filter((f) => /\.ya?ml$/.test(f))
-      .map((f) => [`.github/workflows/${f}`, readFileSync(path.join(workflowDir, f), "utf8")]),
+      .map((f) => [`.github/workflows/${f}`, readFileSync(path.join(workflowDir, f), "utf8")])
   );
   return {
     pinnedFile: readOrNull(path.join(root, ".github", "rust-version")),
@@ -230,6 +230,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     for (const problem of problems) console.error(`  - ${problem}`);
     process.exit(1);
   }
-  const pinned = parsePinnedVersion(readFileSync(path.join(root, ".github", "rust-version"), "utf8"));
+  const pinned = parsePinnedVersion(
+    readFileSync(path.join(root, ".github", "rust-version"), "utf8")
+  );
   console.log(`Rust toolchain ${pinned}: CI pin, workspace and rdp-sidecar rust-version agree.`);
 }

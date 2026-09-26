@@ -94,7 +94,7 @@ describe("findProblems", () => {
 
   it("fails when a first-party member does not inherit, but ignores vendor/", () => {
     const problems = findProblems(
-      repo({ memberManifests: { core: '[package]\nname = "core"\n', "vendor/x": "" } }),
+      repo({ memberManifests: { core: '[package]\nname = "core"\n', "vendor/x": "" } })
     );
     expect(problems).toEqual([
       "core/Cargo.toml [package] must set `rust-version.workspace = true`",
@@ -103,14 +103,14 @@ describe("findProblems", () => {
 
   it("fails when the sidecar declares no rust-version", () => {
     const problems = findProblems(
-      repo({ standaloneManifests: { "rdp-sidecar": '[package]\nname = "s"\n' } }),
+      repo({ standaloneManifests: { "rdp-sidecar": '[package]\nname = "s"\n' } })
     );
     expect(problems).toHaveLength(1);
   });
 
   it("fails when a workflow installs a toolchain directly", () => {
     const problems = findProblems(
-      repo({ workflows: { "x.yml": "      - uses: dtolnay/rust-toolchain@1.97.0\n" } }),
+      repo({ workflows: { "x.yml": "      - uses: dtolnay/rust-toolchain@1.97.0\n" } })
     );
     expect(problems).toHaveLength(1);
   });
