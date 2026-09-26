@@ -687,7 +687,10 @@ describe("api response-validation (TFE-004)", () => {
     });
 
     it("installPlugin sends filePath under `path` with the trust-gate flags", async () => {
-      const installed = { id: "p1", name: "Plugin", version: "1.0.0", enabled: true };
+      const installed = {
+        status: "installed",
+        plugin: { id: "p1", name: "Plugin", version: "1.0.0", enabled: true },
+      };
       mockedInvoke.mockResolvedValue(installed);
 
       const result = await installPlugin("/tmp/p1.termihub-plugin", true, false);
@@ -696,8 +699,22 @@ describe("api response-validation (TFE-004)", () => {
         path: "/tmp/p1.termihub-plugin",
         acceptUntrusted: true,
         trustPublisher: false,
+        confirmVersionChange: false,
       });
       expect(result).toEqual(installed);
+    });
+
+    it("installPlugin forwards the version-change confirmation (PLG-012)", async () => {
+      mockedInvoke.mockResolvedValue({ status: "installed", plugin: {} });
+
+      await installPlugin("/tmp/p1.termihub-plugin", false, false, true);
+
+      expect(mockedInvoke).toHaveBeenCalledWith("install_plugin", {
+        path: "/tmp/p1.termihub-plugin",
+        acceptUntrusted: false,
+        trustPublisher: false,
+        confirmVersionChange: true,
+      });
     });
   });
 

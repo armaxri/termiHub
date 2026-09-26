@@ -246,15 +246,64 @@ describe("appStore — plugins (#1993)", () => {
 
   it("installPlugin installs, refreshes, and toasts success", async () => {
     const installed = makePlugin("new-plugin", "active");
-    vi.mocked(apiInstallPlugin).mockResolvedValueOnce(installed);
+    vi.mocked(apiInstallPlugin).mockResolvedValueOnce({ status: "installed", plugin: installed });
     vi.mocked(apiListPlugins).mockResolvedValueOnce([installed]);
 
-    await useAppStore.getState().installPlugin("/tmp/new-plugin.termihub-plugin", true, false);
+    const change = await useAppStore
+      .getState()
+      .installPlugin("/tmp/new-plugin.termihub-plugin", true, false);
 
-    expect(apiInstallPlugin).toHaveBeenCalledWith("/tmp/new-plugin.termihub-plugin", true, false);
+    expect(change).toBeNull();
+    expect(apiInstallPlugin).toHaveBeenCalledWith(
+      "/tmp/new-plugin.termihub-plugin",
+      true,
+      false,
+      false
+    );
     expect(toastLoading).toHaveBeenCalledTimes(1);
     expect(toastSuccess).toHaveBeenCalledWith("Installed Plugin new-plugin", { id: "toast-id" });
     expect(useAppStore.getState().plugins).toHaveLength(1);
+  });
+
+  it("installPlugin resolves the version change when confirmation is required (PLG-012)", async () => {
+    const pending = {
+      pluginId: "new-plugin",
+      pluginName: "Plugin new-plugin",
+      installedVersion: "1.4.0",
+      incomingVersion: "1.2.0",
+      kind: "downgrade" as const,
+    };
+    vi.mocked(apiInstallPlugin).mockResolvedValueOnce({
+      status: "confirmationRequired",
+      change: pending,
+    });
+
+    const change = await useAppStore
+      .getState()
+      .installPlugin("/tmp/new-plugin.termihub-plugin", true, false);
+
+    expect(change).toEqual(pending);
+    // Nothing installed: no refresh, no success toast.
+    expect(apiListPlugins).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+  });
+
+  it("installPlugin forwards an explicit version-change confirmation", async () => {
+    const installed = makePlugin("new-plugin", "active");
+    vi.mocked(apiInstallPlugin).mockResolvedValueOnce({ status: "installed", plugin: installed });
+    vi.mocked(apiListPlugins).mockResolvedValueOnce([installed]);
+
+    await useAppStore
+      .getState()
+      .installPlugin("/tmp/new-plugin.termihub-plugin", true, false, true);
+
+    expect(apiInstallPlugin).toHaveBeenCalledWith(
+      "/tmp/new-plugin.termihub-plugin",
+      true,
+      false,
+      true
+    );
   });
 
   it("installPlugin toasts an error and rethrows on failure", async () => {

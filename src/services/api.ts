@@ -33,6 +33,7 @@ import type {
 import type { WorkspaceTabGroupDef } from "@/types/workspace";
 import type {
   InstalledPlugin,
+  InstallPluginResult,
   JsonValue,
   NativePluginTrust,
   PluginManifest,
@@ -2707,16 +2708,22 @@ export async function assessPluginTrust(filePath: string): Promise<PluginTrustIn
  * signed-but-unknown package pins its key when `trustPublisher` is set
  * (trust-on-first-use); a tampered package is refused; a verified publisher
  * installs with no risk gate.
+ *
+ * Replacing an installed plugin with an older version, a different build of the
+ * same version, or an uncomparable version resolves to `confirmationRequired`
+ * (nothing changed) unless `confirmVersionChange` is set (PLG-012).
  */
 export async function installPlugin(
   filePath: string,
   acceptUntrusted: boolean,
-  trustPublisher: boolean
-): Promise<InstalledPlugin> {
-  return await invoke<InstalledPlugin>("install_plugin", {
+  trustPublisher: boolean,
+  confirmVersionChange = false
+): Promise<InstallPluginResult> {
+  return await invoke<InstallPluginResult>("install_plugin", {
     path: filePath,
     acceptUntrusted,
     trustPublisher,
+    confirmVersionChange,
   });
 }
 

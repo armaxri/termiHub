@@ -15,7 +15,12 @@ import {
 import { currentSettingsView } from "@/store/settingsBridge";
 import { applyTheme, loadPluginThemes, setRegisteredPluginThemes } from "@/themes";
 import type { ThemeDefinition } from "@/themes";
-import type { InstalledPlugin, JsonValue, PluginBackendType } from "@/types/plugin";
+import type {
+  InstalledPlugin,
+  JsonValue,
+  PluginBackendType,
+  PluginVersionChange,
+} from "@/types/plugin";
 import { frontendLog } from "@/utils/frontendLog";
 
 import type { AppState } from "../appStore";
@@ -119,12 +124,18 @@ export interface PluginsSlice {
   /**
    * Install a `.termihub-plugin` package from `filePath`, then refresh the list.
    * Surfaces a pending → success/error toast; rejects on failure.
+   *
+   * Resolves `null` once installed. Resolves the {@link PluginVersionChange}
+   * instead — with nothing installed — when the backend requires confirmation of
+   * a downgrade / same-version rebuild (PLG-012); re-call with
+   * `confirmVersionChange = true` once the user agrees.
    */
   installPlugin: (
     filePath: string,
     acceptUntrusted: boolean,
-    trustPublisher: boolean
-  ) => Promise<void>;
+    trustPublisher: boolean,
+    confirmVersionChange?: boolean
+  ) => Promise<PluginVersionChange | null>;
   /** Uninstall a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
   uninstallPlugin: (pluginId: string) => Promise<void>;
   /** Enable (activate) a plugin by id, then refresh the list. Toasts feedback; rejects on failure. */
@@ -186,12 +197,28 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
     }
   },
 
-  installPlugin: async (filePath, acceptUntrusted, trustPublisher) => {
+  installPlugin: async (
+    filePath,
+    acceptUntrusted,
+    trustPublisher,
+    confirmVersionChange = false
+  ) => {
     const toastId = toast.loading("Installing plugin…");
     try {
-      const installed = await apiInstallPlugin(filePath, acceptUntrusted, trustPublisher);
+      const result = await apiInstallPlugin(
+        filePath,
+        acceptUntrusted,
+        trustPublisher,
+        confirmVersionChange
+      );
+      if (result.status === "confirmationRequired") {
+        // Nothing was installed: the caller asks the user to confirm (PLG-012).
+        toast.dismiss(toastId);
+        return result.change;
+      }
       await get().loadPlugins();
-      toast.success(`Installed ${installed.manifest.name}`, { id: toastId });
+      toast.success(`Installed ${result.plugin.manifest.name}`, { id: toastId });
+      return null;
     } catch (err) {
       toast.error(`Failed to install plugin: ${errorMessage(err)}`, {
         id: toastId,
