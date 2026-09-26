@@ -3203,12 +3203,28 @@ export async function setNativePluginsEnabled(enabled: boolean): Promise<void> {
   await invoke("set_native_plugins_enabled", { enabled });
 }
 
+/** Options for {@link acknowledgeNativePlugin}. */
+export interface AcknowledgeNativePluginOptions {
+  /**
+   * Record the user's explicit acceptance that the plugin's build toolchain
+   * cannot be verified. Only a plugin built for native ABI 1.0 needs it; the
+   * host refuses such a plugin otherwise (#3576).
+   */
+  acceptUnverifiedToolchain?: boolean;
+}
+
 /**
  * Acknowledge trust for the native plugin `id`, binding consent to its current
  * backend library, and load it. Returns the refreshed installed-plugin record.
  */
-export async function acknowledgeNativePlugin(id: string): Promise<InstalledPlugin> {
-  return await invoke<InstalledPlugin>("acknowledge_native_plugin", { id });
+export async function acknowledgeNativePlugin(
+  id: string,
+  options: AcknowledgeNativePluginOptions = {}
+): Promise<InstalledPlugin> {
+  return await invoke<InstalledPlugin>("acknowledge_native_plugin", {
+    id,
+    acceptUnverifiedToolchain: options.acceptUnverifiedToolchain ?? false,
+  });
 }
 
 /** Revoke trust for the native plugin `id` and unload it immediately. */

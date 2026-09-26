@@ -17,7 +17,7 @@ const MAX_BUFFER_SIZE: usize = 2000;
 /// at `DEBUG` so the LogViewer stays useful, while silencing noisy third-party
 /// dependencies — most notably `russh`, which emits per-packet `DEBUG`/`TRACE`
 /// cipher logs that otherwise flood the log even while the app is idle.
-const DEFAULT_LOG_DIRECTIVE: &str = "info,termihub=debug,termihub_lib=debug,termihub_core=debug,termihub_agent=debug,frontend=debug,russh=warn";
+const DEFAULT_LOG_DIRECTIVE: &str = "info,termihub=debug,termihub_lib=debug,termihub_core=debug,termihub_agent=debug,frontend=debug,plugin=debug,russh=warn";
 
 /// Build the tracing [`EnvFilter`] used by the application.
 ///

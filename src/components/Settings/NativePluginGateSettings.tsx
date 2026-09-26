@@ -8,11 +8,22 @@ import {
   revokeNativePluginTrust,
   setNativePluginsEnabled,
 } from "@/services/api";
-import type { NativePluginTrust } from "@/types/plugin";
+import type { InstalledPlugin, NativePluginTrust } from "@/types/plugin";
 import { Button, EmptyState, Toggle, toast } from "@/components/ui";
 import { frontendLog } from "@/utils/frontendLog";
 import { errorMessage } from "@/utils/errorMessage";
 import { SettingsField } from "./SettingsField";
+
+/**
+ * Whether a native plugin was built for an ABI that predates the build-toolchain
+ * record (native ABI 1.0, #3576). termiHub cannot verify such a plugin's
+ * compiler, so it loads only when the user explicitly accepts that when trusting
+ * it. The manifest `apiVersion` is a host-checked mirror of the library's ABI.
+ */
+function predatesToolchainRecord(plugin: InstalledPlugin): boolean {
+  const [major, minor] = plugin.manifest.apiVersion.split(".").map(Number);
+  return major === 1 && minor === 0;
+}
 
 /**
  * Settings → Plugins → the native (in-process) plugin trust gate
@@ -61,8 +72,8 @@ export function NativePluginGateSettings() {
     [plugins]
   );
 
-  const acknowledgedIds = useMemo(
-    () => new Set((trust?.acknowledged ?? []).map((a) => a.id)),
+  const acknowledgments = useMemo(
+    () => new Map((trust?.acknowledged ?? []).map((a) => [a.id, a])),
     [trust]
   );
 
@@ -81,9 +92,9 @@ export function NativePluginGateSettings() {
   );
 
   const handleTrust = useCallback(
-    async (id: string, name: string) => {
+    async (id: string, name: string, acceptUnverifiedToolchain: boolean) => {
       try {
-        await acknowledgeNativePlugin(id);
+        await acknowledgeNativePlugin(id, { acceptUnverifiedToolchain });
         await load();
         toast.success(`Trusted and loaded ${name}`);
       } catch (err) {
@@ -150,7 +161,12 @@ export function NativePluginGateSettings() {
           <ul className="settings-panel__file-list">
             {nativePlugins.map((p) => {
               const id = p.manifest.id;
-              const isTrusted = acknowledgedIds.has(id);
+              const legacyAbi = predatesToolchainRecord(p);
+              const ack = acknowledgments.get(id);
+              // A 1.0 plugin trusted without the toolchain acceptance is still
+              // refused by the host, so it is offered for (re-)trust.
+              const isTrusted =
+                ack !== undefined && (!legacyAbi || ack.unverifiedToolchainAccepted);
               return (
                 <li
                   key={id}
@@ -162,6 +178,16 @@ export function NativePluginGateSettings() {
                     <span className="settings-panel__description">
                       · {isTrusted ? "trusted" : "not trusted"}
                     </span>
+                    {legacyAbi && (
+                      <p
+                        className="settings-panel__description"
+                        data-testid={`native-plugin-toolchain-warning-${id}`}
+                      >
+                        Built for plugin ABI 1.0: termiHub cannot verify which compiler built it,
+                        and a mismatched build can crash termiHub. Trusting it also accepts this
+                        risk. Ask the author for a build for ABI 1.1 or later.
+                      </p>
+                    )}
                   </div>
                   {isTrusted ? (
                     <Button
@@ -180,7 +206,7 @@ export function NativePluginGateSettings() {
                       variant="secondary"
                       size="sm"
                       icon={<ShieldCheck size={14} />}
-                      onClick={() => handleTrust(id, p.manifest.name)}
+                      onClick={() => handleTrust(id, p.manifest.name, legacyAbi)}
                       disabled={!enabled}
                       errorToast={false}
                       aria-label={`Trust ${p.manifest.name}`}

@@ -392,6 +392,11 @@ export interface NativeAckInfo {
   librarySha256: string;
   /** RFC 3339 timestamp the acknowledgment was recorded. */
   acknowledgedAt: string;
+  /**
+   * Whether the user explicitly accepted that the plugin's build toolchain
+   * cannot be verified — required for a plugin built for native ABI 1.0 (#3576).
+   */
+  unverifiedToolchainAccepted: boolean;
 }
 
 /**
