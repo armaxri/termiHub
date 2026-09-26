@@ -53,9 +53,7 @@ use termihub_core::connection::{
 };
 
 use crate::audio::RdpAudioBackend;
-use crate::clipboard::{
-    build_format_data_response, local_text_formats, ClipboardEvent, SidecarClipboardBackend,
-};
+use crate::clipboard::{ClipboardEvent, LocalClipboard, SidecarClipboardBackend};
 use crate::drive::DriveRedirectBackend;
 use crate::failure;
 use crate::input;
@@ -345,6 +343,7 @@ where
             | HostMessage::Input(_)
             | HostMessage::Resize { .. }
             | HostMessage::SetClipboard(_)
+            | HostMessage::SetClipboardImage(_)
             | HostMessage::FetchClipboardFile { .. } => {
                 debug!("ignoring a host message received while awaiting the cert decision");
             }
@@ -706,10 +705,10 @@ where
     let mut terminated = None;
     let mut prev_buttons: u8 = 0;
     let mut cursor: (u32, u32) = (0, 0);
-    // The latest host clipboard text pushed via `SetClipboard`, served back to the
-    // server when it requests our clipboard data (#1756). `None` until the host
-    // copies something.
-    let mut local_clipboard: Option<String> = None;
+    // The latest host clipboard content pushed via `SetClipboard` (text, #1756)
+    // or `SetClipboardImage` (PROD-021), served back to the server when it
+    // requests our clipboard data. Empty until the host copies something.
+    let mut local_clipboard = LocalClipboard::Empty;
 
     loop {
         tokio::select! {
@@ -772,14 +771,30 @@ where
                         if view_only {
                             continue;
                         }
-                        local_clipboard = Some(text);
-                        if advertise_local_clipboard(
-                            &mut stage,
-                            &mut writer,
-                            local_clipboard.as_deref(),
-                        )
-                        .await
-                        .is_err()
+                        local_clipboard = LocalClipboard::Text(text);
+                        if advertise_local_clipboard(&mut stage, &mut writer, &local_clipboard)
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    HostMessage::SetClipboardImage(image) => {
+                        // The host copied an image locally (PROD-021): advertise
+                        // CF_DIB; served on the remote's paste. View-only sessions
+                        // never push; an image over the caps is refused here too
+                        // (the desktop already checked — the pipe is not trusted).
+                        if view_only {
+                            continue;
+                        }
+                        if let Err(violation) = image.validate() {
+                            warn!(%violation, "rejected local clipboard image");
+                            continue;
+                        }
+                        local_clipboard = LocalClipboard::image(&image);
+                        if advertise_local_clipboard(&mut stage, &mut writer, &local_clipboard)
+                            .await
+                            .is_err()
                         {
                             break;
                         }
@@ -801,7 +816,7 @@ where
                             &mut stage,
                             &mut writer,
                             ipc_out,
-                            local_clipboard.as_deref(),
+                            &local_clipboard,
                         )
                         .await
                         .is_err()
@@ -837,7 +852,7 @@ where
                     &mut stage,
                     &mut writer,
                     ipc_out,
-                    local_clipboard.as_deref(),
+                    &local_clipboard,
                 )
                 .await
                 .is_err()
@@ -912,7 +927,7 @@ where
                             &clipboard_rx,
                             &mut writer,
                             ipc_out,
-                            local_clipboard.as_deref(),
+                            &local_clipboard,
                         )
                         .await
                         .is_err()
@@ -945,7 +960,7 @@ where
                             &clipboard_rx,
                             &mut writer,
                             ipc_out,
-                            local_clipboard.as_deref(),
+                            &local_clipboard,
                         )
                         .await
                         .is_err()
@@ -975,7 +990,7 @@ async fn readvertise_and_drain<T, W>(
     clipboard_rx: &std::sync::mpsc::Receiver<ClipboardEvent>,
     transport: &mut T,
     ipc_out: &mut W,
-    local_clipboard: Option<&str>,
+    local_clipboard: &LocalClipboard,
 ) -> Result<()>
 where
     T: FramedWrite,
@@ -1095,12 +1110,12 @@ where
 async fn advertise_local_clipboard<T>(
     stage: &mut ActiveStage,
     transport: &mut T,
-    local_clipboard: Option<&str>,
+    local_clipboard: &LocalClipboard,
 ) -> Result<()>
 where
     T: FramedWrite,
 {
-    let formats = local_text_formats(local_clipboard);
+    let formats = local_clipboard.formats();
     let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
         Some(cliprdr) => cliprdr
             .initiate_copy(&formats)
@@ -1121,7 +1136,7 @@ async fn drain_clipboard_events<T, W>(
     stage: &mut ActiveStage,
     transport: &mut T,
     ipc_out: &mut W,
-    local_clipboard: Option<&str>,
+    local_clipboard: &LocalClipboard,
 ) -> Result<()>
 where
     T: FramedWrite,
@@ -1145,7 +1160,7 @@ where
                 write_cliprdr_messages(stage, transport, messages).await?;
             }
             ClipboardEvent::ProvideData(format) => {
-                let response = build_format_data_response(format, local_clipboard);
+                let response = local_clipboard.response(format);
                 let messages = match stage.get_svc_processor_mut::<CliprdrClient>() {
                     Some(cliprdr) => cliprdr
                         .submit_format_data(response)
@@ -1156,6 +1171,16 @@ where
                     }
                 };
                 write_cliprdr_messages(stage, transport, messages).await?;
+            }
+            ClipboardEvent::RemoteImage(image) => {
+                debug!(
+                    width = image.width,
+                    height = image.height,
+                    "forwarding remote clipboard image to host"
+                );
+                write_message(ipc_out, &SidecarMessage::ClipboardImage(image))
+                    .await
+                    .context("failed to forward remote clipboard image to host")?;
             }
             ClipboardEvent::RemoteText(text) => {
                 debug!(len = text.len(), "forwarding remote clipboard text to host");

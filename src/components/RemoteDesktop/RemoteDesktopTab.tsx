@@ -16,6 +16,7 @@ import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
 import { RemoteDesktopToolbar } from "./RemoteDesktopToolbar";
 import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
 import { RemoteDesktopCertPrompt } from "./RemoteDesktopCertPrompt";
+import { RemoteDesktopClipboardImage } from "./RemoteDesktopClipboardImage";
 import "./RemoteDesktopTab.css";
 
 interface RemoteDesktopTabProps {
@@ -241,6 +242,12 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           <Button variant="secondary" size="sm" onClick={handleSendClipboard}>
             Send to remote
           </Button>
+          {session.sessionId && (
+            <RemoteDesktopClipboardImage
+              sessionId={session.sessionId}
+              viewOnly={session.viewOnly}
+            />
+          )}
           {clipboardFiles.length > 0 && (
             <div className="rd-clipboard__files" data-testid="remote-desktop-clipboard-files">
               <span className="rd-clipboard__files-label">Remote files</span>

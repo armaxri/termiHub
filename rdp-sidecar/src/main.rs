@@ -20,6 +20,7 @@ mod adpcm;
 mod audio;
 mod cert;
 mod clipboard;
+mod dib;
 mod drive;
 mod failure;
 mod folder_watch;

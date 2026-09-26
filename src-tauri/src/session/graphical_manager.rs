@@ -27,8 +27,8 @@ use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
     auto_reconnect_enabled, fixed_resolution_requested, CertPrompt, CertPromptReceiver,
-    ConnectionType, ConnectionTypeRegistry, CursorUpdate, FrameUpdate, GraphicalState, InputEvent,
-    RemoteClipboardFile, SessionStateMachine,
+    ClipboardImage, ConnectionType, ConnectionTypeRegistry, CursorUpdate, FrameUpdate,
+    GraphicalState, InputEvent, RemoteClipboardFile, SessionStateMachine,
 };
 use termihub_core::errors::SessionError;
 
@@ -605,6 +605,54 @@ impl GraphicalSessionManager {
             .graphical()
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
         Ok(backend.get_clipboard().await)
+    }
+
+    /// Whether the session's backend bridges clipboard images (PROD-021) — its
+    /// advertised `supports_clipboard_image` capability.
+    pub async fn supports_clipboard_image(&self, session_id: &str) -> Result<bool, TerminalError> {
+        let conn = self.connection_of(session_id).await?;
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        Ok(backend.graphical_capabilities().supports_clipboard_image)
+    }
+
+    /// The image the remote most recently copied (PROD-021), already capped by
+    /// the backend; `None` when the backend has no image clipboard or the latest
+    /// remote copy was not an image.
+    pub async fn get_clipboard_image(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<ClipboardImage>, TerminalError> {
+        let conn = self.connection_of(session_id).await?;
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        Ok(backend.get_clipboard_image().await)
+    }
+
+    /// Push a local clipboard image to a session's remote (PROD-021). The image
+    /// is validated against the clipboard-image caps first; a backend without an
+    /// image clipboard (VNC) reports an error.
+    pub async fn send_clipboard_image(
+        &self,
+        session_id: &str,
+        image: ClipboardImage,
+    ) -> Result<(), TerminalError> {
+        image
+            .validate()
+            .map_err(|v| TerminalError::InvalidParams(format!("clipboard image rejected: {v}")))?;
+        let conn = self.connection_of(session_id).await?;
+        let guard = conn.lock().await;
+        let backend = guard
+            .graphical()
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        backend
+            .set_clipboard_image(image)
+            .await
+            .map_err(|e| TerminalError::InternalError(e.to_string()))
     }
 
     /// The files the remote most recently copied to its clipboard, surfaced for a

@@ -14,6 +14,7 @@
 //! [`ConnectionTypeRegistry`] at startup.
 
 pub mod auto_reconnect;
+pub mod clipboard_image;
 pub mod graphical;
 pub mod graphical_resolution;
 pub mod lifecycle;
@@ -26,6 +27,10 @@ pub mod validation;
 pub use auto_reconnect::{
     auto_reconnect_enabled, normalize_auto_reconnect, AUTO_RECONNECT_DEFAULT, AUTO_RECONNECT_KEY,
     LEGACY_RESILIENT_RECONNECT_KEY,
+};
+pub use clipboard_image::{
+    check_clipboard_image_size, ClipboardImage, ClipboardImageInfo, ClipboardImageViolation,
+    MAX_CLIPBOARD_IMAGE_BYTES, MAX_CLIPBOARD_IMAGE_DIMENSION,
 };
 pub use graphical::{
     rgba_len, shared_field_base, AuthKind, CertPrompt, CertPromptReceiver, CursorReceiver,

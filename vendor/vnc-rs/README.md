@@ -22,6 +22,14 @@ See [armaxri/termiHub#1714](https://github.com/armaxri/termiHub/issues/1714).
   anonymous ciphers that rustls does not support and are not negotiated.
 - Adds `VncConnector::set_vencrypt(...)` to opt a connection into VeNCrypt.
 - Adds `VncError::Vencrypt` / `VncError::Tls` variants.
+- Makes the standard RFB clipboard encoding-correct and bounded (PROD-021,
+  `src/client/messages.rs`): `ServerCutText` is decoded as UTF-8 when valid and
+  as Latin-1 (the RFB-specified encoding) otherwise, instead of
+  `from_utf8_lossy`; `ClientCutText` is sent as Latin-1 when every character is
+  representable and as UTF-8 otherwise; and a `ServerCutText` longer than
+  `MAX_SERVER_CUT_TEXT_BYTES` (16 MiB) is skipped in bounded chunks rather than
+  allocated (surfaced as `ServerMsg::ServerCutTextDropped`). The Extended
+  Clipboard pseudo-encoding (UTF-8 / rich formats) is **not** implemented.
 - Drops the GUI dev-dependency (`minifb`) and the doctest example that used it so
   the crate builds as a workspace member without system GUI libraries.
 

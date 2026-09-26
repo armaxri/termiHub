@@ -121,6 +121,26 @@ export interface RemoteClipboardFile {
   index: number;
 }
 
+/**
+ * Dimensions of a remote-desktop clipboard image (PROD-021), mirroring the Rust
+ * `ClipboardImageInfo`. The pixels never reach the webview — the backend moves
+ * them between the session and the host OS clipboard itself.
+ */
+export interface ClipboardImageInfo {
+  /** Width in pixels. */
+  width: number;
+  /** Height in pixels. */
+  height: number;
+}
+
+/** Image-clipboard state the clipboard panel renders from (PROD-021). */
+export interface ClipboardImageStatus {
+  /** Whether the session's protocol bridges clipboard images (RDP yes, VNC no). */
+  supported: boolean;
+  /** The image the remote most recently copied, if any. */
+  image: ClipboardImageInfo | null;
+}
+
 /** `remote-desktop-state` event payload. */
 export interface RemoteDesktopStatePayload {
   session_id: string;

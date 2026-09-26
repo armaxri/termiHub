@@ -43,7 +43,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::connection::{
-    CursorUpdate, FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile,
+    ClipboardImage, CursorUpdate, FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile,
 };
 
 use super::config::RdpConfig;
@@ -100,6 +100,11 @@ pub enum HostMessage {
     },
     /// Ask the sidecar to tear the session down and exit.
     Disconnect,
+    /// Push a local clipboard **image** to the remote over CLIPRDR (PROD-021).
+    /// The sidecar re-validates it against the clipboard-image caps, advertises
+    /// `CF_DIB`, and serves it as a DIB when the remote pastes. Dropped in
+    /// view-only sessions. Appended (never reordered) for wire compatibility.
+    SetClipboardImage(ClipboardImage),
 }
 
 /// A message from the sidecar **to** the desktop (written to the sidecar's stdout).
@@ -182,6 +187,11 @@ pub enum SidecarMessage {
         /// Human-readable detail, for logs and the error overlay.
         message: String,
     },
+    /// The remote copied an **image** (PROD-021): its `CF_DIB` / `CF_DIBV5`
+    /// clipboard data, converted to top-down RGBA and already checked against
+    /// the clipboard-image caps by the sidecar (the desktop re-validates).
+    /// Appended (never reordered) for wire compatibility.
+    ClipboardImage(ClipboardImage),
 }
 
 /// Classification carried by [`SidecarMessage::Failure`] (#3390).
@@ -501,6 +511,27 @@ mod tests {
             message: "unknown index".to_string(),
         };
         assert_eq!(round_trip_sidecar(err.clone()).await, err);
+    }
+
+    #[tokio::test]
+    async fn clipboard_image_round_trips_both_ways() {
+        let image = ClipboardImage::new(2, 1, vec![1, 2, 3, 255, 4, 5, 6, 128]).unwrap();
+        let host = HostMessage::SetClipboardImage(image.clone());
+        assert_eq!(round_trip_host(host.clone()).await, host);
+        let sidecar = SidecarMessage::ClipboardImage(image);
+        assert_eq!(round_trip_sidecar(sidecar.clone()).await, sidecar);
+    }
+
+    #[test]
+    fn a_max_size_clipboard_image_fits_one_ipc_frame() {
+        // Worst case for MessagePack: every byte ≥ 0x80 costs two bytes. An image
+        // at the byte cap must still fit one frame, or the sidecar's write would
+        // fail and end the session.
+        let side = 2896; // 2896² × 4 ≈ 31.99 MiB, just under the byte cap.
+        let len = crate::connection::check_clipboard_image_size(side, side).unwrap();
+        let image = ClipboardImage::new(side, side, vec![0xFF; len as usize]).unwrap();
+        let body = rmp_serde::to_vec_named(&SidecarMessage::ClipboardImage(image)).unwrap();
+        assert!(body.len() as u64 <= u64::from(MAX_MESSAGE_BYTES));
     }
 
     #[tokio::test]
