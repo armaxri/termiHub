@@ -120,14 +120,14 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar. Includes **native (cdylib) backends** loaded over a C ABI with an Ed25519 signature / trust model — see the plugin trust warning under [Security](#security)
 - **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN
 - **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning
-- **Macros** — Record and replay terminal input sequences
+- **Macros** — Record and replay terminal input sequences — into the active terminal or, after an explicit confirmation listing every target, into many at once (all terminals, the current panel, the live broadcast set, or a saved broadcast group)
 
 ### Workspace and Windows
 
 - **Multi-window** — Tear tabs out into separate native windows
 - **Workspaces / tab groups** — Save and restore named layouts of connections and splits
 - **Session auto-save and restore** — Reopen your previous sessions on launch, with a Recent Sessions list
-- **Broadcast input** — Type once and mirror input across a group of terminals
+- **Broadcast input** — Type once and mirror input across a group of terminals; save a selection as a named broadcast group (kept by saved connection, so it works again after a restart). Multi-line pastes to several terminals always ask first, naming the target count
 
 ### UI and Customization
 
