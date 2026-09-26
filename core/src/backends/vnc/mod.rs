@@ -13,6 +13,7 @@
 //! the same trait: a new `backends/vnc/` module, a schema, and one additive
 //! registry `register(...)` call — no shared match arm, no editor switch.
 
+mod budget;
 mod config;
 mod frame;
 mod jpeg;
@@ -43,6 +44,7 @@ use crate::errors::SessionError;
 use crate::files::FileBrowser;
 use crate::monitoring::MonitoringProvider;
 
+use budget::{ByteBudgetSender, MAX_QUEUED_CURSOR_BYTES, MAX_QUEUED_FRAME_BYTES};
 use config::VncConfig;
 use frame::FrameShadow;
 
@@ -336,6 +338,9 @@ async fn drive(
     cursor_tx: mpsc::Sender<CursorUpdate>,
 ) {
     let mut shadow = FrameShadow::new();
+    // #3511: bound the channels to the frame pump by bytes, not only by count.
+    let mut frame_tx = ByteBudgetSender::new(frame_tx, MAX_QUEUED_FRAME_BYTES);
+    let mut cursor_tx = ByteBudgetSender::new(cursor_tx, MAX_QUEUED_CURSOR_BYTES);
     // Prime the first full frame.
     if client.input(X11Event::FullRefresh).await.is_err() {
         return;
@@ -354,7 +359,7 @@ async fn drive(
                     match client.poll_event().await {
                         Ok(Some(event)) => {
                             got_event = true;
-                            if !handle_event(event, &mut shadow, &shared, &frame_tx, &cursor_tx).await {
+                            if !handle_event(event, &mut shadow, &shared, &mut frame_tx, &mut cursor_tx).await {
                                 return; // channel closed downstream — session gone
                             }
                         }
@@ -464,8 +469,8 @@ async fn handle_event(
     event: VncEvent,
     shadow: &mut FrameShadow,
     shared: &VncShared,
-    frame_tx: &mpsc::Sender<FrameUpdate>,
-    cursor_tx: &mpsc::Sender<CursorUpdate>,
+    frame_tx: &mut ByteBudgetSender<FrameUpdate>,
+    cursor_tx: &mut ByteBudgetSender<CursorUpdate>,
 ) -> bool {
     match event {
         VncEvent::SetResolution(screen) => {
@@ -478,7 +483,6 @@ async fn handle_event(
                     rects: Vec::new(),
                 })
                 .await
-                .is_ok()
         }
         VncEvent::RawImage(rect, data) => {
             let (x, y, w, h) = (
@@ -514,7 +518,6 @@ async fn handle_event(
                     }],
                 })
                 .await
-                .is_ok()
         }
         VncEvent::Copy(dst, src) => {
             let (w, h) = (dst.width as u32, dst.height as u32);
@@ -537,7 +540,6 @@ async fn handle_event(
                     }],
                 })
                 .await
-                .is_ok()
         }
         VncEvent::SetCursor(rect, data) => {
             if !shared.show_remote_cursor {
@@ -563,7 +565,6 @@ async fn handle_event(
                     shape,
                 })
                 .await
-                .is_ok()
         }
         VncEvent::JpegImage(rect, data) => {
             // Tight's photographic sub-rect: a self-describing JPEG independent of
@@ -579,7 +580,6 @@ async fn handle_event(
                     rects: vec![dirty],
                 })
                 .await
-                .is_ok()
         }
         VncEvent::Text(text) => {
             *shared.clipboard.lock().await = text;
@@ -1009,9 +1009,12 @@ mod tests {
         let shared = test_shared();
         let (frame_tx, _frame_rx) = mpsc::channel(1);
         let (cursor_tx, _cursor_rx) = mpsc::channel(1);
+        let mut frame_tx = ByteBudgetSender::new(frame_tx, 1024);
+        let mut cursor_tx = ByteBudgetSender::new(cursor_tx, 1024);
         let mut shadow = FrameShadow::new();
         let event = VncEvent::Error(Arc::new(VncError::UnsupportedEncoding(7)));
-        let keep_going = handle_event(event, &mut shadow, &shared, &frame_tx, &cursor_tx).await;
+        let keep_going =
+            handle_event(event, &mut shadow, &shared, &mut frame_tx, &mut cursor_tx).await;
         assert!(!keep_going, "a protocol error ends the session");
         match shared.fatal_error() {
             Some(SessionError::ProtocolError(msg)) => {
@@ -1028,10 +1031,13 @@ mod tests {
         let shared = test_shared();
         let (frame_tx, _frame_rx) = mpsc::channel(1);
         let (cursor_tx, _cursor_rx) = mpsc::channel(1);
+        let mut frame_tx = ByteBudgetSender::new(frame_tx, 1024);
+        let mut cursor_tx = ByteBudgetSender::new(cursor_tx, 1024);
         let mut shadow = FrameShadow::new();
         let io = std::io::Error::from(std::io::ErrorKind::ConnectionReset);
         let event = VncEvent::Error(Arc::new(VncError::IoError(io)));
-        let keep_going = handle_event(event, &mut shadow, &shared, &frame_tx, &cursor_tx).await;
+        let keep_going =
+            handle_event(event, &mut shadow, &shared, &mut frame_tx, &mut cursor_tx).await;
         assert!(!keep_going);
         assert!(shared.fatal_error().is_none());
     }
