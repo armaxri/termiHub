@@ -56,7 +56,8 @@ const TUNNEL: TunnelConfig = {
 
 let container: HTMLDivElement;
 let root: Root;
-let saveTunnel: ReturnType<typeof vi.fn>;
+type SaveTunnel = (config: TunnelConfig) => Promise<void>;
+let saveTunnel: ReturnType<typeof vi.fn<SaveTunnel>>;
 
 function render(tunnelId: string | null) {
   act(() => {
@@ -96,7 +97,7 @@ describe("TunnelEditor — follows connection id changes (#3603)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     seedConnectionsRegion({ connections: [ssh("Work/bastion"), ssh("Job/bastion")] });
-    saveTunnel = vi.fn(() => Promise.resolve());
+    saveTunnel = vi.fn<SaveTunnel>(() => Promise.resolve());
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       tunnels: [TUNNEL],

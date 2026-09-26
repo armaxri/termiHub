@@ -46,7 +46,8 @@ const TAB_ID = "tab-ws-edit";
 
 let container: HTMLDivElement;
 let root: Root;
-let saveWorkspace: ReturnType<typeof vi.fn>;
+type SaveWorkspace = (definition: WorkspaceDefinition) => Promise<void>;
+let saveWorkspace: ReturnType<typeof vi.fn<SaveWorkspace>>;
 
 setupConnectionsRegion();
 
@@ -55,7 +56,7 @@ describe("WorkspaceEditor — follows connection id changes (#3603)", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    saveWorkspace = vi.fn(() => Promise.resolve());
+    saveWorkspace = vi.fn<SaveWorkspace>(() => Promise.resolve());
     useAppStore.setState({
       ...useAppStore.getInitialState(),
       saveWorkspaceToBackend: saveWorkspace,
@@ -94,7 +95,7 @@ describe("WorkspaceEditor — follows connection id changes (#3603)", () => {
     await flushAsync();
 
     expect(saveWorkspace).toHaveBeenCalledTimes(1);
-    const saved = saveWorkspace.mock.calls[0][0] as WorkspaceDefinition;
+    const saved = saveWorkspace.mock.calls[0][0];
     expect(saved.tabGroups[0].layout).toEqual({
       type: "split",
       direction: "horizontal",
