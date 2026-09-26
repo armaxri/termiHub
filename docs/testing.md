@@ -2053,6 +2053,29 @@ rendering needs a real WebView, so it stays manual.
 5. Disconnect and reconnect the tab. **Expected:** the text scrollback is
    replayed; the earlier image is gone (by design); the terminal stays usable.
 
+### Shipped CSP: no violations in the editor, terminal and plugin UI (WA-CI-035, #3627)
+
+The CSP only applies to a **production** build (`./scripts/build.sh`); `./scripts/dev.sh` loads
+the Vite dev server without it, so a dev launch cannot confirm this. The allow-list is guarded by
+`src/security/cspConfig.test.ts`, and the nightly `tests/system/tests/test_csp.py` checks terminal
+boot on Linux/Windows. The #3627 review exercised xterm (theme styles, SIXEL WASM decoder, iTerm2
+blob images), Monaco with Shiki (Oniguruma WASM), sonner and a Radix dialog in headless Chrome,
+using the production bundle and the shipped policy. It found no document-level violations.
+WebKit (macOS/Linux) and the plugin origin still need a real build:
+
+1. Build the app with `./scripts/build.sh` and launch the installed or bundled app on each OS.
+   Open the Log Viewer. **Expected:** no `csp` entries at any point in the steps below.
+2. Open a local shell tab, run a command, then `img2sixel <some.png>`. **Expected:** the terminal
+   is coloured, the cursor is visible and the picture renders.
+3. Open a local file in the editor (e.g. a `.sh` or `.yaml`). **Expected:** it is syntax-coloured
+   (Shiki loaded its WASM engine), and a toast and a dialog render as overlays.
+4. Turn on **Settings > Plugins > Enable Frontend (JavaScript) Plugins** and install the
+   `examples/plugins/clock-widget` plugin. **Expected:** the clock widget appears in the status
+   bar. On Windows this checks `http://plugin.localhost`, and on macOS/Linux `plugin://localhost`.
+5. With the Web Inspector / DevTools attached (debug build), open the editor again.
+   **Expected:** no `Refused to …` / `violates the following Content Security Policy` messages,
+   apart from the known Monaco `editorWorkerService` worker error tracked in #3632.
+
 ### Right-click paste inserts the clipboard exactly once (Windows/WebView2, #2595)
 
 A single right-click paste in the terminal used to insert the clipboard **twice**
