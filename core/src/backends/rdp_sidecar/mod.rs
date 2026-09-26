@@ -821,6 +821,8 @@ impl GraphicalBackend for SidecarRdp {
             // Text clipboard bridges bidirectionally over the CLIPRDR channel in
             // the sidecar (#1756).
             supports_clipboard: true,
+            // Images bridge both ways as CF_DIB over CLIPRDR (PROD-021).
+            supports_clipboard_image: true,
             view_only_capable: true,
         }
     }
@@ -1160,6 +1162,7 @@ mod tests {
         assert!(caps.view_only_capable);
         assert!(caps.supports_dynamic_resize);
         assert!(caps.supports_clipboard);
+        assert!(caps.supports_clipboard_image);
     }
 
     #[test]

@@ -677,6 +677,9 @@ impl GraphicalBackend for Vnc {
             // scales the canvas instead.
             supports_dynamic_resize: false,
             supports_clipboard: true,
+            // The standard RFB clipboard (ServerCutText / ClientCutText) is
+            // Latin-1 text only; vnc-rs has no Extended Clipboard support.
+            supports_clipboard_image: false,
             view_only_capable: true,
         }
     }
@@ -924,6 +927,7 @@ mod tests {
         // VeNCrypt Plain (#1714) surfaces as username+password.
         assert!(caps.auth_kinds.contains(&AuthKind::UsernamePassword));
         assert!(caps.supports_clipboard);
+        assert!(!caps.supports_clipboard_image);
         assert!(caps.view_only_capable);
         assert!(!caps.supports_dynamic_resize);
     }

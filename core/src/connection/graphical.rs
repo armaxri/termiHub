@@ -514,6 +514,11 @@ pub struct GraphicalCapabilities {
     pub supports_dynamic_resize: bool,
     /// Whether the backend syncs text clipboard both ways.
     pub supports_clipboard: bool,
+    /// Whether the backend bridges clipboard **images** (PROD-021): RDP yes
+    /// (CLIPRDR `CF_DIB`), VNC no (the RFB clipboard is Latin-1 text only).
+    /// Defaults to `false` when absent.
+    #[serde(default)]
+    pub supports_clipboard_image: bool,
     /// Whether the backend can run in view-only mode (input suppressed).
     pub view_only_capable: bool,
 }
@@ -1110,6 +1115,7 @@ mod tests {
             auth_kinds: vec![AuthKind::Password, AuthKind::None],
             supports_dynamic_resize: true,
             supports_clipboard: true,
+            supports_clipboard_image: false,
             view_only_capable: true,
         };
         let json = serde_json::to_value(&caps).unwrap();

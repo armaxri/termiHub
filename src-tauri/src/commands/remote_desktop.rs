@@ -18,7 +18,8 @@
 //! - **input** (key / pointer / wheel) and **resize** from a non-owning window
 //!   are dropped (`Ok(())`, like `commands::session::send_input`);
 //! - **clipboard** is gated in *both* directions — a non-owner can neither push
-//!   text to the remote nor read the remote clipboard (text or surfaced files).
+//!   text or an image to the remote nor read the remote clipboard (text, image or
+//!   surfaced files; the image commands live in `remote_desktop_image`).
 //!
 //! An unclaimed session accepts every window (single-window / pre-claim). The
 //! evicted window shows "Taken over by another window" + Reclaim; nothing
@@ -38,7 +39,7 @@ use crate::window::WindowManager;
 
 /// The graphical operation being ownership-gated (#3388), for the rule and log.
 #[derive(Debug, Clone, Copy)]
-enum GatedOp {
+pub(crate) enum GatedOp {
     Input,
     Resize,
     ClipboardSend,
@@ -47,7 +48,7 @@ enum GatedOp {
 
 /// Whether `window_label` controls `session_id` (unclaimed → any window;
 /// claimed → owner only), logging the drop when it does not.
-fn window_controls(
+pub(crate) fn window_controls(
     window_manager: &WindowManager,
     session_id: &str,
     window_label: &str,

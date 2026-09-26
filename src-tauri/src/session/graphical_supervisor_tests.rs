@@ -214,6 +214,7 @@ impl GraphicalBackend for FakeDesktop {
             auth_kinds: vec![AuthKind::None],
             supports_dynamic_resize: true,
             supports_clipboard: false,
+            supports_clipboard_image: false,
             view_only_capable: false,
         }
     }

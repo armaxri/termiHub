@@ -21,9 +21,9 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::connection::{
-    AuthKind, Capabilities, ConnectionType, CursorReceiver, CursorUpdate, DirtyRect, FrameReceiver,
-    FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent, OutputReceiver,
-    SettingsSchema,
+    AuthKind, Capabilities, ClipboardImage, ConnectionType, CursorReceiver, CursorUpdate,
+    DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, InputEvent,
+    OutputReceiver, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -73,6 +73,9 @@ struct MockRuntime {
     frame_tx: mpsc::Sender<FrameUpdate>,
     cursor_tx: mpsc::Sender<CursorUpdate>,
     clipboard: Mutex<String>,
+    /// Echoed clipboard image (PROD-021), so the desktop's image path can be
+    /// exercised without a live RDP server.
+    clipboard_image: Mutex<Option<ClipboardImage>>,
     view_only: bool,
     dims: Mutex<(u16, u16)>,
     /// Count of accepted input events — lets tests assert view-only suppression.
@@ -292,6 +295,7 @@ impl ConnectionType for MockRemoteDesktop {
             frame_tx,
             cursor_tx,
             clipboard: Mutex::new(String::new()),
+            clipboard_image: Mutex::new(None),
             view_only: cfg.view_only,
             dims: Mutex::new((width, height)),
             input_count: AtomicU64::new(0),
@@ -375,6 +379,7 @@ impl GraphicalBackend for MockRemoteDesktop {
             auth_kinds: vec![AuthKind::None, AuthKind::Password],
             supports_dynamic_resize: true,
             supports_clipboard: true,
+            supports_clipboard_image: true,
             view_only_capable: true,
         }
     }
@@ -460,6 +465,25 @@ impl GraphicalBackend for MockRemoteDesktop {
             return Err(SessionError::NotRunning("mock not connected".to_string()));
         };
         *rt.clipboard.lock().await = text;
+        Ok(())
+    }
+
+    async fn get_clipboard_image(&self) -> Option<ClipboardImage> {
+        let rt = self.runtime.as_ref()?;
+        rt.clipboard_image.lock().await.clone()
+    }
+
+    async fn set_clipboard_image(&self, image: ClipboardImage) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("mock not connected".to_string()));
+        };
+        if rt.view_only {
+            return Ok(());
+        }
+        image
+            .validate()
+            .map_err(|v| SessionError::InvalidConfig(format!("clipboard image rejected: {v}")))?;
+        *rt.clipboard_image.lock().await = Some(image);
         Ok(())
     }
 }
@@ -631,6 +655,24 @@ mod tests {
         assert!(backend.get_clipboard().await.is_none());
         backend.set_clipboard("hello".to_string()).await.unwrap();
         assert_eq!(backend.get_clipboard().await.as_deref(), Some("hello"));
+        m.disconnect().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn clipboard_image_round_trips_and_rejects_invalid() {
+        let mut m = connected();
+        m.connect(serde_json::json!({})).await.unwrap();
+        let backend = m.graphical().unwrap();
+        assert!(backend.get_clipboard_image().await.is_none());
+        let image = ClipboardImage::new(1, 1, vec![1, 2, 3, 4]).unwrap();
+        backend.set_clipboard_image(image.clone()).await.unwrap();
+        assert_eq!(backend.get_clipboard_image().await, Some(image));
+        let bogus = ClipboardImage {
+            width: 2,
+            height: 2,
+            rgba: vec![0; 3],
+        };
+        assert!(backend.set_clipboard_image(bogus).await.is_err());
         m.disconnect().await.unwrap();
     }
 
