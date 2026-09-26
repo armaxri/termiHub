@@ -693,7 +693,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     id: "networkToolHistoryEnabled",
     label: "Record Network Tool History",
     description:
-      "Keep a local history of finished network tool runs (ping, traceroute, port scan, DNS, …) to revisit, re-run and export",
+      "Keep a local history of finished network tool runs (ping, traceroute, port scan, DNS, …) and HTTP monitor checks to revisit, re-run and export",
     category: "sessions",
     keywords: [
       "network",
@@ -703,6 +703,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "traceroute",
       "port scan",
       "dns",
+      "http monitor",
+      "checks",
       "results",
       "record",
       "clear",

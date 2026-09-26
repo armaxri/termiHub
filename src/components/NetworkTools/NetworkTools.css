@@ -143,6 +143,14 @@
   border-top: 1px solid var(--border-secondary);
 }
 
+/* Section title with a trailing action (e.g. the HTTP monitor's Export). */
+.network-panel__section-title--with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
 /* Results table */
 .network-panel__table-wrapper {
   overflow-x: auto;

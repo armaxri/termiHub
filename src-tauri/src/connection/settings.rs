@@ -245,8 +245,9 @@ pub struct AppSettings {
     pub show_recent_sessions: bool,
     /// When true (default), every finished network-tool run (ping, traceroute,
     /// port scan, …) is recorded to the local run history
-    /// (`network-tool-history.json`, PROD-032). Turning it off stops recording
-    /// (existing entries are kept until cleared).
+    /// (`network-tool-history.json`, PROD-032), and every HTTP monitor check to
+    /// the monitor check history (`http-monitor-history.json`, #3462). Turning
+    /// it off stops recording (existing entries are kept until cleared).
     #[serde(default = "default_true")]
     pub network_tool_history_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

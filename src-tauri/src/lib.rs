@@ -890,6 +890,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::network::network_http_monitor_stop_all,
             commands::network::network_http_monitor_list,
             commands::network::set_http_monitor_run_location,
+            commands::network::list_http_monitor_checks,
+            commands::network::clear_http_monitor_history,
             commands::network::set_network_tool_run_location,
             // Embedded servers
             commands::embedded_servers::list_embedded_servers,
