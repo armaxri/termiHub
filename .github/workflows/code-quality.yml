@@ -333,13 +333,17 @@ jobs:
 
   # Frontend Quality Checks
   # Also on docs-only PRs: Prettier + markdownlint over docs/**/*.md live here.
+  # Also on Rust-only PRs: the IPC invoke-contract step below cross-checks the
+  # #[tauri::command] parameter names in src-tauri against src/ (#3488), so a
+  # renamed Rust parameter must re-run it too.
   frontend-quality:
     name: Frontend Code Quality
     runs-on: ubuntu-latest
     needs: changes
     if: >-
       ${{ !cancelled() && (needs.changes.outputs.frontend != 'false' ||
-      needs.changes.outputs.markdown != 'false') }}
+      needs.changes.outputs.markdown != 'false' ||
+      needs.changes.outputs.rust != 'false') }}
 
     steps:
       - name: Checkout code
@@ -362,6 +366,12 @@ jobs:
 
       - name: Check TypeScript types
         run: pnpm exec tsc --noEmit
+
+      # Tauri matches invoke() args to #[tauri::command] params BY NAME; a wrong
+      # key is invisible to tsc and to mocked-invoke unit tests (#3488). Fails on
+      # unknown commands, missing required args and unknown extra args.
+      - name: Check IPC invoke argument contract
+        run: node scripts/internal/check-invoke-contract.mjs
 
       - name: Check formatting with Prettier
         run: pnpm run format:check

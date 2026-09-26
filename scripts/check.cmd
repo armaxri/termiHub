@@ -52,6 +52,12 @@ node scripts\internal\check-pnpm-overrides.mjs
 if errorlevel 1 set FAILED=1
 
 echo.
+echo === IPC invoke argument contract ===
+REM invoke() arg keys vs #[tauri::command] param names (#3488).
+node scripts\internal\check-invoke-contract.mjs
+if errorlevel 1 set FAILED=1
+
+echo.
 echo === uv version pin consistency ===
 REM .github/uv-version is the only uv pin; no direct astral-sh/setup-uv (WA-CI-017).
 node scripts\internal\check-uv-version.mjs
