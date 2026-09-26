@@ -6,7 +6,7 @@
 
 use serde_json::json;
 
-use termihub_core::monitoring::{MonitorStatus, SystemStats};
+use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason, SystemStats};
 
 use super::{SystemMonitorStore, DEFAULT_MONITORING_INTERVAL_MS};
 
@@ -160,7 +160,7 @@ fn set_interval_and_status_and_clear_error() {
     store.open_failed("s1", Some("boom".to_string()));
 
     store.set_interval("s1", 10_000);
-    store.set_status("s1", MonitorStatus::Stale);
+    store.set_status("s1", MonitorStatus::Stale, None);
     store.clear_error("s1");
 
     let entry = store.get("s1").unwrap();
@@ -220,7 +220,7 @@ fn transitions_on_an_unknown_key_are_no_ops() {
     // None of these should panic or create an entry.
     store.opened("ghost");
     store.stats("ghost", sample("x", 1.0));
-    store.set_status("ghost", MonitorStatus::Live);
+    store.set_status("ghost", MonitorStatus::Live, None);
     store.set_paused("ghost", true);
     store.set_interval("ghost", 1000);
     store.clear_error("ghost");
@@ -229,4 +229,81 @@ fn transitions_on_an_unknown_key_are_no_ops() {
     // `stats` still records the cache even without an entry (matches the
     // frontend cache write).
     assert!(store.cached_stats("ghost").is_some());
+}
+
+// ── Status reason (#3301) ────────────────────────────────────────────────────
+
+#[test]
+fn set_status_records_the_offline_reason_and_serializes_it() {
+    let store = SystemMonitorStore::new();
+    store.open("s1", None, None);
+    store.opened("s1");
+    assert_eq!(
+        store.snapshot()["monitors"]["s1"]["statusReason"],
+        json!(null),
+        "a healthy monitor projects a null reason"
+    );
+
+    store.set_status(
+        "s1",
+        MonitorStatus::Offline,
+        Some(MonitorStatusReason::Parse),
+    );
+    let entry = store.get("s1").unwrap();
+    assert_eq!(entry.status, Some(MonitorStatus::Offline));
+    assert_eq!(entry.status_reason, Some(MonitorStatusReason::Parse));
+    assert_eq!(
+        store.snapshot()["monitors"]["s1"]["statusReason"],
+        json!("parse")
+    );
+
+    store.set_status(
+        "s1",
+        MonitorStatus::Offline,
+        Some(MonitorStatusReason::Silent),
+    );
+    assert_eq!(
+        store.snapshot()["monitors"]["s1"]["statusReason"],
+        json!("silent")
+    );
+}
+
+#[test]
+fn a_healthy_transition_clears_the_reason() {
+    for clear in ["opened", "live", "paused", "open_failed"] {
+        let store = SystemMonitorStore::new();
+        store.open("s1", None, None);
+        store.set_status(
+            "s1",
+            MonitorStatus::Offline,
+            Some(MonitorStatusReason::Transport),
+        );
+        match clear {
+            "opened" => store.opened("s1"),
+            "live" => store.set_status("s1", MonitorStatus::Live, None),
+            "paused" => store.set_paused("s1", true),
+            _ => store.open_failed("s1", Some("boom".to_string())),
+        }
+        assert_eq!(
+            store.get("s1").unwrap().status_reason,
+            None,
+            "{clear} must clear a stale offline reason"
+        );
+    }
+}
+
+#[test]
+fn a_replace_seed_without_a_reason_still_deserializes() {
+    // A `monitor.replace` payload from a frontend that predates the field.
+    let monitors = serde_json::from_value(json!({
+        "s1": {
+            "key": "s1", "host": null, "monitorSessionId": "s1", "stats": null,
+            "loading": false, "error": null, "status": "offline", "sampleCount": 0,
+            "paused": false, "intervalMs": 2000
+        }
+    }))
+    .expect("an entry without statusReason must deserialize");
+    let store = SystemMonitorStore::new();
+    store.replace(monitors, std::collections::HashMap::new());
+    assert_eq!(store.get("s1").unwrap().status_reason, None);
 }

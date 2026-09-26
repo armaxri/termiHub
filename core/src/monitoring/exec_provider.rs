@@ -39,11 +39,10 @@ use tracing::{debug, warn};
 
 use crate::errors::CoreError;
 use crate::monitoring::{
-    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatus,
-    MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
-    MonitoringSubscription, NetDeltaTracker, PerCoreCpuTracker, SystemStats, BACKOFF_CAP,
-    DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
-    DEFAULT_STALE_THRESHOLD,
+    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
+    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
+    NetDeltaTracker, PerCoreCpuTracker, SystemStats, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
+    DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
 };
 
 /// Default polling interval for collecting stats.
@@ -255,8 +254,8 @@ async fn collect_once(
 ///
 /// A dropped status receiver must not tear down the collect loop — the stats
 /// channel governs the loop's lifetime.
-async fn emit_status(status_tx: &MonitorStatusSender, status: MonitorStatus) {
-    let _ = status_tx.send(status).await;
+async fn emit_status(status_tx: &MonitorStatusSender, loop_state: &CollectLoopState) {
+    let _ = status_tx.send(loop_state.update()).await;
 }
 
 /// Sleep `delay` in small increments, returning early if the loop is asked to
@@ -297,8 +296,8 @@ async fn reconnect_with_backoff(
     alive: &AtomicBool,
     cancel: &CancellationToken,
 ) -> bool {
-    if let Some(status) = loop_state.begin_reconnect() {
-        emit_status(status_tx, status).await;
+    if loop_state.begin_reconnect().is_some() {
+        emit_status(status_tx, loop_state).await;
     }
 
     while let Some(delay) = backoff.next_delay() {
@@ -343,14 +342,14 @@ async fn run_collect_loop(
     while alive.load(Ordering::SeqCst) {
         // Paused: keep the loop alive but skip collection.
         if controls.is_paused() {
-            if let Some(status) = loop_state.pause() {
-                emit_status(&status_tx, status).await;
+            if loop_state.pause().is_some() {
+                emit_status(&status_tx, &loop_state).await;
             }
             interruptible_sleep(PAUSE_POLL_INTERVAL, &alive, &cancel).await;
             continue;
         }
-        if let Some(status) = loop_state.resume() {
-            emit_status(&status_tx, status).await;
+        if loop_state.resume().is_some() {
+            emit_status(&status_tx, &loop_state).await;
             // Drop the stale CPU/network baselines so the first post-resume
             // sample does not report a spurious rate from the paused gap.
             trackers = Trackers::new();
@@ -366,8 +365,8 @@ async fn run_collect_loop(
             Err(CollectMiss::Failed) => loop_state.on_failure(),
             Err(CollectMiss::Unparseable) => loop_state.on_parse_failure(),
         };
-        if let Some(status) = transition {
-            emit_status(&status_tx, status).await;
+        if transition.is_some() {
+            emit_status(&status_tx, &loop_state).await;
         }
 
         // The exec answers but never with parseable output: `Offline` is
@@ -394,8 +393,8 @@ async fn run_collect_loop(
                 trackers = Trackers::new();
                 continue;
             }
-            if let Some(status) = loop_state.exhaust_reconnect() {
-                emit_status(&status_tx, status).await;
+            if loop_state.exhaust_reconnect().is_some() {
+                emit_status(&status_tx, &loop_state).await;
             }
             break;
         }
@@ -504,7 +503,7 @@ impl MonitoringProvider for ExecMonitoringProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::monitoring::MonitorStatusReceiver;
+    use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
     use std::sync::atomic::AtomicUsize;
 
     /// A captured `MONITORING_COMMAND` sample as a container/distro would emit it:
@@ -627,11 +626,16 @@ Inter-|   Receive                                                |  Transmit
     }
 
     /// Wait for the next status transition, failing if none arrives in time.
-    async fn next_status(rx: &mut MonitorStatusReceiver) -> MonitorStatus {
+    async fn next_update(rx: &mut MonitorStatusReceiver) -> crate::monitoring::MonitorStatusUpdate {
         tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("status should arrive before timeout")
             .expect("status channel should stay open")
+    }
+
+    /// The status of the next transition (see [`next_update`]).
+    async fn next_status(rx: &mut MonitorStatusReceiver) -> MonitorStatus {
+        next_update(rx).await.status
     }
 
     async fn next_sample(rx: &mut MonitoringReceiver) -> SystemStats {
@@ -769,8 +773,11 @@ Inter-|   Receive                                                |  Transmit
         let mut sub = provider.subscribe().await.expect("subscribe");
 
         assert_eq!(
-            next_status(&mut sub.status).await,
-            MonitorStatus::Offline,
+            next_update(&mut sub.status).await,
+            crate::monitoring::MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(crate::monitoring::MonitorStatusReason::Parse)
+            ),
             "persistently unparseable output must resolve Connecting -> Offline"
         );
         assert!(
@@ -802,8 +809,11 @@ Inter-|   Receive                                                |  Transmit
         let mut sub = provider.subscribe().await.expect("subscribe");
 
         assert_eq!(
-            next_status(&mut sub.status).await,
-            MonitorStatus::Offline,
+            next_update(&mut sub.status).await,
+            crate::monitoring::MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(crate::monitoring::MonitorStatusReason::Transport)
+            ),
             "persistent pre-Live transport failures must resolve Connecting -> Offline"
         );
         assert!(
@@ -876,8 +886,11 @@ Inter-|   Receive                                                |  Transmit
             MonitorStatus::Reconnecting
         );
         assert_eq!(
-            next_status(&mut sub.status).await,
-            MonitorStatus::Offline,
+            next_update(&mut sub.status).await,
+            crate::monitoring::MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(crate::monitoring::MonitorStatusReason::Transport)
+            ),
             "a target that stays down must resolve to Offline"
         );
 

@@ -21,9 +21,9 @@ use tracing::{debug, warn};
 use crate::config::SshConfig;
 use crate::errors::CoreError;
 use crate::monitoring::{
-    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatus,
-    MonitorStatusSender, MonitoringProvider, MonitoringReceiver, MonitoringSender,
-    MonitoringSubscription, NetDeltaTracker, PerCoreCpuTracker, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
+    parse_stats, BackoffSchedule, CollectLoopState, CpuDeltaTracker, MonitorStatusSender,
+    MonitoringProvider, MonitoringReceiver, MonitoringSender, MonitoringSubscription,
+    NetDeltaTracker, PerCoreCpuTracker, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
     DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
     MONITORING_COMMAND,
 };
@@ -258,8 +258,8 @@ async fn collect_once<T: MonitoringTransport>(
 ///
 /// A dropped status receiver (frontend stopped listening) must not tear down
 /// the collect loop — the stats channel governs the loop's lifetime.
-async fn emit_status(status_tx: &MonitorStatusSender, status: MonitorStatus) {
-    let _ = status_tx.send(status).await;
+async fn emit_status(status_tx: &MonitorStatusSender, loop_state: &CollectLoopState) {
+    let _ = status_tx.send(loop_state.update()).await;
 }
 
 /// Sleep `delay` in small increments, returning early if the loop is asked to
@@ -312,8 +312,8 @@ async fn reconnect_with_backoff<T: MonitoringTransport>(
     alive: &AtomicBool,
     cancel: &CancellationToken,
 ) -> Option<T::Session> {
-    if let Some(status) = loop_state.begin_reconnect() {
-        emit_status(status_tx, status).await;
+    if loop_state.begin_reconnect().is_some() {
+        emit_status(status_tx, loop_state).await;
     }
 
     while let Some(delay) = backoff.next_delay() {
@@ -378,16 +378,16 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                 // Paused: keep the transport open but skip collection. Emit
                 // `Paused` on the transition, then idle until resumed (#1233).
                 if loop_controls.is_paused() {
-                    if let Some(status) = loop_state.pause() {
-                        emit_status(&status_tx, status).await;
+                    if loop_state.pause().is_some() {
+                        emit_status(&status_tx, &loop_state).await;
                     }
                     interruptible_sleep(PAUSE_POLL_INTERVAL, &alive_clone, &loop_cancel).await;
                     continue;
                 }
                 // Just resumed after a pause: announce the transition so the UI
                 // un-dims and the next collect keeps the loop `Live`.
-                if let Some(status) = loop_state.resume() {
-                    emit_status(&status_tx, status).await;
+                if loop_state.resume().is_some() {
+                    emit_status(&status_tx, &loop_state).await;
                     // Drop the stale CPU/network baselines so the first
                     // post-resume sample does not report a spurious rate from
                     // the paused gap.
@@ -433,8 +433,8 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                     TickOutcome::Failed => loop_state.on_failure(),
                     TickOutcome::Unparseable => loop_state.on_parse_failure(),
                 };
-                if let Some(status) = transition {
-                    emit_status(&status_tx, status).await;
+                if transition.is_some() {
+                    emit_status(&status_tx, &loop_state).await;
                 }
 
                 // Connected but never parseable: `Offline` is terminal — end the
@@ -469,8 +469,8 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
                             // Budget exhausted (or told to stop): resolve to
                             // Offline and end the loop — monitoring is dead
                             // until manually re-picked.
-                            if let Some(status) = loop_state.exhaust_reconnect() {
-                                emit_status(&status_tx, status).await;
+                            if loop_state.exhaust_reconnect().is_some() {
+                                emit_status(&status_tx, &loop_state).await;
                             }
                             break;
                         }
@@ -530,7 +530,7 @@ impl<T: MonitoringTransport> MonitoringProvider for SshMonitoringProviderImpl<T>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::monitoring::MonitorStatusReceiver;
+    use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
     use std::sync::atomic::AtomicUsize;
 
     /// A valid `MONITORING_COMMAND` output that `parse_stats` accepts, so the
@@ -727,11 +727,16 @@ Inter-|   Receive                                                |  Transmit
     }
 
     /// Wait for the next status transition, failing if none arrives in time.
-    async fn next_status(rx: &mut MonitorStatusReceiver) -> MonitorStatus {
+    async fn next_update(rx: &mut MonitorStatusReceiver) -> crate::monitoring::MonitorStatusUpdate {
         tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("status should arrive before timeout")
             .expect("status channel should stay open")
+    }
+
+    /// The status of the next transition (see [`next_update`]).
+    async fn next_status(rx: &mut MonitorStatusReceiver) -> MonitorStatus {
+        next_update(rx).await.status
     }
 
     /// Wait for the next emitted `SystemStats` sample, failing if none arrives.
@@ -852,8 +857,11 @@ Inter-|   Receive                                                |  Transmit
 
         // All re-dials fail → backoff exhausted → Offline.
         assert_eq!(
-            next_status(&mut sub.status).await,
-            MonitorStatus::Offline,
+            next_update(&mut sub.status).await,
+            crate::monitoring::MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(crate::monitoring::MonitorStatusReason::Transport)
+            ),
             "an exhausted reconnect budget must emit Offline"
         );
 
@@ -880,8 +888,11 @@ Inter-|   Receive                                                |  Transmit
         let mut sub = provider.subscribe().await.expect("subscribe");
 
         assert_eq!(
-            next_status(&mut sub.status).await,
-            MonitorStatus::Offline,
+            next_update(&mut sub.status).await,
+            crate::monitoring::MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(crate::monitoring::MonitorStatusReason::Transport)
+            ),
             "a pre-Live run of transport failures must resolve Connecting -> Offline"
         );
         assert!(
@@ -1114,8 +1125,11 @@ Inter-|   Receive                                                |  Transmit
         // Live, and never a Stale/Reconnecting campaign against a healthy
         // transport.
         assert_eq!(
-            next_status(&mut sub.status).await,
-            MonitorStatus::Offline,
+            next_update(&mut sub.status).await,
+            crate::monitoring::MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(crate::monitoring::MonitorStatusReason::Parse)
+            ),
             "persistently unparseable output must resolve Connecting -> Offline"
         );
         // …and must never push a stats sample derived from unparseable output.
