@@ -108,6 +108,6 @@ where
 pub(crate) fn install() -> (CaptureLayer, tracing::subscriber::DefaultGuard) {
     let layer = CaptureLayer::default();
     let subscriber = tracing_subscriber::registry().with(layer.clone());
-    let guard = tracing::subscriber::set_default(subscriber);
+    let guard = crate::utils::log_capture::test_support::set_scoped_subscriber(subscriber);
     (layer, guard)
 }

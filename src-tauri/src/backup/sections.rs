@@ -28,6 +28,7 @@ use crate::network::http_monitor_storage::HttpMonitorsFile;
 use crate::network::monitor_history::HttpMonitorHistoryStore;
 use crate::network::tool_history::NetworkToolHistoryStore;
 use crate::network::wol_storage::WolDevicesFile;
+use crate::schedules::config::ScheduleStore;
 use crate::tunnel::config::TunnelStore;
 use crate::utils::migrate::{load_versioned, read_version, LoadOutcome, VersionedStore};
 use crate::workflows::config::WorkflowStore;
@@ -414,6 +415,19 @@ pub static SECTIONS: &[SectionSpec] = &[
         normalize: normalize_versioned::<WorkflowStore>,
         legacy_secrets: None,
         default_doc: || to_doc(&WorkflowStore::default()),
+    },
+    SectionSpec {
+        id: "schedules",
+        label: "Schedules",
+        description: "Scheduled workflow and macro runs.",
+        file_name: "schedules.json",
+        current_version: <ScheduleStore as VersionedStore>::CURRENT_VERSION,
+        shape: Shape::List { field: "schedules" },
+        contains_secrets: false,
+        integrity_sensitive: false,
+        normalize: normalize_versioned::<ScheduleStore>,
+        legacy_secrets: None,
+        default_doc: || to_doc(&ScheduleStore::default()),
     },
     SectionSpec {
         id: "tunnels",

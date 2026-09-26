@@ -697,16 +697,16 @@ mod tests {
     fn connection_slot_is_released_when_the_connect_fails() {
         // A failed dial-out must not leak a slot: the reservation is released on
         // the error path, so a later connect still fits under the ceiling (#2028).
-        // Bind then immediately drop a listener to get a port that refuses.
-        let refused_port = {
-            let l = TcpListener::bind("127.0.0.1:0").unwrap();
-            l.local_addr().unwrap().port()
-        };
+        // Hold a bound, never-listening socket so the dial-out fails for the whole
+        // test (a dropped listener's port can be reused by a parallel test, #3532).
+        let (_refusing, refused_addr) = crate::util::test_net::unconnectable_tcp_addr();
+        let refused_port = refused_addr.port();
         let good = TcpListener::bind("127.0.0.1:0").unwrap();
         let good_port = good.local_addr().unwrap().port();
         let accepting = std::thread::spawn(move || good.accept().map(|(s, _)| s));
 
-        // Ceiling of 1, and a short timeout so a refusal (or drop) resolves fast.
+        // Ceiling of 1, and a short timeout so a refusal (Linux/Windows) or a
+        // dropped SYN (macOS) resolves fast.
         let policy = ConnectionPolicy::new(1, Duration::from_secs(2));
         let bridge =
             build_host_bridge_with_policy(perms(&[PluginPermission::Network], &[]), policy);

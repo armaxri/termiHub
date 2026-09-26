@@ -155,6 +155,12 @@ export interface WorkflowTargetRun {
   targetLabel?: string;
   /** Set when this target is one of several in a fan-out run (PROD-047, #3418). */
   fanout?: WorkflowFanoutHooks;
+  /**
+   * An unattended (scheduled, PROD-043) run: it must never prompt. A
+   * `run-local-process` step whose program is not already allowlisted is
+   * refused instead of asking.
+   */
+  unattended?: boolean;
 }
 
 /** Show the terminal toast for a single-target run's outcome. */
@@ -206,6 +212,7 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     triggeredBy,
     targetLabel,
     fanout,
+    unattended,
   } = run;
   const workflowId = workflow.id;
   // This run's key in the workflow-run region (#3418): concurrent targets of a
@@ -252,6 +259,11 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
     }
     const allowlist = settings.workflowLocalProcessAllowlist ?? [];
     if (allowlist.includes(program)) return true;
+    if (unattended) {
+      // Never prompt from a scheduled run: an un-allowlisted program is refused.
+      frontendLog("workflow", `scheduled run refused un-allowlisted local program: ${program}`);
+      return false;
+    }
 
     // Not yet trusted — ask the user, once, via the confirmation dialog.
     const decision = await new Promise<LocalProcessAuthDecision>((resolve) => {

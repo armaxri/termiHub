@@ -11,6 +11,7 @@ import { SshHostKeyPrompt } from "@/components/SshHostKeyPrompt/SshHostKeyPrompt
 import { SshKeyboardInteractivePrompt } from "@/components/SshKeyboardInteractivePrompt/SshKeyboardInteractivePrompt";
 import { LocalProcessAuthDialog } from "@/components/WorkflowSidebar/LocalProcessAuthDialog";
 import { WorkflowParamPromptDialog } from "@/components/WorkflowSidebar/WorkflowParamPromptDialog";
+import { ScheduleEditorHost } from "@/components/Schedules";
 import { CustomizeLayoutDialog } from "@/components/Settings/CustomizeLayoutDialog";
 import { ExportDialog, ImportDialog } from "@/components/ExportImport";
 import { UnlockDialog } from "@/components/UnlockDialog";
@@ -35,6 +36,7 @@ import { useSessionOwnershipSuperseded } from "@/hooks/useSessionOwnershipSupers
 import { useTransferReconcile } from "@/hooks/useTransferReconcile";
 import { useEmbeddedServerEvents } from "@/hooks/useEmbeddedServerEvents";
 import { usePluginEvents } from "@/hooks/usePluginEvents";
+import { useScheduledRuns } from "@/hooks/useScheduledRuns";
 import { usePluginUpdateSchedule } from "@/hooks/usePluginUpdateSchedule";
 import { useCredentialStoreEvents } from "@/hooks/useCredentialStoreEvents";
 import { useAgentUpdateEvents } from "@/hooks/useAgentUpdateEvents";
@@ -62,6 +64,7 @@ function App() {
   useTransferReconcile();
   useEmbeddedServerEvents();
   usePluginEvents();
+  useScheduledRuns();
   usePluginUpdateSchedule();
   useCredentialStoreEvents();
   useAgentUpdateEvents();
@@ -341,6 +344,7 @@ function App() {
           <SshKeyboardInteractivePrompt />
           <LocalProcessAuthDialog />
           <WorkflowParamPromptDialog />
+          <ScheduleEditorHost />
           <CustomizeLayoutDialog />
           <ExportDialog />
           <ImportDialog />

@@ -665,7 +665,9 @@ mod tests {
         let subscriber = tracing_subscriber::registry().with(LogCaptureLayer::new(buffer.clone()));
 
         let outcome =
-            tracing::subscriber::with_default(subscriber, || migrate_credentials(&mgr, &creds));
+            crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
+                migrate_credentials(&mgr, &creds)
+            });
 
         // Worst case: nothing migrated, one warning surfaced to the frontend.
         assert_eq!(outcome.migrated_count, 0, "a locked store migrates nothing");
@@ -741,7 +743,7 @@ mod tests {
             .with_max_level(tracing::Level::TRACE)
             .finish();
 
-        tracing::subscriber::with_default(subscriber, || {
+        crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
             migrate_credentials(&mgr, &creds);
         });
 

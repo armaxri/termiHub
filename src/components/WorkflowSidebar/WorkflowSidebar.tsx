@@ -18,6 +18,7 @@ import { serializeWorkflows } from "@/services/workflowIo";
 import type { Workflow } from "@/types/workflow";
 import { WorkflowListItem } from "./WorkflowListItem";
 import { WorkflowHistorySection } from "./WorkflowHistorySection";
+import { SchedulesSection } from "@/components/Schedules";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
 import { WorkflowRunTargetsDialog } from "./WorkflowRunTargetsDialog";
@@ -75,6 +76,11 @@ export function WorkflowSidebar() {
   const importWorkflows = useAppStore((s) => s.importWorkflows);
   const runWorkflow = useAppStore((s) => s.runWorkflow);
   const cancelWorkflowRun = useAppStore((s) => s.cancelWorkflowRun);
+  const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
+  const handleSchedule = useCallback(
+    (workflowId: string) => openScheduleEditor({ action: { kind: "workflow", workflowId } }),
+    [openScheduleEditor]
+  );
   const cancelAllWorkflowRuns = useCallback(() => cancelWorkflowRun(), [cancelWorkflowRun]);
   // The per-workflow "running" badge reads run progress from the authoritative
   // projected `workflow-run` region (#2206 reducer-removal).
@@ -379,6 +385,7 @@ export function WorkflowSidebar() {
                 onRunOn={openRunTargets}
                 onCancel={cancelAllWorkflowRuns}
                 onEdit={handleEdit}
+                onSchedule={handleSchedule}
                 onDuplicate={handleDuplicate}
                 onExport={handleExportOne}
                 onDelete={handleDelete}
@@ -389,6 +396,7 @@ export function WorkflowSidebar() {
           })}
         </div>
       )}
+      <SchedulesSection />
       <WorkflowHistorySection />
       <WorkflowRunOutput />
       <WorkflowEditorDialog
