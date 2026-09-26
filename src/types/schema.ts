@@ -70,6 +70,7 @@ export type FieldType =
   | { type: "select"; options: SelectOption[] }
   | { type: "port" }
   | { type: "serialPort" }
+  | { type: "dockerContainer" }
   | { type: "filePath"; kind: FilePathKind }
   | { type: "keyValueList" }
   | { type: "objectList"; fields: SettingsField[] }

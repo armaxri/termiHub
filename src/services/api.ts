@@ -1057,6 +1057,33 @@ export async function listDockerImages(): Promise<string[]> {
   return await invoke<string[]>("list_docker_images");
 }
 
+/** One container of the local runtime, as listed for the container picker (PROD-017). */
+export interface DockerContainerInfo {
+  /** Full container ID. */
+  id: string;
+  /** Primary name without the leading `/` (short ID when unnamed). */
+  name: string;
+  /** Image the container was created from (empty when unknown). */
+  image: string;
+  /** Machine-readable state (`running`, `exited`, …). */
+  state: string;
+  /** Human-readable status (e.g. `Up 3 hours`). */
+  status: string;
+  /** Whether the container is running (only running ones accept a shell). */
+  running: boolean;
+}
+
+/**
+ * List the containers (running first) of the selected local container runtime
+ * (`auto` / `docker` / `podman`). Rejects with the runtime's error message when
+ * it is unreachable.
+ */
+export async function listDockerContainers(runtime?: string): Promise<DockerContainerInfo[]> {
+  return await invoke<DockerContainerInfo[]>("list_docker_containers", {
+    runtime: runtime ?? null,
+  });
+}
+
 /** Check if Podman is available on the local system. */
 export async function checkPodmanAvailable(): Promise<boolean> {
   return await invoke<boolean>("check_podman_available");

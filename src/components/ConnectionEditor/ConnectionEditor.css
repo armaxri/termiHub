@@ -232,6 +232,60 @@
   gap: var(--spacing-xs);
 }
 
+/* Docker container picker (PROD-017): the runtime's containers listed below the
+   name/ID input, running first; stopped ones are dimmed. */
+.settings-form__container-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 180px;
+  overflow-y: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.settings-form__container-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--spacing-xxs);
+  width: 100%;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  background: none;
+  border: none;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+}
+
+.settings-form__container-option:hover {
+  background: var(--bg-hover);
+}
+
+.settings-form__container-option:focus-visible {
+  outline: 1px solid var(--focus-border);
+  outline-offset: -1px;
+}
+
+.settings-form__container-option--selected {
+  background: var(--bg-secondary);
+  box-shadow: inset 2px 0 0 var(--accent-color);
+}
+
+.settings-form__container-option--stopped {
+  color: var(--text-secondary);
+}
+
+.settings-form__container-name {
+  font-size: var(--font-size-sm);
+  font-family: var(--font-mono);
+}
+
+.settings-form__container-meta {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
 /* === Jump Host (SSH ProxyJump) section === */
 .jump-host__toggle-label {
   display: inline-flex;

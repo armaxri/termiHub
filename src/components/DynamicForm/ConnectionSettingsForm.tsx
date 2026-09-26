@@ -27,6 +27,13 @@ interface ConnectionSettingsFormProps {
    */
   availablePorts?: string[];
   /**
+   * Whether `dockerContainer` fields may list the LOCAL container runtime's
+   * containers (PROD-017). Pass `false` for agent-hosted connections, whose
+   * containers live on the agent's machine; the field then accepts a typed
+   * name/ID only. Defaults to `true`.
+   */
+  localContainerListing?: boolean;
+  /**
    * Reports overall client-side validity plus a per-field error map (keyed by
    * field key) whenever validation state changes. Only currently-visible fields
    * are considered, so a required field hidden by `visibleWhen` never blocks.
@@ -48,6 +55,7 @@ export function ConnectionSettingsForm({
   onChange,
   credentialSavedHint,
   availablePorts,
+  localContainerListing = true,
   onValidityChange,
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
@@ -292,6 +300,14 @@ export function ConnectionSettingsForm({
                         !rhfField.value
                       }
                       availablePorts={availablePorts}
+                      containerContext={
+                        field.fieldType.type === "dockerContainer"
+                          ? {
+                              runtime: visibilityValues.runtime as string | undefined,
+                              listingEnabled: localContainerListing,
+                            }
+                          : undefined
+                      }
                     />
                   )}
                 />
