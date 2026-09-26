@@ -1912,7 +1912,13 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   above 8 MiB (`local_copy_start`, including local ↔ WSL copies over the
   `\\wsl$` UNC share) runs under the reserved `local` session through
   `core/src/files/transfer/local.rs`, writing a hidden temp file that is
-  renamed over the destination only on completion.
+  renamed over the destination only on completion. A local **folder** copy
+  (#3605, `core/src/files/transfer/local_folder.rs`) is planned by one bounded
+  walk (entries, depth, total size; refused up front beyond them), laid out
+  directly — dirs, symlinks recreated not followed, small files; merging into an
+  existing destination folder — and each large file queued as its own row in a
+  cancel group (cancelling one cancels the folder's rest). Special files are
+  skipped and reported.
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
   `src-tauri/src/session/registry.rs::build_desktop_registry()`); the remote agent has no FTP
   backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP
