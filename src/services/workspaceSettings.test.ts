@@ -17,6 +17,7 @@ import {
   WORKSPACE_OVERRIDABLE_SETTINGS,
   __resetActiveWorkspaceForTest,
   activateWorkspace,
+  applyEffectiveTheme,
   clearWorkspaceOverride,
   currentEffectiveSettings,
   envVarRowError,
@@ -26,8 +27,10 @@ import {
   isValidEnvVarName,
   looksLikeSecretName,
   normalizeWorkspaceSettings,
+  primeActiveWorkspace,
   resolveEffectiveSettings,
   setActiveWorkspaceLocal,
+  subscribeActiveWorkspace,
 } from "./workspaceSettings";
 
 vi.mock("@/themes", () => ({
@@ -136,6 +139,31 @@ describe("live apply on workspace switch", () => {
     expect(getActiveWorkspace()?.name).toBe("Prod");
     handler?.({ payload: null });
     expect(getActiveWorkspace()).toBeNull();
+  });
+});
+
+describe("primeActiveWorkspace (#3517 startup, no theme flash)", () => {
+  it("reads the backend's active workspace without applying a theme", async () => {
+    vi.mocked(apiGetActiveWorkspace).mockResolvedValue(PROD);
+    const listener = vi.fn();
+    subscribeActiveWorkspace(listener);
+
+    await primeActiveWorkspace();
+
+    expect(getActiveWorkspace()).toEqual(PROD);
+    expect(listener).toHaveBeenCalledTimes(1);
+    // No global-theme apply yet — the caller's first apply includes the override.
+    expect(applyTheme).not.toHaveBeenCalled();
+    applyEffectiveTheme(GLOBAL);
+    expect(applyTheme).toHaveBeenCalledTimes(1);
+    expect(applyTheme).toHaveBeenCalledWith("light", undefined);
+  });
+
+  it("leaves the state unchanged when the backend read fails", async () => {
+    setActiveWorkspaceLocal(PROD);
+    vi.mocked(apiGetActiveWorkspace).mockRejectedValue(new Error("down"));
+    await primeActiveWorkspace();
+    expect(getActiveWorkspace()).toEqual(PROD);
   });
 });
 

@@ -190,7 +190,10 @@ import { onThemeChange } from "@/themes";
 import {
   activateWorkspace,
   applyEffectiveTheme,
+  getActiveWorkspace,
   loadExistingWorkspaceSettings,
+  primeActiveWorkspace,
+  subscribeActiveWorkspace,
 } from "@/services/workspaceSettings";
 import { setOverrides as setKeybindingOverrides } from "@/services/keybindings";
 import { fireAndForget, frontendError, frontendLog } from "@/utils/frontendLog";
@@ -4943,6 +4946,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
           sidebarView,
           sidebarCollapsed,
         });
+        // #3517: read a workspace the backend re-activated from the last session
+        // first, so this single theme apply already includes its override (no
+        // flash of the global theme).
+        await primeActiveWorkspace();
         applyEffectiveTheme(settings);
         void get().loadSessionHistory();
         if (settings.keybindingOverrides) {
@@ -6773,6 +6780,16 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
         const idx = Math.min(Math.max(session.activeGroupIndex, 0), builtGroups.length - 1);
         const activeGroup = builtGroups[idx];
+        // #3517: re-activate the session's workspace BEFORE its tabs connect so
+        // its overrides (theme / font, and the default directory / env of new
+        // local shells) are in effect again. A workspace deleted since is
+        // rejected by the backend and logged, leaving none active; the next save
+        // then drops the stale id. Skipped when it is already active (the
+        // backend re-activates it at startup in "always" mode).
+        const sessionWorkspaceId = loaded.activeWorkspaceId;
+        if (sessionWorkspaceId && getActiveWorkspace()?.id !== sessionWorkspaceId) {
+          await activateWorkspace(sessionWorkspaceId);
+        }
         // GAP G1 (#1146): tear down any currently-open live sessions BEFORE the
         // `set` replaces the layout (e.g. a CLI-opened workspace at startup that
         // runs before restore), otherwise those sessions are orphaned.
@@ -6870,6 +6887,23 @@ export const useAppStore = create<AppState>((set, get, store) => {
     // createPortableModeSlice (ARCH-001/FES-011, extracted under #2077 via #2881).
   };
 });
+
+/**
+ * Keep `activeWorkspaceName` in step with the backend's active workspace (#3517):
+ * the `active-workspace-changed` broadcast (from any window) clears it when the
+ * active workspace is deleted, follows a rename, and sets it when a workspace is
+ * re-activated from the last session. Exported for tests, which may reset the
+ * active-workspace listeners.
+ */
+export function syncActiveWorkspaceName(): () => void {
+  return subscribeActiveWorkspace(() => {
+    const name = getActiveWorkspace()?.name ?? null;
+    if (useAppStore.getState().activeWorkspaceName !== name) {
+      useAppStore.setState({ activeWorkspaceName: name });
+    }
+  });
+}
+syncActiveWorkspaceName();
 
 // Track last-focused leaf in split containers for directional navigation (#448).
 // When the (composed) active panel changes, mark all ancestor SplitContainers so

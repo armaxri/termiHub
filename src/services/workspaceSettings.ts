@@ -160,6 +160,22 @@ export async function clearWorkspaceOverride(
 }
 
 /**
+ * Read the backend's active workspace into this window **without** applying the
+ * theme, so the caller's next theme application already includes the workspace
+ * override. Called at startup before the first theme apply: the backend may have
+ * re-activated the last session's workspace (#3517), and applying the global
+ * theme first would flash it. Best-effort — a failure leaves the state unchanged.
+ */
+export async function primeActiveWorkspace(): Promise<void> {
+  try {
+    active = (await apiGetActiveWorkspace()) ?? null;
+    for (const listener of listeners) listener();
+  } catch (err) {
+    frontendLog("workspace_settings", `Failed to read active workspace: ${errorMessage(err)}`);
+  }
+}
+
+/**
  * Start following the backend's active workspace in this window: read the
  * current one and listen for changes. Returns an unsubscribe.
  */
