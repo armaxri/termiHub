@@ -189,12 +189,17 @@ are installed, so:
 Consequently, **changing your plugin `id` or `connectionType` in an update
 orphans every connection users saved against the old id** — treat both as
 permanent once published. (A connection whose plugin is missing is kept, not
-deleted; it works again once the plugin is reinstalled.) If two types share a
+deleted — the sidebar marks it with a badge naming your plugin and why it is
+unavailable (not installed, disabled, or not trusted), and connecting is refused
+with the same message; it works again once the plugin is installed and
+enabled.) If two types share a
 `displayName`, the selector suffixes the later one with your plugin `name`.
 
 Connections saved before this scheme (when the first plugin to load got the
 bare `connectionType` and later ones `<connectionType>-<plugin id>`) are
-migrated to the namespaced id automatically when termiHub loads them.
+migrated to the namespaced id automatically when termiHub loads them — including
+connections in external connection files and in imported connection and
+workspace exports.
 
 ### `theme`
 
