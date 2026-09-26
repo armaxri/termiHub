@@ -520,6 +520,8 @@ jobs:
           call scripts\build-agents.cmd --native --sign-key does-not-exist.pem
           if not errorlevel 1 (echo expected failure: missing signing key& exit /b 1)
           echo build-agents.cmd smoke OK
+          rem echo keeps the last negative test's ERRORLEVEL; exit 0 explicitly.
+          exit /b 0
 
       - name: Stage the build-agents.cmd checksum line
         shell: bash
