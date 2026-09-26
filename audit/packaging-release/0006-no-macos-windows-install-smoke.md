@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/release-linux-smoke.yml:48
   - .github/workflows/release-linux-arm64-smoke.yml:1
   - .github/workflows/release.yml:103
-status: open
+status: fixed
+resolution: "#3487 — release-macos-smoke (arm64+Intel) and release-windows-smoke (msiexec install/launch/uninstall) after Release"
 ---
 
 ## What

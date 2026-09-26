@@ -10,7 +10,8 @@ evidence:
   - .github/workflows/release-linux-smoke.yml:49
   - scripts/smoke-test.sh:222
   - scripts/smoke-test.sh:232
-status: open
+status: fixed
+resolution: "#3487 — same as PKG-006"
 ---
 
 ## What
