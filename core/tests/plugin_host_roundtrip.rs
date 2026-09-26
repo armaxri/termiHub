@@ -3,7 +3,9 @@
 //! Builds the real `cdylib` fixture at `tests/fixtures/test-plugin`, then drives
 //! it through the public host API: a successful load with metadata, a full
 //! [`ConnectionType`] session that echoes input back through the output channel,
-//! an incompatible-ABI rejection, and missing-symbol handling.
+//! the ABI 1.x compatibility matrix across a real `dlopen` (newer minor, other
+//! major, pre-freeze value, manifest mirror, inconsistent reports), and
+//! missing-symbol handling.
 //!
 //! The fixture is compiled with `cargo build` into a throwaway target directory,
 //! so the test genuinely exercises `dlopen`/`LoadLibrary` on whichever platform
@@ -16,7 +18,10 @@ use std::process::Command;
 use std::time::Duration;
 
 use termihub_core::connection::ConnectionType;
-use termihub_core::plugin::{load_backend_library, HostError, PluginConnectionType};
+use termihub_core::plugin::{
+    load_backend_library, load_backend_library_for_manifest, AbiIncompatibility, AbiVersion,
+    HostError, PluginConnectionType, CURRENT_PLUGIN_ABI_VERSION,
+};
 
 /// Path to the fixture plugin's `Cargo.toml`.
 fn fixture_manifest() -> PathBuf {
@@ -80,10 +85,7 @@ async fn plugin_host_round_trip() {
     assert_eq!(lib.info().id, "test-echo");
     assert_eq!(lib.info().name, "Test Echo");
     assert_eq!(lib.info().version, "0.1.0");
-    assert_eq!(
-        lib.info().api_version,
-        termihub_plugin_api::CURRENT_PLUGIN_API_VERSION
-    );
+    assert_eq!(lib.info().abi_version, CURRENT_PLUGIN_ABI_VERSION);
 
     // --- 2. Full ConnectionType round trip: written input echoes to output. ---
     let mut conn = PluginConnectionType::new(
@@ -112,25 +114,108 @@ async fn plugin_host_round_trip() {
     conn.disconnect().await.expect("disconnect should succeed");
     assert!(!conn.is_connected());
 
-    // --- 3. Incompatible ABI is rejected without loading, never a crash. ---
-    // SAFETY (env): single-threaded within this test; no other code reads the
-    // variable, and it is removed immediately after the load.
-    std::env::set_var("TERMIHUB_TEST_PLUGIN_ABI", "99");
-    let result = load_backend_library(&good, None);
-    std::env::remove_var("TERMIHUB_TEST_PLUGIN_ABI");
-    match result {
-        Err(HostError::IncompatibleAbi { expected, found }) => {
-            assert_eq!(expected, termihub_plugin_api::CURRENT_PLUGIN_API_VERSION);
-            assert_eq!(found, 99);
-        }
-        Err(other) => panic!("expected IncompatibleAbi, got {other:?}"),
-        Ok(_) => panic!("expected IncompatibleAbi, got a successful load"),
-    }
+    // --- 3. ABI compatibility matrix, across a real dlopen. ---
+    abi_matrix(&good);
 
     // --- 4. Missing required symbol is a clean error. ---
     match load_backend_library(&noinit, None) {
         Err(HostError::MissingSymbol(name)) => assert_eq!(name, "termihub_plugin_init"),
         Err(other) => panic!("expected MissingSymbol, got {other:?}"),
         Ok(_) => panic!("expected MissingSymbol, got a successful load"),
+    }
+}
+
+/// Load `lib` with `TERMIHUB_TEST_PLUGIN_ABI` (and optionally the info-ABI
+/// override) set, restoring the environment afterwards.
+fn load_with_abi(
+    lib: &Path,
+    abi: Option<&str>,
+    info_abi: Option<&str>,
+    manifest: Option<&str>,
+) -> Result<std::sync::Arc<termihub_core::plugin::LoadedLibrary>, HostError> {
+    // SAFETY (env): the round trip is the only test in this binary, it runs
+    // single-threaded here, and the variables are removed right after the load.
+    if let Some(v) = abi {
+        std::env::set_var("TERMIHUB_TEST_PLUGIN_ABI", v);
+    }
+    if let Some(v) = info_abi {
+        std::env::set_var("TERMIHUB_TEST_PLUGIN_INFO_ABI", v);
+    }
+    let result = match manifest {
+        Some(m) => load_backend_library_for_manifest(lib, None, m),
+        None => load_backend_library(lib, None),
+    };
+    std::env::remove_var("TERMIHUB_TEST_PLUGIN_ABI");
+    std::env::remove_var("TERMIHUB_TEST_PLUGIN_INFO_ABI");
+    result
+}
+
+/// Expect an `IncompatibleAbi` refusal and return its detail.
+fn expect_incompatible(
+    result: Result<std::sync::Arc<termihub_core::plugin::LoadedLibrary>, HostError>,
+) -> AbiIncompatibility {
+    match result {
+        Err(HostError::IncompatibleAbi(detail)) => detail,
+        Err(other) => panic!("expected IncompatibleAbi, got {other:?}"),
+        Ok(_) => panic!("expected IncompatibleAbi, got a successful load"),
+    }
+}
+
+fn abi_matrix(good: &Path) {
+    let host = CURRENT_PLUGIN_ABI_VERSION;
+
+    // Same version, with a mirroring manifest: loads.
+    let lib = load_with_abi(good, None, None, Some(&host.to_string()))
+        .expect("same ABI with a mirroring manifest loads");
+    assert_eq!(lib.info().abi_version, host);
+    drop(lib);
+
+    // Newer minor than the host: refused, "update termiHub".
+    let newer = AbiVersion::new(host.major, host.minor + 1);
+    let detail = expect_incompatible(load_with_abi(good, Some(&newer.to_string()), None, None));
+    assert_eq!(
+        detail,
+        AbiIncompatibility::NewerMinor {
+            plugin: newer,
+            host
+        }
+    );
+    assert!(detail.to_string().contains("update termiHub"), "{detail}");
+
+    // Different major: refused.
+    let next_major = AbiVersion::new(host.major + 1, 0);
+    let detail = expect_incompatible(load_with_abi(
+        good,
+        Some(&next_major.to_string()),
+        None,
+        None,
+    ));
+    assert!(matches!(
+        detail,
+        AbiIncompatibility::UnsupportedMajor { plugin, .. } if plugin == next_major
+    ));
+
+    // A pre-freeze plugin returning the old exact-match counter (4) is major 0.
+    let detail = expect_incompatible(load_with_abi(good, Some("4"), None, None));
+    assert_eq!(detail.plugin(), AbiVersion::new(0, 4));
+
+    // Manifest that does not mirror the library: refused before init.
+    match load_with_abi(good, None, None, Some("1.7")) {
+        Err(HostError::ManifestAbiMismatch { manifest, library }) => {
+            assert_eq!(manifest, "1.7");
+            assert_eq!(library, host);
+        }
+        Err(other) => panic!("expected ManifestAbiMismatch, got {other:?}"),
+        Ok(_) => panic!("expected ManifestAbiMismatch, got a successful load"),
+    }
+
+    // Exported version and PluginInfo version disagree: refused.
+    match load_with_abi(good, None, Some("0.9"), None) {
+        Err(HostError::InconsistentAbi { symbol, info }) => {
+            assert_eq!(symbol, host);
+            assert_eq!(info, AbiVersion::new(0, 9));
+        }
+        Err(other) => panic!("expected InconsistentAbi, got {other:?}"),
+        Ok(_) => panic!("expected InconsistentAbi, got a successful load"),
     }
 }

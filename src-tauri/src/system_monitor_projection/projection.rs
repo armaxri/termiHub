@@ -49,7 +49,7 @@ use std::sync::Arc;
 use serde_json::{json, Map, Value};
 use tauri::{AppHandle, Manager};
 
-use termihub_core::monitoring::{MonitorStatus, SystemStats};
+use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason, SystemStats};
 
 use crate::commands::projection::ProjectionState;
 use crate::projection::{
@@ -300,7 +300,7 @@ pub fn register_monitor_intents(registry: &mut HandlerRegistry, app_handle: AppH
     registry.route("monitor.status", move |intent, projector| {
         let store = store_of(&handle)?;
         let key = required_str(intent, "key")?;
-        store.set_status(&key, required_status(intent)?);
+        store.set_status(&key, required_status(intent)?, optional_reason(intent)?);
         Ok(publish_monitors(projector, &store))
     });
 
@@ -416,6 +416,19 @@ fn required_status(intent: &Intent) -> Result<MonitorStatus, (String, String)> {
         .ok_or_else(|| ("bad_payload".to_string(), "missing 'status'".to_string()))?;
     serde_json::from_value(value.clone())
         .map_err(|e| ("bad_payload".to_string(), format!("invalid status: {e}")))
+}
+
+/// Parse the optional `reason` field as a [`MonitorStatusReason`] (#3301).
+///
+/// Absent or `null` → `None`; a present-but-unknown value is a `bad_payload`
+/// rejection, like a malformed `status`.
+fn optional_reason(intent: &Intent) -> Result<Option<MonitorStatusReason>, (String, String)> {
+    match intent.payload.get("reason") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => serde_json::from_value(value.clone())
+            .map(Some)
+            .map_err(|e| ("bad_payload".to_string(), format!("invalid reason: {e}"))),
+    }
 }
 
 #[cfg(test)]

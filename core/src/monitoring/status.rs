@@ -59,13 +59,51 @@ pub enum MonitorStatusReason {
     Transport,
     /// The transport answered, but its output could not be parsed.
     Parse,
+    /// The loop's owner went silent: no sample and no status report arrived
+    /// within its recovery budget while the transport to it stayed up (#3301).
+    ///
+    /// Inferred by the desktop for an agent-hosted monitor whose agent stopped
+    /// streaming; an agent never reports it about its own loop.
+    Silent,
 }
 
-/// Async sender for [`MonitorStatus`] updates (used by collector loops).
-pub type MonitorStatusSender = tokio::sync::mpsc::Sender<MonitorStatus>;
+/// One observable status transition of a collector loop, with the kind of
+/// failure behind it (#3301).
+///
+/// The status channel carries this rather than a bare [`MonitorStatus`] so the
+/// desktop can fold *why* a monitor left `Live` into the system-monitor
+/// projection — e.g. to tell "remote output unreadable" apart from "connection
+/// lost" on an `Offline` badge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorStatusUpdate {
+    /// The loop's new status.
+    pub status: MonitorStatus,
+    /// Why the loop is not `Live` (see [`CollectLoopState::reason`]); `None`
+    /// while `Live`, `Paused`, or `Connecting` with no failure yet.
+    pub reason: Option<MonitorStatusReason>,
+}
 
-/// Async receiver for [`MonitorStatus`] updates.
-pub type MonitorStatusReceiver = tokio::sync::mpsc::Receiver<MonitorStatus>;
+impl MonitorStatusUpdate {
+    /// An update carrying `status` with no reason.
+    pub fn new(status: MonitorStatus) -> Self {
+        Self {
+            status,
+            reason: None,
+        }
+    }
+
+    /// An update carrying `status` and the failure kind behind it.
+    pub fn with_reason(status: MonitorStatus, reason: Option<MonitorStatusReason>) -> Self {
+        Self { status, reason }
+    }
+}
+
+/// Async sender for [`MonitorStatusUpdate`]s (used by collector loops).
+pub type MonitorStatusSender = tokio::sync::mpsc::Sender<MonitorStatusUpdate>;
+
+/// Async receiver for [`MonitorStatusUpdate`]s.
+pub type MonitorStatusReceiver = tokio::sync::mpsc::Receiver<MonitorStatusUpdate>;
 
 /// Default number of consecutive collect failures before a `Live` loop is
 /// declared [`MonitorStatus::Stale`].
@@ -372,6 +410,30 @@ impl CollectLoopState {
             MonitorStatus::Live | MonitorStatus::Paused => None,
             _ => self.reason,
         }
+    }
+
+    /// The current status paired with its [`reason`](Self::reason) — the value a
+    /// collector loop emits on its status channel after a transition (#3301).
+    pub fn update(&self) -> MonitorStatusUpdate {
+        MonitorStatusUpdate::with_reason(self.status, self.reason())
+    }
+
+    /// Re-attribute the failure behind the current non-`Live` status (#3301).
+    ///
+    /// For a loop that *infers* its status (the desktop mirror of an
+    /// agent-hosted monitor), the generic transport reason set by
+    /// [`on_failure`](Self::on_failure) / [`exhaust_reconnect`](Self::exhaust_reconnect)
+    /// can be refined once the driver knows more — e.g. the transport is up but
+    /// the agent went [`Silent`](MonitorStatusReason::Silent). Returns `true`
+    /// when the reason changed. Ignored (returns `false`) while `Live` or
+    /// `Paused`, which carry no reason.
+    pub fn attribute(&mut self, reason: MonitorStatusReason) -> bool {
+        if matches!(self.status, MonitorStatus::Live | MonitorStatus::Paused) {
+            return false;
+        }
+        let changed = self.reason != Some(reason);
+        self.reason = Some(reason);
+        changed
     }
 
     /// Adopt a status reported by the loop's authoritative owner (#3321).
@@ -704,6 +766,70 @@ mod tests {
         assert_eq!(
             serde_json::to_value(MonitorStatusReason::Parse).unwrap(),
             serde_json::json!("parse")
+        );
+        assert_eq!(
+            serde_json::to_value(MonitorStatusReason::Silent).unwrap(),
+            serde_json::json!("silent")
+        );
+    }
+
+    // ── Status update + attribution (#3301) ───────────────────────────────
+
+    #[test]
+    fn update_pairs_status_with_reason() {
+        let mut state = CollectLoopState::new();
+        assert_eq!(
+            state.update(),
+            MonitorStatusUpdate::new(MonitorStatus::Connecting)
+        );
+        state.on_parse_failure();
+        state.on_parse_failure();
+        assert_eq!(
+            state.update(),
+            MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(MonitorStatusReason::Parse)
+            )
+        );
+        state.on_success();
+        assert_eq!(
+            state.update(),
+            MonitorStatusUpdate::new(MonitorStatus::Live)
+        );
+    }
+
+    #[test]
+    fn attribute_refines_a_non_live_reason_only() {
+        let mut state = CollectLoopState::new();
+        state.on_success();
+        assert!(
+            !state.attribute(MonitorStatusReason::Silent),
+            "Live carries no reason"
+        );
+        assert_eq!(state.reason(), None);
+
+        state.on_failure();
+        state.on_failure();
+        state.exhaust_reconnect();
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Transport));
+        assert!(state.attribute(MonitorStatusReason::Silent));
+        assert!(!state.attribute(MonitorStatusReason::Silent), "no change");
+        assert_eq!(state.reason(), Some(MonitorStatusReason::Silent));
+
+        let mut paused = CollectLoopState::new();
+        paused.pause();
+        assert!(!paused.attribute(MonitorStatusReason::Parse));
+    }
+
+    #[test]
+    fn update_serializes_camel_case() {
+        assert_eq!(
+            serde_json::to_value(MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(MonitorStatusReason::Parse)
+            ))
+            .unwrap(),
+            serde_json::json!({ "status": "offline", "reason": "parse" })
         );
     }
 

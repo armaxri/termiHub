@@ -222,6 +222,31 @@ describe("StatusBar — monitoring controls (#1233)", () => {
     expect(retry!.textContent).toContain("Retry");
   });
 
+  it.each([
+    ["parse", "Offline — remote output unreadable"],
+    ["transport", "Offline — connection lost"],
+    ["silent", "Offline — no data from agent"],
+    [null, "Offline — connection lost"],
+  ] as const)(
+    "names the offline reason on the Retry affordance (%s, #3301)",
+    (statusReason, label) => {
+      setActiveMonitor({
+        monitorSessionId: "sess-1",
+        stats: makeStats(),
+        sampleCount: 3,
+        status: "offline",
+        statusReason,
+      });
+      renderStatusBar();
+
+      const retry = container.querySelector('[data-testid="monitoring-retry-btn"]');
+      expect(retry).not.toBeNull();
+      expect(retry!.textContent).toContain(label);
+      expect(retry!.textContent).toContain("Retry");
+      expect(retry!.getAttribute("aria-label")).toContain(label.replace("Offline — ", ""));
+    }
+  );
+
   it("does not render Paused / Retry affordances while live", () => {
     setActiveMonitor({
       monitorSessionId: "sess-1",

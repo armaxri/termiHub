@@ -5,12 +5,18 @@
 //! The host loader resolves them by the [`SYMBOL_*`](self) names and calls them
 //! through the matching function-pointer type aliases.
 //!
+//! These four symbols and their signatures are **frozen for ABI 1.x**. A later
+//! minor adds plugin-provided behavior as a **new, optional** symbol; the host
+//! resolves it only when the plugin's ABI [`supports`](crate::AbiVersion::supports)
+//! that minor, so an older-minor plugin that lacks it still loads (see
+//! [`crate::version`]).
+//!
 //! ```ignore
 //! use termihub_plugin_api::*;
 //!
 //! #[no_mangle]
 //! pub extern "C" fn termihub_plugin_abi_version() -> u32 {
-//!     CURRENT_PLUGIN_API_VERSION
+//!     CURRENT_PLUGIN_ABI_VERSION.to_packed()
 //! }
 //!
 //! #[no_mangle]
@@ -19,9 +25,7 @@
 //!         return PluginStatus::Other;
 //!     }
 //!     unsafe {
-//!         out_info.write(PluginInfo::new(
-//!             "k8s-exec", "Kubernetes Exec", "1.2.0", CURRENT_PLUGIN_API_VERSION,
-//!         ));
+//!         out_info.write(PluginInfo::new("k8s-exec", "Kubernetes Exec", "1.2.0"));
 //!     }
 //!     PluginStatus::Ok
 //! }
@@ -62,8 +66,9 @@ pub const SYMBOL_PLUGIN_CREATE_BACKEND: &[u8] = b"termihub_plugin_create_backend
 pub const SYMBOL_PLUGIN_SHUTDOWN: &[u8] = b"termihub_plugin_shutdown\0";
 
 /// Type of [`SYMBOL_PLUGIN_ABI_VERSION`]: returns the ABI version the plugin was
-/// built against. The host compares it to [`crate::CURRENT_PLUGIN_API_VERSION`]
-/// before calling anything else.
+/// built against, [packed](crate::AbiVersion::to_packed) as `major << 16 | minor`
+/// (return `CURRENT_PLUGIN_ABI_VERSION.to_packed()`). The host checks it against
+/// [`crate::CURRENT_PLUGIN_ABI_VERSION`] before calling anything else.
 pub type PluginAbiVersionFn = unsafe extern "C" fn() -> u32;
 
 /// Type of [`SYMBOL_PLUGIN_INIT`]: fills `out_info` with the plugin's metadata.
@@ -106,7 +111,7 @@ mod ffi_safety_check {
 
     // Exported entry points, exactly matching the type aliases above.
     unsafe extern "C" fn _abi_version() -> u32 {
-        crate::CURRENT_PLUGIN_API_VERSION
+        crate::CURRENT_PLUGIN_ABI_VERSION.to_packed()
     }
     unsafe extern "C" fn _init(_out: *mut PluginInfo) -> PluginStatus {
         PluginStatus::Ok

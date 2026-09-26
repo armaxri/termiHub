@@ -14,7 +14,6 @@ use zip::ZipArchive;
 
 use super::manifest::{
     parse_manifest, ApiCompatibility, ManifestParseError, ManifestValidationError, PluginManifest,
-    CURRENT_PLUGIN_API_VERSION,
 };
 
 /// The required manifest entry at the root of every package.
@@ -188,11 +187,12 @@ pub enum PluginPackageError {
     ManifestInvalid(#[from] ManifestValidationError),
 
     /// The manifest is valid but its `apiVersion` is incompatible with the host.
-    #[error("plugin targets API version `{declared}` but this host supports `{supported}`")]
+    #[error("plugin built for ABI `{declared}`, this termiHub supports ABI `{supported}`")]
     IncompatibleApiVersion {
         /// The version the plugin declared.
         declared: String,
-        /// The version this host supports ([`CURRENT_PLUGIN_API_VERSION`]).
+        /// The ABI version this host supports
+        /// ([`CURRENT_PLUGIN_ABI_VERSION`](termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION)).
         supported: String,
     },
 }
@@ -265,7 +265,7 @@ fn validate_package_with_limits(
         ApiCompatibility::Compatible => Ok(manifest),
         ApiCompatibility::Incompatible => Err(PluginPackageError::IncompatibleApiVersion {
             declared: manifest.api_version.clone(),
-            supported: CURRENT_PLUGIN_API_VERSION.to_string(),
+            supported: termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION.to_string(),
         }),
     }
 }
@@ -399,7 +399,10 @@ mod tests {
                 supported,
             } => {
                 assert_eq!(declared, "2.0");
-                assert_eq!(supported, CURRENT_PLUGIN_API_VERSION);
+                assert_eq!(
+                    supported,
+                    termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION.to_string()
+                );
             }
             other => panic!("expected IncompatibleApiVersion, got: {other}"),
         }
