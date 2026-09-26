@@ -19,6 +19,7 @@
 //! Every backend keeps only its own streaming primitive and its error type.
 
 use std::fmt::Display;
+use std::future::Future;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -268,18 +269,6 @@ pub(super) fn rebase_cursor(
         cursor.total = fp.size;
     }
     handle.set_metrics(cursor.offset, cursor.total, 0);
-}
-
-/// Restart the cursor from byte zero (resume disabled or impossible),
-/// adopting `current` as the new source baseline.
-#[cfg(feature = "docker")]
-pub(super) fn restart_cursor(
-    cursor: &mut ResumeCursor,
-    handle: &TransferHandle,
-    current: Option<SourceFingerprint>,
-) {
-    cursor.offset = 0;
-    rebase_cursor(cursor, handle, current);
 }
 
 /// Re-verify the resume point immediately before an attempt appends
@@ -547,12 +536,15 @@ pub(super) async fn settle_attempt<E: Display>(
 
 /// Settle a transfer that ends as cancelled: clean up the partial, emit the
 /// terminal event, and drop the registry entry.
-async fn finish_cancelled<C: AsyncFn()>(
+async fn finish_cancelled<C, CFut>(
     handle: &Arc<TransferHandle>,
     registry: &TransferRegistry,
     sink: &ProgressSink,
     cleanup: &C,
-) {
+) where
+    C: Fn() -> CFut,
+    CFut: Future<Output = ()>,
+{
     handle.transition(TransferEvent::Cancel);
     cleanup().await;
     emit(handle, sink, TransferPhase::Cancelled, None, None);
@@ -564,17 +556,23 @@ async fn finish_cancelled<C: AsyncFn()>(
 /// done, cancelled (with `cleanup` of the partial destination), paused (slot
 /// released until a resume), or permanently failed (slot released, handle kept
 /// for a manual retry). Consumes the handle's registry entry on exit.
-pub(super) async fn drive_transfer<S, C>(
+///
+/// The cursor is threaded through `stint` by value (it is `Copy`), which keeps
+/// the stint future free of higher-ranked borrows so the whole transfer future
+/// stays `Send` for `tokio::spawn`.
+pub(super) async fn drive_transfer<S, SFut, C, CFut>(
     handle: &Arc<TransferHandle>,
     registry: &TransferRegistry,
     sink: &ProgressSink,
     backend: &'static str,
-    cursor: &mut ResumeCursor,
+    mut cursor: ResumeCursor,
     mut stint: S,
     cleanup: C,
 ) where
-    S: AsyncFnMut(&mut ResumeCursor) -> AttemptsResult,
-    C: AsyncFn(),
+    S: FnMut(ResumeCursor) -> SFut,
+    SFut: Future<Output = (AttemptsResult, ResumeCursor)>,
+    C: Fn() -> CFut,
+    CFut: Future<Output = ()>,
 {
     loop {
         if !wait_for_active(handle, registry).await {
@@ -583,7 +581,9 @@ pub(super) async fn drive_transfer<S, C>(
         }
         emit(handle, sink, TransferPhase::Transferring, None, None);
 
-        match stint(cursor).await {
+        let (result, next) = stint(cursor).await;
+        cursor = next;
+        match result {
             AttemptsResult::Completed => {
                 info!(backend, transfer_id = %handle.transfer_id, transferred = cursor.offset, "transfer complete");
                 emit(handle, sink, TransferPhase::Done, None, None);
@@ -773,21 +773,6 @@ mod tests {
         assert_eq!(cursor.offset, 0);
         assert_eq!(cursor.baseline, fp(800, 3));
         assert_eq!(cursor.total, 800);
-    }
-
-    #[cfg(feature = "docker")]
-    #[test]
-    fn restart_cursor_zeroes_offset_and_rebases() {
-        let (handle, _, _) = harness();
-        let mut cursor = ResumeCursor {
-            offset: 300,
-            total: 1000,
-            baseline: fp(1000, 7),
-        };
-        restart_cursor(&mut cursor, &handle, fp(1000, 7));
-        assert_eq!(cursor.offset, 0);
-        assert_eq!(cursor.total, 1000);
-        assert_eq!(handle.snapshot().transferred, 0);
     }
 
     #[tokio::test]

@@ -223,7 +223,9 @@ async fn run_attempts(
             Ok(c) => c,
             Err(e) => {
                 let e = SftpTransferError::Ssh(format!("open SFTP transfer channel: {e}"));
-                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e, BACKEND).await {
+                if let Some(outcome) =
+                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
+                {
                     return outcome;
                 }
                 continue;
@@ -310,7 +312,8 @@ async fn run_attempts(
             BACKEND,
             "server",
         )
-        .await {
+        .await
+        {
             return outcome;
         }
     }
@@ -388,31 +391,34 @@ pub async fn run_sftp_transfer(
     handle.set_metrics(offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
-    let mut cursor = ResumeCursor {
+    let cursor = ResumeCursor {
         offset,
         total,
         baseline,
     };
+    let (browser, remote_path, local_path, handle, sink) =
+        (&browser, &remote_path, &local_path, &handle, &sink);
     drive_transfer(
-        &handle,
+        handle,
         &registry,
-        &sink,
+        sink,
         BACKEND,
-        &mut cursor,
-        async |cursor: &mut ResumeCursor| {
-            run_attempts(
-                &browser,
+        cursor,
+        |mut cursor| async move {
+            let result = run_attempts(
+                browser,
                 direction,
-                &remote_path,
-                &local_path,
-                cursor,
-                &handle,
-                &sink,
+                remote_path,
+                local_path,
+                &mut cursor,
+                handle,
+                sink,
                 resume_mode,
             )
-            .await
+            .await;
+            (result, cursor)
         },
-        async || cleanup_partial(&browser, direction, &remote_path, &local_path).await,
+        || cleanup_partial(browser, direction, remote_path, local_path),
     )
     .await;
 }
@@ -525,7 +531,9 @@ async fn run_remote_attempts(
             Ok(c) => c,
             Err(e) => {
                 let e = SftpTransferError::Ssh(format!("open source SFTP transfer channel: {e}"));
-                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e, BACKEND).await {
+                if let Some(outcome) =
+                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
+                {
                     return outcome;
                 }
                 continue;
@@ -536,7 +544,9 @@ async fn run_remote_attempts(
             Err(e) => {
                 let e =
                     SftpTransferError::Ssh(format!("open destination SFTP transfer channel: {e}"));
-                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e, BACKEND).await {
+                if let Some(outcome) =
+                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
+                {
                     return outcome;
                 }
                 continue;
@@ -593,7 +603,8 @@ async fn run_remote_attempts(
             BACKEND,
             "server",
         )
-        .await {
+        .await
+        {
             return outcome;
         }
     }
@@ -637,31 +648,40 @@ pub async fn run_sftp_remote_copy(
     handle.set_metrics(0, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
-    let mut cursor = ResumeCursor {
+    let cursor = ResumeCursor {
         offset: 0,
         total,
         baseline,
     };
-    drive_transfer(
+    let (src_browser, dst_browser, src_path, dst_path, handle, sink) = (
+        &src_browser,
+        &dst_browser,
+        &src_path,
+        &dst_path,
         &handle,
-        &registry,
         &sink,
+    );
+    drive_transfer(
+        handle,
+        &registry,
+        sink,
         "SFTP remote-to-remote",
-        &mut cursor,
-        async |cursor: &mut ResumeCursor| {
-            run_remote_attempts(
-                &src_browser,
-                &dst_browser,
-                &src_path,
-                &dst_path,
-                cursor,
-                &handle,
-                &sink,
+        cursor,
+        |mut cursor| async move {
+            let result = run_remote_attempts(
+                src_browser,
+                dst_browser,
+                src_path,
+                dst_path,
+                &mut cursor,
+                handle,
+                sink,
                 resume_mode,
             )
-            .await
+            .await;
+            (result, cursor)
         },
-        async || cleanup_remote_partial(&dst_browser, &dst_path).await,
+        || cleanup_remote_partial(dst_browser, dst_path),
     )
     .await;
 }
