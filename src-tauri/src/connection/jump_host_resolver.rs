@@ -85,23 +85,15 @@ impl<'a> JumpHostScope<'a> {
     /// The one connection `id` refers to, or an error when it is ambiguous or
     /// not in the scope (see the type docs for the rule).
     fn find(&self, id: &str) -> Result<&'a SavedConnection> {
-        let mut matches = self.connections.iter().filter(|c| c.id == id);
-        let Some(first) = matches.next() else {
-            bail!("{}", self.not_found_message(id));
-        };
-        let rest: Vec<&SavedConnection> = matches.collect();
-        if rest.is_empty() {
-            return Ok(first);
+        match match_unique(self.connections, |c| c.id == id) {
+            UniqueMatch::One(conn) => Ok(conn),
+            UniqueMatch::None => bail!("{}", self.not_found_message(id)),
+            UniqueMatch::Ambiguous(all) => bail!(
+                "Referenced jump host connection '{id}' is ambiguous: a connection with this id \
+                 exists in {}. Rename or move one of them, or configure the hop inline.",
+                source_labels(&all)
+            ),
         }
-        let sources: Vec<String> = std::iter::once(first)
-            .chain(rest)
-            .map(|c| source_label(c.source_file.as_deref()))
-            .collect();
-        bail!(
-            "Referenced jump host connection '{id}' is ambiguous: a connection with this id \
-             exists in {}. Rename or move one of them, or configure the hop inline.",
-            sources.join(" and ")
-        )
     }
 
     fn not_found_message(&self, id: &str) -> String {
@@ -125,6 +117,46 @@ impl<'a> JumpHostScope<'a> {
         msg.push_str(" Pick an existing SSH connection or switch to inline configuration.");
         msg
     }
+}
+
+/// Outcome of looking a reference up in a set of saved connections under the
+/// [`JumpHostScope`] rule: exactly one match resolves, several are ambiguous.
+#[derive(Debug)]
+pub(crate) enum UniqueMatch<'a> {
+    /// No connection matches.
+    None,
+    /// Exactly one connection matches.
+    One(&'a SavedConnection),
+    /// Several connections match (in scope order); the reference must be
+    /// refused or left unresolved rather than guessed.
+    Ambiguous(Vec<&'a SavedConnection>),
+}
+
+/// Look up the connection in `connections` matching `pred` under the one rule
+/// every by-reference lookup over the unified view shares (#3602): a single
+/// match resolves, no match is not found, several matches are ambiguous — there
+/// is no precedence between files. The jump-host resolver matches on id; the
+/// workspace export/import maps (#3625) reuse it for ids and names.
+pub(crate) fn match_unique<'a>(
+    connections: &'a [SavedConnection],
+    pred: impl Fn(&SavedConnection) -> bool,
+) -> UniqueMatch<'a> {
+    let mut matches: Vec<&'a SavedConnection> = connections.iter().filter(|c| pred(c)).collect();
+    match matches.len() {
+        0 => UniqueMatch::None,
+        1 => UniqueMatch::One(matches.remove(0)),
+        _ => UniqueMatch::Ambiguous(matches),
+    }
+}
+
+/// The connection files `connections` live in, as one human-readable phrase
+/// (`the main connection store and the external connection file '…'`).
+pub(crate) fn source_labels(connections: &[&SavedConnection]) -> String {
+    connections
+        .iter()
+        .map(|c| source_label(c.source_file.as_deref()))
+        .collect::<Vec<_>>()
+        .join(" and ")
 }
 
 /// Human-readable name of the connection file a connection lives in.
