@@ -90,6 +90,12 @@
    * never mistaken for focus.
    */
   --broadcast-accent: #e87d0d;
+  /*
+   * Multi-target macro playback (#3446): the per-tab "receiving macro" badge.
+   * Violet, so it is distinct from both the orange broadcast badge and the blue
+   * focus accent, and reads on dark and light themes.
+   */
+  --macro-accent: #a66cf0;
 
   /* State indicator dots */
   --state-connected: #2dd79c;

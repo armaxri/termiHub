@@ -46,7 +46,8 @@ export interface MacroPlaybackState {
   /**
    * Every terminal receiving the macro when it plays into several at once
    * (PROD-042, #3443); `undefined` for a single-terminal run. `tabId` is the
-   * first of these.
+   * first of these. Narrowed as the run progresses to the targets still
+   * receiving input, so a dropped target's tab-strip marker clears (#3446).
    */
   targetTabIds?: string[];
 }
@@ -215,16 +216,20 @@ export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (s
       { timingMode, fixedDelayMs: opts?.fixedDelayMs },
       {
         onProgress: (played, stepTotal) => {
+          // Narrow the receiving set to the targets still live (#3446) so a tab
+          // dropped mid-run (disconnected / taken over / injection failed) loses
+          // its tab-strip "receiving macro" marker as soon as it stops receiving.
+          const live = fanout.live();
           set((s) =>
             s.macroPlayback &&
             s.macroPlayback.macroId === macro.id &&
             s.macroPlayback.tabId === firstTab
-              ? { macroPlayback: { ...s.macroPlayback, played } }
+              ? { macroPlayback: { ...s.macroPlayback, played, targetTabIds: live } }
               : {}
           );
           toast.loading(title, {
             id: toastId,
-            description: `${played} / ${stepTotal} steps · ${fanout.live().length} receiving`,
+            description: `${played} / ${stepTotal} steps · ${live.length} receiving`,
           });
         },
       }
