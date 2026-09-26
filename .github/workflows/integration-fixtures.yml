@@ -27,6 +27,8 @@ on:
       - "tests/docker/**"
       - "core/tests/**"
       - "core/src/backends/**"
+      # The RDP sidecar is backend source too: rdp.rs drives it end to end.
+      - "rdp-sidecar/**"
       - ".github/workflows/integration-fixtures.yml"
 
 # A fixture run is self-contained; cancel an in-flight run when a newer commit
@@ -56,6 +58,20 @@ jobs:
 
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # The RDP sidecar is a workspace-excluded crate with its own target dir.
+          workspaces: |
+            . -> target
+            rdp-sidecar -> target
+
+      - name: Build the RDP sidecar
+        # core/tests/rdp.rs drives the real `termihub-rdp-helper` (#3609). It is
+        # workspace-excluded (own Cargo.lock), so `cargo test` never builds it;
+        # the sidecar links libasound2 (audio redirection) on Linux.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+          ./scripts/build-rdp-sidecar.sh
 
       - name: Bring up the Docker fixtures
         # `--wait` blocks until every container is healthy — viable because the
@@ -68,13 +84,15 @@ jobs:
         #   * network  -> network-target / ssh-tunnel-target ports
         #   * ftp      -> ftp-server:21 (ftp_file_browser/reconnect/transfer.rs, `ftp`)
         #   * vnc      -> vnc-server:5900 + vnc-vencrypt-server:5900 (vnc.rs, `vnc`)
+        #   * rdp      -> rdp-server:3389 (xrdp) + :3390 (FreeRDP shadow, NLA)
+        #                 (rdp.rs, `rdp-sidecar`)
         # The default-profile services (ssh-*, telnet, ssh-x11) come up regardless.
         # The `agent` profile is omitted (no core/tests target it — the agent
         # suite lives in the `agent` crate, not this `-p termihub-core` lane).
         run: |
           docker compose -f tests/docker/docker-compose.yml \
             --profile stress --profile fault --profile network \
-            --profile ftp --profile vnc \
+            --profile ftp --profile vnc --profile rdp \
             up -d --build --wait
 
       - name: Run core integration suite against the fixtures
@@ -97,6 +115,9 @@ jobs:
         # (no containers) leaves it unset, so those runs still skip as before.
         env:
           TERMIHUB_REQUIRE_DOCKER: "1"
+          # The sidecar built above; rdp.rs hard-fails without it under
+          # TERMIHUB_REQUIRE_DOCKER instead of skipping.
+          TERMIHUB_RDP_HELPER: ${{ github.workspace }}/rdp-sidecar/target/debug/termihub-rdp-helper
         #
         # `--test-threads=1` is required: the suites share single-instance
         # containers, and running them concurrently makes them stomp on shared

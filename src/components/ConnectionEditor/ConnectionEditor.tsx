@@ -64,6 +64,8 @@ import {
   filterCredentialFields,
 } from "@/utils/schemaDefaults";
 import { useAvailableRuntimes } from "@/hooks/useAvailableRuntimes";
+import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { remapJumpHostRefs } from "@/utils/connectionIdChanges";
 import { shouldOfferGitBashSetup } from "@/utils/gitBashSetup";
 import { GitBashSetupDialog } from "@/components/OpenConnections/GitBashSetupDialog";
 import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
@@ -553,6 +555,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const initialPersistent = useRef(persistent);
   const initialAgentSettings = useRef(agentSettings);
   const initialSourceFile = useRef(sourceFile);
+
+  // Another saved connection renamed or moved while this editor is open: re-point
+  // the draft's saved-connection jump-host hops, or saving would write the old id
+  // back over the backend's follow (#3603). The remap is not a user edit, so the
+  // dirty baseline follows too — a clean editor stays clean, a dirty one dirty.
+  useConnectionIdChanges((remap) => {
+    initialConnSettings.current = remapJumpHostRefs(initialConnSettings.current, remap);
+    setConnSettings((prev) => remapJumpHostRefs(prev, remap));
+  });
 
   useEffect(() => {
     const normalizedConnSettings = {

@@ -33,6 +33,7 @@ import { TunnelChainPreviewDialog } from "./TunnelChainPreviewDialog";
 import { validateTunnelType, type TunnelFieldErrors } from "./tunnelValidation";
 import { newId } from "@/services/transport/ids";
 import { ambiguousConnectionIds } from "@/utils/jumpHost";
+import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
 import "./TunnelEditor.css";
 
 /** Encode a run-location as a `Select` option value, and decode it back. */
@@ -205,6 +206,10 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   });
 
   // Sync if the tunnel ID changes (reload the working copy from the store).
+  // Keyed on the id, not the object: a republish of the tunnels list (a status
+  // change, or the backend following a connection rename) must not clobber the
+  // unsaved edits — the draft follows renames itself below (#3603).
+  const existingTunnelId = existingTunnel?.id;
   useEffect(() => {
     if (existingTunnel) {
       reset({
@@ -218,7 +223,7 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [existingTunnel]);
+  }, [existingTunnelId]);
 
   // Subscribe to every field so validity + the derived diagram/endpoint/
   // reachability reads re-run on each edit, then take a complete, fresh snapshot
@@ -373,6 +378,18 @@ export function TunnelEditor({ tabId, meta, isVisible }: TunnelEditorProps) {
   const [chainOpen, setChainOpen] = useState(false);
   const [chainSshId, setChainSshId] = useState("");
   const [chainStartNow, setChainStartNow] = useState(true);
+
+  // A connection renamed while the editor is open: re-point the draft's SSH
+  // connection (and a pending chain hop's), or saving would write the old id
+  // back over the backend's follow (#3603). No dirty flag to preserve here.
+  useConnectionIdChanges((remap) => {
+    const current = getValues("sshConnectionId");
+    if (current) {
+      const mapped = remap(current);
+      if (mapped !== current) setValue("sshConnectionId", mapped, { shouldValidate: true });
+    }
+    setChainSshId((prev) => (prev ? remap(prev) : prev));
+  });
 
   const handleOpenChain = () => {
     setChainSshId(bestSshViaForAgent(sshViaCandidates, hostAgent?.config.host) ?? "");
