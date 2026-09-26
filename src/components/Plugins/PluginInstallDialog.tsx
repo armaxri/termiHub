@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Cpu, Package, ShieldAlert } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
-import type { PluginManifest, PluginTrustInfo } from "@/types/plugin";
+import type { PluginManifest, PluginTrustInfo, PluginVersionChange } from "@/types/plugin";
 import { Button, Checkbox, Modal } from "@/components/ui";
 import {
   PERMISSION_DESCRIPTIONS,
@@ -10,6 +10,7 @@ import {
   pluginTypeLabel,
   trustBanner,
 } from "./pluginPresentation";
+import { PluginVersionChangeDialog } from "./PluginVersionChangeDialog";
 import "./Plugins.css";
 
 /** Props for {@link PluginInstallDialog}. */
@@ -60,6 +61,11 @@ function installButtonLabel(level: PluginTrustInfo["level"], trustPublisher: boo
  * "Trust this publisher" checkbox (trust-on-first-use); an unsigned package
  * keeps the untrusted-source acknowledgement; a tampered package is hard-blocked
  * with no install action.
+ *
+ * When the package would replace an installed plugin with an older version, a
+ * different build of the same version, or an uncomparable version, the backend
+ * refuses and the dialog swaps to a {@link PluginVersionChangeDialog}; only an
+ * explicit confirmation there re-issues the install (PLG-012).
  */
 export function PluginInstallDialog({
   filePath,
@@ -72,24 +78,42 @@ export function PluginInstallDialog({
   const selectPlugin = useAppStore((s) => s.selectPlugin);
 
   const [trustPublisher, setTrustPublisher] = useState(false);
+  const [pendingChange, setPendingChange] = useState<PluginVersionChange | null>(null);
 
   const banner = trustBanner(trust);
   const BannerIcon = banner.icon;
   const blocked = trust.isBlocked;
   const isNative = pluginHasNativeCode(manifest.extensions);
 
-  const handleInstall = async () => {
+  const runInstall = async (confirmVersionChange: boolean) => {
     // installPlugin / enablePlugin own their own pending → success/error toasts
     // and re-throw on failure, so the async Button keeps the dialog open (and
     // shows the error) when either step fails. `acceptUntrusted` acknowledges an
     // unsigned package's risk; `trustPublisher` pins a signed key on first use.
     const acceptUntrusted = trust.level === "untrusted";
     const doTrust = trust.level === "signed" && trustPublisher;
-    await installPlugin(filePath, acceptUntrusted, doTrust);
+    const change = await installPlugin(filePath, acceptUntrusted, doTrust, confirmVersionChange);
+    if (change) {
+      // Downgrade / same-version rebuild: nothing was installed; ask first.
+      setPendingChange(change);
+      return;
+    }
     await enablePlugin(manifest.id);
     selectPlugin(manifest.id);
     onClose();
   };
+
+  const handleInstall = () => runInstall(false);
+
+  if (pendingChange) {
+    return (
+      <PluginVersionChangeDialog
+        change={pendingChange}
+        onConfirm={() => runInstall(true)}
+        onCancel={onClose}
+      />
+    );
+  }
 
   return (
     <Modal
