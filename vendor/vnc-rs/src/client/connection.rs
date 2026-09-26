@@ -84,9 +84,9 @@ where
         error!("VNC {task} task panicked: {detail}");
         if let Some(tx) = report {
             let _ = tx
-                .send(VncEvent::Error(format!(
-                    "internal VNC {task} error: {detail}"
-                )))
+                .send(VncEvent::Error(Arc::new(VncError::Internal(format!(
+                    "{task} task: {detail}"
+                )))))
                 .await;
         }
     }
@@ -177,11 +177,12 @@ impl VncInner {
                             // do nothing here
                         } else {
                             error!("Error occurs during the decoding {:?}", e);
-                            let _ = output_func(VncEvent::Error(e.to_string())).await;
+                            let _ =
+                                output_func(VncEvent::Error(Arc::new(VncError::IoError(e)))).await;
                         }
                     } else {
                         error!("Error occurs during the decoding {:?}", e);
-                        let _ = output_func(VncEvent::Error(e.to_string())).await;
+                        let _ = output_func(VncEvent::Error(Arc::new(e))).await;
                     }
                 }
                 trace!("Decoding thread stops");
@@ -625,7 +626,10 @@ mod tests {
         )
         .await;
         match rx.recv().await {
-            Some(VncEvent::Error(msg)) => assert!(msg.contains("boom"), "{msg}"),
+            Some(VncEvent::Error(err)) => match err.as_ref() {
+                VncError::Internal(msg) => assert!(msg.contains("boom"), "{msg}"),
+                other => panic!("expected an internal error, got {other:?}"),
+            },
             other => panic!("expected an error event, got {other:?}"),
         }
     }
