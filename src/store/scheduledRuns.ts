@@ -68,7 +68,7 @@ function skip(message: string): WindowRunReport {
  * The saved-connection ids a schedule targets, or `null` when its broadcast
  * group no longer exists.
  */
-export function resolveTargetConnectionIds(
+function resolveTargetConnectionIds(
   targets: ScheduleTargets,
   groups: readonly BroadcastGroup[]
 ): string[] | null {
@@ -81,7 +81,7 @@ export function resolveTargetConnectionIds(
  * The open terminal tabs of this window opened from one of `connectionIds`,
  * in tab order. Tabs without a saved connection are never targets.
  */
-export function targetTabIds(state: AppState, connectionIds: readonly string[]): string[] {
+function targetTabIds(state: AppState, connectionIds: readonly string[]): string[] {
   const members = new Set(connectionIds);
   return collectLiveTabs(state)
     .filter((t) => t.contentType === "terminal" && !!t.connectionId && members.has(t.connectionId))
@@ -93,7 +93,7 @@ export function targetTabIds(state: AppState, connectionIds: readonly string[]):
  * type-appropriate empty value. Returns the name of a required parameter that
  * has no usable default (the run must then not start — it cannot prompt).
  */
-export function unattendedParamValues(
+function unattendedParamValues(
   parameters: readonly WorkflowParameter[]
 ): { values: WorkflowParamValues } | { missing: string } {
   const values: WorkflowParamValues = {};

@@ -24,7 +24,7 @@ export const MIN_INTERVAL_MINUTES = 1;
 /** Longest interval — one week — in minutes (mirrors the backend). */
 export const MAX_INTERVAL_MINUTES = 7 * 24 * 60;
 /** Longest schedule name (mirrors the backend). */
-export const MAX_SCHEDULE_NAME_CHARS = 120;
+const MAX_SCHEDULE_NAME_CHARS = 120;
 
 /** `HH:MM`, 24h. */
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
