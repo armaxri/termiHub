@@ -3,7 +3,8 @@
 # Run from anywhere: ./scripts/smoke-test.sh <path-to-app-binary>
 #
 # Linux/Windows (MSYS): uses tauri-driver + WebDriver (curl) if available, else process-based fallback
-# macOS:                uses osascript for window verification
+# macOS:                runs the bundle's CFBundleExecutable + durable-log IPC check;
+#                       the osascript window query is best-effort
 set -euo pipefail
 
 cd "$(git rev-parse --show-toplevel)"
@@ -201,30 +202,101 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# macOS flow (osascript-based)
+# macOS flow (bundle executable + durable app log; window query best-effort)
 # ---------------------------------------------------------------------------
 
+# Read a key from the bundle's Info.plist (empty on failure).
+plist_value() {
+    /usr/libexec/PlistBuddy -c "Print :$1" "$APP_PATH/Contents/Info.plist" 2>/dev/null || true
+}
+
+# Size in bytes of a file, or 0 when it does not exist.
+file_size() {
+    if [ -f "$1" ]; then wc -c < "$1" | tr -d ' '; else echo 0; fi
+}
+
 if [ "$PLATFORM" = "macos" ]; then
+    APP_PATH="$(cd "$APP_PATH" && pwd -P)"
+    # The process name is the bundle's CFBundleExecutable (`termihub`, lowercase —
+    # not the display name `termiHub`), so read it rather than hard-coding it.
+    MAC_EXE_NAME="$(plist_value CFBundleExecutable)"
+    MAC_BUNDLE_ID="$(plist_value CFBundleIdentifier)"
+    if [ -z "$MAC_EXE_NAME" ] || [ -z "$MAC_BUNDLE_ID" ]; then
+        echo "Error: could not read CFBundleExecutable/CFBundleIdentifier from '$APP_PATH/Contents/Info.plist'"
+        exit 1
+    fi
+    MAC_EXE_PATH="$APP_PATH/Contents/MacOS/$MAC_EXE_NAME"
+    if [ ! -x "$MAC_EXE_PATH" ]; then
+        echo "Error: bundle executable not found or not executable at '$MAC_EXE_PATH'"
+        exit 1
+    fi
+    info "Executable: $MAC_EXE_NAME (bundle id: $MAC_BUNDLE_ID)"
+
+    # A running instance (from any install location) would either receive this
+    # launch via single-instance forwarding or share the log below, so refuse
+    # rather than report on — or shut down — someone else's process. `-a` keeps
+    # ancestors in the match (e.g. this shell running inside termiHub itself).
+    if EXISTING_PIDS=$(pgrep -a -x "$MAC_EXE_NAME" 2>/dev/null); then
+        echo "Error: '$MAC_EXE_NAME' is already running (PID $(echo "$EXISTING_PIDS" | tr '\n' ' ')) — quit it first"
+        exit 1
+    fi
+
+    # The durable app log (src-tauri/src/utils/file_log.rs). The frontend's
+    # startup `load_connections_and_folders` IPC call logs IPC_MARKER
+    # (commands/connection.rs); seeing it proves the webview loaded the bundled
+    # frontend and reached the backend — the same signal the release smokes use,
+    # and unlike a System Events query it needs no Automation permission.
+    APP_LOG="$HOME/Library/Logs/$MAC_BUNDLE_ID/termihub.log"
+    IPC_MARKER="Loading connections and folders"
+    # Only lines written after launch count (the log is appended across runs).
+    LOG_OFFSET=$(file_size "$APP_LOG")
+
     echo ""
     echo "--- Check 1: Launch app ---"
-    open "$APP_PATH"
+    # Run the bundle's executable directly so this script owns the PID: no
+    # name-based lookup, and shutdown can never hit another instance.
+    "$MAC_EXE_PATH" > /dev/null 2>&1 &
+    APP_PID=$!
     sleep 3
 
-    # Verify the process is running
-    if pgrep -x "termiHub" > /dev/null 2>&1; then
-        pass "App launched successfully"
+    if kill -0 "$APP_PID" 2>/dev/null && [ "$(ps -o comm= -p "$APP_PID")" = "$MAC_EXE_PATH" ]; then
+        pass "App launched (process $MAC_EXE_NAME, PID: $APP_PID)"
     else
-        fail "App process not found after launch"
+        fail "App process $MAC_EXE_NAME exited or not found after launch"
+        APP_PID=""
         exit 1
     fi
 
     echo ""
-    echo "--- Check 2: Verify window opens ---"
-    WINDOW_CHECK=$(osascript -e 'tell application "System Events" to get name of every window of process "termiHub"' 2>/dev/null || echo "")
+    echo "--- Check 2: Verify the frontend reaches the backend ---"
+    IPC_SEEN=false
+    for _ in $(seq 1 60); do
+        if ! kill -0 "$APP_PID" 2>/dev/null; then
+            break
+        fi
+        if [ "$(file_size "$APP_LOG")" -lt "$LOG_OFFSET" ]; then
+            LOG_OFFSET=0 # the log rotated since launch; scan the new file whole
+        fi
+        if tail -c "+$((LOG_OFFSET + 1))" "$APP_LOG" 2>/dev/null | grep -q "$IPC_MARKER"; then
+            IPC_SEEN=true
+            break
+        fi
+        sleep 1
+    done
+
+    if [ "$IPC_SEEN" = true ]; then
+        pass "Frontend IPC observed in $APP_LOG"
+    else
+        fail "No '$IPC_MARKER' in $APP_LOG within 60s of launch"
+    fi
+
+    # Best-effort locally: System Events needs Automation/Accessibility
+    # permission, which hosted CI runners do not grant.
+    WINDOW_CHECK=$(osascript -e "tell application \"System Events\" to get name of every window of (first process whose unix id is $APP_PID)" 2>/dev/null || echo "")
     if [ -n "$WINDOW_CHECK" ]; then
         pass "Window detected: $WINDOW_CHECK"
     else
-        fail "No window detected for termiHub"
+        skip "Window query (System Events unavailable, no permission, or no window)"
     fi
 
     echo ""
@@ -233,16 +305,21 @@ if [ "$PLATFORM" = "macos" ]; then
 
     echo ""
     echo "--- Check 7: Close app ---"
-    osascript -e 'quit app "termiHub"' 2>/dev/null || true
-    sleep 2
+    kill -TERM "$APP_PID" 2>/dev/null || true
+    for _ in $(seq 1 15); do
+        kill -0 "$APP_PID" 2>/dev/null || break
+        sleep 1
+    done
 
-    if ! pgrep -x "termiHub" > /dev/null 2>&1; then
+    if ! kill -0 "$APP_PID" 2>/dev/null; then
+        wait "$APP_PID" 2>/dev/null || true
         pass "App shut down cleanly"
     else
-        fail "App still running after quit"
+        fail "App still running 15s after SIGTERM"
         # Force kill for cleanup
-        pkill -x "termiHub" 2>/dev/null || true
+        kill -KILL "$APP_PID" 2>/dev/null || true
     fi
+    APP_PID=""
 
 # ---------------------------------------------------------------------------
 # Linux/Windows flow (tauri-driver + WebDriver or fallback)

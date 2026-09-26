@@ -273,34 +273,6 @@ pub(crate) async fn open_remote_in_vscode(
     Ok(())
 }
 
-/// Write the keyboard shortcut cheat sheet HTML to the app cache directory
-/// and return the absolute path so the frontend can open it in the system browser.
-///
-/// Uses native Rust file I/O so no `plugin-fs` permission scope is required.
-#[tauri::command]
-pub fn write_cheatsheet(html: String, app: tauri::AppHandle) -> Result<String, TerminalError> {
-    let cache_dir = app.path().app_cache_dir().map_err(|e| {
-        // Generic backend-operation failure with no more specific existing
-        // variant, so it maps to `InternalError` (matching every other retyped
-        // command); the exact human text is preserved verbatim as the payload,
-        // only the typed variant's classifying prefix is added (ARCH-006 /
-        // TAURI-008 / ERR-008 Phase 2).
-        TerminalError::InternalError(format!("could not resolve app cache dir: {e}"))
-    })?;
-
-    std::fs::create_dir_all(&cache_dir)
-        .map_err(|e| TerminalError::InternalError(format!("could not create cache dir: {e}")))?;
-
-    let file_path = cache_dir.join("termihub-shortcuts.html");
-
-    std::fs::write(&file_path, html)
-        .map_err(|e| TerminalError::InternalError(format!("could not write cheatsheet: {e}")))?;
-
-    file_path.to_str().map(|s| s.to_string()).ok_or_else(|| {
-        TerminalError::InternalError("file path contains non-UTF-8 characters".to_string())
-    })
-}
-
 // --- Native drag-out to the OS file manager (#3457) ---
 
 /// Resolve the per-user drag-out staging root under the app cache dir.
@@ -372,52 +344,4 @@ pub async fn drag_out_start(
     done_rx
         .await
         .map_err(|_| TerminalError::InternalError("drag-out ended without a result".to_string()))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::utils::errors::IpcErrorCode;
-
-    // ── Typed error envelope (ARCH-006 / TAURI-008 / ERR-008 Phase 2) ─────────
-    //
-    // `write_cheatsheet` returned raw `String` errors before the retype. Its
-    // failures are generic backend file-operation failures with no more specific
-    // existing variant, so each maps to `TerminalError::InternalError`: the exact
-    // human text the command surfaced before survives verbatim as the payload,
-    // and only the typed variant's classifying prefix is added — matching the
-    // #3168 envelope and every other retyped command. These guard that the human
-    // message text and the machine `code` are what the frontend now receives.
-
-    #[test]
-    fn cheatsheet_write_failure_preserves_message_and_carries_internal_code() {
-        // Representative of the `std::fs::write(...).map_err(...)?` arm.
-        let err =
-            TerminalError::InternalError("could not write cheatsheet: no space left".to_string());
-
-        assert_eq!(err.code(), IpcErrorCode::InternalError);
-        // The exact human text the command produced before survives verbatim,
-        // preceded only by the typed variant's classifying prefix.
-        assert_eq!(
-            err.to_string(),
-            "Internal error: could not write cheatsheet: no space left"
-        );
-    }
-
-    #[test]
-    fn cheatsheet_error_serializes_the_structured_envelope() {
-        // Representative of the cache-dir-resolve arm.
-        let err =
-            TerminalError::InternalError("could not resolve app cache dir: not found".to_string());
-        let value: serde_json::Value =
-            serde_json::from_str(&serde_json::to_string(&err).expect("serialize"))
-                .expect("valid JSON object");
-
-        assert_eq!(value["code"], "internal_error", "wrong code: {value}");
-        assert_eq!(
-            value["message"], "Internal error: could not resolve app cache dir: not found",
-            "wrong message: {value}"
-        );
-        assert!(value["details"].is_null(), "details must be null: {value}");
-    }
 }
