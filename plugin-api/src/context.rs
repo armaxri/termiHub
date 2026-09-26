@@ -57,6 +57,16 @@
 //! rejected), replaces control characters so a message cannot forge extra log
 //! lines, and contains any panic on its side. Invalid UTF-8 is replaced, not
 //! trusted.
+//!
+//! The host also **rate-limits** each plugin's log lines with a token bucket
+//! shared by all of the plugin's sessions: a burst of 100 lines, then 20 lines
+//! per second sustained (host policy, not part of the ABI — it may be tuned).
+//! A line over the limit is **dropped, and the call still returns `Ok`**: a
+//! dropped log line is not an error a plugin can usefully act on, and keeping
+//! the status set unchanged keeps the ABI append-only. The host reports the
+//! drops itself with one `[<id>] N log lines suppressed …` warning per window
+//! (at most one per second, on the plugin's next log call or when it is
+//! unloaded), so a flood stays visible without evicting other log entries.
 
 use core::ffi::c_void;
 use std::path::PathBuf;
@@ -182,6 +192,9 @@ impl PluginHostServices {
 
     /// Send `message` to the host log at `level`. The host tags it with this
     /// plugin's id and truncates it to [`MAX_LOG_MESSAGE_BYTES`].
+    ///
+    /// Lines over the host's per-plugin rate limit are dropped and still
+    /// return `Ok(())` (see the module docs, *Logging*).
     pub fn log(&self, level: PluginLogLevel, message: &str) -> Result<(), PluginError> {
         // SAFETY: `ctx` holds a live reference; `message` outlives the call.
         let status =

@@ -436,7 +436,11 @@ impl ConnectionType for PluginConnectionType {
                     "",
                 ),
             };
-            let state = ServicesState::new(plugin_id, self.library.shutdown_signal());
+            let state = ServicesState::new(
+                plugin_id,
+                self.library.shutdown_signal(),
+                self.library.log_limiter(),
+            );
             // The host's own reference, borrowed by the context for the call.
             let handle = ServicesState::handle(&state);
             let context = PluginHostContext::new(host_version, data_dir, &handle);
