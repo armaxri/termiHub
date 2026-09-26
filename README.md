@@ -120,7 +120,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar. Includes **native (cdylib) backends** loaded over a C ABI with an Ed25519 signature / trust model — see the plugin trust warning under [Security](#security)
 - **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN
 - **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning
-- **Macros** — Record and replay terminal input sequences
+- **Macros** — Record and replay terminal input sequences, or write them by hand in the Macro Manager (control keys via `\r` Enter, `\t` Tab, `\e` Esc, `\xHH`)
 
 ### Workspace and Windows
 
