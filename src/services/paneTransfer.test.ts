@@ -24,16 +24,14 @@ vi.mock("@tauri-apps/plugin-fs", () => fs);
 
 const feedback = vi.hoisted(() => ({
   seedTransferQueueRow: vi.fn(),
-  runMaybeTrackedTransfer: vi.fn(
-    async (_label: string, action: () => Promise<boolean>) => {
-      try {
-        await action();
-        return true;
-      } catch {
-        return false;
-      }
+  runMaybeTrackedTransfer: vi.fn(async (_label: string, action: () => Promise<boolean>) => {
+    try {
+      await action();
+      return true;
+    } catch {
+      return false;
     }
-  ),
+  }),
 }));
 vi.mock("@/hooks/transferFeedback", () => feedback);
 
@@ -135,10 +133,7 @@ describe("copyBetweenPanes", () => {
       remote: queued,
     });
     expect(api.sessionMkdir.mock.calls.map((c) => c[1])).toEqual(["/r/proj", "/r/proj/sub"]);
-    expect(api.sessionUpload.mock.calls.map((c) => c[2])).toEqual([
-      "/r/proj/x",
-      "/r/proj/sub/y",
-    ]);
+    expect(api.sessionUpload.mock.calls.map((c) => c[2])).toEqual(["/r/proj/x", "/r/proj/sub/y"]);
   });
 
   it("recreates a remote folder locally and copies its tree", async () => {
