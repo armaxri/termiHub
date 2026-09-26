@@ -1,6 +1,8 @@
 mod auth;
 pub mod connection;
 pub mod connector;
+#[cfg(test)]
+mod hostile_server_tests;
 mod messages;
 mod security;
 #[cfg(feature = "vencrypt")]

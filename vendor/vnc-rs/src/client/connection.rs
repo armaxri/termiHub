@@ -31,21 +31,23 @@ struct ImageRect {
     encoding: VncEncoding,
 }
 
-impl From<[u8; 12]> for ImageRect {
-    fn from(buf: [u8; 12]) -> Self {
-        Self {
+impl TryFrom<[u8; 12]> for ImageRect {
+    type Error = VncError;
+
+    fn try_from(buf: [u8; 12]) -> Result<Self, VncError> {
+        let encoding = u32::from_be_bytes([buf[8], buf[9], buf[10], buf[11]]);
+        Ok(Self {
             rect: Rect {
-                x: ((buf[0] as u16) << 8) | buf[1] as u16,
-                y: ((buf[2] as u16) << 8) | buf[3] as u16,
-                width: ((buf[4] as u16) << 8) | buf[5] as u16,
-                height: ((buf[6] as u16) << 8) | buf[7] as u16,
+                x: u16::from_be_bytes([buf[0], buf[1]]),
+                y: u16::from_be_bytes([buf[2], buf[3]]),
+                width: u16::from_be_bytes([buf[4], buf[5]]),
+                height: u16::from_be_bytes([buf[6], buf[7]]),
             },
-            encoding: (((buf[8] as u32) << 24)
-                | ((buf[9] as u32) << 16)
-                | ((buf[10] as u32) << 8)
-                | (buf[11] as u32))
-                .into(),
-        }
+            // termiHub fork (#3473): an encoding we never negotiated ends the
+            // session with a typed error instead of being decoded as Raw.
+            encoding: VncEncoding::from_wire(encoding)
+                .ok_or(VncError::UnsupportedEncoding(encoding as i32))?,
+        })
     }
 }
 
@@ -56,7 +58,37 @@ impl ImageRect {
     {
         let mut rect_buf = [0_u8; 12];
         reader.read_exact(&mut rect_buf).await?;
-        Ok(rect_buf.into())
+        rect_buf.try_into()
+    }
+}
+
+/// Largest desktop name accepted in `ServerInit` (termiHub fork, #3473). The
+/// length is a server-chosen `u32`; upstream allocated it verbatim (up to 4 GiB).
+const MAX_DESKTOP_NAME_BYTES: u32 = 64 * 1024;
+
+/// Run one of the client's internal tasks with a panic boundary (termiHub fork,
+/// #3473). A panic in the decoder must never take the host down silently: it is
+/// caught here, logged, and reported to the consumer as [`VncEvent::Error`] so
+/// the session ends cleanly like any other protocol error.
+async fn run_guarded<Fut>(task: &'static str, fut: Fut, report: Option<Sender<VncEvent>>)
+where
+    Fut: Future<Output = ()>,
+{
+    use futures::FutureExt;
+    if let Err(panic) = std::panic::AssertUnwindSafe(fut).catch_unwind().await {
+        let detail = panic
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| panic.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic".to_string());
+        error!("VNC {task} task panicked: {detail}");
+        if let Some(tx) = report {
+            let _ = tx
+                .send(VncEvent::Error(format!(
+                    "internal VNC {task} error: {detail}"
+                )))
+                .await;
+        }
     }
 }
 
@@ -116,47 +148,63 @@ impl VncInner {
             .await?;
 
         // start the decoding thread
-        spawn(async move {
-            trace!("Decoding thread starts");
-            let mut conn_ch_rx = {
-                let conn_ch_rx = ReceiverStream::new(conn_ch_rx).into_async_read();
-                FuturesAsyncReadCompatExt::compat(conn_ch_rx)
-            };
+        let panic_report = output_ch_tx.clone();
+        spawn(run_guarded(
+            "decoder",
+            async move {
+                trace!("Decoding thread starts");
+                let mut conn_ch_rx = {
+                    let conn_ch_rx = ReceiverStream::new(conn_ch_rx).into_async_read();
+                    FuturesAsyncReadCompatExt::compat(conn_ch_rx)
+                };
 
-            let output_func = |e| async {
-                output_ch_tx.send(e).await?;
-                Ok(())
-            };
+                let output_func = |e| async {
+                    output_ch_tx.send(e).await?;
+                    Ok(())
+                };
 
-            let pf = pixel_format.as_ref().unwrap();
-            if let Err(e) =
-                asycn_vnc_read_loop(&mut conn_ch_rx, pf, &output_func, decoding_stop_rx).await
-            {
-                if let VncError::IoError(e) = e {
-                    if let std::io::ErrorKind::UnexpectedEof = e.kind() {
-                        // this should be a normal case when the network connection disconnects
-                        // and we just send an EOF over the inner bridge between the process thread and the decode thread
-                        // do nothing here
+                // `read_server_init` always fills `pixel_format` (with the server's
+                // format when the caller did not choose one).
+                let pf = pixel_format.unwrap_or_default();
+                let pf = &pf;
+                if let Err(e) =
+                    asycn_vnc_read_loop(&mut conn_ch_rx, pf, &output_func, decoding_stop_rx).await
+                {
+                    if let VncError::IoError(e) = e {
+                        if let std::io::ErrorKind::UnexpectedEof = e.kind() {
+                            // this should be a normal case when the network connection disconnects
+                            // and we just send an EOF over the inner bridge between the process thread and the decode thread
+                            // do nothing here
+                        } else {
+                            error!("Error occurs during the decoding {:?}", e);
+                            let _ = output_func(VncEvent::Error(e.to_string())).await;
+                        }
                     } else {
                         error!("Error occurs during the decoding {:?}", e);
                         let _ = output_func(VncEvent::Error(e.to_string())).await;
                     }
-                } else {
-                    error!("Error occurs during the decoding {:?}", e);
-                    let _ = output_func(VncEvent::Error(e.to_string())).await;
                 }
-            }
-            trace!("Decoding thread stops");
-        });
+                trace!("Decoding thread stops");
+            },
+            Some(panic_report),
+        ));
 
         // start the traffic process thread
-        spawn(async move {
-            trace!("Net Connection thread starts");
-            let _ =
-                async_connection_process_loop(stream, input_ch_rx, conn_ch_tx, net_conn_stop_rx)
-                    .await;
-            trace!("Net Connection thread stops");
-        });
+        spawn(run_guarded(
+            "connection",
+            async move {
+                trace!("Net Connection thread starts");
+                let _ = async_connection_process_loop(
+                    stream,
+                    input_ch_rx,
+                    conn_ch_tx,
+                    net_conn_stop_rx,
+                )
+                .await;
+                trace!("Net Connection thread stops");
+            },
+            None,
+        ));
 
         info!("VNC Client {name} starts");
         Ok(Self {
@@ -359,15 +407,20 @@ where
     }
 
     let name_len = stream.read_u32().await?;
+    if name_len > MAX_DESKTOP_NAME_BYTES {
+        return Err(VncError::Protocol(format!(
+            "server desktop name of {name_len} bytes exceeds the {MAX_DESKTOP_NAME_BYTES}-byte limit"
+        )));
+    }
     let mut name_buf = vec![0_u8; name_len as usize];
     stream.read_exact(&mut name_buf).await?;
     let name = String::from_utf8_lossy(&name_buf).into_owned();
 
     if send_our_pf {
         trace!("Send customized pixel format {:#?}", pf);
-        ClientMsg::SetPixelFormat(*pf.as_ref().unwrap())
-            .write(stream)
-            .await?;
+        if let Some(pf) = pf.as_ref() {
+            ClientMsg::SetPixelFormat(*pf).write(stream).await?;
+        }
     }
     Ok((name, (screen_width, screen_height)))
 }
@@ -383,7 +436,7 @@ where
     Ok(())
 }
 
-async fn asycn_vnc_read_loop<S, F, Fut>(
+pub(super) async fn asycn_vnc_read_loop<S, F, Fut>(
     stream: &mut S,
     pf: &PixelFormat,
     output_func: &F,
@@ -410,6 +463,22 @@ where
                     let rect = ImageRect::read(stream).await?;
                     // trace!("Encoding: {:?}", rect.encoding);
 
+                    // termiHub fork (#3473): bound the server-chosen geometry of
+                    // every pixel-carrying rectangle before a decoder allocates
+                    // for it. Pseudo-encodings reuse the fields for other meanings
+                    // (cursor hotspot, desktop size) and are bounded by their own
+                    // handlers.
+                    if matches!(
+                        rect.encoding,
+                        VncEncoding::Raw
+                            | VncEncoding::CopyRect
+                            | VncEncoding::Tight
+                            | VncEncoding::Trle
+                            | VncEncoding::Zrle
+                    ) {
+                        codec::validate_image_rect(&rect.rect)?;
+                    }
+
                     match rect.encoding {
                         VncEncoding::Raw => {
                             raw_decoder
@@ -422,6 +491,7 @@ where
                             let mut src_rect = rect.rect;
                             src_rect.x = source_x;
                             src_rect.y = source_y;
+                            codec::validate_image_rect(&src_rect)?;
                             output_func(VncEvent::Copy(rect.rect, src_rect)).await?;
                         }
                         VncEncoding::Tight => {
@@ -454,7 +524,13 @@ where
                     }
                 }
             }
-            // SetColorMapEntries,
+            ServerMsg::SetColorMapEntries(first, count) => {
+                trace!(
+                    first,
+                    count,
+                    "ignored SetColorMapEntries (true-colour client)"
+                );
+            }
             ServerMsg::Bell => {
                 output_func(VncEvent::Bell).await?;
             }
@@ -531,4 +607,46 @@ where
         .await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_panicking_task_reports_an_error_event_instead_of_dying_silently() {
+        let (tx, mut rx) = channel(4);
+        run_guarded(
+            "decoder",
+            async {
+                panic!("boom");
+            },
+            Some(tx),
+        )
+        .await;
+        match rx.recv().await {
+            Some(VncEvent::Error(msg)) => assert!(msg.contains("boom"), "{msg}"),
+            other => panic!("expected an error event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_well_behaved_task_reports_nothing() {
+        let (tx, mut rx) = channel(4);
+        run_guarded("decoder", async {}, Some(tx)).await;
+        assert!(rx.recv().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn oversize_desktop_name_is_rejected_before_allocating() {
+        // ServerInit: 1x1, a pixel format, then a 4 GiB name length.
+        let mut server_init = vec![0, 1, 0, 1];
+        server_init.extend(<PixelFormat as Into<Vec<u8>>>::into(PixelFormat::rgba()));
+        server_init.extend_from_slice(&u32::MAX.to_be_bytes());
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        server.write_all(&server_init).await.unwrap();
+        let mut pf = Some(PixelFormat::rgba());
+        let result = read_server_init(&mut client, &mut pf, &|_e| async { Ok(()) }).await;
+        assert!(matches!(result, Err(VncError::Protocol(_))), "{result:?}");
+    }
 }
