@@ -26,9 +26,9 @@ use tokio::task::JoinHandle;
 use tracing::{debug, info, warn};
 
 use termihub_core::connection::{
-    auto_reconnect_enabled, CertPrompt, CertPromptReceiver, ConnectionType,
-    ConnectionTypeRegistry, CursorUpdate, FrameUpdate, GraphicalState, InputEvent,
-    RemoteClipboardFile, SessionStateMachine,
+    auto_reconnect_enabled, CertPrompt, CertPromptReceiver, ConnectionType, ConnectionTypeRegistry,
+    CursorUpdate, FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile,
+    SessionStateMachine,
 };
 
 use crate::session::frame_guard::{FrameGuard, FrameVerdict};

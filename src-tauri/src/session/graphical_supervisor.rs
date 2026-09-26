@@ -169,8 +169,11 @@ impl<S: GraphicalEventSink> Supervisor<S> {
             let end = self.run_generation(generation, retrying).await;
             if end.aborted {
                 warn!(session_id = %self.session_id, "hostile frame stream; not auto-reconnecting");
-                self.rest(GraphicalState::Disconnected, Some(REJECTED_FRAMES_MESSAGE.into()))
-                    .await;
+                self.rest(
+                    GraphicalState::Disconnected,
+                    Some(REJECTED_FRAMES_MESSAGE.into()),
+                )
+                .await;
                 return;
             }
             if self.redial_settings.is_none() {
@@ -274,10 +277,7 @@ impl<S: GraphicalEventSink> Supervisor<S> {
             }
         }
         let message = match last_error {
-            Some(err) => format!(
-                "Reconnect failed after {} attempts: {err}",
-                engine.attempt
-            ),
+            Some(err) => format!("Reconnect failed after {} attempts: {err}", engine.attempt),
             None => format!("Reconnect failed after {} attempts", engine.attempt),
         };
         self.rest(GraphicalState::Disconnected, Some(message)).await;

@@ -12,8 +12,8 @@ use tokio::time::Instant;
 
 use termihub_core::connection::{
     AuthKind, Capabilities, ConnectionType, ConnectionTypeRegistry, CursorReceiver, CursorUpdate,
-    DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities,
-    GraphicalState, InputEvent, OutputReceiver, SettingsSchema, MAX_FRAMEBUFFER_DIMENSION,
+    DirtyRect, FrameReceiver, FrameUpdate, GraphicalBackend, GraphicalCapabilities, GraphicalState,
+    InputEvent, OutputReceiver, SettingsSchema, MAX_FRAMEBUFFER_DIMENSION,
 };
 use termihub_core::errors::SessionError;
 use termihub_core::files::FileBrowser;
@@ -132,7 +132,13 @@ impl ConnectionType for FakeDesktop {
     }
     async fn connect(&mut self, _settings: serde_json::Value) -> Result<(), SessionError> {
         self.dial = self.ctl.dials.fetch_add(1, Ordering::SeqCst) + 1;
-        let step = self.ctl.script.lock().unwrap().pop_front().unwrap_or(Dial::Ok);
+        let step = self
+            .ctl
+            .script
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or(Dial::Ok);
         let (frame_tx, frame_rx) = mpsc::channel(64);
         let (cursor_tx, cursor_rx) = mpsc::channel(64);
         match step {
@@ -286,7 +292,8 @@ async fn open(settings: serde_json::Value, redials: Vec<Dial>) -> Harness {
     );
     ctl.script([Dial::Ok]);
     ctl.script(redials);
-    let mgr = GraphicalSessionManager::new(Arc::new(registry), Arc::new(RdpTrustStore::in_memory()));
+    let mgr =
+        GraphicalSessionManager::new(Arc::new(registry), Arc::new(RdpTrustStore::in_memory()));
     let sink = Sink::default();
     let sid = mgr
         .connect(FAKE, settings, sink.clone())
@@ -412,7 +419,10 @@ async fn exhausted_budget_rests_disconnected_after_three_backed_off_attempts() {
         ]
     );
     let message = h.sink.last().and_then(|e| e.message).unwrap_or_default();
-    assert!(message.contains("Reconnect failed after 3 attempts"), "{message}");
+    assert!(
+        message.contains("Reconnect failed after 3 attempts"),
+        "{message}"
+    );
     assert!(message.contains("refused"), "{message}");
 
     idle().await;
@@ -435,7 +445,11 @@ async fn auto_reconnect_off_goes_straight_to_disconnected() {
 
 #[tokio::test(start_paused = true)]
 async fn legacy_resilient_reconnect_off_is_honoured() {
-    let h = open(serde_json::json!({ "resilientReconnect": false }), Vec::new()).await;
+    let h = open(
+        serde_json::json!({ "resilientReconnect": false }),
+        Vec::new(),
+    )
+    .await;
     h.ctl.drop_stream();
     wait_until("disconnected", || {
         last_state(&h.sink) == Some(GraphicalState::Disconnected)
@@ -447,7 +461,11 @@ async fn legacy_resilient_reconnect_off_is_honoured() {
 
 #[tokio::test(start_paused = true)]
 async fn auth_failure_on_redial_is_terminal() {
-    let h = open(serde_json::json!({}), vec![Dial::Err(SessionError::AuthFailed)]).await;
+    let h = open(
+        serde_json::json!({}),
+        vec![Dial::Err(SessionError::AuthFailed)],
+    )
+    .await;
     h.ctl.drop_stream();
     wait_until("auth failed", || {
         last_state(&h.sink) == Some(GraphicalState::AuthFailed)
