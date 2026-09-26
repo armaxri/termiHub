@@ -1458,3 +1458,129 @@ describe("FileEditor — SFTP-backed session tab reaches SFTP parity (#2420)", (
     expect(downloadCalls[0].localPath).toBe("/local/hosts.txt");
   });
 });
+
+describe("FileEditor — FTP writability hint + editing limits (PROD-015)", () => {
+  const FTP_META: EditorTabMeta = {
+    filePath: "/pub/readme.txt",
+    isRemote: true,
+    sessionBrowser: { sessionId: "sess-ftp-2", connectionType: "ftp" },
+  };
+
+  beforeEach(() => {
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    useAppStore.setState({ ...useAppStore.getInitialState() });
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = false;
+  });
+
+  /** Mock a byte-based (non-SFTP) FTP session whose stat reports `writable`. */
+  function mockFtpSession(writable: boolean | null | "reject") {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "session_read_file") return Promise.resolve(toB64("hello\n"));
+      if (cmd === "session_has_exec_capability")
+        return Promise.reject(new Error("session is not SFTP-backed"));
+      if (cmd === "session_stat") {
+        if (writable === "reject") return Promise.reject(new Error("stat failed"));
+        return Promise.resolve({
+          name: "readme.txt",
+          path: "/pub/readme.txt",
+          isDirectory: false,
+          size: 6,
+          modified: "",
+          permissions: null,
+          writable,
+        });
+      }
+      return Promise.resolve(undefined);
+    });
+  }
+
+  it("disables Save and shows the read-only notice when the listing reports read-only", async () => {
+    mockFtpSession(false);
+    render(FTP_META);
+    await flush();
+    await flush();
+
+    editContent("hello\nedited\n");
+    await flush();
+
+    expect(query("file-editor-readonly-badge")).not.toBeNull();
+    const banner = query("file-editor-readonly-banner");
+    expect(banner?.textContent).toContain("read-only for your login");
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(true);
+    // No SFTP-only affordances on a byte-based backend.
+    expect(query("file-editor-save-copy")).toBeNull();
+    expect(query("file-editor-edit-with-sudo")).toBeNull();
+    // The unknown-writability note is not shown once the answer is known.
+    expect(query("file-editor-ftp-note")).toBeNull();
+    expect(query("file-editor-ftp-badge")).not.toBeNull();
+  });
+
+  it("shows a dismissible FTP limits note when writability is unknown", async () => {
+    mockFtpSession(null);
+    render(FTP_META);
+    await flush();
+    await flush();
+
+    const note = query("file-editor-ftp-note");
+    expect(note?.textContent).toContain("didn't report whether you can write");
+    expect(note?.textContent).toContain("not atomic");
+    expect(query("file-editor-readonly-badge")).toBeNull();
+
+    editContent("hello\nedited\n");
+    await flush();
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(false);
+
+    act(() => {
+      (query("file-editor-ftp-note-dismiss") as HTMLButtonElement).click();
+    });
+    expect(query("file-editor-ftp-note")).toBeNull();
+  });
+
+  it("treats a failed stat as unknown and keeps Save available", async () => {
+    mockFtpSession("reject");
+    render(FTP_META);
+    await flush();
+    await flush();
+
+    expect(query("file-editor-ftp-note")).not.toBeNull();
+    editContent("changed\n");
+    await flush();
+    expect((query("file-editor-save") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("shows only the FTP badge (limits in its tooltip) when the file is writable", async () => {
+    mockFtpSession(true);
+    render(FTP_META);
+    await flush();
+    await flush();
+
+    const badge = query("file-editor-ftp-badge");
+    expect(badge?.getAttribute("title")).toContain("re-upload the whole file");
+    expect(query("file-editor-ftp-note")).toBeNull();
+    expect(query("file-editor-readonly-badge")).toBeNull();
+    expect(query("file-editor-readonly-banner")).toBeNull();
+  });
+
+  it("does not show the FTP badge or note on a non-FTP byte-based session", async () => {
+    mockFtpSession(null);
+    render({
+      ...FTP_META,
+      sessionBrowser: { sessionId: "sess-docker-1", connectionType: "docker" },
+    });
+    await flush();
+    await flush();
+
+    expect(query("file-editor-ftp-badge")).toBeNull();
+    expect(query("file-editor-ftp-note")).toBeNull();
+  });
+});
