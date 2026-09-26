@@ -8,6 +8,8 @@
 //! `service` modules so existing `crate::embedded_servers::{config, service}`
 //! paths keep working unchanged.
 
+pub mod migration;
+pub mod secrets;
 pub mod server_manager;
 pub mod storage;
 

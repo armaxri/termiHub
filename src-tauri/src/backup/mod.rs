@@ -22,9 +22,12 @@
 //!   The header is repeated inside the sealed contents and must match on
 //!   restore, so a tampered header is detected.
 //! - **Unencrypted** (opt-out): the contents are stored in the clear under
-//!   `contents`. Sections that hold secrets (embedded-server passwords) can
-//!   only be exported encrypted, and credentials are always sealed in their own
-//!   vault envelope — so no secret ever appears in plaintext on disk.
+//!   `contents`. No store section carries a password — connection and
+//!   embedded-server passwords (#3514) live in the credential store — and
+//!   credentials are always sealed in their own vault envelope, so no secret
+//!   ever appears in plaintext on disk. Plaintext passwords a section from an
+//!   older build still carries are moved into the credential store on restore,
+//!   never written back to a file.
 //!
 //! One passphrase protects everything: when credentials are included, the
 //! vault section is sealed with the same passphrase as the backup.
@@ -67,6 +70,8 @@ pub mod trust_map;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_embedded_servers;
 #[cfg(test)]
 mod tests_plugins;
 #[cfg(test)]

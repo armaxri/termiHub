@@ -31,6 +31,8 @@ use super::activity::ActivitySnapshot;
 use super::config::{
     EmbeddedServerConfig, EmbeddedServerStore, ServerState, ServerStats, ServerStatus,
 };
+use super::migration::{load_and_migrate, persist_store};
+use super::secrets::{self, ServerSecrets};
 use super::service::{
     auto_start_error_state, service_id_for, EmbeddedServerService, STATUS_EVENT_KIND,
 };
@@ -39,6 +41,7 @@ use crate::agent_service::{
     agent_rpc_client, AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
 };
 use crate::connection::recovery::RecoveryWarning;
+use crate::credential::CredentialStore;
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
@@ -91,6 +94,9 @@ impl AgentHosted for AgentServerHandle {
 pub struct EmbeddedServerManager {
     configs: Mutex<EmbeddedServerStore>,
     storage: EmbeddedServerStorage,
+    /// FTP / HTTP Basic passwords: kept in the credential store, never in
+    /// `configs` or on disk (#3514). `configs` always holds stripped configs.
+    secrets: ServerSecrets,
     /// Live services keyed by config id (running **or** stopped-but-listed).
     services: Mutex<HashMap<String, EmbeddedServerService>>,
     /// Servers currently hosted on a remote agent, keyed by config id (#2214).
@@ -119,16 +125,17 @@ pub struct EmbeddedServerManager {
 }
 
 impl EmbeddedServerManager {
-    /// Create a new manager, loading saved configurations from disk.
-    pub fn new(app_handle: &AppHandle) -> Result<Self> {
+    /// Create a new manager, loading saved configurations from disk and
+    /// migrating any legacy plaintext passwords into `credential_store` (#3514).
+    pub fn new(app_handle: &AppHandle, credential_store: Arc<dyn CredentialStore>) -> Result<Self> {
         let storage = EmbeddedServerStorage::new(app_handle)
             .context("Failed to initialise embedded server storage")?;
-        let result = storage
-            .load_with_recovery()
-            .context("Failed to load embedded servers")?;
+        let secrets = ServerSecrets::new(credential_store);
+        let result = load_and_migrate(&storage, &secrets)?;
         Ok(Self {
             configs: Mutex::new(result.data),
             storage,
+            secrets,
             services: Mutex::new(HashMap::new()),
             agent_servers: AgentInstances::new(),
             run_locations: Mutex::new(HashMap::new()),
@@ -192,17 +199,61 @@ impl EmbeddedServerManager {
     }
 
     /// Add or update a server configuration.
-    pub fn save_config(&self, config: EmbeddedServerConfig) -> Result<(), TerminalError> {
+    ///
+    /// Its passwords go to the credential store (an empty one keeps the saved
+    /// password) and are stripped before the config is kept or written (#3514).
+    pub fn save_config(&self, mut config: EmbeddedServerConfig) -> Result<(), TerminalError> {
+        self.sync_secrets();
+        self.secrets.capture(&mut config)?;
         let mut store = self.lock_configs()?;
         if let Some(existing) = store.servers.iter_mut().find(|s| s.id == config.id) {
             *existing = config;
         } else {
             store.servers.push(config);
         }
-        self.storage
-            .save(&store)
-            .map_err(|e| TerminalError::EmbeddedServerError(format!("Save failed: {e}")))?;
-        Ok(())
+        self.persist(&store)
+    }
+
+    /// Write `store` to disk without its passwords (legacy plaintext still
+    /// awaiting a store unlock excepted — see [`ServerSecrets::disk_view`]).
+    fn persist(&self, store: &EmbeddedServerStore) -> Result<(), TerminalError> {
+        persist_store(&self.storage, &self.secrets, store)
+            .map_err(|e| TerminalError::EmbeddedServerError(format!("Save failed: {e}")))
+    }
+
+    /// Move any passwords held in memory into the credential store once it can
+    /// take them — completing a migration that waited for an unlock, or keeping
+    /// session-only passwords after a store is enabled — and rewrite the file
+    /// when legacy plaintext left it (#3514).
+    ///
+    /// Cheap when nothing is held. Called on every config operation and by the
+    /// credential-store unlock / switch commands.
+    pub fn sync_secrets(&self) {
+        let outcome = self.secrets.reconcile();
+        if outcome.moved_to_session > 0 {
+            tracing::warn!(
+                count = outcome.moved_to_session,
+                "No credential store: embedded server passwords are kept for this session only"
+            );
+        }
+        if outcome.rewrite {
+            match self.lock_configs() {
+                Ok(store) => {
+                    if let Err(e) = self.persist(&store) {
+                        tracing::warn!("Failed to rewrite embedded servers after migration: {e}");
+                    }
+                }
+                Err(e) => tracing::warn!("Failed to rewrite embedded servers: {e}"),
+            }
+        }
+    }
+
+    /// Credential owners of every configured server, labelled for the
+    /// credential vault (#3514).
+    pub fn vault_owners(&self) -> Vec<(String, String)> {
+        self.lock_configs()
+            .map(|store| secrets::vault_owners(&store.servers))
+            .unwrap_or_default()
     }
 
     /// Delete a configuration. Stops the server first if it is running.
@@ -214,16 +265,17 @@ impl EmbeddedServerManager {
         if let Ok(mut locations) = self.run_locations.lock() {
             locations.remove(server_id);
         }
+        self.secrets.forget(server_id);
         let mut store = self.lock_configs()?;
         store.servers.retain(|s| s.id != server_id);
-        self.storage
-            .save(&store)
-            .map_err(|e| TerminalError::EmbeddedServerError(format!("Save failed: {e}")))?;
-        Ok(())
+        self.persist(&store)
     }
 
     /// Return the current runtime state of every configured server.
     pub fn get_states(&self) -> Result<Vec<ServerState>, TerminalError> {
+        // Polled by the UI, so this is where a migration that waited for the
+        // credential store to unlock usually completes.
+        self.sync_secrets();
         let store = self.lock_configs()?;
         let services = self.lock_services()?;
         let agent_servers = self.lock_agent_servers()?;
@@ -257,7 +309,8 @@ impl EmbeddedServerManager {
     /// from the agent poller, both reaching the [`SERVER_STATUS_EVENT`] Tauri
     /// event.
     pub fn start_server(&self, server_id: &str) -> Result<(), TerminalError> {
-        let config = {
+        self.sync_secrets();
+        let mut config = {
             let store = self.lock_configs()?;
             store
                 .servers
@@ -268,6 +321,10 @@ impl EmbeddedServerManager {
                     TerminalError::EmbeddedServerError(format!("Server not found: {server_id}"))
                 })?
         };
+        // Fill the passwords from the credential store (#3514); refuses with a
+        // clear message when the store is locked or has none. The resolved
+        // config reaches only the server itself (desktop or agent RPC).
+        self.secrets.resolve(&mut config)?;
 
         // Route by run-location (#2214). A server with no recorded preference
         // resolves local and takes the existing desktop path; an agent preference
@@ -678,7 +735,7 @@ fn stopped_state(server_id: &str) -> ServerState {
 /// The instance id is the desktop config id (so later stop/status key off it),
 /// the service id is the server type's registered id, and the config is the full
 /// [`EmbeddedServerConfig`]. Pure so the wire shape is unit-testable.
-fn service_start_params(
+pub(super) fn service_start_params(
     server_id: &str,
     config: &EmbeddedServerConfig,
 ) -> Result<serde_json::Value, TerminalError> {

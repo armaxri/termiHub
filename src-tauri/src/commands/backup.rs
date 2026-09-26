@@ -75,7 +75,7 @@ pub async fn export_backup(
     let created_at = chrono::Utc::now().to_rfc3339();
     let mut credential_count = None;
     let credentials = if options.include_credentials {
-        let owner_ids: Vec<String> = known_owners(&connection_manager)
+        let owner_ids: Vec<String> = known_owners(&connection_manager, &app)
             .map_err(|e| VaultError::Other {
                 message: format!("Could not read the saved connections: {e}"),
             })?
@@ -138,7 +138,7 @@ pub async fn preview_backup_restore(
     let opened = restore::open(&json, passphrase.as_deref().map(String::as_str))?;
     let config_dir = config_dir(&app)?;
 
-    let mut owners = known_owners(&connection_manager).unwrap_or_else(|e| {
+    let mut owners = known_owners(&connection_manager, &app).unwrap_or_else(|e| {
         warn!("Could not read saved connections for the restore preview: {e}");
         Default::default()
     });
@@ -189,13 +189,13 @@ pub async fn apply_backup_restore(
         "Restoring backup"
     );
     let opened = restore::open(&json, passphrase.as_deref().map(String::as_str))?;
-    let store: Option<&dyn CredentialStore> = if request.credentials.is_some() {
+    if request.credentials.is_some() {
         vault::authorize_import(&manager)?;
-        Some(&**manager)
-    } else {
-        None
-    };
-    restore::apply(&opened, &config_dir(&app)?, &request, store)
+    }
+    // Always handed over: a section from an older backup may carry plaintext
+    // passwords (embedded servers before #3514) that must go into the store.
+    let store: &dyn CredentialStore = &**manager;
+    restore::apply(&opened, &config_dir(&app)?, &request, Some(store))
 }
 
 /// Restart termiHub so a staged restore is applied before any store loads.

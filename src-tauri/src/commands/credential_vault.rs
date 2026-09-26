@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use tauri::State;
+use tauri::{AppHandle, Manager, State};
 use tracing::{info, warn};
 use zeroize::Zeroizing;
 
@@ -17,13 +17,18 @@ use crate::credential::vault::{
     self, ConflictStrategy, VaultError, VaultImportPreview, VaultImportResult,
 };
 use crate::credential::CredentialManager;
+use crate::embedded_servers::server_manager::EmbeddedServerManager;
 
 /// Map every saved connection and agent id to its display name.
 ///
 /// Used to probe the OS keychain (which cannot enumerate its items) during an
 /// export and to label conflicts in the import preview.
+///
+/// Embedded-server passwords (#3514) are owned by their server, labelled
+/// "<server name> (FTP login | HTTP Basic auth)".
 pub(crate) fn known_owners(
     connection_manager: &ConnectionManager,
+    app_handle: &AppHandle,
 ) -> Result<HashMap<String, String>, String> {
     let store = connection_manager.get_all().map_err(|e| e.to_string())?;
     let mut owners = HashMap::new();
@@ -32,6 +37,9 @@ pub(crate) fn known_owners(
     }
     for agent in store.agents {
         owners.insert(agent.id, agent.name);
+    }
+    if let Some(servers) = app_handle.try_state::<EmbeddedServerManager>() {
+        owners.extend(servers.vault_owners());
     }
     Ok(owners)
 }
@@ -53,6 +61,7 @@ pub async fn export_credential_vault(
     export_passphrase: String,
     manager: State<'_, Arc<CredentialManager>>,
     connection_manager: State<'_, ConnectionManager>,
+    app_handle: AppHandle,
 ) -> Result<String, VaultError> {
     let master_password = master_password.map(Zeroizing::new);
     let export_passphrase = Zeroizing::new(export_passphrase);
@@ -67,7 +76,7 @@ pub async fn export_credential_vault(
     )?;
     vault::authorize_export(&manager, master_password.as_deref().map(String::as_str))?;
 
-    let owner_ids: Vec<String> = known_owners(&connection_manager)
+    let owner_ids: Vec<String> = known_owners(&connection_manager, &app_handle)
         .map_err(|e| VaultError::Other {
             message: format!("Could not read the saved connections: {e}"),
         })?
@@ -100,12 +109,13 @@ pub async fn preview_credential_vault_import(
     passphrase: String,
     manager: State<'_, Arc<CredentialManager>>,
     connection_manager: State<'_, ConnectionManager>,
+    app_handle: AppHandle,
 ) -> Result<VaultImportPreview, VaultError> {
     let passphrase = Zeroizing::new(passphrase);
     vault::authorize_import(&manager)?;
 
     let opened = vault::open_json(&json, &passphrase)?;
-    let owners = known_owners(&connection_manager).unwrap_or_else(|e| {
+    let owners = known_owners(&connection_manager, &app_handle).unwrap_or_else(|e| {
         warn!("Could not read saved connections for the vault import preview: {e}");
         HashMap::new()
     });
