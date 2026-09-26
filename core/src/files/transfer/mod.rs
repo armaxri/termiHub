@@ -39,6 +39,8 @@ pub mod state;
 // Shared attempt orchestration for the offset-resuming executors (PARITY-004).
 #[cfg(any(feature = "ssh", feature = "docker"))]
 mod attempt;
+#[cfg(feature = "docker")]
+pub mod docker;
 #[cfg(feature = "ftp")]
 pub mod ftp;
 #[cfg(feature = "ssh")]
