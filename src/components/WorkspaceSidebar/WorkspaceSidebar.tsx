@@ -172,11 +172,26 @@ export function WorkspaceSidebar() {
 
   // A cancelled file dialog is a silent no-op (no toast). Only a genuine failure
   // surfaces an error (GAP G8).
+  //
+  // A tab bound to a connection id that several connection files hold has no
+  // portable name and is exported by id (#3625). Once the file is written, each
+  // such warning is surfaced like an import warning so the user knows the
+  // reference will not travel.
   const handleExport = useCallback(() => {
+    let warnings: string[] = [];
     void exportWorkspacesToFile({
       defaultPath: "termihub-workspaces.json",
-      content: () => exportWorkspaces(),
+      content: async () => {
+        const result = await exportWorkspaces();
+        warnings = result.warnings;
+        return result.json;
+      },
       successMessage: "Exported workspaces",
+      onWritten: () => {
+        for (const warning of warnings) {
+          toast.error(warning);
+        }
+      },
     });
   }, [exportWorkspacesToFile]);
 

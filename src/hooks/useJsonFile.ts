@@ -20,6 +20,12 @@ export interface JsonFileExportOptions {
   content: string | (() => string | Promise<string>);
   /** Success toast shown after the file is written (caller-specific wording). */
   successMessage: string;
+  /**
+   * Called after the file was written and the success toast shown — e.g. to
+   * surface non-fatal warnings the content factory collected. Not called when
+   * the dialog is cancelled or the export fails.
+   */
+  onWritten?: () => void;
 }
 
 /**
@@ -36,13 +42,19 @@ export function useJsonFileExport(
   entityLabel: string
 ): (options: JsonFileExportOptions) => Promise<void> {
   return useCallback(
-    async ({ defaultPath, content, successMessage }: JsonFileExportOptions): Promise<void> => {
+    async ({
+      defaultPath,
+      content,
+      successMessage,
+      onWritten,
+    }: JsonFileExportOptions): Promise<void> => {
       try {
         const text = typeof content === "function" ? await content() : content;
         const filePath = await save({ defaultPath, filters: JSON_FILTERS });
         if (!filePath) return;
         await writeTextFile(filePath, text);
         toast.success(successMessage);
+        onWritten?.();
       } catch (err) {
         toast.error(`Failed to export ${entityLabel}: ${errorMessage(err)}`);
       }
