@@ -215,7 +215,8 @@ impl ConnectionManager {
     /// already persisted, the remaining files still follow, and a reference left
     /// behind dangles exactly as it did before #3596.
     fn follow_references(&self, changes: &[ConnectionIdChange], origin: ChangeOrigin<'_>) {
-        let remap = ConnectionIdRemap::new(changes);
+        let changes = self.changes_owned_by(changes, origin);
+        let remap = ConnectionIdRemap::new(&changes);
         if remap.is_empty() {
             return;
         }
@@ -257,6 +258,45 @@ impl ConnectionManager {
                 );
             }
         }
+    }
+
+    /// The `changes` whose old id no connection outside `origin` still holds
+    /// (#3602). Ids are not file-scoped, so the main store and an external file
+    /// can both hold `gw`; references to it were ambiguous (and refused at
+    /// connect). When one holder is renamed, the other files' references must
+    /// not be dragged along to it — they stay on the old id, which now names
+    /// the remaining holder unambiguously. The origin file's own references were
+    /// already rewritten in its write, which is where a same-file reference
+    /// most plausibly meant the renamed connection.
+    ///
+    /// If the unified view cannot be loaded, every change is kept (the
+    /// behaviour before #3602).
+    fn changes_owned_by(
+        &self,
+        changes: &[ConnectionIdChange],
+        origin: ChangeOrigin<'_>,
+    ) -> Vec<ConnectionIdChange> {
+        let view = match self.load_unified_view() {
+            Ok(view) => view,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load connections to scope id changes");
+                return changes.to_vec();
+            }
+        };
+        let held_elsewhere = |id: &str| {
+            view.connections.iter().any(|c| {
+                c.id == id
+                    && match (origin, c.source_file.as_deref()) {
+                        (ChangeOrigin::MainStore, source) => source.is_some(),
+                        (ChangeOrigin::ExternalFile(path), source) => source != Some(path),
+                    }
+            })
+        };
+        changes
+            .iter()
+            .filter(|c| !held_elsewhere(&c.old_id))
+            .cloned()
+            .collect()
     }
 
     /// Carry stored secrets along `changes`, which are already persisted in the
