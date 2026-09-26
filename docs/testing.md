@@ -2289,6 +2289,27 @@ for #1399.
 2. Right-click a file → **Copy Path** → a `Copied path` toast appears and the
    file's full path is on the clipboard.
 
+### File browser drag-to-move (#3454, PROD-006)
+
+Covers the pointer gesture, which the jsdom unit tests cannot hit-test.
+
+1. Open the file browser on a local directory that has a sub-folder `docs` and a
+   file `a.txt`. Drag `a.txt` onto the `docs` row → while you hover, `docs` has
+   an accent highlight and a floating chip reads `Move "a.txt"`. Release →
+   `a.txt` moves into `docs` (a `Moved "a.txt" to …` toast appears).
+2. Drag a file onto `docs` and hold **Alt/Option** before releasing → the chip
+   switches to `Copy …` and the file is copied (the original stays).
+3. Ctrl/Cmd-click two files, then drag one of them onto a parent breadcrumb in
+   the path bar → both files move up to that folder.
+4. Drag `docs` onto its own row → the row turns red (refused). Releasing shows a
+   "Cannot move … into itself" error and nothing changes.
+5. Put a file with the same name in the destination and drop it again → a
+   **Move and Replace?** dialog appears. Cancel leaves both files untouched.
+6. Repeat step 1 on an SFTP session → the move is an instant server-side rename
+   (no transfer row). Alt-drop copies server-side.
+7. Right-click a file → **Move to…**, type a folder path, press **Enter** → the
+   file moves there. You can do this from the keyboard alone.
+
 ### Network Tools shared field validation (#1381)
 
 Verifies every Network Tools text input shares one label + input + inline-error
