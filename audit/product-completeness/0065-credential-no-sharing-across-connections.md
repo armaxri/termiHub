@@ -9,7 +9,8 @@ subsystem: src-tauri/src/credential
 evidence:
   - src-tauri/src/credential/os_keychain.rs:20
   - src-tauri/src/credential/types.rs:58
-status: open
+status: fixed
+resolution: "#3566 — shared named credentials (nc-<uuid>) referenced by connections/remote agents; rotate in one place; delete-in-use refused; backup/vault/re-auth covered"
 ---
 
 ## What
