@@ -713,6 +713,12 @@ cargo test -p termihub-core --all-features --test sftp_stress -- --nocapture
 docker compose -f tests/docker/docker-compose.yml --profile vnc up -d
 cargo test -p termihub-core --features vnc --test vnc -- --nocapture
 
+# Include the RDP servers (requires rdp profile) + drive the rdp backend through
+# the real sidecar, which must be built first (workspace-excluded crate).
+./scripts/build-rdp-sidecar.sh
+docker compose -f tests/docker/docker-compose.yml --profile rdp up -d --wait rdp-server
+cargo test -p termihub-core --features rdp-sidecar --test rdp -- --test-threads=1
+
 # Include the FTP/FTPS server (requires ftp profile) + backend-independent smoke
 docker compose -f tests/docker/docker-compose.yml --profile ftp up -d --wait ftp-server
 bash tests/docker/ftp-server/smoke-test.sh   # lists /pub over plain/explicit/implicit FTPS
@@ -734,6 +740,7 @@ docker compose -f tests/docker/docker-compose.yml --profile all down
 | SSH Banner             | `core/tests/ssh_banner.rs`                          | ssh-banner:2206, ssh-password:2201                        | Pre-auth banner text, no-banner on standard server, banner on failed auth                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | Telnet                 | `core/tests/telnet.rs`                              | telnet:2301                                               | Connect, output subscribe, login flow                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | VNC                    | `core/tests/vnc.rs`                                 | vnc-server:2501, vnc-vencrypt-server:2502 (profile `vnc`) | Live RFB path of the `vnc` graphical backend against real servers serving a static four-quadrant pattern. **Plain VncAuth** (vnc-server, x11vnc, #1681/#1713): connect + VncAuth, decode a real framebuffer end to end (asserts each quadrant's colour), input/clipboard round-trip over the wire, wrong-password rejection, and the same pattern decoded at **16-bit color** over Tight/ZRLE and Raw and at lossy **Tight quality** levels (VNC-08, #3464), and a **dynamic resolution** session whose `SetDesktopSize` x11vnc refuses as prohibited — reported by `resize`, session kept (VNC-10, #3463). **VeNCrypt X509 over TLS** (vnc-vencrypt-server, TigerVNC Xvnc, #1714/#1770): connect + decode with `tlsVerify=insecure` (accept self-signed) and `tlsVerify=ca` (trust the fixture CA), exercising the vendored `vnc-rs` fork's VeNCrypt X509Vnc negotiate → TLS handshake → VNC-password → decode path against a real server. The same fixture covers **remote resolution** over RFB ExtendedDesktopSize (VNC-09, #3463): a fixed 800x600 session is resized right after the handshake and a dynamic one follows `resize`, then the fixture is restored to 1024x768 (VNC-06/07/09 are serialized because they share that desktop). Requires the `vnc` compose profile; ports via `TERMIHUB_TEST_VNC_PORT` (default 2501) / `TERMIHUB_TEST_VNC_VENCRYPT_PORT` (default 2502) — see [Parallel test isolation](#parallel-test-isolation) |
+| RDP                    | `core/tests/rdp.rs`                                 | rdp-server:2601 (xrdp), :2602 (NLA) (profile `rdp`)       | Live path of the `rdp` graphical backend **through the real `termihub-rdp-helper` sidecar** (#3609): TLS logon with the Client Info credentials and the first decoded frame at the requested dynamic size (RDP-01), a fixed 1024x768 resolution honoured by the server (RDP-02), a wrong password ending the session without a desktop and the sidecar exiting on its own (xrdp, RDP-04) or being rejected in CredSSP (NLA, RDP-04b), a clipboard text round trip over CLIPRDR (RDP-05), the untrusted-certificate prompt + accept (RDP-06), an NLA logon (RDP-08), and after every session a **PID check** that no sidecar child of the test process is left running — also when the backend is dropped without a disconnect (RDP-07). Frames are asserted pixel-wise against each server's solid desktop colour. Dynamic resize (RDP-03) is `#[ignore]`d until #3611 (xrdp's short Deactivate All PDU). Requires the `rdp` compose profile and a built sidecar (`./scripts/build-rdp-sidecar.sh`, or `TERMIHUB_RDP_HELPER`); ports via `TERMIHUB_TEST_RDP_PORT` (default 2601) / `TERMIHUB_TEST_RDP_NLA_PORT` (default 2602) — see [Parallel test isolation](#parallel-test-isolation)                                                                                                                                                                                                                                                            |
 | SFTP Stress            | `core/tests/sftp_stress.rs`                         | sftp-stress:2210                                          | Large files, deep trees, symlinks, special filenames, permissions                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | Network Resilience     | `core/tests/network_resilience.rs`                  | network-fault:2209                                        | Latency, packet loss, throttle, disconnect, jitter, corruption                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | Monitoring             | `core/tests/monitoring.rs`                          | ssh-password:2201                                         | CPU, memory, disk stats, stats under load                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
@@ -1029,6 +1036,7 @@ fresh clone, or CI — behaves exactly as it always did.
 | Docker container / network names | `termihub-*` / `termihub-*-net`     | Prefixed with `compose_project` (`COMPOSE_PROJECT_NAME`).                     |
 | SSH / telnet / HTTP host ports   | `2201–2213`, `2301`, `8080`         | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | VNC host ports                   | `2501` (VncAuth), `2502` (VeNCrypt) | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
+| RDP host ports                   | `2601` (xrdp), `2602` (NLA)         | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | FTP / FTPS host ports            | `2401`, `2402`, PASV `30000–30019`  | `base + test_port_offset`, published by `tests/docker/docker-compose.yml`.    |
 | Quick-start (E2E) host ports     | `2214` (SSH), `2323` (telnet)       | `base + test_port_offset`, published by `examples/docker/docker-compose.yml`. |
 | SSH-tunnel test ports            | `18081–18088`                       | `base + test_port_offset`.                                                    |
@@ -1346,10 +1354,15 @@ connection-editor UI, which the integration lane does not drive:
 ### RDP via the IronRDP sidecar (#1747)
 
 The RDP backend decodes through the separately-built `termihub-rdp-helper`
-sidecar (workspace-excluded crate; see #1747 / #1725). Live RDP needs a real
-server, and per-PR CI does not run integration/container tests, so the wire path
-is covered by unit tests (`termihub-core` `backends::rdp_sidecar` + the sidecar
-crate) plus these manual steps.
+sidecar (workspace-excluded crate; see #1747 / #1725). The wire path is covered by
+unit tests (`termihub-core` `backends::rdp_sidecar` + the sidecar crate) and, since
+#3609, by the **automated live suite** `core/tests/rdp.rs` against the `rdp-server`
+fixture (xrdp + a FreeRDP NLA server; see [Test Suites](#test-suites)), which runs
+on the nightly Docker-fixture lane. It now covers what the steps below used to check
+by hand: logon and the first painted frame through the real sidecar, fixed
+resolution, the wrong-password path, clipboard text, the certificate prompt, and the
+"no orphan `termihub-rdp-helper`" check after disconnect (a PID check). What remains
+manual is the app/UI side and Windows-specific behaviour.
 
 Prerequisites: enable experimental features (#1705); build the helper and point
 the app at it.
@@ -1359,19 +1372,22 @@ the app at it.
 2. Make it discoverable: either copy it next to the desktop binary, or
    `export TERMIHUB_RDP_HELPER=<abs-path-to-helper>` before launching via
    `./scripts/dev.sh`.
-3. Stand up an RDP server (a Windows host with Remote Desktop enabled, or a Linux
-   `xrdp` container).
+3. Stand up an RDP server (a Windows host with Remote Desktop enabled, or the
+   `rdp-server` fixture: `docker compose -f tests/docker/docker-compose.yml
+--profile rdp up -d --wait rdp-server`, then `127.0.0.1:2601` + offset,
+   `testuser` / `testpass`).
 4. In the connection editor create an **RDP** connection: host, port (3389),
    username, password, and — for a domain account — the **Domain** field; leave
    Security on **Auto** (NLA/CredSSP).
-5. Connect. **Expected:** the tab shows the remote desktop painting in the shared
-   canvas; the state dot goes connecting → active. Move the mouse and type — the
-   remote cursor and input track. Close the tab — the helper process exits (no
-   orphan `termihub-rdp-helper`).
-6. Failure paths: a wrong password surfaces an authentication error (state
-   `authFailed`); an unreachable host surfaces a connect error; deleting/renaming
-   the helper before connecting surfaces an actionable "failed to launch RDP
-   helper" error that names `scripts/build-rdp-sidecar.sh` / `TERMIHUB_RDP_HELPER`.
+5. Connect. **Expected:** the state dot goes connecting → active and the canvas
+   paints (the sidecar-level paint and the helper exiting on disconnect are
+   automated). Move the mouse and type — the remote cursor and input track.
+6. Failure paths: a wrong password against a **Windows** host surfaces an
+   authentication error (state `authFailed`; the fixture's servers cannot send
+   Windows' logon NTSTATUS — see #3612); an unreachable host surfaces a connect
+   error; deleting/renaming the helper before connecting surfaces an actionable
+   "failed to launch RDP helper" error that names `scripts/build-rdp-sidecar.sh` /
+   `TERMIHUB_RDP_HELPER`.
 
 #### Fixed resolution and color depth (#3460, PROD-026)
 
@@ -1382,8 +1398,8 @@ The config mapping, resize suppression and reconnect behavior are unit-tested
 
 1. In the RDP connection editor set **Resolution** to _Fixed size_, **Width**
    `1366`, **Height** `768`, **Color Depth** _16-bit (high color)_; connect.
-   **Expected:** the status bar shows `1366×768 · 16-bit`; the remote desktop is
-   1366×768 (check the remote's display settings).
+   **Expected:** the status bar shows `1366×768 · 16-bit`. (That the server
+   renders the fixed size is automated: `rdp_02_fixed_resolution`.)
 2. Resize the tab / window. **Expected:** the canvas rescales locally; the remote
    resolution stays 1366×768 (no reflow on the remote).
 3. Click the toolbar scaling button repeatedly. **Expected:** it toggles only
@@ -1391,7 +1407,9 @@ The config mapping, resize suppression and reconnect behavior are unit-tested
 4. Drop the network briefly (with Auto-Reconnect on). **Expected:** the session
    reconnects at 1366×768.
 5. Switch **Resolution** back to _Dynamic_ and reconnect with _Match Window_
-   scaling. **Expected:** the remote follows the tab size as before.
+   scaling. **Expected:** the remote follows the tab size as before. (Against an
+   xrdp host the session currently ends on the first resize — #3611; the
+   automated `rdp_03_dynamic_resize` is ignored until that lands.)
 
 #### Drive redirection (RDPDR, #1757)
 
