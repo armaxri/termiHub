@@ -21,115 +21,26 @@ use crate::projection::{
     apply_ops, DiffFrame, Dispatcher, HandlerRegistry, Intent, IntentStatus, ProjectionError,
     ProjectionFrame, ProjectionSink, Projector, SnapshotFrame,
 };
-use crate::workflow_projection::projection::{publish_workflow_run, workflow_run_region};
+use crate::workflow_projection::projection::{
+    apply_workflow_intent, publish_workflow_run, workflow_run_region, WORKFLOW_INTENT_KINDS,
+};
 use crate::workflow_projection::store::WorkflowRunStore;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 
 /// The production `workflow.*` routes, bound to an injected store instead of
-/// resolving one from an `AppHandle` — the exact parse → mutate → publish path
-/// `register_workflow_intents` runs.
+/// resolving one from an `AppHandle` — the exact shared parse → mutate
+/// ([`apply_workflow_intent`]) → publish path `register_workflow_intents` runs.
 fn registry_for(store: Arc<WorkflowRunStore>) -> HandlerRegistry {
     let mut registry = HandlerRegistry::new();
-
-    let s = store.clone();
-    registry.route("workflow.runStarted", move |intent, projector| {
-        let workflow_id = req_str(intent, "workflowId")?;
-        let workflow_name = req_str(intent, "workflowName")?;
-        let tab_id = req_str(intent, "tabId")?;
-        let total = req_usize(intent, "total")?;
-        s.run_started(
-            &intent.client_id,
-            &workflow_id,
-            &workflow_name,
-            &tab_id,
-            total,
-        );
-        Ok(publish_workflow_run(projector, &s, &intent.client_id))
-    });
-
-    let s = store.clone();
-    registry.route("workflow.stepAdvanced", move |intent, projector| {
-        let workflow_id = req_str(intent, "workflowId")?;
-        let tab_id = req_str(intent, "tabId")?;
-        let completed = req_usize(intent, "completed")?;
-        s.step_advanced(&intent.client_id, &workflow_id, &tab_id, completed);
-        Ok(publish_workflow_run(projector, &s, &intent.client_id))
-    });
-
-    let s = store.clone();
-    registry.route("workflow.outputOpened", move |intent, projector| {
-        let workflow_id = req_str(intent, "workflowId")?;
-        let workflow_name = req_str(intent, "workflowName")?;
-        let program = req_str(intent, "program")?;
-        let args: Vec<String> = intent
-            .payload
-            .get("args")
-            .and_then(Value::as_array)
-            .map(|a| {
-                a.iter()
-                    .filter_map(|v| v.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        s.output_opened(
-            &intent.client_id,
-            &workflow_id,
-            &workflow_name,
-            &program,
-            &args,
-        );
-        Ok(publish_workflow_run(projector, &s, &intent.client_id))
-    });
-
-    let s = store.clone();
-    registry.route("workflow.runCompleted", move |intent, projector| {
-        s.run_completed(&intent.client_id);
-        Ok(publish_workflow_run(projector, &s, &intent.client_id))
-    });
-
-    let s = store.clone();
-    registry.route("workflow.runCancelled", move |intent, projector| {
-        s.run_cancelled(&intent.client_id);
-        Ok(publish_workflow_run(projector, &s, &intent.client_id))
-    });
-
-    let s = store.clone();
-    registry.route("workflow.runFailed", move |intent, projector| {
-        let error = intent
-            .payload
-            .get("error")
-            .and_then(Value::as_str)
-            .map(str::to_string);
-        s.run_failed(&intent.client_id, error);
-        Ok(publish_workflow_run(projector, &s, &intent.client_id))
-    });
-
-    let s = store;
-    registry.route("workflow.dismissOutput", move |intent, projector| {
-        s.dismiss_output(&intent.client_id);
-        Ok(publish_workflow_run(projector, &s, &intent.client_id))
-    });
-
+    for kind in WORKFLOW_INTENT_KINDS {
+        let s = store.clone();
+        registry.route(kind, move |intent, projector| {
+            apply_workflow_intent(&s, intent)?;
+            Ok(publish_workflow_run(projector, &s, &intent.client_id))
+        });
+    }
     registry
-}
-
-fn req_str(intent: &Intent, key: &str) -> Result<String, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
-}
-
-fn req_usize(intent: &Intent, key: &str) -> Result<usize, (String, String)> {
-    intent
-        .payload
-        .get(key)
-        .and_then(Value::as_u64)
-        .map(|n| n as usize)
-        .ok_or_else(|| ("bad_payload".to_string(), format!("missing '{key}'")))
 }
 
 /// An in-memory sink recording delivered frames; can be killed to simulate a
@@ -410,4 +321,86 @@ fn a_dead_subscriber_is_reaped_on_publish() {
         1,
         "the dead subscriber was reaped"
     );
+}
+
+#[test]
+fn concurrent_keyed_runs_progress_and_settle_independently() {
+    let store = Arc::new(WorkflowRunStore::new());
+    let region = workflow_run_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+    let sink = Arc::new(VecSink::new());
+    let snap = projector.subscribe(&region, "sub", "A", sink.clone());
+    let mut cache = ClientCache::from_snapshot(&snap);
+
+    let start = |run_id: &str, tab: &str| {
+        json!({
+            "runId": run_id, "workflowId": "wf-1", "workflowName": "Deploy",
+            "tabId": tab, "label": tab, "total": 2, "preserveOutput": true,
+        })
+    };
+    for (kind, payload) in [
+        ("workflow.runStarted", start("r1", "t1")),
+        ("workflow.runStarted", start("r2", "t2")),
+        ("workflow.runStarted", start("r3", "t3")),
+        (
+            "workflow.stepAdvanced",
+            json!({ "runId": "r2", "completed": 1 }),
+        ),
+        (
+            "workflow.runFailed",
+            json!({ "runId": "r1", "error": "boom" }),
+        ),
+        ("workflow.runCancelled", json!({ "runId": "r3" })),
+    ] {
+        let ack = dispatcher.dispatch(intent(kind, "A", payload));
+        assert_eq!(ack.status, IntentStatus::Accepted, "{kind} accepted");
+    }
+    for diff in &sink.diffs() {
+        cache.apply(diff);
+    }
+    assert_eq!(cache.view, store.snapshot("A"), "cache converges");
+    let runs = cache.view["runs"].as_array().expect("runs");
+    assert_eq!(runs.len(), 1, "only r2 still in flight");
+    assert_eq!(runs[0]["runId"], json!("r2"));
+    assert_eq!(runs[0]["completed"], json!(1));
+    assert_eq!(cache.view["run"]["runId"], json!("r2"));
+
+    let ack = dispatcher.dispatch(intent(
+        "workflow.runCompleted",
+        "A",
+        json!({ "runId": "r2" }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    assert_eq!(store.snapshot("A")["runs"], json!([]));
+}
+
+#[test]
+fn a_keyed_step_advance_needs_no_workflow_or_tab_id() {
+    let store = Arc::new(WorkflowRunStore::new());
+    let region = workflow_run_region("A");
+    let projector = Arc::new(Projector::new());
+    projector.register_region(&region, store.snapshot("A"));
+    let dispatcher = Dispatcher::new(projector.clone(), Arc::new(registry_for(store.clone())));
+
+    dispatcher.dispatch(intent(
+        "workflow.runStarted",
+        "A",
+        json!({ "runId": "r1", "workflowId": "wf-1", "workflowName": "D", "tabId": "t", "total": 3 }),
+    ));
+    // Legacy stepAdvanced without runId still requires workflowId + tabId.
+    let rejected = dispatcher.dispatch(intent(
+        "workflow.stepAdvanced",
+        "A",
+        json!({ "completed": 1 }),
+    ));
+    assert_eq!(rejected.status, IntentStatus::Rejected);
+    let ack = dispatcher.dispatch(intent(
+        "workflow.stepAdvanced",
+        "A",
+        json!({ "runId": "r1", "completed": 2 }),
+    ));
+    assert_eq!(ack.status, IntentStatus::Accepted);
+    assert_eq!(store.keyed_run_progress("A", "r1"), Some((3, 2)));
 }

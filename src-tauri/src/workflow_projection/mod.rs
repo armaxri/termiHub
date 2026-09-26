@@ -4,7 +4,9 @@
 //! Moves the in-flight **workflow-run** state machine the frontend drives
 //! (`appStore` `workflowRun` + `workflowRunOutput`, #1852 / #1865) into a Rust
 //! authority on the projection substrate ([`crate::projection`]). The run
-//! machine tracks a single active run's step progress (`run`) and the
+//! machine tracks the in-flight runs' step progress (`runs`, keyed by `runId`
+//! since #3418 — several may run concurrently; `run` is the back-compat
+//! most-recent one) and the
 //! dismissible inline output panel a `run-local-process` step opens (`output`),
 //! settling both through the run's terminal outcome (completed / cancelled /
 //! failed).
@@ -12,16 +14,15 @@
 //! This is the **run** machine, not the workflow **library**: the library CRUD
 //! is already backend-backed (`workflowApi`). The step-execution side-effects
 //! (the send / macro / local-process seams in `workflowRunner`) stay frontend
-//! orchestration; this store owns only the run *status* — which run is active,
+//! orchestration; this store owns only the run *status* — which runs are active,
 //! how far it has progressed, and the status of its output panel.
 //!
 //! # Client-scoped region — Open Design Decision #4 / #6
 //!
 //! A workflow run is launched by one client against one of *that client's*
 //! target terminals, and its feedback — the progress toast and the inline
-//! run-output panel — is the launching client's own UI overlay. Only one run is
-//! active per client at a time (`appStore` cancels any in-flight run before
-//! starting another). Like the client-scoped `restore-cohort`
+//! run-output panel — is the launching client's own UI overlay. A client may have
+//! several runs in flight at once (a concurrent "Run on…" fan-out, #3418). Like the client-scoped `restore-cohort`
 //! ([`crate::restore_cohort_projection`]) and `broadcast`
 //! ([`crate::broadcast_projection`]) regions — and unlike the shared
 //! `session-lifecycle` region — the run is an **orchestration overlay owned by
