@@ -8,7 +8,8 @@ client-side implementation of the VNC/RFB protocol.
 (the version-bump commit; upstream publishes no tags). The fork is registered in
 [`vendor/vendored-forks.json`](../vendored-forks.json), and a weekly CI job
 reports upstream releases, commits and advisories that the fork does not have
-yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing.
+yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing or
+reviewing upstream again (the reviewed state is below).
 
 ## Why this is vendored
 

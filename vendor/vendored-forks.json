@@ -27,8 +27,8 @@
       "base_version": "0.5.3",
       "base_commit": "f8ac0ee4915e8e1e1adb8880a0716761b91281f6",
       "base_commit_note": "upstream publishes no git tags; this is the commit that bumped Cargo.toml to 0.5.3",
-      "reviewed_version": "0.5.3",
-      "reviewed_commit": "f8ac0ee4915e8e1e1adb8880a0716761b91281f6",
+      "reviewed_version": "0.6.0",
+      "reviewed_commit": "99ed1a28553c7594212adf30b9517d57fe46558d",
       "deltas": [
         {
           "summary": "VeNCrypt 0.2 (RFB security type 19) negotiation over rustls behind the vencrypt feature",
@@ -51,6 +51,13 @@
             "https://github.com/armaxri/termiHub/issues/3479",
             "https://github.com/armaxri/termiHub/pull/3496"
           ]
+        },
+        {
+          "summary": "Upstream 0.6.0 security/robustness fixes ported onto the 0.5.3 base: checked SecurityResult/SecurityType handshake, PixelFormat validation, rects bound to negotiated encodings and the framebuffer, cancellable decoder/bridge I/O, non-deadlocking input()",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/3499",
+            "https://github.com/armaxri/termiHub/pull/3512"
+          ]
         }
       ],
       "watch": {
@@ -71,7 +78,7 @@
       "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
       "base_commit_note": "upstream tag ironrdp-rdpsnd-v0.9.0",
       "reviewed_version": "0.9.0",
-      "reviewed_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
+      "reviewed_commit": "160752fcf3293889f1ce1bdd3d2e7afc790a9cd2",
       "deltas": [
         {
           "summary": "RdpsndClientHandler::wave receives the concrete negotiated AudioFormat instead of an index",
@@ -80,6 +87,13 @@
         {
           "summary": "accepts_format hook: echo server-chosen compressed formats (ADPCM/Opus) verbatim, deterministic order",
           "refs": ["https://github.com/armaxri/termiHub/issues/1812"]
+        },
+        {
+          "summary": "Upstream fixes ported after 0.9.0: malformed server PDUs (incl. encrypted waves) are dropped instead of ending the session, CryptKey/WaveEncrypt keep the channel alive, get_format indexes the client list",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/3499",
+            "https://github.com/armaxri/termiHub/pull/3512"
+          ]
         }
       ],
       "watch": {
