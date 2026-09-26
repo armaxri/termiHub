@@ -290,7 +290,7 @@ describe("FileBrowser — drag-to-move (PROD-006)", () => {
     expect(input.value).toBe("/home");
     await act(async () => {
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(input, "/home/docs");
+      setter?.call(input, "docs");
       input.dispatchEvent(new Event("input", { bubbles: true }));
     });
     await act(async () => {

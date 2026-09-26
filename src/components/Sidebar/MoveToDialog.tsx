@@ -1,7 +1,12 @@
 import { useEffect, useState } from "react";
 import { Modal, Button, Input } from "@/components/ui";
 import type { FileEntry } from "@/types/connection";
-import { describeEntries, type FileTransferOperation } from "@/utils/fileDragMove";
+import { describeEntries, joinDirPath, type FileTransferOperation } from "@/utils/fileDragMove";
+
+/** Resolve a typed destination: absolute (`/`, `~`, `C:`) as-is, else relative to `base`. */
+function resolveDestination(typed: string, base: string): string {
+  return /^([/~]|[A-Za-z]:)/.test(typed) ? typed : joinDirPath(base, typed);
+}
 
 /** What the dialog is moving/copying, or `null` when closed. */
 export interface MoveToRequest {
@@ -38,7 +43,7 @@ export function MoveToDialog({ request, currentPath, onSubmit, onClose }: MoveTo
   const handleSubmit = async () => {
     if (!request || trimmed === "") return;
     onClose();
-    await onSubmit(request, trimmed);
+    await onSubmit(request, resolveDestination(trimmed, currentPath));
   };
 
   return (
