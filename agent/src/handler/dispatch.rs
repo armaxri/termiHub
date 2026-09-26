@@ -3323,8 +3323,8 @@ mod tests {
     /// desktop can fold the tab `Evicted` without parsing the message.
     #[tokio::test]
     async fn session_attach_held_by_other_desktop_has_its_own_code() {
-        let handler = make_handler();
-        init_handler(&handler).await;
+        let handler = make_mock_handler();
+        dispatch(&handler, "initialize", init_params(), 1).await;
 
         let result = dispatch(
             &handler,
