@@ -12,7 +12,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 import type { IntentAck, ProjectionCacheState } from "@/services/transport";
-import type { TunnelConfig, TunnelState } from "@/types/tunnel";
+import type { TunnelConfig } from "@/types/tunnel";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
 import { onFrontendLog } from "@/utils/frontendLog";
 
