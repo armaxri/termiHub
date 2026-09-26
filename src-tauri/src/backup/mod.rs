@@ -50,7 +50,6 @@ pub mod sections;
 #[cfg(test)]
 mod tests;
 
-
 /// Format identifier stamped on every backup file.
 pub const BACKUP_FORMAT_ID: &str = "termihub-backup";
 /// Backup container format version written by this build.
