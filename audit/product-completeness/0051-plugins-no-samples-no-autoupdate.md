@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: examples/plugins, src-tauri/src/commands/plugin
 evidence:
   - src-tauri/src/commands/plugin.rs:1
-status: open
+status: fixed
+resolution: "#3490 — log-highlighter + clock-widget sample plugins; HTTPS updateUrl check (manual/opt-in daily) through normal install flow; settings migration"
 ---
 
 ## What
