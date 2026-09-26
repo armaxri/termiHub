@@ -23,6 +23,7 @@ import {
   stepKindIcon,
   stepKindLabel,
 } from "./workflowStepMeta";
+import { WorkflowStepErrorHandlingEditor } from "./WorkflowStepErrorHandlingEditor";
 
 /** A working step paired with a stable uid for drag-and-drop and React keys. */
 export interface WorkflowStepEntry {
@@ -148,18 +149,27 @@ interface StepDetailEditorProps {
 }
 
 /**
- * The per-kind detail fields for a single step, driven by the discriminant.
- * `fieldId` scopes every input's id/testid so a nested step (inside a
- * `conditional`'s then/else list) never collides with its parent's ids.
- * Exported so the conditional editor can render its sub-steps recursively.
+ * The full detail editor for a single step: its per-kind fields followed by the
+ * shared "on failure" policy controls (PROD-045). `fieldId` scopes every input's
+ * id/testid so a nested step (inside a `conditional`'s then/else list or a
+ * loop body) never collides with its parent's ids. Exported so the conditional
+ * and loop editors can render their sub-steps recursively.
  */
-export function StepDetailEditor({
-  fieldId,
-  stepNumber,
-  step,
-  macros,
-  onChange,
-}: StepDetailEditorProps) {
+export function StepDetailEditor(props: StepDetailEditorProps) {
+  return (
+    <>
+      <StepKindFields {...props} />
+      <WorkflowStepErrorHandlingEditor
+        fieldId={props.fieldId}
+        step={props.step}
+        onChange={props.onChange}
+      />
+    </>
+  );
+}
+
+/** The per-kind detail fields for a single step, driven by the discriminant. */
+function StepKindFields({ fieldId, stepNumber, step, macros, onChange }: StepDetailEditorProps) {
   switch (step.kind) {
     case "send-command":
       return (

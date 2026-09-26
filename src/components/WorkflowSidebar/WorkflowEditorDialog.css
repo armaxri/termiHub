@@ -115,6 +115,27 @@
   font-size: var(--font-size-sm);
 }
 
+/* ── Per-step error handling (PROD-045) ──────────────────────────────── */
+.workflow-step__policy {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: var(--spacing-sm);
+  border-top: 1px solid var(--border-primary);
+}
+
+.workflow-step__retry {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.workflow-step__retry > * {
+  flex: 1;
+  min-width: 120px;
+}
+
 /* ── Conditional step (PROD-0044) ───────────────────────────────────── */
 .workflow-step__conditional {
   display: flex;
