@@ -16,6 +16,13 @@ pub(crate) struct WolDevicesFile {
     pub(crate) devices: Vec<WolDevice>,
 }
 
+impl WolDevicesFile {
+    /// The file's schema version. It carries no `version` field yet, so it is
+    /// schema v1; the unified backup (PROD-068) takes the version from here.
+    /// Add a `version` field and bump this together if the shape ever changes.
+    pub(crate) const CURRENT_VERSION: u32 = 1;
+}
+
 /// Resolve the path to the WoL devices file.
 fn devices_path(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join(WOL_DEVICES_FILE)

@@ -21,22 +21,42 @@ const HOST_MARKER: &str = "sentinel-host.example";
 
 // --- fixtures ---
 
+/// Stamp `doc` with the schema version the owning store's own writer (its
+/// default document) uses — never a literal — so a store's version bump keeps
+/// these fixtures current instead of silently making them "older" backups.
+fn at_current(file: &str, mut doc: Value) -> Value {
+    let spec = sections::spec_for_file(file).unwrap();
+    let obj = doc.as_object_mut().unwrap();
+    match spec.default_doc().get("version") {
+        Some(version) => obj.insert("version".into(), version.clone()),
+        None => obj.remove("version"),
+    };
+    doc
+}
+
+/// A schema version one past what the section's store supports.
+fn newer_than_current(id: &str) -> String {
+    (sections::spec(id).unwrap().current_version + 1).to_string()
+}
+
 fn connections_doc() -> Value {
-    json!({
-        "version": "4",
-        "children": [
-            {"type": "folder", "name": "Work", "isExpanded": true, "children": [
-                {"type": "connection", "name": "Prod",
-                 "config": {"type": "ssh", "config": {"host": HOST_MARKER, "username": "ops"}}}
-            ]},
-            {"type": "connection", "name": "Local",
-             "config": {"type": "local", "config": {"shell": "bash"}}}
-        ],
-        "agents": [
-            {"id": "agent-1", "name": "Pi",
-             "config": {"host": "pi.local", "port": 22, "username": "pi"}}
-        ]
-    })
+    at_current(
+        "connections.json",
+        json!({
+            "children": [
+                {"type": "folder", "name": "Work", "isExpanded": true, "children": [
+                    {"type": "connection", "name": "Prod",
+                     "config": {"type": "ssh", "config": {"host": HOST_MARKER, "username": "ops"}}}
+                ]},
+                {"type": "connection", "name": "Local",
+                 "config": {"type": "local", "config": {"shell": "bash"}}}
+            ],
+            "agents": [
+                {"id": "agent-1", "name": "Pi",
+                 "config": {"host": "pi.local", "port": 22, "username": "pi"}}
+            ]
+        }),
+    )
 }
 
 fn macros_doc(items: &[(&str, &str)]) -> Value {
@@ -44,7 +64,7 @@ fn macros_doc(items: &[(&str, &str)]) -> Value {
         .iter()
         .map(|(id, name)| json!({"id": id, "name": name, "tags": [], "steps": []}))
         .collect();
-    json!({"version": "1", "macros": macros})
+    at_current("macros.json", json!({"macros": macros}))
 }
 
 fn fixture_docs() -> Vec<(&'static str, Value)> {
@@ -100,7 +120,7 @@ fn write_doc(dir: &Path, file: &str, doc: &Value) {
 
 fn populate(dir: &Path) {
     for (file, doc) in fixture_docs() {
-        write_doc(dir, file, &doc);
+        write_doc(dir, file, &at_current(file, doc));
     }
 }
 
@@ -344,7 +364,7 @@ fn partial_restore_only_touches_chosen_sections() {
     write_doc(
         dst.path(),
         "workflows.json",
-        &json!({"version": "1", "workflows": []}),
+        &at_current("workflows.json", json!({"workflows": []})),
     );
     let result = restore_and_boot(
         &json,
@@ -476,12 +496,15 @@ fn connections_merge_by_path_id_including_agents() {
     write_doc(
         dst.path(),
         "connections.json",
-        &json!({"version": "4", "children": [
-            {"type": "connection", "name": "Mine",
-             "config": {"type": "local", "config": {"shell": "zsh"}}},
-            {"type": "connection", "name": "Local",
-             "config": {"type": "local", "config": {"shell": "fish"}}}
-        ], "agents": []}),
+        &at_current(
+            "connections.json",
+            json!({"children": [
+                {"type": "connection", "name": "Mine",
+                 "config": {"type": "local", "config": {"shell": "zsh"}}},
+                {"type": "connection", "name": "Local",
+                 "config": {"type": "local", "config": {"shell": "fish"}}}
+            ], "agents": []}),
+        ),
     );
     let req = request(vec![choice(
         "connections",
@@ -508,8 +531,11 @@ fn settings_replace_preserves_local_credential_storage() {
     write_doc(
         dst.path(),
         "settings.json",
-        &json!({"version": "1", "theme": "light", "credentialStorageMode": "master_password",
-                "credentialAutoLockMinutes": 5}),
+        &at_current(
+            "settings.json",
+            json!({"theme": "light", "credentialStorageMode": "master_password",
+                   "credentialAutoLockMinutes": 5}),
+        ),
     );
     // Merge is not offered for settings.
     let opened = restore::open(&json, Some(PASSPHRASE)).unwrap();
@@ -582,7 +608,8 @@ fn older_section_versions_are_migrated() {
     )]);
     restore_and_boot(&json, dst.path(), &req);
     let doc = read_doc(dst.path(), "connections.json");
-    assert_eq!(doc["version"], "4");
+    let current = sections::spec("connections").unwrap().current_version;
+    assert_eq!(doc["version"], current.to_string());
     let text = doc.to_string();
     assert!(!text.contains("resilientReconnect") && text.contains("autoReconnect"));
 }
@@ -647,7 +674,7 @@ fn restoring_over_a_newer_current_store_is_refused() {
     write_doc(
         dst.path(),
         "workspaces.json",
-        &json!({"version": "7", "workspaces": []}),
+        &json!({"version": newer_than_current("workspaces"), "workspaces": []}),
     );
     let opened = restore::open(&json, Some(PASSPHRASE)).unwrap();
     let req = request(vec![choice(
@@ -906,7 +933,7 @@ fn failed_startup_swap_rolls_every_file_back() {
     );
 
     let dst = tempfile::tempdir().unwrap();
-    let original = json!({"version": "4", "children": [], "agents": []});
+    let original = at_current("connections.json", json!({"children": [], "agents": []}));
     write_doc(dst.path(), "connections.json", &original);
     let opened = restore::open(&json, Some(PASSPHRASE)).unwrap();
     let req = request(vec![
@@ -988,4 +1015,173 @@ fn every_section_file_is_known_to_the_manifest_validator() {
         assert_eq!(sections::spec_for_file(spec.file_name).unwrap().id, spec.id);
         assert!(spec.normalize(spec.default_doc()).is_ok(), "{}", spec.id);
     }
+}
+
+// --- section schema versions follow the owning stores ---
+
+/// Guard: every backup section's schema version is the owning store's own
+/// `CURRENT_VERSION` and matches what the store's own writer (its default
+/// document) stamps. Bumping a store without the backup following — e.g. a new
+/// `Default` version string while the constant still says the old one — fails
+/// here instead of turning every same-build backup into a "migrated" or
+/// refused one.
+#[test]
+fn every_section_version_is_its_stores_current_version() {
+    use crate::connection::config::ConnectionStore;
+    use crate::connection::settings::AppSettings;
+    use crate::embedded_servers::config::EmbeddedServerStore;
+    use crate::macros::config::MacroStore;
+    use crate::network::http_monitor_storage::HttpMonitorsFile;
+    use crate::network::tool_history::NetworkToolHistoryStore;
+    use crate::network::wol_storage::WolDevicesFile;
+    use crate::tunnel::config::TunnelStore;
+    use crate::utils::migrate::{read_version, VersionedStore};
+    use crate::workflows::config::WorkflowStore;
+    use crate::workspace::config::WorkspaceStore;
+
+    // Each store-backed section reads its store's own constant.
+    let store_versions: &[(&str, u32)] = &[
+        (
+            "connections",
+            <ConnectionStore as VersionedStore>::CURRENT_VERSION,
+        ),
+        ("settings", <AppSettings as VersionedStore>::CURRENT_VERSION),
+        (
+            "workspaces",
+            <WorkspaceStore as VersionedStore>::CURRENT_VERSION,
+        ),
+        ("macros", MacroStore::CURRENT_VERSION),
+        (
+            "workflows",
+            <WorkflowStore as VersionedStore>::CURRENT_VERSION,
+        ),
+        ("tunnels", TunnelStore::CURRENT_VERSION),
+        ("embeddedServers", EmbeddedServerStore::CURRENT_VERSION),
+        ("wolDevices", WolDevicesFile::CURRENT_VERSION),
+        ("httpMonitors", HttpMonitorsFile::CURRENT_VERSION),
+        (
+            "networkToolHistory",
+            <NetworkToolHistoryStore as VersionedStore>::CURRENT_VERSION,
+        ),
+    ];
+    for (id, store_version) in store_versions {
+        let spec = sections::spec(id).unwrap();
+        assert_eq!(spec.current_version, *store_version, "{id}");
+    }
+
+    // For every section: the store's own writer stamps the section's version,
+    // a current document is accepted as-is, and one past it is refused.
+    for spec in SECTIONS {
+        let id = spec.id;
+        let default_doc = spec.default_doc();
+        let written = read_version(&default_doc).unwrap_or(1);
+        assert_eq!(written, spec.current_version, "{id}: default document");
+
+        let normalized = spec.normalize(default_doc.clone()).unwrap();
+        assert_eq!(
+            read_version(&normalized).unwrap_or(1),
+            spec.current_version,
+            "{id}: normalized"
+        );
+
+        if default_doc.get("version").is_none() {
+            continue; // No in-file version to push past.
+        }
+        let mut newer = default_doc;
+        newer
+            .as_object_mut()
+            .unwrap()
+            .insert("version".into(), json!(newer_than_current(id)));
+        assert!(
+            matches!(
+                spec.normalize(newer),
+                Err(sections::NormalizeError::Newer { found, supported })
+                    if found == spec.current_version + 1 && supported == spec.current_version
+            ),
+            "{id}: newer"
+        );
+    }
+}
+
+/// A backup this build writes from the stores' own current documents restores
+/// on this build with every section reported as current (not "migrated").
+#[test]
+fn same_build_backup_of_default_stores_previews_ok() {
+    let src = tempfile::tempdir().unwrap();
+    for spec in SECTIONS {
+        write_doc(src.path(), spec.file_name, &spec.default_doc());
+    }
+    let ids = all_ids();
+    let ids: Vec<&str> = ids.iter().map(String::as_str).collect();
+    let json = build(src.path(), &options(&ids, true, false), None);
+    let opened = restore::open(&json, Some(PASSPHRASE)).unwrap();
+    let dst = tempfile::tempdir().unwrap();
+    let preview = restore::plan(&opened, dst.path(), no_creds);
+    assert_eq!(preview.sections.len(), SECTIONS.len());
+    for section in &preview.sections {
+        let spec = sections::spec(&section.id).unwrap();
+        assert_eq!(section.status, SectionStatus::Ok, "{}", section.id);
+        assert_eq!(
+            section.schema_version, spec.current_version,
+            "{}",
+            section.id
+        );
+    }
+}
+
+fn legacy_v1_workspaces() -> Value {
+    json!({"version": "1", "workspaces": [{"id": "w1", "name": "Dev", "tabGroups": []}]})
+}
+
+/// A store file the app has not re-saved since an upgrade (still an older
+/// schema on disk) is backed up already migrated, so this build restores its
+/// own backup as current.
+#[test]
+fn stale_store_file_is_backed_up_at_the_current_version() {
+    let src = tempfile::tempdir().unwrap();
+    write_doc(src.path(), "workspaces.json", &legacy_v1_workspaces());
+    let json = build(src.path(), &options(&["workspaces"], false, false), None);
+    let opened = restore::open(&json, None).unwrap();
+    let current = sections::spec("workspaces").unwrap().current_version;
+    assert!(current > 1);
+
+    let section = &opened.sections[0];
+    assert_eq!(section.schema_version, current);
+    assert_eq!(section.data["version"], current.to_string());
+    assert_eq!(section.data["workspaces"][0]["name"], "Dev");
+
+    let dst = tempfile::tempdir().unwrap();
+    let preview = restore::plan(&opened, dst.path(), no_creds);
+    assert_eq!(preview.sections[0].status, SectionStatus::Ok);
+}
+
+/// Migration path: a backup carrying a v1 workspace section (written by an
+/// older build) still restores on this build, migrated forward.
+#[test]
+fn v1_workspace_section_restores_migrated() {
+    let json = raw_backup(
+        vec![BackupSection {
+            id: "workspaces".into(),
+            schema_version: 1,
+            data: legacy_v1_workspaces(),
+        }],
+        BACKUP_FORMAT_VERSION,
+    );
+    let dst = tempfile::tempdir().unwrap();
+    let opened = restore::open(&json, None).unwrap();
+    let preview = restore::plan(&opened, dst.path(), no_creds);
+    assert_eq!(preview.sections[0].status, SectionStatus::Migrated);
+    assert_eq!(preview.sections[0].new_count, 1);
+
+    let req = request(vec![choice(
+        "workspaces",
+        RestoreMode::Replace,
+        ConflictStrategy::Skip,
+    )]);
+    restore_and_boot(&json, dst.path(), &req);
+    let doc = read_doc(dst.path(), "workspaces.json");
+    let current = sections::spec("workspaces").unwrap().current_version;
+    assert_eq!(doc["version"], current.to_string());
+    assert_eq!(doc["workspaces"][0]["id"], "w1");
+    assert_eq!(doc["workspaces"][0]["name"], "Dev");
 }

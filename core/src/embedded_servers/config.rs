@@ -157,10 +157,18 @@ pub struct EmbeddedServerStore {
     pub servers: Vec<EmbeddedServerConfig>,
 }
 
+impl EmbeddedServerStore {
+    /// The schema version this build reads and writes. The single source of
+    /// truth for the store's version: the default document and the unified
+    /// backup (PROD-068) both take it from here, so a bump is picked up
+    /// everywhere at once.
+    pub const CURRENT_VERSION: u32 = 1;
+}
+
 impl Default for EmbeddedServerStore {
     fn default() -> Self {
         Self {
-            version: "1".to_string(),
+            version: Self::CURRENT_VERSION.to_string(),
             servers: Vec::new(),
         }
     }
