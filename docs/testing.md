@@ -1728,8 +1728,9 @@ backend and dialogs are unit-tested; this checks the native save/open dialogs).
 4. Enter the right passphrase → **Preview** shows 1 conflict; choose **Replace
    them with the imported ones** → **Import** → success toast; connecting uses the
    exported password again.
-5. Switch to OS Keychain mode and import the same file → credentials land in
-   the OS keychain.
+5. Switch to OS Keychain mode: **Export vault…** is disabled with the "requires
+   system authentication … #3433" reason; **Import vault…** with the same file
+   works and the credentials land in the OS keychain.
 
 ### Zoomed tab repaints terminal content immediately (#1823)
 

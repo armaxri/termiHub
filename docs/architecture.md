@@ -1124,10 +1124,12 @@ file and imports such a file into the **current** store (PROD-063, `src-tauri/sr
 
 - **Export** requires re-authentication (in master-password mode the store must be unlocked and the
   master password re-entered) and an **export passphrase** entered twice (minimum 12 characters,
-  different from the master password, with a strength hint). In OS-keychain mode, credentials of
-  saved connections and agents are included (the keychain cannot be enumerated). The file is
-  written only after encryption; plaintext never reaches the disk, the logs or the clipboard, and
-  in-memory copies are zeroized.
+  different from the master password, with a strength hint). In **OS-keychain mode export is
+  refused** (backend and UI) until OS-level user authentication exists
+  ([#3433](https://github.com/armaxri/termiHub/issues/3433)) — termiHub can read its own keychain
+  items without a prompt, so there would be no re-authentication step. Import into the keychain is
+  allowed. The file is written only after encryption; plaintext never reaches the disk, the logs
+  or the clipboard, and in-memory copies are zeroized.
 - **File format** — a versioned JSON header around the standard envelope:
 
   ```json
