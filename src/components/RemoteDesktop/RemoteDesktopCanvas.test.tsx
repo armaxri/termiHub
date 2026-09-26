@@ -41,6 +41,7 @@ interface RenderOptions {
   onResize: (width: number, height: number) => void;
   onDimensions: (width: number, height: number) => void;
   onFirstFrame: () => void;
+  onReleaseAll: () => void;
 }
 
 let container: HTMLDivElement;
@@ -390,6 +391,83 @@ describe("RemoteDesktopCanvas", () => {
     expect(onInput).not.toHaveBeenCalledWith(
       expect.objectContaining({ kind: "key", code: "ShiftLeft" })
     );
+  });
+
+  describe("releases held input on focus loss (#3402)", () => {
+    function holdKeyAndButton(): void {
+      emitFrame(makeFrame(100, 50));
+      act(() => {
+        canvasEl().focus();
+        canvasEl().dispatchEvent(
+          new KeyboardEvent("keydown", { bubbles: true, code: "ShiftLeft" })
+        );
+        canvasEl().dispatchEvent(
+          new MouseEvent("mousedown", { bubbles: true, clientX: 10, clientY: 20, buttons: 1 })
+        );
+      });
+    }
+
+    it("canvas blur asks the backend to release everything instead of per-key ups", () => {
+      const onReleaseAll = vi.fn();
+      const { onInput } = render({ onReleaseAll });
+      holdKeyAndButton();
+      onInput.mockClear();
+      act(() => canvasEl().blur());
+      expect(onReleaseAll).toHaveBeenCalledTimes(1);
+      expect(onInput).not.toHaveBeenCalled();
+    });
+
+    it("window blur releases while the canvas is focused or holds input", () => {
+      const onReleaseAll = vi.fn();
+      render({ onReleaseAll });
+      holdKeyAndButton();
+      act(() => {
+        window.dispatchEvent(new FocusEvent("blur"));
+      });
+      expect(onReleaseAll).toHaveBeenCalled();
+    });
+
+    it("the document turning hidden releases held input", () => {
+      const onReleaseAll = vi.fn();
+      render({ onReleaseAll });
+      holdKeyAndButton();
+      onReleaseAll.mockClear();
+      const prev = Object.getOwnPropertyDescriptor(document, "visibilityState");
+      Object.defineProperty(document, "visibilityState", {
+        configurable: true,
+        get: () => "hidden",
+      });
+      try {
+        act(() => {
+          document.dispatchEvent(new Event("visibilitychange"));
+        });
+      } finally {
+        if (prev) Object.defineProperty(document, "visibilityState", prev);
+        else delete (document as { visibilityState?: string }).visibilityState;
+      }
+      expect(onReleaseAll).toHaveBeenCalledTimes(1);
+    });
+
+    it("an idle, unfocused canvas sends nothing on window blur", () => {
+      const onReleaseAll = vi.fn();
+      render({ onReleaseAll });
+      act(() => {
+        window.dispatchEvent(new FocusEvent("blur"));
+      });
+      expect(onReleaseAll).not.toHaveBeenCalled();
+    });
+
+    it("a view-only (evicted) canvas never sends a release", () => {
+      const onReleaseAll = vi.fn();
+      const { onInput } = render({ onReleaseAll, viewOnly: true });
+      holdKeyAndButton();
+      act(() => {
+        canvasEl().blur();
+        window.dispatchEvent(new FocusEvent("blur"));
+      });
+      expect(onReleaseAll).not.toHaveBeenCalled();
+      expect(onInput).not.toHaveBeenCalled();
+    });
   });
 
   it("requests a debounced resolution change on resize in match mode", () => {

@@ -83,8 +83,54 @@ pub(crate) async fn gated_send_input(
     if !window_controls(window_manager, session_id, window_label, GatedOp::Input) {
         return Ok(false);
     }
-    manager.send_input(session_id, event).await?;
+    manager
+        .send_input_from(session_id, Some(window_label), event)
+        .await?;
     Ok(true)
+}
+
+/// Ownership-gated release-all (#3402): synthesise key-up / button-up for
+/// everything held on the remote. Sent by the controlling window when its
+/// canvas or window loses focus. Returns the number of release events sent
+/// (0 when dropped for a non-owner, or when nothing was held).
+pub(crate) async fn gated_release_input(
+    manager: &GraphicalSessionManager,
+    window_manager: &WindowManager,
+    window_label: &str,
+    session_id: &str,
+) -> Result<usize, TerminalError> {
+    if !window_controls(window_manager, session_id, window_label, GatedOp::Input) {
+        return Ok(0);
+    }
+    manager.release_held_input(session_id, None).await
+}
+
+/// Release what the *previous* controller left held on a graphical session's
+/// remote once `new_owner` has claimed it (#3402). The evicted window can no
+/// longer send (its input is gated off), so the backend releases on its behalf;
+/// input `new_owner` itself holds is kept. A non-graphical (terminal) session id
+/// is a silent no-op. Returns the number of release events sent.
+pub(crate) async fn release_on_takeover(
+    manager: &GraphicalSessionManager,
+    session_id: &str,
+    new_owner: &str,
+) -> usize {
+    match manager
+        .release_held_input(session_id, Some(new_owner))
+        .await
+    {
+        Ok(released) => {
+            if released > 0 {
+                debug!(
+                    session_id,
+                    new_owner, released, "released held graphical input on takeover (#3402)"
+                );
+            }
+            released
+        }
+        // Not a graphical session (the claim was for a terminal): nothing held.
+        Err(_) => 0,
+    }
 }
 
 /// Ownership-gated resize. Returns whether the resize was forwarded.
@@ -232,6 +278,23 @@ pub async fn remote_desktop_send_input(
     )
     .await
     .map(|_| ())
+}
+
+/// Release every key / mouse button held on the remote (#3402).
+///
+/// Invoked by the controlling window when its canvas or window loses focus or
+/// is hidden, so a key-up the canvas never saw cannot leave a key stuck.
+/// Ownership-gated: a non-owning window cannot release the owner's input.
+#[tauri::command]
+pub async fn remote_desktop_release_input(
+    session_id: String,
+    window: tauri::WebviewWindow,
+    manager: State<'_, GraphicalSessionManager>,
+    window_manager: State<'_, WindowManager>,
+) -> Result<(), TerminalError> {
+    gated_release_input(&manager, &window_manager, window.label(), &session_id)
+        .await
+        .map(|_| ())
 }
 
 /// Push local clipboard text to the remote.
