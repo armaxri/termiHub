@@ -138,7 +138,8 @@ set "STAGE=%SOURCE%"
 
 REM The rustc termiHub releases are built with (#2549). A native plugin must be
 REM built with exactly the host's rustc and panic strategy (ABI 1.1, #3576).
-set /p RELEASE_RUSTC=<"%ROOT%\.github\rust-version"
+set "RELEASE_RUSTC="
+for /f "usebackq delims=" %%v in ("%ROOT%\.github\rust-version") do if not defined RELEASE_RUSTC set "RELEASE_RUSTC=%%v"
 if /i "!TOOLCHAIN!"=="release" set "TOOLCHAIN=!RELEASE_RUSTC!"
 set "TC="
 if defined TOOLCHAIN set "TC=+!TOOLCHAIN!"
@@ -161,8 +162,8 @@ if "%BUILD%"=="1" if exist "%SOURCE%\Cargo.toml" (
     if exist "%SOURCE%\frontend" xcopy /e /i /q "%SOURCE%\frontend" "!STAGE!\frontend" >nul
     mkdir "!STAGE!\backend"
 
-    REM Print the toolchain the backend is built with (the record the plugin
-    REM reports in its PluginInfo); warn when it is not the release rustc.
+    REM Print the toolchain the backend is built with, which is the record the
+    REM plugin reports in its PluginInfo, and warn when it is not the release rustc.
     set "BUILD_RUSTC="
     for /f "tokens=2" %%r in ('rustc !TC! -vV ^| findstr /b /c:"release:"') do set "BUILD_RUSTC=%%r"
     echo Backend toolchain: rustc !BUILD_RUSTC! -- recorded in the plugin's PluginInfo
