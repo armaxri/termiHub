@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -34,6 +35,14 @@ pub struct LastSession {
     /// which restores entirely into the main window.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub windows: Option<Vec<WorkspaceWindowDef>>,
+    /// Id of the workspace whose settings overrides (PROD-052) were active when
+    /// the session was saved, so a restart re-activates it (#3517). Stamped by
+    /// the backend from `WorkspaceManager` on every save — the frontend value is
+    /// ignored — and kept in sync when the active workspace changes or is
+    /// deleted. Absent when no workspace was active. Additive and optional, so
+    /// the schema version is unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_workspace_id: Option<String>,
     /// Unknown top-level keys, captured verbatim so an older app preserves
     /// fields a newer version added rather than dropping them on save (PER-010).
     #[serde(flatten, default)]
@@ -174,16 +183,31 @@ impl LastSessionStorage {
 }
 
 /// Manages the last-session lifecycle: load on startup, save on change, clear on demand.
+///
+/// Every write goes through `write_lock` so the layout auto-save and the
+/// active-workspace sync (#3517) cannot interleave their load/modify/write steps.
 pub struct LastSessionManager {
     storage: LastSessionStorage,
+    write_lock: Mutex<()>,
 }
 
 impl LastSessionManager {
     /// Create a manager backed by on-disk storage.
     pub fn new(app_handle: &AppHandle) -> Result<Self> {
-        Ok(Self {
-            storage: LastSessionStorage::new(app_handle)?,
-        })
+        Ok(Self::with_storage(LastSessionStorage::new(app_handle)?))
+    }
+
+    fn with_storage(storage: LastSessionStorage) -> Self {
+        Self {
+            storage,
+            write_lock: Mutex::new(()),
+        }
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, ()>> {
+        self.write_lock
+            .lock()
+            .map_err(|e| anyhow::anyhow!("last-session lock poisoned: {e}"))
     }
 
     /// Load the persisted last session, if any (never errors on corrupt data).
@@ -191,8 +215,15 @@ impl LastSessionManager {
         self.storage.load()
     }
 
-    /// Persist the given session, or clear the file when the session is empty.
+    /// Persist the given session as-is, or clear the file when it is empty.
+    /// Production saves go through [`Self::save_with_active`].
+    #[cfg(test)]
     pub fn save(&self, session: LastSession) -> Result<()> {
+        let _guard = self.lock()?;
+        self.save_unlocked(session)
+    }
+
+    fn save_unlocked(&self, session: LastSession) -> Result<()> {
         if session.is_empty() {
             self.storage.clear()
         } else {
@@ -200,8 +231,68 @@ impl LastSessionManager {
         }
     }
 
+    /// Persist `session` stamped with the currently active workspace id (#3517).
+    ///
+    /// `active` is read *inside* the write lock, so a concurrent
+    /// [`Self::set_active_workspace_id`] can never be overwritten by a stale id.
+    pub fn save_with_active(
+        &self,
+        mut session: LastSession,
+        active: impl FnOnce() -> Option<String>,
+    ) -> Result<()> {
+        let _guard = self.lock()?;
+        session.active_workspace_id = active();
+        self.save_unlocked(session)
+    }
+
+    /// Update the active workspace id recorded in the stored session (#3517).
+    ///
+    /// A no-op when no session is stored (nothing to restore, so nothing to
+    /// re-activate) or when the id is already current.
+    pub fn set_active_workspace_id(&self, id: Option<String>) -> Result<()> {
+        let _guard = self.lock()?;
+        let Some(mut session) = self.storage.load()? else {
+            return Ok(());
+        };
+        if session.active_workspace_id == id {
+            return Ok(());
+        }
+        session.active_workspace_id = id;
+        self.save_unlocked(session)
+    }
+
+    /// The active workspace id recorded in the stored session, if any.
+    pub fn active_workspace_id(&self) -> Option<String> {
+        self.storage
+            .load()
+            .ok()
+            .flatten()
+            .and_then(|s| s.active_workspace_id)
+    }
+
+    /// Re-activate the workspace recorded in the stored session (#3517).
+    ///
+    /// `activate` returns whether the workspace could be made active. A recorded
+    /// workspace that no longer exists is logged and cleared from the stored
+    /// session so it is not retried on every start. Returns the re-activated id.
+    pub fn restore_active_workspace(&self, activate: impl FnOnce(&str) -> bool) -> Option<String> {
+        let id = self.active_workspace_id()?;
+        if activate(&id) {
+            tracing::info!("Re-activated workspace {id} from the last session");
+            return Some(id);
+        }
+        tracing::warn!(
+            "Last session recorded active workspace {id}, which no longer exists; clearing it"
+        );
+        if let Err(e) = self.set_active_workspace_id(None) {
+            tracing::warn!("Failed to clear stale active workspace from last session: {e}");
+        }
+        None
+    }
+
     /// Remove the persisted last session.
     pub fn clear(&self) -> Result<()> {
+        let _guard = self.lock()?;
         self.storage.clear()
     }
 }
@@ -229,6 +320,7 @@ mod tests {
             }],
             active_group_index: 0,
             windows: None,
+            active_workspace_id: None,
             extra: Default::default(),
         }
     }
@@ -446,13 +538,14 @@ mod tests {
 
         // Saving an empty session through the manager should clear the file
         // rather than persist an empty session.
-        let manager = LastSessionManager { storage };
+        let manager = LastSessionManager::with_storage(storage);
         manager
             .save(LastSession {
                 version: "1".to_string(),
                 tab_groups: vec![],
                 active_group_index: 0,
                 windows: None,
+                active_workspace_id: None,
                 extra: Default::default(),
             })
             .unwrap();
@@ -483,5 +576,119 @@ mod tests {
             tabs[0].inline_config.as_ref().unwrap()["type"],
             "plugin:beta:k8s"
         );
+    }
+    fn test_manager(dir: &TempDir) -> LastSessionManager {
+        LastSessionManager::with_storage(create_test_storage(dir))
+    }
+
+    fn with_active(id: Option<&str>) -> LastSession {
+        LastSession {
+            active_workspace_id: id.map(str::to_string),
+            ..sample_session()
+        }
+    }
+
+    /// #3517: the backend stamps the active workspace on save, overriding
+    /// whatever the frontend sent, and it survives a simulated restart.
+    #[test]
+    fn save_with_active_stamps_id_and_survives_restart() {
+        let dir = TempDir::new().unwrap();
+        test_manager(&dir)
+            .save_with_active(with_active(Some("from-frontend")), || {
+                Some("ws-1".to_string())
+            })
+            .unwrap();
+
+        let restarted = test_manager(&dir);
+        assert_eq!(restarted.active_workspace_id().as_deref(), Some("ws-1"));
+        let raw = fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
+        assert!(raw.contains("\"activeWorkspaceId\": \"ws-1\""));
+
+        restarted
+            .save_with_active(with_active(Some("stale")), || None)
+            .unwrap();
+        assert_eq!(test_manager(&dir).active_workspace_id(), None);
+        let raw = fs::read_to_string(dir.path().join(FILE_NAME)).unwrap();
+        assert!(
+            !raw.contains("activeWorkspaceId"),
+            "absent when none active"
+        );
+    }
+
+    #[test]
+    fn legacy_session_without_active_id_loads_as_none() {
+        let json = r#"{"version":"1","tabGroups":[],"activeGroupIndex":0}"#;
+        let session: LastSession = serde_json::from_str(json).unwrap();
+        assert_eq!(session.active_workspace_id, None);
+    }
+
+    /// Activating / deleting a workspace updates the stored session in place
+    /// (tabs untouched), and is a no-op when no session is stored.
+    #[test]
+    fn set_active_workspace_id_patches_stored_session() {
+        let dir = TempDir::new().unwrap();
+        let manager = test_manager(&dir);
+        manager
+            .set_active_workspace_id(Some("ws-1".into()))
+            .unwrap();
+        assert!(
+            !dir.path().join(FILE_NAME).exists(),
+            "no session stored, nothing created"
+        );
+
+        manager.save(sample_session()).unwrap();
+        manager
+            .set_active_workspace_id(Some("ws-1".into()))
+            .unwrap();
+        let loaded = test_manager(&dir).load().unwrap().unwrap();
+        assert_eq!(loaded.active_workspace_id.as_deref(), Some("ws-1"));
+        assert_eq!(loaded.tab_groups, sample_session().tab_groups);
+
+        // Deleting the active workspace clears it.
+        manager.set_active_workspace_id(None).unwrap();
+        assert_eq!(test_manager(&dir).active_workspace_id(), None);
+    }
+
+    /// Restoring re-activates a recorded workspace that still exists.
+    #[test]
+    fn restore_active_workspace_reactivates_existing() {
+        let dir = TempDir::new().unwrap();
+        let manager = test_manager(&dir);
+        manager.save(with_active(Some("ws-1"))).unwrap();
+
+        let mut activated = None;
+        let restored = test_manager(&dir).restore_active_workspace(|id| {
+            activated = Some(id.to_string());
+            true
+        });
+        assert_eq!(restored.as_deref(), Some("ws-1"));
+        assert_eq!(activated.as_deref(), Some("ws-1"));
+        assert_eq!(manager.active_workspace_id().as_deref(), Some("ws-1"));
+    }
+
+    /// A recorded workspace that no longer exists restores with none active and
+    /// is cleared from the stored session (tabs kept).
+    #[test]
+    fn restore_active_workspace_clears_missing() {
+        let dir = TempDir::new().unwrap();
+        let manager = test_manager(&dir);
+        manager.save(with_active(Some("deleted"))).unwrap();
+
+        assert_eq!(manager.restore_active_workspace(|_| false), None);
+        let loaded = manager.load().unwrap().unwrap();
+        assert_eq!(loaded.active_workspace_id, None);
+        assert!(!loaded.tab_groups.is_empty());
+    }
+
+    #[test]
+    fn restore_active_workspace_without_session_is_noop() {
+        let dir = TempDir::new().unwrap();
+        let called = std::cell::Cell::new(false);
+        let restored = test_manager(&dir).restore_active_workspace(|_| {
+            called.set(true);
+            true
+        });
+        assert_eq!(restored, None);
+        assert!(!called.get());
     }
 }

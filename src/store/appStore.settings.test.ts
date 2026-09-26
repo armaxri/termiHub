@@ -44,7 +44,18 @@ vi.mock("@/services/api", () => ({
   sessionMonitoringClose: (sessionId: string) => mockSessionMonitoringClose(sessionId),
 }));
 
+// #3517: the active workspace is read at startup before the first theme apply.
+const mockGetActiveWorkspace = vi.fn<() => Promise<ActiveWorkspaceInfo | null>>(() =>
+  Promise.resolve(null)
+);
+vi.mock("@/services/workspaceApi", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/services/workspaceApi")>()),
+  getActiveWorkspace: () => mockGetActiveWorkspace(),
+}));
+
 import { useAppStore } from "./appStore";
+import type { ActiveWorkspaceInfo } from "@/types/workspace";
+import { setActiveWorkspaceLocal } from "@/services/workspaceSettings";
 import { layoutState, seedLayoutState } from "@/test/layoutState";
 import { currentSettingsView } from "./settingsBridge";
 import { ensureMonitorsSubscribed } from "./systemMonitorBridge";
@@ -295,6 +306,33 @@ describe("appStore — theme initialization on loadFromBackend", () => {
     await useAppStore.getState().loadFromBackend();
 
     expect(mockApplyTheme).toHaveBeenCalledWith("light");
+  });
+
+  it("applies a re-activated workspace's theme override on the FIRST apply (#3517, no flash)", async () => {
+    const { getSettings } = await import("@/services/storage");
+    vi.mocked(getSettings).mockResolvedValueOnce({
+      version: "1",
+      externalConnectionFiles: [],
+      powerMonitoringEnabled: true,
+      fileBrowserEnabled: true,
+      theme: "dark",
+    });
+    mockGetActiveWorkspace.mockResolvedValueOnce({
+      id: "ws-1",
+      name: "Prod",
+      settings: { theme: "light" },
+    });
+
+    try {
+      await useAppStore.getState().loadFromBackend();
+
+      // The global "dark" theme is never applied first.
+      expect(mockApplyTheme).toHaveBeenCalledTimes(1);
+      expect(mockApplyTheme).toHaveBeenCalledWith("light");
+      expect(useAppStore.getState().activeWorkspaceName).toBe("Prod");
+    } finally {
+      setActiveWorkspaceLocal(null);
+    }
   });
 
   it("applies undefined theme when settings have no theme field", async () => {

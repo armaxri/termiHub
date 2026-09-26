@@ -218,7 +218,7 @@ pub struct ScheduleStore {
 impl Default for ScheduleStore {
     fn default() -> Self {
         Self {
-            version: "1".to_string(),
+            version: <Self as crate::utils::migrate::VersionedStore>::CURRENT_VERSION.to_string(),
             paused: false,
             schedules: Vec::new(),
             extra: serde_json::Map::new(),

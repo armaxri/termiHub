@@ -20,8 +20,9 @@ pub struct WorkspaceManager {
     storage: WorkspaceStorage,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
     /// Id of the workspace whose settings overrides are currently in effect
-    /// (PROD-052). Runtime-only: set by the frontend when a workspace is
-    /// launched/saved and cleared when it is deleted.
+    /// (PROD-052). Set by the frontend when a workspace is launched/saved and
+    /// cleared when it is deleted. Persisted in the last session (#3517), not
+    /// here, and re-activated from it at startup.
     active_id: Mutex<Option<String>>,
 }
 
@@ -89,6 +90,11 @@ impl WorkspaceManager {
                 name: ws.name.clone(),
                 settings: ws.settings.clone(),
             })
+    }
+
+    /// Id of the active workspace, if one is active.
+    pub fn active_id(&self) -> Option<String> {
+        self.active_id.lock().ok()?.clone()
     }
 
     /// Whether `id` is the active workspace.
@@ -637,6 +643,27 @@ mod tests {
         mgr.set_active_workspace(Some("ws-1".into())).unwrap();
         mgr.delete_workspace("ws-1").unwrap();
         assert!(mgr.active_settings().is_none());
+        assert_eq!(mgr.active_id(), None);
+    }
+
+    /// #3517: the active workspace is tracked by id, so renaming it keeps it
+    /// active (and the broadcast info carries the new name), and a missing id
+    /// — e.g. one recorded by a previous run — is rejected, leaving none active.
+    #[test]
+    fn active_id_survives_rename_and_rejects_missing() {
+        let dir = TempDir::new().unwrap();
+        let mgr = create_test_manager(&dir);
+        mgr.save_workspace(sample_definition("ws-1", "A")).unwrap();
+        mgr.set_active_workspace(Some("ws-1".into())).unwrap();
+        mgr.save_workspace(sample_definition("ws-1", "Renamed"))
+            .unwrap();
+        assert_eq!(mgr.active_id().as_deref(), Some("ws-1"));
+        assert_eq!(mgr.active_workspace_info().unwrap().name, "Renamed");
+
+        let fresh = create_test_manager(&dir);
+        assert_eq!(fresh.active_id(), None, "not persisted in workspaces.json");
+        assert!(fresh.set_active_workspace(Some("gone".into())).is_err());
+        assert_eq!(fresh.active_id(), None);
     }
 
     #[test]

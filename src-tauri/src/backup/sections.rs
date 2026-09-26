@@ -13,12 +13,16 @@ use std::path::Path;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use serde_json::Value;
+use zeroize::Zeroizing;
 
 use crate::connection::config::{ConnectionStore, SavedRemoteAgent};
 use crate::connection::settings::AppSettings;
 use crate::connection::tree::{build_tree, flatten_tree};
+use crate::credential::types::CredentialKey;
 use crate::credential::vault::ConflictStrategy;
 use crate::embedded_servers::config::EmbeddedServerStore;
+use crate::embedded_servers::secrets::{credential_key, take_passwords};
+use crate::embedded_servers::storage::remove_password_keys;
 use crate::macros::config::MacroStore;
 use crate::network::http_monitor_storage::HttpMonitorsFile;
 use crate::network::tool_history::NetworkToolHistoryStore;
@@ -28,6 +32,9 @@ use crate::tunnel::config::TunnelStore;
 use crate::utils::migrate::{load_versioned, read_version, LoadOutcome, VersionedStore};
 use crate::workflows::config::WorkflowStore;
 use crate::workspace::config::WorkspaceStore;
+
+use super::trust_map::{fingerprints_covered, normalize_trust_map};
+pub use super::trust_map::{trust_conflicts, TRUST_STORE_SCHEMA_VERSION};
 
 /// How a section's items are laid out, which drives counting and merging.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +47,13 @@ pub enum Shape {
     /// `settings.json`: one object; replace only. The machine's own
     /// credential-storage keys are always preserved (see [`LOCAL_SETTINGS_KEYS`]).
     Settings,
+    /// A host-key trust store (`ssh_known_hosts.json`, `rdp_known_hosts.json`):
+    /// one object mapping `host:port` to the list of trusted fingerprints,
+    /// merged by host. A host that is already trusted here **always keeps its
+    /// current fingerprints** on a merge — a backup can never add or swap a key
+    /// for a known host (that would be exactly a man-in-the-middle injection);
+    /// only Replace adopts the backup's keys wholesale.
+    TrustMap,
 }
 
 /// Why a section's data cannot be used.
@@ -81,11 +95,22 @@ pub struct SectionSpec {
     /// store's version bump reaches the backup automatically.
     pub current_version: u32,
     pub shape: Shape,
-    /// The store holds secrets in its own file (e.g. embedded-server
-    /// passwords), so it is only exported inside an encrypted backup.
+    /// The store holds secrets in its own file, so it is only exported inside
+    /// an encrypted backup. (No store does today: connection and — since #3514
+    /// — embedded-server passwords live in the credential store and travel in
+    /// the credentials section.)
     pub contains_secrets: bool,
+    /// The store holds **trust decisions** (trusted host keys) whose integrity
+    /// matters: an injected entry could enable a man-in-the-middle. It is only
+    /// exported inside an encrypted backup and only restored from one (the
+    /// AES-GCM envelope authenticates the whole contents).
+    pub integrity_sensitive: bool,
     /// Validate + migrate a document to the current schema.
     normalize: fn(Value) -> Result<Value, NormalizeError>,
+    /// Read the plaintext passwords an older schema of this store kept in its
+    /// own file (see [`LegacySecret`]). [`Self::normalize`] strips them; a
+    /// restore moves them into the credential store instead.
+    pub legacy_secrets: Option<fn(&Value) -> Vec<LegacySecret>>,
     /// The store's empty default document.
     default_doc: fn() -> Value,
 }
@@ -105,6 +130,57 @@ impl SectionSpec {
     /// Whether [`RestoreMode::Merge`](super::RestoreMode::Merge) is available.
     pub fn supports_merge(&self) -> bool {
         !matches!(self.shape, Shape::Settings)
+    }
+
+    /// Whether the section may only be exported in (and restored from) an
+    /// encrypted backup.
+    pub fn requires_encryption(&self) -> bool {
+        self.contains_secrets || self.integrity_sensitive
+    }
+
+    /// Whether a merge conflict always keeps the current item, ignoring the
+    /// chosen conflict strategy (trust stores — see [`Shape::TrustMap`]).
+    pub fn conflicts_keep_existing(&self) -> bool {
+        self.shape == Shape::TrustMap
+    }
+
+    /// Validate and migrate one backup section. On top of the store's own
+    /// version gate ([`Self::normalize`]), the section's recorded
+    /// `schema_version` must not be newer than this build — this is the only
+    /// version a store without an in-file `version` field (the trust stores)
+    /// carries.
+    pub fn normalize_section(
+        &self,
+        section: &super::BackupSection,
+    ) -> Result<Value, NormalizeError> {
+        if section.schema_version > self.current_version {
+            return Err(NormalizeError::Newer {
+                found: section.schema_version,
+                supported: self.current_version,
+            });
+        }
+        self.normalize(section.data.clone())
+    }
+}
+
+/// A password an older store schema kept in plaintext in its own file (e.g.
+/// `embedded_servers.json` v1, before #3514). It is never written back to a
+/// file: a backup leaves it out and a restore moves it into the credential
+/// store.
+pub struct LegacySecret {
+    /// The id of the store item (e.g. the embedded server) that owns it.
+    pub item_id: String,
+    /// Where the credential store keeps it.
+    pub key: CredentialKey,
+    pub value: Zeroizing<String>,
+}
+
+impl LegacySecret {
+    /// The legacy secrets in a (raw, not yet normalized) section document.
+    pub fn read(spec: &SectionSpec, doc: &Value) -> Vec<LegacySecret> {
+        spec.legacy_secrets
+            .map(|read| read(doc))
+            .unwrap_or_default()
     }
 }
 
@@ -234,6 +310,42 @@ fn normalize_connections(data: Value) -> Result<Value, NormalizeError> {
     Ok(doc)
 }
 
+/// `embedded_servers.json`: v1 files may carry plaintext FTP / HTTP Basic
+/// passwords; v2 (#3514) keeps them in the credential store. Migrating a
+/// document forward is exactly removing them — the same `password` keys the
+/// store's own writer removes — so the result is always a v2 document. The
+/// passwords themselves are read separately ([`embedded_server_secrets`]).
+fn normalize_embedded_servers(data: Value) -> Result<Value, NormalizeError> {
+    let mut doc = normalize_plain::<EmbeddedServerStore>(data)?;
+    remove_password_keys(&mut doc);
+    if let Some(obj) = doc.as_object_mut() {
+        obj.insert(
+            "version".to_string(),
+            Value::String(EmbeddedServerStore::CURRENT_VERSION.to_string()),
+        );
+    }
+    Ok(doc)
+}
+
+/// The plaintext passwords in a (v1) `embedded_servers.json` document, keyed
+/// as the embedded-server manager keeps them in the credential store.
+fn embedded_server_secrets(doc: &Value) -> Vec<LegacySecret> {
+    let Ok(mut store) = serde_json::from_value::<EmbeddedServerStore>(doc.clone()) else {
+        return Vec::new();
+    };
+    let mut secrets = Vec::new();
+    for config in &mut store.servers {
+        for (slot, value) in take_passwords(config) {
+            secrets.push(LegacySecret {
+                item_id: config.id.clone(),
+                key: credential_key(&config.id, slot),
+                value,
+            });
+        }
+    }
+    secrets
+}
+
 /// Every section a backup can carry, in display order.
 pub static SECTIONS: &[SectionSpec] = &[
     SectionSpec {
@@ -244,7 +356,9 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <ConnectionStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::Connections,
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_connections,
+        legacy_secrets: None,
         default_doc: || to_doc(&ConnectionStore::default()),
     },
     SectionSpec {
@@ -255,7 +369,9 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <AppSettings as VersionedStore>::CURRENT_VERSION,
         shape: Shape::Settings,
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<AppSettings>,
+        legacy_secrets: None,
         default_doc: || to_doc(&AppSettings::default()),
     },
     SectionSpec {
@@ -268,7 +384,9 @@ pub static SECTIONS: &[SectionSpec] = &[
             field: "workspaces",
         },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<WorkspaceStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&WorkspaceStore::default()),
     },
     SectionSpec {
@@ -279,7 +397,9 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: MacroStore::CURRENT_VERSION,
         shape: Shape::List { field: "macros" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_plain::<MacroStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&MacroStore::default()),
     },
     SectionSpec {
@@ -290,7 +410,9 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <WorkflowStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "workflows" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<WorkflowStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&WorkflowStore::default()),
     },
     SectionSpec {
@@ -301,7 +423,9 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <ScheduleStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "schedules" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<ScheduleStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&ScheduleStore::default()),
     },
     SectionSpec {
@@ -312,18 +436,23 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: TunnelStore::CURRENT_VERSION,
         shape: Shape::List { field: "tunnels" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_plain::<TunnelStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&TunnelStore::default()),
     },
     SectionSpec {
         id: "embeddedServers",
         label: "Embedded servers",
-        description: "Embedded HTTP/FTP/TFTP server definitions (includes their passwords).",
+        description:
+            "Embedded HTTP/FTP/TFTP server definitions (passwords are in the credentials).",
         file_name: "embedded_servers.json",
         current_version: EmbeddedServerStore::CURRENT_VERSION,
         shape: Shape::List { field: "servers" },
-        contains_secrets: true,
-        normalize: normalize_plain::<EmbeddedServerStore>,
+        contains_secrets: false,
+        integrity_sensitive: false,
+        normalize: normalize_embedded_servers,
+        legacy_secrets: Some(embedded_server_secrets),
         default_doc: || to_doc(&EmbeddedServerStore::default()),
     },
     SectionSpec {
@@ -334,7 +463,9 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: WolDevicesFile::CURRENT_VERSION,
         shape: Shape::List { field: "devices" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_plain::<WolDevicesFile>,
+        legacy_secrets: None,
         default_doc: || to_doc(&WolDevicesFile::default()),
     },
     SectionSpec {
@@ -345,7 +476,9 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: HttpMonitorsFile::CURRENT_VERSION,
         shape: Shape::List { field: "monitors" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_plain::<HttpMonitorsFile>,
+        legacy_secrets: None,
         default_doc: || to_doc(&HttpMonitorsFile::default()),
     },
     SectionSpec {
@@ -356,8 +489,36 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <NetworkToolHistoryStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "runs" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<NetworkToolHistoryStore>,
+        legacy_secrets: None,
         default_doc: || to_doc(&NetworkToolHistoryStore::default()),
+    },
+    SectionSpec {
+        id: "sshKnownHosts",
+        label: "Trusted SSH host keys",
+        description: "SSH host keys you chose to trust (only in an encrypted backup).",
+        file_name: "ssh_known_hosts.json",
+        current_version: TRUST_STORE_SCHEMA_VERSION,
+        shape: Shape::TrustMap,
+        contains_secrets: false,
+        integrity_sensitive: true,
+        normalize: normalize_trust_map,
+        legacy_secrets: None,
+        default_doc: || Value::Object(serde_json::Map::new()),
+    },
+    SectionSpec {
+        id: "rdpKnownHosts",
+        label: "Trusted RDP certificates",
+        description: "RDP server certificates you chose to trust (only in an encrypted backup).",
+        file_name: "rdp_known_hosts.json",
+        current_version: TRUST_STORE_SCHEMA_VERSION,
+        shape: Shape::TrustMap,
+        contains_secrets: false,
+        integrity_sensitive: true,
+        normalize: normalize_trust_map,
+        legacy_secrets: None,
+        default_doc: || Value::Object(serde_json::Map::new()),
     },
 ];
 
@@ -377,6 +538,10 @@ pub fn spec_for_file(file_name: &str) -> Option<&'static SectionSpec> {
 pub fn keyed_items(spec: &SectionSpec, doc: &Value) -> Result<Vec<(String, Value)>, String> {
     match spec.shape {
         Shape::Settings => Ok(Vec::new()),
+        Shape::TrustMap => match doc {
+            Value::Object(map) => Ok(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
+            _ => Err("expected a JSON object".to_string()),
+        },
         Shape::List { field } => {
             let items = match doc.get(field) {
                 Some(Value::Array(items)) => items,
@@ -438,6 +603,12 @@ pub fn compare(spec: &SectionSpec, backup: &Value, current: &Value) -> Result<Co
         match current_items.get(id) {
             None => cmp.new_count += 1,
             Some(existing) if existing == item => cmp.unchanged_count += 1,
+            // A trust-store host whose backup keys are all trusted here already.
+            Some(existing)
+                if spec.shape == Shape::TrustMap && fingerprints_covered(item, existing) =>
+            {
+                cmp.unchanged_count += 1
+            }
             Some(_) => cmp.conflict_count += 1,
         }
     }
@@ -473,6 +644,20 @@ pub fn merge(
 ) -> Result<Value, String> {
     match spec.shape {
         Shape::Settings => Err(format!("{} can only be replaced, not merged", spec.label)),
+        Shape::TrustMap => {
+            // Union by host; a host trusted here keeps exactly its current keys
+            // whatever the strategy (see `Shape::TrustMap`).
+            let Value::Object(mut merged) = current else {
+                return Err("expected a JSON object".to_string());
+            };
+            let Value::Object(backup) = backup else {
+                return Err("expected a JSON object".to_string());
+            };
+            for (host, fps) in backup {
+                merged.entry(host.clone()).or_insert_with(|| fps.clone());
+            }
+            Ok(Value::Object(merged))
+        }
         Shape::List { field } => {
             let mut doc = current;
             let current_list = match doc.get(field) {
@@ -565,4 +750,20 @@ pub fn read_current(spec: &SectionSpec, config_dir: &Path) -> CurrentDoc {
         Err(NormalizeError::Newer { found, supported }) => CurrentDoc::Newer { found, supported },
         Err(NormalizeError::Invalid(detail)) => CurrentDoc::Unreadable(detail),
     }
+}
+
+/// The legacy plaintext passwords still in a section's current store file
+/// (e.g. embedded-server passwords whose move into a locked credential store
+/// is pending, #3514). Empty when the file is missing or unreadable.
+pub fn read_current_legacy_secrets(spec: &SectionSpec, config_dir: &Path) -> Vec<LegacySecret> {
+    if spec.legacy_secrets.is_none() {
+        return Vec::new();
+    }
+    let Ok(raw) = std::fs::read_to_string(config_dir.join(spec.file_name)) else {
+        return Vec::new();
+    };
+    let raw = Zeroizing::new(raw);
+    serde_json::from_str::<Value>(&raw)
+        .map(|doc| LegacySecret::read(spec, &doc))
+        .unwrap_or_default()
 }

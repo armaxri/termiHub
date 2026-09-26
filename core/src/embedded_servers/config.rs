@@ -16,11 +16,42 @@ pub enum ServerType {
 }
 
 /// Authentication configuration for FTP servers.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// The `password` is only carried in memory and over IPC / the agent RPC: the
+/// desktop keeps it in the credential store and never writes it to
+/// `embedded_servers.json` (#3514). It is `#[serde(default)]` so a persisted
+/// config — which omits it — still parses. `Debug` redacts it.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum FtpAuth {
     Anonymous,
-    Credentials { username: String, password: String },
+    Credentials {
+        username: String,
+        #[serde(default)]
+        password: String,
+    },
+}
+
+impl std::fmt::Debug for FtpAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FtpAuth::Anonymous => f.write_str("Anonymous"),
+            FtpAuth::Credentials { username, password } => f
+                .debug_struct("Credentials")
+                .field("username", username)
+                .field("password", &redacted(password))
+                .finish(),
+        }
+    }
+}
+
+/// Placeholder printed instead of a secret by the redacting `Debug` impls.
+fn redacted(secret: &str) -> &'static str {
+    if secret.is_empty() {
+        "<empty>"
+    } else {
+        "<redacted>"
+    }
 }
 
 /// Optional HTTP Basic authentication credentials for an embedded HTTP server
@@ -31,11 +62,24 @@ pub enum FtpAuth {
 /// `WWW-Authenticate: Basic` until a matching `Authorization: Basic` header is
 /// supplied. Absent (`http_auth: None`) the server serves unauthenticated,
 /// exactly as before this field existed.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+///
+/// Like [`FtpAuth`], the `password` lives in the desktop's credential store and
+/// is never persisted to `embedded_servers.json` (#3514); `Debug` redacts it.
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct HttpBasicAuth {
     pub username: String,
+    #[serde(default)]
     pub password: String,
+}
+
+impl std::fmt::Debug for HttpBasicAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HttpBasicAuth")
+            .field("username", &self.username)
+            .field("password", &redacted(&self.password))
+            .finish()
+    }
 }
 
 /// Configuration for a single embedded server.
@@ -162,7 +206,14 @@ impl EmbeddedServerStore {
     /// truth for the store's version: the default document and the unified
     /// backup (PROD-068) both take it from here, so a bump is picked up
     /// everywhere at once.
-    pub const CURRENT_VERSION: u32 = 1;
+    ///
+    /// Version 2 (#3514): FTP / HTTP Basic passwords are kept in the credential
+    /// store and never written to the file.
+    pub const CURRENT_VERSION: u32 = 2;
+
+    /// The schema version whose files may still carry plaintext FTP / HTTP
+    /// Basic passwords (before #3514).
+    pub const LEGACY_PLAINTEXT_VERSION: u32 = 1;
 }
 
 impl Default for EmbeddedServerStore {
@@ -267,8 +318,44 @@ mod tests {
     #[test]
     fn server_store_default_is_empty() {
         let store = EmbeddedServerStore::default();
-        assert_eq!(store.version, "1");
+        assert_eq!(
+            store.version,
+            EmbeddedServerStore::CURRENT_VERSION.to_string()
+        );
         assert!(store.servers.is_empty());
+    }
+
+    /// A persisted (#3514) config omits the password; it must still parse, with
+    /// an empty password the desktop fills from the credential store.
+    #[test]
+    fn auth_without_password_field_parses_as_empty() {
+        let ftp: FtpAuth =
+            serde_json::from_str(r#"{"type":"credentials","username":"admin"}"#).unwrap();
+        assert_eq!(
+            ftp,
+            FtpAuth::Credentials {
+                username: "admin".to_string(),
+                password: String::new(),
+            }
+        );
+        let http: HttpBasicAuth = serde_json::from_str(r#"{"username":"u"}"#).unwrap();
+        assert_eq!(http.password, "");
+    }
+
+    /// `Debug` must never print a password (it reaches tracing via `?config`).
+    #[test]
+    fn debug_redacts_passwords() {
+        let ftp = FtpAuth::Credentials {
+            username: "admin".to_string(),
+            password: "hunter2".to_string(),
+        };
+        let http = HttpBasicAuth {
+            username: "u".to_string(),
+            password: "s3cret".to_string(),
+        };
+        let out = format!("{ftp:?} {http:?}");
+        assert!(!out.contains("hunter2") && !out.contains("s3cret"), "{out}");
+        assert!(out.contains("admin") && out.contains("<redacted>"), "{out}");
     }
 
     #[test]

@@ -30,7 +30,12 @@ export function sectionSummary(section: BackupSectionPreview): string {
 export function BackupSectionRow({ section, choice, restorable, onChange }: BackupSectionRowProps) {
   const id = `backup-restore-${section.id}`;
   const included = restorable && (choice?.include ?? false);
-  const showConflicts = included && choice?.mode === "merge" && section.conflictCount > 0;
+  // Trust stores always keep the current keys on a conflict: no choice to offer.
+  const showConflicts =
+    included &&
+    choice?.mode === "merge" &&
+    section.conflictCount > 0 &&
+    !section.conflictsKeepExisting;
   return (
     <li className="backup-restore__row" data-testid={`backup-restore-section-${section.id}`}>
       <Checkbox
@@ -49,6 +54,16 @@ export function BackupSectionRow({ section, choice, restorable, onChange }: Back
               ` · upgraded from format v${section.schemaVersion} to v${section.supportedVersion}`}
           </span>
         </label>
+        {restorable &&
+          section.notes.map((note) => (
+            <p
+              key={note}
+              className="backup-restore__detail"
+              data-testid={`backup-restore-note-${section.id}`}
+            >
+              {note}
+            </p>
+          ))}
         {included && (
           <div className="backup-restore__controls">
             <Select

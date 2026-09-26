@@ -40,4 +40,14 @@ conflictCount: number,
 /**
  * Backup items identical to the current store.
  */
-unchangedCount: number, };
+unchangedCount: number, 
+/**
+ * A merge always keeps the current item on a conflict, whatever strategy
+ * is chosen (trust stores: a backup never replaces a trusted key).
+ */
+conflictsKeepExisting: boolean, 
+/**
+ * Things the user should know before restoring this section (kept
+ * conflicts, plugins that come back turned off, …).
+ */
+notes: Array<string>, };

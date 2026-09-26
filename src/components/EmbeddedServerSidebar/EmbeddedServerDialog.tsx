@@ -203,6 +203,13 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
     password: "",
   };
 
+  // Saved passwords live in the credential store and are never sent back to the
+  // UI (#3514): when editing a server that already has one, a blank field keeps it.
+  const savedPasswordHint = "Saved \u2014 leave blank to keep";
+  const ftpPasswordPlaceholder =
+    config?.ftpAuth?.type === "credentials" ? savedPasswordHint : undefined;
+  const httpPasswordPlaceholder = config?.httpAuth ? savedPasswordHint : undefined;
+
   return (
     <>
       {/* LAN exposure warning */}
@@ -444,6 +451,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                     <PasswordInput
                       className="server-dialog__input"
                       value={httpCreds.password}
+                      placeholder={httpPasswordPlaceholder}
                       onChange={(e) =>
                         setValue("httpAuth", {
                           username: httpCreds.username,
@@ -512,6 +520,7 @@ export function EmbeddedServerDialog({ open, onOpenChange, config, onSave }: Pro
                     <PasswordInput
                       className="server-dialog__input"
                       value={ftpCreds.password}
+                      placeholder={ftpPasswordPlaceholder}
                       onChange={(e) => {
                         const p = e.target.value;
                         setValue("ftpAuth", {

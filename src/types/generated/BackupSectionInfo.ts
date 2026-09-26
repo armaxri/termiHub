@@ -9,6 +9,11 @@ export type BackupSectionInfo = { id: string, label: string, description: string
  */
 containsSecrets: boolean, 
 /**
+ * The section is only exported in an encrypted backup — it holds secrets
+ * or trust decisions (host keys, plugins).
+ */
+requiresEncryption: boolean, 
+/**
  * The store file exists on this machine (there is something to back up).
  */
 present: boolean, 

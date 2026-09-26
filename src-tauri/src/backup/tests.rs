@@ -14,9 +14,9 @@ use crate::credential::types::{CredentialKey, CredentialType, StorageMode};
 use crate::credential::vault::{self, ConflictStrategy, VaultError, VaultSecret};
 use crate::credential::{CredentialManager, CredentialStore, CredentialStoreStatus};
 
-const PASSPHRASE: &str = "correct horse battery staple";
+pub(super) const PASSPHRASE: &str = "correct horse battery staple";
 const CRED_SECRET: &str = "sentinel-credential-7f3c";
-const SERVER_SECRET: &str = "sentinel-ftp-password-19ad";
+pub(super) const SERVER_SECRET: &str = "sentinel-ftp-password-19ad";
 const HOST_MARKER: &str = "sentinel-host.example";
 
 // --- fixtures ---
@@ -86,7 +86,7 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
         ),
         (
             "workspaces.json",
-            json!({"version": "1", "workspaces": [{"id": "w1", "name": "Dev", "tabGroups": []}]}),
+            json!({"version": "2", "workspaces": [{"id": "w1", "name": "Dev", "tabGroups": []}]}),
         ),
         (
             "macros.json",
@@ -103,10 +103,12 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
         ("tunnels.json", json!({"version": "1", "tunnels": []})),
         (
             "embedded_servers.json",
-            json!({"version": "1", "servers": [{
+            // Passwords live in the credential store (#3514); legacy plaintext
+            // is covered by `tests_embedded_servers`.
+            json!({"version": "2", "servers": [{
                 "id": "s1", "name": "FTP", "serverType": "ftp", "rootDirectory": "/tmp",
                 "bindHost": "127.0.0.1", "port": 2121,
-                "ftpAuth": {"type": "credentials", "username": "u", "password": SERVER_SECRET}
+                "ftpAuth": {"type": "credentials", "username": "u"}
             }]}),
         ),
         (
@@ -123,10 +125,18 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
             "network-tool-history.json",
             json!({"version": "1", "runs": []}),
         ),
+        (
+            "ssh_known_hosts.json",
+            json!({"server.example:22": ["SHA256:AAAA", "SHA256:BBBB"]}),
+        ),
+        (
+            "rdp_known_hosts.json",
+            json!({"desk.example:3389": ["sha256:11:22"]}),
+        ),
     ]
 }
 
-fn write_doc(dir: &Path, file: &str, doc: &Value) {
+pub(super) fn write_doc(dir: &Path, file: &str, doc: &Value) {
     std::fs::write(dir.join(file), serde_json::to_string_pretty(doc).unwrap()).unwrap();
 }
 
@@ -136,7 +146,7 @@ fn populate(dir: &Path) {
     }
 }
 
-fn read_doc(dir: &Path, file: &str) -> Value {
+pub(super) fn read_doc(dir: &Path, file: &str) -> Value {
     serde_json::from_str(&std::fs::read_to_string(dir.join(file)).unwrap()).unwrap()
 }
 
@@ -144,7 +154,11 @@ fn all_ids() -> Vec<String> {
     SECTIONS.iter().map(|s| s.id.to_string()).collect()
 }
 
-fn options(ids: &[&str], encrypt: bool, include_credentials: bool) -> BackupExportOptions {
+pub(super) fn options(
+    ids: &[&str],
+    encrypt: bool,
+    include_credentials: bool,
+) -> BackupExportOptions {
     BackupExportOptions {
         sections: ids.iter().map(|s| s.to_string()).collect(),
         include_credentials,
@@ -162,10 +176,14 @@ fn build(dir: &Path, opts: &BackupExportOptions, creds: Option<vault::VaultExpor
         "0.0.0-test".into(),
     )
     .unwrap()
-    .0
+    .json
 }
 
-fn choice(id: &str, mode: RestoreMode, conflicts: ConflictStrategy) -> SectionRestoreChoice {
+pub(super) fn choice(
+    id: &str,
+    mode: RestoreMode,
+    conflicts: ConflictStrategy,
+) -> SectionRestoreChoice {
     SectionRestoreChoice {
         id: id.into(),
         mode,
@@ -173,18 +191,22 @@ fn choice(id: &str, mode: RestoreMode, conflicts: ConflictStrategy) -> SectionRe
     }
 }
 
-fn request(sections: Vec<SectionRestoreChoice>) -> BackupRestoreRequest {
+pub(super) fn request(sections: Vec<SectionRestoreChoice>) -> BackupRestoreRequest {
     BackupRestoreRequest {
         sections,
         credentials: None,
     }
 }
 
-fn no_creds(_: &vault::OpenedVault) -> BackupCredentialsPreview {
+pub(super) fn no_creds(_: &vault::OpenedVault) -> BackupCredentialsPreview {
     unreachable!("backup has no credentials")
 }
 
-fn restore_and_boot(json: &str, dir: &Path, req: &BackupRestoreRequest) -> BackupRestoreResult {
+pub(super) fn restore_and_boot(
+    json: &str,
+    dir: &Path,
+    req: &BackupRestoreRequest,
+) -> BackupRestoreResult {
     let opened = restore::open(json, Some(PASSPHRASE)).unwrap();
     let result = restore::apply(&opened, dir, req, None).unwrap();
     assert!(apply_pending_restore(dir).is_none());
@@ -204,7 +226,7 @@ fn sealed_vault(entries: &[(&str, &str)]) -> vault::VaultExportFile {
     vault::seal(&secrets, PASSPHRASE, "2026-09-26T00:00:00+00:00".into()).unwrap()
 }
 
-fn mp_manager(dir: &Path) -> CredentialManager {
+pub(super) fn mp_manager(dir: &Path) -> CredentialManager {
     let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.to_path_buf());
     mgr.with_master_password_store(|s| s.setup("master-pw"))
         .unwrap()
@@ -212,7 +234,7 @@ fn mp_manager(dir: &Path) -> CredentialManager {
     mgr
 }
 
-fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+pub(super) fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir).unwrap() {
         let path = entry.unwrap().path();
@@ -225,7 +247,7 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
     out
 }
 
-fn assert_not_on_disk(dir: &Path, needle: &str) {
+pub(super) fn assert_not_on_disk(dir: &Path, needle: &str) {
     for path in walk(dir) {
         let text = String::from_utf8_lossy(&std::fs::read(&path).unwrap()).to_string();
         assert!(
@@ -292,12 +314,12 @@ fn round_trip_every_section_encrypted() {
 }
 
 #[test]
-fn unencrypted_backup_refuses_secret_sections_and_needs_no_passphrase() {
+fn unencrypted_backup_refuses_encryption_only_sections_and_needs_no_passphrase() {
     let src = tempfile::tempdir().unwrap();
     populate(src.path());
     let err = export::build(
         src.path(),
-        &options(&["embeddedServers"], false, false),
+        &options(&["sshKnownHosts"], false, false),
         None,
         None,
         "t".into(),
@@ -306,7 +328,11 @@ fn unencrypted_backup_refuses_secret_sections_and_needs_no_passphrase() {
     .unwrap_err();
     assert!(matches!(err, VaultError::WeakPassphrase { .. }));
 
-    let (json, written) = export::build(
+    let export::BuiltBackup {
+        json,
+        sections: written,
+        ..
+    } = export::build(
         src.path(),
         &options(&["macros", "connections"], false, false),
         None,
@@ -325,7 +351,7 @@ fn unencrypted_backup_refuses_secret_sections_and_needs_no_passphrase() {
 fn missing_store_files_are_skipped_on_export() {
     let src = tempfile::tempdir().unwrap();
     write_doc(src.path(), "macros.json", &macros_doc(&[("m1", "A")]));
-    let (_, written) = export::build(
+    let written = export::build(
         src.path(),
         &options(&["macros", "tunnels"], true, false),
         Some(PASSPHRASE),
@@ -333,7 +359,8 @@ fn missing_store_files_are_skipped_on_export() {
         "t".into(),
         "v".into(),
     )
-    .unwrap();
+    .unwrap()
+    .sections;
     assert_eq!(written, vec!["macros"]);
     let infos = export::section_infos(src.path());
     let macros = infos.iter().find(|i| i.id == "macros").unwrap();
@@ -348,7 +375,7 @@ fn connection_passwords_are_never_backed_up() {
     doc["children"][1]["config"]["config"]["password"] = json!("leaked-pw");
     doc["agents"][0]["config"]["password"] = json!("leaked-agent-pw");
     write_doc(src.path(), "connections.json", &doc);
-    let (json, _) = export::build(
+    let json = export::build(
         src.path(),
         &options(&["connections"], false, false),
         None,
@@ -356,7 +383,8 @@ fn connection_passwords_are_never_backed_up() {
         "t".into(),
         "v".into(),
     )
-    .unwrap();
+    .unwrap()
+    .json;
     assert!(!json.contains("leaked-pw") && !json.contains("leaked-agent-pw"));
 }
 
@@ -575,7 +603,7 @@ fn settings_replace_preserves_local_credential_storage() {
 // --- versioning ---
 
 /// Hand-build an unencrypted backup containing the given sections.
-fn raw_backup(sections: Vec<BackupSection>, format_version: u32) -> String {
+pub(super) fn raw_backup(sections: Vec<BackupSection>, format_version: u32) -> String {
     let contents = BackupContents {
         format: BACKUP_FORMAT_ID.into(),
         format_version,

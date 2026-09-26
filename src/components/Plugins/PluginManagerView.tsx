@@ -2,7 +2,7 @@ import { useCallback, useState } from "react";
 import { CircleArrowUp, FileUp, RefreshCw } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
-import { assessPluginTrust, validatePlugin } from "@/services/api";
+import { assessPluginTrust, previewPlugin } from "@/services/api";
 import type { InstalledPlugin, PluginManifest, PluginTrustInfo } from "@/types/plugin";
 import { Button, SearchInput, StatusDot, toast } from "@/components/ui";
 import { useListFilter, type ListFilterMatcher } from "@/hooks/useListFilter";
@@ -22,6 +22,10 @@ interface PendingInstall {
   filePath: string;
   manifest: PluginManifest;
   trust: PluginTrustInfo;
+  /** This computer's target triple (PLG-011, #3507). */
+  hostPlatform: string;
+  /** Whether the package ships a native library for this computer. */
+  platformSupported: boolean;
 }
 
 /**
@@ -93,12 +97,13 @@ export function PluginManagerView() {
 
     const toastId = toast.loading("Validating plugin…");
     try {
-      const [manifest, trust] = await Promise.all([
-        validatePlugin(filePath),
+      const [preview, trust] = await Promise.all([
+        previewPlugin(filePath),
         assessPluginTrust(filePath),
       ]);
+      const { manifest, hostPlatform, platformSupported } = preview;
       toast.dismiss(toastId);
-      setPending({ filePath, manifest, trust });
+      setPending({ filePath, manifest, trust, hostPlatform, platformSupported });
     } catch (err) {
       toast.error(`Invalid plugin package: ${errorMessage(err)}`, {
         id: toastId,
@@ -196,6 +201,8 @@ export function PluginManagerView() {
           filePath={pending.filePath}
           manifest={pending.manifest}
           trust={pending.trust}
+          hostPlatform={pending.hostPlatform}
+          platformSupported={pending.platformSupported}
           onClose={() => setPending(null)}
         />
       )}

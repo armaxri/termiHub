@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use tauri::AppHandle;
 
 use super::config::{EmbeddedServerConfig, EmbeddedServerStore};
+use super::secrets::strip_store;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
 use crate::utils::fs::write_atomic;
@@ -27,6 +28,12 @@ impl EmbeddedServerStorage {
         Ok(Self {
             file_path: config_dir.join(FILE_NAME),
         })
+    }
+
+    /// Storage backed by an explicit file path (tests only).
+    #[cfg(test)]
+    pub(crate) fn at_path(file_path: PathBuf) -> Self {
+        Self { file_path }
     }
 
     /// Load with recovery: on parse failure, back up the corrupt file and reset to defaults.
@@ -65,7 +72,10 @@ impl EmbeddedServerStorage {
         } = salvage_list_store::<EmbeddedServerStore, EmbeddedServerConfig>(
             &data, FILE_NAME, "servers",
         ) {
-            self.save(&store)
+            // Verbatim: the salvaged entries may still carry legacy plaintext
+            // passwords the manager has yet to migrate into the credential store
+            // (#3514); stripping them here would lose the only copy.
+            self.save_verbatim(&store)
                 .context("Failed to save salvaged embedded servers")?;
             return Ok(RecoveryResult {
                 data: store,
@@ -100,11 +110,52 @@ impl EmbeddedServerStorage {
     /// leaves `embedded_servers.json` holding either the complete previous
     /// contents or the complete new contents, never a truncated mix that the
     /// recovery path would discard as corrupt (#2320 torn-write class, #2327).
+    ///
+    /// Every password is stripped and the current schema version stamped: the
+    /// passwords live in the credential store (#3514). This is enforced here,
+    /// independently of the manager, so no save path can leak one to disk.
     pub fn save(&self, store: &EmbeddedServerStore) -> Result<()> {
+        let mut stripped = store.clone();
+        strip_store(&mut stripped);
+        stripped.version = EmbeddedServerStore::CURRENT_VERSION.to_string();
+        let mut value =
+            serde_json::to_value(&stripped).context("Failed to serialize embedded servers")?;
+        remove_password_keys(&mut value);
+        let data =
+            serde_json::to_string_pretty(&value).context("Failed to serialize embedded servers")?;
+        write_atomic(&self.file_path, &data).context("Failed to write embedded servers file")?;
+        Ok(())
+    }
+
+    /// Save `store` exactly as given — only for a store still holding legacy
+    /// plaintext passwords whose migration into the credential store is pending
+    /// (a locked store), so a rewrite never destroys the only copy (#3514).
+    pub fn save_verbatim(&self, store: &EmbeddedServerStore) -> Result<()> {
         let data =
             serde_json::to_string_pretty(store).context("Failed to serialize embedded servers")?;
         write_atomic(&self.file_path, &data).context("Failed to write embedded servers file")?;
         Ok(())
+    }
+}
+
+/// Drop the (already emptied) `password` keys from a serialized store, so the
+/// file carries no password field at all (#3514).
+///
+/// Downgrade safety: a build from before #3514 requires the field, so it
+/// fails to parse a credentialed entry and its per-entry salvage drops it
+/// (after backing the file up to `embedded_servers.json.bak`). That fails
+/// closed — writing `"password": ""` instead would make such a build serve
+/// the FTP login / HTTP Basic auth with an empty password.
+pub(crate) fn remove_password_keys(value: &mut serde_json::Value) {
+    let Some(servers) = value.get_mut("servers").and_then(|s| s.as_array_mut()) else {
+        return;
+    };
+    for server in servers {
+        for auth in ["ftpAuth", "httpAuth"] {
+            if let Some(obj) = server.get_mut(auth).and_then(|a| a.as_object_mut()) {
+                obj.remove("password");
+            }
+        }
     }
 }
 
@@ -117,6 +168,52 @@ mod tests {
         EmbeddedServerStorage {
             file_path: dir.path().join(FILE_NAME),
         }
+    }
+
+    /// #3514: `save` never writes a password, whatever the caller passes.
+    #[test]
+    fn save_strips_every_password() {
+        use super::super::config::{FtpAuth, HttpBasicAuth, ServerType};
+
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let server = |id: &str| EmbeddedServerConfig {
+            id: id.to_string(),
+            name: id.to_string(),
+            server_type: ServerType::Ftp,
+            root_directory: "/tmp".to_string(),
+            bind_host: "127.0.0.1".to_string(),
+            port: 2121,
+            auto_start: false,
+            read_only: false,
+            directory_listing: None,
+            ftp_auth: Some(FtpAuth::Credentials {
+                username: "admin".to_string(),
+                password: "hunter2".to_string(),
+            }),
+            http_auth: Some(HttpBasicAuth {
+                username: "u".to_string(),
+                password: "s3cret".to_string(),
+            }),
+            max_transfer_bytes: None,
+        };
+        let store = EmbeddedServerStore {
+            version: "1".to_string(),
+            servers: vec![server("a"), server("b")],
+        };
+        storage.save(&store).unwrap();
+        let raw = fs::read_to_string(&storage.file_path).unwrap();
+        assert!(!raw.contains("hunter2") && !raw.contains("s3cret"), "{raw}");
+        assert!(!raw.contains("password"), "no password field at all: {raw}");
+        assert!(raw.contains("\"admin\""), "usernames are kept: {raw}");
+
+        let reloaded = storage.load_with_recovery().unwrap();
+        assert!(reloaded.warnings.is_empty());
+        assert_eq!(
+            reloaded.data.version,
+            EmbeddedServerStore::CURRENT_VERSION.to_string()
+        );
+        assert_eq!(reloaded.data.servers.len(), 2);
     }
 
     #[test]
