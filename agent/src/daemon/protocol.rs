@@ -19,7 +19,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 pub const MSG_INPUT: u8 = 0x01;
 /// Agent → Daemon: resize PTY (payload: cols u16 BE + rows u16 BE).
 pub const MSG_RESIZE: u8 = 0x02;
-/// Agent → Daemon: detach (empty payload).
+/// Agent → Daemon: detach (empty payload). The daemon acknowledges it by dropping
+/// this connection (EOF), after which the session runs unattached — so a worker
+/// that has read that EOF knows it no longer holds the session (#3410).
 pub const MSG_DETACH: u8 = 0x03;
 /// Agent → Daemon: kill shell and exit (empty payload).
 pub const MSG_KILL: u8 = 0x04;
