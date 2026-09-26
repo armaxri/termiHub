@@ -113,6 +113,34 @@
         "osv_ecosystem": "crates.io"
       },
       "acknowledged_advisories": []
+    },
+    {
+      "path": "rdp-sidecar/vendor/ironrdp-pdu",
+      "crate": "ironrdp-pdu",
+      "consumed_by": "rdp-sidecar/Cargo.toml [patch.crates-io]",
+      "parses": "RDP PDUs from RDP servers (connection sequence, Share Control/Data headers, capability sets, fast-path/slow-path output)",
+      "upstream_repo": "https://github.com/Devolutions/IronRDP",
+      "upstream_branch": "master",
+      "upstream_path": "crates/ironrdp-pdu",
+      "base_version": "0.9.0",
+      "base_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
+      "base_commit_note": "upstream tag ironrdp-pdu-v0.9.0",
+      "reviewed_version": "0.9.0",
+      "reviewed_commit": "11a0810cfbbabd8b8023875a05e3041216d4b01b",
+      "deltas": [
+        {
+          "summary": "Accept the 6-byte Share Control Header (shareId optional) so xrdp's header-only Deactivate All PDU no longer ends the session; port of unreleased upstream d4b728a1d40b (IronRDP#1719)",
+          "refs": [
+            "https://github.com/armaxri/termiHub/issues/3611",
+            "https://github.com/Devolutions/IronRDP/commit/d4b728a1d40b"
+          ]
+        }
+      ],
+      "watch": {
+        "crates_io": "ironrdp-pdu",
+        "osv_ecosystem": "crates.io"
+      },
+      "acknowledged_advisories": []
     }
   ]
 }

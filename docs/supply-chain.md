@@ -79,16 +79,17 @@ runs on pull requests that change a dependency manifest or lockfile, on every pu
 
 ## Vendored forks
 
-Two third-party crates are carried as in-tree forks (SUP-005). A fork is consumed by **path** or
+Three third-party crates are carried as in-tree forks (SUP-005). A fork is consumed by **path** or
 by **`[patch.crates-io]`**, so `cargo update`, Dependabot, `cargo audit` and `cargo deny` never
 see the upstream crate again: an upstream security fix is not pulled in and a RustSec advisory
-against the upstream crate is not reported. Both forks sit on untrusted-input paths, so the
+against the upstream crate is not reported. All forks sit on untrusted-input paths, so the
 upstream crate is watched explicitly instead.
 
 | Fork                                | Upstream                                                                              | Base                            | Reviewed up to           | Why it is forked                                                                                                                             |
 | ----------------------------------- | ------------------------------------------------------------------------------------- | ------------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `vendor/vnc-rs`                     | [HsuJv/vnc-rs](https://github.com/HsuJv/vnc-rs)                                       | 0.5.3 (`f8ac0ee`)               | 0.6.0 (`99ed1a2`, #3499) | VeNCrypt (#1714), bounded cut-text (#3474), hostile-server hardening (#3473), typed error event (#3479), upstream 0.6.0 fixes ported (#3499) |
 | `rdp-sidecar/vendor/ironrdp-rdpsnd` | [Devolutions/IronRDP](https://github.com/Devolutions/IronRDP) `crates/ironrdp-rdpsnd` | 0.9.0 (`ironrdp-rdpsnd-v0.9.0`) | `160752f` (#3499)        | Concrete negotiated audio format (#1773), `accepts_format` (#1812), post-0.9.0 upstream fixes ported (#3499)                                 |
+| `rdp-sidecar/vendor/ironrdp-pdu`    | [Devolutions/IronRDP](https://github.com/Devolutions/IronRDP) `crates/ironrdp-pdu`    | 0.9.0 (`ironrdp-pdu-v0.9.0`)    | 0.9.0 (`11a0810`)        | 6-byte Share Control Header for xrdp's short Deactivate All PDU (#3611), port of unreleased upstream `d4b728a`                               |
 
 The machine-readable register is [`vendor/vendored-forks.json`](../vendor/vendored-forks.json):
 per fork the upstream repository and crate name, the fork base (version **and** commit), how far
@@ -148,7 +149,7 @@ it. The last three columns are prose.
 | `vnc-rs`           | 0.5.3 | `Cargo.lock`                           | RFB server messages and framebuffer encodings from VNC servers            | no   | Vendored fork (see above): no server-reachable panics, 8192x8192 rect cap, bounded lengths, `catch_unwind` task boundary  | Hostile-server and seeded fuzz tests (`vendor/vnc-rs/src/client/hostile_server_tests.rs`) |
 | `zune-jpeg`        | 0.4   | `Cargo.lock`                           | Tight-encoded JPEG rectangles from VNC servers                            | no   | Decode errors drop the rectangle; output length checked against the reported size (`core/src/backends/vnc/jpeg.rs`)       | Unit tests in `jpeg.rs`; no fuzzing                                                       |
 | `ironrdp`          | 0.17  | `rdp-sidecar/Cargo.lock`               | RDP connection sequence, graphics and virtual channels from RDP servers   | no   | Runs out of process in the RDP sidecar; sidecar IPC frames capped at 128 MiB; clipboard image size caps (#3474)           | Sidecar unit tests; no fuzzing                                                            |
-| `ironrdp-pdu`      | 0.9   | `rdp-sidecar/Cargo.lock`               | RDP PDU decoding (the wire parser under `ironrdp`)                        | no   | As `ironrdp`                                                                                                              | Upstream tests only                                                                       |
+| `ironrdp-pdu`      | 0.9   | `rdp-sidecar/Cargo.lock`               | RDP PDU decoding (the wire parser under `ironrdp`)                        | no   | Vendored fork (see above); as `ironrdp`                                                                                   | Sidecar Share Control Header unit tests (#3611); upstream tests                           |
 | `ironrdp-rdpsnd`   | 0.9.0 | `rdp-sidecar/Cargo.lock`               | RDP audio output channel PDUs                                             | no   | Vendored fork (see above)                                                                                                 | Sidecar audio unit tests; no fuzzing                                                      |
 | `suppaftp`         | 11    | `Cargo.lock`                           | FTP control replies and directory listings from FTP servers               | yes  | On the line that closes RUSTSEC-2025-0052 and RUSTSEC-2026-0271 (CRLF injection); FTPS via rustls                         | FTP Docker fixture in the nightly integration lane; no fuzzing                            |
 | `vte`              | 0.13  | `Cargo.lock`, `rdp-sidecar/Cargo.lock` | Terminal escape sequences in remote shell output (screen-clear detection) | no   | Used only to recognise clear sequences (`core/src/output/screen_clear.rs`)                                                | Unit tests in `screen_clear.rs`; no fuzzing                                               |

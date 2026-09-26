@@ -383,12 +383,46 @@ async fn rdp_02_fixed_resolution() {
 
 // ── RDP-03: dynamic resize over Display Control (#1755, #3465) ──────
 
-/// Ignored until #3611: xrdp resizes with a Deactivate-Reactivate sequence
-/// whose Deactivate All PDU is a bare 6-byte header, which IronRDP rejects as
-/// a decode error — the session ends instead of reflowing. Run with
-/// `--ignored` to reproduce.
+/// Ask for `(w, h)` over Display Control until the desktop reflows to it and
+/// shows the solid red session again. The channel may still be opening right
+/// after the first frame (or right after a reactivation); a request sent
+/// before it is ready is dropped by design, so the request is re-sent.
+async fn resize_until(
+    graphical: &dyn GraphicalBackend,
+    frames: &mut FrameReceiver,
+    fb: &mut Framebuffer,
+    (w, h): (u32, u32),
+    label: &str,
+) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        graphical
+            .resize(w as u16, h as u16)
+            .await
+            .unwrap_or_else(|e| panic!("{label}: resize request should be accepted: {e}"));
+        let window = tokio::time::Instant::now() + Duration::from_secs(3);
+        while let Ok(next) = tokio::time::timeout_at(window, frames.recv()).await {
+            let frame =
+                next.unwrap_or_else(|| panic!("{label}: the session ended instead of resizing"));
+            fb.apply(&frame);
+            if (fb.width, fb.height) == (w, h) && fb.is_solid(Solid::Red) {
+                return;
+            }
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "{label}: desktop never became {w}x{h} (last {}x{})",
+            fb.width,
+            fb.height
+        );
+    }
+}
+
+/// xrdp resizes with a Deactivation-Reactivation Sequence whose Deactivate
+/// All PDU is a bare 6-byte header (#3611). The sidecar must decode it, redo
+/// the capability exchange, and carry on at the new size — twice, so the
+/// session provably survives a reactivation and can reactivate again.
 #[tokio::test]
-#[ignore = "xrdp's short Deactivate All PDU ends the session (#3611)"]
 async fn rdp_03_dynamic_resize() {
     let _serial = SERIAL.lock().await;
     require_rdp!();
@@ -403,35 +437,21 @@ async fn rdp_03_dynamic_resize() {
     let mut frames = graphical.subscribe_frames();
     wait_for_xrdp_session(&mut frames, "RDP-03 initial").await;
 
-    // The Display Control channel may still be opening right after the first
-    // frame; a request sent before it is ready is dropped by design, so re-send
-    // until the server reflows the desktop to the new size.
-    let (w, h) = (1100u32, 700u32);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let mut fb = Framebuffer::default();
-    loop {
-        graphical
-            .resize(w as u16, h as u16)
-            .await
-            .expect("RDP-03: resize request should be accepted");
-        let window = tokio::time::Instant::now() + Duration::from_secs(3);
-        while let Ok(next) = tokio::time::timeout_at(window, frames.recv()).await {
-            let frame = next.expect("RDP-03: the session ended instead of resizing");
-            fb.apply(&frame);
-            if (fb.width, fb.height) == (w, h) && fb.is_solid(Solid::Red) {
-                break;
-            }
-        }
-        if (fb.width, fb.height) == (w, h) && fb.is_solid(Solid::Red) {
-            break;
-        }
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "RDP-03: desktop never became {w}x{h} (last {}x{})",
-            fb.width,
-            fb.height
-        );
-    }
+    resize_until(graphical, &mut frames, &mut fb, (1100, 700), "RDP-03 first").await;
+    // Back to the initial size: a second Deactivate All on the rebuilt stage.
+    resize_until(
+        graphical,
+        &mut frames,
+        &mut fb,
+        (DYNAMIC_WIDTH, DYNAMIC_HEIGHT),
+        "RDP-03 second",
+    )
+    .await;
+    assert!(
+        rdp.is_connected(),
+        "RDP-03: the session must still be up after two reactivations"
+    );
 
     rdp.disconnect().await.expect("disconnect should succeed");
     assert_helper_gone(pid, "RDP-03").await;
