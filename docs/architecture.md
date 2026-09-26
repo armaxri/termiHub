@@ -462,7 +462,7 @@ graph LR
 | **State**      | `agent/src/state/`        | Session state persistence (`~/.config/termihub-agent/state.json`) for daemon recovery after agent restart                                                                                                                                                                                                             |
 | **IO**         | `agent/src/io/`           | Transport layer — stdio (production SSH mode) and TCP (development/test mode)                                                                                                                                                                                                                                         |
 | **File log**   | `agent/src/file_log.rs`   | Durable, size-bounded, rotating on-disk log (`<config-dir>/logs/termihub-agent.log`, e.g. `~/.config/termihub-agent/logs/`) written for **all** roles — the only retrievable trace for the `--daemon`/`--listen`/`--registry-daemon` roles, whose stderr goes to the remote host with no capture path (audit OBS-003) |
-| **Panic hook** | `agent/src/panic_hook.rs` | Logs a panic and writes a redacted, bounded crash report to `<config-dir>/logs/crash-reports/` on the agent's host (OBS-010, see ADR-16). Never sent anywhere                                                                                                                                                         |
+| **Panic hook** | `agent/src/panic_hook.rs` | Logs a panic and writes a redacted, bounded crash report to `<config-dir>/logs/crash-reports/` on the agent's host (OBS-010, see ADR-16). Never sent anywhere on its own; a connected desktop can pull them into its diagnostics export via `agent.crash_reports.*` (#3574)                                           |
 
 The agent was recently refactored into a **thin proxy** over the core `ConnectionType` registry. All session lifecycle methods now use the `connection.*` JSON-RPC namespace (`connection.create`, `connection.attach`, `connection.detach`, `connection.input`, `connection.resize`, `connection.close`, `connection.list`). The agent's dispatcher routes these generically through the registry — no connection-type-specific dispatch code. See [Remote Protocol](remote-protocol.md) for the full specification and [Agent Concept](concepts/implemented/agent.html) for the design vision.
 
@@ -2384,8 +2384,18 @@ terminal sessions for people who expect nothing to leave their machine.
   `showCrashReportNotice: false`). **Export Diagnostics** (settings menu, or Settings → General →
   Diagnostics) shows the exact file list first, then writes a redacted zip (logs, crash reports,
   version/platform info) only to a path the user picks in the save dialog.
-- The desktop does not fetch agent crash reports; they stay on the agent's host. Adding a
-  retrieval RPC is a separate decision.
+- **Remote agent reports are pulled only on request, only from connected agents** (#3574). When
+  the Export Diagnostics dialog opens, the desktop asks each **already-connected** agent for its
+  crash reports over the existing connection (`agent.crash_reports.list` / `.read`, see
+  `docs/remote-protocol.md`); it never opens a connection for this and contacts no other host. The
+  preview lists each agent's reports with an include checkbox. The agent serves only names from
+  its own crash-report directory (no path parameter), capped at 10 reports and 96 KiB each; the
+  desktop validates the names again before using them as zip paths
+  (`agents/<agent id>/crash-reports/<name>`), re-applies the per-report cap plus a 1 MiB total
+  cap, and **redacts every report again** with its own redactor before writing it. An agent that
+  predates the RPC answers "method not found" and is skipped with a note in the preview; reports
+  that were selected but could not be fetched are listed in `agents/skipped.txt`. A notice for
+  "an agent crashed since it was last connected" is not implemented yet.
 
 **Consequences:**
 
