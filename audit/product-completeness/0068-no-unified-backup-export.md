@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/ExportImport
 evidence:
   - src/components/ExportImport/ExportDialog.tsx:48
-status: open
+status: fixed
+resolution: "#3516 — unified backup/restore of all stores + optional vault section (maintainer decision), whole-file encryption default, per-section merge/replace, transactional restart-swap restore; host keys/plugins #3515"
 ---
 
 ## What
