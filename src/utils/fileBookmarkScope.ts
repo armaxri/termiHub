@@ -21,6 +21,11 @@
  * `local` and `host:` lists have no owning record and are kept. Removing an
  * external connections file (without deleting its connections) keeps their
  * lists, since the file may come back.
+ *
+ * A saved connection's id is its path in the tree, so renaming or moving it —
+ * or renaming or deleting a folder above it — changes the id (#3569). The
+ * backend then moves `connection:<old>` to `connection:<new>` (merging without
+ * duplicate paths) and emits `file-bookmarks-rekeyed`; the UI cache mirrors it.
  */
 
 import type { FileBrowserMode } from "@/store/fileBrowsersBridge";
