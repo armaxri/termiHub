@@ -71,7 +71,8 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   {
     id: "defaultShellIntegration",
     label: "Shell Integration by Default",
-    description: "Pre-enable Shell Integration (OSC 7 CWD tracking) for new SSH connections",
+    description:
+      "Pre-enable Shell Integration (OSC 7 CWD tracking and OSC 133 command marks) for new SSH connections",
     category: "general",
     keywords: [
       "ssh",
