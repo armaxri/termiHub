@@ -13,6 +13,7 @@ import {
   resolveImportCollisions,
 } from "./macroIo";
 import type { Macro } from "@/types/macro";
+import { parseMacroStepText } from "@/components/MacroSidebar/macroStepFormat";
 
 function makeMacro(overrides: Partial<Macro> = {}): Macro {
   return {
@@ -49,6 +50,19 @@ describe("macroIo — serialize/parse envelope", () => {
     expect(macros[0].description).toBe(original.description);
     expect(macros[0].tags).toEqual(original.tags);
     expect(macros[0].steps).toEqual(original.steps);
+  });
+
+  it("round-trips hand-authored steps with control characters (PROD-039)", () => {
+    // Steps as the editor produces them from typed escape notation.
+    const authored = ["cd /srv\\r", "\\e[A\\r", "\\x03", "C:\\\\tmp\\t"].map((text, i) => {
+      const parsed = parseMacroStepText(text);
+      if (!parsed.ok) throw new Error(parsed.error);
+      return { data: parsed.data, delayMs: i * 100 };
+    });
+    const original = makeMacro({ steps: authored });
+    const [restored] = parseMacroEnvelope(serializeMacros([original]));
+    expect(restored.steps).toEqual(authored);
+    expect(restored.steps.map((s) => s.data)).toEqual(["cd /srv\r", "\x1b[A\r", "\x03", "C:\\tmp\t"]);
   });
 
   it("round-trips the whole library", () => {
