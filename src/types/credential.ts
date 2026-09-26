@@ -30,3 +30,11 @@ export interface SwitchCredentialStoreResult {
   failedCount: number;
   warnings: string[];
 }
+
+// Credential-vault export/import DTOs (PROD-063), generated from their Rust
+// source of truth (`credential::vault`) via ts-rs.
+export type { ConflictStrategy as VaultConflictStrategy } from "./generated/ConflictStrategy";
+export type { VaultConflict } from "./generated/VaultConflict";
+export type { VaultError } from "./generated/VaultError";
+export type { VaultImportPreview } from "./generated/VaultImportPreview";
+export type { VaultImportResult } from "./generated/VaultImportResult";

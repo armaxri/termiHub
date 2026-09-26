@@ -15,7 +15,14 @@ import { XServerConsentDecision, XServerStatusReport } from "@/types/xserver";
 import type { RemoteClipboardFile, RemoteDesktopInput } from "@/types/remoteDesktop";
 import type { RunLocation } from "@/types/tunnel";
 import type { KillSignal, ProcessInfo } from "@/types/monitoring";
-import { CredentialStoreStatusInfo, SwitchCredentialStoreResult } from "@/types/credential";
+import type {
+  CredentialStoreStatusInfo,
+  SwitchCredentialStoreResult,
+  VaultConflictStrategy,
+  VaultError,
+  VaultImportPreview,
+  VaultImportResult,
+} from "@/types/credential";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
 import type { ImportPreview } from "@/types/generated/ImportPreview";
@@ -2651,6 +2658,61 @@ export async function switchCredentialStore(
 /** Update the auto-lock timeout for the master password credential store. */
 export async function setAutoLockTimeout(minutes: number | null): Promise<void> {
   await invoke("set_auto_lock_timeout", { minutes });
+}
+
+// --- Credential vault export / import (PROD-063) ---
+
+const VAULT_ERROR_KINDS: ReadonlySet<string> = new Set<VaultError["kind"]>([
+  "wrongPassphrase",
+  "invalidFile",
+  "unsupportedVersion",
+  "weakPassphrase",
+  "storeUnavailable",
+  "storeLocked",
+  "wrongMasterPassword",
+  "other",
+]);
+
+/** Type guard: whether a caught rejection is a structured {@link VaultError}. */
+export function isVaultError(err: unknown): err is VaultError {
+  if (typeof err !== "object" || err === null) return false;
+  const kind = (err as { kind?: unknown }).kind;
+  return typeof kind === "string" && VAULT_ERROR_KINDS.has(kind);
+}
+
+/**
+ * Export every saved credential as an encrypted vault file and return its text.
+ *
+ * `masterPassword` re-authenticates a master-password store (pass `null` in OS
+ * keychain mode). `exportPassphrase` seals the file. Rejects with a
+ * {@link VaultError}.
+ */
+export async function exportCredentialVault(
+  masterPassword: string | null,
+  exportPassphrase: string
+): Promise<string> {
+  return await invoke<string>("export_credential_vault", { masterPassword, exportPassphrase });
+}
+
+/** Decrypt a vault file and preview the import without writing anything. */
+export async function previewCredentialVaultImport(
+  json: string,
+  passphrase: string
+): Promise<VaultImportPreview> {
+  return await invoke<VaultImportPreview>("preview_credential_vault_import", { json, passphrase });
+}
+
+/** Import a vault file into the current credential store (all-or-nothing). */
+export async function importCredentialVault(
+  json: string,
+  passphrase: string,
+  strategy: VaultConflictStrategy
+): Promise<VaultImportResult> {
+  return await invoke<VaultImportResult>("import_credential_vault", {
+    json,
+    passphrase,
+    strategy,
+  });
 }
 
 /**
