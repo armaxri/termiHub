@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import { FileUp } from "lucide-react";
+import { CircleArrowUp, FileUp, RefreshCw } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
 import { assessPluginTrust, validatePlugin } from "@/services/api";
@@ -11,6 +11,11 @@ import { pluginDotState, pluginDotTone, pluginTypeIcon } from "./pluginPresentat
 import { PluginInstallDialog } from "./PluginInstallDialog";
 import "./Plugins.css";
 import { errorMessage } from "@/utils/errorMessage";
+import {
+  hasAvailableUpdate,
+  hasUpdateSource,
+  usePluginUpdateStore,
+} from "@/plugins/pluginUpdateStore";
 
 /** A picked-and-validated package awaiting the user's install confirmation. */
 interface PendingInstall {
@@ -43,7 +48,31 @@ export function PluginManagerView() {
   const selectedPluginId = useAppStore((s) => s.selectedPluginId);
   const selectPlugin = useAppStore((s) => s.selectPlugin);
 
+  const updateEntries = usePluginUpdateStore((s) => s.entries);
+  const checkingAll = usePluginUpdateStore((s) => s.checkingAll);
+  const checkForUpdates = usePluginUpdateStore((s) => s.checkForUpdates);
+
   const [pending, setPending] = useState<PendingInstall | null>(null);
+
+  const updatable = plugins.some(hasUpdateSource);
+
+  const handleCheckUpdates = useCallback(async () => {
+    await checkForUpdates();
+    const { entries } = usePluginUpdateStore.getState();
+    const available = plugins.filter((p) => hasAvailableUpdate(entries, p)).length;
+    const failed = plugins.filter(
+      (p) => hasUpdateSource(p) && entries[p.manifest.id]?.phase === "error"
+    ).length;
+    if (available > 0) {
+      toast.success(
+        `${available} plugin ${available === 1 ? "update is" : "updates are"} available`
+      );
+    } else if (failed > 0) {
+      toast.error(`Update check failed for ${failed} ${failed === 1 ? "plugin" : "plugins"}`);
+    } else {
+      toast.success("All plugins are up to date");
+    }
+  }, [checkForUpdates, plugins]);
 
   const { query, setQuery, filtered } = useListFilter(plugins, pluginNameMatches);
 
@@ -121,6 +150,13 @@ export function PluginManagerView() {
                 />
                 <TypeIcon className="plugin-row__icon" aria-hidden="true" />
                 <span className="plugin-row__name">{manifest.name}</span>
+                {hasAvailableUpdate(updateEntries, plugin) && (
+                  <CircleArrowUp
+                    className="plugin-row__update"
+                    aria-label="Update available"
+                    data-testid={`plugin-update-badge-${manifest.id}`}
+                  />
+                )}
                 <span className="plugin-row__ver">v{manifest.version}</span>
               </button>
             );
@@ -129,6 +165,20 @@ export function PluginManagerView() {
       </div>
 
       <div className="plugin-manager__footer">
+        {updatable && (
+          <Button
+            variant="ghost"
+            size="sm"
+            fullWidth
+            icon={<RefreshCw size={14} />}
+            onClick={handleCheckUpdates}
+            disabled={checkingAll}
+            errorToast={false}
+            data-testid="plugin-check-updates"
+          >
+            Check for updates
+          </Button>
+        )}
         <Button
           variant="secondary"
           size="sm"

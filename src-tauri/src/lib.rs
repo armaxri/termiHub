@@ -602,6 +602,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::plugin::set_native_plugins_enabled,
             commands::plugin::acknowledge_native_plugin,
             commands::plugin::revoke_native_plugin_trust,
+            // Opt-in plugin update check; downloads verify, never install (PROD-051)
+            commands::plugin_update::check_plugin_updates,
+            commands::plugin_update::download_plugin_update,
             // Session commands (replaces old terminal commands)
             commands::session::create_connection,
             commands::session::test_connection,

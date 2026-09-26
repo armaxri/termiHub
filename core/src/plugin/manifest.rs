@@ -259,6 +259,12 @@ pub struct PluginManifest {
     /// Optional user-configurable settings, keyed by setting name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub settings: Option<BTreeMap<String, PluginSettingSchema>>,
+    /// Optional HTTPS URL of the plugin's update document (PROD-051), used by
+    /// the opt-in "Check for updates" — see [`super::update_check`]. Absent
+    /// means the plugin never reports updates. Never triggers an install by
+    /// itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_url: Option<String>,
 }
 
 impl PluginManifest {
@@ -283,6 +289,10 @@ impl PluginManifest {
         }
         if let Some(backend) = &self.extensions.terminal_backend {
             validate_connection_type(&backend.connection_type)?;
+        }
+        if let Some(url) = &self.update_url {
+            super::update_check::validate_https_url(url)
+                .map_err(|reason| ManifestValidationError::InvalidUpdateUrl(url.clone(), reason))?;
         }
         Ok(())
     }
@@ -363,6 +373,9 @@ pub enum ManifestValidationError {
          characters of letters, digits, `.`, `_` or `-` (got `{0}`)"
     )]
     InvalidConnectionType(String),
+    /// `updateUrl` is not an acceptable HTTPS URL (PROD-051).
+    #[error("plugin manifest `updateUrl` `{0}` is invalid: {1}")]
+    InvalidUpdateUrl(String, String),
 }
 
 fn require_non_empty(field: &'static str, value: &str) -> Result<(), ManifestValidationError> {
@@ -648,6 +661,42 @@ mod tests {
             manifest
                 .validate()
                 .unwrap_or_else(|e| panic!("connectionType {good:?} should validate: {e}"));
+        }
+    }
+
+    #[test]
+    fn update_url_is_optional_https_only() {
+        let manifest = parse_manifest(valid_manifest_json()).unwrap();
+        assert!(manifest.update_url.is_none());
+
+        let with = |url: &str| {
+            valid_manifest_json().replace(
+                "\"license\": \"MIT\",",
+                &format!("\"license\": \"MIT\", \"updateUrl\": \"{url}\","),
+            )
+        };
+        let manifest = parse_manifest(&with("https://example.com/k8s-exec/update.json")).unwrap();
+        manifest.validate().expect("https updateUrl validates");
+        assert_eq!(
+            manifest.update_url.as_deref(),
+            Some("https://example.com/k8s-exec/update.json")
+        );
+        let reparsed = parse_manifest(&serde_json::to_string(&manifest).unwrap()).unwrap();
+        assert_eq!(manifest, reparsed);
+
+        for bad in [
+            "http://example.com/u.json",
+            "https://u:p@example.com/",
+            "ftp://x",
+        ] {
+            let manifest = parse_manifest(&with(bad)).unwrap();
+            assert!(
+                matches!(
+                    manifest.validate(),
+                    Err(ManifestValidationError::InvalidUpdateUrl(..))
+                ),
+                "updateUrl {bad:?} should be rejected"
+            );
         }
     }
 

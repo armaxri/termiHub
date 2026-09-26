@@ -12,6 +12,7 @@ pub mod logs;
 pub mod macros;
 pub mod network;
 pub mod plugin;
+pub mod plugin_update;
 pub mod portable;
 pub mod projection;
 // Test-bridge-only diagnostic projection region (#2164). Gated (SEC-005) so it

@@ -651,6 +651,12 @@ export interface AppSettings {
    * injected plugin scripts (see `reconcileFrontendPlugins`).
    */
   frontendPluginsEnabled?: boolean;
+  /**
+   * Opt-in periodic plugin update check (PROD-051). Defaults to `false` (off):
+   * plugins that declare an `updateUrl` are then only checked when the user
+   * clicks "Check for updates". A check never installs anything.
+   */
+  pluginUpdateCheckEnabled?: boolean;
   updates?: UpdateSettings;
   /**
    * Durable log-file verbosity (OBS-009). Controls how much detail termiHub

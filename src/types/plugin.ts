@@ -153,6 +153,11 @@ export interface PluginManifest {
   extensions: PluginExtensions;
   /** Optional user-configurable settings, keyed by setting name. */
   settings?: Record<string, PluginSettingSchema>;
+  /**
+   * Optional HTTPS URL of the plugin's update document (PROD-051). Enables the
+   * opt-in "Check for updates"; it never installs anything by itself.
+   */
+  updateUrl?: string;
 }
 
 /**
@@ -319,4 +324,35 @@ export interface NativePluginTrust {
   disclosure: string;
   /** Every recorded per-plugin acknowledgment, sorted by plugin id. */
   acknowledged: NativeAckInfo[];
+}
+
+/**
+ * Whether an update check offers a newer version (mirrors Rust `UpdateStatus`):
+ *
+ * - `upToDate` — the published version is not newer (an older one is never offered).
+ * - `updateAvailable` — a newer, host-compatible version can be downloaded.
+ * - `incompatibleHost` — a newer version exists but needs a newer termiHub.
+ */
+export type PluginUpdateStatus = "upToDate" | "updateAvailable" | "incompatibleHost";
+
+/** An evaluated update check for one plugin (Rust `UpdateCheckOutcome`). */
+export interface PluginUpdateCheckOutcome {
+  pluginId: string;
+  installedVersion: string;
+  latestVersion: string;
+  status: PluginUpdateStatus;
+  downloadUrl: string;
+  sha256: string;
+  minHostAbi: string;
+  changelogUrl?: string;
+}
+
+/**
+ * One plugin's result from `check_plugin_updates`: either an `outcome` or an
+ * `error` explaining why the check failed (unreachable, invalid document, …).
+ */
+export interface PluginUpdateCheckResult {
+  pluginId: string;
+  outcome?: PluginUpdateCheckOutcome;
+  error?: string;
 }

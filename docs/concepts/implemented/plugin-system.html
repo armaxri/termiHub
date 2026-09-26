@@ -1542,8 +1542,9 @@
         <h3>Edge Cases</h3>
         <ul>
           <li>
-            <strong>Two plugins providing the same connection-type name</strong>: every plugin type is
-            registered under the stable id <code>plugin:&lt;plugin-id&gt;:&lt;connectionType&gt;</code>
+            <strong>Two plugins providing the same connection-type name</strong>: every plugin type
+            is registered under the stable id
+            <code>plugin:&lt;plugin-id&gt;:&lt;connectionType&gt;</code>
             (PLG-007), so the ids never collide and never depend on load order; only a clashing
             display name is suffixed with the plugin name.
           </li>
@@ -2023,8 +2024,9 @@ flowchart TD
               <tr>
                 <td>Two plugins provide the same connection type</td>
                 <td>
-                  Both register under their own <code>plugin:&lt;plugin-id&gt;:&lt;type&gt;</code> id;
-                  a clashing display name is suffixed with the plugin name
+                  Both register under their own
+                  <code>plugin:&lt;plugin-id&gt;:&lt;type&gt;</code> id; a clashing display name is
+                  suffixed with the plugin name
                 </td>
               </tr>
               <tr>
@@ -2591,20 +2593,22 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
           <li>
             <strong>JavaScript plugin isolation</strong>: Frontend plugin JS executes in a
             least-privilege <strong>Web Worker sandbox</strong> (#2136), not the main WebView
-            document. Inside the worker there is no DOM, no <code>window</code>, and no Tauri IPC, so
-            plugin code cannot reach the host app, the document, or the backend. The host and worker
-            communicate only over <code>postMessage</code>: protocol parsers run over terminal output
-            through an ordered asynchronous pipeline (the no-plugin path stays synchronous and
-            byte-exact), and status-bar widgets are described declaratively (<code>render()</code>
+            document. Inside the worker there is no DOM, no <code>window</code>, and no Tauri IPC,
+            so plugin code cannot reach the host app, the document, or the backend. The host and
+            worker communicate only over <code>postMessage</code>: protocol parsers run over
+            terminal output through an ordered asynchronous pipeline (the no-plugin path stays
+            synchronous and byte-exact), and status-bar widgets are described declaratively (<code
+              >render()</code
+            >
             returns a serialisable node, not a live element) and materialised by the host through a
-            strict tag/attribute allowlist — never <code>innerHTML</code>. Plugin code is loaded into
-            the worker by <code>importScripts</code>-ing it from the app-controlled
+            strict tag/attribute allowlist — never <code>innerHTML</code>. Plugin code is loaded
+            into the worker by <code>importScripts</code>-ing it from the app-controlled
             <code>plugin://</code> origin (#2251/#2266): the plugin protocol serves each entry point
             already wrapped in its per-plugin loader IIFE, so no <code>blob:</code> URL is built and
-            <code>script-src</code> no longer permits <code>blob:</code> at all
-            (<code>script-src 'self' plugin://localhost http://plugin.localhost</code>). Earlier
-            versions injected plugin JS as a <code>&lt;script&gt;</code> into the main document (weak,
-            shared-context isolation); that gap is now closed.
+            <code>script-src</code> no longer permits <code>blob:</code> at all (<code
+              >script-src 'self' plugin://localhost http://plugin.localhost</code
+            >). Earlier versions injected plugin JS as a <code>&lt;script&gt;</code> into the main
+            document (weak, shared-context isolation); that gap is now closed.
           </li>
           <li>
             <strong>File system access</strong>: Plugins requesting <code>filesystem</code>
@@ -2661,12 +2665,14 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
           plugin system is fully built end-to-end: packaging, the stable native ABI, the host
           loader, the Plugin Manager UI, all four extension points, connection wiring, per-plugin
           settings, and the security-hardening layer. Cryptographic <em>code-signing</em> — the last
-          deferred sub-feature — is now implemented (<a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>)
-          per its dedicated design in
+          deferred sub-feature — is now implemented (<a
+            href="https://github.com/armaxri/termiHub/issues/2036"
+            >#2036</a
+          >) per its dedicated design in
           <a href="plugin-code-signing.html"><code>implemented/plugin-code-signing.html</code></a>
-          (concept issue <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>): Ed25519
-          package signatures, a publisher trust store with trust-on-first-use pinning, and a verified
-          install gate.
+          (concept issue <a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>):
+          Ed25519 package signatures, a publisher trust store with trust-on-first-use pinning, and a
+          verified install gate.
         </p>
 
         <h3>Implemented</h3>
@@ -2774,6 +2780,23 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
                 <td>Packaging tool, example plugin, and plugin author docs</td>
                 <td>#1994</td>
               </tr>
+              <tr>
+                <td>Sample JS plugins, update check, settings migration</td>
+                <td>
+                  <code>log-highlighter</code> (protocol parser) and
+                  <code>clock-widget</code> (status-bar widget) samples under
+                  <code>examples/plugins/</code>, loaded through the sandbox in tests. The 0.1
+                  distribution model stays <strong>local install only</strong> (no registry /
+                  marketplace): a plugin may declare an HTTPS <code>updateUrl</code>; "Check for
+                  updates" (manual, plus an opt-in daily check, off by default) reports a strictly
+                  newer, host-compatible version, and an offered update is downloaded,
+                  SHA-256/id/version-verified, then installed only through the normal install
+                  dialog. On a version change, stored settings that no longer fit the new manifest
+                  schema are dropped (<code>update_check.rs</code>,
+                  <code>settings_migration.rs</code>, <code>commands/plugin_update.rs</code>).
+                </td>
+                <td>#3484, #3382</td>
+              </tr>
             </tbody>
           </table>
         </div>
@@ -2796,9 +2819,12 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
                   SHA-256 digest map (<code>signature.rs</code>), a publisher trust store with TOFU
                   pinning (<code>trust_store.rs</code>), and an <code>assess_trust</code> that opens
                   the package, verifies its signature, and gates install on
-                  <code>Verified</code>/<code>Signed</code>/<code>Untrusted</code>/<code>Tampered</code>.
-                  The dedicated design lives in
-                  <a href="plugin-code-signing.html"><code>implemented/plugin-code-signing.html</code></a>.
+                  <code>Verified</code
+                  >/<code>Signed</code>/<code>Untrusted</code>/<code>Tampered</code>. The dedicated
+                  design lives in
+                  <a href="plugin-code-signing.html"
+                    ><code>implemented/plugin-code-signing.html</code></a
+                  >.
                 </td>
                 <td>
                   <a href="plugin-code-signing.html">concept</a> /
@@ -2846,10 +2872,10 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
           <code>src/plugins/*</code>, <code>src/themes/pluginThemes.ts</code>). The UI surfaces, the
           four extension points, the lifecycle/state machine, the install-permission gate, and the
           error-recovery machine all match the built implementation. Since the previous sync, the
-          dedicated connection-limit status landed (<code>PluginStatus::ResourceLimit</code>, ABI
-          v4 — <a href="https://github.com/armaxri/termiHub/issues/2030">#2030</a>), so that item
-          moved from deferred to Resolved; code-signing gained a dedicated backlog design concept.
-          The one <em>design-reality</em> correction (§5) has been folded into the concept; the two
+          dedicated connection-limit status landed (<code>PluginStatus::ResourceLimit</code>, ABI v4
+          — <a href="https://github.com/armaxri/termiHub/issues/2030">#2030</a>), so that item moved
+          from deferred to Resolved; code-signing gained a dedicated backlog design concept. The one
+          <em>design-reality</em> correction (§5) has been folded into the concept; the two
           remaining open items are deferred sub-features, not concept↔code contradictions.
         </p>
 
@@ -2874,19 +2900,21 @@ disablePlugin: (pluginId: string) => Promise&lt;void&gt;;</code></pre>
                 </td>
                 <td>
                   <strong>Implemented</strong> (#2036). <code>assess_trust</code> opens the package,
-                  verifies its embedded <code>signature.json</code> (Ed25519 over a per-entry SHA-256
-                  digest map) via <code>signature.rs</code>, and consults a <code>trust_store.rs</code>
-                  publisher store; install blocks <code>Tampered</code>, offers TOFU pinning for
-                  <code>Signed</code>, skips the warning for <code>Verified</code>, and keeps the
-                  acceptance gate for <code>Untrusted</code>.
+                  verifies its embedded <code>signature.json</code> (Ed25519 over a per-entry
+                  SHA-256 digest map) via <code>signature.rs</code>, and consults a
+                  <code>trust_store.rs</code> publisher store; install blocks <code>Tampered</code>,
+                  offers TOFU pinning for <code>Signed</code>, skips the warning for
+                  <code>Verified</code>, and keeps the acceptance gate for <code>Untrusted</code>.
                 </td>
                 <td>Resolved</td>
                 <td>
                   Implemented per the dedicated design in
-                  <a href="plugin-code-signing.html"><code>implemented/plugin-code-signing.html</code></a>
+                  <a href="plugin-code-signing.html"
+                    ><code>implemented/plugin-code-signing.html</code></a
+                  >
                   (<a href="https://github.com/armaxri/termiHub/issues/2017">#2017</a>,
-                  <code>Concept</code>; <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>,
-                  implemented).
+                  <code>Concept</code>;
+                  <a href="https://github.com/armaxri/termiHub/issues/2036">#2036</a>, implemented).
                 </td>
               </tr>
               <tr>
