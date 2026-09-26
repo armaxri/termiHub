@@ -622,6 +622,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::check_ssh_agent_status,
             commands::session::check_docker_available,
             commands::session::list_docker_images,
+            commands::session::list_docker_containers,
             commands::session::check_podman_available,
             commands::session::list_podman_images,
             commands::session::validate_ssh_key,

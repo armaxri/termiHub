@@ -482,6 +482,38 @@ pub fn list_docker_images() -> Vec<String> {
     crate::utils::docker_detect::list_docker_images()
 }
 
+/// Parse the Docker connection's `runtime` setting (`auto` / `docker` /
+/// `podman`) exactly as the backend does: absent or unknown falls back to
+/// [`ContainerRuntime::Auto`](termihub_core::config::ContainerRuntime::Auto).
+fn parse_container_runtime(runtime: Option<&str>) -> termihub_core::config::ContainerRuntime {
+    runtime
+        .and_then(|s| serde_json::from_value(serde_json::json!(s)).ok())
+        .unwrap_or_default()
+}
+
+/// Human-readable listing error: unwrap the core's `SpawnFailed` wrapper so
+/// the picker shows the runtime's own explanation (e.g. "daemon unreachable").
+fn container_list_error(err: termihub_core::errors::SessionError) -> String {
+    match err {
+        termihub_core::errors::SessionError::SpawnFailed(msg) => msg,
+        other => other.to_string(),
+    }
+}
+
+/// List the containers (running first, then stopped) of the selected local
+/// container runtime, for the Docker connection editor's container picker
+/// (PROD-017). `runtime` is the connection's `runtime` setting; the endpoint
+/// is resolved exactly as a connect would resolve it.
+#[tauri::command]
+pub async fn list_docker_containers(
+    runtime: Option<String>,
+) -> Result<Vec<termihub_core::backends::docker::ContainerInfo>, String> {
+    let runtime = parse_container_runtime(runtime.as_deref());
+    termihub_core::backends::docker::list_containers(&runtime)
+        .await
+        .map_err(container_list_error)
+}
+
 /// Check if Podman is available on the local system.
 #[tauri::command]
 pub fn check_podman_available() -> bool {
@@ -1402,8 +1434,38 @@ pub async fn get_agent_session_buffer(
 #[cfg(test)]
 mod tests {
     use super::{
-        decode_file_bytes, encode_file_bytes, initial_connect_tab_id, killed_disconnect_tab_id,
+        container_list_error, decode_file_bytes, encode_file_bytes, initial_connect_tab_id,
+        killed_disconnect_tab_id, parse_container_runtime,
     };
+    use termihub_core::config::ContainerRuntime;
+    use termihub_core::errors::SessionError;
+
+    #[test]
+    fn container_runtime_parses_like_the_backend() {
+        assert_eq!(parse_container_runtime(None), ContainerRuntime::Auto);
+        assert_eq!(parse_container_runtime(Some("auto")), ContainerRuntime::Auto);
+        assert_eq!(
+            parse_container_runtime(Some("docker")),
+            ContainerRuntime::Docker
+        );
+        assert_eq!(
+            parse_container_runtime(Some("podman")),
+            ContainerRuntime::Podman
+        );
+        assert_eq!(parse_container_runtime(Some("bogus")), ContainerRuntime::Auto);
+    }
+
+    #[test]
+    fn container_list_error_unwraps_spawn_failed() {
+        assert_eq!(
+            container_list_error(SessionError::SpawnFailed("daemon unreachable".into())),
+            "daemon unreachable"
+        );
+        assert_eq!(
+            container_list_error(SessionError::AuthFailed),
+            SessionError::AuthFailed.to_string()
+        );
+    }
 
     /// File bytes cross IPC as base64 (PERF-002): `session_read_file` returns
     /// base64 and `session_write_file` accepts base64. The encode/decode pair
