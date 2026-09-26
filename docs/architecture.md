@@ -1196,11 +1196,12 @@ file and imports such a file into the **current** store (PROD-063, `src-tauri/sr
 
 - **Export** requires re-authentication (in master-password mode the store must be unlocked and the
   master password re-entered) and an **export passphrase** entered twice (minimum 12 characters,
-  different from the master password, with a strength hint). In **OS-keychain mode export is
-  refused** (backend and UI) until OS-level user authentication exists
-  ([#3433](https://github.com/armaxri/termiHub/issues/3433)) — termiHub can read its own keychain
-  items without a prompt, so there would be no re-authentication step. Import into the keychain is
-  allowed. The file is written only after encryption; plaintext never reaches the disk, the logs
+  different from the master password, with a strength hint). In **OS-keychain mode** termiHub can
+  read its own keychain items without a prompt, so every export instead requires a fresh **OS user
+  verification** (Touch ID / login password on macOS, Windows Hello on Windows — see
+  [OS user verification and biometric unlock](#os-user-verification-and-biometric-unlock));
+  where the OS cannot verify the user (Linux) the export stays refused (backend and UI). Import into
+  the keychain is allowed. The file is written only after encryption; plaintext never reaches the disk, the logs
   or the clipboard, and in-memory copies are zeroized.
 - **File format** — a versioned JSON header around the standard envelope:
 
@@ -1252,6 +1253,84 @@ sequenceDiagram
 The exported file object is self-contained, and the unified backup below embeds it verbatim as its
 credentials section.
 
+#### OS user verification and biometric unlock
+
+`src-tauri/src/credential/os_auth/` asks the operating system to confirm that the person at the
+keyboard is the logged-in user ([#3433](https://github.com/armaxri/termiHub/issues/3433),
+PROD-064). Every platform implements the `OsUserVerifier` trait; the contract is **fail closed** —
+only an explicit OS confirmation is success, and cancel, failure, timeout and "not available" all
+refuse the operation.
+
+| Platform      | Mechanism                                                                                                                                                                                                     | Enrollment binding                                                               |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| macOS         | LocalAuthentication `LAContext` (`objc2-local-authentication`): `deviceOwnerAuthentication` (Touch ID **or** login password) for export; `deviceOwnerAuthenticationWithBiometrics` (Touch ID only) for unlock | SHA-256 of `evaluatedPolicyDomainState` (changes when a finger is added/removed) |
+| Windows       | Windows Hello `UserConsentVerifier` (face / fingerprint / PIN) via `IUserConsentVerifierInterop`, parented to the termiHub window (`windows` crate)                                                           | None — Windows exposes no enrollment state                                       |
+| Linux / other | **Unavailable.** There is no standard per-user re-authentication API (polkit authorizes _administrative_ actions and needs a system-installed policy file), so verification always fails closed               | —                                                                                |
+
+It is used for two things:
+
+- **OS-keychain export re-authentication** — `credential::vault::authorize_export` requires a
+  successful verification **immediately before every** vault export and every backup that includes
+  the credentials section. Nothing is cached: two exports prompt twice. The export passphrase is
+  validated first so a weak passphrase never costs a prompt. Master-password mode is unchanged
+  (the master password is re-entered; OS verification cannot stand in for it).
+- **Biometric unlock of the master-password store** (opt-in, Settings → Security → Master Password
+  Options → _Unlock with Touch ID / Windows Hello_; the option is only shown where supported). The
+  master password is **not** weakened or replaced — the vault stays sealed with its Argon2id key,
+  and the master password remains required to set up, change, or opt in.
+
+```mermaid
+sequenceDiagram
+    participant UI as Unlock dialog
+    participant M as CredentialManager
+    participant OS as OsUserVerifier
+    participant KC as OS credential store
+    participant F as biometric-unlock.json
+    participant V as credentials.enc
+    UI->>M: unlock_credential_store_biometric
+    M->>F: read bindings, compare salt fingerprint with V (no prompt yet)
+    M->>OS: verify(BiometricUnlock)
+    OS-->>M: ok + enrollment fingerprint
+    M->>M: fingerprint == enrolled? (else delete enrollment)
+    M->>KC: read wrapping key
+    M->>M: AES-GCM unwrap vault key (AAD = salt fp + enrollment fp)
+    M->>V: unlock_with_key (AEAD-authenticated)
+```
+
+**Key protection.** On opt-in (master password re-verified **and** a successful OS verification)
+termiHub generates a random 256-bit _wrapping key_, stores it in the OS credential store (macOS
+Keychain / Windows Credential Manager, service `termiHub-biometric-unlock`), and seals a copy of
+the already-derived vault key with AES-256-GCM under it into `biometric-unlock.json` next to
+`credentials.enc`. The AEAD associated data binds the ciphertext to the vault's salt fingerprint and
+the enrollment fingerprint, so editing the file cannot re-bind it. Neither half alone reveals the
+key; the file never contains the vault key or the wrapping key.
+
+**Invalidation.** Any mismatch **deletes both halves** and the user falls back to the master
+password (`invalidated`): the vault salt changed (master password changed, even behind termiHub's
+back), the biometric enrollment changed (macOS), the wrapping key is missing or wrong, the file is
+unreadable, or the unwrapped key no longer opens the vault. The enrollment is also deleted on a
+master-password change, a store reset, a switch away from master-password mode, and on opt-out. A
+cancelled or failed prompt does **not** delete it. Auto-lock applies unchanged — biometric unlock
+passes the same auto-lock fail-safe gate (WA-RS-004) as a password unlock.
+
+**Threat model.**
+
+| Threat                                                                   | Mitigation                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Someone at an unattended, unlocked session exports every keychain secret | OS verification is required for each export; cancel/failure refuses it; no verification window is cached                                                                                                                                                                                          |
+| Someone at an unattended session unlocks a locked master-password store  | Biometric unlock needs the enrolled finger/face (or Hello PIN on Windows); the master password still works                                                                                                                                                                                        |
+| A finger is enrolled later by someone who knows the login password       | macOS: enrollment fingerprint changes → enrollment deleted (`biometryCurrentSet` semantics). Windows: not detectable — documented limitation                                                                                                                                                      |
+| Master password changed or vault replaced                                | Salt fingerprint mismatch → enrollment deleted before any prompt                                                                                                                                                                                                                                  |
+| Metadata file tampered to re-bind the enrollment                         | Bindings are AEAD associated data; any edit fails authentication → enrollment deleted                                                                                                                                                                                                             |
+| Offline theft of the config directory                                    | Without biometric unlock: Argon2id(master password) as before. **With it: also bounded by the OS credential store** — the wrapping key is protected by the user's login (Keychain / DPAPI), not by the master password. This is the accepted trade-off of opting in, stated in the setting's hint |
+| Malware running as the logged-in user                                    | **Not in scope.** It can read the user's keychain items and termiHub's memory while unlocked (it can equally keylog the master password). The OS prompt is enforced by termiHub, not by the key store                                                                                             |
+| Unit tests popping real prompts or silently succeeding                   | Under `cfg(test)` the platform verifier is always the unavailable one and the wrapping-key slot is in-memory; tests inject a scripted `MockVerifier`                                                                                                                                              |
+
+**Known limitation.** The wrapping key is gated by termiHub's own OS verification, not by a
+hardware-bound access control. Binding it cryptographically (macOS `SecAccessControl`
+`.biometryCurrentSet` in the data-protection keychain, Windows Hello `KeyCredentialManager`
+signatures) needs a code-signed build with keychain entitlements and is tracked as a follow-up.
+
 #### Unified backup and restore
 
 Settings → **Backup & Restore** backs up all app data to one file and restores it (PROD-068,
@@ -1262,8 +1341,8 @@ workspaces, macros, workflows, tunnels, embedded servers, Wake-on-LAN devices, H
 network-tool history. Session history, workflow run history, the last session and transfer state
 are deliberately not backed up. The optional **credentials** section is the credential-vault file
 object above, sealed with the backup passphrase and gated exactly like a vault export
-(master-password re-authentication; refused in OS-keychain mode until
-[#3433](https://github.com/armaxri/termiHub/issues/3433), while the rest of the backup still works).
+(master-password re-authentication, or a fresh OS user verification in OS-keychain mode —
+refused where that is unavailable, while the rest of the backup still works).
 
 ```json
 {
