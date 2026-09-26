@@ -840,6 +840,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::macros::get_macro,
             commands::macros::save_macro,
             commands::macros::delete_macro,
+            commands::macros::list_macro_runs,
+            commands::macros::record_macro_run,
+            commands::macros::clear_macro_run_history,
             // Session history
             commands::session_history::get_session_history,
             commands::session_history::record_session,

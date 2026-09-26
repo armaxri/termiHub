@@ -55,6 +55,7 @@ pub(super) fn completed(n: u32) -> WindowRunReport {
         message: None,
         targets_run: n,
         workflow_run_ids: Vec::new(),
+        macro_run_ids: Vec::new(),
     }
 }
 
@@ -64,6 +65,7 @@ pub(super) fn skip_report(msg: &str) -> WindowRunReport {
         message: Some(msg.to_string()),
         targets_run: 0,
         workflow_run_ids: Vec::new(),
+        macro_run_ids: Vec::new(),
     }
 }
 
@@ -327,6 +329,7 @@ fn a_failure_in_any_window_marks_the_run_failed() {
         message: Some("step 2 failed".into()),
         targets_run: 1,
         workflow_run_ids: Vec::new(),
+        macro_run_ids: Vec::new(),
     };
     m.report(&token, "win-1", failed, t(10, 11)).unwrap();
     let res = last_result(&m);

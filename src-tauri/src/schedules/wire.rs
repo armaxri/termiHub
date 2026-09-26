@@ -48,6 +48,9 @@ pub struct WindowRunReport {
     /// Workflow run-history record ids the run produced in that window.
     #[serde(default)]
     pub workflow_run_ids: Vec<String>,
+    /// Macro run-history record ids the run produced in that window (#3543).
+    #[serde(default)]
+    pub macro_run_ids: Vec<String>,
 }
 
 /// A schedule plus its live scheduling state, as the UI shows it.
@@ -197,8 +200,13 @@ pub(crate) fn aggregate(
         .iter()
         .flat_map(|r| r.workflow_run_ids.iter().cloned())
         .collect();
+    let macro_run_ids = reports
+        .iter()
+        .flat_map(|r| r.macro_run_ids.iter().cloned())
+        .collect();
     ScheduleRunResult {
         workflow_run_ids,
+        macro_run_ids,
         ..fired_result(fired_at, at, outcome, message, catch_up)
     }
 }
@@ -218,6 +226,7 @@ fn fired_result(
         started_at: Some(fired_at.to_rfc3339()),
         duration_ms: Some(duration_ms),
         workflow_run_ids: Vec::new(),
+        macro_run_ids: Vec::new(),
         outcome,
         message,
         catch_up,
@@ -234,6 +243,7 @@ pub(crate) fn skipped(
         started_at: None,
         duration_ms: None,
         workflow_run_ids: Vec::new(),
+        macro_run_ids: Vec::new(),
         outcome: ScheduleRunOutcome::Skipped,
         message: Some(message.into()),
         catch_up,

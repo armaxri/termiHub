@@ -152,6 +152,10 @@ pub struct ScheduleRunResult {
     /// terminal a workflow ran on). Empty for macros and skips.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub workflow_run_ids: Vec<String>,
+    /// Ids of the macro run-history records this attempt produced (one per
+    /// window a macro played in, #3543). Empty for workflows and skips.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub macro_run_ids: Vec<String>,
     /// How it ended.
     pub outcome: ScheduleRunOutcome,
     /// Human-readable detail (the skip reason, the failure, the target count).
@@ -312,6 +316,7 @@ mod tests {
             started_at: None,
             duration_ms: None,
             workflow_run_ids: Vec::new(),
+            macro_run_ids: Vec::new(),
             outcome: ScheduleRunOutcome::Skipped,
             message: Some("why".into()),
             catch_up: false,
@@ -321,6 +326,7 @@ mod tests {
         assert!(!s.contains("startedAt"));
         assert!(!s.contains("durationMs"));
         assert!(!s.contains("workflowRunIds"));
+        assert!(!s.contains("macroRunIds"));
         assert!(s.contains("\"outcome\":\"skipped\""));
     }
 }
