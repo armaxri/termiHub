@@ -30,6 +30,12 @@ vi.mock("@/store/appStore", () => ({
     }),
 }));
 
+const clearNetworkToolHistory = vi.fn(() => Promise.resolve());
+vi.mock("@/store/networkToolHistoryStore", () => ({
+  useNetworkToolHistoryStore: <T,>(selector: (s: { clear: () => Promise<void> }) => T): T =>
+    selector({ clear: clearNetworkToolHistory }),
+}));
+
 // The dropdown resolves its value asynchronously via core::restore_mode; return the
 // explicit mode synchronously so the trigger label is deterministic.
 vi.mock("@/utils/restoreMode", () => ({
@@ -161,5 +167,36 @@ describe("SessionSettings", () => {
     expect(query("settings-restore-last-session-mode")).not.toBeNull();
     expect(query("settings-session-history-enabled")).toBeNull();
     expect(query("settings-clear-session-history")).toBeNull();
+  });
+
+  describe("network tool history (PROD-032)", () => {
+    it("defaults the recording toggle on and emits the flipped value", () => {
+      const onChange = renderWith(defaultSettings);
+      const toggle = query("settings-network-tool-history-enabled")!;
+      expect(toggle.getAttribute("aria-checked")).toBe("true");
+      act(() => toggle.click());
+      expect(applied(onChange, defaultSettings)).toEqual(
+        expect.objectContaining({ networkToolHistoryEnabled: false })
+      );
+    });
+
+    it("reflects an explicit off", () => {
+      renderWith({ ...defaultSettings, networkToolHistoryEnabled: false });
+      expect(query("settings-network-tool-history-enabled")!.getAttribute("aria-checked")).toBe(
+        "false"
+      );
+    });
+
+    it("clears every tool's history from the Clear button", () => {
+      clearNetworkToolHistory.mockClear();
+      renderWith(defaultSettings);
+      act(() => (query("settings-clear-network-tool-history") as HTMLButtonElement).click());
+      expect(clearNetworkToolHistory).toHaveBeenCalledWith();
+    });
+
+    it("is hidden when search excludes it", () => {
+      renderWith(defaultSettings, new Set(["sessionHistoryEnabled"]));
+      expect(query("settings-network-tool-history-enabled")).toBeNull();
+    });
   });
 });
