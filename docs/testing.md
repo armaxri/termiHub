@@ -3673,6 +3673,12 @@ limits, symlinks, merge layout, group cancel, end-to-end temp tree) and
    unrelated file — the unrelated file stays, same-named files are replaced.
 5. **Into itself:** paste `tree` into `tree/sub` — an error toast says a folder
    cannot be copied into itself and nothing is written.
+6. **Cancel after a restart (#3613):** paste `tree` into a fresh folder, pause
+   both rows and quit the app. Relaunch: both rows are back as paused. Resume
+   `a.bin`, then cancel it — `b.bin` moves to cancelled too. Repeat, but cancel
+   a paused row without resuming anything — both rows move to cancelled, and
+   neither comes back after another restart. Automated coverage:
+   `src-tauri/src/files/transfer/relaunch.rs` (`cancelling_*` tests).
 
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 

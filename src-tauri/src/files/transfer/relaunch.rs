@@ -129,7 +129,7 @@ pub(crate) enum ResumeDecision {
     /// A live handle exists and accepted the resume signal (normal paused row).
     Signaled,
     /// No live handle, but a rehydrated record was found — relaunch it.
-    Relaunch(PersistedTransfer),
+    Relaunch(Box<PersistedTransfer>),
     /// No live handle and no rehydrated record: an unknown / finished id (no-op).
     Unknown,
 }
@@ -236,7 +236,7 @@ pub(crate) fn decide_resume(
         return ResumeDecision::Signaled;
     }
     match persist.get_record(transfer_id) {
-        Some(record) => ResumeDecision::Relaunch(record),
+        Some(record) => ResumeDecision::Relaunch(Box::new(record)),
         None => ResumeDecision::Unknown,
     }
 }
@@ -262,7 +262,7 @@ pub(crate) async fn resume_or_relaunch(
         ResumeDecision::Signaled => true,
         ResumeDecision::Unknown => false,
         ResumeDecision::Relaunch(record) => {
-            relaunch_record(record, registry, manager, app_handle).await
+            relaunch_record(*record, registry, manager, app_handle).await
         }
     }
 }
@@ -659,7 +659,6 @@ mod tests {
                 local_path: "/home/user/data.csv".to_string(),
                 offset: 4096,
                 total: 8192,
-                group_id: None,
             }
         );
     }
@@ -723,6 +722,7 @@ mod tests {
                 dest_path: "/backup/data.csv".to_string(),
                 offset: 4096,
                 total: 8192,
+                group_id: None,
             }
         );
     }

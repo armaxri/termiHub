@@ -1918,7 +1918,12 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   directly — dirs, symlinks recreated not followed, small files; merging into an
   existing destination folder — and each large file queued as its own row in a
   cancel group (cancelling one cancels the folder's rest). Special files are
-  skipped and reported.
+  skipped and reported. The group id is persisted with each row, so after an
+  app restart the rehydrated rows keep it (#3613): a resumed row relaunches
+  inside its rebuilt group, and cancelling any row — resumed or still waiting
+  as a rehydrated paused row — cancels the folder's rest. The rows stay
+  individual queue rows; the folder-level result the paste awaited does not
+  survive the restart, so each row reports its own outcome afterwards.
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
   `src-tauri/src/session/registry.rs::build_desktop_registry()`); the remote agent has no FTP
   backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP
