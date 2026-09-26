@@ -9,7 +9,8 @@ subsystem: core/backends/vnc, core/backends/rdp_sidecar
 evidence:
   - core/src/backends/vnc/mod.rs:704
   - core/src/backends/rdp_sidecar/mod.rs:690
-status: open
+status: partial
+resolution: "#3474 — RDP image clipboard both directions (CF_DIB, capped 8192px/32MiB, owner-gated); VNC text UTF-8 fix + cap; VNC Extended Clipboard #3472"
 ---
 
 ## What
