@@ -271,7 +271,7 @@ function JumpHostStatus() {
  * Shared status-bar segment for the active graphical remote-desktop tab (#1709).
  *
  * Shows `<monitor> host:port · WxH · N-bit` while a `remote-desktop` tab is
- * active: `host:port` and colour depth come from the connection config, and the
+ * active: `host:port` and (RDP) colour depth come from the connection config, and the
  * live `WxH` resolution comes from the framebuffer surfaced to the store
  * (`remoteDesktopResolutions`, keyed by session id). Renders nothing for any
  * other active tab, so it disappears the moment a non-graphical tab is focused.
@@ -292,7 +292,9 @@ function RemoteDesktopStatus() {
   const host = readConfigString(activeTab.config, "host") || activeTab.title || "remote";
   const port = cfg.port;
   const hostPort = port !== undefined && port !== null && port !== "" ? `${host}:${port}` : host;
-  const colorDepth = cfg.colorDepth;
+  // Only RDP negotiates a configurable color depth; VNC is always 32-bit, so a
+  // `colorDepth` left in an older VNC config is not shown (PROD-026).
+  const colorDepth = activeTab.config.type === "rdp" ? cfg.colorDepth : undefined;
 
   const parts = [hostPort];
   if (resolution) parts.push(`${resolution.width}×${resolution.height}`);
