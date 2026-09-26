@@ -286,6 +286,9 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 | Desktop Version | Agent Version | Compatible?                                                                                                 |
 | --------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
+| 0.10.0          | 0.10.0        | Yes                                                                                                         |
+| 0.10.0          | 0.9.0         | Yes (`clientCapabilities` ignored — agent-authenticated SSH keeps auto-answer-only keyboard-interactive)    |
+| 0.9.0           | 0.10.0        | Yes (no `clientCapabilities` — the agent never relays prompts to this desktop)                              |
 | 0.9.0           | 0.9.0         | Yes                                                                                                         |
 | 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`) |
 | 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                      |
@@ -309,6 +312,8 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 | 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                  |
 | 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                        |
 | 1.0.0           | 0.4.0         | No (major mismatch)                                                                                         |
+
+**0.10.0 (additive, minor)** — adds the SSH keyboard-interactive prompt relay (#3375): the `clientCapabilities` object in the `initialize` **params**, the `capabilities.keyboardInteractivePrompts` flag in its result, the [`ssh.keyboard_interactive.prompt`](#sshkeyboard_interactiveprompt) / [`ssh.keyboard_interactive.closed`](#sshkeyboard_interactiveclosed) notifications, the [`ssh.keyboard_interactive.respond`](#sshkeyboard_interactiverespond) method, and the `-32024` / `-32025` error codes. Negotiation is by **capability** in the other direction from `toolStreaming`: the agent relays prompts only to a desktop that sent `clientCapabilities.keyboardInteractivePrompts: true`. Backwards compatible in both directions: an older desktop sends no `clientCapabilities`, so the agent keeps the pre-0.10.0 behaviour (auto-answer a lone password prompt, fail any OTP prompt with a clear error); an older agent ignores the member and never sends the notifications.
 
 **0.9.0 (additive, minor)** — adds streaming tool runs: the [`tool.start`](#toolstart) / [`tool.cancel`](#toolcancel) methods, the [`tool.event`](#toolevent) / [`tool.done`](#tooldone) notifications, and the `capabilities.toolStreaming` flag in the `initialize` result (#3353). Negotiation is by **capability**, not version: the desktop streams only when the agent advertises `toolStreaming: true`. Backwards compatible in both directions: a pre-0.9.0 agent never advertises the flag, so the desktop keeps the collect-and-return `network.*` / `tool.run` path (bounded by its 60 s request timeout); a pre-0.9.0 desktop never calls the methods and ignores the notifications.
 
@@ -341,7 +346,8 @@ Handshake that establishes the protocol version and exchanges capabilities.
   "params": {
     "protocolVersion": "0.2.0",
     "client": "termihub-desktop",
-    "clientVersion": "0.1.0"
+    "clientVersion": "0.1.0",
+    "clientCapabilities": { "keyboardInteractivePrompts": true }
   },
   "id": 1
 }
@@ -382,26 +388,28 @@ Handshake that establishes the protocol version and exchanges capabilities.
 }
 ```
 
-| Param             | Type     | Description                |
-| ----------------- | -------- | -------------------------- |
-| `protocolVersion` | `string` | Requested protocol version |
-| `client`          | `string` | Client identifier          |
-| `clientVersion`   | `string` | Client application version |
+| Param                                           | Type      | Description                                                                                                                                                                                    |
+| ----------------------------------------------- | --------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `protocolVersion`                               | `string`  | Requested protocol version                                                                                                                                                                     |
+| `client`                                        | `string`  | Client identifier                                                                                                                                                                              |
+| `clientVersion`                                 | `string`  | Client application version                                                                                                                                                                     |
+| `clientCapabilities.keyboardInteractivePrompts` | `boolean` | The desktop shows agent-relayed SSH keyboard-interactive prompts (0.10.0+; absent = `false`) — see [Interactive SSH Authentication on the Agent](#interactive-ssh-authentication-on-the-agent) |
 
 On a successful `initialize`, the agent records the client (`client`, `client_version`, an agent-assigned `client_id`, and a `connected_since` timestamp) in its per-process `ConnectionRegistry` and clears it when the connection drops (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Because each `--stdio` process serves one client, the registry holds exactly one entry in the SSH-tunnelled deployment.
 
-| Result Field                         | Type                   | Description                                                                           |
-| ------------------------------------ | ---------------------- | ------------------------------------------------------------------------------------- |
-| `protocol_version`                   | `string`               | Negotiated protocol version                                                           |
-| `agent_version`                      | `string`               | Agent binary version                                                                  |
-| `client_id`                          | `string`               | Agent-assigned id for this client (0.3.0+)                                            |
-| `capabilities.connectionTypes`       | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                          |
-| `capabilities.maxSessions`           | `integer`              | Maximum concurrent sessions                                                           |
-| `capabilities.availableShells`       | `string[]`             | Available shell paths                                                                 |
-| `capabilities.availableSerialPorts`  | `string[]`             | Available serial port paths                                                           |
-| `capabilities.dockerAvailable`       | `boolean`              | Whether Docker is available                                                           |
-| `capabilities.availableDockerImages` | `string[]`             | Available Docker image names                                                          |
-| `capabilities.toolStreaming`         | `boolean`              | Streaming tool runs supported — [`tool.start`](#toolstart) (0.9.0+; absent = `false`) |
+| Result Field                              | Type                   | Description                                                                                                     |
+| ----------------------------------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `protocol_version`                        | `string`               | Negotiated protocol version                                                                                     |
+| `agent_version`                           | `string`               | Agent binary version                                                                                            |
+| `client_id`                               | `string`               | Agent-assigned id for this client (0.3.0+)                                                                      |
+| `capabilities.connectionTypes`            | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                                                    |
+| `capabilities.maxSessions`                | `integer`              | Maximum concurrent sessions                                                                                     |
+| `capabilities.availableShells`            | `string[]`             | Available shell paths                                                                                           |
+| `capabilities.availableSerialPorts`       | `string[]`             | Available serial port paths                                                                                     |
+| `capabilities.dockerAvailable`            | `boolean`              | Whether Docker is available                                                                                     |
+| `capabilities.availableDockerImages`      | `string[]`             | Available Docker image names                                                                                    |
+| `capabilities.toolStreaming`              | `boolean`              | Streaming tool runs supported — [`tool.start`](#toolstart) (0.9.0+; absent = `false`)                           |
+| `capabilities.keyboardInteractivePrompts` | `boolean`              | The agent relays SSH keyboard-interactive prompts to a desktop that advertised them (0.10.0+; absent = `false`) |
 
 > **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
 > (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
@@ -2155,6 +2163,30 @@ Cancel a streaming run. Idempotent.
 
 Result: `{"cancelled": true}` when a running run was signalled, or `{"cancelled": false}` when the id is unknown or the run already finished. The run's `tool.done` follows.
 
+### `ssh.keyboard_interactive.respond`
+
+Answer (or cancel) a round relayed by an [`ssh.keyboard_interactive.prompt`](#sshkeyboard_interactiveprompt) notification (#3375). Only an agent whose `initialize` result carries `capabilities.keyboardInteractivePrompts: true` offers it.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ssh.keyboard_interactive.respond",
+  "params": { "requestId": "5e0f…", "responses": ["123456"] },
+  "id": 42
+}
+```
+
+| Param       | Type               | Description                                                            |
+| ----------- | ------------------ | ---------------------------------------------------------------------- |
+| `requestId` | `string`           | The `requestId` of the prompt notification                             |
+| `responses` | `string[] \| null` | One answer per prompt, in order; `null` = the user cancelled the round |
+
+**Result:** `{ "accepted": true }` — `false` when no round with that id is waiting (already answered, timed out, or abandoned), which is a stale reply rather than an error.
+
+This request is special in two ways: the agent's transport loop **dispatches it immediately even while another request is in flight** (the `connection.create` whose SSH connect is waiting for this very answer — every other request still waits its turn, in order), and it carries secrets, so neither side ever logs it; both keep the answers in zeroizing storage and wipe them once handed on. A malformed request is rejected with `-32602` without echoing its params.
+
+---
+
 ### Agent-hosted embedded servers (`service.*`)
 
 The `service.*` methods run an embedded server (HTTP / FTP / TFTP) **on the agent** instead of on the desktop (#2192). The agent creates the server from its `ServiceRegistry` by `serviceId` and binds the listen socket on the agent host; the desktop keeps only lifecycle control — start, stop, and status — over this RPC. The lifecycle methods are additive in protocol **0.7.0**: a pre-0.7.0 agent lacks them, so a `service.start` call returns [`-32601` Method not found](#standard-json-rpc-errors), and the desktop surfaces the existing "not supported" path (hosting the embedded server locally on the desktop as before).
@@ -2697,6 +2729,55 @@ A desktop must ignore `tool.event` / `tool.done` for a `runId` it does not know.
 
 ---
 
+### `ssh.keyboard_interactive.prompt`
+
+An SSH connection the **agent** authenticates needs the user to answer a keyboard-interactive round — typically an OTP / 2FA code (#3375). Sent only to a desktop that advertised `clientCapabilities.keyboardInteractivePrompts`, and — unlike other notifications — written **even while a request is in flight** (the waiting `connection.create`). The desktop shows its usual keyboard-interactive dialog, labelled with the agent, and replies with [`ssh.keyboard_interactive.respond`](#sshkeyboard_interactiverespond).
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ssh.keyboard_interactive.prompt",
+  "params": {
+    "requestId": "5e0f…",
+    "sessionId": "8b1c…",
+    "host": "bastion.example.com",
+    "port": 22,
+    "username": "alice",
+    "name": "",
+    "instructions": "Enter the code from your authenticator app",
+    "prompts": [{ "prompt": "Verification code: ", "echo": false }],
+    "round": 2
+  }
+}
+```
+
+| Param          | Type                | Description                                                                          |
+| -------------- | ------------------- | ------------------------------------------------------------------------------------ |
+| `requestId`    | `string`            | Correlates the respond request                                                       |
+| `sessionId`    | `string` (optional) | Agent session being created, when the round belongs to one (absent for tunnels etc.) |
+| `host`, `port` | `string`, `integer` | Host being authenticated to (for a jump-host hop: that hop)                          |
+| `username`     | `string`            | User being authenticated                                                             |
+| `name`         | `string`            | Server-supplied challenge name (often empty)                                         |
+| `instructions` | `string`            | Server-supplied instruction text (often empty)                                       |
+| `prompts`      | `{prompt, echo}[]`  | The prompts to answer in order; `echo: false` → mask the input                       |
+| `round`        | `integer`           | 1-based round number within the exchange                                             |
+
+Each round waits at most **300 s** for an answer — the same per-prompt bound as a direct connection — and that wait is excluded from every connect timeout on both sides (the core SSH connect clock, the agent's session-daemon connect wait, and the desktop's `connection.create` request timeout).
+
+### `ssh.keyboard_interactive.closed`
+
+A round is no longer awaited: it timed out, or the connect that asked was abandoned (#3375). The desktop closes the dialog; a late respond for it returns `accepted: false`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "ssh.keyboard_interactive.closed",
+  "params": { "requestId": "5e0f…" }
+}
+```
+
+---
+
 ### `agent.update_pending`
 
 Another host is updating this agent (#1351). Broadcast to every client **except** the one that called [`agent.request_update`](#agentrequest_update).
@@ -2817,6 +2898,8 @@ For serial sessions:
 | `-32021` | Update signature rejected   | An agent update's Ed25519 signature is missing, malformed, or does not verify (AGT-005)                                     |
 | `-32022` | Tool run rejected           | A streaming `tool.start` was refused: unknown tool, duplicate run id, concurrency limit, or no streaming on this connection |
 | `-32023` | Session held by other       | A plain `connection.attach` was refused because another desktop holds the session; only `takeover: true` may evict it       |
+| `-32024` | Auth cancelled              | The user cancelled an agent-relayed SSH keyboard-interactive prompt; the desktop treats it as a quiet cancel                |
+| `-32025` | Second factor failed        | An agent-authenticated SSH connection's one-time code was rejected after an earlier factor was accepted — keep the password |
 
 ---
 
@@ -2952,11 +3035,53 @@ When the **agent** authenticates an SSH connection itself (agent-hosted SSH
 sessions, `tunnel.start`'s `sshConfig`, remote monitoring), `authMethod` may be
 `"keyboard-interactive"` and the core SSH backend also falls back to
 keyboard-interactive after a refused password or a partial-success first factor
-(#3371). The agent has **no prompt round-trip to the desktop yet**, so it can
-only answer a round that consists of a single echo-off password prompt, using
-the configured `password`. Any other prompt (OTP / verification code) fails the
-connect with a clear "no prompt is available here" error rather than hanging.
-The prompt notification + response method is tracked in #3375.
+(#3371). The same auto-answer rule as a direct connection applies: a lone
+echo-off password prompt in the first round is answered with the configured
+`password`; every other prompt goes to the user.
+
+Since 0.10.0 (#3375) the agent relays those prompts to the desktop:
+
+```mermaid
+sequenceDiagram
+    participant UI as Desktop dialog
+    participant D as Desktop agent_manager
+    participant W as Agent worker (hub)
+    participant S as Session daemon (SSH auth)
+    D->>W: initialize {clientCapabilities.keyboardInteractivePrompts: true}
+    D->>W: connection.create {type: ssh}
+    W->>S: spawn with TERMIHUB_KI_PROMPT_ENDPOINT
+    S->>W: prompt frame (per-session local socket)
+    W-->>D: ssh.keyboard_interactive.prompt (priority, mid-request)
+    D->>UI: ssh-keyboard-interactive-prompt (via agent host)
+    UI->>D: answer / cancel
+    D->>W: ssh.keyboard_interactive.respond (dispatched mid-request)
+    W->>S: answer frame
+    S-->>W: connected (or typed failure report)
+    W-->>D: connection.create result / -32024 / -32025
+```
+
+- **Capability-gated.** The agent's prompter is only _available_ while a
+  desktop that sent `clientCapabilities.keyboardInteractivePrompts: true` is
+  attached. With an older desktop nothing changes: an OTP prompt fails the
+  connect with the "no prompt is available here" error rather than hanging.
+- **Session daemons.** Persistent SSH sessions authenticate in the session
+  daemon process, so the worker binds a per-session current-user-only relay
+  endpoint (`session-<id>-ki.sock` / `\\.\pipe\termihub-ki-prompt-<id>`),
+  exports it to the daemon, and forwards each round to the desktop. The daemon
+  reports a cancel or rejected second factor back over it, so
+  `connection.create` fails with the typed `-32024` / `-32025`.
+- **Errors.** Cancel → `-32024` (the desktop closes quietly, like a cancelled
+  direct prompt); a wrong one-time code after an accepted password → `-32025`
+  (the saved password is kept, #3376); a plain credential rejection stays the
+  generic `-32003`.
+- **Lifecycle.** A round the agent stops awaiting (300 s timeout, connect
+  abandoned) is closed with `ssh.keyboard_interactive.closed`; a desktop that
+  disconnects has all its rounds cancelled on the agent, and the desktop closes
+  every open dialog of an agent whose connection drops.
+- **Secrets.** Answers are never logged on either side (the agent redacts the
+  respond request in its dispatch logs), live in zeroizing storage, and are
+  wiped once handed to the SSH layer or written to the wire. They are never
+  replayed across an agent reconnect.
 
 ### Threat Model
 
