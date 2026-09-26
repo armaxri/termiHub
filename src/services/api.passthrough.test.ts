@@ -83,6 +83,8 @@ import {
   disconnectAgent,
   getAgentCapabilities,
   listAgentSessions,
+  listAgentHostSessions,
+  takeOverAgentSession,
   closeAgentSession,
   listAgentDefinitions,
   saveAgentDefinition,
@@ -857,6 +859,29 @@ describe("api pass-through wrappers (#2975)", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("list_agent_sessions", { agentId: "agent-1" });
       expect(result).toEqual(sessions);
+    });
+
+    it("listAgentHostSessions forwards the agent id (#3369)", async () => {
+      const reply = { supported: true, sessions: [] };
+      mockedInvoke.mockResolvedValue(reply);
+
+      const result = await listAgentHostSessions("agent-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_agent_host_sessions", {
+        agentId: "agent-1",
+      });
+      expect(result).toEqual(reply);
+    });
+
+    it("takeOverAgentSession forwards the agent and session ids (#3369)", async () => {
+      mockedInvoke.mockResolvedValue(undefined);
+
+      await takeOverAgentSession("agent-1", "s-1");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("take_over_agent_session", {
+        agentId: "agent-1",
+        sessionId: "s-1",
+      });
     });
 
     it("closeAgentSession forwards the agent and session ids", async () => {

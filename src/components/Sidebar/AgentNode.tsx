@@ -64,6 +64,8 @@ import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { AgentTreeFilter, filterAgentTree } from "@/utils/agentTreeSearch";
 import { computeAgentTreeNodes, type AgentVisibleNode } from "@/utils/computeAgentTreeNodes";
 import { AgentSetupDialog } from "./AgentSetupDialog";
+import { AgentRunningSessionsDialog } from "./AgentRunningSessionsDialog";
+import { sessionBoundDefinition, type OpenableAgentSession } from "@/utils/sessionBoundDefinition";
 import { ConnectionErrorDialog } from "./ConnectionErrorDialog";
 import { InlineFolderInput } from "./InlineFolderInput";
 import { PersistentStateDot } from "./PersistentStateDot";
@@ -692,6 +694,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
 
   const [connecting, setConnecting] = useState(false);
   const [setupDialogOpen, setSetupDialogOpen] = useState(false);
+  const [runningSessionsOpen, setRunningSessionsOpen] = useState(false);
   const [connectionError, setConnectionError] = useState<ClassifiedAgentError | null>(null);
   const [errorDialogOpen, setErrorDialogOpen] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
@@ -965,32 +968,21 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
   }, [agent, addTab]);
 
   const handleAttachSession = useCallback(
-    (session: AgentSessionInfo) => {
-      // If the agent reported which saved-connection definition this session
-      // was created from, route through the adopt+attach path so the new tab
-      // re-attaches to the existing session (with scrollback replay) instead
-      // of spawning a fresh one. Falls back to the simple addTab path for
-      // legacy sessions created before the agent learned about definition_id.
-      const def = session.definitionId
-        ? agentDefinitions.find((d) => d.id === session.definitionId)
-        : undefined;
-      if (def && session.definitionId) {
-        useAppStore
-          .getState()
-          .adoptAndAttachAgentPersistentSession(agent.id, def, session.sessionId);
-        return;
-      }
-      addTab(session.title || `Session: ${session.sessionId}`, "remote-session", {
-        type: "remote-session",
-        config: {
-          agentId: agent.id,
-          sessionType: session.type as "shell" | "serial",
-          persistent: true,
-          title: session.title,
-        },
-      });
+    (session: OpenableAgentSession) => {
+      // Always bind the new tab to the agent's existing session (with scrollback
+      // replay) through the adopt+attach path — never spawn a fresh one. When the
+      // agent reported the saved-connection definition the session came from,
+      // use it; otherwise (an ad-hoc session) adopt it under a session-scoped
+      // synthetic definition (#3369).
+      const def =
+        (session.definitionId
+          ? agentDefinitions.find((d) => d.id === session.definitionId)
+          : undefined) ?? sessionBoundDefinition(session);
+      void useAppStore
+        .getState()
+        .adoptAndAttachAgentPersistentSession(agent.id, def, session.sessionId);
     },
-    [agent.id, addTab, agentDefinitions]
+    [agent.id, agentDefinitions]
   );
 
   const handleOpenDefinition = useCallback(
@@ -1372,6 +1364,14 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
                   <RefreshCw size={14} />
                   Refresh Sessions
                 </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="context-menu__item"
+                  onSelect={() => setRunningSessionsOpen(true)}
+                  data-testid="context-agent-running-sessions"
+                >
+                  <Terminal size={14} />
+                  Running Sessions...
+                </ContextMenu.Item>
                 <ContextMenu.Separator className="context-menu__separator" />
                 <ContextMenu.Item
                   className="context-menu__item"
@@ -1436,6 +1436,15 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       {isConnected && <AgentUpdateBanner agentId={agent.id} agentName={agent.name} />}
 
       <AgentSetupDialog open={setupDialogOpen} onOpenChange={setSetupDialogOpen} agent={agent} />
+      {runningSessionsOpen && (
+        <AgentRunningSessionsDialog
+          open={runningSessionsOpen}
+          onOpenChange={setRunningSessionsOpen}
+          agentId={agent.id}
+          agentName={agent.name}
+          onOpenSession={handleAttachSession}
+        />
+      )}
       <ConnectionErrorDialog
         open={errorDialogOpen}
         onOpenChange={setErrorDialogOpen}

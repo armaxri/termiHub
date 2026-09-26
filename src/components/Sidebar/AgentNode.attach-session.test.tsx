@@ -178,7 +178,7 @@ describe("AgentNode — Active Sessions reattach", () => {
     expect(addTab).not.toHaveBeenCalled();
   });
 
-  it("falls back to plain addTab when the session has no definitionId", async () => {
+  it("binds a session without a definitionId via a session-scoped definition (#3369)", async () => {
     const adopt = vi.fn().mockResolvedValue(undefined);
     const addTab = vi.fn();
     seedAgentsRegion({
@@ -209,7 +209,13 @@ describe("AgentNode — Active Sessions reattach", () => {
       sessionBtn!.dispatchEvent(new MouseEvent("dblclick", { bubbles: true, cancelable: true }));
     });
 
-    expect(adopt).not.toHaveBeenCalled();
-    expect(addTab).toHaveBeenCalledTimes(1);
+    // Never the fresh-spawn fallback: the tab must bind to the running session.
+    expect(addTab).not.toHaveBeenCalled();
+    expect(adopt).toHaveBeenCalledTimes(1);
+    expect(adopt).toHaveBeenCalledWith(
+      AGENT_ID,
+      expect.objectContaining({ id: `session:${AGENT_SESSION_ID}`, persistent: true }),
+      AGENT_SESSION_ID
+    );
   });
 });
