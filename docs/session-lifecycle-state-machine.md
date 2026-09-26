@@ -139,6 +139,16 @@ the sticky `Evicted` state. Every **automatic** fold is a no-op from `Evicted`
 takeover) and ping-pong control. Only the explicit Reclaim (`reclaimed`), a fresh
 `connect`, a user `disconnect` / `cancelReconnect`, or `remove` leave it.
 
+**Window takeover (#3368).** The same rule holds between windows of one desktop,
+but window eviction is **window-local**, not a region status: the region is shared
+by every window of the desktop. The backend `session → window` ownership map
+(`WindowManager`, SM-026 / #1900) is the single source of truth — a
+`claim_session` atomically supersedes the previous owner, and `send_input` /
+`resize_terminal` from any other window are dropped (`may_send_input` /
+`may_resize`). A window whose session is owned elsewhere shows "Taken over by
+another window" with Reclaim; Reclaim is `claim_session` from that window.
+Re-binding the same session id never claims it back automatically.
+
 `Failed`, `AuthFailed`, `SessionLost`, and idle `Disconnected` are the resting
 states. From any of them a fresh `session.connect` (a new connect / manual
 retry / "start new shell") restarts the machine at `Connecting`; `session.remove`

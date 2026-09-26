@@ -30,6 +30,7 @@ const sendHandoffToWindow = vi.fn();
 const claimSession = vi.fn();
 const releaseSession = vi.fn();
 const takePendingHandoffs = vi.fn();
+const listSessionOwners = vi.fn();
 
 vi.mock("@/services/api", () => ({
   sftpOpen: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock("@/services/api", () => ({
   claimSession: (...args: unknown[]) => claimSession(...args),
   releaseSession: (...args: unknown[]) => releaseSession(...args),
   takePendingHandoffs: (...args: unknown[]) => takePendingHandoffs(...args),
+  listSessionOwners: (...args: unknown[]) => listSessionOwners(...args),
 }));
 
 import { useAppStore } from "./appStore";
@@ -241,6 +243,92 @@ describe("appStore — multi-window re-parenting seam (#1900)", () => {
       useAppStore.getState().setTabSessionId(tabId, null);
 
       expect(releaseSession).not.toHaveBeenCalled();
+    });
+  });
+
+  // #3368 (SM-003 single-attach for windows): one window controls a session; a
+  // window another window took it over from is evicted until it explicitly
+  // reclaims — never automatically.
+  describe("window takeover → evicted → reclaim (#3368)", () => {
+    /** Simulate the backend `session-ownership-changed` mirror refresh. */
+    const setOwner = (sessionId: string, label: string) =>
+      useAppStore.getState().setSessionOwners({ [sessionId]: label });
+
+    beforeEach(() => {
+      listSessionOwners.mockReset();
+      useAppStore.setState({ windowLabel: "main" });
+    });
+
+    it("is not evicted while this window owns the session or it is unclaimed", () => {
+      seedLiveTab("sess-own");
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-own")).toBe(false);
+      setOwner("sess-own", "main");
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-own")).toBe(false);
+      expect(useAppStore.getState().isSessionWindowEvicted(null)).toBe(false);
+    });
+
+    it("A owns → B takes over → A evicted → A reclaims → B evicted", async () => {
+      seedLiveTab("sess-x");
+      setOwner("sess-x", "main");
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-x")).toBe(false);
+
+      // Window B (win-1) takes over: the backend map now names B.
+      setOwner("sess-x", "win-1");
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-x")).toBe(true);
+
+      // A's explicit Reclaim claims the session for A and leaves evicted state.
+      claimSession.mockClear();
+      claimSession.mockResolvedValue("win-1");
+      listSessionOwners.mockResolvedValue({ "sess-x": "main" });
+      await expect(useAppStore.getState().reclaimWindowSession("sess-x")).resolves.toBe(true);
+      expect(claimSession).toHaveBeenCalledTimes(1);
+      expect(claimSession).toHaveBeenCalledWith("sess-x");
+      expect(useAppStore.getState().sessionOwners["sess-x"]).toBe("main");
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-x")).toBe(false);
+
+      // Seen from window B, the same map now evicts B.
+      useAppStore.setState({ windowLabel: "win-1" });
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-x")).toBe(true);
+    });
+
+    it("never auto-reclaims when an evicted tab re-binds the same session", () => {
+      const { tabId } = seedLiveTab("sess-steal");
+      setOwner("sess-steal", "win-1");
+      claimSession.mockClear();
+
+      // A remount / reattach re-registers the same id in the evicted window.
+      useAppStore.getState().setTabSessionId(tabId, "sess-steal");
+
+      expect(claimSession).not.toHaveBeenCalled();
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-steal")).toBe(true);
+    });
+
+    it("still claims a re-bound session no other window controls", () => {
+      const { tabId } = seedLiveTab("sess-free");
+      claimSession.mockClear();
+
+      useAppStore.getState().setTabSessionId(tabId, "sess-free");
+
+      expect(claimSession).toHaveBeenCalledWith("sess-free");
+    });
+
+    it("keeps the tab evicted and does not claim again when reclaim fails", async () => {
+      seedLiveTab("sess-fail");
+      setOwner("sess-fail", "win-1");
+      claimSession.mockClear();
+      claimSession.mockRejectedValue(new Error("ipc down"));
+
+      await expect(useAppStore.getState().reclaimWindowSession("sess-fail")).resolves.toBe(false);
+
+      expect(claimSession).toHaveBeenCalledTimes(1);
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-fail")).toBe(true);
+    });
+
+    it("does not treat a mid-move session as evicted", () => {
+      seedLiveTab("sess-moving");
+      setOwner("sess-moving", "win-1");
+      useAppStore.setState((s) => ({ movingSessionIds: [...s.movingSessionIds, "sess-moving"] }));
+      expect(useAppStore.getState().isSessionWindowEvicted("sess-moving")).toBe(false);
     });
   });
 });

@@ -6266,6 +6266,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
         // connecting sessions and non-terminal tabs are skipped silently.
         if (!tab || tab.contentType !== "terminal" || !tab.sessionId) continue;
         if (deriveTabStatus(statusMaps, tabId) !== "connected") continue;
+        // #3368: nor a tab whose session another window took over.
+        if (state.isSessionWindowEvicted(tab.sessionId)) continue;
         result.push(tabId);
       }
       return result;
