@@ -12,7 +12,7 @@ use super::config::{
 use super::credential_migration::follow_id_changes;
 use super::id_changes::{diff_connection_ids, ConnectionIdRemap};
 pub use super::id_changes::{ConnectionIdChange, ConnectionIdChangeListener};
-use super::jump_host_resolver::follow_jump_host_refs_in;
+use super::jump_host_resolver::{follow_jump_host_refs_in, JumpHostScope, UnavailableFile};
 use super::placement::{place_connection, PlaceMode};
 use super::plugin_type_ids::migrate_connections;
 use super::recovery::RecoveryWarning;
@@ -215,7 +215,8 @@ impl ConnectionManager {
     /// already persisted, the remaining files still follow, and a reference left
     /// behind dangles exactly as it did before #3596.
     fn follow_references(&self, changes: &[ConnectionIdChange], origin: ChangeOrigin<'_>) {
-        let remap = ConnectionIdRemap::new(changes);
+        let changes = self.changes_owned_by(changes, origin);
+        let remap = ConnectionIdRemap::new(&changes);
         if remap.is_empty() {
             return;
         }
@@ -257,6 +258,45 @@ impl ConnectionManager {
                 );
             }
         }
+    }
+
+    /// The `changes` whose old id no connection outside `origin` still holds
+    /// (#3602). Ids are not file-scoped, so the main store and an external file
+    /// can both hold `gw`; references to it were ambiguous (and refused at
+    /// connect). When one holder is renamed, the other files' references must
+    /// not be dragged along to it — they stay on the old id, which now names
+    /// the remaining holder unambiguously. The origin file's own references were
+    /// already rewritten in its write, which is where a same-file reference
+    /// most plausibly meant the renamed connection.
+    ///
+    /// If the unified view cannot be loaded, every change is kept (the
+    /// behaviour before #3602).
+    fn changes_owned_by(
+        &self,
+        changes: &[ConnectionIdChange],
+        origin: ChangeOrigin<'_>,
+    ) -> Vec<ConnectionIdChange> {
+        let view = match self.load_unified_view() {
+            Ok(view) => view,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load connections to scope id changes");
+                return changes.to_vec();
+            }
+        };
+        let held_elsewhere = |id: &str| {
+            view.connections.iter().any(|c| {
+                c.id == id
+                    && match (origin, c.source_file.as_deref()) {
+                        (ChangeOrigin::MainStore, source) => source.is_some(),
+                        (ChangeOrigin::ExternalFile(path), source) => source != Some(path),
+                    }
+            })
+        };
+        changes
+            .iter()
+            .filter(|c| !held_elsewhere(&c.old_id))
+            .cloned()
+            .collect()
     }
 
     /// Carry stored secrets along `changes`, which are already persisted in the
@@ -314,6 +354,13 @@ impl ConnectionManager {
     /// has no jump-host chain or no references. `root_id` is the connection being
     /// connected, when known, so a hop that references its own connection is
     /// rejected as circular.
+    ///
+    /// References resolve against the [unified view](Self::load_unified_view) —
+    /// the main store plus every enabled external file, the same set the
+    /// editor's jump-host picker offers (#3602). An id held by several files is
+    /// refused as ambiguous; see [`JumpHostScope`] for the rule.
+    ///
+    /// [`JumpHostScope`]: super::jump_host_resolver::JumpHostScope
     pub fn resolve_jump_host_refs(
         &self,
         settings: &mut serde_json::Value,
@@ -324,13 +371,43 @@ impl ConnectionManager {
         if !super::jump_host_resolver::chain_has_reference(settings) {
             return Ok(());
         }
-        let connections = self.get_all()?.connections;
+        let view = self.load_unified_view()?;
+        let mut unavailable: Vec<UnavailableFile> = view
+            .external_errors
+            .into_iter()
+            .map(|(path, error)| UnavailableFile::FailedToLoad { path, error })
+            .collect();
+        unavailable.extend(self.disabled_external_files());
+        let scope = JumpHostScope::new(&view.connections).with_unavailable(unavailable);
         super::jump_host_resolver::resolve_proxy_jump_refs(
             settings,
-            &connections,
+            &scope,
             &*self.credential_store,
             root_id,
         )
+    }
+
+    /// Every configured-but-disabled external file with the connection ids it
+    /// holds, read without migrating or rewriting it. A file that is missing or
+    /// unreadable contributes no ids — it only feeds an error message.
+    fn disabled_external_files(&self) -> Vec<UnavailableFile> {
+        self.get_settings()
+            .external_connection_files
+            .into_iter()
+            .filter(|f| !f.enabled)
+            .map(|f| {
+                let ids = read_external_store(&f.path)
+                    .map(|store| {
+                        flatten_tree(&store.children, None)
+                            .0
+                            .into_iter()
+                            .map(|c| c.id)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                UnavailableFile::Disabled { path: f.path, ids }
+            })
+            .collect()
     }
 
     /// Reload the in-memory store from disk before a mutation.
@@ -3049,3 +3126,7 @@ mod reference_tests;
 #[cfg(test)]
 #[path = "manager_edit_move_tests.rs"]
 mod edit_move_tests;
+
+#[cfg(test)]
+#[path = "manager_jump_host_scope_tests.rs"]
+mod jump_host_scope_tests;

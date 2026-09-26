@@ -65,12 +65,16 @@ export type { ConnectionFolder };
  * A single jump host (bastion) hop in an SSH `ProxyJump` chain.
  *
  * Mirrors the Rust `JumpHostConfig` (`core/src/config/mod.rs`). Stored inline on
- * an SSH connection's `proxyJump` array. `connectionId` (a reference to a saved
- * SSH connection) is reserved for a later phase; current editing uses the inline
- * connection fields.
+ * an SSH connection's `proxyJump` array. A hop either carries the inline
+ * connection fields or references a saved SSH connection by `connectionId`,
+ * which the backend expands to inline fields at connect time (#940).
  */
 export interface JumpHostConfig {
-  /** Reference to a saved SSH connection (reserved; resolved by a later phase). */
+  /**
+   * Reference to a saved SSH connection in the main store or any enabled
+   * external connection file. An id held by more than one file is refused as
+   * ambiguous (#3602).
+   */
   connectionId?: string;
   host: string;
   /**

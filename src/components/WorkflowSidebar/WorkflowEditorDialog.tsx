@@ -28,6 +28,8 @@ import {
 } from "./workflowStepMeta";
 import { newId } from "@/services/transport/ids";
 import { parseTags } from "@/utils/parseTags";
+import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { remapWorkflowTriggers } from "@/utils/connectionIdChanges";
 import "./WorkflowEditorDialog.css";
 
 /** The editable fields the dialog collects before saving a workflow. */
@@ -131,6 +133,9 @@ export function WorkflowEditorDialog({
   const [entries, setEntries] = useState<WorkflowStepEntry[]>([]);
   const [triggers, setTriggers] = useState<WorkflowTrigger[]>([]);
   const [parameters, setParameters] = useState<WorkflowParameter[]>([]);
+  // A connection renamed while the dialog is open: re-point the on-connect
+  // triggers, or saving would write the old id back (#3603).
+  useFollowConnectionIdChanges(setTriggers, remapWorkflowTriggers, open);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 

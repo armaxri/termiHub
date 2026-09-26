@@ -6,6 +6,8 @@ import type { SavedConnection } from "@/types/connection";
 import type { ScheduleInput } from "@/types/schedule";
 import type { Workflow } from "@/types/workflow";
 import { ScheduleEditorDialog } from "./ScheduleEditorDialog";
+import { flushAsync } from "@/test/flushAsync";
+import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 
 vi.mock("@/themes", () => ({ applyTheme: vi.fn(), onThemeChange: vi.fn() }));
 
@@ -121,5 +123,49 @@ describe("ScheduleEditorDialog (PROD-043)", () => {
     expect(query("schedule-editor-day-sat")!.getAttribute("aria-pressed")).toBe("true");
     expect(query("schedule-editor-day-mon")!.getAttribute("aria-pressed")).toBe("false");
     expect(query("schedule-editor-dialog")!.textContent).toContain("Edit Schedule");
+  });
+
+  describe("an open editor follows connection id changes (#3603)", () => {
+    const existing: ScheduleInput = {
+      id: "s1",
+      name: "Backups",
+      action: { kind: "workflow", workflowId: "wf-1" },
+      targets: { kind: "connections", connectionIds: ["c1", "c2"] },
+      rule: { kind: "interval", everyMinutes: 5 },
+      missedRuns: "skip",
+    };
+
+    it("saves the renamed connection's new id", async () => {
+      const events = installConnectionIdChangesHarness();
+      const onSave = vi.fn();
+      render({ schedule: existing, onSave });
+      await flushAsync();
+
+      events.emit([
+        { oldId: "c1", newId: "c2" },
+        { oldId: "c2", newId: "c1" },
+      ]);
+      await act(async () => query("schedule-editor-save")!.click());
+
+      expect(onSave).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targets: { kind: "connections", connectionIds: ["c2", "c1"] },
+        })
+      );
+    });
+
+    it("keeps unsaved edits when the schedule list refreshes", async () => {
+      const onSave = vi.fn();
+      render({ schedule: existing, onSave });
+      setInput("schedule-editor-name", "Edited");
+      // The backend followed the rename and the list reloaded: a new object, same id.
+      render({
+        schedule: { ...existing, targets: { kind: "connections", connectionIds: ["c1", "c2"] } },
+        onSave,
+      });
+      await act(async () => query("schedule-editor-save")!.click());
+
+      expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ name: "Edited" }));
+    });
   });
 });
