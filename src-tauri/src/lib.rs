@@ -802,6 +802,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::diagnostics::read_crash_report,
             commands::diagnostics::preview_diagnostics_bundle,
             commands::diagnostics::export_diagnostics_bundle,
+            commands::diagnostics::list_agent_crash_reports,
             // Tunnels
             commands::tunnel::get_tunnels,
             commands::tunnel::save_tunnel,

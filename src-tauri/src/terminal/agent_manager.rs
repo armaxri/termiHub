@@ -255,6 +255,27 @@ pub trait AgentRpcClient: Send + Sync + 'static {
     /// Check if an agent is connected.
     fn is_connected(&self, agent_id: &str) -> bool;
 
+    /// Ids of every agent currently connected (live I/O task), sorted. Used by
+    /// the diagnostics export to talk only to agents that are already connected
+    /// (#3574). Default empty so mock clients need not implement it.
+    fn connected_agent_ids(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    /// [`send_request`](Self::send_request) bounded by `timeout` instead of the
+    /// default request timeout, for best-effort calls that must not hold a UI
+    /// flow for a minute (the diagnostics export, #3574). Defaults to the plain
+    /// request so mock clients need not implement it.
+    fn send_request_bounded(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+        _timeout: std::time::Duration,
+    ) -> Result<Value, TerminalError> {
+        self.send_request(agent_id, method, params)
+    }
+
     /// Sweep every agent whose I/O task has already died (`alive == false`),
     /// returning the swept ids. Manual resource-hygiene escape hatch (G6, #1239).
     fn prune_dead_agents(&self) -> Vec<String> {
@@ -2046,6 +2067,27 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn is_connected(&self, agent_id: &str) -> bool {
         AgentConnectionManager::is_connected(self, agent_id)
+    }
+
+    fn connected_agent_ids(&self) -> Vec<String> {
+        let agents = self.agents.lock().unwrap_or_else(|e| e.into_inner());
+        let mut ids: Vec<String> = agents
+            .iter()
+            .filter(|(_, c)| c.alive.load(Ordering::SeqCst))
+            .map(|(id, _)| id.clone())
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    fn send_request_bounded(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value, TerminalError> {
+        self.send_request_with_timeout(agent_id, method, params, timeout)
     }
 
     fn prune_dead_agents(&self) -> Vec<String> {
