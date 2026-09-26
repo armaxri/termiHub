@@ -132,6 +132,12 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
             ]}]}),
         ),
         (
+            "file-browser-bookmarks.json",
+            json!({"version": "1", "bookmarks": [
+                {"id": "b1", "scope": "local", "path": "/srv", "name": "srv"}
+            ]}),
+        ),
+        (
             "ssh_known_hosts.json",
             json!({"server.example:22": ["SHA256:AAAA", "SHA256:BBBB"]}),
         ),
@@ -1166,6 +1172,7 @@ fn every_section_version_is_its_stores_current_version() {
     use crate::connection::config::ConnectionStore;
     use crate::connection::settings::AppSettings;
     use crate::embedded_servers::config::EmbeddedServerStore;
+    use crate::files::bookmarks::FileBookmarkStore;
     use crate::macros::config::MacroStore;
     use crate::network::http_monitor_storage::HttpMonitorsFile;
     use crate::network::monitor_history::HttpMonitorHistoryStore;
@@ -1208,6 +1215,10 @@ fn every_section_version_is_its_stores_current_version() {
         (
             "httpMonitorHistory",
             <HttpMonitorHistoryStore as VersionedStore>::CURRENT_VERSION,
+        ),
+        (
+            "fileBrowserBookmarks",
+            <FileBookmarkStore as VersionedStore>::CURRENT_VERSION,
         ),
     ];
     for (id, store_version) in store_versions {

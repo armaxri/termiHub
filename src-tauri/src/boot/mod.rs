@@ -1060,6 +1060,23 @@ pub(crate) fn init_secondary_managers(
         }
     }
 
+    // Initialize the file-browser bookmark manager (PROD-007). On failure the
+    // app still starts; the bookmarks menu shows an error instead of entries.
+    match crate::files::bookmarks_manager::FileBookmarkManager::new(app.handle()) {
+        Ok(manager) => {
+            recovery_warnings.extend(manager.take_recovery_warnings());
+            app.manage(manager);
+        }
+        Err(e) => {
+            tracing::error!("Failed to initialize file bookmark manager: {e}");
+            recovery_warnings.push(RecoveryWarning {
+                file_name: "file-browser-bookmarks.json".to_string(),
+                message: "Could not initialize file browser bookmark storage. Bookmarks are unavailable until the app is restarted.".to_string(),
+                details: Some(e.to_string()),
+            });
+        }
+    }
+
     // Initialize the HTTP monitor check-history manager (#3462). On failure the
     // app still starts; monitors run as before, their checks just aren't kept.
     match network::monitor_history_manager::HttpMonitorHistoryManager::new(app.handle()) {
