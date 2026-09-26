@@ -1,0 +1,164 @@
+/* Dual-pane local ↔ remote transfer view (PROD-007, #3558). */
+
+.transfer-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background-color: var(--bg-primary);
+}
+
+.transfer-view[hidden] {
+  display: none;
+}
+
+.transfer-view__panes {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-sm);
+}
+
+.transfer-view__actions {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: var(--spacing-sm);
+}
+
+.transfer-view__transfers {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  max-height: 160px;
+  padding: var(--spacing-xs) var(--spacing-sm);
+  overflow-y: auto;
+  border-top: 1px solid var(--border-secondary);
+  background: var(--bg-secondary);
+}
+
+.transfer-pane {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background-color: var(--bg-secondary);
+}
+
+.transfer-pane--drop-target {
+  border-color: var(--focus-border);
+  background-color: var(--bg-selected);
+}
+
+.transfer-pane__header,
+.transfer-pane__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+}
+
+.transfer-pane__header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--border-secondary);
+}
+
+.transfer-pane__title {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-pane__path {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+}
+
+.transfer-pane__error {
+  padding: var(--spacing-xs) var(--spacing-sm);
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+}
+
+.transfer-pane__placeholder,
+.transfer-pane__loading {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-md);
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+.transfer-pane__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  outline: none;
+}
+
+.transfer-pane__list:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--focus-border);
+}
+
+.transfer-pane__row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  height: 26px;
+  padding: 0 var(--spacing-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+  cursor: default;
+  user-select: none;
+}
+
+.transfer-pane__row:hover {
+  background-color: var(--bg-hover);
+}
+
+.transfer-pane__row--selected {
+  background-color: var(--bg-selected);
+}
+
+.transfer-pane__row--selected:hover {
+  background-color: var(--bg-selected-hover);
+}
+
+.transfer-pane__list:focus-visible .transfer-pane__row--active {
+  outline: 1px solid var(--text-accent);
+  outline-offset: -1px;
+}
+
+.transfer-pane__row--dragging {
+  opacity: 0.5;
+}
+
+.transfer-pane__icon {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.transfer-pane__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.transfer-pane__size {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  font-variant-numeric: tabular-nums;
+}

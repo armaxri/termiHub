@@ -9,6 +9,7 @@ import {
   ScrollText,
   ArrowLeftRight,
   Puzzle,
+  Columns2,
   Eraser,
   FileDown,
   ClipboardCopy,
@@ -184,7 +185,9 @@ export function Tab({
               ? ArrowLeftRight
               : tab.contentType === "plugin-detail"
                 ? Puzzle
-                : null;
+                : tab.contentType === "transfer-view"
+                  ? Columns2
+                  : null;
   const isTerminalTab = tab.contentType === "terminal";
 
   const tabElement = (
