@@ -122,6 +122,48 @@
   white-space: nowrap;
 }
 
+.schedules__attempts-toggle {
+  margin-top: var(--spacing-xxs);
+  font-size: var(--font-size-2xs);
+}
+
+.schedule-attempts {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin: var(--spacing-xxs) 0 0;
+  padding: var(--spacing-xs) 0 0 var(--spacing-sm);
+  border-left: 1px solid var(--border-primary);
+  list-style: none;
+}
+
+.schedule-attempts__item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xxs);
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-2xs);
+}
+
+.schedule-attempts__head {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.schedule-attempts__outcome {
+  color: var(--text-primary);
+}
+
+.schedule-attempts__message,
+.schedule-attempts__runs {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .schedule-chip {
     transition: none;

@@ -1145,11 +1145,11 @@ fn schedules_are_a_backup_section_that_merges_by_id() {
 fn a_newer_schedules_backup_is_refused() {
     let spec = sections::spec("schedules").unwrap();
     let err = spec
-        .normalize(json!({"version": "2", "schedules": []}))
+        .normalize(json!({"version": "3", "schedules": []}))
         .unwrap_err();
     assert!(matches!(
         err,
-        sections::NormalizeError::Newer { found: 2, .. }
+        sections::NormalizeError::Newer { found: 3, .. }
     ));
 }
 

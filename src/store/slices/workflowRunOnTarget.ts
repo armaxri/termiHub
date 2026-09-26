@@ -579,5 +579,5 @@ export async function runWorkflowOnTarget(run: WorkflowTargetRun): Promise<Workf
 
   // A fan-out run summarises all targets once at the end instead (PROD-047).
   if (!fanout) toastRunOutcome(workflow.name, result, total, toastId);
-  return result;
+  return { ...result, historyRunId: runRecord.id };
 }
