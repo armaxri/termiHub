@@ -30,8 +30,9 @@ const ICON = 14;
  * - `failed` / `cancelled` → Retry, Remove
  *
  * Every Transfer Queue row is a queued transfer on the backend's transfer queue
- * — SFTP (PROD-0012), remote-to-remote SFTP (PROD-0013), FTP and Docker
- * (#3567) — and all of them honour pause / resume / retry, so these controls
+ * — SFTP (PROD-0012), remote-to-remote SFTP (PROD-0013), FTP, Docker and
+ * large local / WSL copies (#3567) — and all of them honour pause / resume /
+ * retry, so these controls
  * render for every row (#3304). Byte-based remote-agent transfers never create
  * a row.
  *

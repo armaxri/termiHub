@@ -11,11 +11,16 @@ import {
   localSetOwner,
   localCreateSymlink,
   localWriteFile,
-  localCopyFile,
+  localCopyStart,
   vscodeOpenLocal,
+  LOCAL_TRANSFER_SESSION,
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
-import { pickPathOrReport, runBlockingTransfer } from "./transferFeedback";
+import {
+  pickPathOrReport,
+  runMaybeTrackedTransfer,
+  seedTransferQueueRow,
+} from "./transferFeedback";
 import { toast } from "@/components/ui";
 import {
   describeEntries,
@@ -23,6 +28,23 @@ import {
   pasteVerbLabels,
   type PasteOptions,
 } from "@/utils/fileDragMove";
+
+/**
+ * Start a local copy of `srcPath` to `destPath` (PARITY-004, #3567): a large
+ * file runs through the transfer queue — its row is seeded under
+ * {@link LOCAL_TRANSFER_SESSION} — and a small file or a folder is copied
+ * directly. Resolves to whether the queue tracked it.
+ */
+function copyLocal(srcPath: string, destPath: string): Promise<boolean> {
+  return localCopyStart(srcPath, destPath, (transferId) =>
+    seedTransferQueueRow({
+      transferId,
+      sessionId: LOCAL_TRANSFER_SESSION,
+      direction: "download",
+      remotePath: srcPath,
+    })
+  );
+}
 
 /**
  * Hook for local filesystem operations.
@@ -146,13 +168,13 @@ export function useLocalFileSystem() {
       const base = currentPath.endsWith("/") ? currentPath.slice(0, -1) : currentPath;
       const destPath = base ? `${base}/${fileName}` : `/${fileName}`;
       if (localPath === destPath) return;
-      // An OS drop onto the local pane is a blocking copy with no transfer event;
-      // own its feedback so a failure never becomes a silent unhandled rejection.
-      const ok = await runBlockingTransfer(() => localCopyFile(localPath, destPath, false), {
-        loading: `Copying ${fileName}…`,
-        success: `Copied ${fileName}`,
-        errorLabel: `Copy "${fileName}"`,
-      });
+      // An OS drop onto the local pane: a large file is a queued copy whose event
+      // path owns the terminal toast, a small one a direct copy we toast here.
+      const ok = await runMaybeTrackedTransfer(
+        `Copy "${fileName}"`,
+        () => copyLocal(localPath, destPath),
+        { loading: `Copying ${fileName}…`, success: `Copied ${fileName}` }
+      );
       if (ok) void refreshLocal();
     },
     [currentPath, refreshLocal]
@@ -163,15 +185,11 @@ export function useLocalFileSystem() {
       save({ title: "Save file as...", defaultPath: fileName })
     );
     if (!localPath) return;
-    const isDir =
-      currentFileBrowsersView().local.entries.find((e) => e.path === filePath)?.isDirectory ??
-      false;
-    // A local Save-as copy is a blocking round-trip with no transfer-progress
-    // event, so surface its own feedback (UX-017) rather than resolving silently.
-    await runBlockingTransfer(() => localCopyFile(filePath, localPath, isDir), {
+    // A local Save-as: a large file is a queued copy (the backend also detects a
+    // folder and copies it directly); a direct copy owns its feedback (UX-017).
+    await runMaybeTrackedTransfer(`Save "${fileName}"`, () => copyLocal(filePath, localPath), {
       loading: `Saving ${fileName}…`,
       success: `Saved ${fileName}`,
-      errorLabel: `Save "${fileName}"`,
     });
   }, []);
 
@@ -221,26 +239,27 @@ export function useLocalFileSystem() {
       const what = describeEntries(clipboard.entries);
       const where = options?.destDir ? ` to ${destDir}` : "";
 
-      // A local rename/copy is a blocking round-trip with no transfer-progress
-      // event, so own the loading → success/error feedback here (#3458) — one
-      // summary toast for the whole paste. The first failure aborts the rest,
-      // and the rejection is swallowed so no caller sees an unhandled rejection.
-      const ok = await runBlockingTransfer(
+      // A rename or a small/folder copy is a blocking round-trip with no
+      // transfer-progress event, so own the loading → success/error feedback here
+      // (#3458) — one summary toast for the whole paste. A large file copy runs
+      // through the transfer queue (#3567), whose event path then owns the
+      // terminal toast. The first failure aborts the rest, and the rejection is
+      // swallowed so no caller sees an unhandled rejection.
+      const ok = await runMaybeTrackedTransfer(
+        `${verb} ${what}`,
         async () => {
+          let tracked = false;
           for (const clipEntry of clipboard.entries) {
             const destPath = joinDirPath(destDir, clipEntry.name);
             if (clipboard.operation === "cut") {
               await localRename(clipEntry.path, destPath);
             } else {
-              await localCopyFile(clipEntry.path, destPath, clipEntry.isDirectory);
+              tracked = (await copyLocal(clipEntry.path, destPath)) || tracked;
             }
           }
+          return tracked;
         },
-        {
-          loading: `${labels.loading} ${what}…`,
-          success: `${labels.done} ${what}${where}`,
-          errorLabel: `${verb} ${what}`,
-        }
+        { loading: `${labels.loading} ${what}…`, success: `${labels.done} ${what}${where}` }
       );
 
       // Keep a cut clipboard after a failure so the user can retry.

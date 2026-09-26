@@ -3632,6 +3632,28 @@ verify manually until it lands. See PR #1509.
 5. **Upload:** repeat 1–4 for uploads into `/uploads` as `ftpuser`, confirming
    byte-exact results and that concurrent uploads use separate connections.
 
+### Queued local and WSL copies (#3567, PARITY-004)
+
+Verifies that large local copies run through the Transfer Queue. Automated
+coverage: `core/src/files/transfer/local.rs` unit tests (chunked copy,
+pause/resume from the temp file, cancel cleanup, rename-on-complete, source
+changed since a checkpoint). Prepare a file above the 8 MiB threshold, e.g.
+`dd if=/dev/urandom of=/tmp/big.bin bs=1m count=512`.
+
+1. **Queued paste:** copy `big.bin` in the local file browser and paste it into
+   another folder. A Transfer Queue row appears with progress and speed; while
+   it runs, the destination folder shows only a hidden
+   `.big.bin.<id>.termihub-part` file, never a partial `big.bin`.
+2. **Pause / resume:** pause the row, confirm the bytes stop, resume, and
+   confirm it continues (not from zero) and the result is byte-identical
+   (`cmp`).
+3. **Cancel:** paste over an existing `big.bin`, cancel mid-copy. The old
+   `big.bin` is unchanged and no `.termihub-part` file is left.
+4. **Small files stay direct:** paste a small file — no queue row, one
+   "Pasted …" toast.
+5. **WSL (Windows only):** open a WSL tab, and repeat 1–3 copying between a
+   Windows folder and the distribution's home folder in the sidebar.
+
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 
 Verifies the connection-type-agnostic Transfer Queue panel UI docked above the

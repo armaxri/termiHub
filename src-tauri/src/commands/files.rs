@@ -20,14 +20,69 @@ pub fn sftp_cancel_transfer(transfer_id: String, registry: State<'_, TransferReg
 
 // --- Local filesystem commands ---
 
-/// Copy a file or directory on the local filesystem.
+/// Start a user-visible local copy, through the transfer queue when it is big
+/// enough to be worth tracking (PARITY-004, #3567).
+///
+/// A file larger than
+/// [`DIRECT_COPY_MAX_BYTES`](crate::files::transfer::local::DIRECT_COPY_MAX_BYTES)
+/// is enqueued on the rich transfer queue under the reserved
+/// [`LOCAL_TRANSFER_SESSION`](crate::files::transfer::local::LOCAL_TRANSFER_SESSION)
+/// and copied in the background with progress, pause/resume, cancel and retry;
+/// the returned `transfer_id` identifies its queue row. A smaller file or a
+/// directory is copied directly (recursively, via `files::local::copy_file`) and `None` is returned
+/// once it has finished. WSL paths reach this as their host `\\wsl$` UNC
+/// paths, so a local ↔ WSL copy takes the same route.
 #[tauri::command]
-pub fn local_copy(
+pub async fn local_copy_start(
     src_path: String,
     dest_path: String,
-    is_directory: bool,
-) -> Result<(), TerminalError> {
-    crate::files::local::copy_file(&src_path, &dest_path, is_directory)
+    registry: State<'_, TransferRegistry>,
+    app_handle: tauri::AppHandle,
+) -> Result<Option<String>, TerminalError> {
+    use crate::files::transfer::{self, local, TransferDirection};
+
+    let meta = tokio::fs::metadata(&src_path)
+        .await
+        .map_err(TerminalError::Io)?;
+    if meta.is_dir() || !local::should_queue_local_copy(meta.len()) {
+        debug!(src_path, dest_path, "Local copy (direct)");
+        let is_directory = meta.is_dir();
+        tokio::task::spawn_blocking(move || {
+            crate::files::local::copy_file(&src_path, &dest_path, is_directory)
+        })
+        .await
+        .map_err(|e| TerminalError::Io(std::io::Error::other(e.to_string())))??;
+        return Ok(None);
+    }
+
+    let transfer_id = uuid::Uuid::new_v4().to_string();
+    debug!(transfer_id, src_path, dest_path, "Local copy (queued)");
+    let file_name = crate::utils::fs::file_name_of(&src_path);
+    let handle = registry.enqueue(
+        &transfer_id,
+        local::LOCAL_TRANSFER_SESSION,
+        TransferDirection::Download,
+        &file_name,
+        &src_path,
+        meta.len(),
+    );
+    if let Some(pm) = app_handle.try_state::<transfer::TransferPersistenceManager>() {
+        pm.record_registration(
+            &transfer_id,
+            local::LOCAL_TRANSFER_SESSION,
+            TransferDirection::Download,
+            &file_name,
+            &src_path,
+            Some(dest_path.clone()),
+            meta.len(),
+        );
+    }
+    let registry = (*registry).clone();
+    let sink = transfer::app_progress_sink(app_handle);
+    tauri::async_runtime::spawn(async move {
+        local::run_local_transfer(src_path, dest_path, handle, registry, sink, 0).await;
+    });
+    Ok(Some(transfer_id))
 }
 
 /// Return the current user's home directory path.

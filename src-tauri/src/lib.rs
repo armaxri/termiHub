@@ -743,7 +743,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::files::drag_out_discard_staging,
             commands::files::drag_out_stage_session,
             commands::files::drag_out_start,
-            commands::files::local_copy,
+            commands::files::local_copy_start,
             commands::files::local_mkdir,
             commands::files::local_delete,
             commands::files::local_rename,

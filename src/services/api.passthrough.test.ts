@@ -71,7 +71,7 @@ import {
   installShellIntegration,
   uninstallShellIntegration,
   // local filesystem
-  localCopyFile,
+  localCopyStart,
   localSetPermissions,
   localSetOwner,
   localCreateSymlink,
@@ -742,15 +742,14 @@ describe("api pass-through wrappers (#2975)", () => {
 
   // ── Local filesystem ──────────────────────────────────────────────────────
   describe("local filesystem", () => {
-    it("localCopyFile forwards src/dest and directory flag", async () => {
-      mockedInvoke.mockResolvedValue(undefined);
+    it("localCopyStart forwards src/dest and reports a direct copy as untracked", async () => {
+      mockedInvoke.mockResolvedValue(null);
 
-      await localCopyFile("/a", "/b", true);
+      await expect(localCopyStart("/a", "/b")).resolves.toBe(false);
 
-      expect(mockedInvoke).toHaveBeenCalledWith("local_copy", {
+      expect(mockedInvoke).toHaveBeenCalledWith("local_copy_start", {
         srcPath: "/a",
         destPath: "/b",
-        isDirectory: true,
       });
     });
 

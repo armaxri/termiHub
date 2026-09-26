@@ -49,7 +49,8 @@
 //! transfers carry their credentials inline in a frontend-supplied config that is
 //! not persisted and has no credential-store re-sourcing seam yet — both surface
 //! an honest Failed state rather than a half-working resume (follow-up tracked
-//! separately).
+//! separately). Queued **local-disk copies** (PARITY-004, #3567) need no session
+//! and always relaunch from their temp file.
 
 use tauri::{AppHandle, Manager};
 
@@ -85,6 +86,14 @@ pub(crate) enum RelaunchPlan {
         offset: u64,
         total: u64,
     },
+    /// A queued local-disk copy (PARITY-004, #3567): needs no session at all, so
+    /// it always relaunches, continuing from its temp file behind the resume gate.
+    Local {
+        src_path: String,
+        dest_path: String,
+        offset: u64,
+        total: u64,
+    },
     /// The transfer cannot be relaunched from its persisted metadata alone; the
     /// row must move to a Failed state carrying `reason`.
     Unsupported { reason: String },
@@ -105,11 +114,21 @@ pub(crate) enum ResumeDecision {
 ///
 /// A download or upload persists a `local_path` (the local endpoint) and is
 /// relaunchable as an SFTP session transfer — or, when it carries a persisted
-/// container identity, as a Docker session transfer (#3585). A remote-to-remote copy persists no
+/// container identity, as a Docker session transfer (#3585). A record under the
+/// reserved local session id is a queued local-disk copy (#3567) and relaunches
+/// with no session at all. A remote-to-remote copy persists no
 /// local endpoint (`local_path == None`) — and never persisted its *source*
 /// session/path — so it cannot be relaunched after a restart.
 pub(crate) fn plan_from_record(record: &PersistedTransfer) -> RelaunchPlan {
     match (&record.local_path, &record.docker) {
+        (Some(dest_path), None) if record.session_id == super::local::LOCAL_TRANSFER_SESSION => {
+            RelaunchPlan::Local {
+                src_path: record.remote_path.clone(),
+                dest_path: dest_path.clone(),
+                offset: record.resume_offset,
+                total: record.total,
+            }
+        }
         (Some(local_path), Some(docker)) => RelaunchPlan::Docker {
             session_id: record.session_id.clone(),
             container_id: docker.container_id.clone(),
@@ -310,6 +329,29 @@ async fn relaunch_record(
                 }
             }
         }
+        RelaunchPlan::Local {
+            src_path,
+            dest_path,
+            offset,
+            total,
+        } => {
+            let spawn_src = src_path.clone();
+            spawn_relaunch(
+                &record,
+                TransferDirection::Download,
+                &src_path,
+                total,
+                registry,
+                app_handle,
+                move |handle, registry, sink| async move {
+                    super::local::run_local_transfer(
+                        spawn_src, dest_path, handle, registry, sink, offset,
+                    )
+                    .await;
+                },
+            );
+            true
+        }
         RelaunchPlan::Unsupported { reason } => {
             fail_row(app_handle, &record, reason);
             true
@@ -469,6 +511,22 @@ mod tests {
             )),
             other => panic!("expected Relaunch, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn plan_for_a_local_copy_relaunches_without_a_session() {
+        let mut rec = record("t3", Some("/backup/data.csv"));
+        rec.session_id = crate::files::transfer::local::LOCAL_TRANSFER_SESSION.to_string();
+        rec.remote_path = "/home/user/data.csv".to_string();
+        assert_eq!(
+            plan_from_record(&rec),
+            RelaunchPlan::Local {
+                src_path: "/home/user/data.csv".to_string(),
+                dest_path: "/backup/data.csv".to_string(),
+                offset: 4096,
+                total: 8192,
+            }
+        );
     }
 
     #[test]
