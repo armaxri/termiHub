@@ -10,8 +10,7 @@ evidence:
   - docs/plugin-authoring.md:232
   - plugin-api/src/info.rs:12
   - core/src/plugin/host.rs:266
-status: fixed
-resolution: "#3582 — ABI 1.1: rustc release+commit+panic strategy recorded in PluginInfo; exact-match enforcement, unknown refused, 1.0 needs explicit trust-bound acceptance (ADR-15)"
+status: open
 ---
 
 ## What

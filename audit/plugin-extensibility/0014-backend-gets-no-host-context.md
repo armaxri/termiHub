@@ -9,8 +9,7 @@ subsystem: plugin-api
 evidence:
   - plugin-api/src/symbols.rs:81
   - plugin-api/src/capabilities.rs:175
-status: fixed
-resolution: "#3582 — ABI 1.1 host context: app version, owned data dir, FFI-safe tagged log callback, cancellation flag; settings via existing settings_json"
+status: open
 ---
 
 ## What
