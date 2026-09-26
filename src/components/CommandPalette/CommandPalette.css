@@ -79,3 +79,22 @@
   color: var(--text-secondary);
   text-align: center;
 }
+
+/* Sub-picker breadcrumb (#3430): shows which picker is open; click to go back. */
+.command-palette__picker {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.command-palette__picker:hover,
+.command-palette__picker:focus-visible {
+  color: var(--text-primary);
+}

@@ -1824,6 +1824,25 @@ backend and dialogs are unit-tested; this checks the native save/open dialogs).
    **Import vault…** with the same file works and the credentials land in the OS
    keychain.
 
+### Shared named credentials (#3557, PROD-065)
+
+The model, resolution, migration and backup are unit-tested; this checks the real connect flow.
+
+1. Master Password mode. Settings → Security → **Shared Credentials** → **New shared credential…**
+   → name "Bastion", kind Password, the SSH password twice → **Create**. The list shows
+   "Password · Not used".
+2. Edit two SSH connections (password auth) to the same host: **Password source** → "Bastion".
+   The Password and Save fields disappear. Save both; the list shows "Used by 2 connections".
+3. Connect with each: no password prompt. Lock the store, connect again → unlock prompt first,
+   then it connects.
+4. Rotate "Bastion" to a wrong password → connecting prompts with "The shared credential was
+   rejected…" and no Save box; the shared credential is still listed. Rotate it back → both
+   connect without a prompt.
+5. **Delete** "Bastion" → refused, listing both connections. Switch one connection back to "This
+   connection's password", then the other; delete now succeeds.
+6. Switch the storage mode to OS Keychain (and back) with a shared credential in use → the
+   connections still connect without a prompt.
+
 ### OS re-authentication and biometric unlock (#3433, PROD-064)
 
 The gate logic is unit-tested against a mock verifier; the real OS prompts can only be checked by
@@ -2520,6 +2539,33 @@ Covers the pointer gesture, which the jsdom unit tests cannot hit-test.
    (no transfer row). Alt-drop copies server-side.
 7. Right-click a file → **Move to…**, type a folder path, press **Enter** → the
    file moves there. You can do this from the keyboard alone.
+
+### Dual-pane transfer view (#3558, PROD-007)
+
+Covers the pointer drag between panes and real transfers, which the jsdom unit
+tests mock.
+
+1. Open an SSH session, open the file browser on it and click **Open Dual-Pane
+   Transfer View** (columns icon) → a `Transfer: <session>` tab opens with your
+   local home directory on the left and the remote folder from the sidebar on
+   the right.
+2. Click a local file and press the **→** button → a Transfer Queue row appears
+   below the panes with progress. When it finishes, the file shows up in the
+   remote pane.
+3. Drag a remote folder that has a nested subfolder onto the local pane → the
+   local pane highlights while you hover. After you release, one row per file
+   appears and the whole tree lands in the local folder.
+4. Copy the same file again → a **Replace existing items?** dialog appears.
+   **Cancel** leaves the file untouched.
+5. Start copying a large file and press **Cancel** on its row → the transfer
+   stops and no error toast appears.
+6. Keyboard only: **Tab** into the local list, use **↓** / **Enter** to open a
+   folder, **Backspace** to go up, **Space** / **Shift+↓** to select, and
+   **F5** to copy to the remote pane. **Tab** reaches the remote picker, the
+   copy buttons and the remote list.
+7. Close the SSH tab → the remote pane asks you to choose a connection. Reopen
+   the connection and pick it from the **Remote connection** picker → the pane
+   lists it again.
 
 ### File browser drag-out to the OS file manager (#3457)
 

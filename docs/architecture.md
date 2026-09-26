@@ -1257,6 +1257,72 @@ sequenceDiagram
 The exported file object is self-contained, and the unified backup below embeds it verbatim as its
 credentials section.
 
+#### Shared named credentials
+
+A **shared (named) credential** is one password or SSH key passphrase that several saved
+connections and remote agents use, so a shared bastion secret is stored and rotated in one place
+([#3557](https://github.com/armaxri/termiHub/issues/3557), PROD-065,
+`src-tauri/src/credential/named/`). Settings → Security → **Shared Credentials** creates, renames,
+rotates and deletes them; a connection picks one in its Authentication settings (the picker offers
+only credentials of the kind its auth method needs and hides the connection's own password fields
+while one is chosen).
+
+**Data model.** A named credential is split in two, so no new place ever holds a secret:
+
+- **Metadata** — `{ id: "nc-<uuid>", name, kind: password | key_passphrase, createdAt, rotatedAt? }`
+  in `named_credentials.json` (a `VersionedStore`, schema **v1**, with the standard recovery rules:
+  a newer file is left untouched and never overwritten, a corrupt entry is dropped, unknown
+  top-level fields survive a save).
+- **Secret** — in the active credential store under the owner id `named-credential:<id>` and the
+  credential type of its kind. Because it is an ordinary `CredentialKey`, the master-password file,
+  OS-keychain entries, vault export / import, the unified backup's credentials section and the
+  OS re-authentication gate all carry it without a format change.
+- **Reference** — `credentialRef: "<id>"` in a connection's settings, or `credentialRef` on a remote
+  agent's `RemoteAgentConfig`. Ids never change, so renames and connection moves keep references.
+
+**Resolution precedence.** A connection with a reference resolves **only** the named credential —
+never its own per-connection secret, even if one is still stored — so a rotated shared secret can
+never be shadowed by a stale per-connection copy. Without a reference, per-connection resolution is
+unchanged (old configs load and connect exactly as before; there is no forced migration). A
+reference to a missing credential, or to one of the other kind, resolves to nothing and the connect
+flow prompts as for a missing per-connection secret (the editor warns about the dangling
+reference). The same precedence applies in the backend jump-host resolver, so a referenced hop
+connection uses its shared credential. On an authentication failure the shared credential is
+**never deleted** (other connections use it) and a prompted secret is **never saved per-connection**
+in its place (the prompt offers no Save box); the user rotates the shared credential instead.
+
+**Secret exposure.** Secrets travel into the backend only on create / rotate and are zeroized once
+stored; there is no "reveal" command. The single read path, `resolve_named_credential`, serves the
+connect flow exactly like the existing per-connection `resolve_credential` — the secret reaches the
+webview only where a per-connection secret already did.
+
+**Storage modes.** With storage off (`none`) a named credential cannot be created or rotated —
+there is nowhere to keep the secret. A master-password ↔ OS-keychain switch migrates named secrets
+like any other; since the keychain cannot enumerate its items, the switch probes the keys known
+from the metadata, so they migrate in both directions.
+
+**Deleting an in-use credential is refused**, and the refusal lists every referencing connection
+and agent (main and external connection files). Silently deleting it — or deleting it with a
+warning — would turn every referencing connection into one that fails or prompts at connect time,
+possibly on an unattended reconnect, far from the action that caused it; refusing keeps the failure
+at the point of the decision. The user re-points or detaches those connections first. Deleting also
+requires a writable store, so the secret is removed together with the metadata.
+
+**Backup.** The unified backup carries the metadata as its **Shared credentials** section
+(`namedCredentials`, no secrets, no encryption required) and the secrets in the sealed credentials
+section, whose preview labels them "`<name>` (shared credential)". Restoring both brings every
+reference back. Older builds skip the unknown section and ignore `credentialRef` (they prompt), so
+a downgrade loses no secret.
+
+```mermaid
+flowchart LR
+    C1[Connection A<br/>credentialRef: nc-1] --> R{resolve}
+    C2[Remote agent B<br/>credentialRef: nc-1] --> R
+    C3[Connection C<br/>no reference] --> P[own secret<br/>C:password]
+    R --> M[named_credentials.json<br/>nc-1: Bastion, password]
+    R --> S[credential store<br/>named-credential:nc-1:password]
+```
+
 #### OS user verification and biometric unlock
 
 `src-tauri/src/credential/os_auth/` asks the operating system to confirm that the person at the

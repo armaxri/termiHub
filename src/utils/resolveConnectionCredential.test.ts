@@ -4,10 +4,16 @@ vi.mock("@/services/api", () => ({
   resolveCredential: vi.fn(),
 }));
 
+vi.mock("@/services/namedCredentials", () => ({
+  resolveNamedCredential: vi.fn(),
+}));
+
 import { resolveCredential } from "@/services/api";
+import { resolveNamedCredential } from "@/services/namedCredentials";
 import { resolveConnectionCredential } from "./resolveConnectionCredential";
 
 const mockedResolveCredential = vi.mocked(resolveCredential);
+const mockedResolveNamed = vi.mocked(resolveNamedCredential);
 
 describe("resolveConnectionCredential", () => {
   beforeEach(() => {
@@ -120,6 +126,77 @@ describe("resolveConnectionCredential", () => {
       password: null,
       usedStoredCredential: false,
       credentialType: "key_passphrase",
+    });
+  });
+
+  describe("with a shared named credential (#3557)", () => {
+    it("resolves the named credential instead of the per-connection secret", async () => {
+      mockedResolveNamed.mockResolvedValue("shared-pw");
+
+      const result = await resolveConnectionCredential("conn-1", "password", false, "nc-1");
+
+      expect(mockedResolveNamed).toHaveBeenCalledWith("nc-1", "password");
+      expect(mockedResolveCredential).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        password: "shared-pw",
+        usedStoredCredential: true,
+        credentialType: "password",
+        namedCredentialId: "nc-1",
+      });
+    });
+
+    it("resolves a key passphrase even without savePassword", async () => {
+      mockedResolveNamed.mockResolvedValue("phrase");
+
+      const result = await resolveConnectionCredential("conn-2", "key", false, "nc-2");
+
+      expect(mockedResolveNamed).toHaveBeenCalledWith("nc-2", "key_passphrase");
+      expect(result.password).toBe("phrase");
+      expect(result.credentialType).toBe("key_passphrase");
+      expect(result.namedCredentialId).toBe("nc-2");
+    });
+
+    it("never falls back to the per-connection secret when the named one is missing", async () => {
+      mockedResolveNamed.mockResolvedValue(null);
+      mockedResolveCredential.mockResolvedValue("stale-own");
+
+      const result = await resolveConnectionCredential("conn-1", "password", true, "nc-gone");
+
+      expect(mockedResolveCredential).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        password: null,
+        usedStoredCredential: false,
+        credentialType: "password",
+        namedCredentialId: "nc-gone",
+      });
+    });
+
+    it("treats a store error as not found", async () => {
+      mockedResolveNamed.mockRejectedValue(new Error("locked"));
+
+      const result = await resolveConnectionCredential("conn-1", "password", false, "nc-1");
+
+      expect(result.password).toBeNull();
+      expect(result.usedStoredCredential).toBe(false);
+      expect(result.namedCredentialId).toBe("nc-1");
+    });
+
+    it("ignores the reference for agent auth", async () => {
+      const result = await resolveConnectionCredential("conn-3", "agent", false, "nc-1");
+
+      expect(mockedResolveNamed).not.toHaveBeenCalled();
+      expect(result.password).toBeNull();
+      expect(result.namedCredentialId).toBeUndefined();
+    });
+
+    it("treats an empty reference as no reference", async () => {
+      mockedResolveCredential.mockResolvedValue("own");
+
+      const result = await resolveConnectionCredential("conn-1", "password", false, "");
+
+      expect(mockedResolveNamed).not.toHaveBeenCalled();
+      expect(result.password).toBe("own");
+      expect(result.namedCredentialId).toBeUndefined();
     });
   });
 });

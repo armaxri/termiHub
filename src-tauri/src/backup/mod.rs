@@ -73,6 +73,8 @@ mod tests;
 #[cfg(test)]
 mod tests_embedded_servers;
 #[cfg(test)]
+mod tests_named_credentials;
+#[cfg(test)]
 mod tests_plugins;
 #[cfg(test)]
 mod tests_trust;

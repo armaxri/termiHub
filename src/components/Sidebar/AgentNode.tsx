@@ -821,6 +821,7 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
     const proceed = await ensureCredentialStoreUnlocked({
       authMethod: agent.config.authMethod,
       savePassword: agent.config.savePassword,
+      credentialRef: agent.config.credentialRef,
     });
     if (!proceed) return;
 
@@ -831,8 +832,12 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       const resolution = await resolveConnectionCredential(
         agent.id,
         agent.config.authMethod,
-        agent.config.savePassword
+        agent.config.savePassword,
+        agent.config.credentialRef
       );
+      // A shared credential (#3557) is never deleted on rejection nor replaced
+      // by a per-agent secret.
+      const sharedCredential = resolution.namedCredentialId !== undefined;
 
       let promptedPassword: string | undefined;
 
@@ -851,7 +856,11 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
       try {
         await connectRemoteAgent(agent.id, password);
         // Persist the entered password if the user opted in via the prompt checkbox
-        if (promptedPassword && useAppStore.getState().passwordPromptShouldSave) {
+        if (
+          promptedPassword &&
+          !sharedCredential &&
+          useAppStore.getState().passwordPromptShouldSave
+        ) {
           await storeCredential(agent.id, "password", promptedPassword).catch((err) => {
             frontendLog("agent_node", `Failed to store credential: ${err}`);
           });
@@ -866,20 +875,30 @@ export function AgentNode({ agent, style, sectionRef, filterQuery = "" }: AgentN
           // A failed removal leaves a known-bad stored credential in place — log
           // it to the LogViewer instead of swallowing it (WA-FE-005). The flow
           // still re-prompts for a password below.
-          await removeCredential(agent.id, resolution.credentialType).catch((err) => {
-            frontendError(
-              "agent_node",
-              `Failed to remove stale credential for agent ${agent.id}: ${err}`
-            );
-          });
-          const retryPassword = await requestPassword(agent.config.host, agent.config.username);
+          if (!sharedCredential) {
+            await removeCredential(agent.id, resolution.credentialType).catch((err) => {
+              frontendError(
+                "agent_node",
+                `Failed to remove stale credential for agent ${agent.id}: ${err}`
+              );
+            });
+          }
+          const retryPassword = sharedCredential
+            ? await requestPassword(
+                agent.config.host,
+                agent.config.username,
+                "The shared credential was rejected — enter it for this connect, or rotate it in Settings → Security.",
+                "password",
+                { allowSave: false }
+              )
+            : await requestPassword(agent.config.host, agent.config.username);
           if (!retryPassword) {
             setConnecting(false);
             return;
           }
           await connectRemoteAgent(agent.id, retryPassword);
           // Persist the retry password if the user opted in
-          if (useAppStore.getState().passwordPromptShouldSave) {
+          if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
             await storeCredential(agent.id, "password", retryPassword).catch((err) => {
               frontendLog("agent_node", `Failed to store credential: ${err}`);
             });

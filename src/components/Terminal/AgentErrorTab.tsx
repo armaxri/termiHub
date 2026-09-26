@@ -40,6 +40,7 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
         const proceed = await ensureCredentialStoreUnlocked({
           authMethod: agent.config.authMethod,
           savePassword: agent.config.savePassword,
+          credentialRef: agent.config.credentialRef,
         });
         if (!proceed) {
           setIsReconnecting(false);
@@ -48,7 +49,8 @@ export function AgentErrorTab({ tabId: _tabId, meta, isVisible }: AgentErrorTabP
         const resolution = await resolveConnectionCredential(
           meta.agentId,
           agent.config.authMethod,
-          agent.config.savePassword
+          agent.config.savePassword,
+          agent.config.credentialRef
         );
         if (resolution.usedStoredCredential && resolution.password) {
           password = resolution.password;

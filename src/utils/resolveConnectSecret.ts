@@ -8,9 +8,12 @@
  * 1. Decide whether a secret is needed from the schema: a visible, empty
  *    password field (password auth) or an encrypted key (key auth — an
  *    unreadable key file counts as encrypted so it never fails silently, #885).
- * 2. When the connection has a persisted id, pass the credential-store unlock
- *    gate (#1144) and try the stored credential.
- * 3. Otherwise prompt via `requestPassword`.
+ * 2. When the connection references a shared named credential (#3557) or has a
+ *    persisted id, pass the credential-store unlock gate (#1144) and try the
+ *    stored credential — only the named one when a reference is set.
+ * 3. Otherwise prompt via `requestPassword`. With a named reference the prompt
+ *    offers no Save box: the shared credential is rotated in Settings, never
+ *    replaced by a per-connection secret.
  *
  * This helper **never persists anything**: it does not store a prompt-entered
  * secret (Save & Connect does that itself when the prompt's Save box is
@@ -97,14 +100,27 @@ export async function resolveConnectSecret({
   const username = (settings[promptInfo.usernameKey] as string) ?? "";
   const authMethod = settings.authMethod as string | undefined;
 
-  if (authMethod && connectionId) {
+  const credentialRef =
+    typeof settings.credentialRef === "string" && settings.credentialRef.trim()
+      ? settings.credentialRef
+      : undefined;
+  if (authMethod && (connectionId || credentialRef)) {
     const savePassword = settings.savePassword as boolean | undefined;
     // Unlock gate (G3, #1144): a locked master-password store must be unlocked
     // before the stored credential can be read.
-    const proceed = await ensureCredentialStoreUnlocked({ authMethod, savePassword });
+    const proceed = await ensureCredentialStoreUnlocked({
+      authMethod,
+      savePassword,
+      credentialRef,
+    });
     if (!proceed) return { status: "canceled" };
 
-    const resolution = await resolveConnectionCredential(connectionId, authMethod, savePassword);
+    const resolution = await resolveConnectionCredential(
+      connectionId ?? "",
+      authMethod,
+      savePassword,
+      credentialRef
+    );
     if (resolution.usedStoredCredential && resolution.password) {
       return {
         status: "resolved",
@@ -117,9 +133,10 @@ export async function resolveConnectSecret({
   }
 
   // Only pass options when opting out, so the default call shape is unchanged.
-  const entered = allowSave
-    ? await requestPassword(host, username, "", credentialType)
-    : await requestPassword(host, username, "", credentialType, { allowSave: false });
+  const entered =
+    allowSave && !credentialRef
+      ? await requestPassword(host, username, "", credentialType)
+      : await requestPassword(host, username, "", credentialType, { allowSave: false });
   if (entered === null) return { status: "canceled" };
   return {
     status: "resolved",

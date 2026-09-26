@@ -630,6 +630,11 @@ export interface AppState
     connectionId?: string
   ) => void;
   /**
+   * Open (or focus) the dual-pane local ↔ remote transfer view for the terminal
+   * tab `remoteTabId` (PROD-007, #3558); `null` opens it with no remote chosen.
+   */
+  openTransferViewTab: (meta: import("@/types/terminal").TransferViewMeta) => void;
+  /**
    * Open (or focus) an editor tab for a file.
    *
    * A remote tab is backed by the protocol-agnostic session layer via
@@ -4091,6 +4096,45 @@ export const useAppStore = create<AppState>((set, get, store) => {
         };
       }),
 
+    openTransferViewTab: (meta) =>
+      setAndReseed((state) => {
+        const allLeaves = getAllLeaves(state.rootPanel);
+        for (const leaf of allLeaves) {
+          const existing = leaf.tabs.find(
+            (t) =>
+              t.contentType === "transfer-view" &&
+              t.transferViewMeta?.remoteTabId === meta.remoteTabId
+          );
+          if (existing) {
+            const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
+              ...l,
+              tabs: l.tabs.map((t) => ({ ...t, isActive: t.id === existing.id })),
+              activeTabId: existing.id,
+            }));
+            return { rootPanel, activePanelId: leaf.id };
+          }
+        }
+        const targetPanelId = state.activePanelId ?? allLeaves[0]?.id;
+        if (!targetPanelId) return state;
+        const remoteTitle = meta.remoteTabId
+          ? state.tabContent[meta.remoteTabId]?.title
+          : undefined;
+        const title = remoteTitle ? `Transfer: ${remoteTitle}` : "File Transfer";
+        const dummyConfig: ConnectionConfig = { type: "local", config: {} };
+        const newTab = createTab(title, "local", dummyConfig, targetPanelId, "transfer-view");
+        newTab.transferViewMeta = meta;
+        const rootPanel = updateLeaf(state.rootPanel, targetPanelId, (leaf) => {
+          const tabs = leaf.tabs.map((t) => ({ ...t, isActive: false }));
+          tabs.push(newTab);
+          return { ...leaf, tabs, activeTabId: newTab.id };
+        });
+        return {
+          rootPanel,
+          activePanelId: targetPanelId,
+          tabContent: setTabContentEntry(state.tabContent, newTab),
+        };
+      }),
+
     openEditorTab: (filePath, isRemote, permissions, sessionBrowser) =>
       setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
@@ -6434,7 +6478,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           if (agent.connectionState === "connected") return false;
           return (
             agent.config.authMethod === "password" ||
-            (agent.config.authMethod === "key" && agent.config.savePassword)
+            (agent.config.authMethod === "key" &&
+              (agent.config.savePassword || Boolean(agent.config.credentialRef)))
           );
         });
 
@@ -6453,7 +6498,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
               if (!saved) return false;
               const authMethod = readConfigString(saved.config, "authMethod");
               const savePassword = readConfigBoolean(saved.config, "savePassword");
-              return authMethod === "password" || (authMethod === "key" && savePassword);
+              const credentialRef = readConfigString(saved.config, "credentialRef");
+              return (
+                authMethod === "password" ||
+                (authMethod === "key" && (savePassword || Boolean(credentialRef)))
+              );
             }) || disconnectedAgentsNeedingCreds.length > 0;
           if (needsStoredCredential) {
             const unlocked = await get().requestUnlock();
@@ -6478,7 +6527,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
                 const resolution = await resolveConnectionCredential(
                   agent.id,
                   agent.config.authMethod,
-                  agent.config.savePassword
+                  agent.config.savePassword,
+                  agent.config.credentialRef
                 );
                 const password =
                   resolution.usedStoredCredential && resolution.password
@@ -6511,7 +6561,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
             const authMethod = readConfigString(conn.config, "authMethod");
             const savePassword = readConfigBoolean(conn.config, "savePassword");
             if (!authMethod) return conn;
-            const resolution = await resolveConnectionCredential(conn.id, authMethod, savePassword);
+            const resolution = await resolveConnectionCredential(
+              conn.id,
+              authMethod,
+              savePassword,
+              readConfigString(conn.config, "credentialRef")
+            );
             if (!resolution.usedStoredCredential || !resolution.password) return conn;
             return {
               ...conn,

@@ -77,6 +77,7 @@ import { sshJumpHostOptions } from "@/utils/jumpHost";
 import { remoteAgentConfigToRecord, toRemoteAgentConfig } from "@/utils/remoteAgentConfig";
 import { AgentSettingsForm } from "./AgentSettingsForm";
 import { UnsavedChangesDialog } from "./UnsavedChangesDialog";
+import { NamedCredentialPicker } from "./NamedCredentialPicker";
 import { findLeafByTab } from "@/utils/panelTree";
 import { useEditorKeyboard } from "@/hooks/useEditorKeyboard";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
@@ -202,6 +203,12 @@ function buildTypeDefaults(
  * file) at the call site.
  */
 const DEFAULT_STORAGE_FILE = "__default__";
+
+/**
+ * Form fields hidden while a shared named credential supplies the secret
+ * (#3557): the connection's own password and its "save" toggle.
+ */
+const SHARED_CREDENTIAL_HIDDEN_FIELDS = ["password", "savePassword"] as const;
 
 interface ConnectionEditorProps {
   tabId: string;
@@ -436,7 +443,19 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       const merged: Record<string, unknown> = { ...values };
       if (prev.proxyJump !== undefined) merged.proxyJump = prev.proxyJump;
       if (prev.forwardAgent !== undefined) merged.forwardAgent = prev.forwardAgent;
+      // Owned by the shared-credential picker, not the schema form (#3557).
+      if (prev.credentialRef !== undefined) merged.credentialRef = prev.credentialRef;
+      else delete merged.credentialRef;
       return merged;
+    });
+  }, []);
+
+  /** Use a shared named credential (#3557); omit the key for the connection's own. */
+  const handleCredentialRefChange = useCallback((credentialRef: string | undefined) => {
+    setConnSettings((prev) => {
+      if (credentialRef) return { ...prev, credentialRef };
+      const { credentialRef: _omit, ...rest } = prev;
+      return rest;
     });
   }, []);
 
@@ -746,6 +765,15 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   // Show a "Password saved in credential store" hint on empty password fields when editing
   // an existing connection that has savePassword=true, an active credential store, and a
   // credential actually present in the store.
+  // Shared named credentials (#3557) serve saved connections and remote agents
+  // on this machine — not agent-hosted definitions, which run on the agent.
+  const sharedCredentialsSupported = !isAgentDefinitionMode;
+  const credentialRef =
+    typeof connSettings.credentialRef === "string" && connSettings.credentialRef
+      ? connSettings.credentialRef
+      : undefined;
+  const usesSharedCredential = sharedCredentialsSupported && credentialRef !== undefined;
+
   const credentialSavedHint =
     !!(existingConnection || existingAgent) &&
     credentialStoreStatus?.mode !== "none" &&
@@ -1465,6 +1493,25 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           settings={connSettings}
           onChange={handleSchemaSettingsChange}
           onValidityChange={handleFormValidityChange}
+          hiddenFieldKeys={usesSharedCredential ? SHARED_CREDENTIAL_HIDDEN_FIELDS : undefined}
+          afterField={
+            sharedCredentialsSupported
+              ? {
+                  key: "authMethod",
+                  node: (
+                    <NamedCredentialPicker
+                      authMethod={
+                        typeof connSettings.authMethod === "string"
+                          ? connSettings.authMethod
+                          : undefined
+                      }
+                      value={credentialRef}
+                      onChange={handleCredentialRefChange}
+                    />
+                  ),
+                }
+              : undefined
+          }
           credentialSavedHint={credentialSavedHint}
           availablePorts={
             isAgentDefinitionMode
