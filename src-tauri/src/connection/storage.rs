@@ -203,15 +203,21 @@ impl ConnectionStorage {
     /// result is persisted right away (best-effort) so the resolution sticks even
     /// if the plugin set changes before the next user edit.
     fn migrate_plugin_type_ids(&self, flat: &mut FlatConnectionStore) {
-        let Some(config_dir) = self.file_path.parent() else {
+        let Some(resolver) = self.legacy_type_resolver() else {
             return;
         };
-        let resolver = super::plugin_type_ids::legacy_resolver(config_dir);
         if super::plugin_type_ids::migrate_connections(&mut flat.connections, &resolver) {
             if let Err(e) = self.save_flat(flat) {
                 tracing::warn!("Failed to persist migrated plugin connection types: {e:#}");
             }
         }
+    }
+
+    /// The PLG-007 legacy plugin type-id resolver for this store's config
+    /// directory, so other readers of connection configs (external files,
+    /// imports — #3343) resolve against the same installed plugins.
+    pub fn legacy_type_resolver(&self) -> Option<termihub_core::connection::LegacyTypeIdResolver> {
+        super::plugin_type_ids::legacy_resolver_beside(&self.file_path)
     }
 
     /// Save the connection store to disk (pretty-printed JSON).
