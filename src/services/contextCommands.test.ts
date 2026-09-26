@@ -13,6 +13,7 @@ import { getActiveTabGroupId } from "@/store/layoutSelectors";
 import { getAllLeaves } from "@/utils/panelTree";
 import { setupSettingsRegion, seedSettings } from "@/test/settingsRegionTestHarness";
 import { layoutState } from "@/test/layoutState";
+import { type CommandMarkTracker, registerCommandMarkTracker } from "./commandMarks";
 
 /** Add a tab of the given content type and make it the active tab/panel. */
 function addActiveTab(contentType: "terminal" | "editor" = "terminal"): string {
@@ -60,6 +61,10 @@ describe("CONTEXT_COMMANDS registry", () => {
         "prev-tab",
         "prev-tab-group",
         "select-all",
+        "jump-prev-prompt",
+        "jump-next-prompt",
+        "select-last-command-output",
+        "copy-last-command-output",
       ].sort()
     );
   });
@@ -319,6 +324,61 @@ describe("clipboard commands (copy / paste / select-all)", () => {
       CONTEXT_COMMANDS[action].run();
       window.removeEventListener(eventName, listener);
       expect(events).toHaveLength(0);
+    }
+  });
+});
+
+describe("command-mark commands (OSC 133, #3415)", () => {
+  const CASES: Array<[string, string]> = [
+    ["jump-prev-prompt", "termihub:jump-prev-prompt"],
+    ["jump-next-prompt", "termihub:jump-next-prompt"],
+    ["select-last-command-output", "termihub:select-last-command-output"],
+    ["copy-last-command-output", "termihub:copy-last-command-output"],
+  ];
+  const unregisters: Array<() => void> = [];
+
+  /** Register a stand-in tracker for `tabId` reporting whether marks exist. */
+  function withTracker(tabId: string, hasMarks: boolean): void {
+    const tracker = { hasMarks: () => hasMarks } as unknown as CommandMarkTracker;
+    unregisters.push(registerCommandMarkTracker(tabId, tracker));
+  }
+
+  afterEach(() => {
+    while (unregisters.length) unregisters.pop()!();
+  });
+
+  it("are unavailable without a terminal, or when its shell emits no marks", () => {
+    for (const [action] of CASES) {
+      expect(CONTEXT_COMMANDS[action].isAvailable()).toBe(false);
+    }
+    const tabId = addActiveTab("terminal");
+    for (const [action] of CASES) {
+      expect(CONTEXT_COMMANDS[action].isAvailable()).toBe(false);
+    }
+    withTracker(tabId, false);
+    for (const [action] of CASES) {
+      expect(CONTEXT_COMMANDS[action].isAvailable()).toBe(false);
+    }
+  });
+
+  it("are available once the focused terminal has command marks", () => {
+    const tabId = addActiveTab("terminal");
+    withTracker(tabId, true);
+    for (const [action] of CASES) {
+      expect(CONTEXT_COMMANDS[action].isAvailable()).toBe(true);
+    }
+  });
+
+  it("dispatch the matching terminal command event for the focused terminal", () => {
+    const tabId = addActiveTab("terminal");
+    for (const [action, eventName] of CASES) {
+      const events: CustomEvent[] = [];
+      const listener = (e: Event) => events.push(e as CustomEvent);
+      window.addEventListener(eventName, listener);
+      CONTEXT_COMMANDS[action].run();
+      window.removeEventListener(eventName, listener);
+      expect(events).toHaveLength(1);
+      expect(events[0].detail.tabId).toBe(tabId);
     }
   });
 });

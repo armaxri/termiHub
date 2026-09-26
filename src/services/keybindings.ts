@@ -122,6 +122,47 @@ export const DEFAULT_BINDINGS: KeyBinding[] = [
     configurable: true,
     scope: "terminal",
   },
+  // OSC 133 command marks (#3415). Only meaningful when the shell emits the
+  // marks (shell integration); otherwise the keys fall through to the shell.
+  // Cmd+Up/Down match macOS terminals (Terminal.app, iTerm2, VS Code); on
+  // Windows/Linux Ctrl+Shift+Up/Down avoids Ctrl+Up/Down, which shells and
+  // editors use for word/paragraph movement.
+  {
+    action: "jump-prev-prompt",
+    label: "Jump to Previous Prompt",
+    category: "terminal",
+    macDefault: { key: "ArrowUp", meta: true },
+    winLinuxDefault: { key: "ArrowUp", ctrl: true, shift: true },
+    configurable: true,
+    scope: "terminal",
+  },
+  {
+    action: "jump-next-prompt",
+    label: "Jump to Next Prompt",
+    category: "terminal",
+    macDefault: { key: "ArrowDown", meta: true },
+    winLinuxDefault: { key: "ArrowDown", ctrl: true, shift: true },
+    configurable: true,
+    scope: "terminal",
+  },
+  {
+    action: "select-last-command-output",
+    label: "Select Last Command Output",
+    category: "terminal",
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+    scope: "terminal",
+  },
+  {
+    action: "copy-last-command-output",
+    label: "Copy Last Command Output",
+    category: "terminal",
+    macDefault: null,
+    winLinuxDefault: null,
+    configurable: true,
+    scope: "terminal",
+  },
   {
     action: "move-tab-to-new-window",
     label: "Move Tab to New Window",

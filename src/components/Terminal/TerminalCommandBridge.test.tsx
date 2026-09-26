@@ -9,6 +9,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import React, { act } from "react";
 import { createRoot, Root } from "react-dom/client";
+import { writeText } from "@tauri-apps/plugin-clipboard-manager";
 import { TerminalCommandBridge } from "./TerminalCommandBridge";
 
 const registry = {
@@ -21,6 +22,18 @@ const registry = {
 
 vi.mock("./TerminalRegistry", () => ({
   useTerminalRegistry: () => registry,
+}));
+
+const tracker = {
+  jumpToPreviousPrompt: vi.fn(() => true),
+  jumpToNextPrompt: vi.fn(() => true),
+  selectLastCommandOutput: vi.fn(() => true),
+  getLastCommandOutput: vi.fn((): string | null => "last output"),
+};
+const trackers = new Map<string, typeof tracker>([["tab-marks", tracker]]);
+
+vi.mock("@/services/commandMarks", () => ({
+  getCommandMarkTracker: (tabId: string) => trackers.get(tabId),
 }));
 
 let container: HTMLDivElement;
@@ -72,5 +85,37 @@ describe("TerminalCommandBridge", () => {
       window.dispatchEvent(new CustomEvent("termihub:paste", { detail: { tabId: "" } }));
     });
     expect(registry.pasteToTerminal).not.toHaveBeenCalled();
+  });
+
+  describe("OSC 133 command-mark events (#3415)", () => {
+    it("route prompt navigation and output selection to the tab's tracker", () => {
+      dispatch("termihub:jump-prev-prompt", "tab-marks");
+      expect(tracker.jumpToPreviousPrompt).toHaveBeenCalledTimes(1);
+
+      dispatch("termihub:jump-next-prompt", "tab-marks");
+      expect(tracker.jumpToNextPrompt).toHaveBeenCalledTimes(1);
+
+      dispatch("termihub:select-last-command-output", "tab-marks");
+      expect(tracker.selectLastCommandOutput).toHaveBeenCalledTimes(1);
+    });
+
+    it("copies the last command's output to the OS clipboard", async () => {
+      dispatch("termihub:copy-last-command-output", "tab-marks");
+      await act(async () => {});
+      expect(writeText).toHaveBeenCalledWith("last output");
+    });
+
+    it("copies nothing when there is no finished command output", async () => {
+      tracker.getLastCommandOutput.mockReturnValueOnce(null);
+      dispatch("termihub:copy-last-command-output", "tab-marks");
+      await act(async () => {});
+      expect(writeText).not.toHaveBeenCalled();
+    });
+
+    it("is a no-op for a tab without a tracker", () => {
+      expect(() => dispatch("termihub:jump-prev-prompt", "tab-unknown")).not.toThrow();
+      expect(() => dispatch("termihub:copy-last-command-output", "tab-unknown")).not.toThrow();
+      expect(tracker.jumpToPreviousPrompt).not.toHaveBeenCalled();
+    });
   });
 });

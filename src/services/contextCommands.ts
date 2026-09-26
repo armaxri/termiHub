@@ -8,6 +8,7 @@ import {
 import { currentSettingsView } from "@/store/settingsBridge";
 import { getAllLeaves, findAdjacentLeaf, FocusDirection } from "@/utils/panelTree";
 import type { LeafPanel, TerminalTab } from "@/types/terminal";
+import { getCommandMarkTracker } from "@/services/commandMarks";
 
 /**
  * A context-bound application command — one that acts on the currently-focused
@@ -47,6 +48,12 @@ function activeLeaf(): LeafPanel | null {
 function activeTerminalTab(): TerminalTab | null {
   const tab = getActiveTab(useAppStore.getState());
   return tab && tab.contentType === "terminal" ? tab : null;
+}
+
+/** Whether the active terminal's shell has emitted OSC 133 command marks (#3415). */
+function activeTerminalHasCommandMarks(): boolean {
+  const tab = activeTerminalTab();
+  return !!tab && (getCommandMarkTracker(tab.id)?.hasMarks() ?? false);
 }
 
 /** Close the active tab, honouring the confirm-on-shortcut setting. */
@@ -212,6 +219,24 @@ export const CONTEXT_COMMANDS: Record<string, ContextCommand> = {
   "select-all": {
     isAvailable: () => activeTerminalTab() !== null,
     run: () => dispatchToActiveTerminal("termihub:select-all"),
+  },
+  // OSC 133 command marks (#3415): available only once the focused terminal's
+  // shell has emitted prompt marks, so the palette greys them out otherwise.
+  "jump-prev-prompt": {
+    isAvailable: activeTerminalHasCommandMarks,
+    run: () => dispatchToActiveTerminal("termihub:jump-prev-prompt"),
+  },
+  "jump-next-prompt": {
+    isAvailable: activeTerminalHasCommandMarks,
+    run: () => dispatchToActiveTerminal("termihub:jump-next-prompt"),
+  },
+  "select-last-command-output": {
+    isAvailable: activeTerminalHasCommandMarks,
+    run: () => dispatchToActiveTerminal("termihub:select-last-command-output"),
+  },
+  "copy-last-command-output": {
+    isAvailable: activeTerminalHasCommandMarks,
+    run: () => dispatchToActiveTerminal("termihub:copy-last-command-output"),
   },
   "move-tab-to-new-window": {
     isAvailable: () => activeTerminalTab() !== null,
