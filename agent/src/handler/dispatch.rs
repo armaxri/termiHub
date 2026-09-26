@@ -4824,11 +4824,6 @@ mod tests {
         let handler = make_handler();
         init_handler(&handler).await;
 
-        // Reserve an ephemeral loopback port, then free it for the server.
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-
         let start = dispatch(
             &handler,
             "service.start",
@@ -4841,7 +4836,10 @@ mod tests {
                     "serverType": "http",
                     "rootDirectory": ".",
                     "bindHost": "127.0.0.1",
-                    "port": port,
+                    // Port 0: the server binds an OS-assigned port itself and
+                    // the test reads it back, so no other test can take it in
+                    // between (#3533).
+                    "port": 0,
                     "readOnly": true,
                     "directoryListing": true
                 }
@@ -4853,6 +4851,12 @@ mod tests {
             start["result"]["status"]["state"], "running",
             "service.start must report running: {start}"
         );
+        let port = handler
+            .service_registry
+            .local_addr("srv-1")
+            .await
+            .expect("hosted HTTP server reports its bound address")
+            .port();
 
         // The hosted server actually accepts connections on its bound port.
         assert!(
@@ -4903,10 +4907,6 @@ mod tests {
             "{init}"
         );
 
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").expect("bind probe");
-        let port = probe.local_addr().unwrap().port();
-        drop(probe);
-
         let start = dispatch(
             &handler,
             "service.start",
@@ -4919,7 +4919,10 @@ mod tests {
                     "serverType": "http",
                     "rootDirectory": ".",
                     "bindHost": "127.0.0.1",
-                    "port": port,
+                    // Port 0: the server binds an OS-assigned port itself and
+                    // the test reads it back, so no other test can take it in
+                    // between (#3533).
+                    "port": 0,
                     "readOnly": true,
                     "directoryListing": true
                 }
@@ -4928,6 +4931,12 @@ mod tests {
         )
         .await;
         assert_eq!(start["result"]["status"]["state"], "running", "{start}");
+        let port = handler
+            .service_registry
+            .local_addr("srv-log")
+            .await
+            .expect("hosted HTTP server reports its bound address")
+            .port();
 
         // Empty log before any request.
         let empty = dispatch(

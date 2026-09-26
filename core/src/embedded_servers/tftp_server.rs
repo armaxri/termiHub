@@ -149,8 +149,9 @@ async fn run_tftp_server(
         }
     };
 
-    // Bind confirmed — tell the manager it is safe to report Running.
-    ready.confirm();
+    // Bind confirmed — tell the manager it is safe to report Running, and
+    // which address it bound (the OS picks the port for a port-0 config).
+    ready.confirm(socket.local_addr().ok());
 
     let root = PathBuf::from(&config.root_directory);
     let read_only = config.read_only;
@@ -877,14 +878,14 @@ mod tests {
             .expect("bind test socket")
     }
 
-    /// A loopback address with (almost certainly) no listener: bind an ephemeral
-    /// port and release it. DATA sent there is never ACKed, and on Windows it
-    /// draws an ICMP "port unreachable" that surfaces as `WSAECONNRESET` on the
-    /// transfer socket's next receive — so the ACK-wait tests below also prove
-    /// that reset is tolerated rather than aborting the transfer.
-    fn closed_peer() -> SocketAddr {
-        let probe = std::net::UdpSocket::bind("127.0.0.1:0").expect("bind probe socket");
-        probe.local_addr().expect("probe local addr")
+    /// A loopback address with no receiver that no other test can bind while
+    /// the returned guard is held (#3533). DATA sent there is never ACKed, and
+    /// on Windows it draws an ICMP "port unreachable" that surfaces as
+    /// `WSAECONNRESET` on the transfer socket's next receive — so the ACK-wait
+    /// tests below also prove that reset is tolerated rather than aborting the
+    /// transfer.
+    fn closed_peer() -> (StdUdpSocket, SocketAddr) {
+        crate::util::test_net::unreachable_udp_addr()
     }
 
     #[test]
@@ -914,7 +915,7 @@ mod tests {
         // Regression for #1145 (G1): an in-flight transfer must abort promptly
         // when the server is stopped, instead of burning its full retry budget.
         let socket = test_socket().await;
-        let peer = closed_peer();
+        let (_peer_guard, peer) = closed_peer();
         let shutdown = ShutdownSignal::new();
         shutdown.trigger();
 
@@ -950,7 +951,7 @@ mod tests {
         // paused clock the (huge) timeout can only fire if virtual time advances,
         // so an unchanged clock proves the wake was event-driven.
         let socket = test_socket().await;
-        let peer = closed_peer();
+        let (_peer_guard, peer) = closed_peer();
         let shutdown = ShutdownSignal::new();
 
         let wait = wait_for_ack(
@@ -992,7 +993,7 @@ mod tests {
         // Without shutdown, the loop must exhaust its retry budget (no peer ever
         // ACKs), proving the shutdown check is what changes the outcome above.
         let socket = test_socket().await;
-        let peer = closed_peer();
+        let (_peer_guard, peer) = closed_peer();
         let shutdown = ShutdownSignal::new();
 
         let outcome = wait_for_ack(
@@ -1624,32 +1625,24 @@ mod tests {
         std::thread::JoinHandle<Result<()>>,
         Arc<AtomicServerStats>,
     ) {
-        for _ in 0..5 {
-            let port = StdUdpSocket::bind("127.0.0.1:0")
-                .and_then(|s| s.local_addr())
-                .expect("find free port")
-                .port();
-            let mut config = tftp_test_config(root, port);
-            config.read_only = read_only;
-            let shutdown = ShutdownSignal::new();
-            let stats = AtomicServerStats::new();
-            let (ready, ready_rx) = BindSignal::for_test();
-            let server_shutdown = shutdown.clone();
-            let server_stats = Arc::clone(&stats);
-            let handle = std::thread::spawn(move || {
-                start_tftp_server(&config, server_shutdown, server_stats, ready)
-            });
-            match ready_rx.recv_timeout(Duration::from_secs(5)) {
-                Ok(Ok(())) => {
-                    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-                    return (addr, shutdown, handle, stats);
-                }
-                _ => {
-                    let _ = handle.join();
-                }
-            }
-        }
-        panic!("could not start a TFTP server on a free port");
+        // Port 0: the server binds an OS-assigned port itself and reports it
+        // back, so there is no window for another test to take it (#3533).
+        let mut config = tftp_test_config(root, 0);
+        config.read_only = read_only;
+        let shutdown = ShutdownSignal::new();
+        let stats = AtomicServerStats::new();
+        let (ready, ready_rx) = BindSignal::for_test();
+        let server_shutdown = shutdown.clone();
+        let server_stats = Arc::clone(&stats);
+        let handle = std::thread::spawn(move || {
+            start_tftp_server(&config, server_shutdown, server_stats, ready)
+        });
+        let addr = ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("TFTP server should confirm its bind")
+            .expect("TFTP server bind failed")
+            .expect("TFTP server reports its bound address");
+        (addr, shutdown, handle, stats)
     }
 
     #[test]

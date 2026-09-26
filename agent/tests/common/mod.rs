@@ -133,3 +133,45 @@ pub fn fork_guard() -> MutexGuard<'static, ()> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+/// Every address the agent announced with its `Listening on <addr>` log line,
+/// in order, parsed from its captured stderr (`log`).
+///
+/// A re-exec (self-update apply) inherits the same stderr, so the *n*-th entry is
+/// the listener of the agent's *n*-th incarnation.
+#[allow(dead_code)]
+pub fn listen_addrs(log: &str) -> Vec<String> {
+    log.lines()
+        .filter_map(|line| line.split("Listening on ").nth(1))
+        .filter_map(|rest| rest.split_whitespace().next())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Wait for the agent logging to `stderr_path` to announce the listener of its
+/// `generation`-th incarnation (`0` = as spawned, `1` = after the first re-exec)
+/// and return that address, or `None` on timeout.
+///
+/// Suites start the agent on `--listen 127.0.0.1:0` and read the bound address
+/// back from this line, instead of reserving a port by binding and dropping it
+/// first — a freed ephemeral port can be taken by a concurrent test before the
+/// agent binds it (#3533). A re-exec re-binds `127.0.0.1:0`, so it announces a
+/// fresh address, which is why callers pass the incarnation they expect.
+#[allow(dead_code)]
+pub fn wait_for_listen_addr(
+    stderr_path: &Path,
+    generation: usize,
+    timeout: Duration,
+) -> Option<String> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let log = std::fs::read_to_string(stderr_path).unwrap_or_default();
+        if let Some(addr) = listen_addrs(&log).into_iter().nth(generation) {
+            return Some(addr);
+        }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
