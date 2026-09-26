@@ -59,9 +59,9 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use crate::connection::{
-    AuthKind, Capabilities, CertPrompt, CertPromptReceiver, ConnectionType, CursorReceiver,
-    FrameReceiver, GraphicalBackend, GraphicalCapabilities, InputEvent, OutputReceiver,
-    RemoteClipboardFile, SettingsSchema,
+    AuthKind, Capabilities, CertPrompt, CertPromptReceiver, ClipboardImage, ConnectionType,
+    CursorReceiver, FrameReceiver, GraphicalBackend, GraphicalCapabilities, InputEvent,
+    OutputReceiver, RemoteClipboardFile, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -309,6 +309,10 @@ enum FetchEvent {
 struct SidecarShared {
     /// Latest remote clipboard text, surfaced via `get_clipboard`.
     clipboard: Mutex<String>,
+    /// The image the remote most recently copied (PROD-021), validated against
+    /// the clipboard-image caps; cleared when the remote copies text or files
+    /// instead, so a stale image is never offered for the newer copy.
+    clipboard_image: Mutex<Option<ClipboardImage>>,
     /// The files the remote most recently copied, surfaced for a local paste
     /// (delayed rendering, #1793). Replaced wholesale on each remote copy.
     remote_clipboard_files: Mutex<Vec<RemoteClipboardFile>>,
@@ -433,12 +437,35 @@ async fn run_reader<R>(
                         }
                     }
                     Ok(SidecarMessage::Clipboard(text)) => {
+                        // A newer remote copy: any earlier image is stale. (A copy
+                        // offering both text and an image sends the text first,
+                        // then the image, so the image still lands.)
+                        *shared.clipboard_image.lock().await = None;
                         *shared.clipboard.lock().await = text;
+                    }
+                    Ok(SidecarMessage::ClipboardImage(image)) => {
+                        // Re-validate at the trust boundary (PROD-021): the sidecar
+                        // already capped it, but the desktop never trusts the pipe.
+                        match image.validate() {
+                            Ok(()) => {
+                                debug!(
+                                    width = image.width,
+                                    height = image.height,
+                                    "remote clipboard image received"
+                                );
+                                *shared.clipboard_image.lock().await = Some(image);
+                            }
+                            Err(violation) => {
+                                warn!(%violation, "rejected remote clipboard image");
+                                *shared.clipboard_image.lock().await = None;
+                            }
+                        }
                     }
                     Ok(SidecarMessage::RemoteClipboardFiles(files)) => {
                         // The remote copied files; surface the list for a local
                         // paste (#1793). Bytes are fetched later, on demand.
                         debug!(count = files.len(), "remote clipboard file list surfaced");
+                        *shared.clipboard_image.lock().await = None;
                         *shared.remote_clipboard_files.lock().await = files;
                     }
                     Ok(SidecarMessage::ClipboardFileChunk {
@@ -683,6 +710,7 @@ impl ConnectionType for SidecarRdp {
 
         let shared = Arc::new(SidecarShared {
             clipboard: Mutex::new(String::new()),
+            clipboard_image: Mutex::new(None),
             remote_clipboard_files: Mutex::new(Vec::new()),
             fetches: StdMutex::new(HashMap::new()),
             view_only,
@@ -866,6 +894,32 @@ impl GraphicalBackend for SidecarRdp {
         // Forwarded to the sidecar, which mirrors the text to the remote over the
         // CLIPRDR channel (#1756).
         let _ = rt.to_sidecar.send(HostMessage::SetClipboard(text)).await;
+        Ok(())
+    }
+
+    async fn get_clipboard_image(&self) -> Option<ClipboardImage> {
+        let rt = self.runtime.as_ref()?;
+        rt.shared.clipboard_image.lock().await.clone()
+    }
+
+    async fn set_clipboard_image(&self, image: ClipboardImage) -> Result<(), SessionError> {
+        let Some(rt) = &self.runtime else {
+            return Err(SessionError::NotRunning("rdp not connected".to_string()));
+        };
+        if rt.shared.view_only {
+            return Ok(());
+        }
+        // Bound it before it reaches the IPC frame (an oversize image would fail
+        // the sidecar write) — the sidecar re-checks on its side too.
+        image
+            .validate()
+            .map_err(|v| SessionError::InvalidConfig(format!("clipboard image rejected: {v}")))?;
+        // Forwarded to the sidecar, which advertises CF_DIB to the remote and
+        // serves the image when the remote pastes (PROD-021).
+        let _ = rt
+            .to_sidecar
+            .send(HostMessage::SetClipboardImage(image))
+            .await;
         Ok(())
     }
 
@@ -1279,6 +1333,7 @@ mod tests {
     fn test_shared() -> Arc<SidecarShared> {
         Arc::new(SidecarShared {
             clipboard: Mutex::new(String::new()),
+            clipboard_image: Mutex::new(None),
             remote_clipboard_files: Mutex::new(Vec::new()),
             fetches: StdMutex::new(HashMap::new()),
             view_only: false,
@@ -1640,6 +1695,7 @@ mod tests {
 
         let shared = Arc::new(SidecarShared {
             clipboard: Mutex::new(String::new()),
+            clipboard_image: Mutex::new(None),
             remote_clipboard_files: Mutex::new(vec![RemoteClipboardFile {
                 name: "hello.txt".to_string(),
                 relative_path: None,
@@ -1745,5 +1801,151 @@ mod tests {
         assert!(sanitize_leaf("a\\b").is_none());
         assert!(sanitize_leaf("C:evil").is_none());
         assert!(sanitize_leaf("nul\0byte").is_none());
+    }
+
+    // ── image clipboard (PROD-021) ────────────────────────────────────────────
+
+    fn rdp_with_channel(view_only: bool) -> (SidecarRdp, mpsc::Receiver<HostMessage>) {
+        let (to_sidecar, rx) = mpsc::channel(CHANNEL_DEPTH);
+        let shared = Arc::new(SidecarShared {
+            clipboard: Mutex::new(String::new()),
+            clipboard_image: Mutex::new(None),
+            remote_clipboard_files: Mutex::new(Vec::new()),
+            fetches: StdMutex::new(HashMap::new()),
+            view_only,
+            failure: StdMutex::new(None),
+        });
+        let rdp = SidecarRdp {
+            runtime: Some(Arc::new(SidecarRuntime {
+                to_sidecar,
+                shared,
+                next_fetch_id: AtomicU64::new(1),
+                cancel: CancellationToken::new(),
+            })),
+            frame_rx: StdMutex::new(None),
+            cursor_rx: StdMutex::new(None),
+            cert_prompt_rx: StdMutex::new(None),
+            tasks: Vec::new(),
+        };
+        (rdp, rx)
+    }
+
+    #[tokio::test]
+    async fn reader_stores_a_remote_image_and_clears_it_on_a_newer_text_copy() {
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _frame_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _cert_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let shared = test_shared();
+        let cancel = CancellationToken::new();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            cancel.clone(),
+        ));
+
+        let image = ClipboardImage::new(1, 1, vec![1, 2, 3, 4]).unwrap();
+        write_message(
+            &mut sidecar_stdout,
+            &SidecarMessage::ClipboardImage(image.clone()),
+        )
+        .await
+        .unwrap();
+        // Poll until the reader has processed it.
+        for _ in 0..100 {
+            if shared.clipboard_image.lock().await.is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        assert_eq!(*shared.clipboard_image.lock().await, Some(image));
+
+        write_message(
+            &mut sidecar_stdout,
+            &SidecarMessage::Clipboard("newer".to_string()),
+        )
+        .await
+        .unwrap();
+        drop(sidecar_stdout);
+        let _ = reader.await;
+        assert_eq!(&*shared.clipboard.lock().await, "newer");
+        assert!(shared.clipboard_image.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn reader_rejects_a_malformed_remote_image() {
+        let (mut sidecar_stdout, host_read) = tokio::io::duplex(1024 * 1024);
+        let (frame_tx, _frame_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cursor_tx, _cursor_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let (cert_tx, _cert_rx) = mpsc::channel(CHANNEL_DEPTH);
+        let shared = test_shared();
+        let cancel = CancellationToken::new();
+        let reader = tokio::spawn(run_reader(
+            host_read,
+            frame_tx,
+            cursor_tx,
+            cert_tx,
+            shared.clone(),
+            cancel.clone(),
+        ));
+        // Bypass the constructor: an oversize claim with a tiny buffer, as a
+        // hostile or buggy sidecar could send.
+        let bogus = ClipboardImage {
+            width: 100_000,
+            height: 1,
+            rgba: vec![0; 4],
+        };
+        write_message(&mut sidecar_stdout, &SidecarMessage::ClipboardImage(bogus))
+            .await
+            .unwrap();
+        drop(sidecar_stdout);
+        let _ = reader.await;
+        assert!(shared.clipboard_image.lock().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn set_clipboard_image_forwards_a_valid_image_to_the_sidecar() {
+        let (rdp, mut rx) = rdp_with_channel(false);
+        let image = ClipboardImage::new(2, 1, vec![0; 8]).unwrap();
+        rdp.set_clipboard_image(image.clone()).await.unwrap();
+        assert_eq!(rx.recv().await, Some(HostMessage::SetClipboardImage(image)));
+    }
+
+    #[tokio::test]
+    async fn set_clipboard_image_rejects_an_invalid_image_without_sending() {
+        let (rdp, mut rx) = rdp_with_channel(false);
+        let bogus = ClipboardImage {
+            width: 3,
+            height: 3,
+            rgba: vec![0; 4],
+        };
+        assert!(matches!(
+            rdp.set_clipboard_image(bogus).await,
+            Err(SessionError::InvalidConfig(_))
+        ));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn view_only_never_pushes_a_local_image() {
+        let (rdp, mut rx) = rdp_with_channel(true);
+        let image = ClipboardImage::new(1, 1, vec![0; 4]).unwrap();
+        rdp.set_clipboard_image(image).await.unwrap();
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn image_clipboard_is_unavailable_when_disconnected() {
+        let r = SidecarRdp::new();
+        assert!(r.get_clipboard_image().await.is_none());
+        let image = ClipboardImage::new(1, 1, vec![0; 4]).unwrap();
+        assert!(matches!(
+            r.set_clipboard_image(image).await,
+            Err(SessionError::NotRunning(_))
+        ));
     }
 }

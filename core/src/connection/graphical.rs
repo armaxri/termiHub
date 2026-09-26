@@ -812,6 +812,26 @@ pub trait GraphicalBackend: Send + Sync {
     /// Push local clipboard text to the remote.
     async fn set_clipboard(&self, text: String) -> Result<(), SessionError>;
 
+    /// The image the remote most recently copied to its clipboard (PROD-021),
+    /// already converted to RGBA and validated against the clipboard-image caps.
+    /// `None` when the backend has no image clipboard, or the remote's latest
+    /// copy was not an image. Defaults to `None`.
+    async fn get_clipboard_image(&self) -> Option<super::ClipboardImage> {
+        None
+    }
+
+    /// Push a local clipboard image to the remote (PROD-021). The caller has
+    /// validated it against the clipboard-image caps. View-only sessions drop it
+    /// (`Ok(())`). Backends without an image clipboard (VNC: the RFB clipboard is
+    /// Latin-1 text only) return [`SessionError::NotRunning`]. Defaults to
+    /// unsupported.
+    async fn set_clipboard_image(&self, image: super::ClipboardImage) -> Result<(), SessionError> {
+        let _ = image;
+        Err(SessionError::NotRunning(
+            "image clipboard is not supported by this backend".to_string(),
+        ))
+    }
+
     /// The files the remote most recently copied to its clipboard, surfaced for a
     /// local paste (#1793). Empty when the backend does not support remote→host
     /// file transfer, the feature is not opted in, or the remote copied no files
