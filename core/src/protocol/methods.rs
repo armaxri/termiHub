@@ -932,7 +932,14 @@ pub struct UpdatePendingNotification {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkPortScanParams {
+    /// Target spec as typed: one host, an IP, a CIDR range, or a comma list.
     pub host: String,
+    /// The desktop's already-expanded target list (#3385). Optional and omitted
+    /// when absent, so the wire stays compatible both ways: an older agent
+    /// ignores it (and scans `host`), a newer agent falls back to expanding
+    /// `host` when an older desktop does not send it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets: Option<Vec<String>>,
     /// Port specification: "22", "80,443", "1-1024"
     pub ports: String,
     pub timeout_ms: Option<u64>,
