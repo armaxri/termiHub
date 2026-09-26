@@ -14,6 +14,8 @@ interface CredentialVaultExportDialogProps {
   onOpenChange: (open: boolean) => void;
   /** The active credential store mode; master-password mode requires re-auth. */
   mode: CredentialStorageMode;
+  /** OS verification method (e.g. "Touch ID"), shown in OS-keychain mode. */
+  osAuthLabel?: string;
 }
 
 /** Default file name for a vault export, dated so successive backups don't collide. */
@@ -55,6 +57,7 @@ export function CredentialVaultExportDialog({
   open,
   onOpenChange,
   mode,
+  osAuthLabel,
 }: CredentialVaultExportDialogProps) {
   const [masterPassword, setMasterPassword] = useState("");
   const [passphrase, setPassphrase] = useState("");
@@ -131,6 +134,12 @@ export function CredentialVaultExportDialog({
           read them — store it somewhere safe. If you forget the passphrase, the file cannot be
           recovered.
         </p>
+        {mode === "os_keychain" && (
+          <p className="credential-vault__note" data-testid="vault-export-os-auth-note">
+            After you choose a passphrase, you&apos;ll be asked to confirm it&apos;s you with{" "}
+            {osAuthLabel ?? "system authentication"}.
+          </p>
+        )}
         {mode === "master_password" && (
           <PasswordInput
             className="ui-input"

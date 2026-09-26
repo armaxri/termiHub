@@ -6,6 +6,13 @@ use tauri::{AppHandle, Emitter};
 use tracing::warn;
 
 use super::auto_lock::AutoLockTimer;
+use super::biometric_unlock::{
+    BiometricUnlock, BiometricUnlockError, BiometricUnlockStatus, SecretSlot, ENABLE_REASON,
+    UNLOCK_REASON,
+};
+use super::os_auth::{
+    platform_verifier, OsAuthCapability, OsAuthError, OsAuthPurpose, OsAuthSuccess, OsUserVerifier,
+};
 use super::types::{CredentialKey, CredentialStoreStatus, StorageMode};
 use super::{CredentialStore, MasterPasswordStore, NullStore, OsKeychainStore};
 
@@ -31,6 +38,10 @@ pub struct CredentialManager {
     config_dir: PathBuf,
     auto_lock_timer: RwLock<Option<Arc<AutoLockTimer>>>,
     app_handle: RwLock<Option<AppHandle>>,
+    /// OS user verification (Touch ID / Windows Hello) — #3433, PROD-064.
+    os_auth: Box<dyn OsUserVerifier>,
+    /// Opt-in biometric unlock of the master-password store (PROD-064).
+    biometric: BiometricUnlock,
 }
 
 impl CredentialManager {
@@ -40,12 +51,30 @@ impl CredentialManager {
     /// for [`MasterPasswordStore`].
     pub fn new(mode: StorageMode, config_dir: PathBuf) -> Self {
         let backend = Self::create_backend(&mode, &config_dir);
+        let biometric = BiometricUnlock::new(&config_dir, default_biometric_slot());
         Self {
             inner: RwLock::new(backend),
             config_dir,
             auto_lock_timer: RwLock::new(None),
             app_handle: RwLock::new(None),
+            os_auth: platform_verifier(),
+            biometric,
         }
+    }
+
+    /// Replace the OS user verifier (tests inject a mock).
+    #[cfg(test)]
+    pub fn with_os_auth(mut self, verifier: Box<dyn OsUserVerifier>) -> Self {
+        self.os_auth = verifier;
+        self
+    }
+
+    /// Replace where the biometric-unlock wrapping key is stored (tests use
+    /// an in-memory slot).
+    #[cfg(test)]
+    pub fn with_biometric_slot(mut self, slot: Box<dyn SecretSlot>) -> Self {
+        self.biometric = BiometricUnlock::new(&self.config_dir, slot);
+        self
     }
 
     /// Return the current storage mode.
@@ -71,7 +100,18 @@ impl CredentialManager {
             old_store.lock();
         }
 
+        let leaving_master_password = matches!(*inner, StoreBackend::MasterPassword(_))
+            && new_mode != StorageMode::MasterPassword;
         *inner = new_backend;
+        drop(inner);
+
+        // The biometric-unlock enrollment belongs to the master-password store
+        // being left; it must not survive a store switch (PROD-064).
+        if leaving_master_password {
+            if let Err(e) = self.biometric.disable() {
+                warn!(error = %e, "failed to remove biometric unlock after a store switch");
+            }
+        }
         Ok(())
     }
 
@@ -166,6 +206,161 @@ impl CredentialManager {
         }
     }
 
+    /// Whether the OS can verify the user for `purpose`. Never prompts.
+    pub fn os_auth_capability(&self, purpose: OsAuthPurpose) -> OsAuthCapability {
+        self.os_auth.capability(purpose)
+    }
+
+    /// Ask the OS to verify the logged-in user (blocks until answered).
+    ///
+    /// Fails closed: only an explicit OS confirmation is `Ok`. Nothing is
+    /// cached — every call prompts (#3433).
+    pub fn verify_user(
+        &self,
+        purpose: OsAuthPurpose,
+        reason: &str,
+    ) -> Result<OsAuthSuccess, OsAuthError> {
+        self.os_auth.verify(purpose, reason, self.owner_window())
+    }
+
+    /// The native handle of termiHub's focused (or first) window, used to
+    /// parent the Windows Hello prompt. `None` elsewhere.
+    fn owner_window(&self) -> Option<isize> {
+        #[cfg(windows)]
+        {
+            use tauri::Manager;
+            let guard = self.app_handle.read().ok()?;
+            let handle = guard.as_ref()?;
+            let windows = handle.webview_windows();
+            let window = windows
+                .values()
+                .find(|w| w.is_focused().unwrap_or(false))
+                .or_else(|| windows.values().next())?;
+            window.hwnd().ok().map(|hwnd| hwnd.0 as isize)
+        }
+        #[cfg(not(windows))]
+        {
+            None
+        }
+    }
+
+    /// Biometric-unlock state for the UI.
+    pub fn biometric_unlock_status(&self) -> BiometricUnlockStatus {
+        let capability = self.os_auth.capability(OsAuthPurpose::BiometricUnlock);
+        BiometricUnlockStatus {
+            supported: capability.available,
+            enabled: self.get_mode() == StorageMode::MasterPassword && self.biometric.is_enabled(),
+            method_label: capability.method_label,
+            reason: capability.reason,
+        }
+    }
+
+    /// Opt in to biometric unlock: re-verify `master_password` against the
+    /// unlocked store, confirm the biometric with the OS, then enroll.
+    pub fn enable_biometric_unlock(
+        &self,
+        master_password: &str,
+    ) -> Result<(), BiometricUnlockError> {
+        // Check the store and password first (no OS prompt for a typo).
+        self.with_master_password_store(|store| {
+            if !store.is_unlocked() {
+                return Err(BiometricUnlockError::store_unavailable(
+                    "Unlock the credential store before turning on biometric unlock.",
+                ));
+            }
+            match store.verify_password(master_password) {
+                Ok(true) => Ok(()),
+                Ok(false) => Err(BiometricUnlockError::WrongMasterPassword {
+                    message: "The master password is incorrect.".to_string(),
+                }),
+                Err(e) => Err(BiometricUnlockError::other(format!(
+                    "Could not verify the master password: {e}"
+                ))),
+            }
+        })
+        .unwrap_or_else(|| Err(not_master_password_mode()))?;
+
+        let capability = self
+            .os_auth
+            .capability(OsAuthPurpose::EnableBiometricUnlock);
+        if !capability.available {
+            return Err(BiometricUnlockError::AuthFailed {
+                message: capability
+                    .reason
+                    .unwrap_or_else(|| "Biometric unlock is not available.".to_string()),
+            });
+        }
+        // Prompt without holding the backend lock.
+        let verified = self.verify_user(OsAuthPurpose::EnableBiometricUnlock, ENABLE_REASON)?;
+
+        self.with_master_password_store(|store| self.biometric.enable(store, &verified))
+            .unwrap_or_else(|| Err(not_master_password_mode()))
+    }
+
+    /// Unlock the master-password store with biometrics. The caller applies
+    /// the auto-lock gate and notifies the timer, exactly as for a password
+    /// unlock. An already-unlocked store is a no-op (no prompt).
+    pub fn unlock_with_biometrics(&self) -> Result<(), BiometricUnlockError> {
+        let already_unlocked = self
+            .with_master_password_store(|store| {
+                if store.is_unlocked() {
+                    return Ok(true);
+                }
+                self.biometric.precheck(store).map(|()| false)
+            })
+            .unwrap_or_else(|| Err(not_master_password_mode()))?;
+        if already_unlocked {
+            return Ok(());
+        }
+
+        // Prompt without holding the backend lock (a prompt can stay open for
+        // minutes); the enrollment is re-checked under the lock afterwards.
+        let verified = self.verify_user(OsAuthPurpose::BiometricUnlock, UNLOCK_REASON)?;
+
+        self.with_master_password_store(|store| {
+            if store.is_unlocked() {
+                return Ok(());
+            }
+            self.biometric.unlock(store, &verified)
+        })
+        .unwrap_or_else(|| Err(not_master_password_mode()))
+    }
+
+    /// Opt out of biometric unlock (deletes the enrollment). Idempotent.
+    pub fn disable_biometric_unlock(&self) -> Result<()> {
+        self.biometric.disable()
+    }
+
+    /// Change the master password and drop the biometric-unlock enrollment,
+    /// which was bound to the old key (PROD-064).
+    pub fn change_master_password(&self, current: &str, new: &str) -> Result<()> {
+        self.with_master_password_store(|store| store.change_password(current, new))
+            .unwrap_or_else(|| {
+                Err(anyhow::anyhow!(
+                    "Credential store is not in master password mode"
+                ))
+            })?;
+        if let Err(e) = self.biometric.disable() {
+            warn!(error = %e, "failed to remove biometric unlock after a master-password change");
+        }
+        Ok(())
+    }
+
+    /// Delete a (corrupt) master-password store and its biometric-unlock
+    /// enrollment.
+    pub fn reset_master_password_store(&self) -> Result<()> {
+        self.with_master_password_store(MasterPasswordStore::reset)
+            .unwrap_or_else(|| {
+                Err(anyhow::anyhow!(
+                    "Credential store is not in master password mode"
+                ))
+            })?;
+        if let Err(e) = self.biometric.disable() {
+            warn!(error = %e, "failed to remove biometric unlock after a store reset");
+        }
+        Ok(())
+    }
+
     /// Create the appropriate backend for the given mode.
     fn create_backend(mode: &StorageMode, config_dir: &Path) -> StoreBackend {
         match mode {
@@ -176,6 +371,25 @@ impl CredentialManager {
             StorageMode::OsKeychain => StoreBackend::OsKeychain(OsKeychainStore::new()),
             StorageMode::None => StoreBackend::Null(NullStore),
         }
+    }
+}
+
+fn not_master_password_mode() -> BiometricUnlockError {
+    BiometricUnlockError::store_unavailable(
+        "Biometric unlock is only available for the master-password credential store.",
+    )
+}
+
+/// Where the biometric-unlock wrapping key lives: the OS credential store,
+/// or an in-memory slot in unit tests (never the real keychain).
+fn default_biometric_slot() -> Box<dyn SecretSlot> {
+    #[cfg(test)]
+    {
+        Box::new(super::biometric_unlock::MemorySlot::default())
+    }
+    #[cfg(not(test))]
+    {
+        Box::new(super::biometric_unlock::KeyringSlot::default())
     }
 }
 

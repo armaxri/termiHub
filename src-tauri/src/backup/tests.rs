@@ -849,15 +849,14 @@ fn credentials_round_trip_into_the_current_store() {
 fn keychain_mode_blocks_the_credentials_section_but_not_the_rest() {
     let dir = tempfile::tempdir().unwrap();
     populate(dir.path());
+    // No OS verification available (the unit-test default, and Linux).
     let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf());
     let err = export::seal_credentials(&mgr, None, PASSPHRASE, &[], "t".into()).unwrap_err();
-    assert_eq!(
-        err,
-        VaultError::ReauthUnavailable {
-            message: vault::KEYCHAIN_EXPORT_BLOCKED_MESSAGE.to_string(),
-        }
+    assert!(
+        matches!(&err, VaultError::ReauthUnavailable { message }
+            if message.starts_with(vault::KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE)),
+        "{err:?}"
     );
-    assert!(vault::KEYCHAIN_EXPORT_BLOCKED_MESSAGE.contains("#3433"));
     // Everything else still backs up.
     let json = build(
         dir.path(),
@@ -865,6 +864,45 @@ fn keychain_mode_blocks_the_credentials_section_but_not_the_rest() {
         None,
     );
     assert!(restore::open(&json, Some(PASSPHRASE)).is_ok());
+}
+
+#[test]
+fn keychain_credentials_section_requires_os_verification() {
+    use crate::credential::os_auth::mock::{MockOutcome, MockVerifier};
+    use crate::credential::os_auth::{OsAuthError, OsAuthPurpose};
+
+    let _keyring = crate::credential::os_keychain::test_support::install_mock();
+    let dir = tempfile::tempdir().unwrap();
+    let verifier = std::sync::Arc::new(MockVerifier::new([
+        MockOutcome::Error(OsAuthError::Cancelled),
+        MockOutcome::Success(None),
+    ]));
+    let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf())
+        .with_os_auth(Box::new(verifier.clone()));
+
+    // Cancelled → the credentials section is refused.
+    assert!(matches!(
+        export::seal_credentials(&mgr, None, PASSPHRASE, &[], "t".into()),
+        Err(VaultError::ReauthFailed { .. })
+    ));
+    // Verified → sealed (per backup; the earlier cancel is not remembered).
+    let (sealed, count) =
+        export::seal_credentials(&mgr, None, PASSPHRASE, &[], "t".into()).unwrap();
+    assert_eq!(count, 0);
+    assert!(vault::open_file(&sealed, PASSPHRASE).is_ok());
+    assert_eq!(
+        verifier.calls(),
+        vec![
+            (
+                OsAuthPurpose::ReauthExport,
+                vault::EXPORT_REAUTH_REASON.to_string()
+            ),
+            (
+                OsAuthPurpose::ReauthExport,
+                vault::EXPORT_REAUTH_REASON.to_string()
+            ),
+        ]
+    );
 }
 
 #[test]

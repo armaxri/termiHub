@@ -21,7 +21,10 @@ import type {
 import type { RunLocation } from "@/types/tunnel";
 import type { KillSignal, ProcessInfo } from "@/types/monitoring";
 import type {
+  BiometricUnlockError,
+  BiometricUnlockStatus,
   CredentialStoreStatusInfo,
+  OsAuthInfo,
   SwitchCredentialStoreResult,
   VaultConflictStrategy,
   VaultError,
@@ -2778,6 +2781,55 @@ export async function setAutoLockTimeout(minutes: number | null): Promise<void> 
   await invoke("set_auto_lock_timeout", { minutes });
 }
 
+// --- OS user verification + biometric unlock (#3433, PROD-064) ---
+
+/** What OS user verification can do here (never prompts). */
+export async function getOsAuthInfo(): Promise<OsAuthInfo> {
+  return await invoke<OsAuthInfo>("get_os_auth_info");
+}
+
+const BIOMETRIC_UNLOCK_ERROR_KINDS: ReadonlySet<string> = new Set<BiometricUnlockError["kind"]>([
+  "notEnabled",
+  "invalidated",
+  "cancelled",
+  "authFailed",
+  "wrongMasterPassword",
+  "storeUnavailable",
+  "storeCorrupted",
+  "other",
+]);
+
+/** Type guard: whether a caught rejection is a structured {@link BiometricUnlockError}. */
+export function isBiometricUnlockError(err: unknown): err is BiometricUnlockError {
+  if (typeof err !== "object" || err === null) return false;
+  const kind = (err as { kind?: unknown }).kind;
+  return typeof kind === "string" && BIOMETRIC_UNLOCK_ERROR_KINDS.has(kind);
+}
+
+/**
+ * Turn on biometric unlock: re-verifies `masterPassword`, then prompts for
+ * Touch ID / Windows Hello. Rejects with a {@link BiometricUnlockError}.
+ */
+export async function enableBiometricUnlock(
+  masterPassword: string
+): Promise<BiometricUnlockStatus> {
+  return await invoke<BiometricUnlockStatus>("enable_biometric_unlock", { masterPassword });
+}
+
+/** Turn off biometric unlock (deletes the stored key). */
+export async function disableBiometricUnlock(): Promise<BiometricUnlockStatus> {
+  return await invoke<BiometricUnlockStatus>("disable_biometric_unlock");
+}
+
+/**
+ * Unlock the master-password store with Touch ID / Windows Hello. Rejects
+ * with a {@link BiometricUnlockError} (`cancelled` when the user dismissed the
+ * prompt or chose the master password instead).
+ */
+export async function unlockCredentialStoreBiometric(): Promise<void> {
+  await invoke("unlock_credential_store_biometric");
+}
+
 // --- Credential vault export / import (PROD-063) ---
 
 const VAULT_ERROR_KINDS: ReadonlySet<string> = new Set<VaultError["kind"]>([
@@ -2789,6 +2841,7 @@ const VAULT_ERROR_KINDS: ReadonlySet<string> = new Set<VaultError["kind"]>([
   "storeLocked",
   "wrongMasterPassword",
   "reauthUnavailable",
+  "reauthFailed",
   "other",
 ]);
 
@@ -2802,9 +2855,10 @@ export function isVaultError(err: unknown): err is VaultError {
 /**
  * Export every saved credential as an encrypted vault file and return its text.
  *
- * `masterPassword` re-authenticates a master-password store. Export is refused
- * in OS-keychain mode (`reauthUnavailable`) until OS-level auth lands (#3433).
- * `exportPassphrase` seals the file. Rejects with a
+ * `masterPassword` re-authenticates a master-password store. In OS-keychain
+ * mode the backend asks the OS to verify the user (Touch ID / Windows Hello)
+ * for this export (#3433): cancelled/failed → `reauthFailed`, unavailable →
+ * `reauthUnavailable`. `exportPassphrase` seals the file. Rejects with a
  * {@link VaultError}.
  */
 export async function exportCredentialVault(

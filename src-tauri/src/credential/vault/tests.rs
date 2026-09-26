@@ -1,7 +1,7 @@
 //! Tests for the credential-vault export/import (PROD-063).
 
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -14,6 +14,8 @@ use zeroize::Zeroizing;
 use super::import::{check_format_version, open, parse};
 use super::*;
 use crate::credential::crypto::{encrypt_with_password, Argon2Cost};
+use crate::credential::os_auth::mock::{MockOutcome, MockVerifier};
+use crate::credential::os_auth::{OsAuthError, OsAuthPurpose};
 use crate::credential::types::CredentialType;
 use crate::credential::{CredentialStore, MasterPasswordStore};
 
@@ -533,25 +535,133 @@ fn export_and_import_refused_without_a_store() {
     ));
 }
 
+// --- OS-keychain export re-authentication (#3433) ---
+
+fn keychain_manager(dir: &Path, verifier: Arc<MockVerifier>) -> CredentialManager {
+    CredentialManager::new(StorageMode::OsKeychain, dir.to_path_buf())
+        .with_os_auth(Box::new(verifier))
+}
+
 #[test]
-fn export_refused_in_os_keychain_mode_until_os_auth_exists() {
-    // No in-app re-auth exists for the OS keychain, so an unattended unlocked
-    // session must not be able to export every secret (#3433).
+fn keychain_export_refused_when_os_verification_unavailable() {
+    // No OS verification (e.g. Linux) → the export stays blocked, with the
+    // OS reason, and no prompt is attempted (#3433).
     let dir = tempfile::tempdir().unwrap();
-    let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf());
-    let result = authorize_export(&mgr, None);
-    assert_eq!(
-        result,
-        Err(VaultError::ReauthUnavailable {
-            message: KEYCHAIN_EXPORT_BLOCKED_MESSAGE.to_string(),
-        })
+    let verifier = Arc::new(MockVerifier::unavailable());
+    let mgr = keychain_manager(dir.path(), verifier.clone());
+    let err = authorize_export(&mgr, None).unwrap_err();
+    let VaultError::ReauthUnavailable { message } = err else {
+        panic!("expected reauthUnavailable, got {err:?}");
+    };
+    assert!(message.starts_with(KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE));
+    assert!(message.contains("mock verifier is unavailable"));
+    assert!(
+        verifier.calls().is_empty(),
+        "must not prompt when unavailable"
     );
-    assert!(KEYCHAIN_EXPORT_BLOCKED_MESSAGE.contains("#3433"));
     // Supplying some password does not bypass the refusal.
     assert!(matches!(
         authorize_export(&mgr, Some("anything")),
         Err(VaultError::ReauthUnavailable { .. })
     ));
+}
+
+#[test]
+fn the_default_verifier_keeps_keychain_export_blocked_in_tests() {
+    // The platform verifier is never live in unit tests: keychain export
+    // fails closed rather than prompting or silently succeeding.
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf());
+    assert!(matches!(
+        authorize_export(&mgr, None),
+        Err(VaultError::ReauthUnavailable { .. })
+    ));
+}
+
+#[test]
+fn keychain_export_allowed_after_successful_os_verification() {
+    let dir = tempfile::tempdir().unwrap();
+    let verifier = Arc::new(MockVerifier::succeeding(1, None));
+    let mgr = keychain_manager(dir.path(), verifier.clone());
+    assert_eq!(authorize_export(&mgr, None), Ok(()));
+    assert_eq!(
+        verifier.calls(),
+        vec![(
+            OsAuthPurpose::ReauthExport,
+            EXPORT_REAUTH_REASON.to_string()
+        )]
+    );
+}
+
+#[test]
+fn keychain_export_prompts_every_time_without_caching() {
+    let dir = tempfile::tempdir().unwrap();
+    let verifier = Arc::new(MockVerifier::succeeding(1, None));
+    let mgr = keychain_manager(dir.path(), verifier.clone());
+    assert!(authorize_export(&mgr, None).is_ok());
+    // The first success must not authorize a second export.
+    verifier.push(MockOutcome::Error(OsAuthError::Cancelled));
+    assert!(matches!(
+        authorize_export(&mgr, None),
+        Err(VaultError::ReauthFailed { .. })
+    ));
+    assert_eq!(verifier.calls().len(), 2);
+}
+
+#[test]
+fn keychain_export_refused_when_os_verification_cancelled_or_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let verifier = Arc::new(MockVerifier::new([
+        MockOutcome::Error(OsAuthError::Cancelled),
+        MockOutcome::Error(OsAuthError::Failed("wrong finger".into())),
+        MockOutcome::Error(OsAuthError::Other("boom".into())),
+        MockOutcome::Error(OsAuthError::Unavailable("lid closed".into())),
+    ]));
+    let mgr = keychain_manager(dir.path(), verifier.clone());
+
+    let cancelled = authorize_export(&mgr, None).unwrap_err();
+    assert!(
+        matches!(&cancelled, VaultError::ReauthFailed { message } if message.contains("cancelled"))
+    );
+    let failed = authorize_export(&mgr, None).unwrap_err();
+    assert!(
+        matches!(&failed, VaultError::ReauthFailed { message } if message.contains("wrong finger"))
+    );
+    let other = authorize_export(&mgr, None).unwrap_err();
+    assert!(matches!(other, VaultError::ReauthFailed { .. }));
+    let unavailable = authorize_export(&mgr, None).unwrap_err();
+    assert!(
+        matches!(&unavailable, VaultError::ReauthUnavailable { message } if message.contains("lid closed"))
+    );
+    // With no scripted outcome left the mock fails — never a silent success.
+    assert!(authorize_export(&mgr, None).is_err());
+}
+
+#[test]
+fn master_password_export_never_uses_os_verification() {
+    let dir = tempfile::tempdir().unwrap();
+    let verifier = Arc::new(MockVerifier::succeeding(5, None));
+    let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf())
+        .with_os_auth(Box::new(verifier.clone()));
+    mgr.with_master_password_store(|s| s.setup("master-pw"))
+        .unwrap()
+        .unwrap();
+    // OS verification cannot stand in for the master password.
+    assert!(matches!(
+        authorize_export(&mgr, None),
+        Err(VaultError::WrongMasterPassword { .. })
+    ));
+    assert!(authorize_export(&mgr, Some("master-pw")).is_ok());
+    assert!(verifier.calls().is_empty());
+}
+
+#[test]
+fn reauth_failed_serializes_with_stable_kind() {
+    let value = serde_json::to_value(VaultError::ReauthFailed {
+        message: "m".into(),
+    })
+    .unwrap();
+    assert_eq!(value["kind"], "reauthFailed");
 }
 
 #[test]

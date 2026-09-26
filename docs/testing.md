@@ -1809,9 +1809,75 @@ backend and dialogs are unit-tested; this checks the native save/open dialogs).
 4. Enter the right passphrase → **Preview** shows 1 conflict; choose **Replace
    them with the imported ones** → **Import** → success toast; connecting uses the
    exported password again.
-5. Switch to OS Keychain mode: **Export vault…** is disabled with the "requires
-   system authentication … #3433" reason; **Import vault…** with the same file
-   works and the credentials land in the OS keychain.
+5. Switch to OS Keychain mode: on macOS/Windows **Export vault…** is enabled and
+   exporting asks for Touch ID / Windows Hello (see the #3433 steps below); on
+   Linux it is disabled with the "requires system authentication" reason.
+   **Import vault…** with the same file works and the credentials land in the OS
+   keychain.
+
+### OS re-authentication and biometric unlock (#3433, PROD-064)
+
+The gate logic is unit-tested against a mock verifier; the real OS prompts can only be checked by
+hand. Run on a **real display** (the prompts are system UI). Use a Mac with Touch ID (or an Apple
+keyboard with Touch ID) and a Windows 10/11 machine with Windows Hello (PIN is enough; a fingerprint
+or face sensor for the biometric steps). Each step states the expected result.
+
+#### macOS — keychain export (Touch ID or login password)
+
+1. Settings → Security → storage **OS Keychain**, save one connection password. The Credential Vault
+   Backup section shows "…confirm with Touch ID or your Mac password each time you export";
+   **Export vault…** is enabled.
+2. **Export vault…** → passphrase twice → **Export…** → a system sheet reads _"termiHub is trying to
+   export your saved credentials."_ → touch the sensor → the save dialog opens; saving shows a
+   success toast.
+3. Repeat, but click **Cancel** in the system sheet → inline "System authentication was cancelled —
+   nothing was exported."; no save dialog, no file.
+4. Repeat, choose **Use Password…** in the sheet and enter the Mac login password → export succeeds
+   (the export policy accepts the password).
+5. Export twice in a row → you are prompted **both** times (no caching).
+6. Settings → Backup & Restore → **Back up everything…** → Credentials is checked with "You'll confirm
+   with Touch ID…" → **Save backup…** → Touch ID prompt → backup saves with "N credentials". Cancel
+   instead → inline error, nothing written.
+
+#### macOS — biometric unlock (Touch ID only)
+
+1. Storage **Master Password**, unlocked. Master Password Options shows **Unlock with Touch ID**
+   (hidden on a Mac without Touch ID). Turn it on → enter the master password → **Turn on** → Touch
+   ID sheet _"…turn on biometric unlock for your saved credentials"_ → touch → toggle stays on,
+   success toast. A wrong master password shows an inline error and **no** Touch ID sheet.
+2. Lock the store (status-bar lock) and connect a saved connection → the unlock dialog opens and the
+   Touch ID sheet appears immediately → touch → store unlocks, the connection proceeds.
+3. Lock again → in the sheet choose **Use Master Password** (or Cancel) → the dialog stays open with
+   no error; type the master password → unlocks. **Unlock with Touch ID** retries the sheet.
+4. System Settings → Touch ID → **add a fingerprint**. Lock, unlock with Touch ID → the dialog
+   explains "fingerprints or face data have changed … turned off"; the Touch ID button disappears;
+   the master password unlocks; the setting toggle is off.
+5. Re-enable, then **Change Master Password** → the toggle turns off (enrollment dropped). Re-enable,
+   switch storage to None → back to Master Password: the toggle is off.
+6. Re-enable, wait for the auto-lock timeout → the store auto-locks as before; unlocking with Touch
+   ID works.
+
+#### Windows — keychain export and biometric unlock (Windows Hello)
+
+1. Storage **OS Keychain**: **Export vault…** → passphrase → **Export…** → a Windows Security dialog
+   _"termiHub is trying to export your saved credentials."_ appears **in front of** termiHub →
+   verify (PIN / face / finger) → the save dialog opens. Cancel instead → inline "cancelled", no
+   file. With Windows Hello not set up for the user, the export button is disabled with "Windows
+   Hello is not set up for this user…".
+2. **Back up everything…** with Credentials → Windows Hello dialog → backup saves.
+3. Storage **Master Password**: **Unlock with Windows Hello** → master password → **Turn on** → Hello
+   dialog → verify → on. Lock → the unlock dialog opens the Hello dialog immediately → verify →
+   unlocked. Cancel → master password fallback works.
+4. **Change Master Password** → the toggle turns off. (Adding a fingerprint does **not** invalidate on
+   Windows — documented limitation.)
+
+#### Linux
+
+1. Storage **OS Keychain**: **Export vault…** is disabled with "Exporting from the OS keychain
+   requires system authentication (Touch ID / Windows Hello), which is not available on this
+   computer…"; backup Credentials is disabled with the same reason; import still works.
+2. Storage **Master Password**: no "Unlock with…" toggle is shown; the unlock dialog shows only the
+   password field.
 
 ### Unified backup and restore (PROD-068, #3509)
 
@@ -1827,8 +1893,10 @@ backend and dialogs are unit-tested; this checks the native dialogs and the rest
    counts; Settings says it replaces the current settings.
 4. Keep the defaults (merge) → **Restore and restart**. termiHub restarts; the deleted connection
    and macro are back, the theme is the backed-up one, and the saved password still connects.
-5. Switch to OS Keychain mode and open **Back up everything…**: Credentials is disabled with the
-   "requires system authentication … #3433" reason; a backup of the rest still saves.
+5. Switch to OS Keychain mode and open **Back up everything…**: on macOS/Windows Credentials is
+   checked and saving asks for Touch ID / Windows Hello first (see the #3433 steps below); on Linux
+   it is disabled with the "requires system authentication" reason and a backup of the rest still
+   saves.
 
 ### Backup of trusted host keys and plugins (#3515)
 

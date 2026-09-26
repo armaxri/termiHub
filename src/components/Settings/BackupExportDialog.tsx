@@ -4,12 +4,13 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { exportBackup, isVaultError, listBackupSections } from "@/services/api";
 import { useAppStore } from "@/store/appStore";
 import type { BackupSectionInfo } from "@/types/backup";
-import type { CredentialStorageMode } from "@/types/credential";
+import type { CredentialStorageMode, OsAuthInfo } from "@/types/credential";
+import { useOsAuthInfo } from "@/hooks/useOsAuthInfo";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Modal, Button, Checkbox, Toggle, toast } from "@/components/ui";
 import { MIN_EXPORT_PASSPHRASE_LENGTH, ratePassphrase } from "@/utils/passphraseStrength";
 import { errorMessage } from "@/utils/errorMessage";
-import { KEYCHAIN_EXPORT_BLOCKED_REASON } from "./CredentialVaultBackup";
+import { keychainExportReason } from "./CredentialVaultBackup";
 import "./CredentialVault.css";
 import "./BackupRestore.css";
 
@@ -37,10 +38,11 @@ export function defaultBackupFileName(): string {
 /** Why the credentials cannot be included from the current store, or null. */
 export function credentialsExportBlockedReason(
   mode: CredentialStorageMode,
-  status: string | undefined
+  status: string | undefined,
+  osAuth: OsAuthInfo | null
 ): string | null {
   if (mode === "none") return "Credential storage is off — there are no saved credentials.";
-  if (mode === "os_keychain") return KEYCHAIN_EXPORT_BLOCKED_REASON;
+  if (mode === "os_keychain") return keychainExportReason(osAuth);
   if (status === "unavailable") return "No master password has been set up yet.";
   return null;
 }
@@ -86,7 +88,8 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
   const requestUnlock = useAppStore((s) => s.requestUnlock);
   const mode: CredentialStorageMode = credentialStoreStatus?.mode ?? "none";
   const status = credentialStoreStatus?.status;
-  const credentialsBlocked = credentialsExportBlockedReason(mode, status);
+  const { info: osAuth } = useOsAuthInfo();
+  const credentialsBlocked = credentialsExportBlockedReason(mode, status, osAuth);
 
   const [sections, setSections] = useState<BackupSectionInfo[] | null>(null);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -286,7 +289,9 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
                 data-testid="backup-export-credentials-detail"
               >
                 {credentialsBlocked ??
-                  "Saved passwords and key passphrases, always encrypted with the passphrase."}
+                  (mode === "os_keychain" && osAuth
+                    ? `Saved passwords and key passphrases, always encrypted with the passphrase. You'll confirm with ${osAuth.exportReauth.methodLabel}.`
+                    : "Saved passwords and key passphrases, always encrypted with the passphrase.")}
               </span>
             </label>
           </li>

@@ -8,6 +8,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import { CredentialVaultBackup } from "./CredentialVaultBackup";
+import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
 import { errorMessage } from "@/utils/errorMessage";
 
 interface SecuritySettingsProps {
@@ -465,6 +466,8 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
                   options={AUTO_LOCK_SELECT_OPTIONS}
                 />
               </SettingsField>
+
+              <BiometricUnlockSettings />
 
               <div className="settings-panel__field">
                 <Button
