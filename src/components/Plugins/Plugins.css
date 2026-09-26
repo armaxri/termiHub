@@ -109,6 +109,9 @@
 }
 
 .plugin-manager__footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
   padding: var(--spacing-sm);
   border-top: 1px solid var(--border-secondary);
 }
@@ -460,4 +463,51 @@
 
 .plugin-install__perm-desc {
   color: var(--text-secondary);
+}
+
+/* ── Detail panel — update check (PROD-051) ───────────────────────────── */
+.plugin-update__line {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+  margin: 0 0 var(--spacing-sm);
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.plugin-update__line--muted {
+  color: var(--text-secondary);
+}
+
+.plugin-update__line--error {
+  color: var(--color-error);
+}
+
+.plugin-update__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+
+.plugin-update__icon--ok {
+  color: var(--color-success);
+}
+
+.plugin-update__icon--accent {
+  color: var(--accent-color);
+}
+
+.plugin-update__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  flex-wrap: wrap;
+}
+
+/* List-row badge: a newer version of this plugin is available. */
+.plugin-row__update {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  color: var(--accent-color);
 }

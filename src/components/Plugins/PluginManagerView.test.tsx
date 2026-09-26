@@ -12,16 +12,19 @@ import React from "react";
 import { useAppStore } from "@/store/appStore";
 import type { InstalledPlugin, PluginState } from "@/types/plugin";
 import { withTooltip } from "@/test/tooltip";
+import { usePluginUpdateStore } from "@/plugins/pluginUpdateStore";
 import { PluginManagerView } from "./PluginManagerView";
 
 const openMock = vi.fn();
 const validateMock = vi.fn();
 const assessTrustMock = vi.fn();
+const checkUpdatesMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...a: unknown[]) => openMock(...a) }));
 vi.mock("@/services/api", () => ({
   validatePlugin: (...a: unknown[]) => validateMock(...a),
   assessPluginTrust: (...a: unknown[]) => assessTrustMock(...a),
+  checkPluginUpdates: (...a: unknown[]) => checkUpdatesMock(...a),
 }));
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
@@ -66,6 +69,8 @@ describe("PluginManagerView (#1997)", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useAppStore.setState(useAppStore.getInitialState());
+    usePluginUpdateStore.setState({ entries: {}, checkingAll: false, lastCheckedAt: null });
+    checkUpdatesMock.mockReset();
     openMock.mockReset();
     validateMock.mockReset();
     assessTrustMock.mockReset();
@@ -224,5 +229,62 @@ describe("PluginManagerView (#1997)", () => {
 
     expect(validateMock).not.toHaveBeenCalled();
     expect(document.querySelector('[data-testid="plugin-install-dialog"]')).toBeNull();
+  });
+
+  describe("update check (PROD-051)", () => {
+    function updatable(id: string, version: string): InstalledPlugin {
+      const p = plugin(id, id, version, "active");
+      p.manifest.updateUrl = `https://example.com/${id}/update.json`;
+      return p;
+    }
+
+    it("hides the check button when no plugin publishes updates", () => {
+      useAppStore.setState({ plugins: [plugin("k8s", "Kubernetes Exec", "1.2.0", "active")] });
+      render();
+      expect(container.querySelector('[data-testid="plugin-check-updates"]')).toBeNull();
+    });
+
+    it("checks every plugin and badges the ones with an update", async () => {
+      useAppStore.setState({ plugins: [updatable("a", "1.0.0"), updatable("b", "2.0.0")] });
+      checkUpdatesMock.mockResolvedValue([
+        {
+          pluginId: "a",
+          outcome: {
+            pluginId: "a",
+            installedVersion: "1.0.0",
+            latestVersion: "1.1.0",
+            status: "updateAvailable",
+            downloadUrl: "https://example.com/a.termihub-plugin",
+            sha256: "0".repeat(64),
+            minHostAbi: "1.0",
+          },
+        },
+        {
+          pluginId: "b",
+          outcome: {
+            pluginId: "b",
+            installedVersion: "2.0.0",
+            latestVersion: "2.0.0",
+            status: "upToDate",
+            downloadUrl: "https://example.com/b.termihub-plugin",
+            sha256: "0".repeat(64),
+            minHostAbi: "1.0",
+          },
+        },
+      ]);
+      render();
+      expect(container.querySelector('[data-testid="plugin-update-badge-a"]')).toBeNull();
+
+      await act(async () => {
+        container
+          .querySelector<HTMLButtonElement>('[data-testid="plugin-check-updates"]')!
+          .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await flush();
+
+      expect(checkUpdatesMock).toHaveBeenCalledWith(undefined);
+      expect(container.querySelector('[data-testid="plugin-update-badge-a"]')).not.toBeNull();
+      expect(container.querySelector('[data-testid="plugin-update-badge-b"]')).toBeNull();
+    });
   });
 });

@@ -452,6 +452,45 @@ mod tests {
         );
     }
 
+    /// The shipped JavaScript example plugins (PROD-051) — the samples
+    /// `docs/plugin-authoring.md` links — must pack and round-trip validate as-is,
+    /// carrying their `frontend/` entry point.
+    #[test]
+    fn packs_the_shipped_js_example_plugins() {
+        let examples = Path::new(env!("CARGO_MANIFEST_DIR")).join("../examples/plugins");
+        for (dir, id, extension) in [
+            ("log-highlighter", "log-highlighter", "protocolParser"),
+            ("clock-widget", "clock-widget", "statusBarWidget"),
+        ] {
+            let out = TempDir::new().unwrap();
+            let pkg = pack_plugin(&examples.join(dir), out.path())
+                .unwrap_or_else(|e| panic!("example {dir} should pack: {e}"));
+            assert_eq!(
+                pkg.file_name().unwrap().to_str().unwrap(),
+                format!("{id}-1.0.0.termihub-plugin")
+            );
+            let names = entry_names(&pkg);
+            for entry in ["manifest.json", "README.md", "frontend/index.js"] {
+                assert!(names.contains(entry), "{dir} is missing {entry}: {names:?}");
+            }
+            let manifest = validate_package(&pkg).expect("example package must validate");
+            assert_eq!(manifest.id, id);
+            let declared = match extension {
+                "protocolParser" => manifest
+                    .extensions
+                    .protocol_parser
+                    .as_ref()
+                    .map(|p| p.entry_point.clone()),
+                _ => manifest
+                    .extensions
+                    .status_bar_widget
+                    .as_ref()
+                    .map(|w| w.entry_point.clone()),
+            };
+            assert_eq!(declared.as_deref(), Some("frontend/index.js"), "{dir}");
+        }
+    }
+
     #[test]
     fn missing_manifest_is_reported() {
         let empty = TempDir::new().unwrap();

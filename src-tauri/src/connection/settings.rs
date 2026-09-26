@@ -293,6 +293,11 @@ pub struct AppSettings {
     /// `None`/`Some(false)` keeps the full-IPC plugin JS surface off by default.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontend_plugins_enabled: Option<bool>,
+    /// Opt-in periodic plugin update check (PROD-051). `None`/`Some(false)` keeps
+    /// it off: plugins with an `updateUrl` are only checked when the user asks.
+    /// A check never installs anything.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plugin_update_check_enabled: Option<bool>,
     /// Update checker configuration and state.
     #[serde(default)]
     pub updates: UpdateSettings,
@@ -401,6 +406,7 @@ impl Default for AppSettings {
             custom_language_grammars: None,
             experimental_features_enabled: None,
             frontend_plugins_enabled: None,
+            plugin_update_check_enabled: None,
             updates: UpdateSettings::default(),
             serial_port_scan_prefixes: None,
             shell_integration: ShellIntegrationSettings::default(),
@@ -1162,6 +1168,24 @@ mod tests {
         assert_eq!(settings.frontend_plugins_enabled, None);
         let json = serde_json::to_string(&settings).unwrap();
         assert!(!json.contains("frontendPluginsEnabled"));
+    }
+
+    #[test]
+    fn plugin_update_check_defaults_off_and_round_trips() {
+        let settings = AppSettings::default();
+        assert_eq!(settings.plugin_update_check_enabled, None);
+        assert!(!serde_json::to_string(&settings)
+            .unwrap()
+            .contains("pluginUpdateCheckEnabled"));
+
+        let settings = AppSettings {
+            plugin_update_check_enabled: Some(true),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&settings).unwrap();
+        assert!(json.contains("\"pluginUpdateCheckEnabled\":true"));
+        let back: AppSettings = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.plugin_update_check_enabled, Some(true));
     }
 
     #[test]
