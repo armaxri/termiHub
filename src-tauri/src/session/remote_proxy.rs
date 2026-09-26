@@ -1541,6 +1541,7 @@ mod tests {
                     docker_available: false,
                     available_docker_images: vec![],
                     monitoring_supported: false,
+                    tool_streaming: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),

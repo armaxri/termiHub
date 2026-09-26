@@ -14,6 +14,7 @@ use termihub_core::network::{
 };
 use termihub_core::service::ServiceInfo;
 
+use crate::network::agent_stream::{self, StreamTool};
 use crate::network::http_monitor::{HttpMonitorConfig, HttpMonitorState};
 use crate::network::{agent_tools, events, NetworkManager};
 use crate::run_location::{ResolvedLocation, RunLocation};
@@ -115,7 +116,6 @@ pub async fn network_port_scan(
 
         match location {
             ResolvedLocation::Agent(agent_id) => {
-                let params = agent_tools::port_scan_params(&host, &ports, timeout_ms, concurrency);
                 // Guarded by `ensure_agent_client` before spawning; emit a
                 // recoverable error instead of panicking should that invariant
                 // ever be bypassed (WA-RS-005).
@@ -129,11 +129,30 @@ pub async fn network_port_scan(
                     manager.complete_task(&tid);
                     return;
                 };
-                let (app2, tid2) = (app.clone(), tid.clone());
-                let _ = tokio::task::spawn_blocking(move || {
-                    agent_tools::dispatch_port_scan(&client, &agent_id, &app2, &tid2, params);
-                })
-                .await;
+                if agent_stream::supports_streaming(&client, &agent_id) {
+                    // Live results, no 60 s cap, Stop cancels on the agent (#3353).
+                    let params =
+                        agent_tools::port_scan_tool_params(&host, &ports, timeout_ms, concurrency);
+                    agent_stream::run_streaming_to_app(
+                        StreamTool::PortScan,
+                        client,
+                        &agent_id,
+                        &app,
+                        &tid,
+                        params,
+                        &cancel,
+                    )
+                    .await;
+                } else {
+                    // Older agent: one-shot `network.port_scan`.
+                    let params =
+                        agent_tools::port_scan_params(&host, &ports, timeout_ms, concurrency);
+                    let (app2, tid2) = (app.clone(), tid.clone());
+                    let _ = tokio::task::spawn_blocking(move || {
+                        agent_tools::dispatch_port_scan(&client, &agent_id, &app2, &tid2, params);
+                    })
+                    .await;
+                }
             }
             ResolvedLocation::Local => {
                 let on_result = {
@@ -242,7 +261,6 @@ pub async fn network_ping_start(
 
         match location {
             ResolvedLocation::Agent(agent_id) => {
-                let params = agent_tools::ping_params(&host, interval_ms, count);
                 // Guarded by `ensure_agent_client` before spawning; emit a
                 // recoverable error instead of panicking should that invariant
                 // ever be bypassed (WA-RS-005).
@@ -256,11 +274,28 @@ pub async fn network_ping_start(
                     manager.complete_task(&tid);
                     return;
                 };
-                let (app2, tid2) = (app.clone(), tid.clone());
-                let _ = tokio::task::spawn_blocking(move || {
-                    agent_tools::dispatch_ping(&client, &agent_id, &app2, &tid2, params);
-                })
-                .await;
+                if agent_stream::supports_streaming(&client, &agent_id) {
+                    // Live echoes; an absent count runs until Stop (#3353).
+                    let params = agent_tools::ping_tool_params(&host, interval_ms, count);
+                    agent_stream::run_streaming_to_app(
+                        StreamTool::Ping,
+                        client,
+                        &agent_id,
+                        &app,
+                        &tid,
+                        params,
+                        &cancel,
+                    )
+                    .await;
+                } else {
+                    // Older agent: one-shot, count-bounded `network.ping`.
+                    let params = agent_tools::ping_params(&host, interval_ms, count);
+                    let (app2, tid2) = (app.clone(), tid.clone());
+                    let _ = tokio::task::spawn_blocking(move || {
+                        agent_tools::dispatch_ping(&client, &agent_id, &app2, &tid2, params);
+                    })
+                    .await;
+                }
             }
             ResolvedLocation::Local => {
                 let on_result = {
@@ -354,7 +389,27 @@ pub async fn network_ping_sweep(
         if let ResolvedLocation::Agent(agent_id) = location {
             // Guarded by `ensure_agent_client` before spawning (WA-RS-005).
             match agent_client {
+                Some(client) if agent_stream::supports_streaming(&client, &agent_id) => {
+                    // Live results, no 60 s cap, Stop cancels on the agent (#3353).
+                    let params = agent_tools::ping_sweep_tool_params(
+                        &targets,
+                        timeout_ms,
+                        concurrency,
+                        resolve_hostnames,
+                    );
+                    agent_stream::run_streaming_to_app(
+                        StreamTool::PingSweep,
+                        client,
+                        &agent_id,
+                        &app,
+                        &tid,
+                        params,
+                        &cancel,
+                    )
+                    .await;
+                }
                 Some(client) => {
+                    // Older agent: one-shot `tool.run`.
                     let params = agent_tools::ping_sweep_tool_run_params(
                         &targets,
                         timeout_ms,
@@ -631,7 +686,6 @@ pub async fn network_traceroute(
 
         match location {
             ResolvedLocation::Agent(agent_id) => {
-                let params = agent_tools::traceroute_params(&host, max_hops);
                 // Guarded by `ensure_agent_client` before spawning; emit a
                 // recoverable error instead of panicking should that invariant
                 // ever be bypassed (WA-RS-005).
@@ -645,11 +699,28 @@ pub async fn network_traceroute(
                     manager.complete_task(&tid);
                     return;
                 };
-                let (app2, tid2) = (app.clone(), tid.clone());
-                let _ = tokio::task::spawn_blocking(move || {
-                    agent_tools::dispatch_traceroute(&client, &agent_id, &app2, &tid2, params);
-                })
-                .await;
+                if agent_stream::supports_streaming(&client, &agent_id) {
+                    // Live hops, Stop cancels on the agent (#3353).
+                    let params = agent_tools::traceroute_tool_params(&host, max_hops);
+                    agent_stream::run_streaming_to_app(
+                        StreamTool::Traceroute,
+                        client,
+                        &agent_id,
+                        &app,
+                        &tid,
+                        params,
+                        &cancel,
+                    )
+                    .await;
+                } else {
+                    // Older agent: one-shot `network.traceroute`.
+                    let params = agent_tools::traceroute_params(&host, max_hops);
+                    let (app2, tid2) = (app.clone(), tid.clone());
+                    let _ = tokio::task::spawn_blocking(move || {
+                        agent_tools::dispatch_traceroute(&client, &agent_id, &app2, &tid2, params);
+                    })
+                    .await;
+                }
             }
             ResolvedLocation::Local => {
                 let on_hop = {

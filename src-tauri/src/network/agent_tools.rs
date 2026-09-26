@@ -312,14 +312,32 @@ pub fn dispatch_open_ports(
 /// The core `ToolRegistry` id the agent runs a ping sweep under.
 pub const PING_SWEEP_TOOL_ID: &str = "ping_sweep";
 
+/// Build the camelCase `ping_sweep` tool params (`targets`, `timeoutMs`,
+/// `concurrency`, `resolveHostnames`) shared by `tool.run` and the streaming
+/// `tool.start` (#3353).
+///
+/// The desktop expands the target spec itself, so the agent receives the
+/// concrete address list, and fills absent optionals with the same defaults the
+/// local path uses so both vantages probe identically.
+pub fn ping_sweep_tool_params(
+    targets: &[String],
+    timeout_ms: Option<u64>,
+    concurrency: Option<usize>,
+    resolve_hostnames: Option<bool>,
+) -> Value {
+    json!({
+        "targets": targets,
+        "timeoutMs": timeout_ms.unwrap_or(defaults::PING_SWEEP_TIMEOUT_MS),
+        "concurrency": concurrency.unwrap_or(defaults::PING_SWEEP_CONCURRENCY),
+        "resolveHostnames": resolve_hostnames.unwrap_or(defaults::PING_SWEEP_RESOLVE_HOSTNAMES),
+    })
+}
+
 /// Build the `tool.run` params for an agent ping sweep.
 ///
 /// The sweep has no dedicated `network.*` method; it runs through the agent's
-/// generic `tool.run`, whose params are `{ toolId, params }` and whose tool
-/// params are camelCase (`targets`, `timeoutMs`, `concurrency`,
-/// `resolveHostnames`). The desktop expands the target spec itself, so the
-/// agent receives the concrete address list, and fills absent optionals with the
-/// same defaults the local path uses so both vantages probe identically.
+/// generic `tool.run`, whose params are `{ toolId, params }` wrapping
+/// [`ping_sweep_tool_params`].
 pub fn ping_sweep_tool_run_params(
     targets: &[String],
     timeout_ms: Option<u64>,
@@ -328,13 +346,46 @@ pub fn ping_sweep_tool_run_params(
 ) -> Value {
     json!({
         "toolId": PING_SWEEP_TOOL_ID,
-        "params": {
-            "targets": targets,
-            "timeoutMs": timeout_ms.unwrap_or(defaults::PING_SWEEP_TIMEOUT_MS),
-            "concurrency": concurrency.unwrap_or(defaults::PING_SWEEP_CONCURRENCY),
-            "resolveHostnames":
-                resolve_hostnames.unwrap_or(defaults::PING_SWEEP_RESOLVE_HOSTNAMES),
-        }
+        "params": ping_sweep_tool_params(targets, timeout_ms, concurrency, resolve_hostnames),
+    })
+}
+
+// ── Streaming tool params (`tool.start`, #3353) ───────────────────────────────
+//
+// The core `ToolRegistry` tools take camelCase params. Absent optionals get the
+// local path's defaults, so a streamed agent run probes exactly like a local one.
+
+/// `port_scan` tool params.
+pub fn port_scan_tool_params(
+    host: &str,
+    ports: &str,
+    timeout_ms: Option<u64>,
+    concurrency: Option<usize>,
+) -> Value {
+    json!({
+        "host": host,
+        "ports": ports,
+        "timeoutMs": timeout_ms.unwrap_or(defaults::PORT_SCAN_TIMEOUT_MS),
+        "concurrency": concurrency.unwrap_or(defaults::PORT_SCAN_CONCURRENCY),
+    })
+}
+
+/// `ping` tool params. Unlike the collect-and-return [`ping_params`], an absent
+/// count is kept: a streamed ping runs until Stop, exactly like a local one
+/// (bounded only by the agent's per-run lifetime cap).
+pub fn ping_tool_params(host: &str, interval_ms: Option<u64>, count: Option<u32>) -> Value {
+    json!({
+        "host": host,
+        "intervalMs": interval_ms.unwrap_or(defaults::PING_INTERVAL_MS),
+        "count": count,
+    })
+}
+
+/// `traceroute` tool params.
+pub fn traceroute_tool_params(host: &str, max_hops: Option<u8>) -> Value {
+    json!({
+        "host": host,
+        "maxHops": max_hops.unwrap_or(defaults::TRACEROUTE_MAX_HOPS),
     })
 }
 
@@ -746,6 +797,34 @@ mod tests {
         assert_eq!(
             d["params"]["resolveHostnames"],
             defaults::PING_SWEEP_RESOLVE_HOSTNAMES
+        );
+    }
+
+    #[test]
+    fn streaming_tool_params_are_camel_case_with_local_defaults() {
+        assert_eq!(
+            port_scan_tool_params("h", "1-1024", None, Some(8)),
+            json!({
+                "host": "h",
+                "ports": "1-1024",
+                "timeoutMs": defaults::PORT_SCAN_TIMEOUT_MS,
+                "concurrency": 8,
+            })
+        );
+        // A streamed ping keeps an absent count (runs until Stop).
+        assert_eq!(
+            ping_tool_params("h", None, None),
+            json!({ "host": "h", "intervalMs": defaults::PING_INTERVAL_MS, "count": null })
+        );
+        assert_eq!(ping_tool_params("h", Some(500), Some(3))["count"], 3);
+        assert_eq!(
+            traceroute_tool_params("h", None),
+            json!({ "host": "h", "maxHops": defaults::TRACEROUTE_MAX_HOPS })
+        );
+        let targets = vec!["10.0.0.1".to_string()];
+        assert_eq!(
+            ping_sweep_tool_run_params(&targets, None, None, None)["params"],
+            ping_sweep_tool_params(&targets, None, None, None)
         );
     }
 

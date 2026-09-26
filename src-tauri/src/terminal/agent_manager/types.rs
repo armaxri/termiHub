@@ -33,10 +33,29 @@ pub struct AgentCapabilities {
     /// Whether the remote system supports `/proc`-based monitoring.
     #[serde(default)]
     pub monitoring_supported: bool,
+    /// Whether the agent streams tool runs (`tool.start` / `tool.cancel` with
+    /// `tool.event` / `tool.done` notifications, #3353). `false` for older agents,
+    /// which only offer the collect-and-return `tool.run`.
+    #[serde(default)]
+    pub tool_streaming: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     pub agent_version: String,
 }
+
+/// One update for a streaming tool run (#3353), routed by the agent I/O task
+/// from the run's `tool.event` / `tool.done` notifications.
+#[derive(Debug, Clone)]
+pub enum ToolRunMessage {
+    /// A batch of streamed events, in emission order.
+    Events(Vec<termihub_core::tool::ToolEvent>),
+    /// The run finished (always the last message).
+    Done(termihub_core::protocol::methods::ToolDoneNotification),
+}
+
+/// Where the agent I/O task delivers one streaming run's updates. Dropped (the
+/// receiver sees the channel close) when the agent transport breaks.
+pub type ToolRunSender = tokio::sync::mpsc::UnboundedSender<ToolRunMessage>;
 
 /// Result of connecting to an agent.
 #[derive(Debug, Clone, Serialize)]

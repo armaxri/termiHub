@@ -284,28 +284,33 @@ The desktop sends a protocol version in the `initialize` request. The agent resp
 
 ### Compatibility Matrix
 
-| Desktop Version | Agent Version | Compatible?                                                                                    |
-| --------------- | ------------- | ---------------------------------------------------------------------------------------------- |
-| 0.8.0           | 0.8.0         | Yes                                                                                            |
-| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist) |
-| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                      |
-| 0.7.0           | 0.7.0         | Yes                                                                                            |
-| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)       |
-| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                      |
-| 0.6.0           | 0.6.0         | Yes                                                                                            |
-| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)           |
-| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                      |
-| 0.5.0           | 0.5.0         | Yes                                                                                            |
-| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                              |
-| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                      |
-| 0.4.0           | 0.4.0         | Yes                                                                                            |
-| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                |
-| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                        |
-| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                            |
-| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                               |
-| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                     |
-| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                           |
-| 1.0.0           | 0.4.0         | No (major mismatch)                                                                            |
+| Desktop Version | Agent Version | Compatible?                                                                                                 |
+| --------------- | ------------- | ----------------------------------------------------------------------------------------------------------- |
+| 0.9.0           | 0.9.0         | Yes                                                                                                         |
+| 0.9.0           | 0.8.0         | Yes (no `toolStreaming` — agent-run network tools fall back to collect-and-return `network.*` / `tool.run`) |
+| 0.8.0           | 0.9.0         | Yes (new methods / notifications / capability ignored)                                                      |
+| 0.8.0           | 0.8.0         | Yes                                                                                                         |
+| 0.8.0           | 0.7.0         | Yes (`service.pause/resume` absent — agent-hosted monitor pause falls back to stop-and-relist)              |
+| 0.7.0           | 0.8.0         | Yes (new methods ignored)                                                                                   |
+| 0.7.0           | 0.7.0         | Yes                                                                                                         |
+| 0.7.0           | 0.6.0         | Yes (`service.*` absent — agent-hosted embedded servers fall back to hosting on desktop)                    |
+| 0.6.0           | 0.7.0         | Yes (new methods ignored)                                                                                   |
+| 0.6.0           | 0.6.0         | Yes                                                                                                         |
+| 0.6.0           | 0.5.0         | Yes (`tunnel.*` absent — agent-hosted tunnels fall back to the "not supported" path)                        |
+| 0.5.0           | 0.6.0         | Yes (new methods ignored)                                                                                   |
+| 0.5.0           | 0.5.0         | Yes                                                                                                         |
+| 0.5.0           | 0.4.0         | Yes (`agent.forward.*` absent — relay is a no-op)                                                           |
+| 0.4.0           | 0.5.0         | Yes (new methods / notifications ignored)                                                                   |
+| 0.4.0           | 0.4.0         | Yes                                                                                                         |
+| 0.4.0           | 0.3.0         | Yes (`agent.request_update` absent — see below)                                                             |
+| 0.3.0           | 0.4.0         | Yes (new method / notification ignored)                                                                     |
+| 0.3.0           | 0.2.0         | Yes (`agent.list_connections` / `client_id` absent)                                                         |
+| 0.2.0           | 0.3.0         | Yes (new method / field ignored)                                                                            |
+| 0.2.0           | 0.1.0         | No (`connection.*` methods not recognized)                                                                  |
+| 0.1.0           | 0.2.0         | No (old `session.*` methods removed)                                                                        |
+| 1.0.0           | 0.4.0         | No (major mismatch)                                                                                         |
+
+**0.9.0 (additive, minor)** — adds streaming tool runs: the [`tool.start`](#toolstart) / [`tool.cancel`](#toolcancel) methods, the [`tool.event`](#toolevent) / [`tool.done`](#tooldone) notifications, and the `capabilities.toolStreaming` flag in the `initialize` result (#3353). Negotiation is by **capability**, not version: the desktop streams only when the agent advertises `toolStreaming: true`. Backwards compatible in both directions: a pre-0.9.0 agent never advertises the flag, so the desktop keeps the collect-and-return `network.*` / `tool.run` path (bounded by its 60 s request timeout); a pre-0.9.0 desktop never calls the methods and ignores the notifications.
 
 **0.8.0 (additive, minor)** — adds in-place pause for agent-hosted services: the [`service.pause`](#servicepause) / [`service.resume`](#serviceresume) methods (#2607). An agent-hosted HTTP monitor can now pause **in place** (instance kept hosted, poll body suspended) instead of the stop-and-relist the desktop had to do without a pause verb. Backwards compatible in both directions: a pre-0.8.0 agent lacks the methods, so a `service.pause` call returns [`-32601` Method not found](#standard-json-rpc-errors) and the desktop falls back to stop-and-relist; a pre-0.8.0 desktop never calls them.
 
@@ -385,17 +390,18 @@ Handshake that establishes the protocol version and exchanges capabilities.
 
 On a successful `initialize`, the agent records the client (`client`, `client_version`, an agent-assigned `client_id`, and a `connected_since` timestamp) in its per-process `ConnectionRegistry` and clears it when the connection drops (see [Connection Topology & Client Tracking](#connection-topology--client-tracking)). Because each `--stdio` process serves one client, the registry holds exactly one entry in the SSH-tunnelled deployment.
 
-| Result Field                         | Type                   | Description                                  |
-| ------------------------------------ | ---------------------- | -------------------------------------------- |
-| `protocol_version`                   | `string`               | Negotiated protocol version                  |
-| `agent_version`                      | `string`               | Agent binary version                         |
-| `client_id`                          | `string`               | Agent-assigned id for this client (0.3.0+)   |
-| `capabilities.connectionTypes`       | `ConnectionTypeInfo[]` | Available connection types with schemas/caps |
-| `capabilities.maxSessions`           | `integer`              | Maximum concurrent sessions                  |
-| `capabilities.availableShells`       | `string[]`             | Available shell paths                        |
-| `capabilities.availableSerialPorts`  | `string[]`             | Available serial port paths                  |
-| `capabilities.dockerAvailable`       | `boolean`              | Whether Docker is available                  |
-| `capabilities.availableDockerImages` | `string[]`             | Available Docker image names                 |
+| Result Field                         | Type                   | Description                                                                           |
+| ------------------------------------ | ---------------------- | ------------------------------------------------------------------------------------- |
+| `protocol_version`                   | `string`               | Negotiated protocol version                                                           |
+| `agent_version`                      | `string`               | Agent binary version                                                                  |
+| `client_id`                          | `string`               | Agent-assigned id for this client (0.3.0+)                                            |
+| `capabilities.connectionTypes`       | `ConnectionTypeInfo[]` | Available connection types with schemas/caps                                          |
+| `capabilities.maxSessions`           | `integer`              | Maximum concurrent sessions                                                           |
+| `capabilities.availableShells`       | `string[]`             | Available shell paths                                                                 |
+| `capabilities.availableSerialPorts`  | `string[]`             | Available serial port paths                                                           |
+| `capabilities.dockerAvailable`       | `boolean`              | Whether Docker is available                                                           |
+| `capabilities.availableDockerImages` | `string[]`             | Available Docker image names                                                          |
+| `capabilities.toolStreaming`         | `boolean`              | Streaming tool runs supported — [`tool.start`](#toolstart) (0.9.0+; absent = `false`) |
 
 > **Field-casing note.** The `initialize` **params** are serialized in `camelCase`
 > (`protocolVersion`, `clientVersion`), matching the agent's `InitializeParams` — a field sent in
@@ -1960,7 +1966,9 @@ Report whether an agent-hosted tunnel is currently forwarding, with live traffic
 
 ### Agent-run network tools (`network.*`, `tool.run`)
 
-A network diagnostic whose "Run on" location is an agent runs **from the agent's network vantage**. The desktop proxies it (`src-tauri/src/network/agent_tools.rs`) and re-emits the reply as the same Tauri events or return value as the local path, so the UI cannot tell where it ran. Every method is **collect-and-return**: the agent gathers the whole run before replying, bounded by the desktop's 60 s agent-request timeout.
+A network diagnostic whose "Run on" location is an agent runs **from the agent's network vantage**. The desktop proxies it (`src-tauri/src/network/agent_tools.rs`) and re-emits the reply as the same Tauri events or return value as the local path, so the UI cannot tell where it ran.
+
+When the agent advertises `capabilities.toolStreaming` (0.9.0+), the streaming tools — ping, traceroute, port scan and ping sweep — run as [streaming tool runs](#streaming-tool-runs-toolstart-toolcancel) instead (`src-tauri/src/network/agent_stream.rs`): results arrive live, there is no request timeout, and Stop cancels the run on the agent. Otherwise, and always for the one-shot tools, the methods below are **collect-and-return**: the agent gathers the whole run before replying, bounded by the desktop's 60 s agent-request timeout.
 
 | Tool        | Agent method                           | Params                                                | Result                                                   |
 | ----------- | -------------------------------------- | ----------------------------------------------------- | -------------------------------------------------------- |
@@ -1975,6 +1983,85 @@ A network diagnostic whose "Run on" location is an agent runs **from the agent's
 `network.*` params are snake_case. `tool.run` wraps camelCase tool params as `{toolId, params}` and runs the agent's core `ToolRegistry`. Each `result` event payload of a ping sweep is `{host, latencyMs, hostname}`, and `result` is the summary `{total, up, down, elapsedMs}`. The desktop expands the sweep's target spec (CIDR, ranges) itself and sends the concrete address list. An agent without `tool.run` returns [`-32601` Method not found](#standard-json-rpc-errors), which the desktop surfaces as a sweep error.
 
 The HTTP monitor is not on this path: a monitor is agent-hosted per monitor through [`service.*`](#agent-hosted-embedded-servers-service).
+
+### Streaming tool runs (`tool.start`, `tool.cancel`)
+
+A streaming run executes a core `ToolRegistry` tool in a cancellable task on the agent (#3353). `tool.start` returns as soon as the run is accepted; every result the tool emits reaches the desktop in [`tool.event`](#toolevent) notifications, and the run ends with exactly one [`tool.done`](#tooldone). Only an agent whose `initialize` result carries `capabilities.toolStreaming: true` offers these methods.
+
+```mermaid
+sequenceDiagram
+    participant D as Desktop
+    participant A as Agent
+    D->>D: register route for runId
+    D->>A: tool.start {runId, toolId, params}
+    A-->>D: {runId}
+    loop while the tool runs
+        A-)D: tool.event {runId, events: [...]}
+    end
+    opt Stop
+        D->>A: tool.cancel {runId}
+        A-->>D: {cancelled: true}
+    end
+    A-)D: tool.done {runId, result, cancelled}
+```
+
+**Lifecycle and limits (agent side):**
+
+- **Batching and backpressure.** Events are queued in a bounded per-run buffer (65,536 events) and flushed at least every 50 ms, up to 256 events per `tool.event`, so a burst coalesces into few notifications and no line nears the 1 MiB limit. Events beyond a full buffer are dropped and counted in `tool.done`'s `droppedEvents`.
+- **Cancel.** `tool.cancel` trips the run's cancellation token. The tool stops early and `tool.done` reports `cancelled: true` with its **partial** aggregate. A tool that ignores cancellation is abandoned after 10 s and `tool.done` carries an `error`.
+- **Orphans.** Runs belong to the connection that started them. When that connection drops, the agent cancels all of them and sends nothing further — a later client never sees them. A run is also cancelled after a generous **4-hour** lifetime cap (for example, a ping with no count).
+- **Concurrency.** A connection may have at most 16 runs in flight; more are refused with [`-32022` Tool run rejected](#application-errors).
+
+**Desktop side.** The desktop picks a fresh `runId` and registers its notification route **before** sending `tool.start`, so no early event is missed. It re-emits each event as the same `network-*` Tauri event the local path emits. On Stop it sends `tool.cancel` and waits up to 15 s for `tool.done`. If the agent transport breaks, the desktop fails the run, because the agent has already cancelled it.
+
+### `tool.start`
+
+Start a streaming tool run. Returns once the run is accepted.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tool.start",
+  "params": {
+    "runId": "0b6f7c1e-4a2d-4f7e-9d3c-8e1f2a3b4c5d",
+    "toolId": "ping_sweep",
+    "params": {
+      "targets": ["10.0.0.1", "10.0.0.2"],
+      "timeoutMs": 1000,
+      "concurrency": 64,
+      "resolveHostnames": false
+    }
+  },
+  "id": 42
+}
+```
+
+| Param    | Type     | Description                                                                                      |
+| -------- | -------- | ------------------------------------------------------------------------------------------------ |
+| `runId`  | `string` | Client-chosen id, 1–128 characters, unique among the connection's active runs                    |
+| `toolId` | `string` | Registered tool id (`ping`, `port_scan`, `ping_sweep`, `traceroute`, `dns`, `open_ports`, `wol`) |
+| `params` | `object` | The tool's camelCase params — the same object `tool.run` takes (optional, defaults to `{}`)      |
+
+Result: `{"runId": "<runId>"}`.
+
+Errors: [`-32602` Invalid params](#standard-json-rpc-errors) for a malformed request or an empty/over-long `runId`; [`-32022` Tool run rejected](#application-errors) for an unknown tool, a duplicate `runId`, the concurrency limit, or a connection that cannot stream.
+
+The streamed events per tool: `ping` → `result` (a `PingResult`), `port_scan` → `result` (a `PortScanResult`), `ping_sweep` → `result` (`{host, latencyMs, hostname}`), `traceroute` → `hop` (a `TracerouteHop`). One-shot tools (`dns`, `open_ports`, `wol`) emit no events; their whole result is `tool.done`'s `result`.
+
+### `tool.cancel`
+
+Cancel a streaming run. Idempotent.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tool.cancel",
+  "params": { "runId": "0b6f7c1e-4a2d-4f7e-9d3c-8e1f2a3b4c5d" },
+  "id": 43
+}
+```
+
+Result: `{"cancelled": true}` when a running run was signalled, or `{"cancelled": false}` when the id is unknown or the run already finished. The run's `tool.done` follows.
 
 ### Agent-hosted embedded servers (`service.*`)
 
@@ -2466,6 +2553,57 @@ A monitored host's collect-loop status changed (#3321). The agent sends one on e
 
 ---
 
+### `tool.event`
+
+A batch of a streaming run's events, in emission order (#3353). Never empty.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tool.event",
+  "params": {
+    "runId": "0b6f7c1e-4a2d-4f7e-9d3c-8e1f2a3b4c5d",
+    "events": [
+      { "kind": "result", "payload": { "host": "10.0.0.1", "latencyMs": 2, "hostname": null } }
+    ]
+  }
+}
+```
+
+| Param    | Type                | Description                                                     |
+| -------- | ------------------- | --------------------------------------------------------------- |
+| `runId`  | `string`            | The run the events belong to                                    |
+| `events` | `{kind, payload}[]` | Up to 256 events; the same shape as `tool.run`'s `events` array |
+
+### `tool.done`
+
+A streaming run finished. Sent exactly once per accepted run, after its last `tool.event` — unless the connection dropped, in which case nothing is sent.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tool.done",
+  "params": {
+    "runId": "0b6f7c1e-4a2d-4f7e-9d3c-8e1f2a3b4c5d",
+    "result": { "total": 254, "up": 3, "down": 251, "elapsedMs": 4120 },
+    "cancelled": false,
+    "droppedEvents": 0
+  }
+}
+```
+
+| Param           | Type      | Description                                                                                     |
+| --------------- | --------- | ----------------------------------------------------------------------------------------------- |
+| `runId`         | `string`  | The run that finished                                                                           |
+| `result`        | `any`     | The run's aggregate (what `tool.run` returns as `result`); absent when the run failed           |
+| `error`         | `string`  | Why the run failed; absent on success, including a cancelled run that returned a partial result |
+| `cancelled`     | `boolean` | The run stopped early (`tool.cancel` or the lifetime cap)                                       |
+| `droppedEvents` | `integer` | Events dropped because the per-run buffer was full (`0` normally)                               |
+
+A desktop must ignore `tool.event` / `tool.done` for a `runId` it does not know.
+
+---
+
 ### `agent.update_pending`
 
 Another host is updating this agent (#1351). Broadcast to every client **except** the one that called [`agent.request_update`](#agentrequest_update).
@@ -2563,27 +2701,28 @@ For serial sessions:
 
 ### Application Errors
 
-| Code     | Message                     | Description                                                                              |
-| -------- | --------------------------- | ---------------------------------------------------------------------------------------- |
-| `-32001` | Session not found           | No session with the given ID                                                             |
-| `-32002` | Version not supported       | Protocol version mismatch                                                                |
-| `-32003` | Session creation failed     | Could not create the session (e.g., shell binary not found, serial port open failed)     |
-| `-32004` | Session limit reached       | Agent has reached `max_sessions`                                                         |
-| `-32005` | Invalid configuration       | Invalid config values (e.g., invalid baud rate, negative cols/rows)                      |
-| `-32006` | Session not running         | Session exists but has exited                                                            |
-| `-32007` | Not initialized             | Agent has not been initialized yet (must call `initialize` first)                        |
-| `-32008` | Connection not found        | No connection with the given ID                                                          |
-| `-32009` | Folder not found            | No folder with the given ID                                                              |
-| `-32010` | File not found              | The file or directory was not found                                                      |
-| `-32011` | Permission denied           | Permission denied for the requested file operation                                       |
-| `-32012` | File operation failed       | A file operation failed (I/O error, docker exec failure, etc.)                           |
-| `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial)                   |
-| `-32014` | Monitoring error            | A monitoring operation failed (collection error, SSH failure, etc.)                      |
-| `-32015` | Shutdown error              | An error occurred during agent shutdown                                                  |
-| `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)             |
-| `-32017` | Tunnel start failed         | An agent-hosted SSH tunnel failed to start (SSH connect or bind error)                   |
-| `-32018` | Service start failed        | An agent-hosted embedded server failed to start (bad config, port bind, or unknown type) |
-| `-32021` | Update signature rejected   | An agent update's Ed25519 signature is missing, malformed, or does not verify (AGT-005)  |
+| Code     | Message                     | Description                                                                                                                 |
+| -------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `-32001` | Session not found           | No session with the given ID                                                                                                |
+| `-32002` | Version not supported       | Protocol version mismatch                                                                                                   |
+| `-32003` | Session creation failed     | Could not create the session (e.g., shell binary not found, serial port open failed)                                        |
+| `-32004` | Session limit reached       | Agent has reached `max_sessions`                                                                                            |
+| `-32005` | Invalid configuration       | Invalid config values (e.g., invalid baud rate, negative cols/rows)                                                         |
+| `-32006` | Session not running         | Session exists but has exited                                                                                               |
+| `-32007` | Not initialized             | Agent has not been initialized yet (must call `initialize` first)                                                           |
+| `-32008` | Connection not found        | No connection with the given ID                                                                                             |
+| `-32009` | Folder not found            | No folder with the given ID                                                                                                 |
+| `-32010` | File not found              | The file or directory was not found                                                                                         |
+| `-32011` | Permission denied           | Permission denied for the requested file operation                                                                          |
+| `-32012` | File operation failed       | A file operation failed (I/O error, docker exec failure, etc.)                                                              |
+| `-32013` | File browsing not supported | File browsing is not supported for this connection type (e.g., serial)                                                      |
+| `-32014` | Monitoring error            | A monitoring operation failed (collection error, SSH failure, etc.)                                                         |
+| `-32015` | Shutdown error              | An error occurred during agent shutdown                                                                                     |
+| `-32016` | Deferred update failed      | A deferred agent update failed to apply (binary swap / re-exec, or non-Unix)                                                |
+| `-32017` | Tunnel start failed         | An agent-hosted SSH tunnel failed to start (SSH connect or bind error)                                                      |
+| `-32018` | Service start failed        | An agent-hosted embedded server failed to start (bad config, port bind, or unknown type)                                    |
+| `-32021` | Update signature rejected   | An agent update's Ed25519 signature is missing, malformed, or does not verify (AGT-005)                                     |
+| `-32022` | Tool run rejected           | A streaming `tool.start` was refused: unknown tool, duplicate run id, concurrency limit, or no streaming on this connection |
 
 ---
 
