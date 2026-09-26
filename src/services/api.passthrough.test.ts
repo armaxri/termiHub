@@ -106,6 +106,7 @@ import {
   exportConfigToPortable,
   importConfigFromPortable,
   getAppInfo,
+  getThirdPartyNotices,
   checkForUpdates,
   skipUpdateVersion,
   clearSkippedVersion,
@@ -1121,6 +1122,15 @@ describe("api pass-through wrappers (#2975)", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("get_app_info");
       expect(result).toEqual(info);
+    });
+
+    it("getThirdPartyNotices returns the bundled notices or null", async () => {
+      mockedInvoke.mockResolvedValue(null);
+
+      const result = await getThirdPartyNotices();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("get_third_party_notices");
+      expect(result).toBeNull();
     });
 
     it("checkForUpdates forwards the force flag", async () => {

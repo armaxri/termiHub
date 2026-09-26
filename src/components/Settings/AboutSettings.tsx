@@ -1,18 +1,19 @@
+import { useState } from "react";
 import { Github, ExternalLink, ScrollText } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAppInfo } from "@/hooks/useAppInfo";
 import { frontendLog } from "@/utils/frontendLog";
 import { Button } from "@/components/ui";
+import { ThirdPartyNoticesDialog } from "./ThirdPartyNoticesDialog";
 import "./AboutSettings.css";
 
 const GITHUB_URL = "https://github.com/armaxri/termiHub";
 const LICENSE_URL = "https://github.com/armaxri/termiHub/blob/main/LICENSE";
-const THIRD_PARTY_LICENSES_URL =
-  "https://github.com/armaxri/termiHub/blob/main/THIRD_PARTY_LICENSES.md";
 
 /** Settings page section showing app version, project links, and license info. */
 export function AboutSettings() {
   const appInfo = useAppInfo();
+  const [noticesOpen, setNoticesOpen] = useState(false);
 
   const handleGitHub = async () => {
     try {
@@ -32,13 +33,8 @@ export function AboutSettings() {
     }
   };
 
-  const handleThirdPartyLicenses = async () => {
-    try {
-      await openUrl(THIRD_PARTY_LICENSES_URL);
-    } catch (err) {
-      frontendLog("about", `Failed to open third-party licenses URL: ${err}`);
-      throw err;
-    }
+  const handleThirdPartyLicenses = () => {
+    setNoticesOpen(true);
   };
 
   return (
@@ -107,6 +103,8 @@ export function AboutSettings() {
           </Button>
         </div>
       </div>
+
+      <ThirdPartyNoticesDialog open={noticesOpen} onOpenChange={setNoticesOpen} />
     </div>
   );
 }

@@ -131,7 +131,11 @@ describe("AboutSettings", () => {
     expect(btn?.textContent).toContain("Third-Party Licenses");
   });
 
-  it("opens the third-party licenses URL when the link is clicked", async () => {
+  it("opens the bundled third-party notices viewer when the link is clicked", async () => {
+    mockedInvoke.mockImplementation((cmd) => {
+      if (cmd === "get_third_party_notices") return Promise.resolve("serde 1.0 - MIT");
+      return Promise.resolve(undefined);
+    });
     render();
     const btn = container.querySelector(
       "[data-testid='about-third-party-licenses-link']"
@@ -139,8 +143,10 @@ describe("AboutSettings", () => {
     await act(async () => {
       btn.click();
     });
-    expect(mockedOpenUrl).toHaveBeenCalledWith(
-      "https://github.com/armaxri/termiHub/blob/main/THIRD_PARTY_LICENSES.md"
-    );
+    expect(mockedInvoke).toHaveBeenCalledWith("get_third_party_notices");
+    expect(
+      document.querySelector("[data-testid='third-party-notices-text']")?.textContent
+    ).toContain("serde 1.0 - MIT");
+    expect(mockedOpenUrl).not.toHaveBeenCalled();
   });
 });
