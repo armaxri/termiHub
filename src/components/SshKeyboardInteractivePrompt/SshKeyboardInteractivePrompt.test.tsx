@@ -84,6 +84,7 @@ const otpPrompt: SshKeyboardInteractivePromptPayload = {
     { prompt: "Device name: ", echo: true },
   ],
   round: 1,
+  via: null,
 };
 
 const secondPrompt: SshKeyboardInteractivePromptPayload = {
@@ -95,6 +96,13 @@ const secondPrompt: SshKeyboardInteractivePromptPayload = {
   instructions: "",
   prompts: [{ prompt: "Verification code: ", echo: false }],
   round: 1,
+  via: null,
+};
+
+const agentPrompt: SshKeyboardInteractivePromptPayload = {
+  ...secondPrompt,
+  prompt_id: "ki-agent",
+  via: "agent.example",
 };
 
 describe("SshKeyboardInteractivePrompt", () => {
@@ -131,6 +139,20 @@ describe("SshKeyboardInteractivePrompt", () => {
     expect(q<HTMLInputElement>("kbd-interactive-input-1")?.type).toBe("text");
     // Trailing colon stripped for the accessible label.
     expect(q("kbd-interactive-input-0")?.getAttribute("aria-label")).toBe("Password");
+  });
+
+  it("labels a direct connection's prompt without an agent", async () => {
+    render(<SshKeyboardInteractivePrompt />);
+    await fire(otpPrompt);
+    expect(q("kbd-interactive-via")).toBeNull();
+  });
+
+  it("names the agent that relays an agent-hosted connection's prompt", async () => {
+    render(<SshKeyboardInteractivePrompt />);
+    await fire(agentPrompt);
+    const target = q("kbd-interactive-target")?.textContent ?? "";
+    expect(target).toContain("bob@db.internal:2222");
+    expect(q("kbd-interactive-via")?.textContent).toContain("via agent agent.example");
   });
 
   it("submits the answers in prompt order", async () => {
