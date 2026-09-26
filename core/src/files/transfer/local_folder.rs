@@ -32,7 +32,7 @@ use std::sync::Arc;
 use super::local::{run_local_transfer, should_queue_local_copy};
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferStateTag;
-use super::ProgressSink;
+use super::{is_queue_teardown, ProgressSink};
 
 /// Most entries (files, folders, symlinks, skipped items) one folder copy may
 /// hold. Planning keeps one small record per entry, so this bounds its memory.
@@ -103,7 +103,7 @@ pub enum FolderCopyError {
     #[error("the folder is nested deeper than {0} levels")]
     TooDeep(usize),
     /// The tree's files exceed [`FolderCopyLimits::max_bytes`] in total.
-    #[error("the folder is larger than {} GiB", .0 / (1024 * 1024 * 1024))]
+    #[error("the folder is larger than {}", size_label(*.0))]
     TooLarge(u64),
     /// The destination is the source folder or lies inside it.
     #[error("a folder cannot be copied into itself")]
@@ -120,6 +120,16 @@ pub enum FolderCopyError {
     },
 }
 
+/// `bytes` as whole GiB when at least one, else as bytes (for error text).
+fn size_label(bytes: u64) -> String {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    if bytes >= GIB {
+        format!("{} GiB", bytes / GIB)
+    } else {
+        format!("{bytes} bytes")
+    }
+}
+
 /// Attach `what` + `path` context to an I/O error.
 fn io_err(what: &'static str, path: &Path) -> impl FnOnce(std::io::Error) -> FolderCopyError {
     let path = path.to_path_buf();
@@ -132,10 +142,73 @@ fn io_err(what: &'static str, path: &Path) -> impl FnOnce(std::io::Error) -> Fol
 /// are checked first (the entry's own, non-following file type) and recorded
 /// rather than followed. Nothing is written.
 pub fn plan_folder_copy(
-    _src: &Path,
-    _limits: &FolderCopyLimits,
+    src: &Path,
+    limits: &FolderCopyLimits,
 ) -> Result<FolderCopyPlan, FolderCopyError> {
-    unimplemented!("plan_folder_copy")
+    let mut walk = Walk {
+        limits,
+        entries: 0,
+        plan: FolderCopyPlan::default(),
+    };
+    walk.visit(src, Path::new(""), 0)?;
+    Ok(walk.plan)
+}
+
+/// Accumulator for [`plan_folder_copy`]'s depth-first walk.
+struct Walk<'a> {
+    limits: &'a FolderCopyLimits,
+    entries: usize,
+    plan: FolderCopyPlan,
+}
+
+impl Walk<'_> {
+    /// Plan the children of `dir` (at `rel`, `depth` levels below the root).
+    fn visit(&mut self, dir: &Path, rel: &Path, depth: usize) -> Result<(), FolderCopyError> {
+        let mut children = std::fs::read_dir(dir)
+            .map_err(io_err("read folder", dir))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(io_err("read folder", dir))?;
+        children.sort_by_key(|entry| entry.file_name());
+        if !children.is_empty() && depth + 1 > self.limits.max_depth {
+            return Err(FolderCopyError::TooDeep(self.limits.max_depth));
+        }
+        for child in children {
+            self.entries += 1;
+            if self.entries > self.limits.max_entries {
+                return Err(FolderCopyError::TooManyEntries(self.limits.max_entries));
+            }
+            let path = child.path();
+            let child_rel = rel.join(child.file_name());
+            let file_type = child.file_type().map_err(io_err("inspect", &path))?;
+            if file_type.is_symlink() {
+                self.plan.symlinks.push(child_rel);
+            } else if file_type.is_dir() {
+                self.plan.dirs.push(child_rel.clone());
+                self.visit(&path, &child_rel, depth + 1)?;
+            } else if file_type.is_file() {
+                let size = child.metadata().map_err(io_err("inspect", &path))?.len();
+                self.add_file(child_rel, size)?;
+            } else {
+                self.plan.skipped.push(child_rel);
+            }
+        }
+        Ok(())
+    }
+
+    /// Record a regular file on the direct or queued side of the threshold.
+    fn add_file(&mut self, rel: PathBuf, size: u64) -> Result<(), FolderCopyError> {
+        self.plan.total_bytes = self.plan.total_bytes.saturating_add(size);
+        if self.plan.total_bytes > self.limits.max_bytes {
+            return Err(FolderCopyError::TooLarge(self.limits.max_bytes));
+        }
+        let file = FolderFile { rel, size };
+        if should_queue_local_copy(size) {
+            self.plan.queued.push(file);
+        } else {
+            self.plan.direct.push(file);
+        }
+        Ok(())
+    }
 }
 
 /// Refuse a copy of the folder `src` to `dest` when `dest` is `src` itself or
@@ -144,8 +217,40 @@ pub fn plan_folder_copy(
 /// `dest` need not exist yet: its nearest existing ancestor is resolved and the
 /// missing tail appended, so symlinked or `..`-laden spellings still compare
 /// correctly.
-pub fn check_not_into_itself(_src: &Path, _dest: &Path) -> Result<(), FolderCopyError> {
-    unimplemented!("check_not_into_itself")
+pub fn check_not_into_itself(src: &Path, dest: &Path) -> Result<(), FolderCopyError> {
+    if resolve_maybe_missing(dest).starts_with(resolve_maybe_missing(src)) {
+        return Err(FolderCopyError::IntoItself);
+    }
+    Ok(())
+}
+
+/// Resolve `path` via its nearest existing ancestor, appending the missing
+/// tail with `.` / `..` applied lexically. Falls back to `path` unchanged.
+fn resolve_maybe_missing(path: &Path) -> PathBuf {
+    let mut existing = path;
+    let mut tail = Vec::new();
+    loop {
+        if let Ok(resolved) = std::fs::canonicalize(existing) {
+            let mut out = resolved;
+            for part in tail.iter().rev() {
+                match part {
+                    std::path::Component::ParentDir => {
+                        out.pop();
+                    }
+                    std::path::Component::Normal(name) => out.push(name),
+                    _ => {}
+                }
+            }
+            return out;
+        }
+        match (existing.parent(), existing.components().next_back()) {
+            (Some(parent), Some(last)) => {
+                tail.push(last);
+                existing = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 /// Recreate `plan`'s directories and symlinks under `dest` and copy its small
@@ -155,11 +260,38 @@ pub fn check_not_into_itself(_src: &Path, _dest: &Path) -> Result<(), FolderCopy
 /// link. A non-directory where a directory must go (or a non-symlink where a
 /// symlink must go) is an error. The queued files are left to the caller.
 pub fn lay_out_folder_copy(
-    _src: &Path,
-    _dest: &Path,
-    _plan: &FolderCopyPlan,
+    src: &Path,
+    dest: &Path,
+    plan: &FolderCopyPlan,
 ) -> Result<(), FolderCopyError> {
-    unimplemented!("lay_out_folder_copy")
+    std::fs::create_dir_all(dest).map_err(io_err("create folder", dest))?;
+    for rel in &plan.dirs {
+        let dir = dest.join(rel);
+        std::fs::create_dir_all(&dir).map_err(io_err("create folder", &dir))?;
+    }
+    for file in &plan.direct {
+        let to = dest.join(&file.rel);
+        std::fs::copy(src.join(&file.rel), &to).map_err(io_err("copy", &to))?;
+    }
+    for rel in &plan.symlinks {
+        let to = dest.join(rel);
+        remove_existing_symlink(&to)?;
+        crate::files::local::copy_symlink(&src.join(rel), &to)
+            .map_err(io_err("create symlink", &to))?;
+    }
+    Ok(())
+}
+
+/// Remove a symlink already at `path` so a copied link can take its place.
+/// Anything else there is left for the link creation to refuse.
+fn remove_existing_symlink(path: &Path) -> Result<(), FolderCopyError> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.file_type().is_symlink() => std::fs::remove_file(path)
+            // A Windows directory symlink is removed as a directory.
+            .or_else(|_| std::fs::remove_dir(path))
+            .map_err(io_err("replace symlink", path)),
+        _ => Ok(()),
+    }
 }
 
 /// [`run_local_transfer`] for one queued file of a folder copy: once it ends,
@@ -168,7 +300,8 @@ pub fn lay_out_folder_copy(
 ///
 /// Completed siblings are already gone from the registry, so cancelling them is
 /// a harmless no-op; the executor's temp + rename keeps every cancelled file's
-/// final name untouched.
+/// final name untouched. The app-quit teardown sweep already cancels every
+/// transfer (and keeps them for the next launch), so it is left alone.
 pub async fn run_local_transfer_in_group(
     src: String,
     dest: String,
@@ -177,9 +310,13 @@ pub async fn run_local_transfer_in_group(
     sink: ProgressSink,
     group: Arc<[String]>,
 ) {
-    let _ = (&src, &dest, &handle, &registry, &sink, &group);
-    let _ = (run_local_transfer, should_queue_local_copy, TransferStateTag::Cancelled);
-    unimplemented!("run_local_transfer_in_group")
+    run_local_transfer(src, dest, handle.clone(), registry.clone(), sink, 0).await;
+    if handle.state().tag() != TransferStateTag::Cancelled || is_queue_teardown() {
+        return;
+    }
+    for id in group.iter().filter(|id| **id != handle.transfer_id) {
+        registry.cancel(id);
+    }
 }
 
 #[cfg(test)]

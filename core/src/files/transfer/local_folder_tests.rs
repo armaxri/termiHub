@@ -209,7 +209,10 @@ fn layout_creates_dirs_and_copies_only_the_small_files() {
     assert_eq!(std::fs::read(dest.join("a.txt")).expect("a"), b"alpha");
     assert_eq!(std::fs::read(dest.join("sub/b.txt")).expect("b"), b"beta");
     assert!(dest.join("empty").is_dir());
-    assert!(!dest.join("sub/big.iso").exists(), "queued files are left out");
+    assert!(
+        !dest.join("sub/big.iso").exists(),
+        "queued files are left out"
+    );
 }
 
 #[test]
@@ -227,8 +230,14 @@ fn layout_merges_into_an_existing_folder() {
     lay_out_folder_copy(&src, &dest, &plan).expect("layout");
 
     assert_eq!(std::fs::read(dest.join("same.txt")).expect("same"), b"new");
-    assert_eq!(std::fs::read(dest.join("sub/new.txt")).expect("new"), b"added");
-    assert_eq!(std::fs::read(dest.join("unrelated.txt")).expect("u"), b"stays");
+    assert_eq!(
+        std::fs::read(dest.join("sub/new.txt")).expect("new"),
+        b"added"
+    );
+    assert_eq!(
+        std::fs::read(dest.join("unrelated.txt")).expect("u"),
+        b"stays"
+    );
     assert_eq!(
         std::fs::read(dest.join("sub/also-stays.txt")).expect("s"),
         b"stays too"
