@@ -63,6 +63,15 @@ else
 fi
 
 echo ""
+echo "=== Rust toolchain pin / rust-version consistency ==="
+# .github/rust-version vs workspace + rdp-sidecar rust-version (CI-005, SUP-011).
+if node scripts/internal/check-rust-version.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 if [ "$FAILED" -ne 0 ]; then
     echo "SOME CHECKS FAILED. Run ./scripts/format.sh to auto-fix formatting."
     exit 1

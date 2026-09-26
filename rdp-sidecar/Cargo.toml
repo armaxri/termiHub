@@ -3,6 +3,9 @@ name = "termihub-rdp-sidecar"
 version = "0.1.0"
 description = "RDP (IronRDP) sidecar for termiHub — decodes RDP and bridges it to the shared remote-desktop layer over IPC (#1747)"
 edition = "2021"
+# Workspace-excluded, so it cannot inherit `workspace.package`; must equal the
+# root workspace's rust-version and `.github/rust-version` (check-rust-version.mjs).
+rust-version = "1.98.0"
 publish = false
 
 # This crate is EXCLUDED from the root workspace (`[workspace].exclude`) and has

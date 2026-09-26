@@ -15,6 +15,7 @@ import {
   remoteDesktopDisconnect,
   remoteDesktopResize,
   remoteDesktopSendInput,
+  remoteDesktopReleaseInput,
   remoteDesktopSendClipboard,
   remoteDesktopRemoteClipboardFiles,
   remoteDesktopBindClipboardFiles,
@@ -38,6 +39,7 @@ vi.mock("@/services/api", () => ({
   remoteDesktopDisconnect: vi.fn(() => Promise.resolve()),
   remoteDesktopResize: vi.fn(() => Promise.resolve()),
   remoteDesktopSendInput: vi.fn(() => Promise.resolve()),
+  remoteDesktopReleaseInput: vi.fn(() => Promise.resolve()),
   remoteDesktopSendClipboard: vi.fn(() => Promise.resolve()),
   remoteDesktopGetClipboard: vi.fn(() => Promise.resolve(null)),
   remoteDesktopRemoteClipboardFiles: vi.fn(() => Promise.resolve([])),
@@ -72,6 +74,7 @@ const mockedConnect = vi.mocked(remoteDesktopConnect);
 const mockedDisconnect = vi.mocked(remoteDesktopDisconnect);
 const mockedResize = vi.mocked(remoteDesktopResize);
 const mockedSendInput = vi.mocked(remoteDesktopSendInput);
+const mockedReleaseInput = vi.mocked(remoteDesktopReleaseInput);
 const mockedSendClipboard = vi.mocked(remoteDesktopSendClipboard);
 const mockedRemoteClipboardFiles = vi.mocked(remoteDesktopRemoteClipboardFiles);
 const mockedBindClipboardFiles = vi.mocked(remoteDesktopBindClipboardFiles);
@@ -242,6 +245,22 @@ describe("useRemoteDesktopSession", () => {
       code: "KeyA",
       pressed: true,
     });
+  });
+
+  it("releases held input on the remote while this window controls it (#3402)", async () => {
+    const tabId = addTab(false);
+    const h = renderSession(tabId);
+    await flush();
+    act(() => h.get().releaseInput());
+    expect(mockedReleaseInput).toHaveBeenCalledWith("rd-1");
+  });
+
+  it("sends no release while view-only (#3402)", async () => {
+    const tabId = addTab(true);
+    const h = renderSession(tabId);
+    await flush();
+    act(() => h.get().releaseInput());
+    expect(mockedReleaseInput).not.toHaveBeenCalled();
   });
 
   it("suppresses input when view-only", async () => {
@@ -501,6 +520,10 @@ describe("useRemoteDesktopSession — window takeover (#3388)", () => {
       bound = await h.get().bindClipboardFiles();
     });
 
+    // The evicted window cannot release either: the backend releases what it
+    // held on takeover (#3402).
+    act(() => h.get().releaseInput());
+    expect(mockedReleaseInput).not.toHaveBeenCalled();
     expect(mockedSendInput).not.toHaveBeenCalled();
     expect(mockedResize).not.toHaveBeenCalled();
     expect(mockedSendClipboard).not.toHaveBeenCalled();

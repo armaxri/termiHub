@@ -158,6 +158,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
           scaleMode={scaleMode}
           viewOnly={session.viewOnly || evicted}
           onInput={session.sendInput}
+          onReleaseAll={session.releaseInput}
           onResize={session.resize}
           onDimensions={(width, height) => {
             setResolution({ width, height });

@@ -79,6 +79,7 @@ use termihub_core::reconnect_backoff::{
 };
 
 use crate::session::frame_guard::REJECTED_FRAMES_MESSAGE;
+use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_manager::{
     cert_pump, cursor_pump, emit_state, frame_pump, GraphicalEventSink, PendingCert,
 };
@@ -164,6 +165,9 @@ pub(crate) struct Supervisor<S: GraphicalEventSink> {
     pub(crate) last_size: LastSize,
     pub(crate) trust_store: Arc<RdpTrustStore>,
     pub(crate) pending_cert: PendingCert,
+    /// Held keys / buttons (#3402), released on the fresh connection after a
+    /// re-dial so nothing stays stuck across the reconnect.
+    pub(crate) held: SharedHeldInput,
     pub(crate) sink: S,
 }
 
@@ -405,7 +409,15 @@ impl<S: GraphicalEventSink> Supervisor<S> {
 
         let mut dead = {
             let mut slot = self.connection.lock().await;
-            std::mem::replace(&mut *slot, fresh)
+            let dead = std::mem::replace(&mut *slot, fresh);
+            // Whatever was held when the transport dropped is released on the
+            // new connection (a server may keep a dead client's keys down) and
+            // forgotten, so the session resumes with nothing pressed (#3402).
+            let stale = lock_held(&self.held).take_release_events();
+            if let Some(backend) = slot.graphical() {
+                deliver_releases(backend, &self.session_id, stale).await;
+            }
+            dead
         };
         if let Err(e) = dead.disconnect().await {
             debug!(session_id = %self.session_id, error = %e, "retiring dropped graphical connection");
