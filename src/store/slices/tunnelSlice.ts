@@ -155,6 +155,15 @@ export interface TunnelSlice {
   stopTunnel: (tunnelId: string) => Promise<void>;
   /** Force-reconnect a connected tunnel (stop + start), for a stale-but-green tunnel (#1243). */
   reconnectTunnel: (tunnelId: string) => Promise<void>;
+  /**
+   * A terminal session for the saved SSH connection `connectionId` just
+   * connected: start the tunnels bound to it with `startWithConnection`
+   * (PROD-023). No-op (no intent) when none are bound. The backend selects the
+   * tunnels and skips any already active, so a repeat call is harmless; each
+   * start's status arrives as a projection diff (the sidebar badge), with no
+   * toast — the session's own "Connected" toast is the user-facing signal.
+   */
+  startConnectionTunnels: (connectionId: string) => Promise<void>;
 }
 
 export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (set, get) => ({
@@ -282,6 +291,22 @@ export const createTunnelSlice: StateCreator<AppState, [], [], TunnelSlice> = (s
     } finally {
       _tunnelStopInFlight.delete(tunnelId);
       _tunnelStartInFlight.delete(tunnelId);
+    }
+  },
+
+  startConnectionTunnels: async (connectionId) => {
+    const bound = get().tunnels.some(
+      (t) => t.sshConnectionId === connectionId && t.startWithConnection === true && !t.companionOf
+    );
+    if (!bound) return;
+    try {
+      const ack = await dispatchTunnelIntent("tunnel.startForConnection", { connectionId });
+      throwIfRejected(ack, "start connection tunnels");
+    } catch (err) {
+      frontendLog(
+        "app_store",
+        `Failed to start tunnels for connection ${connectionId}: ${errorMessage(err)}`
+      );
     }
   },
 });

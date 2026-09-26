@@ -43,6 +43,7 @@ fn local_tunnel(id: &str, name: &str) -> TunnelConfig {
         }),
         host: crate::run_location::RunLocation::ThisComputer,
         auto_start: false,
+        start_with_connection: false,
         reconnect_on_disconnect: false,
         companion_of: None,
     }
@@ -59,6 +60,7 @@ fn dynamic_tunnel(id: &str, name: &str) -> TunnelConfig {
         }),
         host: crate::run_location::RunLocation::ThisComputer,
         auto_start: false,
+        start_with_connection: false,
         reconnect_on_disconnect: false,
         companion_of: None,
     }
@@ -381,4 +383,23 @@ fn a_dead_subscriber_is_reaped_and_others_keep_receiving() {
     dispatcher.dispatch(intent("tunnel.start", json!({ "id": "t1" })));
     assert_eq!(projector.subscriber_count(TUNNELS_REGION), 1, "dead reaped");
     assert_eq!(live.diffs().len(), 1, "live subscriber still receives");
+}
+
+#[test]
+fn start_for_connection_payload_requires_a_connection_id() {
+    let ok = intent(
+        "tunnel.startForConnection",
+        json!({ "connectionId": "conn-1" }),
+    );
+    assert_eq!(connection_id(&ok).unwrap(), "conn-1");
+
+    for payload in [
+        json!({}),
+        json!({ "connectionId": "" }),
+        json!({ "connectionId": 7 }),
+    ] {
+        let bad = intent("tunnel.startForConnection", payload);
+        let (code, _) = connection_id(&bad).unwrap_err();
+        assert_eq!(code, "bad_payload");
+    }
 }

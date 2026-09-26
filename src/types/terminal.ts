@@ -136,6 +136,12 @@ export interface ConnectionEditorMeta {
 
 export interface TunnelEditorMeta {
   tunnelId: string | null;
+  /**
+   * For a NEW tunnel (`tunnelId === null`): the SSH connection to pre-select,
+   * set when the editor is opened from a connection's "Port Forwarding"
+   * section (PROD-023). Ignored when editing an existing tunnel.
+   */
+  sshConnectionId?: string;
 }
 
 export interface WorkspaceEditorMeta {
