@@ -123,7 +123,15 @@ function calls(cmd: string) {
 function setClipboard(name: string, dir: string, operation: "copy" | "cut", isDirectory = false) {
   const clip: FileClipboard = {
     entries: [
-      { name, path: `${dir}/${name}`, isDirectory, size: 1, modified: "", permissions: null },
+      {
+        name,
+        path: `${dir}/${name}`,
+        isDirectory,
+        size: 1,
+        modified: "",
+        permissions: null,
+        writable: null,
+      },
     ],
     operation,
     sourceMode: "local",
@@ -262,7 +270,15 @@ describe("FileBrowser — plain Paste feedback (#3458)", () => {
     act(() => {
       useAppStore.getState().setFileClipboard({
         entries: [
-          { name: "r.txt", path: "/srv/r.txt", isDirectory: false, size: 1, modified: "" },
+          {
+            name: "r.txt",
+            path: "/srv/r.txt",
+            isDirectory: false,
+            size: 1,
+            modified: "",
+            permissions: null,
+            writable: null,
+          },
         ],
         operation: "copy",
         sourceMode: "session",

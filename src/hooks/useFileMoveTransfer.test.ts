@@ -14,9 +14,15 @@ vi.mock("@/components/ui", () => ({
 
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
+let mockClipboard: FileClipboard | null = null;
+vi.mock("@/store/fileBrowsersBridge", () => ({
+  currentFileBrowsersView: () => ({ clipboard: mockClipboard }),
+}));
+
 import { toast } from "@/components/ui";
 import { localListDir, sessionListFiles } from "@/services/api";
 import type { FileEntry } from "@/types/connection";
+import type { FileClipboard } from "@/store/appStore";
 import type { PasteOptions } from "@/utils/fileDragMove";
 import {
   useFileMoveTransfer,
@@ -63,6 +69,7 @@ describe("useFileMoveTransfer", () => {
     root = createRoot(container);
     vi.clearAllMocks();
     pasteEntry = vi.fn<(options?: PasteOptions) => Promise<void>>(() => Promise.resolve());
+    mockClipboard = null;
   });
 
   afterEach(() => {
@@ -88,7 +95,10 @@ describe("useFileMoveTransfer", () => {
       destDir: "/home/u/docs",
       verb: "Move",
     });
-    expect(toast.success).toHaveBeenCalledWith('Moved "a.txt" to /home/u/docs', expect.anything());
+    // The pane's paste owns the loading → success/error toast; the engine must
+    // not add a second one (#3458).
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.loading).not.toHaveBeenCalled();
   });
 
   it("copies (Alt/Option drop) with a copy clipboard", async () => {
@@ -181,5 +191,130 @@ describe("useFileMoveTransfer", () => {
     expect(localListDir).not.toHaveBeenCalled();
     expect(pasteEntry).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  describe("requestPaste — the plain Paste (#3458)", () => {
+    function clip(overrides: Partial<FileClipboard> & { entries: FileEntry[] }): FileClipboard {
+      return {
+        operation: "copy",
+        sourceMode: "local",
+        sourcePath: "/src",
+        terminalSessionId: null,
+        ...overrides,
+      };
+    }
+
+    it("does nothing with an empty clipboard", async () => {
+      await mount();
+      await act(async () => {
+        await api.requestPaste("/home/u");
+      });
+      expect(localListDir).not.toHaveBeenCalled();
+      expect(pasteEntry).not.toHaveBeenCalled();
+    });
+
+    it("pastes the user clipboard into the folder after a conflict check", async () => {
+      mockClipboard = clip({ entries: [entry("/src/a.txt")] });
+      await mount();
+      await act(async () => {
+        await api.requestPaste("/home/u");
+      });
+      expect(localListDir).toHaveBeenCalledWith("/home/u");
+      // No one-shot clipboard: the pane pastes (and on cut clears) the user's own.
+      expect(pasteEntry).toHaveBeenCalledWith({ destDir: "/home/u" });
+      expect(toast.success).not.toHaveBeenCalled();
+    });
+
+    it("confirms a name clash before a session paste, then pastes the user clipboard", async () => {
+      vi.mocked(sessionListFiles).mockResolvedValueOnce([entry("/srv/a.txt")]);
+      mockClipboard = clip({ entries: [entry("/src/a.txt")] });
+      await mount({ mode: "session", sessionId: "ssh-1" });
+      await act(async () => {
+        await api.requestPaste("/srv");
+      });
+      expect(sessionListFiles).toHaveBeenCalledWith("ssh-1", "/srv");
+      expect(api.pendingConflict).toMatchObject({
+        conflicts: ["a.txt"],
+        destDir: "/srv",
+        fromClipboard: true,
+      });
+      expect(pasteEntry).not.toHaveBeenCalled();
+      await act(async () => {
+        await api.confirmConflict();
+      });
+      expect(pasteEntry).toHaveBeenCalledWith({ destDir: "/srv" });
+    });
+
+    it("cancelling the conflict prompt pastes nothing", async () => {
+      vi.mocked(localListDir).mockResolvedValueOnce([entry("/home/u/a.txt")]);
+      mockClipboard = clip({ entries: [entry("/src/a.txt")] });
+      await mount();
+      await act(async () => {
+        await api.requestPaste("/home/u");
+      });
+      act(() => api.cancelConflict());
+      expect(pasteEntry).not.toHaveBeenCalled();
+    });
+
+    it("refuses a same-session cut of a folder into its own subtree", async () => {
+      mockClipboard = clip({
+        entries: [entry("/srv/app", true)],
+        operation: "cut",
+        sourceMode: "session",
+        terminalSessionId: "ssh-1",
+      });
+      await mount({ mode: "session", sessionId: "ssh-1" });
+      await act(async () => {
+        await api.requestPaste("/srv/app/sub");
+      });
+      expect(toast.error).toHaveBeenCalledWith('Cannot move "app" into itself');
+      expect(sessionListFiles).not.toHaveBeenCalled();
+      expect(pasteEntry).not.toHaveBeenCalled();
+    });
+
+    it("skips the into-self guard across filesystems (local → session upload)", async () => {
+      // "/srv" locally and "/srv/sub" remotely are unrelated paths.
+      mockClipboard = clip({ entries: [entry("/srv", true)], sourcePath: "/" });
+      await mount({ mode: "session", sessionId: "ssh-1" });
+      await act(async () => {
+        await api.requestPaste("/srv/sub");
+      });
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(pasteEntry).toHaveBeenCalledWith({ destDir: "/srv/sub" });
+    });
+
+    it("tells the user when the items are already in this folder", async () => {
+      mockClipboard = clip({ entries: [entry("/home/u/a.txt")], operation: "cut" });
+      await mount();
+      await act(async () => {
+        await api.requestPaste("/home/u");
+      });
+      expect(toast.info).toHaveBeenCalledWith('"a.txt" is already in /home/u');
+      expect(pasteEntry).not.toHaveBeenCalled();
+    });
+
+    it("hands an unsupported remote → local paste to the local pane to report", async () => {
+      mockClipboard = clip({
+        entries: [entry("/srv/a.txt")],
+        sourceMode: "session",
+        terminalSessionId: "ssh-1",
+      });
+      await mount();
+      await act(async () => {
+        await api.requestPaste("/home/u");
+      });
+      expect(localListDir).not.toHaveBeenCalled();
+      expect(pasteEntry).toHaveBeenCalledWith();
+    });
+
+    it("does nothing for a session pane that has no live session", async () => {
+      mockClipboard = clip({ entries: [entry("/src/a.txt")] });
+      await mount({ mode: "session", sessionId: null });
+      await act(async () => {
+        await api.requestPaste("/srv");
+      });
+      expect(localListDir).not.toHaveBeenCalled();
+      expect(pasteEntry).not.toHaveBeenCalled();
+    });
   });
 });
