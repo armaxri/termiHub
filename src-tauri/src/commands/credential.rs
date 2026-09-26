@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tracing::{debug, info, warn};
 
 use crate::connection::manager::ConnectionManager;
@@ -289,6 +289,17 @@ fn guarded_unlock(manager: &CredentialManager, password: &str) -> Result<(), Unl
     Ok(())
 }
 
+/// Let the embedded-server manager move passwords it holds in memory into the
+/// now-usable store — finishing a plaintext migration that waited for the
+/// unlock, or keeping session-only passwords once a store is enabled (#3514).
+fn sync_embedded_server_secrets(app_handle: &AppHandle) {
+    if let Some(servers) =
+        app_handle.try_state::<crate::embedded_servers::server_manager::EmbeddedServerManager>()
+    {
+        servers.sync_secrets();
+    }
+}
+
 /// Unlock the master password credential store.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive.
@@ -302,6 +313,7 @@ pub async fn unlock_credential_store(
 
     guarded_unlock(&manager, &password)?;
 
+    sync_embedded_server_secrets(&app_handle);
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }
@@ -381,6 +393,7 @@ pub async fn setup_master_password(
 
     manager.notify_auto_lock_unlocked();
 
+    sync_embedded_server_secrets(&app_handle);
     if let Err(e) = app_handle.emit(EVENT_STORE_UNLOCKED, ()) {
         warn!("Failed to emit {}: {}", EVENT_STORE_UNLOCKED, e);
     }
@@ -508,6 +521,7 @@ pub async fn switch_credential_store(
         );
     }
 
+    sync_embedded_server_secrets(&app_handle);
     emit_status_changed(&app_handle, &manager);
     Ok(SwitchResult {
         status: outcome.status,
