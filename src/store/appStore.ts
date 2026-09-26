@@ -252,6 +252,7 @@ import {
   type ProjectedSettlement,
 } from "@/store/restoreCohortBridge";
 import { errorMessage } from "@/utils/errorMessage";
+import { resolveWindowEviction } from "@/utils/tabOwnership";
 
 export type SidebarView =
   | "connections"
@@ -751,6 +752,22 @@ export interface AppState
    * {@link useTransferEvents}.
    */
   refreshSessionOwners: () => Promise<void>;
+  /**
+   * Whether *this* window is evicted from `sessionId` (#3368): another window
+   * has taken the session over, so this window must send it no input or resize
+   * until the user explicitly reclaims it. Resolved from {@link sessionOwners}
+   * via `resolveWindowEviction` (unclaimed / owned here / mid-move → `false`).
+   */
+  isSessionWindowEvicted: (sessionId: string | null | undefined) => boolean;
+  /**
+   * Explicit **Reclaim** of a session another window took over (#3368): claim it
+   * for this window (the backend supersedes the other window atomically and that
+   * window folds to its Evicted overlay in turn), then refresh the ownership
+   * mirror so this window leaves the evicted state immediately. Never called
+   * automatically — only from the overlay's Reclaim button — so control cannot
+   * ping-pong between windows. Resolves `true` on success.
+   */
+  reclaimWindowSession: (sessionId: string) => Promise<boolean>;
   /** Whether a session is mid-move (read by the source Terminal's unmount cleanup). */
   isSessionMoving: (sessionId: string) => boolean;
   /** Clear a session's moving flag once the source has released its view. */
@@ -2921,6 +2938,33 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
     },
     isSessionMoving: (sessionId) => get().movingSessionIds.includes(sessionId),
+    isSessionWindowEvicted: (sessionId) => {
+      const state = get();
+      return (
+        resolveWindowEviction({
+          sessionId,
+          sessionOwners: state.sessionOwners,
+          windowLabel: state.windowLabel,
+          moving: !!sessionId && state.movingSessionIds.includes(sessionId),
+        }) !== null
+      );
+    },
+    reclaimWindowSession: async (sessionId) => {
+      try {
+        await claimSession(sessionId);
+      } catch (err) {
+        frontendLog("multi_window", `Failed to reclaim session ${sessionId}: ${errorMessage(err)}`);
+        toast.error(`Could not reclaim the session: ${errorMessage(err)}`);
+        return false;
+      }
+      // Leave the evicted state at once rather than waiting for the
+      // `session-ownership-changed` round-trip, then converge on the backend map.
+      set((state) => ({
+        sessionOwners: { ...state.sessionOwners, [sessionId]: state.windowLabel },
+      }));
+      await get().refreshSessionOwners();
+      return true;
+    },
     clearMovingSession: (sessionId) =>
       set((state) => ({
         movingSessionIds: state.movingSessionIds.filter((id) => id !== sessionId),
@@ -3678,8 +3722,18 @@ export const useAppStore = create<AppState>((set, get, store) => {
         if (prevSessionId && prevSessionId !== sessionId && !get().isSessionMoving(prevSessionId)) {
           bestEffortOwnership(() => releaseSession(prevSessionId));
         }
+        // No automatic take-over (#3368): re-binding the *same* session id (a
+        // remount / reattach of a tab that already showed it) must never steal
+        // the session back from a window that took it over — that would
+        // ping-pong control. Only a new binding, or a session no other window
+        // controls, is claimed; an evicted window regains control solely through
+        // the explicit Reclaim (`reclaimWindowSession`).
         if (sessionId) {
-          bestEffortOwnership(() => claimSession(sessionId));
+          const owner = get().sessionOwners[sessionId];
+          const ownedElsewhere = owner !== undefined && owner !== get().windowLabel;
+          if (sessionId !== prevSessionId || !ownedElsewhere) {
+            bestEffortOwnership(() => claimSession(sessionId));
+          }
         }
       }
       // A non-null session id means this tab has connected — settle it in any

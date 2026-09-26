@@ -327,7 +327,29 @@ impl WindowManager {
     /// windows never race the backend resize (concept: "Resize is a real
     /// subtlety").
     pub fn may_resize(&self, session_id: &str, window_label: &str) -> bool {
-        match self.owner_of(session_id) {
+        self.may_control(session_id, window_label)
+    }
+
+    /// Whether `window_label` may send **input** (keystrokes, paste, broadcast
+    /// fan-out) to `session_id` (#3368, SM-003 single-attach for windows).
+    ///
+    /// Same rule as [`Self::may_resize`]: an unclaimed session accepts input from
+    /// any window (single-window / pre-claim), a claimed one only from its owner.
+    /// A window another window has taken the session over from is *evicted* — it
+    /// renders the "Taken over by another window" overlay and the backend drops
+    /// its input here, so a stale or racing frontend can never type into a
+    /// session it no longer controls. Control returns only through an explicit
+    /// Reclaim (a new [`Self::claim`]); nothing reclaims automatically.
+    pub fn may_send_input(&self, session_id: &str, window_label: &str) -> bool {
+        self.may_control(session_id, window_label)
+    }
+
+    /// The single control rule behind [`Self::may_resize`] and
+    /// [`Self::may_send_input`]: unclaimed → any window; claimed → owner only.
+    /// Read under the same lock [`Self::claim`] writes, so a takeover is observed
+    /// atomically — there is no moment in which two windows both pass.
+    fn may_control(&self, session_id: &str, window_label: &str) -> bool {
+        match recover(self.ownership.lock()).get(session_id) {
             None => true,
             Some(owner) => owner == window_label,
         }
@@ -607,6 +629,84 @@ mod tests {
         wm.claim("s1", "win-1");
         assert!(wm.may_resize("s1", "win-1"));
         assert!(!wm.may_resize("s1", "main"));
+    }
+
+    #[test]
+    fn may_send_input_allows_unclaimed_and_owner_only() {
+        // #3368: input follows the same single-owner rule as resize.
+        let wm = WindowManager::new();
+        assert!(wm.may_send_input("s1", "main"));
+        assert!(wm.may_send_input("s1", "win-1"));
+        wm.claim("s1", "main");
+        assert!(wm.may_send_input("s1", "main"));
+        assert!(
+            !wm.may_send_input("s1", "win-1"),
+            "a non-owning window's input is rejected"
+        );
+    }
+
+    #[test]
+    fn takeover_then_reclaim_flips_input_control_between_windows() {
+        // #3368 two-window flow: A owns → B takes over (A evicted) → A reclaims
+        // (B evicted). Exactly one window may send input at every step.
+        let wm = WindowManager::new();
+        assert_eq!(wm.claim("s1", "main"), None);
+        assert!(wm.may_send_input("s1", "main") && !wm.may_send_input("s1", "win-1"));
+
+        let prev = wm.claim("s1", "win-1");
+        assert_eq!(prev, Some("main".to_string()), "B's takeover supersedes A");
+        assert_eq!(
+            superseded_notification(prev, "win-1", "s1").map(|(t, _)| t),
+            Some("main".to_string()),
+            "A (the evicted window) is the one told it lost the session"
+        );
+        assert!(!wm.may_send_input("s1", "main"), "evicted A sends no input");
+        assert!(wm.may_send_input("s1", "win-1"));
+
+        let prev = wm.claim("s1", "main");
+        assert_eq!(prev, Some("win-1".to_string()), "A's Reclaim supersedes B");
+        assert!(wm.may_send_input("s1", "main"));
+        assert!(!wm.may_send_input("s1", "win-1"), "B is evicted in turn");
+    }
+
+    #[test]
+    fn concurrent_claim_race_leaves_exactly_one_owner() {
+        // #3368: two windows claiming the same session at once must converge on a
+        // single owner, and exactly one of them may send input afterwards. Each
+        // claim observes the other's (or nobody's) previous ownership — never its
+        // own — so the pair of `previous` values is consistent with one ordering.
+        for _ in 0..200 {
+            let wm = std::sync::Arc::new(WindowManager::new());
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let handles: Vec<_> = ["main", "win-1"]
+                .into_iter()
+                .map(|label| {
+                    let wm = wm.clone();
+                    let barrier = barrier.clone();
+                    std::thread::spawn(move || {
+                        barrier.wait();
+                        wm.claim("s1", label)
+                    })
+                })
+                .collect();
+            let prevs: Vec<Option<String>> = handles
+                .into_iter()
+                .map(|h| h.join().expect("claim thread panicked"))
+                .collect();
+            let owner = wm.owner_of("s1").expect("the session has an owner");
+            let other = if owner == "main" { "win-1" } else { "main" };
+            // The winner (last writer) superseded the loser; the loser saw none.
+            let (main_prev, win_prev) = (&prevs[0], &prevs[1]);
+            if owner == "main" {
+                assert_eq!(main_prev.as_deref(), Some("win-1"));
+                assert_eq!(win_prev, &None);
+            } else {
+                assert_eq!(win_prev.as_deref(), Some("main"));
+                assert_eq!(main_prev, &None);
+            }
+            assert!(wm.may_send_input("s1", &owner));
+            assert!(!wm.may_send_input("s1", other));
+        }
     }
 
     #[test]
