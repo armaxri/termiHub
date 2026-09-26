@@ -3,18 +3,29 @@
  * with the backend-owned store on load / add / rename / remove.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { FileBookmark } from "@/types/fileBookmark";
+import type { FileBookmark, FileBookmarkScopeRekey } from "@/types/fileBookmark";
 
+const rekeyed = vi.hoisted(() => ({
+  listener: null as ((renames: FileBookmarkScopeRekey[]) => void) | null,
+}));
 const api = vi.hoisted(() => ({
   listFileBookmarks: vi.fn(),
   addFileBookmark: vi.fn(),
   renameFileBookmark: vi.fn(),
   removeFileBookmark: vi.fn(),
+  onFileBookmarksRekeyed: vi.fn((cb: (renames: FileBookmarkScopeRekey[]) => void) => {
+    rekeyed.listener = cb;
+    return Promise.resolve(() => {});
+  }),
 }));
 vi.mock("@/services/fileBookmarksApi", () => api);
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
-import { useFileBookmarksStore, bookmarksForScope } from "./fileBookmarksStore";
+import {
+  useFileBookmarksStore,
+  bookmarksForScope,
+  rekeyBookmarkScopes,
+} from "./fileBookmarksStore";
 
 function bookmark(id: string, scope = "local", path = `/${id}`): FileBookmark {
   return { id, scope, path, name: id, createdAt: "2026-09-26T00:00:00Z" };
@@ -101,5 +112,61 @@ describe("fileBookmarksStore", () => {
     useFileBookmarksStore.setState({ bookmarks: before, loaded: true });
     useFileBookmarksStore.getState().forgetScopes(() => false);
     expect(useFileBookmarksStore.getState().bookmarks).toBe(before);
+  });
+
+  it("rekeyScopes moves a renamed connection's bookmarks (#3569)", () => {
+    useFileBookmarksStore.setState({
+      bookmarks: [bookmark("a", "connection:Work/x"), bookmark("b", "local")],
+      loaded: true,
+    });
+    useFileBookmarksStore
+      .getState()
+      .rekeyScopes([{ from: "connection:Work/x", to: "connection:Job/x" }]);
+    expect(useFileBookmarksStore.getState().bookmarks.map((b) => [b.id, b.scope])).toEqual([
+      ["a", "connection:Job/x"],
+      ["b", "local"],
+    ]);
+  });
+
+  it("rekeyScopes keeps the same state when no scope moves", () => {
+    const before = [bookmark("a", "local")];
+    useFileBookmarksStore.setState({ bookmarks: before, loaded: true });
+    useFileBookmarksStore.getState().rekeyScopes([{ from: "connection:x", to: "connection:y" }]);
+    expect(useFileBookmarksStore.getState().bookmarks).toBe(before);
+  });
+
+  it("rekeyBookmarkScopes merges without duplicating a path and applies swaps at once", () => {
+    const merged = rekeyBookmarkScopes(
+      [
+        bookmark("old", "connection:a", "/srv"),
+        bookmark("new", "connection:b", "/srv"),
+        bookmark("var", "connection:a", "/var"),
+      ],
+      [{ from: "connection:a", to: "connection:b" }]
+    );
+    expect(merged.map((b) => [b.id, b.scope])).toEqual([
+      ["old", "connection:b"],
+      ["var", "connection:b"],
+    ]);
+
+    const swapped = rekeyBookmarkScopes(
+      [bookmark("x", "connection:a"), bookmark("y", "connection:b")],
+      [
+        { from: "connection:a", to: "connection:b" },
+        { from: "connection:b", to: "connection:a" },
+      ]
+    );
+    expect(swapped.map((b) => b.scope)).toEqual(["connection:b", "connection:a"]);
+  });
+
+  it("follows the backend's re-key event once loaded", async () => {
+    api.listFileBookmarks.mockResolvedValue([bookmark("a", "connection:Work/x")]);
+    await useFileBookmarksStore.getState().load();
+    expect(rekeyed.listener).not.toBeNull();
+
+    rekeyed.listener?.([{ from: "connection:Work/x", to: "connection:Job/x" }]);
+    expect(useFileBookmarksStore.getState().bookmarks.map((b) => b.scope)).toEqual([
+      "connection:Job/x",
+    ]);
   });
 });

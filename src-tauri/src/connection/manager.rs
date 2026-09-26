@@ -9,6 +9,8 @@ use super::config::{
     ExternalConnectionStore, FlatConnectionStore, ImportPreview, ImportResult, SavedConnection,
     SavedRemoteAgent,
 };
+use super::id_changes::{diff_connection_ids, reloaded_connection_id};
+pub use super::id_changes::{ConnectionIdChange, ConnectionIdChangeListener};
 use super::plugin_type_ids::migrate_connections;
 use super::recovery::RecoveryWarning;
 use super::settings::{default_serial_port_scan_prefixes, AppSettings, SettingsStorage};
@@ -140,6 +142,8 @@ pub struct ConnectionManager {
     settings_storage: SettingsStorage,
     credential_store: Arc<dyn CredentialStore>,
     recovery_warnings: Mutex<Vec<RecoveryWarning>>,
+    /// Told about every persisted connection id change (#3569).
+    id_change_listener: Mutex<Option<ConnectionIdChangeListener>>,
 }
 
 impl ConnectionManager {
@@ -162,6 +166,7 @@ impl ConnectionManager {
             settings_storage,
             credential_store,
             recovery_warnings: Mutex::new(warnings),
+            id_change_listener: Mutex::new(None),
         })
     }
 
@@ -183,7 +188,34 @@ impl ConnectionManager {
             settings_storage,
             credential_store,
             recovery_warnings: Mutex::new(Vec::new()),
+            id_change_listener: Mutex::new(None),
         })
+    }
+
+    /// Register the listener told about every connection id change this manager
+    /// persists (#3569) — a rename or move of a connection or of a folder above
+    /// it, in the main store or an external file. Replaces any previous one.
+    pub fn set_id_change_listener(&self, listener: ConnectionIdChangeListener) {
+        *self
+            .id_change_listener
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(listener);
+    }
+
+    /// Tell the listener about `changes`, which are already persisted. Call it
+    /// with the store lock released so the listener may read the manager.
+    fn notify_id_changes(&self, changes: &[ConnectionIdChange]) {
+        if changes.is_empty() {
+            return;
+        }
+        let listener = self
+            .id_change_listener
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if let Some(listener) = listener {
+            listener(changes);
+        }
     }
 
     /// Drain and return any recovery warnings collected during initialization.
@@ -385,6 +417,7 @@ impl ConnectionManager {
         let old_id = connection.id.clone();
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
+        let ids_before = connection_ids(&store.connections);
         let FlatConnectionStore {
             connections,
             folders,
@@ -428,9 +461,16 @@ impl ConnectionManager {
         }
 
         let persisted_id = connections[save_idx].id.clone();
+        let mut id_changes = diff_connection_ids(&ids_before, connections, folders);
+        if save_idx >= ids_before.len() && old_id != persisted_id {
+            // Not found under the id it came with: still carry that id's data over.
+            id_changes.push(ConnectionIdChange::new(old_id, persisted_id.clone()));
+        }
         self.storage
             .save_flat(&store)
             .context("Failed to persist connection")?;
+        drop(store);
+        self.notify_id_changes(&id_changes);
         Ok(persisted_id)
     }
 
@@ -461,6 +501,7 @@ impl ConnectionManager {
     pub fn save_folder(&self, folder: ConnectionFolder) -> Result<()> {
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
+        let ids_before = connection_ids(&store.connections);
 
         // Check if this is a rename (collect info before mutating)
         let rename_info: Option<(String, String)> = store
@@ -507,10 +548,14 @@ impl ConnectionManager {
             ..
         } = &mut *store;
         deduplicate_sibling_names(connections, folders);
+        let id_changes = diff_connection_ids(&ids_before, connections, folders);
 
         self.storage
             .save_flat(&store)
-            .context("Failed to persist folder")
+            .context("Failed to persist folder")?;
+        drop(store);
+        self.notify_id_changes(&id_changes);
+        Ok(())
     }
 
     /// Delete a folder by ID. Moves its connections to root (folder_id = None)
@@ -519,6 +564,7 @@ impl ConnectionManager {
     pub fn delete_folder(&self, id: &str) -> Result<()> {
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
+        let ids_before = connection_ids(&store.connections);
 
         let parent_id = store
             .folders
@@ -585,10 +631,14 @@ impl ConnectionManager {
             } = &mut *store;
             deduplicate_sibling_names(connections, folders);
         }
+        let id_changes = diff_connection_ids(&ids_before, &store.connections, &store.folders);
 
         self.storage
             .save_flat(&store)
-            .context("Failed to persist after folder delete")
+            .context("Failed to persist after folder delete")?;
+        drop(store);
+        self.notify_id_changes(&id_changes);
+        Ok(())
     }
 
     /// Export all connections and folders as a JSON string. Passwords are stripped.
@@ -782,7 +832,10 @@ impl ConnectionManager {
                 let conn_id = connection.id.clone();
                 let mut conn = prepare_for_storage(connection, &*self.credential_store)?;
                 conn.source_file = None; // Strip before writing to disk
-                save_or_update_in_external_file(&file_path, conn)?;
+                let reloaded_id = save_or_update_in_external_file(&file_path, conn)?;
+                if let Some(new_id) = reloaded_id.filter(|id| *id != conn_id) {
+                    self.notify_id_changes(&[ConnectionIdChange::new(conn_id.clone(), new_id)]);
+                }
                 Ok(conn_id)
             }
         }
@@ -993,28 +1046,39 @@ impl ConnectionManager {
 
         // 2. Add to the target location
         connection.source_file = target_source.clone();
-        match &target_source {
+        let reloaded_id = match &target_source {
             None => {
                 let mut disk_conn =
                     prepare_for_storage(connection.clone(), &*self.credential_store)?;
                 disk_conn.source_file = None;
                 let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
                 self.sync_from_disk(&mut store);
+                let reloaded_id = reloaded_connection_id(&disk_conn, &store.folders);
                 store.connections.push(disk_conn);
                 self.storage
                     .save_flat(&store)
                     .context("Failed to persist addition to main store")?;
+                reloaded_id
             }
             Some(file_path) => {
                 let mut disk_conn =
                     prepare_for_storage(connection.clone(), &*self.credential_store)?;
                 disk_conn.source_file = None;
-                save_or_update_in_external_file(file_path, disk_conn)?;
+                save_or_update_in_external_file(file_path, disk_conn)?
             }
+        };
+        // The target file recomputes the id from its own folder tree (#3569).
+        if let Some(new_id) = reloaded_id.filter(|id| id != connection_id) {
+            self.notify_id_changes(&[ConnectionIdChange::new(connection_id, new_id)]);
         }
 
         Ok(connection)
     }
+}
+
+/// Every connection's id, by position — the "before" side of an id diff.
+fn connection_ids(connections: &[SavedConnection]) -> Vec<String> {
+    connections.iter().map(|c| c.id.clone()).collect()
 }
 
 /// Recompute path-based IDs for all descendants of a folder whose ID changed.
@@ -1233,11 +1297,20 @@ fn empty_external_store() -> ExternalConnectionStore {
 }
 
 /// Save or update a single connection in an external file (by name+folder path).
-fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection) -> Result<()> {
+///
+/// Returns the id the connection gets when the file is loaded again — the
+/// file's folder chain plus the connection's name, which differs from the
+/// incoming id after a rename (#3569) — or `None` when its folder is not part
+/// of the file, so it is not written.
+fn save_or_update_in_external_file(
+    file_path: &str,
+    connection: SavedConnection,
+) -> Result<Option<String>> {
     let mut ext_store = read_external_store(file_path)?;
 
     // Flatten, update, rebuild
     let (mut conns, folders) = flatten_tree(&ext_store.children, None);
+    let reloaded_id = reloaded_connection_id(&connection, &folders);
 
     if let Some(existing) = conns.iter_mut().find(|c| c.id == connection.id) {
         *existing = connection;
@@ -1251,7 +1324,7 @@ fn save_or_update_in_external_file(file_path: &str, connection: SavedConnection)
         .context("Failed to serialize external connection file")?;
     write_atomic(std::path::Path::new(file_path), &data)
         .with_context(|| format!("Failed to write external file: {}", file_path))?;
-    Ok(())
+    Ok(reloaded_id)
 }
 
 /// Remove a connection from an external file by ID.
@@ -2818,3 +2891,7 @@ mod tests {
         assert_eq!(type_of(&all.connections, "Gone"), "mqtt");
     }
 }
+
+#[cfg(test)]
+#[path = "manager_id_change_tests.rs"]
+mod id_change_tests;

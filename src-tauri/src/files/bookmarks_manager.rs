@@ -10,14 +10,17 @@
 //! * [`MAX_BOOKMARKS_TOTAL`] — bookmarks across every scope.
 //! * [`MAX_PATH_CHARS`], [`MAX_NAME_CHARS`], [`MAX_SCOPE_CHARS`] — field sizes.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use chrono::Utc;
-use tauri::AppHandle;
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager};
 
 use super::bookmarks::{FileBookmark, FileBookmarkStore};
 use super::bookmarks_storage::FileBookmarkStorage;
+use crate::connection::manager::{ConnectionIdChange, ConnectionManager};
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
 
@@ -46,6 +49,45 @@ pub fn agent_scope_prefix(agent_id: &str) -> String {
     format!("agent:{agent_id}:")
 }
 
+/// Event telling every window that bookmarks moved to another scope (#3569);
+/// the payload is a list of [`ScopeRekey`]s for the UI cache to mirror.
+pub const FILE_BOOKMARKS_REKEYED_EVENT: &str = "file-bookmarks-rekeyed";
+
+/// Bookmarks in scope `from` moved to scope `to`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ScopeRekey {
+    pub from: String,
+    pub to: String,
+}
+
+/// Make saved connections' bookmarks follow their id changes (#3569): register
+/// a listener on the [`ConnectionManager`] that re-keys the bookmarks of every
+/// renamed or moved connection right after the change is persisted, then tells
+/// every window's cache. Call once both managers are managed; without either,
+/// this is a no-op.
+pub fn follow_connection_renames(app: &AppHandle) {
+    let Some(connections) = app.try_state::<ConnectionManager>() else {
+        return;
+    };
+    let handle = app.clone();
+    connections.set_id_change_listener(std::sync::Arc::new(move |changes| {
+        let Some(bookmarks) = handle.try_state::<FileBookmarkManager>() else {
+            return;
+        };
+        let moved = bookmarks.follow_connection_id_changes(changes);
+        if moved.is_empty() {
+            return;
+        }
+        let payload: Vec<ScopeRekey> = moved
+            .into_iter()
+            .map(|(from, to)| ScopeRekey { from, to })
+            .collect();
+        if let Err(e) = handle.emit(FILE_BOOKMARKS_REKEYED_EVENT, payload) {
+            tracing::warn!("Failed to announce re-keyed bookmarks: {e}");
+        }
+    }));
+}
+
 /// Central file-browser bookmark manager. Mirrors
 /// [`crate::network::tool_history_manager::NetworkToolHistoryManager`].
 pub struct FileBookmarkManager {
@@ -60,6 +102,12 @@ impl FileBookmarkManager {
         let storage = FileBookmarkStorage::new(app_handle)
             .context("Failed to initialize file bookmark storage")?;
         Self::with_storage(storage)
+    }
+
+    /// A manager backed by a file in `dir`. Test-only; production uses `new()`.
+    #[cfg(test)]
+    pub(crate) fn new_for_test(dir: &std::path::Path) -> Result<Self> {
+        Self::with_storage(FileBookmarkStorage::new_test(dir))
     }
 
     fn with_storage(storage: FileBookmarkStorage) -> Result<Self> {
@@ -227,6 +275,87 @@ impl FileBookmarkManager {
             Ok(0) => {}
             Ok(n) => tracing::info!(agent_id, removed = n, "Removed deleted agent's bookmarks"),
             Err(e) => tracing::warn!(agent_id, "Failed to remove deleted agent's bookmarks: {e}"),
+        }
+    }
+
+    /// Move bookmarks between scopes (#3569): every bookmark in a `from` scope
+    /// moves to its `to` scope. All renames apply at once, so a swap
+    /// (`a → b`, `b → a`) or a chain (`a → b`, `b → c`) moves each list exactly
+    /// one step. A path the target scope already holds is kept once — the
+    /// earliest-added bookmark wins — so re-keying is idempotent and merging
+    /// never duplicates. Returns the `(from, to)` pairs whose `from` scope held
+    /// bookmarks, in `renames` order; nothing is written when none did.
+    ///
+    /// A merge may leave a scope above [`MAX_BOOKMARKS_PER_SCOPE`]: dropping a
+    /// user's bookmarks to honour the cap would be worse than a list that is
+    /// briefly too long (adding is refused until it shrinks again), and the
+    /// total never grows.
+    pub fn rekey_scopes(
+        &self,
+        renames: &[(String, String)],
+    ) -> Result<Vec<(String, String)>, TerminalError> {
+        let map: HashMap<&str, &str> = renames
+            .iter()
+            .filter(|(from, to)| from != to && !from.is_empty() && !to.is_empty())
+            .map(|(from, to)| (from.as_str(), to.as_str()))
+            .collect();
+        if map.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut store = self.lock()?;
+        let mut moved_from: HashSet<String> = HashSet::new();
+        for bookmark in store.bookmarks.iter_mut() {
+            if let Some(to) = map.get(bookmark.scope.as_str()) {
+                moved_from.insert(std::mem::replace(&mut bookmark.scope, (*to).to_string()));
+            }
+        }
+        if moved_from.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut seen = HashSet::new();
+        store
+            .bookmarks
+            .retain(|b| seen.insert((b.scope.clone(), b.path.clone())));
+        self.persist(&store)?;
+
+        let mut moved = Vec::new();
+        for (from, to) in renames {
+            if moved_from.remove(from) {
+                moved.push((from.clone(), to.clone()));
+            }
+        }
+        Ok(moved)
+    }
+
+    /// Carry saved connections' bookmarks over to their new ids (#3569): a
+    /// rename or move of a connection — or of a folder above it — recomputes
+    /// its path-based id. Best-effort, like the delete prune: the connection
+    /// change is already durable, so a failure is logged, never surfaced.
+    /// Returns the `(from, to)` scope pairs whose bookmarks moved, for the UI
+    /// cache to mirror (empty when nothing moved or on failure).
+    pub fn follow_connection_id_changes(
+        &self,
+        changes: &[ConnectionIdChange],
+    ) -> Vec<(String, String)> {
+        let renames: Vec<(String, String)> = changes
+            .iter()
+            .map(|c| (connection_scope(&c.old_id), connection_scope(&c.new_id)))
+            .collect();
+        match self.rekey_scopes(&renames) {
+            Ok(moved) => {
+                if !moved.is_empty() {
+                    tracing::info!(
+                        scopes = moved.len(),
+                        "Moved renamed connections' bookmarks to their new ids"
+                    );
+                }
+                moved
+            }
+            Err(e) => {
+                tracing::warn!("Failed to move renamed connections' bookmarks: {e}");
+                Vec::new()
+            }
         }
     }
 
@@ -421,6 +550,115 @@ mod tests {
         let left = manager(&dir).list(None).unwrap();
         assert_eq!(left.len(), 1);
         assert_eq!(left[0].scope, "local");
+    }
+
+    fn pair(from: &str, to: &str) -> (String, String) {
+        (from.to_string(), to.to_string())
+    }
+
+    fn scopes_and_paths(m: &FileBookmarkManager) -> Vec<(String, String)> {
+        m.list(None)
+            .unwrap()
+            .into_iter()
+            .map(|b| (b.scope, b.path))
+            .collect()
+    }
+
+    #[test]
+    fn rekey_moves_a_scope_persists_and_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let m = manager(&dir);
+        let kept = m.add("connection:a", "/srv", Some("Web")).unwrap();
+        m.add("connection:ab", "/x", None).unwrap();
+
+        let renames = [pair("connection:a", "connection:b")];
+        assert_eq!(m.rekey_scopes(&renames).unwrap(), renames.to_vec());
+        // Nothing left to move the second time.
+        assert!(m.rekey_scopes(&renames).unwrap().is_empty());
+
+        let reloaded = manager(&dir);
+        assert_eq!(
+            scopes_and_paths(&reloaded),
+            vec![pair("connection:b", "/srv"), pair("connection:ab", "/x")]
+        );
+        // The bookmark itself — id, name — is unchanged.
+        let moved = &reloaded.list(Some("connection:b")).unwrap()[0];
+        assert_eq!(
+            (moved.id.as_str(), moved.name.as_str()),
+            (kept.id.as_str(), "Web")
+        );
+    }
+
+    #[test]
+    fn rekey_merges_into_an_existing_scope_without_duplicates() {
+        let dir = TempDir::new().unwrap();
+        let m = manager(&dir);
+        m.add("connection:old", "/srv", Some("Old name")).unwrap();
+        m.add("connection:new", "/srv", Some("New name")).unwrap();
+        m.add("connection:old", "/var", None).unwrap();
+
+        m.rekey_scopes(&[pair("connection:old", "connection:new")])
+            .unwrap();
+        let left = manager(&dir).list(None).unwrap();
+        let summary: Vec<(&str, &str, &str)> = left
+            .iter()
+            .map(|b| (b.scope.as_str(), b.path.as_str(), b.name.as_str()))
+            .collect();
+        // The earliest-added bookmark of a path wins.
+        assert_eq!(
+            summary,
+            vec![
+                ("connection:new", "/srv", "Old name"),
+                ("connection:new", "/var", "var")
+            ]
+        );
+    }
+
+    #[test]
+    fn rekey_applies_swaps_and_chains_in_one_step() {
+        let dir = TempDir::new().unwrap();
+        let m = manager(&dir);
+        m.add("connection:a", "/a", None).unwrap();
+        m.add("connection:b", "/b", None).unwrap();
+        m.add("connection:c", "/c", None).unwrap();
+
+        m.rekey_scopes(&[
+            pair("connection:a", "connection:b"),
+            pair("connection:b", "connection:a"),
+            pair("connection:c", "connection:d"),
+            pair("connection:d", "connection:e"),
+        ])
+        .unwrap();
+        assert_eq!(
+            scopes_and_paths(&m),
+            vec![
+                pair("connection:b", "/a"),
+                pair("connection:a", "/b"),
+                pair("connection:d", "/c")
+            ]
+        );
+    }
+
+    #[test]
+    fn following_connection_id_changes_moves_their_bookmarks() {
+        let dir = TempDir::new().unwrap();
+        let m = manager(&dir);
+        m.add("connection:Work/x", "/srv", None).unwrap();
+        m.add("local", "/tmp", None).unwrap();
+
+        let moved = m.follow_connection_id_changes(&[
+            ConnectionIdChange::new("Work/x", "Job/x"),
+            ConnectionIdChange::new("Work/y", "Job/y"),
+        ]);
+        // Only scopes that held bookmarks are reported.
+        assert_eq!(moved, vec![pair("connection:Work/x", "connection:Job/x")]);
+        assert_eq!(
+            scopes_and_paths(&manager(&dir)),
+            vec![pair("connection:Job/x", "/srv"), pair("local", "/tmp")]
+        );
+        assert!(m
+            .follow_connection_id_changes(&[ConnectionIdChange::new("Work/x", "Job/x")])
+            .is_empty());
     }
 
     #[test]
