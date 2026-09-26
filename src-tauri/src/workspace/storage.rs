@@ -56,6 +56,12 @@ impl WorkspaceStorage {
         Ok(result)
     }
 
+    /// The PLG-007 legacy plugin type-id resolver for this store's config
+    /// directory, used to resolve imported workspaces' inline configs (#3343).
+    pub fn legacy_type_resolver(&self) -> Option<termihub_core::connection::LegacyTypeIdResolver> {
+        crate::connection::plugin_type_ids::legacy_resolver_beside(&self.file_path)
+    }
+
     /// Save the workspace store to disk (pretty-printed JSON).
     ///
     /// The write is atomic (temp file in the same directory + rename), so an

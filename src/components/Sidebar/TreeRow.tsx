@@ -153,17 +153,20 @@ function treeItemClassName({
   selected,
   persistent,
   reorderOver,
+  unavailable,
 }: {
   dragging?: boolean;
   selected?: boolean;
   persistent?: boolean;
   reorderOver?: boolean;
+  unavailable?: boolean;
 }): string {
   let className = "connection-tree__item";
   if (dragging) className += " connection-tree__item--dragging";
   if (selected) className += " connection-tree__item--selected";
   if (persistent) className += " connection-tree__item--persistent";
   if (reorderOver) className += " connection-tree__item--reorder-over";
+  if (unavailable) className += " connection-tree__item--unavailable";
   return className;
 }
 
@@ -195,6 +198,11 @@ export interface TreeItemRowProps extends Omit<
   persistent?: boolean;
   /** Modifier flag → `--reorder-over`. */
   reorderOver?: boolean;
+  /**
+   * Modifier flag → `--unavailable`: the item cannot be used right now (e.g. its
+   * plugin is missing, #3344) — rendered muted but still selectable/editable.
+   */
+  unavailable?: boolean;
   /** Native `title` (hover help). */
   title?: string;
   /** Optional `data-testid` for the button. */
@@ -225,6 +233,7 @@ export const TreeItemRow = React.forwardRef<HTMLButtonElement, TreeItemRowProps>
       selected,
       persistent,
       reorderOver,
+      unavailable,
       title,
       testId,
       dragAttributes,
@@ -234,7 +243,13 @@ export const TreeItemRow = React.forwardRef<HTMLButtonElement, TreeItemRowProps>
     ref
   ) {
     const composedRef = useComposedButtonRef(ref, buttonRef);
-    const className = treeItemClassName({ dragging, selected, persistent, reorderOver });
+    const className = treeItemClassName({
+      dragging,
+      selected,
+      persistent,
+      reorderOver,
+      unavailable,
+    });
     // Merge the dnd-kit attributes/listeners with any Radix `asChild`-injected
     // props (`rest`), composing overlapping handlers (e.g. `onPointerDown` is set
     // by both dnd-kit's activator and Radix's long-press detector). dnd sources

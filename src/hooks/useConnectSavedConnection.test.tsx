@@ -22,6 +22,7 @@ import {
 } from "@/services/api";
 import { frontendError } from "@/utils/frontendLog";
 import { toast } from "@/components/ui";
+import { backendPlugin } from "@/test/pluginFixtures";
 
 vi.mock("@/services/api", () => ({
   createTerminal: vi.fn(() => Promise.resolve("session-1")),
@@ -463,5 +464,46 @@ describe("useConnectSavedConnection", () => {
     // Non-auth failure opens the tab to surface the error; no re-prompt.
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
     expect(addTabSpy).toHaveBeenCalledOnce();
+  });
+
+  describe("missing plugin (#3344)", () => {
+    const pluginConn: SavedConnection = {
+      id: "kube",
+      name: "Kube",
+      folderId: null,
+      config: { type: "plugin:acme:k8s", config: {} },
+    };
+
+    it("refuses to connect with a clear message when the plugin is disabled", async () => {
+      const errorSpy = vi.spyOn(toast, "error").mockReturnValue("err");
+      useAppStore.setState({
+        plugins: [backendPlugin("acme", "k8s", "disabled", "Acme")],
+        pluginsLoaded: true,
+      });
+      const { connect } = await renderHook();
+      await act(async () => {
+        await connect(pluginConn);
+      });
+      expect(errorSpy).toHaveBeenCalledWith("Cannot connect to Kube: Plugin 'Acme' is disabled");
+      expect(addTabSpy).not.toHaveBeenCalled();
+    });
+
+    it("connects when the plugin is active", async () => {
+      useAppStore.setState({ plugins: [backendPlugin("acme", "k8s")], pluginsLoaded: true });
+      const { connect } = await renderHook();
+      await act(async () => {
+        await connect(pluginConn);
+      });
+      expect(addTabSpy).toHaveBeenCalledOnce();
+    });
+
+    it("does not block before the plugin list has loaded", async () => {
+      useAppStore.setState({ plugins: [], pluginsLoaded: false });
+      const { connect } = await renderHook();
+      await act(async () => {
+        await connect(pluginConn);
+      });
+      expect(addTabSpy).toHaveBeenCalledOnce();
+    });
   });
 });

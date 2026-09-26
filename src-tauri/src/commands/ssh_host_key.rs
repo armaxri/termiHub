@@ -5,12 +5,16 @@
 //! [`ssh_host_key_decision`], unblocking the connect. [`ssh_trust_list`] /
 //! [`ssh_trust_forget`] back the trust-management settings UI, mirroring the RDP
 //! trust commands.
+//!
+//! [`ssh_keyboard_interactive_respond`] answers the sibling
+//! `ssh-keyboard-interactive-prompt` (OTP / 2FA, #3371) the same way.
 
 use std::sync::Arc;
 
 use tauri::State;
 
 use crate::session::ssh_host_key_verifier::SshHostKeyVerifier;
+use crate::session::ssh_keyboard_interactive::SshKeyboardInteractivePrompter;
 use crate::utils::errors::TerminalError;
 
 /// Deliver the user's verdict for a pending SSH host-key prompt (#1959).
@@ -27,6 +31,21 @@ pub async fn ssh_host_key_decision(
     verifier: State<'_, Arc<SshHostKeyVerifier>>,
 ) -> Result<bool, TerminalError> {
     Ok(verifier.resolve(&prompt_id, accept, remember))
+}
+
+/// Answer a pending SSH keyboard-interactive (OTP / 2FA) prompt (#3371).
+///
+/// `responses` holds one answer per prompt of the round, in order; `None`
+/// cancels the authentication. Returns whether a prompt with `prompt_id` was
+/// actually waiting — a stale or duplicate reply returns `false`. Responses are
+/// secrets and are never logged.
+#[tauri::command]
+pub async fn ssh_keyboard_interactive_respond(
+    prompt_id: String,
+    responses: Option<Vec<String>>,
+    prompter: State<'_, Arc<SshKeyboardInteractivePrompter>>,
+) -> Result<bool, TerminalError> {
+    Ok(prompter.resolve(&prompt_id, responses))
 }
 
 /// One remembered SSH host and the host-key fingerprints trusted for it, for the

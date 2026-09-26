@@ -751,6 +751,20 @@ export async function sshHostKeyDecision(
   return await invoke<boolean>("ssh_host_key_decision", { promptId, accept, remember });
 }
 
+/**
+ * Answer a pending SSH keyboard-interactive (OTP / 2FA) prompt (#3371).
+ *
+ * `responses` holds one answer per prompt, in order; `null` cancels the
+ * authentication. Returns whether a prompt with `promptId` was actually waiting
+ * (a stale reply returns `false`).
+ */
+export async function sshKeyboardInteractiveRespond(
+  promptId: string,
+  responses: string[] | null
+): Promise<boolean> {
+  return await invoke<boolean>("ssh_keyboard_interactive_respond", { promptId, responses });
+}
+
 /** Disconnect a graphical remote-desktop session. */
 export async function remoteDesktopDisconnect(sessionId: SessionId): Promise<void> {
   await invoke("remote_desktop_disconnect", { sessionId });

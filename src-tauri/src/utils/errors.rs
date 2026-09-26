@@ -305,6 +305,9 @@ impl TerminalError {
     pub fn from_session_spawn(err: SessionError) -> Self {
         match err {
             SessionError::AuthFailed => TerminalError::AuthFailed(err_display(&err)),
+            // A dismissed keyboard-interactive prompt is a user cancel, never an
+            // auth failure — no stored-credential discard (#3371).
+            SessionError::AuthCancelled => TerminalError::Cancelled,
             SessionError::ConnectionFailed(msg) => TerminalError::unreachable(msg),
             other => TerminalError::SpawnFailed(other.to_string()),
         }
@@ -316,6 +319,7 @@ impl TerminalError {
     pub fn from_session_ssh(err: SessionError) -> Self {
         match err {
             SessionError::AuthFailed => TerminalError::AuthFailed(err_display(&err)),
+            SessionError::AuthCancelled => TerminalError::Cancelled,
             SessionError::ConnectionFailed(msg) => TerminalError::unreachable(msg),
             other => TerminalError::SshError(other.to_string()),
         }
@@ -392,6 +396,19 @@ mod tests {
     fn ssh_error_renders_with_ssh_prefix() {
         let err = TerminalError::SshError("exec channel failed".to_string());
         assert_eq!(err.to_string(), "SSH error: exec channel failed");
+    }
+
+    /// A dismissed keyboard-interactive prompt maps to `Cancelled` on both
+    /// connect chokepoints — never to `AuthFailed` (#3371).
+    #[test]
+    fn auth_cancelled_maps_to_cancelled_not_auth_failed() {
+        for terminal_err in [
+            TerminalError::from_session_spawn(SessionError::AuthCancelled),
+            TerminalError::from_session_ssh(SessionError::AuthCancelled),
+        ] {
+            assert!(matches!(terminal_err, TerminalError::Cancelled));
+            assert_eq!(terminal_err.code(), IpcErrorCode::Cancelled);
+        }
     }
 
     /// A genuine auth rejection maps to the typed `AuthFailed` variant on both
