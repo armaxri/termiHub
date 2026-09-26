@@ -102,3 +102,7 @@ graft/
 # The unanchored pattern above also matches the *tracked* skill dir at
 # .claude/skills/graft/ — re-admit it so the graft skill stays under version control.
 !.claude/skills/graft/
+
+# Generated third-party notices (PKG-009): produced at release time by
+# `pnpm notices:generate` and bundled via src-tauri/tauri.notices.conf.json.
+/src-tauri/resources/THIRD_PARTY_NOTICES.txt

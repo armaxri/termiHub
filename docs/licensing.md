@@ -13,7 +13,10 @@ so does **not** change termiHub's own license.
 > independently installed program** that termiHub launches as its own process.
 
 The user-facing attribution index is [`THIRD_PARTY_LICENSES.md`](../THIRD_PARTY_LICENSES.md).
-Full license texts live under [`licenses/`](../licenses/).
+Full license texts live under [`licenses/`](../licenses/). The notices for the Rust
+crates and npm packages that termiHub **does** compile into its binaries are
+generated from the dependency graph — see
+[Generated third-party notices](#generated-third-party-notices).
 
 > **Legal status:** This document records the project's engineering rationale.
 > It is **not** legal advice. The arm's-length stance below (termiHub invokes a
@@ -82,8 +85,8 @@ redistribution obligation. termiHub's own MIT terms are unaffected.
 - [ ] The winget install command in `THIRD_PARTY_LICENSES.md` matches
       `WINGET_INSTALL_VCXSRV_COMMAND` in
       `src-tauri/src/terminal/xserver/types.rs`.
-- [ ] The in-app **About → Open Source Licenses** entry links to the attribution
-      index.
+- [ ] The in-app **About → Third-Party Licenses** viewer shows the bundled
+      `THIRD_PARTY_NOTICES.txt` (it includes this attribution index).
 - [ ] The process-boundary rationale (this document) is current.
 - [ ] **Counsel has confirmed** the arm's-length stance (installing via a package
       manager and invoking a separate GPL/APSL process, with no redistribution)
@@ -101,3 +104,68 @@ redistribution obligation. termiHub's own MIT terms are unaffected.
 3. Update this document's per-platform table if a new platform/obligation is
    introduced.
 4. Re-run the checklist above.
+
+## Generated third-party notices
+
+Unlike the X servers, the Rust crates and npm packages termiHub is built from **are**
+redistributed — compiled into the desktop app, the agent and the RDP sidecar, or
+bundled into the frontend. Most of their licenses (MIT, BSD, Apache-2.0, ISC, ...)
+require the copyright notice and license text to accompany the binary. termiHub meets
+that with one generated, plain-text `THIRD_PARTY_NOTICES.txt` (audit finding PKG-009):
+
+```mermaid
+flowchart LR
+    CL["Cargo.lock<br/>rdp-sidecar/Cargo.lock"] --> CA["cargo-about 0.9.2<br/>(about.toml)"]
+    PL["pnpm-lock.yaml"] --> PN["pnpm licenses list --prod"]
+    TP["THIRD_PARTY_LICENSES.md<br/>licenses/*.txt"] --> GEN
+    CA --> GEN["scripts/internal/<br/>third-party-notices.mjs"]
+    PN --> GEN
+    GEN --> N["THIRD_PARTY_NOTICES.txt"]
+    N --> APP["every installer<br/>(About → Third-Party Licenses)"]
+    N --> REL["release asset next to<br/>the agent binaries"]
+```
+
+- **Rust:** `cargo about generate --format json --frozen --fail` over `src-tauri`,
+  `agent` and `rdp-sidecar` (all target platforms, build/dev dependencies excluded,
+  first-party crates skipped). `about.toml`'s `accepted` list mirrors `deny.toml`'s
+  license allowlist.
+- **npm:** production dependencies only, each with its own `LICENSE`/`NOTICE` files. A
+  package that ships no license file gets the standard text of its SPDX license and is
+  marked as such.
+- **External programs:** the content of `THIRD_PARTY_LICENSES.md` plus the texts under
+  `licenses/`.
+
+Identical texts are printed once and cross-referenced by number. The output is a pure
+function of the lockfiles and the pinned cargo-about version (about 1.1 MB).
+
+**Why it is generated, not committed.** The file changes with every dependency bump, so
+a committed copy would either drift or need a regeneration on every Renovate/Dependabot
+PR. The app does not need it to compile: it is bundled only by the
+`src-tauri/tauri.notices.conf.json` config fragment, which just the bundling builds merge
+in (`release.yml`, and `scripts/build.sh` / `build.cmd` when cargo-about is installed).
+Builds without it — `./scripts/dev.sh`, CI dev builds — show "not bundled in this build"
+with a link to the online attribution instead.
+
+**Regenerate locally** (no build needed; crate sources are fetched):
+
+```bash
+cargo install cargo-about --locked --version 0.9.2   # once
+pnpm notices:generate            # -> src-tauri/resources/THIRD_PARTY_NOTICES.txt (gitignored)
+pnpm notices:generate --out /tmp/THIRD_PARTY_NOTICES.txt
+pnpm notices:check               # config + npm license gate only (no cargo-about)
+```
+
+**CI gates.**
+
+- `release.yml` → **Generate Third-Party Notices** generates the file once, hands it to
+  every installer build and uploads it as `termiHub-<version>-THIRD_PARTY_NOTICES.txt`;
+  `verify-release` requires the asset.
+- `security-audit.yml` → **Third-Party Notices** runs on dependency PRs and on pushes to
+  `develop`/`main`: `pnpm notices:check` (about.toml equals deny.toml's allowlist, every
+  npm production license is allowlisted, the cargo-about pin matches in every workflow)
+  and a dry-run `pnpm notices:generate`, which fails if any crate has no license text.
+  An unapproved Rust license is rejected by the `cargo deny check licenses` step.
+
+**Bumping cargo-about:** change `CARGO_ABOUT_VERSION` in
+`scripts/internal/third-party-notices.mjs` and the `cargo-about@…` pins in
+`release.yml` and `security-audit.yml` together (`pnpm notices:check` fails on drift).
