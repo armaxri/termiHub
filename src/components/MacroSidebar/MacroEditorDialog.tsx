@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { Controller, useForm, useWatch } from "react-hook-form";
+import { useEffect, useMemo } from "react";
+import { Controller, useFieldArray, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { ArrowDown, ArrowUp, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, CornerDownLeft, Plus, Trash2 } from "lucide-react";
 import { Modal, Button, Input, Field, NumberInput } from "@/components/ui";
 import type { Macro, MacroStep } from "@/types/macro";
 import { parseTags } from "@/utils/parseTags";
-import { formatMacroStepData } from "./macroStepFormat";
+import { escapeMacroStepData, parseMacroStepText } from "./macroStepFormat";
 import "./MacroEditorDialog.css";
 
 /** The editable fields the dialog collects before saving a macro. */
@@ -18,34 +18,79 @@ export interface MacroEditorResult {
 }
 
 /**
- * Client-side validation schema for a macro's scalar form fields (UX feedback
- * only; the same check the dialog previously ran by hand, translated 1:1 into
- * zod): `name` must be non-empty once trimmed. `description` and `tags` ride
- * along as free text and are never rejected — they are trimmed/parsed on save.
+ * Delay pre-filled on a hand-added step that follows another step, so an
+ * authored macro plays back with a short, human-like pause between commands in
+ * real-time mode. The first step always starts at 0.
+ */
+export const AUTHORED_STEP_DELAY_MS = 100;
+
+/**
+ * Client-side validation schema for the whole macro form (UX feedback only):
  *
- * The steps array is validated separately (a macro with no steps cannot be
- * saved) and combined with this schema's validity at the Save gate, so today's
- * exact enable/disable behavior is preserved.
+ * - `name` must be non-empty once trimmed. `description` and `tags` ride along
+ *   as free text and are never rejected — they are trimmed/parsed on save.
+ * - `steps` must contain at least one step (a macro with no steps has nothing
+ *   to play). Each step's `text` is the editable escape notation (see
+ *   {@link escapeMacroStepData}); it must parse ({@link parseMacroStepText})
+ *   and must not be empty, and `delayMs` must be a non-negative number.
  */
 const macroFormSchema = z
   .object({
     name: z.string(),
     description: z.string(),
     tags: z.string(),
+    steps: z.array(
+      z.object({
+        text: z.string(),
+        delayMs: z.union([z.number(), z.literal("")]),
+      })
+    ),
   })
   .superRefine((form, ctx) => {
     if (form.name.trim() === "") {
       ctx.addIssue({ code: "custom", path: ["name"], message: "Name is required." });
     }
+    if (form.steps.length === 0) {
+      ctx.addIssue({ code: "custom", path: ["steps"], message: "Add at least one step." });
+    }
+    form.steps.forEach((step, index) => {
+      if (step.text === "") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["steps", index, "text"],
+          message: "Step input cannot be empty.",
+        });
+      } else {
+        const parsed = parseMacroStepText(step.text);
+        if (!parsed.ok) {
+          ctx.addIssue({ code: "custom", path: ["steps", index, "text"], message: parsed.error });
+        }
+      }
+      if (step.delayMs !== "" && (!Number.isFinite(step.delayMs) || step.delayMs < 0)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["steps", index, "delayMs"],
+          message: "Delay must be 0 or more.",
+        });
+      }
+    });
   });
 
 /** The raw form values the dialog edits (tags stays comma-separated text). */
 type MacroFormValues = z.infer<typeof macroFormSchema>;
 
+/** One editable step row: escaped input text plus its preceding delay. */
+type MacroStepFormValue = MacroFormValues["steps"][number];
+
+const EMPTY_FORM: MacroFormValues = { name: "", description: "", tags: "", steps: [] };
+
 export interface MacroEditorDialogProps {
   /** Whether the dialog is open. */
   open: boolean;
-  /** The macro being edited, or `null` when the dialog is closed. */
+  /**
+   * The macro being edited. `null` while open means "author a new macro from
+   * scratch": the dialog starts blank with one empty step.
+   */
   macro: Macro | null;
   /** Called when the dialog should open/close. */
   onOpenChange: (open: boolean) => void;
@@ -57,83 +102,94 @@ export interface MacroEditorDialogProps {
   onSave: (result: MacroEditorResult) => void | Promise<void>;
 }
 
+/** Convert a stored step into its editable form value. */
+function toFormStep(step: MacroStep): MacroStepFormValue {
+  return { text: escapeMacroStepData(step.data), delayMs: step.delayMs };
+}
+
 /**
- * Detail/edit view for a stored macro: edit the name, description and tags, and
- * review the recorded step list — each step shows a readable preview of its
- * input plus its inter-step delay, which can be adjusted. Steps can be reordered
- * or deleted individually. Composed entirely from the shared UI primitives.
+ * Detail/edit view for a macro — used both to edit a stored (recorded or
+ * authored) macro and to author a new one by hand (PROD-039). Edit the name,
+ * description and tags, and the step list: each step's input is an editable
+ * text field in a lossless escape notation (`\r` Enter, `\t` Tab, `\e` Esc,
+ * `\xHH`, `\\`) so control keys are visible and typeable, plus its
+ * inter-step delay. Steps can be added, reordered or deleted individually.
  *
- * The scalar fields are backed by react-hook-form + zod (see
- * {@link macroFormSchema}); the imperative steps list stays in local state, and
- * the Save gate combines the form validity with the "at least one step" rule.
- *
- * Edits are held locally and only persisted when the user saves, so cancelling
- * discards them. Removing every step is disallowed at the Save gate (a macro
- * with no steps has nothing to play), and the name is required.
+ * The whole form — scalar fields and the steps array — is backed by
+ * react-hook-form + zod (see {@link macroFormSchema}). Edits are held locally
+ * and only persisted when the user saves, so cancelling discards them.
  */
 export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEditorDialogProps) {
-  const { control, getValues, reset } = useForm<MacroFormValues>({
-    defaultValues: { name: "", description: "", tags: "" },
+  const { control, getValues, reset, setValue } = useForm<MacroFormValues>({
+    defaultValues: EMPTY_FORM,
     resolver: zodResolver(macroFormSchema),
     mode: "onChange",
   });
+  const { fields, append, remove, move } = useFieldArray({ control, name: "steps" });
 
-  const [steps, setSteps] = useState<MacroStep[]>([]);
+  const isNew = macro === null;
 
-  // Reload the working copy each time a macro is opened so a prior edit never
-  // leaks in and cancel truly discards.
+  // Reload the working copy each time the dialog opens so a prior edit never
+  // leaks in and cancel truly discards. A new macro starts with one empty step.
   useEffect(() => {
-    if (open && macro) {
+    if (!open) return;
+    if (macro) {
       reset({
         name: macro.name,
         description: macro.description ?? "",
         tags: macro.tags.join(", "),
+        steps: macro.steps.map(toFormStep),
       });
-      setSteps(macro.steps.map((s) => ({ ...s })));
+    } else {
+      reset({ ...EMPTY_FORM, steps: [{ text: "", delayMs: 0 }] });
     }
   }, [open, macro, reset]);
 
-  // Live form values. `useWatch` only surfaces registered fields and can lag the
-  // seeded defaults by a render, so merge it over blank defaults to keep a
-  // complete draft for the synchronous validity check.
+  // Live form values. `useWatch` can lag the seeded defaults by a render, so
+  // merge it over blank defaults to keep a complete draft for the synchronous
+  // validity check.
   const watched = useWatch({ control });
   const draft: MacroFormValues = {
     name: watched?.name ?? "",
     description: watched?.description ?? "",
     tags: watched?.tags ?? "",
+    steps: (watched?.steps ?? []).map((s) => ({ text: s?.text ?? "", delayMs: s?.delayMs ?? 0 })),
   };
 
-  // Deterministic, synchronous validity derived straight from the schema — the
-  // same approach CustomRuleEditor uses — rather than react-hook-form's async
-  // error proxy, so the Save gate updates on the same render as the edit.
-  const validity = useMemo(() => {
-    return macroFormSchema.safeParse(draft).success;
+  // Deterministic, synchronous validation derived straight from the schema —
+  // the same approach CustomRuleEditor uses — rather than react-hook-form's
+  // async error proxy, so the Save gate and the per-step messages update on the
+  // same render as the edit.
+  const draftKey = JSON.stringify(draft);
+  const validation = useMemo(() => {
+    const result = macroFormSchema.safeParse(draft);
+    const stepErrors = new Map<number, string>();
+    if (!result.success) {
+      for (const issue of result.error.issues) {
+        if (issue.path[0] === "steps" && typeof issue.path[1] === "number") {
+          if (!stepErrors.has(issue.path[1])) stepErrors.set(issue.path[1], issue.message);
+        }
+      }
+    }
+    return { valid: result.success, stepErrors };
     // `draft` is rebuilt every render from the watched values; keying on its
     // serialization avoids recomputing when nothing actually changed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(draft)]);
+  }, [draftKey]);
 
-  // Save requires both a valid form and at least one step, exactly as before.
-  const canSave = validity && steps.length > 0;
+  const canSave = validation.valid;
 
-  const moveStep = (index: number, direction: -1 | 1) => {
-    setSteps((prev) => {
-      const target = index + direction;
-      if (target < 0 || target >= prev.length) return prev;
-      const next = [...prev];
-      [next[index], next[target]] = [next[target], next[index]];
-      return next;
-    });
-  };
-
-  const deleteStep = (index: number) => {
-    setSteps((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const setStepDelay = (index: number, delayMs: number) => {
-    setSteps((prev) =>
-      prev.map((s, i) => (i === index ? { ...s, delayMs: Math.max(0, Math.round(delayMs)) } : s))
+  const addStep = () => {
+    append(
+      { text: "", delayMs: fields.length === 0 ? 0 : AUTHORED_STEP_DELAY_MS },
+      { shouldFocus: true }
     );
+  };
+
+  /** Append an Enter (`\r`) to a step — the common "type command + Enter" case. */
+  const appendEnter = (index: number) => {
+    const current = getValues(`steps.${index}.text`) ?? "";
+    setValue(`steps.${index}.text`, `${current}\\r`, { shouldDirty: true });
   };
 
   // Returns the parent's (possibly async) save promise so the Button drives its
@@ -143,6 +199,14 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
   const handleSave = () => {
     if (!canSave) return;
     const current = getValues();
+    const steps: MacroStep[] = [];
+    for (const step of current.steps) {
+      const parsed = parseMacroStepText(step.text);
+      // Unreachable while `canSave` holds, but never persist a bad step.
+      if (!parsed.ok) return;
+      const delay = step.delayMs === "" ? 0 : step.delayMs;
+      steps.push({ data: parsed.data, delayMs: Math.max(0, Math.round(delay)) });
+    }
     return onSave({
       name: current.name.trim(),
       description: current.description.trim() || undefined,
@@ -151,22 +215,59 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
     });
   };
 
-  const stepRows = useMemo(
-    () =>
-      steps.map((step, index) => (
-        <div className="macro-editor__step" key={index} data-testid={`macro-editor-step-${index}`}>
+  const stepRows = fields.map((field, index) => {
+    const error = validation.stepErrors.get(index);
+    const errorId = `macro-editor-step-error-${index}`;
+    return (
+      <div className="macro-editor__step-row" key={field.id}>
+        <div className="macro-editor__step" data-testid={`macro-editor-step-${index}`}>
           <span className="macro-editor__step-index">{index + 1}</span>
-          <code className="macro-editor__step-data" data-testid={`macro-editor-step-data-${index}`}>
-            {formatMacroStepData(step.data) || "(empty)"}
-          </code>
+          <Controller
+            name={`steps.${index}.text`}
+            control={control}
+            render={({ field: textField }) => (
+              <Input
+                className="macro-editor__step-data"
+                value={textField.value ?? ""}
+                onChange={(e) => textField.onChange(e.target.value)}
+                onBlur={textField.onBlur}
+                ref={textField.ref}
+                placeholder={"e.g. ls -la\\r"}
+                spellCheck={false}
+                autoComplete="off"
+                aria-label={`Input for step ${index + 1}`}
+                error={Boolean(error)}
+                size="sm"
+                aria-describedby={error ? errorId : undefined}
+                data-testid={`macro-editor-step-data-${index}`}
+              />
+            )}
+          />
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            aria-label={`Append Enter to step ${index + 1}`}
+            title="Append Enter (\r)"
+            icon={<CornerDownLeft size={12} />}
+            onClick={() => appendEnter(index)}
+            data-testid={`macro-editor-step-enter-${index}`}
+          />
           <div className="macro-editor__step-delay">
-            <NumberInput
-              value={step.delayMs}
-              min={0}
-              step={10}
-              onValueChange={(v) => setStepDelay(index, v === "" ? 0 : v)}
-              aria-label={`Delay before step ${index + 1} in milliseconds`}
-              data-testid={`macro-editor-step-delay-${index}`}
+            <Controller
+              name={`steps.${index}.delayMs`}
+              control={control}
+              render={({ field: delayField }) => (
+                <NumberInput
+                  value={delayField.value ?? 0}
+                  min={0}
+                  step={10}
+                  onValueChange={(v) => delayField.onChange(v)}
+                  onBlur={delayField.onBlur}
+                  aria-label={`Delay before step ${index + 1} in milliseconds`}
+                  data-testid={`macro-editor-step-delay-${index}`}
+                />
+              )}
             />
             <span className="macro-editor__step-unit">ms</span>
           </div>
@@ -178,7 +279,7 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
               aria-label={`Move step ${index + 1} up`}
               disabled={index === 0}
               icon={<ArrowUp size={12} />}
-              onClick={() => moveStep(index, -1)}
+              onClick={() => move(index, index - 1)}
               data-testid={`macro-editor-step-up-${index}`}
             />
             <Button
@@ -186,9 +287,9 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
               size="sm"
               iconOnly
               aria-label={`Move step ${index + 1} down`}
-              disabled={index === steps.length - 1}
+              disabled={index === fields.length - 1}
               icon={<ArrowDown size={12} />}
-              onClick={() => moveStep(index, 1)}
+              onClick={() => move(index, index + 1)}
               data-testid={`macro-editor-step-down-${index}`}
             />
             <Button
@@ -197,21 +298,35 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
               iconOnly
               aria-label={`Delete step ${index + 1}`}
               icon={<Trash2 size={12} />}
-              onClick={() => deleteStep(index)}
+              onClick={() => remove(index)}
               data-testid={`macro-editor-step-delete-${index}`}
             />
           </div>
         </div>
-      )),
-    [steps]
-  );
+        {error && (
+          <p
+            className="macro-editor__step-error"
+            id={errorId}
+            role="alert"
+            data-testid={`macro-editor-step-error-${index}`}
+          >
+            {error}
+          </p>
+        )}
+      </div>
+    );
+  });
 
   return (
     <Modal
       open={open}
       onOpenChange={onOpenChange}
-      title="Edit Macro"
-      description="Edit a stored macro's details and recorded steps"
+      title={isNew ? "New Macro" : "Edit Macro"}
+      description={
+        isNew
+          ? "Author a macro by hand: name it and type the input each step sends"
+          : "Edit a stored macro's details and steps"
+      }
       size="lg"
       data-testid="macro-editor-dialog"
       footer={
@@ -284,11 +399,25 @@ export function MacroEditorDialog({ open, macro, onOpenChange, onSave }: MacroEd
         )}
       />
       <div className="macro-editor__steps-header">
-        <span className="macro-editor__steps-title">Steps ({steps.length})</span>
+        <span className="macro-editor__steps-title">Steps ({fields.length})</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          icon={<Plus size={12} />}
+          onClick={addStep}
+          data-testid="macro-editor-add-step"
+        >
+          Add Step
+        </Button>
       </div>
-      {steps.length === 0 ? (
+      <p className="macro-editor__hint" data-testid="macro-editor-escape-hint">
+        Type the exact input each step sends. Use <code>\r</code> for Enter, <code>\t</code> Tab,{" "}
+        <code>\e</code> Esc, <code>\xHH</code> any other control byte (e.g. <code>\x03</code>{" "}
+        Ctrl+C) and <code>\\</code> for a backslash.
+      </p>
+      {fields.length === 0 ? (
         <p className="macro-editor__empty" role="status" data-testid="macro-editor-no-steps">
-          This macro has no steps. Add one by recording, or it cannot be saved.
+          This macro has no steps. Add one, or it cannot be saved.
         </p>
       ) : (
         <div className="macro-editor__steps" data-testid="macro-editor-steps">

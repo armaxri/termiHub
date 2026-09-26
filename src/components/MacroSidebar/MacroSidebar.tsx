@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
-import { Circle } from "lucide-react";
+import { Circle, Plus } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, SearchInput, toast, Tooltip } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
@@ -24,9 +24,9 @@ function generateMacroId(): string {
 }
 
 /**
- * The Macro Manager panel: browse, search, edit, delete and launch stored
- * macros. Macros are recorded from the terminal toolbar and played back into the
- * active terminal; this panel is their home for organisation. Composed from the
+ * The Macro Manager panel: browse, search, create, edit, delete and launch
+ * stored macros. Macros are recorded from the terminal toolbar or authored by
+ * hand here ("New", PROD-039) and played back into the active terminal; this panel is their home for organisation. Composed from the
  * shared UI primitives and the sidebar list-item shell, mirroring the workspace
  * and tunnel managers. Macros can also be exported to / imported from portable
  * JSON files, so they can be shared between machines (#1677). The search,
@@ -42,6 +42,8 @@ export function MacroSidebar() {
   const startMacroRecording = useAppStore((s) => s.startMacroRecording);
 
   const [editingId, setEditingId] = useState<string | null>(null);
+  // Authoring a brand-new macro by hand (PROD-039): opens the editor blank.
+  const [creating, setCreating] = useState(false);
   const { query, setQuery, filtered } = useListFilter(macros, nameDescriptionTagsMatcher);
   const exportMacrosToFile = useJsonFileExport("macros");
   const importMacrosFromFile = useJsonFileImport("macros");
@@ -72,7 +74,15 @@ export function MacroSidebar() {
     [playMacro]
   );
 
-  const handleEdit = useCallback((macroId: string) => setEditingId(macroId), []);
+  const handleEdit = useCallback((macroId: string) => {
+    setCreating(false);
+    setEditingId(macroId);
+  }, []);
+
+  const handleNew = useCallback(() => {
+    setEditingId(null);
+    setCreating(true);
+  }, []);
 
   const handleDuplicate = useCallback(
     async (macroId: string) => {
@@ -135,6 +145,32 @@ export function MacroSidebar() {
     [macros, requestDelete]
   );
 
+  const handleSaveNew = useCallback(
+    async (result: MacroEditorResult) => {
+      const created: Macro = {
+        id: generateMacroId(),
+        name: result.name,
+        description: result.description,
+        tags: result.tags,
+        steps: result.steps,
+        // The backend stamps authoritative created/updated timestamps.
+        createdAt: "",
+        updatedAt: "",
+      };
+      try {
+        await saveMacroToBackend(created);
+        setCreating(false);
+        toast.success(`Created macro "${result.name}"`);
+      } catch (err) {
+        // Keep the dialog open so the authored steps are not lost.
+        const message = errorMessage(err);
+        toast.error(`Failed to create macro: ${message}`);
+        throw err;
+      }
+    },
+    [saveMacroToBackend]
+  );
+
   const handleSaveEdit = useCallback(
     async (result: MacroEditorResult) => {
       if (!editingMacro) return;
@@ -171,6 +207,18 @@ export function MacroSidebar() {
   return (
     <div className="macro-sidebar" data-testid="macro-sidebar">
       <SidebarToolbar>
+        <Tooltip content="New Macro (author by hand)" side="top">
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={<Plus size={12} />}
+            onClick={handleNew}
+            aria-label="New Macro"
+            data-testid="macro-new-btn"
+          >
+            New
+          </Button>
+        </Tooltip>
         <Tooltip content="Record New Macro" side="top">
           <Button
             variant="ghost"
@@ -207,9 +255,18 @@ export function MacroSidebar() {
         <div className="macro-sidebar__empty" data-testid="macro-empty-message">
           <span>No macros recorded yet.</span>
           <span>
-            Record one with the terminal toolbar&apos;s record button, or{" "}
+            Record one with the terminal toolbar&apos;s record button,{" "}
             <button className="macro-sidebar__empty-link" onClick={handleRecord} type="button">
               start recording now
+            </button>
+            , or{" "}
+            <button
+              className="macro-sidebar__empty-link"
+              onClick={handleNew}
+              type="button"
+              data-testid="macro-empty-new-link"
+            >
+              write one by hand
             </button>
             .
           </span>
@@ -245,12 +302,15 @@ export function MacroSidebar() {
         </div>
       )}
       <MacroEditorDialog
-        open={editingMacro !== null}
-        macro={editingMacro}
+        open={creating || editingMacro !== null}
+        macro={creating ? null : editingMacro}
         onOpenChange={(open) => {
-          if (!open) setEditingId(null);
+          if (!open) {
+            setEditingId(null);
+            setCreating(false);
+          }
         }}
-        onSave={handleSaveEdit}
+        onSave={creating ? handleSaveNew : handleSaveEdit}
       />
       <ConfirmDeleteDialog
         {...macroDelete.dialogProps}

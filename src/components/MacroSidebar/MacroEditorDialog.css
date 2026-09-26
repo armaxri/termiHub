@@ -43,15 +43,34 @@
   text-align: right;
 }
 
-.macro-editor__step-data {
+.macro-editor__step-row {
+  display: flex;
+  flex-direction: column;
+}
+
+.macro-editor__step .macro-editor__step-data {
   flex: 1;
   min-width: 0;
   font-family: var(--font-mono);
   font-size: var(--font-size-sm);
+}
+
+.macro-editor__step-error {
+  margin: 0 0 var(--spacing-xxs);
+  padding-left: calc(20px + var(--spacing-sm) + 6px);
+  color: var(--color-error);
+  font-size: var(--font-size-xs);
+}
+
+.macro-editor__hint {
+  margin: 0 0 var(--spacing-xs);
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+}
+
+.macro-editor__hint code {
+  font-family: var(--font-mono);
   color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .macro-editor__step-delay {
