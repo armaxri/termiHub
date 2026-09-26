@@ -37,6 +37,26 @@ enum Dial {
     OkThenClose,
     /// Fail the connect.
     Err(SessionError),
+    /// Connect, then fail asynchronously before any frame, reporting a typed
+    /// reason on `fatal_error` — the RDP sidecar's shape (#3390): its
+    /// negotiation (and a credential rejection) runs after `connect()` returned.
+    OkThenFail(Fatal),
+}
+
+/// The typed reason a [`Dial::OkThenFail`] backend reports.
+#[derive(Clone, Copy)]
+enum Fatal {
+    Auth,
+    Connect,
+}
+
+impl Fatal {
+    fn error(self) -> SessionError {
+        match self {
+            Fatal::Auth => SessionError::AuthFailed,
+            Fatal::Connect => SessionError::ConnectionFailed("tcp refused".into()),
+        }
+    }
 }
 
 /// Shared script + observations for every fake instance the registry mints.
@@ -106,6 +126,7 @@ struct FakeDesktop {
     dial: u32,
     frame_rx: StdMutex<Option<FrameReceiver>>,
     cursor_rx: StdMutex<Option<CursorReceiver>>,
+    fatal: Option<Fatal>,
 }
 
 #[async_trait::async_trait]
@@ -144,6 +165,7 @@ impl ConnectionType for FakeDesktop {
         match step {
             Dial::Err(e) => return Err(e),
             Dial::OkThenClose => {}
+            Dial::OkThenFail(fatal) => self.fatal = Some(fatal),
             Dial::Ok => {
                 *self.ctl.frame_tx.lock().unwrap() = Some((self.dial, frame_tx));
                 *self.ctl.cursor_tx.lock().unwrap() = Some((self.dial, cursor_tx));
@@ -224,6 +246,9 @@ impl GraphicalBackend for FakeDesktop {
     async fn set_clipboard(&self, _text: String) -> Result<(), SessionError> {
         Ok(())
     }
+    fn fatal_error(&self) -> Option<SessionError> {
+        self.fatal.map(Fatal::error)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -274,7 +299,11 @@ struct Harness {
 /// Connect a fake session with `settings`, after scripting the dials that
 /// follow the (always successful) initial connect.
 async fn open(settings: serde_json::Value, redials: Vec<Dial>) -> Harness {
-    let ctl = Arc::new(Control::default());
+    open_first(settings, Dial::Ok, redials).await
+}
+
+/// A registry whose fake instances all share `ctl`.
+fn fake_registry(ctl: &Arc<Control>) -> ConnectionTypeRegistry {
     let mut registry = ConnectionTypeRegistry::new();
     let factory_ctl = ctl.clone();
     registry.register(
@@ -287,10 +316,19 @@ async fn open(settings: serde_json::Value, redials: Vec<Dial>) -> Harness {
                 dial: 0,
                 frame_rx: StdMutex::new(None),
                 cursor_rx: StdMutex::new(None),
+                fatal: None,
             })
         }),
     );
-    ctl.script([Dial::Ok]);
+    registry
+}
+
+/// [`open`], with the initial connect scripted as `first` (which must let
+/// `connect()` return `Ok`).
+async fn open_first(settings: serde_json::Value, first: Dial, redials: Vec<Dial>) -> Harness {
+    let ctl = Arc::new(Control::default());
+    let registry = fake_registry(&ctl);
+    ctl.script([first]);
     ctl.script(redials);
     let mgr =
         GraphicalSessionManager::new(Arc::new(registry), Arc::new(RdpTrustStore::in_memory()));
@@ -574,4 +612,149 @@ async fn reconnect_that_closes_before_painting_is_a_failed_attempt() {
             (GraphicalState::Disconnected, 3),
         ]
     );
+}
+
+// ── Typed failures reported after connect() returned (#3390) ─────────
+
+#[tokio::test(start_paused = true)]
+async fn async_auth_failure_after_redial_is_terminal_with_zero_retries() {
+    // A password changed mid-session: the re-dial's `connect()` returns (the
+    // RDP sidecar spawned), then the credential is rejected asynchronously.
+    // That must rest in AuthFailed — not burn the remaining retries and end as
+    // "Connection lost".
+    let h = open(
+        serde_json::json!({}),
+        vec![
+            Dial::OkThenFail(Fatal::Auth),
+            Dial::OkThenFail(Fatal::Auth),
+            Dial::OkThenFail(Fatal::Auth),
+        ],
+    )
+    .await;
+    h.ctl.drop_stream();
+    wait_until("auth failed", || {
+        last_state(&h.sink) == Some(GraphicalState::AuthFailed)
+    })
+    .await;
+    idle().await;
+    assert_eq!(h.ctl.dials(), 2, "no retry after an auth rejection");
+    assert_eq!(
+        h.sink.tail(3),
+        vec![
+            (GraphicalState::Reconnecting, 1),
+            (GraphicalState::AuthFailed, 1)
+        ]
+    );
+    assert_eq!(
+        h.sink.last().unwrap().message.as_deref(),
+        Some("Authentication failed")
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn async_auth_failure_on_first_connect_rests_auth_failed() {
+    let h = open_first(
+        serde_json::json!({}),
+        Dial::OkThenFail(Fatal::Auth),
+        Vec::new(),
+    )
+    .await;
+    wait_until("auth failed", || {
+        last_state(&h.sink) == Some(GraphicalState::AuthFailed)
+    })
+    .await;
+    idle().await;
+    assert_eq!(
+        h.ctl.dials(),
+        1,
+        "a first-connect auth rejection never re-dials"
+    );
+    assert_eq!(h.sink.tail(3), vec![(GraphicalState::AuthFailed, 0)]);
+}
+
+#[tokio::test(start_paused = true)]
+async fn async_connect_failure_on_first_connect_rests_connect_failed() {
+    let h = open_first(
+        serde_json::json!({}),
+        Dial::OkThenFail(Fatal::Connect),
+        Vec::new(),
+    )
+    .await;
+    wait_until("connect failed", || {
+        last_state(&h.sink) == Some(GraphicalState::ConnectFailed)
+    })
+    .await;
+    idle().await;
+    assert_eq!(h.ctl.dials(), 1);
+    assert_eq!(h.sink.tail(3), vec![(GraphicalState::ConnectFailed, 0)]);
+    let message = h.sink.last().and_then(|e| e.message).unwrap_or_default();
+    assert!(message.contains("tcp refused"), "{message}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn async_connect_failure_on_redial_is_still_retried() {
+    // Only a credential rejection is terminal on a re-dial; an unreachable
+    // host keeps using the retry budget, as before.
+    let fail = || Dial::OkThenFail(Fatal::Connect);
+    let h = open(serde_json::json!({}), vec![fail(), fail(), fail()]).await;
+    h.ctl.drop_stream();
+    wait_until("give up", || {
+        last_state(&h.sink) == Some(GraphicalState::Disconnected)
+    })
+    .await;
+    idle().await;
+    assert_eq!(h.ctl.dials(), 4);
+    assert_eq!(
+        h.sink.tail(3),
+        vec![
+            (GraphicalState::Reconnecting, 1),
+            (GraphicalState::Reconnecting, 2),
+            (GraphicalState::Reconnecting, 3),
+            (GraphicalState::Disconnected, 3),
+        ]
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn initial_connect_auth_rejection_emits_auth_failed() {
+    // A synchronous first-connect rejection (a wrong VNC password) is typed
+    // AuthFailed, not ConnectFailed, and returns the coded auth error.
+    let ctl = Arc::new(Control::default());
+    ctl.script([Dial::Err(SessionError::AuthFailed)]);
+    let mgr = GraphicalSessionManager::new(
+        Arc::new(fake_registry(&ctl)),
+        Arc::new(RdpTrustStore::in_memory()),
+    );
+    let sink = Sink::default();
+    let err = mgr
+        .connect(FAKE, serde_json::json!({}), sink.clone())
+        .await
+        .expect_err("auth rejection");
+    assert!(
+        matches!(err, crate::utils::errors::TerminalError::AuthFailed(_)),
+        "{err:?}"
+    );
+    assert_eq!(
+        sink.tail(0),
+        vec![
+            (GraphicalState::Connecting, 0),
+            (GraphicalState::Authenticating, 0),
+            (GraphicalState::AuthFailed, 0),
+        ]
+    );
+
+    ctl.script([Dial::Err(SessionError::ConnectionFailed("refused".into()))]);
+    let sink = Sink::default();
+    let err = mgr
+        .connect(FAKE, serde_json::json!({}), sink.clone())
+        .await
+        .expect_err("transport failure");
+    assert!(
+        matches!(
+            err,
+            crate::utils::errors::TerminalError::ConnectionFailed(_)
+        ),
+        "{err:?}"
+    );
+    assert_eq!(last_state(&sink), Some(GraphicalState::ConnectFailed));
 }
