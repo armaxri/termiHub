@@ -161,6 +161,15 @@ window" overlay, which supersedes the reconnect overlay, cert prompt and toolbar
 (their actions would drive a session this window does not control). On regaining
 control the tab re-sends its last requested size and requests a full frame.
 
+**Held input (#3402).** The backend keeps the authoritative set of keys and
+pointer buttons held on each graphical session's remote, tagged with the window
+that pressed them, and synthesises the matching key-ups / button-up so nothing
+stays stuck: on takeover (`claim_session` releases the previous controller's
+input — the evicted window can no longer send), before input from a different
+window, on the fresh connection after an auto-reconnect re-dial, and on the
+owner-gated `remote_desktop_release_input`, which the canvas sends on canvas
+blur, window blur and when the document is hidden. Releases are idempotent.
+
 `Failed`, `AuthFailed`, `SessionLost`, and idle `Disconnected` are the resting
 states. From any of them a fresh `session.connect` (a new connect / manual
 retry / "start new shell") restarts the machine at `Connecting`; `session.remove`
