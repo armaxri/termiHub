@@ -92,7 +92,7 @@ silently ignored.
 | ------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `id`          | string   | yes      | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`). |
 | `name`        | string   | yes      | Human-readable display name.                                                                                                                                                   |
-| `version`     | string   | yes      | Plugin version (informational; the host does not interpret it).                                                                                                                |
+| `version`     | string   | yes      | Plugin [semver](https://semver.org) version. Installing an older version, or a different build of the same one, over an installed copy asks the user to confirm.               |
 | `author`      | string   | yes      | Plugin author.                                                                                                                                                                 |
 | `description` | string   | yes      | Short description.                                                                                                                                                             |
 | `license`     | string   | yes      | SPDX-style license identifier.                                                                                                                                                 |
