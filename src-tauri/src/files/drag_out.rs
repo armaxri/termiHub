@@ -890,8 +890,14 @@ mod tests {
         assert_eq!(out.paths.len(), 3);
         assert!(Path::new(&out.paths[0]).is_dir());
         assert!(Path::new(&out.paths[1]).is_dir());
-        assert!(dir.join("logs").join("deep").is_dir(), "a file's parent exists");
-        assert!(!Path::new(&out.paths[2]).exists(), "files are left to the download");
+        assert!(
+            dir.join("logs").join("deep").is_dir(),
+            "a file's parent exists"
+        );
+        assert!(
+            !Path::new(&out.paths[2]).exists(),
+            "files are left to the download"
+        );
         for p in &out.paths {
             assert!(Path::new(p).starts_with(&dir));
         }
@@ -996,12 +1002,18 @@ mod tests {
         let roots = stage_from_source(
             &source,
             tmp.path(),
-            &[row("/app/a.txt", "a.txt", false), row("/app/logs", "logs", true)],
+            &[
+                row("/app/a.txt", "a.txt", false),
+                row("/app/logs", "logs", true),
+            ],
             StageLimits::default(),
         )
         .await
         .expect("stage");
-        assert_eq!(roots, vec![tmp.path().join("a.txt"), tmp.path().join("logs")]);
+        assert_eq!(
+            roots,
+            vec![tmp.path().join("a.txt"), tmp.path().join("logs")]
+        );
         let read = |p: PathBuf| std::fs::read(p).expect("read");
         assert_eq!(read(tmp.path().join("a.txt")), b"alpha");
         assert_eq!(read(tmp.path().join("logs").join("b.log")), b"beta");
@@ -1048,9 +1060,14 @@ mod tests {
         link.is_symlink = true;
         let source = FakeSource::new().dir("/d", vec![link]);
         let tmp = tempfile::tempdir().expect("tempdir");
-        stage_from_source(&source, tmp.path(), &[row("/d", "d", true)], StageLimits::default())
-            .await
-            .expect("stage");
+        stage_from_source(
+            &source,
+            tmp.path(),
+            &[row("/d", "d", true)],
+            StageLimits::default(),
+        )
+        .await
+        .expect("stage");
         assert!(!tmp.path().join("d").join("loop").exists());
     }
 
@@ -1093,7 +1110,9 @@ mod tests {
         // Refused from the listing size hint before the second read...
         assert!(run(small, vec![row("/d", "d", true)]).await.is_err());
         // ...and from the real byte count when no hint exists (a dragged row).
-        let err = run(small, vec![row("/big", "big", false)]).await.unwrap_err();
+        let err = run(small, vec![row("/big", "big", false)])
+            .await
+            .unwrap_err();
         assert!(err.contains("Download"), "{err}");
         assert!(run(limits, vec![row("/d", "d", true)]).await.is_ok());
     }

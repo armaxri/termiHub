@@ -1429,16 +1429,24 @@ Dragging file-browser rows out to Finder / Explorer / a GTK file manager (#3457)
 [`drag`](https://crates.io/crates/drag) crate (Apache-2.0 OR MIT) — the engine behind
 `tauri-plugin-drag` — **directly**, not the plugin. The plugin would add a
 `drag:allow-start-drag` capability that lets the webview start an OS drag of any path _or arbitrary
-pasteboard data_. Instead the webview only reaches three typed app commands
+pasteboard data_. Instead the webview only reaches four typed app commands
 (`src-tauri/src/files/drag_out.rs`, `commands/files.rs`):
 
 - `drag_out_start` accepts **file paths only** (never pasteboard data), each absolute, `..`-free
   and existing, capped at 1000 entries. It grants nothing the webview could not already reach via
   the local file-browser commands, and the drop itself still needs the user's physical gesture.
 - `drag_out_create_staging` makes a **private** staging directory (`0700` on Unix; the per-user
-  app cache dir on Windows) for remote entries and returns one target path per entry. Remote names
-  are sanitized to a single path component, so a hostile server name such as `../../.bashrc` can
-  never escape it.
+  app cache dir on Windows) for remote entries and returns one target path per entry. An entry is
+  a list of name segments, so a remote folder tree (#3491) is laid out in one call — at most 10 000
+  entries, 32 levels deep, folders created private up front. Every segment is sanitized to a single
+  path component, so a hostile server name such as `../../.bashrc` can never escape it. SFTP / FTP
+  files are then downloaded into those paths through the transfer queue.
+- `drag_out_stage_session` stages rows of a **byte-based** session (Docker / remote agent), which
+  has no transfer queue (#3491). The webview sends only remote paths and names; the backend reads
+  each file (recursing into folders, never following symlinked ones) through the session and
+  writes it into a staging directory it creates and owns — the destination is never
+  webview-supplied. It is capped at 10 000 entries, 32 levels and 1 GiB (those backends return
+  whole files in memory), and a failed staging discards its directory.
 - `drag_out_discard_staging` deletes only a directory **this process created** — any other path
   is refused. All of the process's staging directories are removed at app teardown, and ones left
   by a crash are swept (older than 24 h) the next time staging is used.
