@@ -166,5 +166,34 @@ Tests: `src/client/event_queue.rs` (accounting, backpressure, close) and
 `src/client/event_budget_tests.rs` (a Tight-fill decompression flood through the
 real client stays under budget, drains completely, and does not block `close`).
 
+## 16-bit colour and Tight quality levels (#3464)
+
+Upstream decoded only 32-bpp formats with three 8-bit channels: the cursor
+decoder hit `unreachable!()` for anything else (skipped since #3473) and Tight
+rejected every other format. termiHub can now negotiate 16-bit high colour:
+
+- `PixelFormat::rgb565()` — little-endian RGB565 (maxima 31/63/31, shifts
+  11/5/0).
+- Tight (`src/codec/tight.rs`): a TPIXEL is 3 bytes only for 32 bpp with 8-bit
+  channels (RFC-less Tight spec); for every other valid true-colour format it
+  is the full PIXEL. Fill, copy, palette (incl. two-colour bit-packed) and
+  gradient filters handle that case and emit `RawImage` pixels in the
+  negotiated format; the gradient prediction runs per channel with the format's
+  own shifts, maxima and byte order. Colour-map formats are
+  `VncError::WrongPixelFormat`.
+- Cursor (`src/codec/cursor.rs`): `VncEvent::SetCursor` pixels are now always
+  RGBA8888 with the mask as alpha, converted from any valid true-colour format
+  (either endianness, via `pixel_value` / `pixel_rgb` in `src/codec/mod.rs`).
+  Colour-map or invalid formats still skip the shape without ending the session.
+- ZRLE / TRLE / Raw already emitted negotiated-format pixels at 16 bpp; the
+  consumer converts them (termiHub: `core/src/backends/vnc/pixel.rs`).
+- `VncEncoding` gains `TightJpegQuality(level)` (`-32 + level`) and
+  `TightCompressLevel(level)` (`-256 + level`), levels clamped to `0..=9`. The
+  enum lost its `#[repr(i32)]` discriminants; `VncEncoding::wire_value()` is the
+  RFB encoding number.
+
+Tests: `src/client/hostile_server_tests.rs` (16-bpp cursor incl. big-endian,
+Tight fill/copy/palette/gradient, ZRLE), `src/codec/mod.rs` and `src/config.rs`.
+
 Everything else is upstream `0.5.3`, under the original MIT/Apache-2.0 licenses
 (`LICENSE-MIT`, `LICENSE-APACHE`).

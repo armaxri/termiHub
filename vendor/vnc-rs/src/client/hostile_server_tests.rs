@@ -331,14 +331,68 @@ async fn stop_cancels_a_decoder_blocked_mid_message() {
 
 // ------------------------------------------------------------------ cursor --
 
+fn cursor_pixels(events: &[VncEvent]) -> Option<Vec<u8>> {
+    events.iter().find_map(|e| match e {
+        VncEvent::SetCursor(_, data) => Some(data.clone()),
+        _ => None,
+    })
+}
+
 #[tokio::test]
-async fn cursor_in_16bpp_is_skipped_and_stream_stays_in_sync() {
-    // Upstream hit `unreachable!()` (and out-of-bounds writes) for this.
+async fn cursor_in_16bpp_decodes_to_rgba_and_stream_stays_in_sync() {
+    // Upstream hit `unreachable!()` (and out-of-bounds writes) for this; #3473
+    // skipped it; #3464 decodes it.
     let pf = pf_16bpp();
     let mut bytes = fb_update(1);
     bytes.extend(rect(1, 1, 3, 2, CURSOR));
-    bytes.extend_from_slice(&[0x55; 3 * 2 * 2]); // pixels, 2 bytes each
-    bytes.extend_from_slice(&[0xFF; 2]); // mask: 1 byte per row
+    // Little-endian RGB565: red, green, blue / white, black, mid-grey.
+    for px in [0xF800u16, 0x07E0, 0x001F, 0xFFFF, 0x0000, 0x8410] {
+        bytes.extend_from_slice(&px.to_le_bytes());
+    }
+    bytes.extend_from_slice(&[0b1010_0000, 0b0100_0000]); // mask: 1 byte per row
+    bytes.push(BELL);
+    let (result, events) = run(&bytes, &pf).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(has_bell(&events), "stream desynchronised");
+    assert_eq!(
+        cursor_pixels(&events).expect("cursor decoded"),
+        vec![
+            255, 0, 0, 255, //
+            0, 255, 0, 0, //
+            0, 0, 255, 255, //
+            255, 255, 255, 0, //
+            0, 0, 0, 255, //
+            132, 130, 132, 0,
+        ]
+    );
+}
+
+#[tokio::test]
+async fn cursor_in_big_endian_16bpp_uses_the_format_byte_order() {
+    let mut pf = pf_16bpp();
+    pf.big_endian_flag = 1;
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 2, 1, CURSOR));
+    bytes.extend_from_slice(&0xF800u16.to_be_bytes());
+    bytes.extend_from_slice(&0x001Fu16.to_be_bytes());
+    bytes.push(0xC0);
+    let (_, events) = run(&bytes, &pf).await;
+    assert_eq!(
+        cursor_pixels(&events).expect("cursor decoded"),
+        vec![255, 0, 0, 255, 0, 0, 255, 255]
+    );
+}
+
+#[tokio::test]
+async fn cursor_in_a_colour_map_format_is_skipped_and_stream_stays_in_sync() {
+    let mut pf = PixelFormat::rgba();
+    pf.bits_per_pixel = 8;
+    pf.depth = 8;
+    pf.true_color_flag = 0;
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 3, 1, CURSOR));
+    bytes.extend_from_slice(&[7; 3]);
+    bytes.push(0xE0);
     bytes.push(BELL);
     let (result, events) = run(&bytes, &pf).await;
     assert!(is_eof(&result), "{result:?}");
@@ -376,16 +430,148 @@ async fn cursor_in_rgba_still_decodes_with_mask_alpha() {
 
 // ------------------------------------------------------------------- tight --
 
+fn raw_image(events: &[VncEvent]) -> Option<Vec<u8>> {
+    events.iter().find_map(|e| match e {
+        VncEvent::RawImage(_, data) => Some(data.clone()),
+        _ => None,
+    })
+}
+
+/// Little-endian RGB565 wire bytes for `pixels`.
+fn le565(pixels: &[u16]) -> Vec<u8> {
+    pixels.iter().flat_map(|p| p.to_le_bytes()).collect()
+}
+
 #[tokio::test]
-async fn tight_in_16bpp_is_a_typed_error_not_a_panic() {
+async fn tight_in_a_colour_map_format_is_a_typed_error_not_a_panic() {
+    let mut pf = PixelFormat::rgba();
+    pf.bits_per_pixel = 8;
+    pf.depth = 8;
+    pf.true_color_flag = 0;
     let mut bytes = fb_update(1);
     bytes.extend(rect(0, 0, 1, 1, TIGHT));
     bytes.push(0x80); // fill
-    bytes.extend_from_slice(&[1, 2, 3]);
-    let (result, _) = run(&bytes, &pf_16bpp()).await;
+    bytes.push(1);
+    let (result, _) = run(&bytes, &pf).await;
     assert!(
         matches!(result, Err(VncError::WrongPixelFormat)),
         "{result:?}"
+    );
+}
+
+// termiHub fork (#3464): at 16 bpp a Tight TPIXEL is a full 2-byte PIXEL and the
+// decoder emits negotiated-format pixels (converted to RGBA by the consumer).
+
+#[tokio::test]
+async fn tight_16bpp_fill_repeats_the_two_byte_pixel() {
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 3, 1, TIGHT));
+    bytes.push(0x80); // fill
+    bytes.extend(le565(&[0xF800]));
+    bytes.push(BELL);
+    let (result, events) = run(&bytes, &pf_16bpp()).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(has_bell(&events), "stream desynchronised");
+    assert_eq!(raw_image(&events).unwrap(), le565(&[0xF800; 3]));
+}
+
+#[tokio::test]
+async fn tight_16bpp_big_endian_fill_keeps_the_wire_byte_order() {
+    let mut pf = pf_16bpp();
+    pf.big_endian_flag = 1;
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 2, 1, TIGHT));
+    bytes.push(0x80);
+    bytes.extend_from_slice(&0x07E0u16.to_be_bytes());
+    let (_, events) = run(&bytes, &pf).await;
+    assert_eq!(raw_image(&events).unwrap(), [0x07, 0xE0].repeat(2));
+}
+
+#[tokio::test]
+async fn tight_16bpp_copy_filter_passes_pixels_through() {
+    // Short (< 12 bytes) data is sent uncompressed.
+    let mut bytes = fb_update(2);
+    bytes.extend(rect(0, 0, 2, 1, TIGHT));
+    bytes.push(0x00); // basic, stream 0, copy filter
+    bytes.extend(le565(&[0x1234, 0xABCD]));
+    // Longer data is zlib-compressed behind a compact length.
+    let pixels: Vec<u16> = (0..8).map(|i| 0x0841 * i).collect();
+    let compressed = zlib(&le565(&pixels));
+    assert!(compressed.len() < 128);
+    bytes.extend(rect(0, 0, 4, 2, TIGHT));
+    bytes.push(0x00);
+    bytes.push(compressed.len() as u8);
+    bytes.extend_from_slice(&compressed);
+    bytes.push(BELL);
+    let (result, events) = run(&bytes, &pf_16bpp()).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(has_bell(&events), "stream desynchronised");
+    let images: Vec<Vec<u8>> = events
+        .iter()
+        .filter_map(|e| match e {
+            VncEvent::RawImage(_, data) => Some(data.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(images, vec![le565(&[0x1234, 0xABCD]), le565(&pixels)]);
+}
+
+#[tokio::test]
+async fn tight_16bpp_palette_entries_are_two_byte_pixels() {
+    let mut bytes = fb_update(2);
+    // Three colours: byte indexes.
+    bytes.extend(rect(0, 0, 3, 1, TIGHT));
+    bytes.push(0x40); // basic, stream 0, explicit filter
+    bytes.push(1); // palette
+    bytes.push(2); // 3 colours
+    bytes.extend(le565(&[0xF800, 0x07E0, 0x001F]));
+    bytes.extend_from_slice(&[2, 0, 1]);
+    // Two colours: bit-packed, rows byte-padded.
+    bytes.extend(rect(0, 0, 3, 1, TIGHT));
+    bytes.push(0x40);
+    bytes.push(1);
+    bytes.push(1); // 2 colours
+    bytes.extend(le565(&[0x0000, 0xFFFF]));
+    bytes.push(0b1010_0000);
+    bytes.push(BELL);
+    let (result, events) = run(&bytes, &pf_16bpp()).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(has_bell(&events), "stream desynchronised");
+    let images: Vec<Vec<u8>> = events
+        .iter()
+        .filter_map(|e| match e {
+            VncEvent::RawImage(_, data) => Some(data.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        images,
+        vec![
+            le565(&[0x001F, 0xF800, 0x07E0]),
+            le565(&[0xFFFF, 0x0000, 0xFFFF]),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn tight_16bpp_gradient_filter_reconstructs_pixels() {
+    // Row 0: white then black. The first pixel's prediction is 0, so it is sent
+    // as-is; black's prediction is white, so each channel's delta is
+    // `(0 - max) & max = 1`.
+    // Row 1: the prediction `up + left - up_left` for (1, 1) is
+    // black + white - white = black, so a zero delta keeps it black.
+    let mut bytes = fb_update(1);
+    bytes.extend(rect(0, 0, 2, 2, TIGHT));
+    bytes.push(0x40);
+    bytes.push(2); // gradient
+    bytes.extend(le565(&[0xFFFF, 0x0821, 0x0000, 0x0000]));
+    bytes.push(BELL);
+    let (result, events) = run(&bytes, &pf_16bpp()).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(has_bell(&events), "stream desynchronised");
+    assert_eq!(
+        raw_image(&events).unwrap(),
+        le565(&[0xFFFF, 0x0000, 0xFFFF, 0x0000])
     );
 }
 
@@ -439,6 +625,49 @@ async fn tight_after_failed_zlib_decode_errors_instead_of_panicking() {
 }
 
 // ------------------------------------------------------------- zrle / trle --
+
+#[tokio::test]
+async fn zrle_16bpp_uses_two_byte_cpixels() {
+    // termiHub fork (#3464): a 16-bpp CPIXEL is the full PIXEL; the decoder
+    // emits negotiated-format pixels. A 3x1 tile, raw, then a 2x1 solid tile.
+    let mut tile = vec![0]; // raw
+    tile.extend(le565(&[0xF800, 0x07E0, 0x001F]));
+    let payload = zlib(&tile);
+    let mut bytes = fb_update(2);
+    bytes.extend(rect(0, 0, 3, 1, ZRLE));
+    bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    bytes.extend(payload);
+    let mut solid = vec![1];
+    solid.extend(le565(&[0x1234]));
+    // Continues the same zlib stream (ZRLE keeps one stream per connection).
+    let payload = {
+        let mut enc = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        enc.write_all(&tile).unwrap();
+        enc.flush().unwrap();
+        let first = enc.get_ref().len();
+        enc.write_all(&solid).unwrap();
+        enc.flush().unwrap();
+        enc.get_ref()[first..].to_vec()
+    };
+    bytes.extend(rect(0, 0, 2, 1, ZRLE));
+    bytes.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+    bytes.extend(payload);
+    bytes.push(BELL);
+    let (result, events) = run(&bytes, &pf_16bpp()).await;
+    assert!(is_eof(&result), "{result:?}");
+    assert!(has_bell(&events), "stream desynchronised");
+    let images: Vec<Vec<u8>> = events
+        .iter()
+        .filter_map(|e| match e {
+            VncEvent::RawImage(_, data) => Some(data.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        images,
+        vec![le565(&[0xF800, 0x07E0, 0x001F]), le565(&[0x1234; 2])]
+    );
+}
 
 #[tokio::test]
 async fn zrle_rle_run_overshooting_the_tile_is_invalid_data() {

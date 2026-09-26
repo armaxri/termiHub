@@ -2,20 +2,48 @@ use crate::VncError;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// All supported vnc encodings
+///
+/// termiHub fork (#3464): the enum no longer carries `#[repr(i32)]`
+/// discriminants, because the Tight quality / compression-level pseudo-encodings
+/// carry their level. [`VncEncoding::wire_value`] is the RFB encoding number.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(i32)]
 pub enum VncEncoding {
-    Raw = 0,
-    CopyRect = 1,
+    Raw,
+    CopyRect,
     // Rre = 2,
     // Hextile = 5,
-    Tight = 7,
-    Trle = 15,
-    Zrle = 16,
-    CursorPseudo = -239,
-    DesktopSizePseudo = -223,
-    LastRectPseudo = -224,
+    Tight,
+    Trle,
+    Zrle,
+    CursorPseudo,
+    DesktopSizePseudo,
+    LastRectPseudo,
+    /// Tight JPEG quality level pseudo-encoding (`-32 + level`, level `0..=9`,
+    /// 9 = best quality). Levels above 9 are clamped to 9 (termiHub fork, #3464).
+    TightJpegQuality(u8),
+    /// Tight zlib compression level pseudo-encoding (`-256 + level`, level
+    /// `0..=9`, 9 = smallest output). Levels above 9 are clamped to 9 (termiHub
+    /// fork, #3464).
+    TightCompressLevel(u8),
+}
+
+impl VncEncoding {
+    /// The signed RFB encoding number sent in `SetEncodings`.
+    pub fn wire_value(self) -> i32 {
+        match self {
+            VncEncoding::Raw => 0,
+            VncEncoding::CopyRect => 1,
+            VncEncoding::Tight => 7,
+            VncEncoding::Trle => 15,
+            VncEncoding::Zrle => 16,
+            VncEncoding::CursorPseudo => -239,
+            VncEncoding::DesktopSizePseudo => -223,
+            VncEncoding::LastRectPseudo => -224,
+            VncEncoding::TightJpegQuality(level) => -32 + i32::from(level.min(9)),
+            VncEncoding::TightCompressLevel(level) => -256 + i32::from(level.min(9)),
+        }
+    }
 }
 
 impl From<u32> for VncEncoding {
@@ -59,7 +87,7 @@ impl VncEncoding {
 
 impl From<VncEncoding> for u32 {
     fn from(e: VncEncoding) -> Self {
-        e as u32
+        e.wire_value() as u32
     }
 }
 
@@ -314,6 +342,23 @@ impl PixelFormat {
         }
     }
 
+    /// 16-bit "high colour" RGB565, little-endian: red in bits 11..16 (max 31),
+    /// green in bits 5..11 (max 63), blue in bits 0..5 (max 31). Half the
+    /// bandwidth of the 32-bit formats (termiHub fork, #3464).
+    pub fn rgb565() -> PixelFormat {
+        Self {
+            bits_per_pixel: 16,
+            depth: 16,
+            red_max: 31,
+            green_max: 63,
+            blue_max: 31,
+            red_shift: 11,
+            green_shift: 5,
+            blue_shift: 0,
+            ..Default::default()
+        }
+    }
+
     pub(crate) async fn read<S>(reader: &mut S) -> Result<Self, VncError>
     where
         S: AsyncRead + Unpin,
@@ -321,6 +366,44 @@ impl PixelFormat {
         let mut pixel_buffer = [0_u8; 16];
         reader.read_exact(&mut pixel_buffer).await?;
         pixel_buffer.try_into()
+    }
+}
+
+#[cfg(test)]
+mod encoding_tests {
+    use super::VncEncoding;
+
+    #[test]
+    fn wire_values_match_rfc_6143() {
+        let cases = [
+            (VncEncoding::Raw, 0),
+            (VncEncoding::CopyRect, 1),
+            (VncEncoding::Tight, 7),
+            (VncEncoding::Trle, 15),
+            (VncEncoding::Zrle, 16),
+            (VncEncoding::CursorPseudo, -239),
+            (VncEncoding::DesktopSizePseudo, -223),
+            (VncEncoding::LastRectPseudo, -224),
+        ];
+        for (encoding, wire) in cases {
+            assert_eq!(encoding.wire_value(), wire, "{encoding:?}");
+            assert_eq!(u32::from(encoding), wire as u32, "{encoding:?}");
+            assert_eq!(VncEncoding::from_wire(wire as u32), Some(encoding));
+        }
+    }
+
+    #[test]
+    fn tight_quality_and_compress_levels_map_to_their_pseudo_encodings() {
+        assert_eq!(VncEncoding::TightJpegQuality(0).wire_value(), -32);
+        assert_eq!(VncEncoding::TightJpegQuality(9).wire_value(), -23);
+        assert_eq!(VncEncoding::TightCompressLevel(0).wire_value(), -256);
+        assert_eq!(VncEncoding::TightCompressLevel(9).wire_value(), -247);
+        // Out-of-range levels clamp instead of leaking into another encoding.
+        assert_eq!(VncEncoding::TightJpegQuality(200).wire_value(), -23);
+        assert_eq!(VncEncoding::TightCompressLevel(10).wire_value(), -247);
+        // The server never sends rectangles in these pseudo-encodings.
+        assert_eq!(VncEncoding::from_wire(-23i32 as u32), None);
+        assert_eq!(VncEncoding::from_wire(-256i32 as u32), None);
     }
 }
 
@@ -388,6 +471,24 @@ mod pixel_format_tests {
         assert!(format.validate().is_ok());
         assert!(PixelFormat::rgba().validate().is_ok());
         assert!(PixelFormat::bgra().validate().is_ok());
+    }
+
+    #[test]
+    fn rgb565_is_a_valid_16bpp_true_colour_format() {
+        let format = PixelFormat::rgb565();
+        assert!(format.validate().is_ok());
+        assert_eq!(format.bits_per_pixel, 16);
+        assert_eq!(format.depth, 16);
+        assert_eq!(format.big_endian_flag, 0);
+        assert_eq!(format.true_color_flag, 1);
+        assert_eq!(
+            (format.red_max, format.green_max, format.blue_max),
+            (31, 63, 31)
+        );
+        assert_eq!(
+            (format.red_shift, format.green_shift, format.blue_shift),
+            (11, 5, 0)
+        );
     }
 
     #[test]

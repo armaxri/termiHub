@@ -643,6 +643,14 @@ where
                         VncEncoding::LastRectPseudo => {
                             break;
                         }
+                        // termiHub fork (#3464): client-only hints; `from_wire`
+                        // never yields them, so a rectangle cannot carry one.
+                        VncEncoding::TightJpegQuality(_) | VncEncoding::TightCompressLevel(_) => {
+                            return Err(VncError::Protocol(format!(
+                                "server used client-only pseudo-encoding {:?}",
+                                rect.encoding
+                            )));
+                        }
                     }
                 }
             }

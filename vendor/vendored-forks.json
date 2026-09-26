@@ -62,6 +62,10 @@
             "https://github.com/armaxri/termiHub/issues/3499",
             "https://github.com/armaxri/termiHub/pull/3512"
           ]
+        },
+        {
+          "summary": "16-bit high colour: RGB565 PixelFormat, full-PIXEL Tight TPIXELs (fill/copy/palette/gradient), cursor shapes decoded to RGBA8888 for every true-colour format; Tight JPEG-quality / compression-level pseudo-encodings",
+          "refs": ["https://github.com/armaxri/termiHub/issues/3464"]
         }
       ],
       "watch": {

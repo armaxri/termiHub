@@ -72,6 +72,10 @@ pub enum VncEvent {
     ///
     /// According to [RFC6143, section-7.8.1](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.8.1)
     ///
+    /// The rect's `x`/`y` are the hotspot. termiHub fork (#3464): the data is
+    /// always RGBA8888 (`width * height * 4` bytes, alpha from the cursor mask),
+    /// independent of the negotiated pixel format.
+    ///
     SetCursor(Rect, ImageData),
     /// Just ring a bell
     ///

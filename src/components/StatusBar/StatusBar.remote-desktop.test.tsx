@@ -78,7 +78,7 @@ describe("StatusBar — remote-desktop segment", () => {
     expect(item!.textContent).toContain("16-bit");
   });
 
-  it("omits a stale colour depth for VNC, which is always 32-bit (PROD-026)", () => {
+  it("shows the negotiated 16-bit colour depth for VNC (#3464)", () => {
     setActiveTab({
       config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "16" } },
     });
@@ -87,6 +87,30 @@ describe("StatusBar — remote-desktop segment", () => {
 
     const item = query();
     expect(item).not.toBeNull();
+    expect(item!.textContent).toContain("kiosk:5901");
+    expect(item!.textContent).toContain("16-bit");
+  });
+
+  it("shows a stale VNC colour depth as the 32-bit it connects at", () => {
+    setActiveTab({
+      config: { type: "vnc", config: { host: "kiosk", port: 5901, colorDepth: "24" } },
+    });
+
+    act(() => root.render(React.createElement(StatusBar)));
+
+    const item = query();
+    expect(item!.textContent).toContain("32-bit");
+    expect(item!.textContent).not.toContain("24-bit");
+  });
+
+  it("omits the colour depth for a VNC config saved without one", () => {
+    setActiveTab({
+      config: { type: "vnc", config: { host: "kiosk", port: 5901 } },
+    });
+
+    act(() => root.render(React.createElement(StatusBar)));
+
+    const item = query();
     expect(item!.textContent).toContain("kiosk:5901");
     expect(item!.textContent).not.toContain("-bit");
   });
