@@ -1645,9 +1645,10 @@ export async function transferResume(transferId: string): Promise<boolean> {
   return await invoke<boolean>("transfer_resume", { transferId });
 }
 
-/** Cancel a transfer (queued, active, or paused). Resolves `true` when a live
+/** Cancel a transfer (queued, active, or paused). Resolves `true` when a
  * transfer was cancelled, `false` for an unknown/already-finished id. Works for
- * every queued transfer (SFTP and FTP). */
+ * every queued transfer, including a paused row rehydrated from a previous run;
+ * a file of a local folder copy cancels the rest of its folder (#3613). */
 export async function transferCancel(transferId: string): Promise<boolean> {
   return await invoke<boolean>("transfer_cancel", { transferId });
 }
