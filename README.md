@@ -144,6 +144,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 - **Credential storage** — Optional credential encryption via platform keychain (OS keychain), master password, or prompt-only mode
 - **Auto-lock** — Configurable timeout for credential store locking
+- **Backup & restore** — Back up all app data (connections, settings, themes, keyboard shortcuts, workspaces, macros, workflows, tunnels, embedded servers, network tools, and optionally the encrypted credential vault) to one passphrase-protected file and restore it — per part, merged or replaced (Settings → Backup & Restore)
 - **Credential vault backup** — Export saved credentials to a passphrase-protected, encrypted file (Settings → Security → Export vault…, Master Password mode) and import it on another machine or after a reinstall (Import vault…)
 
 > ⚠️ **Plugin trust warning.** termiHub's plugin system can load **native plugins that run arbitrary code with your full user privileges** (native cdylib backends over a C ABI). Plugins carry an Ed25519 signature / trust status (`Untrusted` / `Tampered` / `Signed` / `Verified`), but installing a plugin is a trust decision: **only install plugins from publishers you trust.** An untrusted native plugin can do anything your user account can.

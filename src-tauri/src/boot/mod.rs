@@ -182,6 +182,13 @@ pub(crate) fn resolve_and_manage_config_dir(
     // is constructed below.
     app.manage(utils::config_paths::ConfigDirOverride(config_dir.clone()));
 
+    // Swap in a committed backup restore (PROD-068) before any store below
+    // loads, so no running store ever sees its file change underneath it.
+    if let Some(w) = crate::backup::pending::apply_pending_restore(&config_dir) {
+        warn!("{} ({})", w.message, w.details.as_deref().unwrap_or(""));
+        recovery_warnings.push(w);
+    }
+
     config_dir
 }
 

@@ -10,9 +10,10 @@ use crate::utils::fs::write_atomic;
 
 const WOL_DEVICES_FILE: &str = "wol-devices.json";
 
+/// On-disk shape of `wol-devices.json` (also read by the unified backup, PROD-068).
 #[derive(Serialize, Deserialize, Default)]
-struct WolDevicesFile {
-    devices: Vec<WolDevice>,
+pub(crate) struct WolDevicesFile {
+    pub(crate) devices: Vec<WolDevice>,
 }
 
 /// Resolve the path to the WoL devices file.

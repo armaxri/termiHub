@@ -1201,8 +1201,73 @@ sequenceDiagram
     BE->>Store: set_many (atomic, rolled back on failure)
 ```
 
-The exported file object is self-contained so a future unified backup can embed it as its
+The exported file object is self-contained, and the unified backup below embeds it verbatim as its
 credentials section.
+
+#### Unified backup and restore
+
+Settings → **Backup & Restore** backs up all app data to one file and restores it (PROD-068,
+`src-tauri/src/backup/`). Each persisted store is one **section** carrying the store's own schema
+version; the registry in `backup/sections.rs` lists them — connections (with agents; passwords are
+stripped as defence in depth), settings (including custom themes and keyboard shortcuts),
+workspaces, macros, workflows, tunnels, embedded servers, Wake-on-LAN devices, HTTP monitors and
+network-tool history. Session history, workflow run history, the last session and transfer state
+are deliberately not backed up. The optional **credentials** section is the credential-vault file
+object above, sealed with the backup passphrase and gated exactly like a vault export
+(master-password re-authentication; refused in OS-keychain mode until
+[#3433](https://github.com/armaxri/termiHub/issues/3433), while the rest of the backup still works).
+
+```json
+{
+  "format": "termihub-backup",
+  "formatVersion": 1,
+  "createdAt": "2026-09-26T12:00:00+00:00",
+  "appVersion": "0.1.0",
+  "encrypted": true,
+  "envelope": {
+    "version": 1,
+    "kdf": { "algorithm": "argon2id", "…": "…" },
+    "nonce": "…",
+    "data": "…"
+  }
+}
+```
+
+- **Encryption** (default on): the whole contents — sections plus the credentials section — are
+  sealed in the standard Argon2id + AES-256-GCM envelope with the backup passphrase (same rules as
+  the vault export passphrase). The header is repeated inside the ciphertext and must match. An
+  unencrypted backup keeps the contents in a `contents` field; sections that hold secrets in their
+  own store (embedded-server passwords) are refused there, and credentials stay sealed in their own
+  vault envelope, so a secret never appears in plaintext.
+- **Restore preview** decrypts, runs each section through its store's typed model and
+  `VersionedStore` gate (older schemas are migrated forward, newer ones and unknown sections are
+  refused) and compares items by id with the current store (new / differ / unchanged).
+- **Restore** is per section: **merge** (add new items; keep or overwrite items with the same id —
+  connections merge by their path-based id) or **replace** (settings are replace-only and always
+  keep this machine's credential-storage mode). It is all-or-nothing across the chosen sections:
+
+```mermaid
+sequenceDiagram
+    participant UI as Settings → Backup & Restore
+    participant BE as backup::restore
+    participant Cred as Credential store
+    participant Boot as Next start (backup::pending)
+    UI->>BE: apply(file, passphrase, choices)
+    BE->>BE: compute every chosen store's new file (validate, migrate, merge/replace)
+    BE->>BE: write them to .backup-restore-staging + manifest
+    BE->>Cred: set_many (atomic)
+    BE->>BE: rename staging → .backup-restore-pending (commit)
+    Note over BE,Cred: any failure: discard staging, put the credentials back
+    UI->>BE: restart_after_backup_restore
+    Boot->>Boot: snapshot originals → .backup-restore-rollback
+    Boot->>Boot: swap every staged file in before any store loads
+    Note over Boot: a failed file rolls every file back and shows a startup warning
+```
+
+Store files are swapped at the next start rather than live, so no running store ever has its file
+changed underneath it (and cannot overwrite the restored data with stale in-memory state). The
+startup swap snapshots the originals before touching anything, so a crash mid-swap resumes from the
+original snapshot, and the manifest may only name known store files.
 
 ### Content-Security-Policy & capability scoping
 

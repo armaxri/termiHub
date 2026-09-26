@@ -18,9 +18,10 @@ use crate::utils::fs::write_atomic;
 
 const HTTP_MONITORS_FILE: &str = "http-monitors.json";
 
+/// On-disk shape of `http-monitors.json` (also read by the unified backup, PROD-068).
 #[derive(Serialize, Deserialize, Default)]
-struct HttpMonitorsFile {
-    monitors: Vec<HttpMonitorConfig>,
+pub(crate) struct HttpMonitorsFile {
+    pub(crate) monitors: Vec<HttpMonitorConfig>,
 }
 
 /// Resolve the path to the HTTP monitors file.

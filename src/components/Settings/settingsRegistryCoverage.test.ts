@@ -72,6 +72,7 @@ const NOT_IN_SETTINGS_SEARCH: Record<string, string> = {
 const WHOLE_PANEL_CATEGORIES = new Set<SettingsCategory>([
   "shell-integration",
   "plugins",
+  "backup",
   "portable",
 ]);
 
