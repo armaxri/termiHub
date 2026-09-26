@@ -10,7 +10,8 @@ evidence:
   - plugin-api/Cargo.toml:15
   - examples/plugins/echo-backend/Cargo.toml:20
   - core/tests/fixtures/test-plugin/Cargo.toml:18
-status: open
+status: fixed
+resolution: "#3374 — SDK documented internal-only for 0.1 (maintainer decision); publish=false kept"
 ---
 
 ## What

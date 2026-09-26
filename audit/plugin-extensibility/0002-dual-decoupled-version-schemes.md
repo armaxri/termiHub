@@ -11,7 +11,8 @@ evidence:
   - plugin-api/src/lib.rs:144
   - examples/plugins/echo-backend/manifest.json:8
   - core/src/plugin/host.rs:284
-status: open
+status: fixed
+resolution: "#3374 — single authoritative ABI version (exported packed u32); manifest apiVersion is a checked mirror"
 ---
 
 ## What

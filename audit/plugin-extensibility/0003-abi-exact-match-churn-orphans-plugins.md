@@ -10,7 +10,8 @@ evidence:
   - plugin-api/src/lib.rs:114
   - core/src/plugin/host.rs:284
   - plugin-api/src/lib.rs:122
-status: open
+status: fixed
+resolution: "#3374 — ABI frozen at 1.0, major/minor append-only compat rule, layout-freeze tests, ADR-15"
 ---
 
 ## What
