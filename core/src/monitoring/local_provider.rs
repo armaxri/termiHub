@@ -25,10 +25,10 @@ use tracing::debug;
 
 use crate::errors::CoreError;
 use crate::monitoring::{
-    BackoffSchedule, CollectLoopState, MonitorStatus, MonitorStatusSender, MonitoringProvider,
-    MonitoringReceiver, MonitoringSender, MonitoringSubscription, StatsCollector, SystemStats,
-    BACKOFF_CAP, DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS,
-    DEFAULT_MONITORING_INTERVAL_MS, DEFAULT_STALE_THRESHOLD,
+    BackoffSchedule, CollectLoopState, MonitorStatusSender, MonitoringProvider, MonitoringReceiver,
+    MonitoringSender, MonitoringSubscription, StatsCollector, SystemStats, BACKOFF_CAP,
+    DEFAULT_BACKOFF_BASE, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_MONITORING_INTERVAL_MS,
+    DEFAULT_STALE_THRESHOLD,
 };
 
 use super::local_collector::LocalCollector;
@@ -222,8 +222,8 @@ async fn collect_once(collector: &SharedCollector, timeout: Duration) -> Option<
 ///
 /// A dropped status receiver must not tear down the collect loop — the stats
 /// channel governs the loop's lifetime.
-async fn emit_status(status_tx: &MonitorStatusSender, status: MonitorStatus) {
-    let _ = status_tx.send(status).await;
+async fn emit_status(status_tx: &MonitorStatusSender, loop_state: &CollectLoopState) {
+    let _ = status_tx.send(loop_state.update()).await;
 }
 
 /// Sleep `delay` in small increments, returning early if the loop is asked to
@@ -263,8 +263,8 @@ async fn reconnect_with_backoff(
     alive: &AtomicBool,
     cancel: &CancellationToken,
 ) -> Option<Box<dyn StatsCollector>> {
-    if let Some(status) = loop_state.begin_reconnect() {
-        emit_status(status_tx, status).await;
+    if loop_state.begin_reconnect().is_some() {
+        emit_status(status_tx, loop_state).await;
     }
 
     while let Some(delay) = backoff.next_delay() {
@@ -305,14 +305,14 @@ async fn run_collect_loop(
     while alive.load(Ordering::SeqCst) {
         // Paused: keep the collector alive but skip collection.
         if controls.is_paused() {
-            if let Some(status) = loop_state.pause() {
-                emit_status(&status_tx, status).await;
+            if loop_state.pause().is_some() {
+                emit_status(&status_tx, &loop_state).await;
             }
             interruptible_sleep(PAUSE_POLL_INTERVAL, &alive, &cancel).await;
             continue;
         }
-        if let Some(status) = loop_state.resume() {
-            emit_status(&status_tx, status).await;
+        if loop_state.resume().is_some() {
+            emit_status(&status_tx, &loop_state).await;
         }
 
         let collected = match collect_once(&collector, collect_timeout).await {
@@ -330,8 +330,8 @@ async fn run_collect_loop(
         } else {
             loop_state.on_failure()
         };
-        if let Some(status) = transition {
-            emit_status(&status_tx, status).await;
+        if transition.is_some() {
+            emit_status(&status_tx, &loop_state).await;
         }
 
         // No sample since (re)opening the collector within the bounded pre-Live
@@ -359,8 +359,8 @@ async fn run_collect_loop(
                     continue;
                 }
                 None => {
-                    if let Some(status) = loop_state.exhaust_reconnect() {
-                        emit_status(&status_tx, status).await;
+                    if loop_state.exhaust_reconnect().is_some() {
+                        emit_status(&status_tx, &loop_state).await;
                     }
                     break;
                 }
@@ -451,7 +451,7 @@ impl MonitoringProvider for LocalMonitoringProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::monitoring::MonitorStatusReceiver;
+    use crate::monitoring::{MonitorStatus, MonitorStatusReceiver};
     use std::sync::atomic::AtomicUsize;
 
     fn sample_stats() -> SystemStats {
@@ -509,11 +509,16 @@ mod tests {
     }
 
     /// Wait for the next status transition, failing if none arrives in time.
-    async fn next_status(rx: &mut MonitorStatusReceiver) -> MonitorStatus {
+    async fn next_update(rx: &mut MonitorStatusReceiver) -> crate::monitoring::MonitorStatusUpdate {
         tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .expect("status should arrive before timeout")
             .expect("status channel should stay open")
+    }
+
+    /// The status of the next transition (see [`next_update`]).
+    async fn next_status(rx: &mut MonitorStatusReceiver) -> MonitorStatus {
+        next_update(rx).await.status
     }
 
     /// A short-interval provider over an always-succeeding fake collector.
@@ -591,8 +596,11 @@ mod tests {
         let mut sub = provider.subscribe().await.expect("subscribe");
 
         assert_eq!(
-            next_status(&mut sub.status).await,
-            MonitorStatus::Offline,
+            next_update(&mut sub.status).await,
+            crate::monitoring::MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(crate::monitoring::MonitorStatusReason::Transport)
+            ),
             "a collector that never samples must resolve Connecting -> Offline"
         );
         assert!(
@@ -747,8 +755,11 @@ mod tests {
             MonitorStatus::Reconnecting
         );
         assert_eq!(
-            next_status(&mut sub.status).await,
-            MonitorStatus::Offline,
+            next_update(&mut sub.status).await,
+            crate::monitoring::MonitorStatusUpdate::with_reason(
+                MonitorStatus::Offline,
+                Some(crate::monitoring::MonitorStatusReason::Transport)
+            ),
             "an exhausted reconnect budget must emit Offline"
         );
 

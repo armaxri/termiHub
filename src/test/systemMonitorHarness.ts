@@ -26,7 +26,12 @@ import {
   type SystemMonitorsView,
 } from "@/store/systemMonitorBridge";
 import { DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
-import type { MonitorStatus, MonitoringEntry, SystemStats } from "@/types/monitoring";
+import type {
+  MonitorStatus,
+  MonitorStatusReason,
+  MonitoringEntry,
+  SystemStats,
+} from "@/types/monitoring";
 
 /** A deterministic stats sample for a host. */
 export function fakeStats(hostname: string, cpu = 10): SystemStats {
@@ -126,6 +131,7 @@ export class FakeMonitorTransport implements Transport {
           loading: true,
           error: null,
           status: "connecting",
+          statusReason: null,
           sampleCount: 0,
           paused: false,
           intervalMs: (p.intervalMs as number) ?? DEFAULT_MONITORING_INTERVAL_MS,
@@ -139,6 +145,7 @@ export class FakeMonitorTransport implements Transport {
             monitorSessionId: key,
             loading: false,
             status: "live",
+            statusReason: null,
             error: null,
           };
         break;
@@ -149,6 +156,7 @@ export class FakeMonitorTransport implements Transport {
             monitorSessionId: null,
             loading: false,
             status: null,
+            statusReason: null,
             error: (p.error as string) ?? null,
           };
         break;
@@ -159,11 +167,17 @@ export class FakeMonitorTransport implements Transport {
         break;
       }
       case "monitor.status":
-        if (m[key]) m[key] = { ...m[key], status: p.status as MonitorStatus };
+        if (m[key])
+          m[key] = {
+            ...m[key],
+            status: p.status as MonitorStatus,
+            statusReason: (p.reason as MonitorStatusReason | undefined) ?? null,
+          };
         break;
       case "monitor.setPaused": {
         const paused = p.paused as boolean;
-        if (m[key]) m[key] = { ...m[key], paused, status: paused ? "paused" : "live" };
+        if (m[key])
+          m[key] = { ...m[key], paused, status: paused ? "paused" : "live", statusReason: null };
         break;
       }
       case "monitor.setInterval":

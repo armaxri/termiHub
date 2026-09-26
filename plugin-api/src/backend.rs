@@ -58,6 +58,13 @@ type BoxedBackend = Box<dyn PluginTerminalBackend>;
 /// [`PluginBackend::from_boxed`]) as its first argument. All are
 /// `unsafe extern "C"`: they dereference `state` and must only be called with a
 /// `state` produced by the same plugin.
+///
+/// **Frozen for ABI 1.x.** This table lives in the *plugin* (it is compiled from
+/// the plugin's copy of this crate), so a newer host must never read past the
+/// entries an older-minor plugin was built with. New per-backend behavior in a
+/// later minor is therefore exposed through a new optional exported symbol that
+/// the host resolves only when the plugin's ABI supports that minor — never by
+/// growing this struct (see [`crate::version`]).
 #[repr(C)]
 pub struct PluginBackendVTable {
     /// See [`PluginTerminalBackend::write_input`].

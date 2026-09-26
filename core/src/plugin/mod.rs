@@ -77,8 +77,8 @@ pub use capabilities::{
 };
 pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
 pub use host::{
-    find_backend_library, load_backend_library, HostError, HostLifecycleHook, LoadedLibrary,
-    LoadedPluginInfo, PluginHost,
+    find_backend_library, load_backend_library, load_backend_library_for_manifest, HostError,
+    HostLifecycleHook, LoadedLibrary, LoadedPluginInfo, PluginHost,
 };
 pub use manager::{
     installed_backend_types, read_stored_settings, resolve_plugin_settings,
@@ -90,7 +90,6 @@ pub use manifest::{
     ManifestParseError, ManifestValidationError, Platform, PluginExtensions, PluginManifest,
     PluginPermission, PluginSettingSchema, ProtocolParserExtension, SettingType,
     StatusBarWidgetExtension, TerminalBackendExtension, ThemeEntry, ThemeExtension, WidgetPosition,
-    CURRENT_PLUGIN_API_VERSION,
 };
 pub use native_trust::{
     native_library_hash, NativeAck, NativeTrustError, NativeTrustStore, NATIVE_TRUST_DISCLOSURE,
@@ -111,4 +110,6 @@ pub use signature::{
     VerifiedIdentity, VerifiedSignature, DIGEST_ALGORITHM, SIGNATURE_ALGORITHM,
     SIGNATURE_FILE_NAME, SIGNATURE_FORMAT_VERSION,
 };
+/// The one authoritative plugin version: the native plugin ABI (PLG-002).
+pub use termihub_plugin_api::{AbiIncompatibility, AbiVersion, CURRENT_PLUGIN_ABI_VERSION};
 pub use trust_store::{TrustSource, TrustStore, TrustStoreError, TrustedPublisher};

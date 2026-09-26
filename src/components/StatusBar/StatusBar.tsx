@@ -38,6 +38,7 @@ import type { ConnectionTypeInfo } from "@/services/api";
 import {
   SystemStats,
   MonitorStatus,
+  MonitorStatusReason,
   MONITORING_INTERVAL_OPTIONS,
   DEFAULT_MONITORING_INTERVAL_MS,
 } from "@/types/monitoring";
@@ -56,6 +57,7 @@ import { PortableBadge } from "./PortableBadge";
 import { UpdateIndicator } from "./UpdateIndicator";
 import { BroadcastStatus } from "./BroadcastStatus";
 import { PluginStatusBarWidgets } from "./PluginStatusBarWidgets";
+import { monitorOfflineLabel, monitorOfflineReasonText } from "@/utils/monitorStatusReason";
 import "./StatusBar.css";
 
 const INDENT_SIZES = [1, 2, 4, 8] as const;
@@ -557,6 +559,7 @@ function MonitoringStatus() {
   const monitoringLoading = activeMonitor?.loading ?? false;
   const monitoringError = activeMonitor?.error ?? null;
   const monitoringStatus = activeMonitor?.status ?? null;
+  const monitoringStatusReason = activeMonitor?.statusReason ?? null;
   const monitoringPaused = activeMonitor?.paused ?? false;
   const monitoringInterval = activeMonitor?.intervalMs ?? DEFAULT_MONITORING_INTERVAL_MS;
 
@@ -810,6 +813,7 @@ function MonitoringStatus() {
         loading={monitoringLoading}
         monitorKey={activeMonitorKey}
         status={monitoringStatus}
+        statusReason={monitoringStatusReason}
         paused={monitoringPaused}
         intervalMs={monitoringInterval}
         histories={monitorHistories}
@@ -829,16 +833,21 @@ function MonitoringStatus() {
           Paused
         </span>
       )}
+      {/*
+        Offline says *why* (#3301): unreadable remote output, a lost connection,
+        or an agent that stopped sending data — Retry stays one click away.
+      */}
       {isOffline && (
         <Tooltip content="Retry monitoring connection" side="top">
           <button
             className="status-bar__item status-bar__item--interactive monitoring-status__error"
-            aria-label="Retry monitoring connection"
+            aria-label={`Retry monitoring connection (${monitorOfflineReasonText(monitoringStatusReason)})`}
             data-testid="monitoring-retry-btn"
+            data-reason={monitoringStatusReason ?? undefined}
             onClick={handleRetry}
           >
             <RotateCw size={12} />
-            Offline — Retry
+            {monitorOfflineLabel(monitoringStatusReason)} · Retry
           </button>
         </Tooltip>
       )}
@@ -960,6 +969,8 @@ interface MonitoringDetailDropdownProps {
   monitorKey: string | null;
   /** Observable collector-loop status of the active monitor. */
   status: MonitorStatus | null;
+  /** Why the active monitor left `live` (#3301), or `null`. */
+  statusReason: MonitorStatusReason | null;
   /** Whether collection is currently paused (#1233). */
   paused: boolean;
   /** Current per-entry refresh interval in ms (#1233). */
@@ -989,6 +1000,7 @@ function MonitoringDetailDropdown({
   loading,
   monitorKey,
   status,
+  statusReason,
   paused,
   intervalMs,
   histories,
@@ -1161,14 +1173,22 @@ function MonitoringDetailDropdown({
               </DropdownMenu.Item>
             )}
             {isOffline && (
-              <DropdownMenu.Item
-                className="monitoring-menu__action"
-                onSelect={onRetry}
-                data-testid="monitoring-retry-btn"
-              >
-                <RotateCw size={14} />
-                Retry
-              </DropdownMenu.Item>
+              <>
+                <DropdownMenu.Label
+                  className="monitoring-menu__label"
+                  data-testid="monitoring-offline-reason"
+                >
+                  {monitorOfflineLabel(statusReason)}
+                </DropdownMenu.Label>
+                <DropdownMenu.Item
+                  className="monitoring-menu__action"
+                  onSelect={onRetry}
+                  data-testid="monitoring-retry-btn"
+                >
+                  <RotateCw size={14} />
+                  Retry
+                </DropdownMenu.Item>
+              </>
             )}
 
             <DropdownMenu.Separator className="monitoring-menu__separator" />

@@ -9,6 +9,18 @@
 export type MonitorStatus = "connecting" | "live" | "stale" | "reconnecting" | "offline" | "paused";
 
 /**
+ * Why a monitoring collector loop left `live` (#3301).
+ *
+ * Mirrors the Rust `MonitorStatusReason` enum (camelCase):
+ * - `transport` — the connection failed (collect timeout / exec error, or the
+ *   reconnect budget ran out);
+ * - `parse` — the remote answered, but its output could not be read;
+ * - `silent` — an agent-hosted monitor's agent stopped sending data while the
+ *   connection to it stayed up.
+ */
+export type MonitorStatusReason = "transport" | "parse" | "silent";
+
+/**
  * One monitored host/session, keyed by a stable {@link MonitorKey} in the store
  * (`monitors: Record<MonitorKey, MonitoringEntry>`). Replaces the former global
  * singleton so multiple hosts can be monitored simultaneously (#1231, audit gap
@@ -40,6 +52,12 @@ export interface MonitoringEntry {
   error: string | null;
   /** Observable collector-loop status (`live`/`stale`/…), or `null` when idle. */
   status: MonitorStatus | null;
+  /**
+   * Why the loop left `live` — the failure kind behind a `stale` /
+   * `reconnecting` / `offline` status, or `null` while healthy (#3301). Always
+   * present on a projected entry; optional so hand-built fixtures may omit it.
+   */
+  statusReason?: MonitorStatusReason | null;
   /**
    * Number of stats samples received on this connection. The remote collectors
    * report CPU 0% on the first sample (no prior delta), so the UI treats sample

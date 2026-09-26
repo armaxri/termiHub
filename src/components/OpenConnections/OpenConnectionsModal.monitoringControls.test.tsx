@@ -179,6 +179,21 @@ describe("OpenConnectionsModal — per-host monitoring controls (#1233)", () => 
     expect(connectMonitoring).toHaveBeenCalledWith(KEY, KEY);
   });
 
+  it.each([
+    ["parse", "offline — remote output unreadable"],
+    ["transport", "offline — connection lost"],
+    ["silent", "offline — no data from agent"],
+    [null, "offline — connection lost"],
+  ] as const)("says why an offline row is offline (reason %s, #3301)", (statusReason, text) => {
+    seedMonitor({ status: "offline", statusReason });
+    renderModal();
+
+    const detail = monitorSection()?.querySelector(".oc-row__detail");
+    expect(detail?.textContent).toBe(text);
+    // The Retry affordance is kept regardless of the reason.
+    expect(document.querySelector(`[data-testid="monitor-retry-${KEY}"]`)).not.toBeNull();
+  });
+
   it("does not render a Retry control while live", () => {
     seedMonitor({ status: "live" });
     renderModal();

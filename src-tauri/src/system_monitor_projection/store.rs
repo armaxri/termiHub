@@ -32,7 +32,7 @@ use std::sync::{Mutex, MutexGuard};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
-use termihub_core::monitoring::{MonitorStatus, SystemStats};
+use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason, SystemStats};
 
 /// Default monitoring refresh interval in milliseconds — mirrors the frontend
 /// `DEFAULT_MONITORING_INTERVAL_MS` (#1233).
@@ -65,6 +65,13 @@ pub struct MonitorEntry {
     pub error: Option<String>,
     /// Observable collector-loop status (`live`/`stale`/…), or `None` when idle.
     pub status: Option<MonitorStatus>,
+    /// Why the loop left `Live` — the failure kind behind a `stale` /
+    /// `reconnecting` / `offline` status (`transport` / `parse` / `silent`),
+    /// or `None` while healthy (#3301). Lets the UI say "remote output
+    /// unreadable" rather than always "connection lost". Defaulted on
+    /// deserialize so a `monitor.replace` seed without it stays valid.
+    #[serde(default)]
+    pub status_reason: Option<MonitorStatusReason>,
     /// Number of stats samples received on this connection (drives CPU priming).
     pub sample_count: u32,
     /// True while the user has paused collection (#1233); transport stays open.
@@ -84,6 +91,7 @@ impl MonitorEntry {
             loading: false,
             error: None,
             status: None,
+            status_reason: None,
             sample_count: 0,
             paused: false,
             interval_ms: DEFAULT_MONITORING_INTERVAL_MS,
@@ -179,6 +187,7 @@ impl SystemMonitorStore {
             entry.monitor_session_id = Some(key.to_string());
             entry.loading = false;
             entry.status = Some(MonitorStatus::Live);
+            entry.status_reason = None;
             entry.error = None;
         }
         inner.dirty_monitors.insert(key.to_string());
@@ -193,6 +202,7 @@ impl SystemMonitorStore {
             entry.monitor_session_id = None;
             entry.loading = false;
             entry.status = None;
+            entry.status_reason = None;
             entry.error = error;
         }
         inner.dirty_monitors.insert(key.to_string());
@@ -212,11 +222,18 @@ impl SystemMonitorStore {
         inner.dirty_monitors.insert(key.to_string());
     }
 
-    /// `monitor.status` — an observable collector-loop status update arrived.
-    pub fn set_status(&self, key: &str, status: MonitorStatus) {
+    /// `monitor.status` — an observable collector-loop status update arrived,
+    /// with the failure kind behind it (`None` for a healthy status, #3301).
+    pub fn set_status(
+        &self,
+        key: &str,
+        status: MonitorStatus,
+        reason: Option<MonitorStatusReason>,
+    ) {
         let mut inner = self.lock();
         if let Some(entry) = inner.monitors.get_mut(key) {
             entry.status = Some(status);
+            entry.status_reason = reason;
         }
         inner.dirty_monitors.insert(key.to_string());
     }
@@ -227,6 +244,7 @@ impl SystemMonitorStore {
         let mut inner = self.lock();
         if let Some(entry) = inner.monitors.get_mut(key) {
             entry.paused = paused;
+            entry.status_reason = None;
             entry.status = Some(if paused {
                 MonitorStatus::Paused
             } else {

@@ -29,11 +29,12 @@ use tokio::sync::Mutex;
 use tokio::task::AbortHandle;
 use tracing::{info, warn};
 
-use termihub_core::monitoring::{MonitorStatus, MonitorStatusReceiver, MonitoringProvider};
+use termihub_core::monitoring::{MonitorStatusReceiver, MonitorStatusUpdate, MonitoringProvider};
 
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::session::remote_proxy::RemoteMonitoringProxy;
 use crate::system_monitor_projection::projection::fold_monitor_transition;
+use crate::system_monitor_projection::store::SystemMonitorStore;
 use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
@@ -45,11 +46,20 @@ use super::manager::SessionEntry;
 /// select arm is inert and the other arm drives the loop. This lets the status
 /// arm be disabled after its channel closes without spinning on repeated
 /// `None`s.
-async fn recv_optional(rx: &mut Option<MonitorStatusReceiver>) -> Option<MonitorStatus> {
+async fn recv_optional(rx: &mut Option<MonitorStatusReceiver>) -> Option<MonitorStatusUpdate> {
     match rx.as_mut() {
         Some(rx) => rx.recv().await,
         None => std::future::pending().await,
     }
+}
+
+/// Fold one collector status transition into the store (#3301).
+///
+/// Carries the reason alongside the status so an `Offline` monitor records
+/// *why* (e.g. unparseable remote output vs. a lost connection). Factored out of
+/// the push task so the fold is unit-testable without a Tauri app.
+fn fold_status_update(store: &SystemMonitorStore, key: &str, update: MonitorStatusUpdate) {
+    store.set_status(key, update.status, update.reason);
 }
 
 /// Borrowing facade exposing a session's monitoring operations.
@@ -238,14 +248,14 @@ impl<'a> MonitoringController<'a> {
                     }
                     status = recv_optional(&mut status_rx) => {
                         match status {
-                            Some(status) => {
+                            Some(update) => {
                                 // Server-authority fold (#2376): mirror the
-                                // collector-produced status transition into the
-                                // shared store at the source (the region diff is
-                                // the sole consumer; see the stats arm above and
-                                // PERF-007).
+                                // collector-produced status transition — and the
+                                // failure kind behind it (#3301) — into the shared
+                                // store at the source (the region diff is the sole
+                                // consumer; see the stats arm above and PERF-007).
                                 fold_monitor_transition(&app_handle, |store| {
-                                    store.set_status(&sid, status);
+                                    fold_status_update(store, &sid, update);
                                 });
                             }
                             // Status channel closed: stop polling it, keep
@@ -578,6 +588,42 @@ mod tests {
             tasks.lock().await.is_empty(),
             "the handle is removed on stop"
         );
+    }
+
+    /// The push task folds each status update *with* its reason, so a monitor
+    /// that goes Offline on unparseable output is distinguishable in the store
+    /// from one that lost its connection (#3301).
+    #[test]
+    fn status_update_fold_carries_the_reason_into_the_store() {
+        use termihub_core::monitoring::{MonitorStatus, MonitorStatusReason};
+
+        let store = SystemMonitorStore::new();
+        store.open("sess", None, None);
+        store.opened("sess");
+
+        for reason in [
+            MonitorStatusReason::Parse,
+            MonitorStatusReason::Transport,
+            MonitorStatusReason::Silent,
+        ] {
+            fold_status_update(
+                &store,
+                "sess",
+                MonitorStatusUpdate::with_reason(MonitorStatus::Offline, Some(reason)),
+            );
+            let entry = store.get("sess").expect("entry");
+            assert_eq!(entry.status, Some(MonitorStatus::Offline));
+            assert_eq!(entry.status_reason, Some(reason));
+        }
+
+        fold_status_update(
+            &store,
+            "sess",
+            MonitorStatusUpdate::new(MonitorStatus::Live),
+        );
+        let entry = store.get("sess").expect("entry");
+        assert_eq!(entry.status, Some(MonitorStatus::Live));
+        assert_eq!(entry.status_reason, None, "recovery clears the reason");
     }
 
     /// With no override recorded, a missing session is treated as already gone —

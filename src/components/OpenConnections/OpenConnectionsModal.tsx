@@ -42,6 +42,7 @@ import {
 import { findCompanion, isCompanion, orderTunnelRows } from "@/utils/tunnelChain";
 import type { TransferState } from "@/types/connection";
 import type { MonitoringEntry } from "@/types/monitoring";
+import { monitorOfflineLabel, monitorOfflineReasonText } from "@/utils/monitorStatusReason";
 import { MONITORING_INTERVAL_OPTIONS, DEFAULT_MONITORING_INTERVAL_MS } from "@/types/monitoring";
 import { useAppStore } from "@/store/appStore";
 import {
@@ -1547,7 +1548,7 @@ function formatMonitorInterval(intervalMs: number): string {
 /** Human-readable secondary line for a monitoring row (#1233). */
 function monitorRowDetail(m: MonitoringEntry): string | undefined {
   if (m.paused) return "paused — collection stopped";
-  if (m.status === "offline") return "offline — connection lost";
+  if (m.status === "offline") return `offline — ${monitorOfflineReasonText(m.statusReason)}`;
   if (m.status === "stale") return "stale — connection dropped";
   return `every ${formatMonitorInterval(m.intervalMs)}`;
 }
@@ -1585,7 +1586,7 @@ function MonitorRowActions({
     <span className="oc-row__actions">
       <MonitorRunLocation entry={entry} />
       {isOffline && (
-        <Tooltip content="Retry monitor" side="top">
+        <Tooltip content={`${monitorOfflineLabel(entry.statusReason)}. Retry monitor`} side="top">
           <Button
             variant="secondary"
             size="sm"

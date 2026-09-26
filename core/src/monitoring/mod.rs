@@ -55,9 +55,9 @@ pub use provider::{
 };
 pub use status::{
     agent_recovery_budget, BackoffSchedule, CollectLoopState, MonitorStatus, MonitorStatusReason,
-    MonitorStatusReceiver, MonitorStatusSender, BACKOFF_CAP, DEFAULT_BACKOFF_BASE,
-    DEFAULT_COLLECT_TIMEOUT, DEFAULT_MAX_RECONNECT_ATTEMPTS, DEFAULT_STALE_THRESHOLD,
-    PRE_LIVE_FAILURE_LIMIT_FACTOR,
+    MonitorStatusReceiver, MonitorStatusSender, MonitorStatusUpdate, BACKOFF_CAP,
+    DEFAULT_BACKOFF_BASE, DEFAULT_COLLECT_TIMEOUT, DEFAULT_MAX_RECONNECT_ATTEMPTS,
+    DEFAULT_STALE_THRESHOLD, PRE_LIVE_FAILURE_LIMIT_FACTOR,
 };
 pub use types::{CpuCounters, NetCounters, SystemStats};
 
