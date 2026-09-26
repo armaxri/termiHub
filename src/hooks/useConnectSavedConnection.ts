@@ -13,7 +13,11 @@ import { frontendError, frontendLog } from "@/utils/frontendLog";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 import { resolveConnectionCredential } from "@/utils/resolveConnectionCredential";
 import { ensureCredentialStoreUnlocked } from "@/utils/ensureCredentialStoreUnlocked";
-import { isAuthFailure } from "@/utils/backendErrorCode";
+import {
+  SECOND_FACTOR_FAILED_MESSAGE,
+  isAuthFailure,
+  isSecondFactorFailure,
+} from "@/utils/backendErrorCode";
 import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 
 /** Return value of {@link useConnectSavedConnection}. */
@@ -239,6 +243,17 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
                 resolution.credentialType === "key_passphrase"
                   ? "Saved passphrase was rejected — please re-enter."
                   : "Saved password was rejected — please re-enter.";
+            } else if (isSecondFactorFailure(err)) {
+              // The saved password was ACCEPTED and only the one-time code the
+              // user typed was rejected (#3376): keep the credential and open
+              // the tab with it, so the retry asks for a fresh code rather than
+              // for the password again.
+              toast.error(SECOND_FACTOR_FAILED_MESSAGE);
+              openTab(preConfig, {
+                terminalOptions: connection.terminalOptions,
+                contentType,
+              });
+              return;
             } else {
               // Non-auth failure — let the Terminal component handle the error
               openTab(config, {

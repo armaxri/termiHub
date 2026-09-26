@@ -32,7 +32,12 @@ import {
   testTerminal,
   cancelConnecting,
 } from "@/services/api";
-import { backendErrorMessage, isAuthFailure } from "@/utils/backendErrorCode";
+import {
+  SECOND_FACTOR_FAILED_MESSAGE,
+  backendErrorMessage,
+  isAuthFailure,
+  isSecondFactorFailure,
+} from "@/utils/backendErrorCode";
 import { frontendLog } from "@/utils/frontendLog";
 import { resolveConnectSecret } from "@/utils/resolveConnectSecret";
 import type { ConnectionTypeInfo } from "@/services/api";
@@ -1202,6 +1207,10 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     } catch (err) {
       if (testCanceledRef.current) {
         toast.info("Connection test canceled.");
+      } else if (isSecondFactorFailure(err)) {
+        // A mistyped one-time code after an accepted password (#3376) — not a
+        // credential problem, so don't send the user to check their password.
+        toast.error("Verification failed", { description: SECOND_FACTOR_FAILED_MESSAGE });
       } else if (isAuthFailure(err)) {
         toast.error("Authentication failed", { description: backendErrorMessage(err) });
       } else {

@@ -49,6 +49,10 @@ pub(crate) enum PasswordPolicy {
     /// The password is accepted as the **first** factor only: a correct one
     /// yields partial success with keyboard-interactive remaining (sshd
     /// `AuthenticationMethods password,keyboard-interactive`).
+    ///
+    /// Caveat: russh 0.61's server clears `partial_success` on every password
+    /// rejection, so the client actually receives `partial_success: false` and
+    /// takes the password-fallback path, not the second-factor path.
     FirstFactor(&'static str),
 }
 

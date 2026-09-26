@@ -111,9 +111,19 @@ describe("RemoteDesktopOverlay", () => {
     expect(query("remote-desktop-overlay-error")?.textContent).toContain("Disconnected");
   });
 
-  it("shows the disconnected state as a reconnecting overlay", () => {
-    render("disconnected");
-    expect(query("remote-desktop-overlay-reconnecting")).not.toBeNull();
+  it("shows a dropped session with no retry running as the manual reconnect prompt", () => {
+    // `disconnected` = Auto-Reconnect off, budget spent, or a non-retryable drop
+    // (#3364): no spinner, but a Reconnect action and the backend's reason.
+    const { onReconnect } = render("disconnected", {
+      reconnectAttempt: 3,
+      message: "Reconnect failed after 3 attempts",
+    });
+    expect(query("remote-desktop-overlay-reconnecting")).toBeNull();
+    const el = query("remote-desktop-overlay-error");
+    expect(el?.textContent).toContain("Connection lost");
+    expect(el?.textContent).toContain("Reconnect failed after 3 attempts");
+    act(() => query("remote-desktop-reconnect")?.click());
+    expect(onReconnect).toHaveBeenCalledOnce();
   });
 
   it("omits the error message block when none is given", () => {

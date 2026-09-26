@@ -244,7 +244,7 @@ export function Tab({
       )}
       {controlledByWindow && (
         <Tooltip
-          content={`Controlled by ${controlledByWindow.name} — resize is disabled here. Click to focus that window.`}
+          content={`Taken over by ${controlledByWindow.name} — input and resize are disabled here. Click to focus that window.`}
           side="bottom"
         >
           <button
@@ -254,7 +254,7 @@ export function Tab({
               e.stopPropagation();
               onFocusOwningWindow?.(controlledByWindow.label);
             }}
-            aria-label={`Controlled by ${controlledByWindow.name}; resize disabled here. Focus that window.`}
+            aria-label={`Taken over by ${controlledByWindow.name}; input and resize disabled here. Focus that window.`}
             data-testid={`tab-controlled-badge-${tab.id}`}
           >
             <AppWindow size={12} aria-hidden />

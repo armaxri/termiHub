@@ -25,9 +25,11 @@ export function useSessionOwnershipSuperseded(): void {
     onSessionOwnershipSuperseded((payload) => {
       frontendLog(
         "session_ownership",
-        `session ${payload.sessionId} claimed by ${payload.newOwner}; resize disabled in this window`
+        `session ${payload.sessionId} claimed by ${payload.newOwner}; input and resize disabled in this window`
       );
-      toast.info("This session is now controlled by another window — resize is disabled here.");
+      toast.info(
+        "This session was taken over by another window — input and resize are paused here until you reclaim it."
+      );
     })
       .then((fn) => {
         // If the effect tore down before registration resolved, unlisten

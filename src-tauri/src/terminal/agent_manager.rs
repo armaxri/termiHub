@@ -106,6 +106,12 @@ pub(crate) enum AgentIoCommand {
     },
     /// Unregister a session's monitoring sender (and its status sender).
     UnregisterMonitoring { session_id: String },
+    /// Route a streaming tool run's `tool.event` / `tool.done` notifications to
+    /// `tx` (#3353). Registered *before* `tool.start` is sent so no early event
+    /// can be missed.
+    RegisterToolRun { run_id: String, tx: ToolRunSender },
+    /// Stop routing a streaming tool run's notifications.
+    UnregisterToolRun { run_id: String },
     /// Send the operator's ssh-agent reply bytes for a forwarded stream to the
     /// agent (`agent.forward.data`, desktop→agent leg of the relay, #1727).
     AgentForwardData { stream_id: String, data: Vec<u8> },
@@ -242,6 +248,24 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         method: &str,
         params: Value,
     ) -> Result<Value, TerminalError>;
+
+    /// Route a streaming tool run's notifications (`tool.event` / `tool.done`,
+    /// #3353) to `tx`. The channel closes without a `Done` if the agent transport
+    /// breaks. Default errors so mock clients that do not model streaming make
+    /// the caller fall back to the collect-and-return `tool.run`.
+    fn register_tool_run(
+        &self,
+        agent_id: &str,
+        _run_id: &str,
+        _tx: ToolRunSender,
+    ) -> Result<(), TerminalError> {
+        Err(TerminalError::RemoteError(format!(
+            "Agent {agent_id} does not support streaming tool runs"
+        )))
+    }
+
+    /// Stop routing a streaming tool run's notifications (#3353). Default no-op.
+    fn unregister_tool_run(&self, _agent_id: &str, _run_id: &str) {}
 
     /// Create a session on the agent.
     ///
@@ -1710,6 +1734,47 @@ impl<R: Runtime> AgentConnectionManager<R> {
             .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
     }
 
+    /// Route a streaming tool run's notifications to `tx` (#3353).
+    pub fn register_tool_run(
+        &self,
+        agent_id: &str,
+        run_id: &str,
+        tx: ToolRunSender,
+    ) -> Result<(), TerminalError> {
+        self.send_io_command(
+            agent_id,
+            AgentIoCommand::RegisterToolRun {
+                run_id: run_id.to_string(),
+                tx,
+            },
+        )
+    }
+
+    /// Stop routing a streaming tool run's notifications (#3353). Best effort:
+    /// a gone agent has already dropped the route.
+    pub fn unregister_tool_run(&self, agent_id: &str, run_id: &str) {
+        let _ = self.send_io_command(
+            agent_id,
+            AgentIoCommand::UnregisterToolRun {
+                run_id: run_id.to_string(),
+            },
+        );
+    }
+
+    /// Queue a command for an agent's I/O task.
+    fn send_io_command(&self, agent_id: &str, cmd: AgentIoCommand) -> Result<(), TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+        let conn = agents.get(agent_id).ok_or_else(|| {
+            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+        })?;
+        conn.command_tx
+            .send(cmd)
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))
+    }
+
     /// Send input to a session on the agent (fire-and-forget).
     pub fn send_session_input(
         &self,
@@ -1992,6 +2057,19 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
             remote_session_id,
             status_tx,
         )
+    }
+
+    fn register_tool_run(
+        &self,
+        agent_id: &str,
+        run_id: &str,
+        tx: ToolRunSender,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::register_tool_run(self, agent_id, run_id, tx)
+    }
+
+    fn unregister_tool_run(&self, agent_id: &str, run_id: &str) {
+        AgentConnectionManager::unregister_tool_run(self, agent_id, run_id)
     }
 
     fn send_session_input(
@@ -2350,6 +2428,8 @@ async fn agent_io_task<R: Runtime>(
     let mut line_buf = String::new();
     let mut session_outputs: HashMap<String, OutputSender> = HashMap::new();
     let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
+    // Streaming tool runs (#3353): run id → where its notifications go.
+    let mut tool_runs: HashMap<String, ToolRunSender> = HashMap::new();
     let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, String>>> =
         HashMap::new();
     // Desktop end of the ssh-agent relay (#1727): bridges forwarded ssh-agent
@@ -2496,6 +2576,12 @@ async fn agent_io_task<R: Runtime>(
                         AgentIoCommand::UnregisterMonitoring { session_id } => {
                             monitoring_outputs.remove(&session_id);
                         }
+                        AgentIoCommand::RegisterToolRun { run_id, tx } => {
+                            tool_runs.insert(run_id, tx);
+                        }
+                        AgentIoCommand::UnregisterToolRun { run_id } => {
+                            tool_runs.remove(&run_id);
+                        }
                         AgentIoCommand::Disconnect => {
                             alive.store(false, Ordering::SeqCst);
                             return;
@@ -2555,6 +2641,10 @@ async fn agent_io_task<R: Runtime>(
                                             &method,
                                             &params,
                                             &b64,
+                                        ) && !route_tool_run_notification(
+                                            &mut tool_runs,
+                                            &method,
+                                            &params,
                                         ) {
                                             dispatch_agent_notification(
                                                 &app_handle,
@@ -2598,6 +2688,11 @@ async fn agent_io_task<R: Runtime>(
         if !connection_broken {
             break;
         }
+
+        // The agent cancels a connection's streaming tool runs when it drops
+        // (#3353), so none survives into the reconnected session. Drop every
+        // route: each run's receiver sees its channel close and fails the run.
+        tool_runs.clear();
 
         // CONC-014: the transport is down and this task will not drain `command_rx`
         // again until the reconnect resolves. Flag it so `send_session_input` drops
@@ -3195,6 +3290,39 @@ fn handle_agent_forward_notification(
         m if m == AGENT_FORWARD_CLOSE => {
             if let Some(stream_id) = params["stream_id"].as_str() {
                 agent_forward.on_close(stream_id);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Route a streaming tool run notification (`tool.event` / `tool.done`,
+/// #3353) to its registered run, returning `true` if it was one. `tool.done`
+/// also drops the route — it is always the run's last message. Notifications for
+/// an unknown run (already unregistered, or from before a reconnect) are dropped.
+fn route_tool_run_notification(
+    tool_runs: &mut HashMap<String, ToolRunSender>,
+    method: &str,
+    params: &Value,
+) -> bool {
+    use termihub_core::protocol::methods::{
+        ToolDoneNotification, ToolEventNotification, TOOL_DONE, TOOL_EVENT,
+    };
+    match method {
+        m if m == TOOL_EVENT => {
+            if let Ok(n) = serde_json::from_value::<ToolEventNotification>(params.clone()) {
+                if let Some(tx) = tool_runs.get(&n.run_id) {
+                    let _ = tx.send(ToolRunMessage::Events(n.events));
+                }
+            }
+            true
+        }
+        m if m == TOOL_DONE => {
+            if let Ok(n) = serde_json::from_value::<ToolDoneNotification>(params.clone()) {
+                if let Some(tx) = tool_runs.remove(&n.run_id) {
+                    let _ = tx.send(ToolRunMessage::Done(n));
+                }
             }
             true
         }

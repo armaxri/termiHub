@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { TerminalEvictedOverlay } from "./TerminalEvictedOverlay";
+import { TerminalEvictedOverlay, TerminalWindowEvictedOverlay } from "./TerminalEvictedOverlay";
 import { withTooltip } from "@/test/tooltip";
 import { useAppStore } from "@/store/appStore";
 import { setSessionTransportForTest, stopSessionSubscription } from "@/store/sessionBridge";
@@ -113,5 +113,66 @@ describe("TerminalEvictedOverlay (SM-003 single-attach)", () => {
     await flush();
 
     expect(reclaimSession).not.toHaveBeenCalled();
+  });
+});
+
+describe("TerminalWindowEvictedOverlay (#3368 window takeover)", () => {
+  let container: HTMLDivElement;
+  let root: ReturnType<typeof createRoot>;
+  const originalReclaim = useAppStore.getState().reclaimWindowSession;
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+  });
+
+  afterEach(() => {
+    act(() => root.unmount());
+    container.remove();
+    useAppStore.setState({ reclaimWindowSession: originalReclaim });
+  });
+
+  it("shows 'Taken over by another window' naming the controlling window", async () => {
+    act(() =>
+      root.render(
+        withTooltip(
+          <TerminalWindowEvictedOverlay sessionId="sess-1" controllingWindowName="Window 2" />
+        )
+      )
+    );
+    await flush();
+
+    const overlay = container.querySelector("[data-testid='terminal-evicted-overlay']");
+    expect(overlay?.getAttribute("data-evicted-by")).toBe("window");
+    expect(overlay?.textContent).toContain("Taken over by another window");
+    expect(overlay?.textContent).toContain("Window 2");
+    expect(container.querySelector("[data-testid='terminal-evicted-reclaim-btn']")).not.toBeNull();
+  });
+
+  it("Reclaim claims the session for this window — only on the explicit click", async () => {
+    const reclaimWindowSession = vi.fn(async () => true);
+    useAppStore.setState({ reclaimWindowSession });
+
+    act(() =>
+      root.render(
+        withTooltip(
+          <TerminalWindowEvictedOverlay sessionId="sess-1" controllingWindowName="Window 2" />
+        )
+      )
+    );
+    await flush();
+    expect(reclaimWindowSession).not.toHaveBeenCalled();
+
+    const btn = container.querySelector<HTMLButtonElement>(
+      "[data-testid='terminal-evicted-reclaim-btn']"
+    );
+    await act(async () => {
+      btn?.click();
+      await Promise.resolve();
+    });
+
+    expect(reclaimWindowSession).toHaveBeenCalledTimes(1);
+    expect(reclaimWindowSession).toHaveBeenCalledWith("sess-1");
   });
 });

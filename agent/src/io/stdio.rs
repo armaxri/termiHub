@@ -32,6 +32,7 @@ pub async fn run_stdio_loop(
     let update_tx = notification_tx.clone();
     let test_update_tx = notification_tx.clone();
     let registry_tx = notification_tx.clone();
+    let tool_tx = notification_tx.clone();
     let monitoring_manager = Arc::new(MonitoringManager::new(
         notification_tx,
         connection_store.clone(),
@@ -82,7 +83,8 @@ pub async fn run_stdio_loop(
         connection_store.clone() as Arc<dyn ConnectionStoreApi>,
         monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
     )?
-    .with_registry_client(registry_client);
+    .with_registry_client(registry_client)
+    .with_notification_sender(tool_tx);
 
     let stdin = tokio::io::stdin();
     let mut stdout = tokio::io::stdout();

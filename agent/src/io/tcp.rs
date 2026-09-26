@@ -43,6 +43,7 @@ pub async fn run_tcp_listener(
     let update_tx = notification_tx.clone();
     let test_update_tx = notification_tx.clone();
     let registry_tx = notification_tx.clone();
+    let tool_tx = notification_tx.clone();
     let monitoring_manager = Arc::new(MonitoringManager::new(
         notification_tx,
         connection_store.clone(),
@@ -186,7 +187,9 @@ pub async fn run_tcp_listener(
                     connection_store.clone() as Arc<dyn ConnectionStoreApi>,
                     monitoring_manager.clone() as Arc<dyn MonitoringManagerApi>,
                 ) {
-                    Ok(handler) => handler.with_registry_client(registry_client.clone()),
+                    Ok(handler) => handler
+                        .with_registry_client(registry_client.clone())
+                        .with_notification_sender(tool_tx.clone()),
                     Err(e) => {
                         warn!("failed to build handler for {}, dropping client: {}", peer, e);
                         continue;

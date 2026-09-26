@@ -124,6 +124,11 @@ pub enum IpcErrorCode {
     EmbeddedServerError,
     Io,
     InvalidParams,
+    /// A user-typed later authentication factor (SSH keyboard-interactive
+    /// one-time code) was rejected after the saved password/key was accepted
+    /// (#3376). Deliberately NOT `auth_failed`: the frontend must keep the saved
+    /// credential and just ask for a fresh code.
+    SecondFactorFailed,
 }
 
 impl IpcErrorCode {
@@ -159,6 +164,13 @@ pub enum TerminalError {
     /// `src/utils/backendErrorCode.ts` (I18N-001 / ERR-003).
     #[error("[thub-code:auth_failed] {0}")]
     AuthFailed(String),
+
+    /// A later authentication factor the user typed (an SSH keyboard-interactive
+    /// one-time code) was rejected after the saved password or key had been
+    /// accepted (#3376). Serialized with the `second_factor_failed` code, which
+    /// the frontend never treats as a stored-credential rejection.
+    #[error("Verification code rejected — try again")]
+    SecondFactorFailed,
 
     #[error("Failed to write to terminal: {0}")]
     WriteFailed(String),
@@ -261,6 +273,7 @@ impl TerminalError {
             TerminalError::SessionNotFound(_) => C::SessionNotFound,
             TerminalError::SpawnFailed(_) => C::SpawnFailed,
             TerminalError::AuthFailed(_) => C::AuthFailed,
+            TerminalError::SecondFactorFailed => C::SecondFactorFailed,
             TerminalError::WriteFailed(_) => C::WriteFailed,
             TerminalError::ResizeFailed(_) => C::ResizeFailed,
             TerminalError::ConnectionFailed(msg) => marker_slug(msg)
@@ -308,6 +321,9 @@ impl TerminalError {
             // A dismissed keyboard-interactive prompt is a user cancel, never an
             // auth failure — no stored-credential discard (#3371).
             SessionError::AuthCancelled => TerminalError::Cancelled,
+            // A mistyped one-time code after an accepted password is not a
+            // credential rejection — no stored-credential discard (#3376).
+            SessionError::SecondFactorFailed => TerminalError::SecondFactorFailed,
             SessionError::ConnectionFailed(msg) => TerminalError::unreachable(msg),
             other => TerminalError::SpawnFailed(other.to_string()),
         }
@@ -320,6 +336,7 @@ impl TerminalError {
         match err {
             SessionError::AuthFailed => TerminalError::AuthFailed(err_display(&err)),
             SessionError::AuthCancelled => TerminalError::Cancelled,
+            SessionError::SecondFactorFailed => TerminalError::SecondFactorFailed,
             SessionError::ConnectionFailed(msg) => TerminalError::unreachable(msg),
             other => TerminalError::SshError(other.to_string()),
         }
@@ -408,6 +425,24 @@ mod tests {
         ] {
             assert!(matches!(terminal_err, TerminalError::Cancelled));
             assert_eq!(terminal_err.code(), IpcErrorCode::Cancelled);
+        }
+    }
+
+    /// A rejected one-time code after an accepted password maps to its own
+    /// `second_factor_failed` code on both connect chokepoints — never to
+    /// `auth_failed`, which would discard the saved password (#3376).
+    #[test]
+    fn second_factor_failed_maps_to_its_own_code_not_auth_failed() {
+        for terminal_err in [
+            TerminalError::from_session_spawn(SessionError::SecondFactorFailed),
+            TerminalError::from_session_ssh(SessionError::SecondFactorFailed),
+        ] {
+            assert!(matches!(terminal_err, TerminalError::SecondFactorFailed));
+            assert_eq!(terminal_err.code(), IpcErrorCode::SecondFactorFailed);
+            assert_ne!(terminal_err.code(), IpcErrorCode::AuthFailed);
+            let json = serde_json::to_value(&terminal_err).expect("serialize");
+            assert_eq!(json["code"], "second_factor_failed");
+            assert_eq!(json["message"], "Verification code rejected — try again");
         }
     }
 

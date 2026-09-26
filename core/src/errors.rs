@@ -88,6 +88,17 @@ pub enum SessionError {
     #[error("Authentication cancelled")]
     AuthCancelled,
 
+    /// A **later** authentication factor the user typed (an SSH
+    /// keyboard-interactive answer such as a one-time code) was rejected after
+    /// an earlier factor — the saved password or key — had already been
+    /// accepted (#3376).
+    ///
+    /// Distinct from [`AuthFailed`](Self::AuthFailed): the stored credential is
+    /// not known to be wrong, so consumers must **not** discard it. The user
+    /// simply retries with a fresh code.
+    #[error("Verification code rejected")]
+    SecondFactorFailed,
+
     /// The session configuration is invalid.
     #[error("Invalid config: {0}")]
     InvalidConfig(String),
@@ -174,6 +185,15 @@ mod tests {
     fn auth_cancelled_is_distinct_from_auth_failed() {
         let err = SessionError::AuthCancelled;
         assert_eq!(err.to_string(), "Authentication cancelled");
+        assert!(!matches!(err, SessionError::AuthFailed));
+    }
+
+    /// A rejected second factor is its own discriminant, never an auth failure
+    /// — that is what keeps the saved password from being discarded (#3376).
+    #[test]
+    fn second_factor_failed_is_distinct_from_auth_failed() {
+        let err = SessionError::SecondFactorFailed;
+        assert_eq!(err.to_string(), "Verification code rejected");
         assert!(!matches!(err, SessionError::AuthFailed));
     }
 

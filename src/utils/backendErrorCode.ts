@@ -29,6 +29,18 @@ import { errorMessage } from "./errorMessage";
 export const AUTH_FAILED_CODE: IpcErrorCode = "auth_failed";
 
 /**
+ * Stable code emitted when a later SSH authentication factor the user typed (a
+ * keyboard-interactive one-time code) is rejected **after** the saved password
+ * or key was accepted (#3376). Deliberately distinct from
+ * {@link AUTH_FAILED_CODE}: the saved credential is not known to be wrong, so it
+ * must never be discarded — the user just needs a fresh code.
+ */
+export const SECOND_FACTOR_FAILED_CODE: IpcErrorCode = "second_factor_failed";
+
+/** User-facing text for a rejected one-time code (#3376). */
+export const SECOND_FACTOR_FAILED_MESSAGE = "Verification code rejected — try again.";
+
+/**
  * Matches the backend error-code marker `[thub-code:<code>] ` anywhere in the
  * message. The code alphabet is restricted to lowercase/digits/underscore so
  * the token is unambiguous and never collides with prose. The trailing space is
@@ -91,6 +103,14 @@ export function parseBackendError(error: unknown): ParsedBackendError {
  */
 export function isAuthFailure(error: unknown): boolean {
   return parseBackendError(error).code === AUTH_FAILED_CODE;
+}
+
+/**
+ * True when the server rejected a user-typed one-time code after the saved
+ * credential was accepted (#3376). Never a reason to discard that credential.
+ */
+export function isSecondFactorFailure(error: unknown): boolean {
+  return parseBackendError(error).code === SECOND_FACTOR_FAILED_CODE;
 }
 
 /**
