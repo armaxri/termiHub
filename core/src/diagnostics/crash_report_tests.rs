@@ -203,3 +203,74 @@ fn read_report_refuses_paths_outside_the_directory() {
         assert!(read_report(tmp.path(), bad).is_err(), "{bad} accepted");
     }
 }
+
+#[test]
+fn read_listed_report_serves_only_listed_reports() {
+    let tmp = tempfile::tempdir().unwrap();
+    touch(tmp.path(), "crash-20260101T000000Z-1.txt");
+    fs::write(tmp.path().join("notes.txt"), "private").unwrap();
+    let (text, truncated) =
+        read_listed_report(tmp.path(), "crash-20260101T000000Z-1.txt", 1024).unwrap();
+    assert_eq!(text, "x");
+    assert!(!truncated);
+    for bad in [
+        "../secret.txt",
+        "crash-../../x.txt",
+        "notes.txt",
+        "crash-a/b.txt",
+        "crash-a\\b.txt",
+        "crash-\u{1F600}.txt",
+        "",
+    ] {
+        assert!(
+            read_listed_report(tmp.path(), bad, 1024).is_err(),
+            "{bad:?} accepted"
+        );
+    }
+    // Well-formed but not in the listing.
+    let missing = read_listed_report(tmp.path(), "crash-20260102T000000Z-1.txt", 1024);
+    assert_eq!(missing.unwrap_err().kind(), std::io::ErrorKind::NotFound);
+}
+
+#[cfg(unix)]
+#[test]
+fn read_listed_report_ignores_symlinked_reports() {
+    let tmp = tempfile::tempdir().unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    fs::write(outside.path().join("secret"), "private").unwrap();
+    std::os::unix::fs::symlink(
+        outside.path().join("secret"),
+        tmp.path().join("crash-20260101T000000Z-1.txt"),
+    )
+    .unwrap();
+    assert!(read_listed_report(tmp.path(), "crash-20260101T000000Z-1.txt", 1024).is_err());
+}
+
+#[test]
+fn read_listed_report_caps_the_size() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(
+        tmp.path().join("crash-20260101T000000Z-1.txt"),
+        "a".repeat(100),
+    )
+    .unwrap();
+    let (text, truncated) =
+        read_listed_report(tmp.path(), "crash-20260101T000000Z-1.txt", 10).unwrap();
+    assert_eq!(text.len(), 10);
+    assert!(truncated);
+    let (text, truncated) =
+        read_listed_report(tmp.path(), "crash-20260101T000000Z-1.txt", 100).unwrap();
+    assert_eq!(text.len(), 100);
+    assert!(!truncated);
+}
+
+#[test]
+fn plain_report_names_are_validated() {
+    assert!(is_plain_report_name("crash-20260926T120102Z-4242.txt"));
+    assert!(!is_plain_report_name("crash-x/../y.txt"));
+    assert!(!is_plain_report_name("crash- spaced.txt"));
+    assert!(!is_plain_report_name(&format!(
+        "crash-{}.txt",
+        "a".repeat(200)
+    )));
+}

@@ -100,6 +100,11 @@ pub const AGENT_SHUTDOWN: &str = "agent.shutdown";
 pub const AGENT_SETTINGS_UPDATE: &str = "agent.settingsUpdate";
 pub const AGENT_REQUEST_UPDATE: &str = "agent.request_update";
 pub const AGENT_REQUEST_DEFERRED_UPDATE: &str = "agent.request_deferred_update";
+/// List the agent's own local crash reports (OBS-010 follow-up, #3574). Added
+/// append-only: an older agent answers "method not found".
+pub const AGENT_CRASH_REPORTS_LIST: &str = "agent.crash_reports.list";
+/// Read one of the agent's crash reports by a name from the listing (#3574).
+pub const AGENT_CRASH_REPORTS_READ: &str = "agent.crash_reports.read";
 
 // ssh-agent relay (#1727). `data`/`close` are used both as desktop→agent
 // requests and as agent→desktop notifications; `open` is notification-only.
@@ -385,6 +390,47 @@ pub struct ConnectionInfo {
     pub client_version: String,
     /// ISO 8601 timestamp of when the client completed `initialize`.
     pub connected_since: String,
+}
+
+// ── agent.crash_reports.* (#3574) ────────────────────────────────────
+
+/// One crash report in an `agent.crash_reports.list` result.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashReportSummary {
+    /// File name (`crash-YYYYMMDDTHHMMSSZ-<pid>.txt`); pass to
+    /// `agent.crash_reports.read`. Never a path.
+    pub name: String,
+    /// Size on disk in bytes.
+    pub size: u64,
+}
+
+/// Result of `agent.crash_reports.list`: the agent's crash reports, newest
+/// first, at most `MAX_REMOTE_REPORTS` of them.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashReportsListResult {
+    pub reports: Vec<CrashReportSummary>,
+}
+
+/// Params of `agent.crash_reports.read`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashReportsReadParams {
+    /// A name exactly as returned by `agent.crash_reports.list`.
+    pub name: String,
+}
+
+/// Result of `agent.crash_reports.read`: the report's (already redacted) text,
+/// capped at `MAX_REMOTE_REPORT_BYTES`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CrashReportsReadResult {
+    pub name: String,
+    pub text: String,
+    /// `true` when the file exceeded the cap and `text` was cut.
+    #[serde(default)]
+    pub truncated: bool,
 }
 
 // ── agent.settingsUpdate ─────────────────────────────────────────────
@@ -3207,6 +3253,8 @@ mod tests {
         assert_eq!(CONNECTIONS_FOLDERS_DELETE, "connections.folders.delete");
         assert_eq!(HEALTH_CHECK, "health.check");
         assert_eq!(AGENT_LIST_CONNECTIONS, "agent.list_connections");
+        assert_eq!(AGENT_CRASH_REPORTS_LIST, "agent.crash_reports.list");
+        assert_eq!(AGENT_CRASH_REPORTS_READ, "agent.crash_reports.read");
         assert_eq!(AGENT_SHUTDOWN, "agent.shutdown");
         assert_eq!(AGENT_SETTINGS_UPDATE, "agent.settingsUpdate");
         assert_eq!(AGENT_REQUEST_UPDATE, "agent.request_update");
