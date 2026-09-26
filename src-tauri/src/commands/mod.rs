@@ -10,6 +10,7 @@ pub mod file_bookmarks;
 pub mod files;
 pub mod inventory_import;
 pub mod local_process;
+pub mod diagnostics;
 pub mod logs;
 pub mod macros;
 pub mod network;

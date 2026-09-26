@@ -488,7 +488,11 @@ pub fn run() -> anyhow::Result<()> {
     // live so a crash lands in the ring buffer and the synchronous file sink
     // before the process unwinds — the highest-value post-mortem event, which
     // otherwise leaves no trace in `termihub.log`.
-    utils::panic_hook::install();
+    // It also leaves a redacted local crash report (OBS-010).
+    utils::panic_hook::install(
+        file_log::log_dir()
+            .map(|d| termihub_core::diagnostics::crash_report::crash_dir_in(&d)),
+    );
 
     // Shared X server manager (#1049), held as an `Arc` so the provisioner
     // (#1052) and the Tauri commands can both reference the same instance.
@@ -794,6 +798,11 @@ pub fn run() -> anyhow::Result<()> {
             commands::logs::record_frontend_log,
             commands::logs::set_file_log_level,
             commands::logs::get_log_file_path,
+            commands::diagnostics::get_crash_report_notice,
+            commands::diagnostics::acknowledge_crash_reports,
+            commands::diagnostics::read_crash_report,
+            commands::diagnostics::preview_diagnostics_bundle,
+            commands::diagnostics::export_diagnostics_bundle,
             // Tunnels
             commands::tunnel::get_tunnels,
             commands::tunnel::save_tunnel,
