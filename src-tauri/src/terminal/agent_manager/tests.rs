@@ -799,6 +799,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             tool_streaming: false,
             agent_version: String::new(),
         },
+        ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
         client_id: String::new(),
     }
 }
@@ -934,6 +935,7 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
             tool_streaming: false,
             agent_version: String::new(),
         },
+        ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
         client_id: String::new(),
     };
     (conn, join)
@@ -1505,4 +1507,66 @@ fn takeover_attach_originates_only_from_explicit_actions() {
             "{name}: an implicit re-attach path must never take over"
         );
     }
+}
+
+// ── Agent keyboard-interactive prompt relay (#3375) ─────────────────
+
+#[test]
+fn initialize_advertises_keyboard_interactive_prompt_support() {
+    let params = build_initialize_params(&AgentSettings::default(), &[]);
+    assert_eq!(
+        params["clientCapabilities"]["keyboardInteractivePrompts"],
+        true
+    );
+}
+
+#[test]
+fn ki_respond_line_carries_answers_or_null() {
+    let answers = vec![Zeroizing::new("123456".to_string())];
+    let line = serialize_ki_respond(9, "r-1", Some(&answers)).expect("serializes");
+    assert!(line.ends_with('\n'));
+    let v: Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(
+        v["method"],
+        termihub_core::protocol::methods::SSH_KEYBOARD_INTERACTIVE_RESPOND
+    );
+    assert_eq!(v["id"], 9);
+    assert_eq!(v["params"]["requestId"], "r-1");
+    assert_eq!(v["params"]["responses"], json!(["123456"]));
+
+    let cancel = serialize_ki_respond(10, "r-2", None).expect("serializes");
+    let v: Value = serde_json::from_str(cancel.trim()).unwrap();
+    assert!(v["params"]["responses"].is_null());
+}
+
+#[test]
+fn relayed_prompt_outcomes_map_to_typed_errors() {
+    use termihub_core::protocol::errors::{AUTH_CANCELLED, SECOND_FACTOR_FAILED};
+    let cancelled = AgentRpcFailure {
+        code: Some(AUTH_CANCELLED),
+        message: "Authentication was cancelled".into(),
+    };
+    assert!(matches!(
+        cancelled.into_terminal_error(),
+        TerminalError::Cancelled
+    ));
+    let otp = AgentRpcFailure {
+        code: Some(SECOND_FACTOR_FAILED),
+        message: "rejected".into(),
+    };
+    assert!(matches!(
+        otp.into_terminal_error(),
+        TerminalError::SecondFactorFailed
+    ));
+}
+
+/// Answers for a dropped agent's rounds are secrets for a round that no
+/// longer exists: never replayed after a reconnect.
+#[test]
+fn reconnect_backlog_drops_prompt_answers() {
+    let kept = filter_reconnect_backlog(vec![AgentIoCommand::KiRespond {
+        request_id: "r".into(),
+        responses: Some(vec![Zeroizing::new("123456".into())]),
+    }]);
+    assert!(kept.is_empty());
 }

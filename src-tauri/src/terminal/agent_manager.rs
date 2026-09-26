@@ -21,7 +21,6 @@ use tracing::{debug, error, info, warn};
 
 use termihub_core::backends::ssh::handler::SshSession;
 use termihub_core::monitoring::{MonitoringSender, SystemStats};
-use termihub_core::protocol::methods::MonitoringStatusNotification;
 use termihub_core::protocol::methods::{
     AgentForwardCloseParams, AgentForwardDataParams, AgentShutdownParams, AgentShutdownResult,
     ConnectionCreateParams, ConnectionDefinition, ConnectionDeleteParams, ConnectionListResult,
@@ -30,9 +29,11 @@ use termihub_core::protocol::methods::{
     SessionCreateResult, SessionDetachParams, SessionInputParams, SessionListEntry,
     SessionListResult, SessionResizeParams,
 };
+use termihub_core::protocol::methods::{ClientCapabilities, MonitoringStatusNotification};
 use termihub_core::reconnect_backoff::{
     reconnect_reducer, BackoffConfig, ReconnectEvent, ReconnectPhase, INITIAL_RECONNECT_STATE,
 };
+use zeroize::Zeroizing;
 
 use crate::agents_projection::projection::fold_agent_transition;
 use crate::agents_projection::store::AgentConnectionState;
@@ -47,6 +48,9 @@ use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
 use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
 use crate::terminal::agent_deploy::ConnectedHost;
 use crate::terminal::agent_forward::DesktopAgentForward;
+use crate::terminal::agent_ki_prompt::{
+    recv_excluding_prompts, AgentKiPromptRelay, AgentPromptActivity, KiResponses,
+};
 use crate::terminal::backend::{OutputSender, RemoteAgentConfig, RemoteStateChangeEvent};
 use crate::terminal::jsonrpc;
 use crate::utils::errors::TerminalError;
@@ -101,6 +105,13 @@ impl AgentRpcFailure {
             Some(termihub_core::protocol::errors::SESSION_HELD_BY_OTHER) => {
                 TerminalError::SessionHeldByPeer(self.message)
             }
+            // An agent-relayed OTP prompt was cancelled / its code rejected
+            // (#3375): the same typed outcomes as a direct SSH connection, so the
+            // frontend closes quietly / keeps the saved password.
+            Some(termihub_core::protocol::errors::AUTH_CANCELLED) => TerminalError::Cancelled,
+            Some(termihub_core::protocol::errors::SECOND_FACTOR_FAILED) => {
+                TerminalError::SecondFactorFailed
+            }
             _ => TerminalError::RemoteError(self.message),
         }
     }
@@ -153,6 +164,14 @@ pub(crate) enum AgentIoCommand {
     /// Tell the agent a forwarded ssh-agent stream has closed
     /// (`agent.forward.close`, #1727).
     AgentForwardClose { stream_id: String },
+    /// Answer (or cancel, `responses: None`) an agent-relayed SSH
+    /// keyboard-interactive round (`ssh.keyboard_interactive.respond`, #3375).
+    /// Fire-and-forget; the answers stay in zeroizing storage up to the wire and
+    /// are never replayed across a reconnect.
+    KiRespond {
+        request_id: String,
+        responses: KiResponses,
+    },
     /// Disconnect the agent.
     Disconnect,
     /// TEST-ONLY (#2573): abruptly sever this agent's russh transport in-process,
@@ -186,6 +205,9 @@ struct AgentConnection {
     /// the task, so the task's own self-termination paths are unaffected.
     io_task: AbortHandle,
     capabilities: AgentCapabilities,
+    /// Agent-relayed SSH keyboard-interactive prompts open on this desktop
+    /// (#3375). A `connection.create` excludes their time from its timeout.
+    ki_activity: Arc<AgentPromptActivity>,
     /// Agent-assigned id for this desktop's own client connection (from the
     /// `initialize` result). Lets [`list_connections`](AgentConnectionManager::list_connections)
     /// exclude this desktop from the connected-host update guard (#1349). Empty
@@ -931,6 +953,8 @@ impl<R: Runtime> AgentConnectionManager<R> {
             let config_task = config_clone.clone();
             let settings_task = settings_clone.clone();
             let agents_weak_task = agents_weak.clone();
+            let ki_activity = AgentPromptActivity::new();
+            let ki_activity_task = ki_activity.clone();
 
             // A clone for the task itself: the agent-forward relay's pump tasks
             // send reply chunks back through it (#1727). Teardown is driven by an
@@ -955,6 +979,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                     request_id,
                     agents_weak_task,
                     pending_notifications,
+                    ki_activity_task,
                 )
                 .await;
             })
@@ -969,6 +994,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 alive,
                 reconnecting,
                 io_task,
+                ki_activity,
             ))
         }));
 
@@ -985,6 +1011,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             alive,
             reconnecting,
             io_task,
+            ki_activity,
         ) = match result {
             Ok(v) => v,
             Err(e) => {
@@ -1011,6 +1038,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 reconnecting,
                 io_task,
                 capabilities,
+                ki_activity,
                 client_id,
             },
         );
@@ -1325,6 +1353,48 @@ impl<R: Runtime> AgentConnectionManager<R> {
         }
     }
 
+    /// [`send_request_with_timeout`](Self::send_request_with_timeout), except
+    /// that time the user spends on an agent-relayed SSH keyboard-interactive
+    /// prompt of this agent does not count against `timeout` (#3375).
+    fn send_request_excluding_prompts(
+        &self,
+        agent_id: &str,
+        method: &str,
+        params: Value,
+        timeout: std::time::Duration,
+    ) -> Result<Value, TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+        let conn = agents.get(agent_id).ok_or_else(|| {
+            TerminalError::RemoteError(format!("Agent {} not connected", agent_id))
+        })?;
+        let activity = conn.ki_activity.clone();
+        let (resp_tx, resp_rx) = oneshot::channel();
+        conn.command_tx
+            .send(AgentIoCommand::Request {
+                method: method.to_string(),
+                params,
+                response_tx: resp_tx,
+            })
+            .map_err(|_| TerminalError::RemoteError("Agent I/O task gone".to_string()))?;
+        drop(agents);
+
+        match tokio::runtime::Handle::current()
+            .block_on(recv_excluding_prompts(resp_rx, timeout, &activity))
+        {
+            Err(()) => Err(TerminalError::RemoteError(format!(
+                "Agent request timed out after {:?}",
+                timeout
+            ))),
+            Ok(Err(_recv)) => Err(TerminalError::RemoteError(
+                "Agent connection lost".to_string(),
+            )),
+            Ok(Ok(inner)) => inner.map_err(AgentRpcFailure::into_terminal_error),
+        }
+    }
+
     /// Create a session on the agent.
     pub fn create_session(
         &self,
@@ -1344,10 +1414,13 @@ impl<R: Runtime> AgentConnectionManager<R> {
             TerminalError::RemoteError(format!("Failed to build connection.create params: {e}"))
         })?;
 
-        let result = self.send_request(
+        // The agent's SSH connect may wait on the user answering a relayed OTP
+        // prompt (#3375): exclude that time from the request timeout.
+        let result = self.send_request_excluding_prompts(
             agent_id,
             termihub_core::protocol::methods::CONNECTION_CREATE,
             params,
+            AGENT_REQUEST_TIMEOUT,
         )?;
         serde_json::from_value::<SessionCreateResult>(result)
             .map(AgentSessionInfo::from)
@@ -2159,8 +2232,48 @@ fn build_initialize_params(settings: &AgentSettings, external_files: &[&str]) ->
         // version (see `cli::version_string`, `agent_deploy`, `agent_setup`).
         "clientVersion": env!("CARGO_PKG_VERSION"),
         "agentSettings": settings,
-        "externalConnectionFiles": external_files
+        "externalConnectionFiles": external_files,
+        // Optional features this desktop supports (#3375). Older agents ignore
+        // the member; newer ones only relay SSH keyboard-interactive prompts
+        // to a desktop that advertises them.
+        "clientCapabilities": ClientCapabilities {
+            keyboard_interactive_prompts: true,
+        },
     })
+}
+
+/// Serialize an `ssh.keyboard_interactive.respond` request line (#3375) into
+/// zeroizing storage, borrowing the answers so no unwiped copy is made.
+fn serialize_ki_respond(
+    id: u64,
+    round_id: &str,
+    responses: Option<&[Zeroizing<String>]>,
+) -> Option<Zeroizing<String>> {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Params<'a> {
+        request_id: &'a str,
+        responses: Option<Vec<&'a str>>,
+    }
+    #[derive(serde::Serialize)]
+    struct Request<'a> {
+        jsonrpc: &'static str,
+        method: &'static str,
+        params: Params<'a>,
+        id: u64,
+    }
+    let request = Request {
+        jsonrpc: "2.0",
+        method: termihub_core::protocol::methods::SSH_KEYBOARD_INTERACTIVE_RESPOND,
+        params: Params {
+            request_id: round_id,
+            responses: responses.map(|r| r.iter().map(|s| s.as_str()).collect()),
+        },
+        id,
+    };
+    let mut line = Zeroizing::new(serde_json::to_string(&request).ok()?);
+    line.push('\n');
+    Some(line)
 }
 
 /// Serialize a JSON-RPC request to a newline-terminated string for channel writes.
@@ -2387,6 +2500,10 @@ fn filter_reconnect_backlog(drained: Vec<AgentIoCommand>) -> Vec<AgentIoCommand>
             AgentIoCommand::SessionInput { .. } => {
                 // Stale keystrokes — never replay into the recovered session.
             }
+            AgentIoCommand::KiRespond { .. } => {
+                // An answer for a round of the dropped agent connection: that
+                // round is gone, and secrets are never replayed (#3375).
+            }
             AgentIoCommand::SessionResize {
                 session_id,
                 cols,
@@ -2458,6 +2575,7 @@ async fn agent_io_task<R: Runtime>(
     mut request_id: u64,
     agents: WeakAgentMap,
     pending_notifications: Vec<(String, Value)>,
+    ki_activity: Arc<AgentPromptActivity>,
 ) {
     let b64 = base64::engine::general_purpose::STANDARD;
     let mut line_buf = String::new();
@@ -2470,6 +2588,22 @@ async fn agent_io_task<R: Runtime>(
     // Desktop end of the ssh-agent relay (#1727): bridges forwarded ssh-agent
     // streams the agent opens to the operator's own local agent.
     let agent_forward = DesktopAgentForward::new();
+    // Agent-relayed SSH keyboard-interactive prompts (#3375): shown with the
+    // same dialog as a direct connection, labelled "via <agent host>".
+    let ki_relay = {
+        let command_tx = command_tx.clone();
+        AgentKiPromptRelay::new(
+            config.host.clone(),
+            termihub_core::backends::ssh::keyboard_interactive::keyboard_interactive_prompter(),
+            Arc::new(move |request_id, responses| {
+                let _ = command_tx.send(AgentIoCommand::KiRespond {
+                    request_id,
+                    responses,
+                });
+            }),
+            ki_activity,
+        )
+    };
     let mut connection_error: Option<String> = None;
 
     // Replay notifications that arrived during the `initialize` handshake before
@@ -2580,6 +2714,15 @@ async fn agent_io_task<R: Runtime>(
                                 }
                             }
                         }
+                        AgentIoCommand::KiRespond { request_id: round_id, responses } => {
+                            request_id += 1;
+                            if let Some(line) =
+                                serialize_ki_respond(request_id, &round_id, responses.as_deref())
+                            {
+                                // Never logged; the line is wiped once written.
+                                let _ = channel.data(line.as_bytes()).await;
+                            }
+                        }
                         AgentIoCommand::AgentForwardClose { stream_id } => {
                             request_id += 1;
                             if let Ok(params) =
@@ -2670,7 +2813,8 @@ async fn agent_io_task<R: Runtime>(
                                         // The ssh-agent relay's streams (#1727)
                                         // route to the desktop's local agent, not
                                         // to a session output channel.
-                                        if !handle_agent_forward_notification(
+                                        if !ki_relay.handle_notification(&method, &params)
+                                            && !handle_agent_forward_notification(
                                             &agent_forward,
                                             &command_tx,
                                             &method,
@@ -2723,6 +2867,10 @@ async fn agent_io_task<R: Runtime>(
         if !connection_broken {
             break;
         }
+
+        // The agent that asked for these answers is gone; close their dialogs
+        // (a reconnected agent re-asks if its connect is still running, #3375).
+        ki_relay.cancel_all();
 
         // The agent cancels a connection's streaming tool runs when it drops
         // (#3353), so none survives into the reconnected session. Drop every
