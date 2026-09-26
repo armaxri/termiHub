@@ -338,6 +338,29 @@ describe("useRemoteDesktopSession", () => {
     expect(mockedConnect).toHaveBeenCalledTimes(2);
   });
 
+  it("cancels an auto-reconnect: disconnects and rests on the manual prompt (#3364)", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    dispatchState({ state: "reconnecting", reconnect_attempt: 1 });
+    expect(h.get().state).toBe("reconnecting");
+
+    act(() => h.get().cancelReconnect());
+    await flush();
+
+    expect(mockedDisconnect).toHaveBeenCalledWith("rd-1");
+    expect(h.get().state).toBe("closed");
+    expect(h.get().reconnectAttempt).toBe(0);
+    // Cancel never dials again on its own.
+    expect(mockedConnect).toHaveBeenCalledTimes(1);
+
+    // The manual Reconnect then connects fresh, without a second disconnect.
+    act(() => h.get().reconnect());
+    await flush();
+    expect(mockedConnect).toHaveBeenCalledTimes(2);
+    expect(mockedDisconnect).toHaveBeenCalledTimes(1);
+  });
+
   // ── Cross-window tab move (#1904) ──
 
   it("adopts a moved-in session without opening a new connection", async () => {
