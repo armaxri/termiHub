@@ -22,7 +22,9 @@ use crate::credential::CredentialManager;
 ///
 /// Used to probe the OS keychain (which cannot enumerate its items) during an
 /// export and to label conflicts in the import preview.
-fn known_owners(connection_manager: &ConnectionManager) -> Result<HashMap<String, String>, String> {
+pub(crate) fn known_owners(
+    connection_manager: &ConnectionManager,
+) -> Result<HashMap<String, String>, String> {
     let store = connection_manager.get_all().map_err(|e| e.to_string())?;
     let mut owners = HashMap::new();
     for conn in store.connections {
