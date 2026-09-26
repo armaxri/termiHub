@@ -34,8 +34,7 @@ export function HttpMonitorRow({
         {m.config.url}
       </span>
       <span className="http-monitor-row__meta">
-        {m.config.method} · every {m.config.intervalMs / 1000}s
-        {agentId ? ` · on ${agentId}` : ""}
+        {m.config.method} · every {m.config.intervalMs / 1000}s{agentId ? ` · on ${agentId}` : ""}
         {!m.running ? " · stopped" : m.paused ? " · paused" : ""}
       </span>
       {m.running && !m.paused && (
