@@ -369,8 +369,7 @@ fn secret_keys_and_owner_labels_cover_every_credential() {
     assert!(labels
         .iter()
         .any(|(id, name)| id == &owner_id(&a.id) && name == "A (shared credential)"));
-    assert!(is_named_owner(&owner_id(&b.id)));
-    assert!(!is_named_owner("Work/web"));
+    assert!(owner_id(&b.id).starts_with(OWNER_PREFIX));
 }
 
 #[test]
@@ -438,19 +437,6 @@ fn unknown_top_level_fields_survive_a_save() {
     let raw: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
     assert_eq!(raw["note"], "keep");
     assert_eq!(raw["version"], "1");
-}
-
-#[test]
-fn kind_for_auth_method() {
-    assert_eq!(
-        NamedCredentialKind::for_auth_method("password"),
-        Some(NamedCredentialKind::Password)
-    );
-    assert_eq!(
-        NamedCredentialKind::for_auth_method("key"),
-        Some(NamedCredentialKind::KeyPassphrase)
-    );
-    assert_eq!(NamedCredentialKind::for_auth_method("agent"), None);
 }
 
 #[test]

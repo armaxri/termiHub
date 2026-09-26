@@ -98,16 +98,6 @@ impl NamedCredentialKind {
             NamedCredentialKind::KeyPassphrase => CredentialType::KeyPassphrase,
         }
     }
-
-    /// The kind a connection with `auth_method` needs, or `None` when the
-    /// method uses no stored secret (e.g. `"agent"`).
-    pub fn for_auth_method(auth_method: &str) -> Option<Self> {
-        match auth_method {
-            "password" => Some(NamedCredentialKind::Password),
-            "key" => Some(NamedCredentialKind::KeyPassphrase),
-            _ => None,
-        }
-    }
 }
 
 /// Metadata of one named credential. Contains no secret.
@@ -225,11 +215,6 @@ impl NamedCredentialError {
 /// The credential-store owner id of a named credential.
 pub fn owner_id(id: &str) -> String {
     format!("{OWNER_PREFIX}{id}")
-}
-
-/// Whether a credential-store owner id belongs to a named credential.
-pub fn is_named_owner(owner: &str) -> bool {
-    owner.starts_with(OWNER_PREFIX)
 }
 
 /// The credential-store key of a named credential's secret.
@@ -365,6 +350,7 @@ impl NamedCredentialRegistry {
     }
 
     /// An empty registry that is never persisted.
+    #[cfg(test)]
     pub fn in_memory() -> Self {
         Self {
             path: None,
