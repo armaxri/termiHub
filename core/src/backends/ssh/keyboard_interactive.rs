@@ -42,6 +42,15 @@
 //! after a PAM conversation finishes) is answered with an empty response list
 //! without prompting.
 //!
+//! ## Which factor failed (#3376)
+//!
+//! A rejection is the typed [`SessionError::AuthFailed`] (the frontend may then
+//! discard the saved credential) only when the saved credential may be what was
+//! wrong. A user-typed answer rejected **after** an earlier factor was accepted
+//! — the primary method's partial success, or an auto-answered password round
+//! the server moved past — is [`SessionError::SecondFactorFailed`] instead, so a
+//! mistyped one-time code never costs the user their saved password.
+//!
 //! ## Secrets
 //!
 //! Responses are never logged. The copies termiHub holds are wrapped in
