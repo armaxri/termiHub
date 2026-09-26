@@ -8,7 +8,7 @@ interface RemoteDesktopOverlayProps {
   host: string;
   reconnectAttempt: number;
   message: string | null;
-  /** Cancel an in-progress reconnect (tears the session down). */
+  /** Cancel an in-progress auto-reconnect (tears the session down). */
   onCancel: () => void;
   /** Manually (re)connect from a failed / dropped state. */
   onReconnect: () => void;
@@ -16,8 +16,11 @@ interface RemoteDesktopOverlayProps {
 
 /**
  * The one shared set of connection-state overlays for graphical remote-desktop
- * sessions (#1680): connecting, reconnecting (with attempt counter + Cancel),
- * and the auth/connect/close failure states (with a Reconnect action). Returns
+ * sessions (#1680): connecting, reconnecting (with attempt counter + Cancel)
+ * while the backend auto-reconnect loop is retrying (#3364), and the
+ * dropped / auth / connect / close resting states (with a Reconnect action).
+ * `disconnected` means no retry is running — Auto-Reconnect is off, its budget
+ * is spent, or the drop was non-retryable — so it gets the manual prompt. Returns
  * `null` while the session is active so the canvas shows through.
  */
 export function RemoteDesktopOverlay({
@@ -42,7 +45,7 @@ export function RemoteDesktopOverlay({
     );
   }
 
-  if (state === "reconnecting" || state === "disconnected") {
+  if (state === "reconnecting") {
     return (
       <div className="rd-overlay" data-testid="remote-desktop-overlay-reconnecting">
         <ContentOverlay
@@ -64,7 +67,8 @@ export function RemoteDesktopOverlay({
     );
   }
 
-  // Failure / closed states: auth failed, connect failed, server closed, closed.
+  // Resting states: dropped (no retry running), auth failed, connect failed,
+  // server closed, closed.
   const closed = state === "serverClosed" || state === "closed";
   return (
     <div className="rd-overlay" data-testid="remote-desktop-overlay-error">
@@ -83,7 +87,9 @@ export function RemoteDesktopOverlay({
               ? "Could not connect"
               : state === "serverClosed"
                 ? "Session closed by server"
-                : "Disconnected"
+                : state === "disconnected"
+                  ? "Connection lost"
+                  : "Disconnected"
         }
         actions={
           <Button
