@@ -6,6 +6,8 @@
 //! - [`backoff_delay`] — exponential backoff schedule for auto-retry.
 //! - [`resume_offset`] — the `REST` byte offset for resuming a partial transfer.
 //! - [`ThroughputMeter`] — an EMA of bytes/sec plus an ETA estimate.
+//! - [`SourceFingerprint`] / [`decide_resume`] — the safe-resume gate shared by
+//!   the offset-resuming executors (PARITY-004).
 
 use std::time::Duration;
 
@@ -125,9 +127,231 @@ impl Default for ThroughputMeter {
     }
 }
 
+/// Identity of a transfer's **source** file at a point in time: its size plus
+/// (when the backend reports one) its modification time (PARITY-004, #3567).
+///
+/// A resume may only append the not-yet-copied tail when the source is still
+/// the *same* file it was when the earlier bytes were copied — otherwise the
+/// destination would end up as a splice of two different versions. The
+/// executors capture a baseline when the transfer starts and re-capture before
+/// every resumed attempt; any difference restarts the copy from byte zero.
+///
+/// `mtime` is opaque and only ever compared against a fingerprint taken from
+/// the same source by the same backend (SFTP reports whole seconds, the local
+/// filesystem nanoseconds), so its unit does not matter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceFingerprint {
+    /// Source size in bytes.
+    pub size: u64,
+    /// Source modification time in a backend-specific unit, when known.
+    pub mtime: Option<u64>,
+}
+
+impl SourceFingerprint {
+    /// Whether `current` still describes the same source as `self` (the
+    /// baseline): the sizes match, and the modification times match whenever
+    /// both are known. A missing mtime on either side falls back to size only.
+    pub fn same_source(&self, current: &SourceFingerprint) -> bool {
+        if self.size != current.size {
+            return false;
+        }
+        match (self.mtime, current.mtime) {
+            (Some(a), Some(b)) => a == b,
+            _ => true,
+        }
+    }
+}
+
+/// What a resumed attempt should do, decided by [`decide_resume`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResumeDecision {
+    /// Append from this verified byte offset (`> 0`).
+    Resume(u64),
+    /// Start from byte zero: nothing to resume (fresh transfer / offset `0`),
+    /// or resume is disabled.
+    Fresh,
+    /// Start from byte zero because the source changed (or can no longer be
+    /// identified) since the earlier bytes were copied.
+    RestartSourceChanged,
+    /// Start from byte zero because the destination partial cannot be trusted
+    /// (absent, un-stattable, longer than we wrote, or already complete).
+    RestartUnverified,
+}
+
+impl ResumeDecision {
+    /// The byte offset the attempt starts from.
+    pub fn offset(self) -> u64 {
+        match self {
+            ResumeDecision::Resume(offset) => offset,
+            _ => 0,
+        }
+    }
+}
+
+/// Decide where a resumed attempt may safely start (PARITY-004, #3567). Pure.
+///
+/// - `requested` — the offset the previous attempt reached (`0` → [`Fresh`]).
+/// - `baseline` / `current` — the source fingerprint when the transfer started
+///   and right now. The source must be verifiably unchanged; an unknown
+///   fingerprint on either side cannot be trusted →
+///   [`RestartSourceChanged`].
+/// - `present` — bytes actually at the destination right now.
+/// - `total` — the source size (`0` = unknown).
+///
+/// The destination is **byte-verified**: it must hold a prefix we wrote, i.e.
+/// `present <= requested`. A *shorter* partial is still trustworthy — the copy
+/// writes sequentially, so after a dropped connection the bytes that landed are
+/// a prefix of the (unchanged) source, and the pipelined writes that were lost
+/// in flight are simply re-sent. The resume starts from `present`, never from
+/// `requested`, so a lost write can never leave a hole. A destination *longer*
+/// than we wrote, an un-stattable one, or one already at/over `total` restarts
+/// from zero ([`RestartUnverified`]).
+///
+/// [`Fresh`]: ResumeDecision::Fresh
+/// [`RestartSourceChanged`]: ResumeDecision::RestartSourceChanged
+/// [`RestartUnverified`]: ResumeDecision::RestartUnverified
+pub fn decide_resume(
+    requested: u64,
+    baseline: Option<SourceFingerprint>,
+    current: Option<SourceFingerprint>,
+    present: Option<u64>,
+    total: u64,
+) -> ResumeDecision {
+    if requested == 0 {
+        return ResumeDecision::Fresh;
+    }
+    match (baseline, current) {
+        (Some(b), Some(c)) if b.same_source(&c) => {}
+        _ => return ResumeDecision::RestartSourceChanged,
+    }
+    let Some(present) = present else {
+        return ResumeDecision::RestartUnverified;
+    };
+    if present > requested {
+        return ResumeDecision::RestartUnverified;
+    }
+    match resume_offset(present, (total > 0).then_some(total)) {
+        0 => ResumeDecision::RestartUnverified,
+        offset => ResumeDecision::Resume(offset),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn fp(size: u64, mtime: Option<u64>) -> Option<SourceFingerprint> {
+        Some(SourceFingerprint { size, mtime })
+    }
+
+    #[test]
+    fn same_source_compares_size_and_known_mtimes() {
+        let base = SourceFingerprint {
+            size: 10,
+            mtime: Some(5),
+        };
+        assert!(base.same_source(&SourceFingerprint {
+            size: 10,
+            mtime: Some(5)
+        }));
+        assert!(!base.same_source(&SourceFingerprint {
+            size: 11,
+            mtime: Some(5)
+        }));
+        assert!(!base.same_source(&SourceFingerprint {
+            size: 10,
+            mtime: Some(6)
+        }));
+        // Unknown mtime on either side → size decides.
+        assert!(base.same_source(&SourceFingerprint {
+            size: 10,
+            mtime: None
+        }));
+    }
+
+    #[test]
+    fn decide_resume_zero_request_is_fresh() {
+        assert_eq!(
+            decide_resume(0, fp(10, None), fp(10, None), Some(0), 10),
+            ResumeDecision::Fresh
+        );
+        assert_eq!(decide_resume(0, None, None, None, 0).offset(), 0);
+    }
+
+    #[test]
+    fn decide_resume_exact_partial_resumes() {
+        let d = decide_resume(300, fp(1000, Some(1)), fp(1000, Some(1)), Some(300), 1000);
+        assert_eq!(d, ResumeDecision::Resume(300));
+        assert_eq!(d.offset(), 300);
+    }
+
+    #[test]
+    fn decide_resume_shorter_partial_resumes_from_present() {
+        // Pipelined writes lost in flight on a drop: resume from what landed,
+        // never from the optimistic counter (which would leave a hole).
+        assert_eq!(
+            decide_resume(300, fp(1000, None), fp(1000, None), Some(250), 1000),
+            ResumeDecision::Resume(250)
+        );
+    }
+
+    #[test]
+    fn decide_resume_longer_or_missing_partial_restarts() {
+        assert_eq!(
+            decide_resume(300, fp(1000, None), fp(1000, None), Some(400), 1000),
+            ResumeDecision::RestartUnverified
+        );
+        assert_eq!(
+            decide_resume(300, fp(1000, None), fp(1000, None), None, 1000),
+            ResumeDecision::RestartUnverified
+        );
+        assert_eq!(
+            decide_resume(300, fp(1000, None), fp(1000, None), Some(0), 1000),
+            ResumeDecision::RestartUnverified
+        );
+    }
+
+    #[test]
+    fn decide_resume_complete_partial_restarts() {
+        assert_eq!(
+            decide_resume(1000, fp(1000, None), fp(1000, None), Some(1000), 1000),
+            ResumeDecision::RestartUnverified
+        );
+    }
+
+    #[test]
+    fn decide_resume_unknown_total_resumes_verified_partial() {
+        assert_eq!(
+            decide_resume(500, fp(0, None), fp(0, None), Some(500), 0),
+            ResumeDecision::Resume(500)
+        );
+    }
+
+    #[test]
+    fn decide_resume_changed_source_restarts() {
+        // Size changed.
+        assert_eq!(
+            decide_resume(300, fp(1000, Some(1)), fp(1200, Some(1)), Some(300), 1200),
+            ResumeDecision::RestartSourceChanged
+        );
+        // Same size, rewritten (mtime moved).
+        assert_eq!(
+            decide_resume(300, fp(1000, Some(1)), fp(1000, Some(2)), Some(300), 1000),
+            ResumeDecision::RestartSourceChanged
+        );
+    }
+
+    #[test]
+    fn decide_resume_unidentifiable_source_restarts() {
+        assert_eq!(
+            decide_resume(300, None, fp(1000, None), Some(300), 1000),
+            ResumeDecision::RestartSourceChanged
+        );
+        assert_eq!(
+            decide_resume(300, fp(1000, None), None, Some(300), 1000),
+            ResumeDecision::RestartSourceChanged
+        );
+    }
 
     #[test]
     fn backoff_is_exponential_then_gives_up() {
