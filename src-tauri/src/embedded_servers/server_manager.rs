@@ -44,8 +44,9 @@ use crate::terminal::agent_manager::AgentRpcClient;
 use crate::utils::errors::TerminalError;
 
 use termihub_core::protocol::methods::{
+    EmbeddedServerActivityParams, EmbeddedServerActivityResult, EmbeddedServerClearActivityParams,
     ServiceStartParams, ServiceStartResult, ServiceStatusParams, ServiceStatusResult,
-    ServiceStopParams,
+    ServiceStopParams, EMBEDDED_SERVER_ACTIVITY, EMBEDDED_SERVER_CLEAR_ACTIVITY,
 };
 use termihub_core::service::{Service, ServiceInfo, ServiceRegistry, ServiceStatus};
 
@@ -428,24 +429,38 @@ impl EmbeddedServerManager {
         Ok(())
     }
 
-    /// Read a server's access log (entries newer than `since`) plus its detailed
-    /// statistics (PROD-034, PROD-036).
+    /// Where `server_id`'s access log lives (#3453): on the agent currently
+    /// hosting it, else on this desktop (which also covers an unknown server —
+    /// its desktop read is simply `None`).
+    pub fn activity_route(&self, server_id: &str) -> Result<ActivityRoute, TerminalError> {
+        let agent_servers = self.lock_agent_servers()?;
+        Ok(route_for(
+            agent_servers.get(server_id).map(|h| h.agent_id.as_str()),
+        ))
+    }
+
+    /// The agent RPC client, for reading an agent-hosted server's log.
+    pub fn agent_client(&self) -> Option<Arc<dyn AgentRpcClient>> {
+        agent_rpc_client(&self.app_handle)
+    }
+
+    /// Read a **desktop-hosted** server's access log (entries newer than
+    /// `since`) plus its detailed statistics (PROD-034, PROD-036).
     ///
-    /// `None` when the server has never run on this desktop, or is hosted on an
-    /// agent (the agent keeps its own log; surfacing it over the agent RPC is a
-    /// follow-up).
+    /// `None` when the server has never run on this desktop. An agent-hosted
+    /// server's log is read over the agent RPC instead — see
+    /// [`activity_route`](Self::activity_route) and [`fetch_agent_activity`].
     pub fn get_activity(
         &self,
         server_id: &str,
         since: Option<u64>,
     ) -> Result<Option<ActivitySnapshot>, TerminalError> {
-        let hosted_on_agent = self.lock_agent_servers()?.contains_key(server_id);
         let services = self.lock_services()?;
-        Ok(read_activity(&services, hosted_on_agent, server_id, since))
+        Ok(read_activity(&services, server_id, since))
     }
 
-    /// Clear a server's access log and its request/error/top counters. A no-op
-    /// for a server with no desktop-hosted log.
+    /// Clear a **desktop-hosted** server's access log and its request/error/top
+    /// counters. A no-op for a server with no desktop-hosted log.
     pub fn clear_activity(&self, server_id: &str) -> Result<(), TerminalError> {
         if let Some(service) = self.lock_services()?.get(server_id) {
             service.clear_activity();
@@ -542,16 +557,119 @@ impl EmbeddedServerManager {
 /// unit-tested without an `AppHandle`.
 fn read_activity(
     services: &HashMap<String, EmbeddedServerService>,
-    hosted_on_agent: bool,
     server_id: &str,
     since: Option<u64>,
 ) -> Option<ActivitySnapshot> {
-    if hosted_on_agent {
-        return None;
-    }
     services
         .get(server_id)
         .map(|svc| svc.activity_snapshot(since))
+}
+
+/// Where an embedded server's access log is read from (#3453).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ActivityRoute {
+    /// Hosted on this agent: read over `embedded_server.activity`.
+    Agent(String),
+    /// Desktop-hosted, or not running anywhere: read the desktop service.
+    Desktop,
+}
+
+/// Pure routing decision behind [`EmbeddedServerManager::activity_route`].
+fn route_for(hosting_agent: Option<&str>) -> ActivityRoute {
+    match hosting_agent {
+        Some(agent_id) => ActivityRoute::Agent(agent_id.to_string()),
+        None => ActivityRoute::Desktop,
+    }
+}
+
+/// Whether `agent_id` advertised the `embeddedServerActivity` capability.
+fn agent_supports_activity(client: &dyn AgentRpcClient, agent_id: &str) -> bool {
+    client
+        .get_capabilities(agent_id)
+        .is_some_and(|caps| caps.embedded_server_activity)
+}
+
+/// Read an agent-hosted server's access log + detailed stats over the agent
+/// RPC (#3453). Blocking — call from `spawn_blocking`.
+///
+/// `Ok(None)` when the agent predates the RPC (no `embeddedServerActivity`
+/// capability, or it answers "method not found") or no longer hosts the
+/// server; a transport/agent error is returned as `Err`.
+pub fn fetch_agent_activity(
+    client: &dyn AgentRpcClient,
+    agent_id: &str,
+    server_id: &str,
+    since: Option<u64>,
+) -> Result<Option<ActivitySnapshot>, TerminalError> {
+    agent_activity_via(
+        agent_supports_activity(client, agent_id),
+        |method, params| client.send_request(agent_id, method, params),
+        server_id,
+        since,
+    )
+}
+
+/// Clear an agent-hosted server's access log over the agent RPC (#3453). A
+/// no-op against an agent that predates the RPC. Blocking — call from
+/// `spawn_blocking`.
+pub fn clear_agent_activity(
+    client: &dyn AgentRpcClient,
+    agent_id: &str,
+    server_id: &str,
+) -> Result<(), TerminalError> {
+    clear_agent_activity_via(
+        agent_supports_activity(client, agent_id),
+        |method, params| client.send_request(agent_id, method, params),
+        server_id,
+    )
+}
+
+/// Testable core of [`fetch_agent_activity`]: `supported` is the capability,
+/// `send` performs the RPC.
+fn agent_activity_via(
+    supported: bool,
+    send: impl FnOnce(&str, serde_json::Value) -> Result<serde_json::Value, TerminalError>,
+    server_id: &str,
+    since: Option<u64>,
+) -> Result<Option<ActivitySnapshot>, TerminalError> {
+    if !supported {
+        return Ok(None);
+    }
+    let params = serde_json::to_value(EmbeddedServerActivityParams {
+        server_id: server_id.to_string(),
+        since_seq: since,
+    })
+    .map_err(|e| TerminalError::EmbeddedServerError(format!("Failed to build params: {e}")))?;
+    let reply = match send(EMBEDDED_SERVER_ACTIVITY, params) {
+        Ok(reply) => reply,
+        // Defensive: an agent that advertised the capability but lacks the
+        // method still degrades to "no log", never an error toast.
+        Err(TerminalError::AgentUnsupported(_)) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let result: EmbeddedServerActivityResult = serde_json::from_value(reply).map_err(|e| {
+        TerminalError::EmbeddedServerError(format!("Invalid embedded_server.activity reply: {e}"))
+    })?;
+    Ok(result.activity)
+}
+
+/// Testable core of [`clear_agent_activity`].
+fn clear_agent_activity_via(
+    supported: bool,
+    send: impl FnOnce(&str, serde_json::Value) -> Result<serde_json::Value, TerminalError>,
+    server_id: &str,
+) -> Result<(), TerminalError> {
+    if !supported {
+        return Ok(());
+    }
+    let params = serde_json::to_value(EmbeddedServerClearActivityParams {
+        server_id: server_id.to_string(),
+    })
+    .map_err(|e| TerminalError::EmbeddedServerError(format!("Failed to build params: {e}")))?;
+    match send(EMBEDDED_SERVER_CLEAR_ACTIVITY, params) {
+        Ok(_) | Err(TerminalError::AgentUnsupported(_)) => Ok(()),
+        Err(e) => Err(e),
+    }
 }
 
 /// Build the [`ServiceRegistry`] with the run-location-routable server types.
@@ -978,7 +1096,7 @@ mod tests {
             "srv-1".to_string(),
             EmbeddedServerService::new(ServerType::Http),
         );
-        let snap = read_activity(&services, false, "srv-1", None).expect("desktop log");
+        let snap = read_activity(&services, "srv-1", None).expect("desktop log");
         assert!(snap.entries.is_empty());
         assert_eq!(
             snap.capacity,
@@ -987,13 +1105,134 @@ mod tests {
     }
 
     #[test]
-    fn read_activity_is_none_for_unknown_or_agent_hosted_servers() {
+    fn read_activity_is_none_for_unknown_servers() {
         let mut services = HashMap::new();
         services.insert(
             "srv-1".to_string(),
             EmbeddedServerService::new(ServerType::Http),
         );
-        assert!(read_activity(&services, false, "missing", None).is_none());
-        assert!(read_activity(&services, true, "srv-1", None).is_none());
+        assert!(read_activity(&services, "missing", None).is_none());
+    }
+
+    // ── agent-hosted activity routing (#3453) ────────────────────────
+
+    #[test]
+    fn activity_routes_to_the_hosting_agent_else_the_desktop() {
+        assert_eq!(
+            route_for(Some("agent-1")),
+            ActivityRoute::Agent("agent-1".to_string())
+        );
+        // Desktop-hosted and unknown servers both read the desktop service.
+        assert_eq!(route_for(None), ActivityRoute::Desktop);
+    }
+
+    fn sample_snapshot() -> serde_json::Value {
+        serde_json::json!({
+            "activity": {
+                "entries": [{
+                    "seq": 3, "timestamp": "2026-09-26T10:00:00.000Z",
+                    "client": "10.0.0.5", "method": "GET", "path": "/a.txt",
+                    "status": "200", "success": true, "bytes": 12
+                }],
+                "latestSeq": 3, "epoch": 1, "dropped": 0, "capacity": 1000,
+                "stats": {
+                    "activeConnections": 0, "totalConnections": 1,
+                    "bytesSent": 12, "bytesReceived": 0,
+                    "totalRequests": 1, "errors": 0,
+                    "topPaths": [], "topClients": [], "currentTransfers": []
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn agent_activity_sends_the_rpc_and_parses_the_snapshot() {
+        let mut seen = None;
+        let snap = agent_activity_via(
+            true,
+            |method, params| {
+                seen = Some((method.to_string(), params));
+                Ok(sample_snapshot())
+            },
+            "srv-1",
+            Some(2),
+        )
+        .expect("ok")
+        .expect("snapshot");
+        let (method, params) = seen.expect("rpc sent");
+        assert_eq!(method, "embedded_server.activity");
+        assert_eq!(
+            params,
+            serde_json::json!({ "serverId": "srv-1", "sinceSeq": 2 })
+        );
+        assert_eq!(snap.latest_seq, 3);
+        assert_eq!(snap.entries.len(), 1);
+        assert_eq!(snap.stats.total_requests, 1);
+    }
+
+    #[test]
+    fn old_agent_without_the_capability_reads_as_none_without_an_rpc() {
+        let res = agent_activity_via(
+            false,
+            |_, _| panic!("must not call an agent lacking the capability"),
+            "srv-1",
+            None,
+        );
+        assert!(matches!(res, Ok(None)));
+        clear_agent_activity_via(
+            false,
+            |_, _| panic!("must not call an agent lacking the capability"),
+            "srv-1",
+        )
+        .expect("no-op");
+    }
+
+    #[test]
+    fn method_not_found_degrades_to_none_other_errors_surface() {
+        let res = agent_activity_via(
+            true,
+            |_, _| Err(TerminalError::AgentUnsupported("nope".into())),
+            "srv-1",
+            None,
+        );
+        assert!(matches!(res, Ok(None)));
+        let res = agent_activity_via(
+            true,
+            |_, _| Err(TerminalError::RemoteError("agent gone".into())),
+            "srv-1",
+            None,
+        );
+        assert!(matches!(res, Err(TerminalError::RemoteError(_))));
+        // An agent that no longer hosts the server answers `activity: null`.
+        let res = agent_activity_via(
+            true,
+            |_, _| Ok(serde_json::json!({ "activity": null })),
+            "srv-1",
+            None,
+        );
+        assert!(matches!(res, Ok(None)));
+    }
+
+    #[test]
+    fn clear_agent_activity_sends_the_rpc() {
+        let mut seen = None;
+        clear_agent_activity_via(
+            true,
+            |method, params| {
+                seen = Some((method.to_string(), params));
+                Ok(serde_json::json!({ "cleared": true }))
+            },
+            "srv-9",
+        )
+        .expect("ok");
+        let (method, params) = seen.expect("rpc sent");
+        assert_eq!(method, "embedded_server.clear_activity");
+        assert_eq!(params, serde_json::json!({ "serverId": "srv-9" }));
+        assert!(clear_agent_activity_via(
+            true,
+            |_, _| Err(TerminalError::RemoteError("x".into())),
+            "srv-9"
+        )
+        .is_err());
     }
 }
