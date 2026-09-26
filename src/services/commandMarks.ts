@@ -85,6 +85,37 @@ interface CommandRecord {
   decoration?: IDecoration;
 }
 
+/**
+ * A buffer position recorded in a {@link CommandMarksSnapshot}, independent of
+ * the terminal width: `line` counts *logical* lines (soft-wrapped rows joined)
+ * back from the cursor's logical line, `offset` is the cell offset into that
+ * logical line. Replaying a serialized scrollback at a different width reflows
+ * the rows, but the logical lines — and so these positions — survive.
+ */
+export interface SnapshotPosition {
+  line: number;
+  offset: number;
+}
+
+/** One command in a {@link CommandMarksSnapshot}. */
+export interface SnapshotCommand {
+  prompt: SnapshotPosition;
+  input?: SnapshotPosition;
+  output?: SnapshotPosition;
+  end?: SnapshotPosition;
+  /** Exit code of a finished command; `undefined` when unknown or unfinished. */
+  exitCode?: number;
+}
+
+/**
+ * The tracked commands of a terminal, captured next to a `SerializeAddon`
+ * scrollback snapshot (which cannot carry OSC 133) so the marks can be rebuilt
+ * after the snapshot is replayed into a fresh xterm (#3420).
+ */
+export interface CommandMarksSnapshot {
+  commands: SnapshotCommand[];
+}
+
 /** A read-only view of a tracked command, for tests and diagnostics. */
 export interface CommandSummary {
   promptLine: number;
@@ -288,6 +319,90 @@ export class CommandMarkTracker implements IDisposable {
     return this.readRange(range);
   }
 
+  /**
+   * Forget every tracked command (disposing its markers and decorations) while
+   * staying usable. Call it whenever the terminal is reset: `xterm.reset()` and
+   * a shell's RIS (`ESC c`) swap in a fresh buffer but do NOT dispose markers on
+   * the old one, so without this the stale records would linger — and a replay
+   * of the same output afterwards would duplicate every mark (#3420).
+   */
+  reset(): void {
+    if (this.disposed) return;
+    this.clearFlash();
+    for (const record of this.records) this.disposeRecord(record);
+    this.records = [];
+    this.nav = null;
+  }
+
+  /**
+   * Capture the tracked commands relative to the cursor, for replay alongside a
+   * serialized scrollback snapshot. Returns `null` when there is nothing to
+   * capture, or when the alternate buffer is active (the snapshot then ends on
+   * the full-screen app, not on the normal buffer's cursor).
+   */
+  exportSnapshot(): CommandMarksSnapshot | null {
+    if (this.disposed) return null;
+    this.prune();
+    if (this.records.length === 0) return null;
+    const buffer = this.term.buffer.active;
+    if (buffer.type === "alternate") return null;
+    const layout = this.logicalLayout();
+    const commands: SnapshotCommand[] = [];
+    for (const record of this.records) {
+      const prompt = this.toSnapshotPosition(layout, record.prompt.line, 0);
+      if (!prompt) continue;
+      const command: SnapshotCommand = { prompt };
+      const input = this.anchorToSnapshot(layout, record.input);
+      const output = this.anchorToSnapshot(layout, record.output);
+      const end = this.anchorToSnapshot(layout, record.end);
+      if (input) command.input = input;
+      if (output) command.output = output;
+      if (end) command.end = end;
+      if (record.state === "finished" && record.exitCode !== undefined) {
+        command.exitCode = record.exitCode;
+      }
+      commands.push(command);
+    }
+    return commands.length > 0 ? { commands } : null;
+  }
+
+  /**
+   * Rebuild the commands of a {@link CommandMarksSnapshot} after its scrollback
+   * was replayed into this terminal. Call it once the replay has been parsed
+   * (the `xterm.write` callback) and before any live output is written, so the
+   * cursor still sits where the snapshot left it. Every restored command is
+   * closed — the shell that produced it is gone, so a live `D` must never be
+   * attributed to it. Commands whose line did not survive the replay (trimmed
+   * scrollback) are skipped; restored commands are ordered before any already
+   * tracked. Never throws.
+   */
+  restoreSnapshot(snapshot: CommandMarksSnapshot | null | undefined): void {
+    if (this.disposed || !snapshot || snapshot.commands.length === 0) return;
+    try {
+      if (this.term.buffer.active.type === "alternate") return;
+      const layout = this.logicalLayout();
+      const restored: CommandRecord[] = [];
+      for (const command of snapshot.commands) {
+        const prompt = this.fromSnapshotPosition(layout, command.prompt);
+        if (!prompt) continue;
+        const record: CommandRecord = { prompt: prompt.marker, state: "finished" };
+        record.input = this.fromSnapshotPosition(layout, command.input);
+        record.output = this.fromSnapshotPosition(layout, command.output);
+        record.end = this.fromSnapshotPosition(layout, command.end);
+        // Output range needs both ends; an exit code is only meaningful with a
+        // command that actually ran (had output start and end marks).
+        if (command.exitCode !== undefined && record.output && record.end) {
+          record.exitCode = command.exitCode;
+        }
+        restored.push(record);
+      }
+      this.records = [...restored, ...this.records];
+      for (const record of restored) this.decorate(record);
+    } catch {
+      // Restoring marks is best effort; it must never break the terminal.
+    }
+  }
+
   /** Dispose every marker and decoration the tracker owns. */
   dispose(): void {
     if (this.disposed) return;
@@ -456,6 +571,78 @@ export class CommandMarkTracker implements IDisposable {
       if (y < range.endLine && !continues) text += "\n";
     }
     return text;
+  }
+
+  /**
+   * The row where each logical line starts, from the top of the buffer down to
+   * the cursor's logical line (inclusive), plus the index of that line.
+   */
+  private logicalLayout(): { starts: number[]; cursorLogical: number } {
+    const buffer = this.term.buffer.active;
+    const cursorLine = this.cursorLine();
+    const starts: number[] = [];
+    for (let y = 0; y <= cursorLine; y++) {
+      if (y === 0 || buffer.getLine(y)?.isWrapped !== true) starts.push(y);
+    }
+    return { starts, cursorLogical: starts.length - 1 };
+  }
+
+  /** Index into `starts` of the logical line containing `row` (binary search). */
+  private logicalIndexOf(starts: number[], row: number): number {
+    let lo = 0;
+    let hi = starts.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (starts[mid] <= row) lo = mid;
+      else hi = mid - 1;
+    }
+    return lo;
+  }
+
+  private toSnapshotPosition(
+    layout: { starts: number[]; cursorLogical: number },
+    row: number,
+    col: number
+  ): SnapshotPosition | undefined {
+    if (row < 0 || layout.starts.length === 0) return undefined;
+    const index = this.logicalIndexOf(layout.starts, row);
+    return {
+      line: layout.cursorLogical - index,
+      offset: (row - layout.starts[index]) * this.term.cols + col,
+    };
+  }
+
+  private anchorToSnapshot(
+    layout: { starts: number[]; cursorLogical: number },
+    anchor: AnchoredPosition | undefined
+  ): SnapshotPosition | undefined {
+    if (!anchor || anchor.marker.isDisposed) return undefined;
+    return this.toSnapshotPosition(layout, anchor.marker.line, anchor.col);
+  }
+
+  private fromSnapshotPosition(
+    layout: { starts: number[]; cursorLogical: number },
+    position: SnapshotPosition | undefined
+  ): AnchoredPosition | undefined {
+    if (!position) return undefined;
+    const index = layout.cursorLogical - position.line;
+    if (index < 0 || index >= layout.starts.length || position.line < 0) return undefined;
+    const cols = Math.max(1, this.term.cols);
+    const start = layout.starts[index];
+    const next = layout.starts[index + 1] ?? this.cursorLine() + 1;
+    let row = start + Math.floor(position.offset / cols);
+    let col = position.offset % cols;
+    // Clamp to the logical line's end (a replay can shorten a line whose
+    // trailing blanks were not serialized).
+    if (row >= next) {
+      row = next - 1;
+      col = cols;
+    }
+    const cursorLine = this.cursorLine();
+    if (row > cursorLine) return undefined;
+    const marker = this.term.registerMarker(row - cursorLine);
+    if (!marker) return undefined;
+    return { marker, col: Math.min(col, cols) };
   }
 
   private promptMarkers(): IMarker[] {
