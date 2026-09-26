@@ -6,6 +6,7 @@ import {
   isTerminalTransferState,
   formatThroughput,
   computeEtaSeconds,
+  summarizeQueueThroughput,
   type TransferEntry,
 } from "./transfer";
 import type { TransferProgress, TransferSnapshot } from "@/services/api";
@@ -132,6 +133,30 @@ describe("transferEntryFromProgress", () => {
     // 1024 more bytes over 1000ms → 1024 B/s
     const entry = transferEntryFromProgress(progress({ transferred: 1024 }), prev, 2000);
     expect(entry.speedBytesPerSec).toBe(1024);
+  });
+
+  it("EMA-smooths the delta-derived throughput instead of jumping on a burst (PROD-038)", () => {
+    const a = transferEntryFromProgress(progress({ transferred: 0 }), undefined, 0);
+    const b = transferEntryFromProgress(progress({ transferred: 1000 }), a, 1000);
+    expect(b.speedBytesPerSec).toBe(1000);
+    // 40 bytes in 4 ms is an instantaneous 10 000 B/s; the estimate barely moves.
+    const c = transferEntryFromProgress(progress({ transferred: 1040 }), b, 1004);
+    expect(c.speedBytesPerSec).toBeGreaterThanOrEqual(1000);
+    expect(c.speedBytesPerSec).toBeLessThan(1100);
+  });
+
+  it("restarts the throughput estimate after a pause", () => {
+    const a = transferEntryFromProgress(progress({ transferred: 0 }), undefined, 0);
+    const b = transferEntryFromProgress(progress({ transferred: 1000 }), a, 1000);
+    const paused = transferEntryFromProgress(
+      progress({ state: "paused", transferred: 1000 }),
+      b,
+      2000
+    );
+    expect(paused.speedBytesPerSec).toBeNull();
+    expect(paused.etaSeconds).toBeNull();
+    const resumed = transferEntryFromProgress(progress({ transferred: 1100 }), paused, 90_000);
+    expect(resumed.speedBytesPerSec).toBeNull();
   });
 
   it("preserves retry counters and path across updates", () => {
@@ -377,5 +402,60 @@ describe("formatThroughput", () => {
   it("returns empty string for null or non-positive rates", () => {
     expect(formatThroughput(null)).toBe("");
     expect(formatThroughput(0)).toBe("");
+  });
+});
+
+describe("summarizeQueueThroughput (PROD-038)", () => {
+  function row(overrides: Partial<TransferEntry>): TransferEntry {
+    return {
+      id: "t",
+      sessionId: "s",
+      direction: "download",
+      name: "f",
+      state: "active",
+      transferred: 0,
+      totalBytes: 1000,
+      percent: 0,
+      speedBytesPerSec: null,
+      etaSeconds: null,
+      updatedAt: 0,
+      ...overrides,
+    };
+  }
+
+  it("sums the active rates and derives the ETA from all pending bytes", () => {
+    const t = summarizeQueueThroughput([
+      row({ id: "a", transferred: 200, speedBytesPerSec: 100 }),
+      row({ id: "b", transferred: 500, speedBytesPerSec: 100 }),
+      row({ id: "c", state: "queued", transferred: 0 }),
+      row({ id: "d", state: "completed", transferred: 1000 }),
+    ]);
+    expect(t.activeCount).toBe(2);
+    expect(t.bytesPerSec).toBe(200);
+    // Remaining: 800 + 500 + 1000 = 2300 B at 200 B/s → 12 s.
+    expect(t.etaSeconds).toBe(12);
+  });
+
+  it("hides the rate and ETA when everything is paused", () => {
+    const t = summarizeQueueThroughput([
+      row({ state: "paused", speedBytesPerSec: null }),
+      row({ id: "q", state: "queued" }),
+    ]);
+    expect(t).toEqual({ activeCount: 0, bytesPerSec: null, etaSeconds: null });
+  });
+
+  it("hides the ETA (but keeps the rate) when a pending total is unknown", () => {
+    const t = summarizeQueueThroughput([
+      row({ speedBytesPerSec: 500 }),
+      row({ id: "u", totalBytes: null, percent: null, speedBytesPerSec: 250 }),
+    ]);
+    expect(t.bytesPerSec).toBe(750);
+    expect(t.etaSeconds).toBeNull();
+  });
+
+  it("reports nothing while active rows have no rate yet (zero progress)", () => {
+    const t = summarizeQueueThroughput([row({ speedBytesPerSec: null })]);
+    expect(t.bytesPerSec).toBeNull();
+    expect(t.etaSeconds).toBeNull();
   });
 });

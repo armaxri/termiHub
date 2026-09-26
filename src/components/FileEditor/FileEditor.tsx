@@ -13,6 +13,7 @@ import {
   RotateCcw,
   X,
   FileWarning,
+  Info,
 } from "lucide-react";
 import { Button, Spinner, toast } from "@/components/ui";
 import { save } from "@tauri-apps/plugin-dialog";
@@ -92,6 +93,14 @@ export const REMOTE_POLL_INTERVAL_MS = 4000;
  * catching the multi-hundred-MB accidents the guard exists for.
  */
 export const LARGE_FILE_THRESHOLD_BYTES = 10 * 1024 * 1024;
+
+/**
+ * FTP editing limits (PROD-015), shown as the FTP badge tooltip and — while the
+ * server has not told us whether the file is writable — as a dismissible note.
+ * Mirrored in the user docs (`docs/marketing/quickstart.md`, "Editing files over FTP").
+ */
+export const FTP_EDIT_LIMITS =
+  "FTP saves re-upload the whole file and are not atomic — an interrupted save can leave a truncated file on the server. There is no elevated (sudo) save over FTP.";
 
 // Use local monaco-editor package instead of CDN (important for Tauri/offline)
 loader.config({ monaco });
@@ -316,6 +325,8 @@ export function FileEditor({
   // Whether the user has dismissed the read-only notice banner. The badge is a
   // persistent state indicator; only the banner is dismissible.
   const [readonlyBannerDismissed, setReadonlyBannerDismissed] = useState(false);
+  // Whether the user has dismissed the FTP editing-limits note (PROD-015).
+  const [ftpNoteDismissed, setFtpNoteDismissed] = useState(false);
 
   // Set when the file changed on disk while the buffer had unsaved edits (#1620).
   // This is the genuine-conflict case: we detect it and surface a non-destructive
@@ -640,12 +651,40 @@ export function FileEditor({
   // parallel with the content read (it never blocks the load; a failure just
   // degrades to "unknown" so no badge is shown). Only a definitive read-only
   // result surfaces the badge/banner — detection only, no elevated save. (#1325)
+  //
+  // A byte-based session backend (FTP / Docker / remote-agent) has no write
+  // probe, so its tab falls back to the listing's coarse `writable` hint from
+  // `session_stat` (PROD-015): for FTP that is the MLSD `perm` fact (the login's
+  // own rights) or the LIST mode bits. `false` → read-only (Save disabled);
+  // `true` / `null` / a failed stat → as before.
   useEffect(() => {
     let cancelled = false;
     setReadonlyBannerDismissed(false);
     if (!advancedOps) {
       setWritable("unknown");
-      return;
+      const sessionId = meta.isRemote && !meta.scratch ? meta.sessionBrowser?.sessionId : undefined;
+      if (!sessionId) return;
+      const hintPath = meta.filePath;
+      sessionStat(sessionId, hintPath)
+        .then((entry) => {
+          if (cancelled) return;
+          const hint = entry?.writable;
+          setWritable(typeof hint === "boolean" ? hint : "unknown");
+          frontendLog(
+            "file_editor",
+            `listing writability hint for ${hintPath}: ${hint ?? "unknown"}`
+          );
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          frontendLog(
+            "file_editor",
+            `listing writability hint failed for ${hintPath}: ${errorMessage(err)}`
+          );
+        });
+      return () => {
+        cancelled = true;
+      };
     }
     const filePath = meta.filePath;
     advancedOps
@@ -667,7 +706,7 @@ export function FileEditor({
     return () => {
       cancelled = true;
     };
-  }, [advancedOps, meta.filePath]);
+  }, [advancedOps, meta.filePath, meta.isRemote, meta.scratch, meta.sessionBrowser?.sessionId]);
 
   // An unsaved scratch buffer has no on-disk copy, so it is always considered
   // dirty (closing it would lose the captured content) until saved via Save As.
@@ -689,6 +728,14 @@ export function FileEditor({
   // channel, so no sudo path exists. The direct Save stays disabled; the user is
   // offered "Save a copy" (to a writable remote path) or a local download.
   const sftpOnlyReadonly = !!advancedOps && writable === false && !execCapable;
+  // Byte-based session backend (FTP / Docker / agent) whose listing reports the
+  // file read-only (PROD-015). There is no probe, sudo, or copy path here, so
+  // the direct Save is disabled rather than left to fail at write time.
+  const listingReadonly = !advancedOps && !!meta.sessionBrowser && writable === false;
+  // FTP editing limits note (PROD-015): whole-file re-upload, no atomic save,
+  // no elevated save. Shown as a banner while writability is unknown; the
+  // toolbar badge carries the same text as a tooltip otherwise.
+  const isFtpTab = meta.isRemote && meta.sessionBrowser?.connectionType === "ftp";
 
   // Sync dirty state to the store (drives the tab dirty dot and close prompt).
   useEffect(() => {
@@ -1589,6 +1636,16 @@ export function FileEditor({
               Read-only
             </span>
           )}
+          {isFtpTab && (
+            <span
+              className="file-editor__remote-badge"
+              data-testid="file-editor-ftp-badge"
+              title={FTP_EDIT_LIMITS}
+            >
+              <Info size={12} />
+              FTP
+            </span>
+          )}
           {elevated && (
             <span
               className="file-editor__remote-badge file-editor__sudo-badge"
@@ -1629,15 +1686,17 @@ export function FileEditor({
             size="sm"
             icon={<Save size={14} />}
             onClick={handleSaveClick}
-            disabled={!isDirty || sftpOnlyReadonly}
+            disabled={!isDirty || sftpOnlyReadonly || listingReadonly}
             pendingLabel="Saving..."
             errorToast={false}
             title={
               sftpOnlyReadonly
                 ? "This file is read-only — use “Save a copy…” or Download"
-                : isUnsavedScratch
-                  ? "Save As... (Ctrl+S)"
-                  : "Save (Ctrl+S)"
+                : listingReadonly
+                  ? "This file is read-only on the server — saving is disabled"
+                  : isUnsavedScratch
+                    ? "Save As... (Ctrl+S)"
+                    : "Save (Ctrl+S)"
             }
             data-testid="file-editor-save"
           >
@@ -1655,7 +1714,9 @@ export function FileEditor({
           <span className="file-editor__readonly-banner-text">
             {sftpOnlyReadonly
               ? "This file is read-only and sudo elevation isn't available on this connection. Save a copy to a writable path or download the file locally instead."
-              : "This file is read-only — you don't have permission to write to it. Saving directly will fail."}
+              : listingReadonly
+                ? "The server reports this file as read-only for your login, and this connection has no elevated (sudo) save. Saving is disabled."
+                : "This file is read-only — you don't have permission to write to it. Saving directly will fail."}
           </span>
           {sftpOnlyReadonly && (
             <>
@@ -1690,6 +1751,28 @@ export function FileEditor({
             title="Dismiss"
             aria-label="Dismiss read-only notice"
             data-testid="file-editor-readonly-banner-dismiss"
+          />
+        </div>
+      )}
+      {isFtpTab && writable === "unknown" && !ftpNoteDismissed && (
+        <div
+          className="file-editor__readonly-banner file-editor__ftp-note"
+          role="status"
+          data-testid="file-editor-ftp-note"
+        >
+          <Info size={14} />
+          <span className="file-editor__readonly-banner-text">
+            {`The FTP server didn't report whether you can write to this file, so a save may be rejected. ${FTP_EDIT_LIMITS}`}
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            iconOnly
+            icon={<X size={14} />}
+            onClick={() => setFtpNoteDismissed(true)}
+            title="Dismiss"
+            aria-label="Dismiss FTP editing note"
+            data-testid="file-editor-ftp-note-dismiss"
           />
         </div>
       )}

@@ -78,6 +78,21 @@ double-click a file to edit it in the built-in Monaco editor (changes save back 
 
 > TODO(maintainer): screenshot of the SFTP browser + an open editor tab.
 
+### Editing files over FTP
+
+FTP / FTPS connections browse and edit through the same file browser and editor, with a
+few protocol limits the editor calls out (an **FTP** badge in the editor toolbar):
+
+- **Writability comes from the server's listing.** termiHub reads the MLSD `perm` fact —
+  the rights of _your_ login — and falls back to the `LIST` permission bits. A file the
+  server reports as read-only opens with a **Read-only** badge and Save disabled. When the
+  server reports nothing (e.g. Windows/DOS-style listings), the editor shows a note that a
+  save may be rejected.
+- **Saves re-upload the whole file** (`STOR`) and are **not atomic** — an interrupted save
+  can leave a truncated file on the server. Keep a copy of important edits.
+- **No elevated (sudo) save** and no "Save a copy" fallback: those need an SSH/SFTP
+  connection.
+
 ## 5. Go further
 
 - **Split the view** — click **Split** in the toolbar, or drag a tab to a panel edge, to

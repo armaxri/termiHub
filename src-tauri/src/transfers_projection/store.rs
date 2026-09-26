@@ -125,8 +125,13 @@ pub struct TransferEntry {
     pub total_bytes: Option<u64>,
     /// Completion percentage (0–100), or `null` when indeterminate.
     pub percent: Option<u32>,
-    /// Instantaneous throughput in bytes/sec, or `null` when not moving/unknown.
+    /// Smoothed throughput in bytes/sec, or `null` when not moving/unknown.
     pub speed_bytes_per_sec: Option<u64>,
+    /// Estimated whole seconds remaining (UX-019 / PROD-038), or `null` when it
+    /// cannot be known: not `active`, unknown total, zero/unknown throughput, or
+    /// nothing left. `#[serde(default)]` keeps older persisted rows readable.
+    #[serde(default)]
+    pub eta_seconds: Option<u64>,
     /// Human-readable error, only populated for the `failed` state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
@@ -178,6 +183,9 @@ pub struct TransferProgress {
     pub state: Option<TransferQueueState>,
     #[serde(default)]
     pub speed: Option<u64>,
+    /// Backend-measured (already EMA-smoothed) seconds remaining (#1336).
+    #[serde(default)]
+    pub eta_secs: Option<u64>,
     #[serde(default)]
     pub total_bytes: Option<u64>,
     #[serde(default)]
@@ -210,6 +218,64 @@ pub struct TransferSnapshot {
     pub attempt: u32,
     #[serde(default)]
     pub max_attempts: u32,
+}
+
+/// Time constant (ms) of the time-weighted EMA applied to the delta-derived
+/// throughput fallback (PROD-038) — mirror of `RATE_TAU_MS` in
+/// `src/utils/byteRate.ts`. A burst of events milliseconds apart barely moves
+/// the estimate; a long stall pulls it down proportionally.
+const RATE_TAU_MS: f64 = 3000.0;
+
+/// EMA weight blending a fresh ETA sample with the previous row's ETA — mirror
+/// of `ETA_SMOOTHING_ALPHA` in `src/types/transfer.ts`.
+const ETA_SMOOTHING_ALPHA: f64 = 0.4;
+
+/// Blend one interval's instantaneous throughput into `prev_rate` with a
+/// time-weighted EMA (`alpha = 1 - exp(-Δt/τ)`), mirroring `blendRate` in
+/// `src/utils/byteRate.ts`. Seeds with the instantaneous rate when there is no
+/// previous rate; returns `prev_rate` for a non-positive interval.
+fn blend_rate(prev_rate: Option<u64>, delta_bytes: u64, delta_ms: u64) -> Option<u64> {
+    if delta_ms == 0 {
+        return prev_rate;
+    }
+    let instant = delta_bytes as f64 / delta_ms as f64 * 1000.0;
+    let blended = match prev_rate {
+        None => instant,
+        Some(prev) => {
+            let alpha = 1.0 - (-(delta_ms as f64) / RATE_TAU_MS).exp();
+            alpha * instant + (1.0 - alpha) * prev as f64
+        }
+    };
+    Some(blended.round() as u64)
+}
+
+/// Estimate whole seconds remaining (mirror of `computeEtaSeconds` in
+/// `src/types/transfer.ts`): `None` unless `active`; a backend ETA `> 0` wins;
+/// otherwise `remaining / speed`, EMA-smoothed against `prev_eta`, clamped to at
+/// least one second while bytes remain.
+fn derive_eta(
+    state: TransferQueueState,
+    transferred: u64,
+    total_bytes: Option<u64>,
+    speed: Option<u64>,
+    backend_eta: Option<u64>,
+    prev_eta: Option<u64>,
+) -> Option<u64> {
+    if state != TransferQueueState::Active {
+        return None;
+    }
+    if let Some(eta) = backend_eta.filter(|&e| e > 0) {
+        return Some(eta.max(1));
+    }
+    let total = total_bytes.filter(|&t| t > 0)?;
+    let speed = speed.filter(|&s| s > 0)?;
+    let remaining = total.checked_sub(transferred).filter(|&r| r > 0)?;
+    let raw = remaining as f64 / speed as f64;
+    let smoothed = match prev_eta.filter(|&e| e > 0) {
+        Some(prev) => ETA_SMOOTHING_ALPHA * raw + (1.0 - ETA_SMOOTHING_ALPHA) * prev as f64,
+        None => raw,
+    };
+    Some((smoothed.round() as u64).max(1))
 }
 
 /// Normalize a raw total (`0` = indeterminate) to `Some(total)` / `None`.
@@ -257,6 +323,7 @@ impl TransferEntry {
             total_bytes: seed.total_bytes.filter(|&t| t > 0),
             percent: None,
             speed_bytes_per_sec: None,
+            eta_seconds: None,
             error: None,
             attempt: None,
             max_attempts: None,
@@ -272,6 +339,19 @@ impl TransferEntry {
         let total_bytes = total_or_none(progress.total_bytes.unwrap_or(progress.total));
         let percent = derive_percent(state, progress.transferred, total_bytes);
         let speed_bytes_per_sec = Self::derive_speed(progress, prev, now, state);
+        // The previous ETA only seeds smoothing while the row stayed `active`, so a
+        // resumed or retried transfer starts a fresh estimate.
+        let prev_eta = prev
+            .filter(|p| p.state == TransferQueueState::Active)
+            .and_then(|p| p.eta_seconds);
+        let eta_seconds = derive_eta(
+            state,
+            progress.transferred,
+            total_bytes,
+            speed_bytes_per_sec,
+            progress.eta_secs,
+            prev_eta,
+        );
 
         Self {
             id: progress.transfer_id.clone(),
@@ -287,6 +367,7 @@ impl TransferEntry {
             total_bytes,
             percent,
             speed_bytes_per_sec,
+            eta_seconds,
             error: if state == TransferQueueState::Failed {
                 Some(
                     progress
@@ -305,9 +386,12 @@ impl TransferEntry {
         }
     }
 
-    /// Throughput derivation for a progress fold: backend-measured speed when
-    /// supplied, else the byte/time delta against an `active` `prev`, else `None`
-    /// (mirror of the frontend `speedBytesPerSec` branch).
+    /// Throughput derivation for a progress fold: backend-measured (already
+    /// smoothed) speed when supplied, else the byte/time delta against an
+    /// `active` `prev` blended into its rate with a time-weighted EMA
+    /// ([`blend_rate`], PROD-038), else `None` — so a pause, resume or retry
+    /// (prev not `active`) restarts the estimate (mirror of the frontend
+    /// `speedBytesPerSec` branch).
     fn derive_speed(
         progress: &TransferProgress,
         prev: Option<&TransferEntry>,
@@ -326,12 +410,14 @@ impl TransferEntry {
         if prev.state != TransferQueueState::Active {
             return None;
         }
-        let delta_bytes = progress.transferred as i64 - prev.transferred as i64;
-        let delta_ms = now as i64 - prev.updated_at as i64;
-        if delta_bytes >= 0 && delta_ms > 0 {
-            Some(((delta_bytes as f64 / delta_ms as f64) * 1000.0).round() as u64)
-        } else {
-            prev.speed_bytes_per_sec
+        match (
+            progress.transferred.checked_sub(prev.transferred),
+            now.checked_sub(prev.updated_at),
+        ) {
+            (Some(delta_bytes), Some(delta_ms)) if delta_ms > 0 => {
+                blend_rate(prev.speed_bytes_per_sec, delta_bytes, delta_ms)
+            }
+            _ => prev.speed_bytes_per_sec,
         }
     }
 
@@ -344,6 +430,15 @@ impl TransferEntry {
             total_or_none(snapshot.total).or_else(|| prev.and_then(|p| p.total_bytes));
         let state = snapshot.state;
         let percent = derive_percent(state, snapshot.transferred, total_bytes);
+        let speed_bytes_per_sec = (snapshot.speed > 0).then_some(snapshot.speed);
+        let eta_seconds = derive_eta(
+            state,
+            snapshot.transferred,
+            total_bytes,
+            speed_bytes_per_sec,
+            None,
+            None,
+        );
 
         Self {
             id: snapshot.transfer_id.clone(),
@@ -358,11 +453,8 @@ impl TransferEntry {
             transferred: snapshot.transferred,
             total_bytes,
             percent,
-            speed_bytes_per_sec: if snapshot.speed > 0 {
-                Some(snapshot.speed)
-            } else {
-                None
-            },
+            speed_bytes_per_sec,
+            eta_seconds,
             error: if state == TransferQueueState::Failed {
                 Some(
                     prev.and_then(|p| p.error.clone())

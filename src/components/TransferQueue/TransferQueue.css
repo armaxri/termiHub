@@ -231,6 +231,18 @@
   justify-content: flex-end;
 }
 
+/* Overall rate + ETA (PROD-038), pushed to the left of the footer actions. */
+.transfer-queue__throughput {
+  margin-right: auto;
+  align-self: center;
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 /* Minimized status-bar indicator — a compact count pill after the label. */
 .transfer-queue-indicator__count {
   display: inline-flex;

@@ -1,5 +1,6 @@
 import type { TransferProgress, TransferQueueState, TransferSnapshot } from "@/services/api";
 import { formatRate } from "@/utils/formatters";
+import { blendRate, etaFromRate } from "@/utils/byteRate";
 
 /**
  * The connection-type-agnostic state space of a queued file transfer, as shown
@@ -238,12 +239,15 @@ export function transferEntryFromProgress(
       // Backend-measured throughput (#1336) is authoritative when supplied.
       speedBytesPerSec = progress.speed;
     } else if (prev && prev.state === "active") {
-      const deltaBytes = progress.transferred - prev.transferred;
-      const deltaMs = now - prev.updatedAt;
-      speedBytesPerSec =
-        deltaBytes >= 0 && deltaMs > 0
-          ? Math.round((deltaBytes / deltaMs) * 1000)
-          : prev.speedBytesPerSec;
+      // Delta-derived fallback, blended into the previous rate with a
+      // time-weighted EMA (PROD-038) so bursty events don't make it jump. A
+      // non-`active` prev (paused / retried) restarts the estimate.
+      const blended = blendRate(
+        prev.speedBytesPerSec,
+        progress.transferred - prev.transferred,
+        now - prev.updatedAt
+      );
+      speedBytesPerSec = blended == null ? null : Math.round(blended);
     }
   }
 
@@ -329,6 +333,44 @@ export function transferEntryFromSnapshot(
     maxAttempts: snapshot.maxAttempts || prev?.maxAttempts,
     updatedAt: now,
   };
+}
+
+/** Aggregate throughput + ETA across the whole queue (PROD-038 footer). */
+export interface QueueThroughput {
+  /** Number of rows currently moving (`active`). */
+  activeCount: number;
+  /** Summed throughput of the active rows in bytes/sec, or `null` when idle. */
+  bytesPerSec: number | null;
+  /**
+   * Whole seconds until every pending (active + queued) row finishes at the
+   * current aggregate rate, or `null` when it cannot be known: nothing is
+   * moving (e.g. all paused), the rate is zero/unknown, or any pending row has
+   * an unknown total size.
+   */
+  etaSeconds: number | null;
+}
+
+/**
+ * Summarize the queue's overall throughput and ETA (PROD-038). Paused and
+ * terminal rows are excluded from the rate; queued rows count toward the
+ * remaining bytes (they will run after the active ones), so the ETA covers the
+ * whole pending batch.
+ */
+export function summarizeQueueThroughput(entries: readonly TransferEntry[]): QueueThroughput {
+  const active = entries.filter((e) => e.state === "active");
+  const pending = entries.filter((e) => e.state === "active" || e.state === "queued");
+  const rateSum = active.reduce((sum, e) => sum + (e.speedBytesPerSec ?? 0), 0);
+  const bytesPerSec = rateSum > 0 ? rateSum : null;
+  let etaSeconds: number | null = null;
+  if (bytesPerSec != null && pending.every((e) => e.totalBytes != null)) {
+    const remaining = pending.reduce(
+      (sum, e) => sum + Math.max(0, (e.totalBytes ?? 0) - e.transferred),
+      0
+    );
+    const eta = etaFromRate(remaining, bytesPerSec);
+    etaSeconds = eta != null && eta > 0 ? eta : null;
+  }
+  return { activeCount: active.length, bytesPerSec, etaSeconds };
 }
 
 /**
