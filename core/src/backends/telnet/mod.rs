@@ -1,11 +1,18 @@
 //! Telnet backend implementing [`ConnectionType`](crate::connection::ConnectionType).
 //!
-//! Uses a raw TCP socket with basic telnet protocol handling (IAC command
-//! filtering). This is the canonical telnet implementation, used by both the
-//! desktop and agent crates (the desktop crate previously had its own
+//! Uses a raw TCP socket with telnet protocol handling: IAC command filtering,
+//! window-size (NAWS, RFC 1073) and terminal-type (RFC 1091) negotiation — see
+//! [`negotiation`] — plus an optional prompt-driven auto-login — see
+//! [`auto_login`]. This is the canonical telnet implementation, used by both
+//! the desktop and agent crates (the desktop crate previously had its own
 //! implementation in `src-tauri/src/terminal/telnet.rs`).
 
-use std::io::{Read, Write};
+mod auto_login;
+mod negotiation;
+mod reader;
+mod schema;
+
+use std::io::Write;
 use std::net::TcpStream;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -13,10 +20,9 @@ use std::time::Duration;
 
 use tracing::{debug, info};
 
-use crate::config::TelnetConfig;
+use crate::config::{expand_config_value, TelnetConfig};
 use crate::connection::{
-    Capabilities, ConnectionType, FieldType, OutputReceiver, OutputSender, SettingsField,
-    SettingsGroup, SettingsSchema,
+    Capabilities, ConnectionType, OutputReceiver, OutputSender, SettingsSchema,
 };
 use crate::errors::SessionError;
 use crate::files::FileBrowser;
@@ -25,17 +31,23 @@ use crate::monitoring::MonitoringProvider;
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
 use tokio_util::sync::CancellationToken;
 
-/// Read timeout for the reader thread (allows periodic alive checks).
+pub use auto_login::{
+    AutoLoginConfig, DEFAULT_AUTO_LOGIN_TIMEOUT_SECS, DEFAULT_LOGIN_PROMPT, DEFAULT_PASSWORD_PROMPT,
+};
+pub use negotiation::DEFAULT_TERMINAL_TYPE;
+use negotiation::{Negotiator, DO, DONT, IAC, SB, SE, WILL, WONT};
+
+/// Read timeout for the reader thread (allows periodic alive checks and the
+/// auto-login prompt timeout).
 const READ_TIMEOUT: Duration = Duration::from_millis(100);
 
-// Telnet protocol constants.
-const IAC: u8 = 255;
-const SE: u8 = 240;
-const SB: u8 = 250;
-const WILL: u8 = 251;
-const WONT: u8 = 252;
-const DO: u8 = 253;
-const DONT: u8 = 254;
+/// Upper bound on a buffered subnegotiation payload. Real payloads (TTYPE
+/// SEND, NAWS, …) are a few bytes; a runaway `IAC SB` without `IAC SE` must
+/// not grow memory without bound — excess bytes are discarded.
+const MAX_SUBNEG_LEN: usize = 512;
+
+/// `authMethod` value that enables auto-login.
+const AUTH_METHOD_AUTO_LOGIN: &str = "password";
 
 /// Default telnet port used when the `port` setting is absent or invalid.
 const DEFAULT_PORT: u16 = 23;
@@ -79,6 +91,9 @@ pub struct Telnet {
 /// Internal state of an active telnet connection.
 struct ConnectedState {
     writer: Arc<Mutex<TcpStream>>,
+    /// Option negotiation state, shared with the reader thread. Lock order is
+    /// always `negotiator` → `writer` so size reports are written in order.
+    negotiator: Arc<Mutex<Negotiator>>,
     alive: Arc<AtomicBool>,
     /// Set to `true` by a graceful [`disconnect()`](ConnectionType::disconnect)
     /// before the state is dropped, so the [`Drop`] guard below becomes a no-op.
@@ -141,20 +156,21 @@ enum FilterState {
     Iac,
     /// Saw `IAC <cmd>` where `cmd` is DO/DONT/WILL/WONT; awaiting the option byte.
     Negotiate(u8),
-    /// Inside a subnegotiation (after `IAC SB`); consuming payload until `IAC SE`.
+    /// Inside a subnegotiation (after `IAC SB`); buffering payload until `IAC SE`.
     Subneg,
     /// Inside a subnegotiation and saw an `IAC`; the next byte is either `SE`
     /// (ends the subnegotiation) or an escaped/ignored byte that keeps it open.
     SubnegIac,
 }
 
-/// Stateful filter for telnet IAC command sequences, responding with WONT/DONT
-/// to all negotiation attempts.
+/// Stateful filter for telnet IAC command sequences.
 ///
 /// A single [`TelnetFilter`] is created per connection and fed successive TCP
 /// reads via [`filter()`](TelnetFilter::filter). Each call returns the
-/// user-visible data with all IAC sequences stripped; negotiation responses
-/// (WONT for DO, DONT for WILL) are written directly to the provided stream.
+/// user-visible data with all IAC sequences stripped. Option commands and
+/// complete subnegotiations are handed to the [`Negotiator`], whose replies
+/// are appended to the caller's `responses` buffer (written back by the
+/// caller, so the filter itself never touches a socket).
 ///
 /// Because TCP delivers arbitrary chunk sizes, an IAC command or
 /// subnegotiation can straddle a read boundary. The parser is a byte-at-a-time
@@ -164,6 +180,8 @@ enum FilterState {
 /// payload) into the terminal (#2331).
 struct TelnetFilter {
     state: FilterState,
+    /// Payload of the subnegotiation in progress (IAC-unescaped).
+    subneg: Vec<u8>,
 }
 
 impl TelnetFilter {
@@ -171,12 +189,18 @@ impl TelnetFilter {
     fn new() -> Self {
         Self {
             state: FilterState::Data,
+            subneg: Vec::new(),
         }
     }
 
     /// Filter one chunk of raw telnet bytes, resuming from the state left by
-    /// the previous call.
-    fn filter(&mut self, data: &[u8], stream: &mut TcpStream) -> Vec<u8> {
+    /// the previous call. Negotiation replies are appended to `responses`.
+    fn filter(
+        &mut self,
+        data: &[u8],
+        negotiator: &mut Negotiator,
+        responses: &mut Vec<u8>,
+    ) -> Vec<u8> {
         let mut output = Vec::with_capacity(data.len());
 
         for &byte in data {
@@ -199,6 +223,7 @@ impl TelnetFilter {
                         self.state = FilterState::Negotiate(byte);
                     }
                     SB => {
+                        self.subneg.clear();
                         self.state = FilterState::Subneg;
                     }
                     _ => {
@@ -207,40 +232,93 @@ impl TelnetFilter {
                     }
                 },
                 FilterState::Negotiate(cmd) => {
-                    match cmd {
-                        // Refuse all DO requests.
-                        DO => {
-                            let _ = stream.write_all(&[IAC, WONT, byte]);
-                        }
-                        // Refuse all WILL offers.
-                        WILL => {
-                            let _ = stream.write_all(&[IAC, DONT, byte]);
-                        }
-                        // DONT / WONT — acknowledged, nothing to send.
-                        _ => {}
-                    }
+                    negotiator.on_command(cmd, byte, responses);
                     self.state = FilterState::Data;
                 }
                 FilterState::Subneg => {
-                    // Discard subnegotiation payload; only IAC can end/escape it.
+                    // Buffer the payload; only IAC can end/escape it.
                     if byte == IAC {
                         self.state = FilterState::SubnegIac;
+                    } else {
+                        self.push_subneg(byte);
                     }
                 }
                 FilterState::SubnegIac => {
-                    // `IAC SE` ends the subnegotiation; `IAC IAC` is escaped
-                    // payload and anything else is malformed — either way keep
-                    // consuming the subnegotiation until a real `IAC SE`.
-                    self.state = if byte == SE {
-                        FilterState::Data
-                    } else {
-                        FilterState::Subneg
-                    };
+                    // `IAC SE` ends the subnegotiation; `IAC IAC` is an escaped
+                    // 0xFF payload byte and anything else is malformed — either
+                    // way keep consuming the subnegotiation until a real `IAC SE`.
+                    match byte {
+                        SE => {
+                            negotiator.on_subnegotiation(&self.subneg, responses);
+                            self.subneg.clear();
+                            self.state = FilterState::Data;
+                        }
+                        IAC => {
+                            self.push_subneg(IAC);
+                            self.state = FilterState::Subneg;
+                        }
+                        _ => self.state = FilterState::Subneg,
+                    }
                 }
             }
         }
 
         output
+    }
+
+    fn push_subneg(&mut self, byte: u8) {
+        if self.subneg.len() < MAX_SUBNEG_LEN {
+            self.subneg.push(byte);
+        }
+    }
+}
+
+/// Session options parsed from the settings beyond the transport
+/// ([`TelnetConfig`]): the terminal type and the optional auto-login.
+#[derive(Debug)]
+struct SessionOptions {
+    terminal_type: String,
+    auto_login: Option<AutoLoginConfig>,
+}
+
+/// Read an optional string setting.
+fn str_setting<'a>(settings: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    settings.get(key).and_then(|v| v.as_str())
+}
+
+/// Read an optional non-negative integer setting given as a JSON number or a
+/// numeric string (the schema-driven form emits numbers as strings).
+fn u64_setting(settings: &serde_json::Value, key: &str) -> Option<u64> {
+    settings.get(key).and_then(|v| {
+        v.as_u64()
+            .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
+    })
+}
+
+/// Parse the terminal-type and auto-login settings. Auto-login is enabled
+/// only when `authMethod` is `"password"`; the password itself is resolved by
+/// the caller (credential store / prompt) and arrives in `password`.
+fn parse_session_options(settings: &serde_json::Value) -> SessionOptions {
+    let terminal_type = str_setting(settings, "terminalType")
+        .unwrap_or(DEFAULT_TERMINAL_TYPE)
+        .to_string();
+    let auto_login =
+        (str_setting(settings, "authMethod") == Some(AUTH_METHOD_AUTO_LOGIN)).then(|| {
+            let timeout_secs = u64_setting(settings, "autoLoginTimeoutSecs")
+                .filter(|s| *s > 0)
+                .unwrap_or(DEFAULT_AUTO_LOGIN_TIMEOUT_SECS);
+            AutoLoginConfig::new(
+                expand_config_value(str_setting(settings, "username").unwrap_or("").trim()),
+                // The password is a secret and is deliberately not expanded.
+                str_setting(settings, "password").map(str::to_string),
+                str_setting(settings, "loginPrompt").unwrap_or(DEFAULT_LOGIN_PROMPT),
+                str_setting(settings, "passwordPrompt").unwrap_or(DEFAULT_PASSWORD_PROMPT),
+                Duration::from_secs(timeout_secs),
+            )
+        });
+    SessionOptions {
+        terminal_type,
+        auto_login,
     }
 }
 
@@ -283,6 +361,31 @@ async fn connect_tcp_cancellable(
     }
 }
 
+/// Write `data` to the shared socket under its lock and flush.
+fn write_locked(writer: &Mutex<TcpStream>, data: &[u8]) -> Result<(), SessionError> {
+    let mut writer = writer.lock().map_err(|e| {
+        SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
+    })?;
+    writer.write_all(data).map_err(SessionError::Io)?;
+    writer.flush().map_err(SessionError::Io)?;
+    Ok(())
+}
+
+/// Send the negotiator's opening offer (`IAC WILL NAWS`).
+fn send_initial_offer(
+    negotiator: &Mutex<Negotiator>,
+    writer: &Mutex<TcpStream>,
+) -> Result<(), SessionError> {
+    let mut negotiator = negotiator
+        .lock()
+        .map_err(|e| SessionError::SpawnFailed(format!("Failed to lock negotiator: {e}")))?;
+    let offer = negotiator.initial_offer();
+    if !offer.is_empty() {
+        write_locked(writer, &offer)?;
+    }
+    Ok(())
+}
+
 #[async_trait::async_trait]
 impl ConnectionType for Telnet {
     fn type_id(&self) -> &str {
@@ -294,65 +397,7 @@ impl ConnectionType for Telnet {
     }
 
     fn settings_schema(&self) -> SettingsSchema {
-        SettingsSchema {
-            groups: vec![SettingsGroup {
-                collapsed: false,
-                key: "telnet".to_string(),
-                label: "Telnet".to_string(),
-                fields: vec![
-                    SettingsField {
-                        key: "host".to_string(),
-                        label: "Host".to_string(),
-                        description: Some(
-                            "Hostname or IP address of the telnet server".to_string(),
-                        ),
-                        help_text: None,
-                        field_type: FieldType::Text,
-                        required: true,
-                        default: None,
-                        placeholder: Some("192.168.1.1".to_string()),
-                        supports_env_expansion: true,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
-                    SettingsField {
-                        key: "port".to_string(),
-                        label: "Port".to_string(),
-                        description: Some("TCP port number".to_string()),
-                        help_text: None,
-                        field_type: FieldType::Port,
-                        required: true,
-                        default: Some(serde_json::json!(23)),
-                        placeholder: None,
-                        supports_env_expansion: false,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
-                    SettingsField {
-                        key: "connectTimeoutSecs".to_string(),
-                        label: "Connect Timeout (s)".to_string(),
-                        description: Some(
-                            "Seconds to wait for the TCP connection before giving up".to_string(),
-                        ),
-                        help_text: Some(
-                            "Bounds how long a connection to an unreachable host blocks before \
-                             failing. Leave empty to use the default (10 s)."
-                                .to_string(),
-                        ),
-                        field_type: FieldType::Number {
-                            min: Some(1.0),
-                            max: Some(300.0),
-                        },
-                        required: false,
-                        default: None,
-                        placeholder: Some("10".to_string()),
-                        supports_env_expansion: false,
-                        supports_tilde_expansion: false,
-                        visible_when: None,
-                    },
-                ],
-            }],
-        }
+        schema::settings_schema()
     }
 
     fn capabilities(&self) -> Capabilities {
@@ -360,7 +405,9 @@ impl ConnectionType for Telnet {
             monitoring: false,
             file_browser: false,
             graphical: false,
-            resize: false,
+            // Window size is propagated via NAWS (RFC 1073) when the server
+            // agrees; a server that refuses simply keeps its own size.
+            resize: true,
             persistent: false,
             terminal: true,
             // Telnet has no port-forwarding mechanism.
@@ -395,10 +442,7 @@ impl ConnectionType for Telnet {
         // Accept the connect timeout as a JSON number or a numeric string (the
         // schema-driven form emits numbers as strings); absent/invalid falls
         // back to the default budget via `TelnetConfig::connect_timeout`.
-        let connect_timeout_secs: Option<u64> = settings.get("connectTimeoutSecs").and_then(|v| {
-            v.as_u64()
-                .or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))
-        });
+        let connect_timeout_secs = u64_setting(&settings, "connectTimeoutSecs");
 
         let config = TelnetConfig {
             host,
@@ -414,6 +458,8 @@ impl ConnectionType for Telnet {
                 "Host must not be empty".to_string(),
             ));
         }
+
+        let options = parse_session_options(&settings);
 
         info!(host = %config.host, port = config.port, "Connecting telnet session");
 
@@ -441,11 +487,17 @@ impl ConnectionType for Telnet {
             .map_err(|e| SessionError::SpawnFailed(format!("Failed to set read timeout: {e}")))?;
 
         // Clone for the reader thread.
-        let mut reader = stream
+        let reader_stream = stream
             .try_clone()
             .map_err(|e| SessionError::SpawnFailed(format!("Failed to clone TCP stream: {e}")))?;
 
         let alive = Arc::new(AtomicBool::new(true));
+        let writer = Arc::new(Mutex::new(stream));
+        let negotiator = Arc::new(Mutex::new(Negotiator::new(&options.terminal_type)));
+
+        // Proactively offer NAWS so servers that never ask still learn the
+        // window size; a refusing server answers DONT and nothing else changes.
+        send_initial_offer(&negotiator, &writer)?;
 
         // Set up output channel.
         let (tx, _rx) = tokio::sync::mpsc::channel(OUTPUT_CHANNEL_CAPACITY);
@@ -457,50 +509,25 @@ impl ConnectionType for Telnet {
             *guard = Some(tx);
         }
 
-        // Spawn reader thread: bridges sync TCP reads to async tokio channel.
-        let alive_clone = alive.clone();
-        let output_tx_clone = self.output_tx.clone();
-        std::thread::spawn(move || {
-            let mut buf = [0u8; 4096];
-            let mut filter = TelnetFilter::new();
-            while alive_clone.load(Ordering::SeqCst) {
-                match reader.read(&mut buf) {
-                    Ok(0) => break,
-                    Ok(n) => {
-                        let filtered = filter.filter(&buf[..n], &mut reader);
-                        if filtered.is_empty() {
-                            continue;
-                        }
-                        // Clone the sender out of the guard and DROP the lock
-                        // BEFORE the blocking send. `blocking_send` parks this
-                        // thread under backpressure (full channel), so holding
-                        // `output_tx` across it would stall any path that needs
-                        // the same lock (teardown clearing the sender, or a
-                        // disconnect) behind a reader that is itself blocked —
-                        // a lockup where the session can neither drain nor be
-                        // torn down (CONC-010). Senders are cheap to clone.
-                        let sender = match output_tx_clone.lock() {
-                            Ok(guard) => match guard.as_ref() {
-                                Some(sender) => sender.clone(),
-                                // No sender — disconnected.
-                                None => break,
-                            },
-                            Err(_) => break,
-                        };
-                        // Lock released above; the blocking send below can no
-                        // longer stall other holders of `output_tx`.
-                        let _ = sender.blocking_send(filtered);
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                    Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => continue,
-                    Err(_) => break,
-                }
-            }
-            alive_clone.store(false, Ordering::SeqCst);
+        if options.auto_login.is_some() {
+            // Never log the credentials themselves — only that auto-login is on.
+            info!("Telnet auto-login enabled; waiting for the login prompt");
+        }
+
+        // Spawn reader thread: bridges sync TCP reads to async tokio channel,
+        // answers option negotiation and drives the optional auto-login.
+        reader::spawn(reader::ReaderContext {
+            stream: reader_stream,
+            writer: writer.clone(),
+            negotiator: negotiator.clone(),
+            alive: alive.clone(),
+            output_tx: self.output_tx.clone(),
+            auto_login: options.auto_login,
         });
 
         self.state = Some(ConnectedState {
-            writer: Arc::new(Mutex::new(stream)),
+            writer,
+            negotiator,
             alive,
             disconnected: false,
         });
@@ -539,16 +566,28 @@ impl ConnectionType for Telnet {
             .state
             .as_ref()
             .ok_or_else(|| SessionError::NotRunning("Not connected".to_string()))?;
-        let mut writer = state.writer.lock().map_err(|e| {
-            SessionError::Io(std::io::Error::other(format!("Failed to lock writer: {e}")))
-        })?;
-        writer.write_all(data).map_err(SessionError::Io)?;
-        writer.flush().map_err(SessionError::Io)?;
-        Ok(())
+        write_locked(&state.writer, data)
     }
 
-    fn resize(&self, _cols: u16, _rows: u16) -> Result<(), SessionError> {
-        // Basic telnet doesn't support terminal resize.
+    /// Report the new window size to the server via `SB NAWS` (RFC 1073).
+    ///
+    /// The size is always remembered — a server that enables NAWS later gets
+    /// it then — but only sent while NAWS is active. Disconnected or refused
+    /// sessions return `Ok(())`: resize is best-effort, never an error.
+    fn resize(&self, cols: u16, rows: u16) -> Result<(), SessionError> {
+        let Some(state) = self.state.as_ref() else {
+            return Ok(());
+        };
+        let mut negotiator = state.negotiator.lock().map_err(|e| {
+            SessionError::Io(std::io::Error::other(format!(
+                "Failed to lock negotiator: {e}"
+            )))
+        })?;
+        if let Some(bytes) = negotiator.resize(cols, rows) {
+            // Written while still holding the negotiator lock so concurrent
+            // size reports reach the wire in order.
+            write_locked(&state.writer, &bytes)?;
+        }
         Ok(())
     }
 
