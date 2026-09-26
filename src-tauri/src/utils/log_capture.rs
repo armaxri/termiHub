@@ -171,6 +171,72 @@ fn level_to_string(level: Level) -> String {
     }
 }
 
+/// Deterministic thread-scoped `tracing` subscribers for tests.
+///
+/// # Why tests must not call `tracing::subscriber::{with_default, set_default}` directly
+///
+/// `tracing-core` caches each callsite's [`Interest`](tracing::subscriber::Interest)
+/// globally, the first time any thread hits it. While at most one dispatcher
+/// is registered process-wide, it takes a lock-free "just one" fast path and
+/// computes that interest from the *registering thread's* default subscriber
+/// only. So when a single test holds a scoped capture subscriber and another
+/// test thread (with no subscriber) is the first to hit a shared callsite —
+/// e.g. `credential migration complete` in `migrate_credentials`, which
+/// several tests call — the callsite is cached as `never` and the capturing
+/// test silently loses the event. Measured at ~0.7% of runs of
+/// `commands::credential` under `--test-threads=16` before this fix.
+///
+/// Pinning two never-dropped no-op dispatchers keeps the registry permanently
+/// at two or more entries, which disables that fast path: every callsite
+/// registration then consults all live dispatchers under the registry lock,
+/// so a scoped subscriber always sees its callsites (a no-op dispatcher only
+/// widens a cached interest to `sometimes`, never narrows it). The same fast
+/// path let a `reload` handle's interest-cache rebuild on another thread reset
+/// the global max level to `OFF` mid-test, which is what the former
+/// `serial(tracing_default_subscriber)` group worked around — and serializing
+/// made it worse, since it guaranteed a lone scoped dispatcher.
+#[cfg(test)]
+pub(crate) mod test_support {
+    use std::sync::OnceLock;
+
+    use tracing::subscriber::{DefaultGuard, NoSubscriber};
+    use tracing::{Dispatch, Subscriber};
+
+    static PINNED_DISPATCHERS: OnceLock<[Dispatch; 2]> = OnceLock::new();
+
+    /// Keep the dispatcher registry off the "just one" fast path for the rest
+    /// of the process. Also call this before anything that rebuilds the
+    /// interest cache (e.g. `reload::Handle::reload`): on the fast path a
+    /// rebuild from a thread without a subscriber resets the global max level
+    /// to `OFF` and every cached callsite interest to `never`.
+    pub(crate) fn pin_multi_dispatcher_registry() {
+        PINNED_DISPATCHERS.get_or_init(|| {
+            [
+                Dispatch::new(NoSubscriber::default()),
+                Dispatch::new(NoSubscriber::default()),
+            ]
+        });
+    }
+
+    /// Run `f` with `subscriber` as this thread's default subscriber.
+    pub(crate) fn with_scoped_subscriber<S, T>(subscriber: S, f: impl FnOnce() -> T) -> T
+    where
+        S: Subscriber + Send + Sync + 'static,
+    {
+        pin_multi_dispatcher_registry();
+        tracing::subscriber::with_default(subscriber, f)
+    }
+
+    /// Install `subscriber` as this thread's default until the guard drops.
+    pub(crate) fn set_scoped_subscriber<S>(subscriber: S) -> DefaultGuard
+    where
+        S: Subscriber + Send + Sync + 'static,
+    {
+        pin_multi_dispatcher_registry();
+        tracing::subscriber::set_default(subscriber)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,12 +310,7 @@ mod tests {
         assert_eq!(buffer.get_recent(10).len(), 0);
     }
 
-    // Serialized against every other thread-local `tracing` default-subscriber
-    // test in this crate under the shared `tracing_default_subscriber` group: a
-    // concurrent guard drop transiently reverts the global max-level to OFF and
-    // would drop this test's events (a well-known parallel-`tracing`-test race).
     #[test]
-    #[serial_test::serial(tracing_default_subscriber)]
     fn layer_captures_tracing_events() {
         use tracing_subscriber::layer::SubscriberExt;
 
@@ -257,7 +318,7 @@ mod tests {
         let layer = LogCaptureLayer::new(buffer.clone());
 
         let subscriber = tracing_subscriber::registry().with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let _guard = test_support::set_scoped_subscriber(subscriber);
 
         tracing::info!(target: "test_target", "hello from tracing");
 
@@ -269,7 +330,6 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial(tracing_default_subscriber)]
     fn default_filter_silences_russh_but_keeps_app_debug() {
         use tracing_subscriber::layer::SubscriberExt;
 
@@ -279,7 +339,7 @@ mod tests {
         let subscriber = tracing_subscriber::registry()
             .with(default_env_filter())
             .with(layer);
-        let _guard = tracing::subscriber::set_default(subscriber);
+        let _guard = test_support::set_scoped_subscriber(subscriber);
 
         // Noisy dependency spam (the bug): must be filtered out.
         tracing::debug!(target: "russh::cipher", "reading, seqn = 603");

@@ -169,7 +169,7 @@ mod tests {
         let layer = LogCaptureLayer::new(buffer.clone());
         let subscriber = tracing_subscriber::registry().with(layer);
 
-        tracing::subscriber::with_default(subscriber, || {
+        crate::utils::log_capture::test_support::with_scoped_subscriber(subscriber, || {
             record_frontend_log("ERROR".into(), "store".into(), "save failed".into());
         });
 

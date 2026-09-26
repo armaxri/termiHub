@@ -487,12 +487,7 @@ async fn remove_session() {
 /// so a supporter can group and filter `termihub.log` by session rather than
 /// grepping message text. Guards against a regression back to string
 /// interpolation or a missing span.
-// Serialized against every other thread-local `tracing` default-subscriber
-// test (see `utils::log_capture`, `terminal::agent_manager`): a concurrent
-// guard drop transiently reverts the global max-level to OFF and would drop
-// our captured events (a well-known parallel-`tracing`-test race).
 #[tokio::test]
-#[serial_test::serial(tracing_default_subscriber)]
 async fn close_session_log_carries_session_id_field_and_span() {
     let manager = SessionManager::new(ConnectionTypeRegistry::new(), Arc::new(NullAgent));
     manager
