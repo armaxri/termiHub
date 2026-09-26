@@ -70,6 +70,7 @@ import { ConnectionTerminalSettings } from "./ConnectionTerminalSettings";
 import { ConnectionAppearanceSettings } from "./ConnectionAppearanceSettings";
 import { AgentExternalFilesSettings } from "./AgentExternalFilesSettings";
 import { JumpHostSection } from "./JumpHostSection";
+import { ConnectionPortForwardingSection } from "./ConnectionPortForwardingSection";
 import { SshConnectionImportDialog } from "./SshConnectionImportDialog";
 import { validateProxyJump } from "@/utils/validateProxyJump";
 import { sshJumpHostOptions } from "@/utils/jumpHost";
@@ -1502,6 +1503,12 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
           errors={jumpHostValidation.errors}
           warnings={jumpHostValidation.warnings}
         />
+      )}
+
+      {showJumpHostSection && (
+        // Per-connection port forwards (PROD-023): same SSH, non-agent gate as
+        // the jump-host section. Bound tunnels need a saved connection id.
+        <ConnectionPortForwardingSection connectionId={existingConnection?.id} />
       )}
 
       {showAgentForwarding && (
