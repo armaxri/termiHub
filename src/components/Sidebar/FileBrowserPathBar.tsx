@@ -2,12 +2,42 @@ import { useEffect, useRef, useState } from "react";
 import { ChevronRight, Pencil } from "lucide-react";
 import { Button, Tooltip, Input } from "@/components/ui";
 import { splitPathSegments } from "@/utils/fileBrowserNav";
+import { useFileDropTarget } from "./fileBrowserDnd";
 
 interface FileBrowserPathBarProps {
   /** The path currently shown by the file browser. */
   currentPath: string;
   /** Navigate the browser to an absolute path. */
   onNavigate: (path: string) => void;
+}
+
+interface CrumbProps {
+  label: string;
+  path: string;
+  isCurrent: boolean;
+  onNavigate: (path: string) => void;
+}
+
+/**
+ * One breadcrumb segment. Besides navigating on click, each segment is a drop
+ * target for drag-to-move (PROD-006), so a row can be dragged "up" into any
+ * ancestor folder; it highlights valid vs refused drops.
+ */
+function Crumb({ label, path, isCurrent, onNavigate }: CrumbProps) {
+  const { setNodeRef, highlight } = useFileDropTarget(`crumb:${path}`, path);
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      className={`file-browser__crumb${highlight ? ` file-browser__crumb--drop-${highlight}` : ""}`}
+      onClick={() => onNavigate(path)}
+      disabled={isCurrent}
+      data-testid="file-browser-crumb"
+      data-drop-highlight={highlight ?? undefined}
+    >
+      {label}
+    </button>
+  );
 }
 
 /**
@@ -83,15 +113,12 @@ export function FileBrowserPathBar({ currentPath, onNavigate }: FileBrowserPathB
         {crumbs.map((crumb, i) => (
           <span className="file-browser__crumb-group" key={crumb.path}>
             {i > 0 && <ChevronRight size={11} className="file-browser__crumb-sep" aria-hidden />}
-            <button
-              type="button"
-              className="file-browser__crumb"
-              onClick={() => onNavigate(crumb.path)}
-              disabled={crumb.path === currentPath}
-              data-testid="file-browser-crumb"
-            >
-              {crumb.label}
-            </button>
+            <Crumb
+              label={crumb.label}
+              path={crumb.path}
+              isCurrent={crumb.path === currentPath}
+              onNavigate={onNavigate}
+            />
           </span>
         ))}
       </nav>
