@@ -85,6 +85,10 @@ pub const PROCESS_NOT_SUPPORTED: i64 = -32020;
 /// (or the agent was built with the placeholder key) (AGT-005, #3213).
 pub const UPDATE_SIGNATURE_REJECTED: i64 = -32021;
 
+/// A streaming `tool.start` was refused: unknown tool, a duplicate or invalid
+/// run id, or the agent's concurrent-run limit is reached (#3353).
+pub const TOOL_RUN_REJECTED: i64 = -32022;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,6 +122,7 @@ mod tests {
             PROCESS_OPERATION_FAILED,
             PROCESS_NOT_SUPPORTED,
             UPDATE_SIGNATURE_REJECTED,
+            TOOL_RUN_REJECTED,
         ];
         for code in codes {
             assert!(code < 0, "Error code {code} should be negative");
@@ -164,6 +169,7 @@ mod tests {
             PROCESS_OPERATION_FAILED,
             PROCESS_NOT_SUPPORTED,
             UPDATE_SIGNATURE_REJECTED,
+            TOOL_RUN_REJECTED,
         ];
         for code in app_codes {
             assert!(

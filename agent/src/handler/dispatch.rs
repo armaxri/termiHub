@@ -24,8 +24,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::client_registry::ConnectionRegistry;
 use crate::files::FileError;
+use crate::io::transport::NotificationSender;
 use crate::monitoring::MonitoringManagerApi;
 use crate::network;
+use crate::network::streaming::{RunLimits, StartError, ToolRunManager};
 use crate::protocol::errors;
 use crate::protocol::methods::{
     AgentForwardCloseParams, AgentForwardDataParams, AgentRequestDeferredUpdateParams,
@@ -44,10 +46,10 @@ use crate::protocol::methods::{
     ServiceStartResult, ServiceStatusParams, ServiceStatusResult, ServiceStopParams,
     ServiceStopResult, SessionAttachParams, SessionCloseParams, SessionCreateParams,
     SessionCreateResult, SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult,
-    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
-    TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
-    TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdatePendingNotification,
-    AGENT_UPDATE_PENDING,
+    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams, ToolCancelParams,
+    ToolCancelResult, ToolStartParams, ToolStartResult, TunnelForwardSpec, TunnelStartParams,
+    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
+    UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
 // in the `register_async_method` calls so agent and desktop cannot drift.
@@ -79,7 +81,10 @@ use termihub_core::monitoring::{LocalProcessManager, ProcessError, ProcessManage
 /// embedded-server methods (#2192).
 /// Bumped to 0.8.0 for the additive `service.pause/resume` methods that let an
 /// agent-hosted monitor pause in place instead of stop-and-relist (#2607).
-const AGENT_PROTOCOL_VERSION: &str = "0.8.0";
+/// Bumped to 0.9.0 for the additive streaming `tool.start` / `tool.cancel`
+/// methods, the `tool.event` / `tool.done` notifications and the
+/// `toolStreaming` capability (#3353).
+const AGENT_PROTOCOL_VERSION: &str = "0.9.0";
 
 /// Maximum response body size for jsonrpsee method calls: 32 MiB.
 ///
@@ -125,6 +130,9 @@ struct HandlerState {
     /// #2185). Populated by `tunnel.start`, drained by `tunnel.stop` /
     /// `agent.shutdown`; `tunnel.status` reads live stats from it.
     tunnel_registry: Arc<AgentTunnelRegistry>,
+    /// Streaming tool runs of this connection (`tool.start` / `tool.cancel`,
+    /// #3353). Shared with [`AgentHandler::tool_runs`] so disconnect cancels them.
+    tool_runs: Arc<ToolRunManager>,
 }
 
 // ── AgentHandler ───────────────────────────────────────────────────
@@ -153,6 +161,11 @@ pub struct AgentHandler {
     /// tests, which is also the honest representation of a host where the
     /// registry could not be reached.
     registry_client: Arc<OnceLock<Arc<RegistryClient>>>,
+    /// This connection's streaming tool runs (#3353). Wired to the transport's
+    /// notification channel by
+    /// [`with_notification_sender`](Self::with_notification_sender); cancelled
+    /// wholesale by [`deregister_client`](Self::deregister_client).
+    tool_runs: Arc<ToolRunManager>,
 }
 
 impl AgentHandler {
@@ -177,6 +190,7 @@ impl AgentHandler {
         termihub_core::monitoring::http_monitor::register_http_monitor(&mut service_factories);
         let service_registry = Arc::new(AgentServiceRegistry::new(service_factories));
         let tunnel_registry = Arc::new(AgentTunnelRegistry::new());
+        let tool_runs = ToolRunManager::new(RunLimits::default());
 
         let state = Mutex::new(HandlerState {
             session_manager,
@@ -192,6 +206,7 @@ impl AgentHandler {
             tool_registry,
             service_registry,
             tunnel_registry,
+            tool_runs: tool_runs.clone(),
         });
 
         let mut module: RpcModule<Mutex<HandlerState>> = RpcModule::new(state);
@@ -204,7 +219,20 @@ impl AgentHandler {
             client_registry,
             client_id,
             registry_client,
+            tool_runs,
         })
+    }
+
+    /// Wire this connection's notification channel so streaming tool runs
+    /// (`tool.start`, #3353) can deliver `tool.event` / `tool.done`.
+    ///
+    /// Called by the transport loops right after construction, like
+    /// [`with_registry_client`](Self::with_registry_client). A handler without a
+    /// sender (unit tests) advertises `toolStreaming: false` and rejects
+    /// `tool.start`, so a desktop falls back to the collect-and-return `tool.run`.
+    pub fn with_notification_sender(self, tx: NotificationSender) -> Self {
+        self.tool_runs.set_notification_sender(tx);
+        self
     }
 
     /// Attach this worker's host-wide registry handle (ADR-11).
@@ -247,6 +275,9 @@ impl AgentHandler {
     /// when the socket closes (see `registry_daemon::process`), so a crash
     /// cannot leave a phantom client behind.
     pub fn deregister_client(&self) {
+        // The client is gone: cancel its streaming tool runs so none outlives
+        // the connection or notifies the next client (#3353).
+        self.tool_runs.shutdown();
         self.client_registry.remove(&self.client_id);
         if let Some(registry) = self.registry() {
             registry.deregister();
@@ -528,6 +559,8 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_tunnel_status(module)?;
     register_tool_list(module)?;
     register_tool_run(module)?;
+    register_tool_start(module)?;
+    register_tool_cancel(module)?;
     register_service_list(module)?;
     register_service_start(module)?;
     register_service_stop(module)?;
@@ -578,7 +611,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 },
             )?;
 
-        let (session_manager, connection_store, buffer_size, client_id) = {
+        let (session_manager, connection_store, buffer_size, client_id, tool_streaming) = {
             let mut s = ctx.lock().await;
             s.initialized = true;
             s.agent_settings = p.agent_settings.clone();
@@ -619,6 +652,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 s.connection_store.clone(),
                 buffer_size,
                 client_id,
+                s.tool_runs.is_available(),
             )
         };
 
@@ -671,6 +705,7 @@ fn register_initialize(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::R
                 docker_available,
                 available_docker_images,
                 monitoring_supported: detect_monitoring_supported(),
+                tool_streaming,
             },
         })
     })?;
@@ -1729,6 +1764,55 @@ fn register_tool_run(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Res
             .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
 
         Ok::<_, ErrorObjectOwned>(json!({ "events": host.take(), "result": result }))
+    })?;
+    Ok(())
+}
+
+/// `tool.start` (#3353): launch a streaming run and return at once. Events
+/// arrive as `tool.event` notifications and the run ends with one `tool.done`.
+fn register_tool_start(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(pm::TOOL_START, |params, ctx, _ext| async move {
+        let (registry, tool_runs) = {
+            let s = ctx.lock().await;
+            if !s.initialized {
+                return Err(not_initialized());
+            }
+            (s.tool_registry.clone(), s.tool_runs.clone())
+        };
+        let p: ToolStartParams = params
+            .parse()
+            .map_err(|e| invalid_params("tool.start", e))?;
+        let run_id = p.run_id.clone();
+        tool_runs
+            .start(registry, p.run_id, p.tool_id, p.params)
+            .map_err(|e| {
+                let code = match e {
+                    StartError::InvalidRunId => errors::INVALID_PARAMS,
+                    _ => errors::TOOL_RUN_REJECTED,
+                };
+                rpc_err(code, e.to_string())
+            })?;
+        to_result_value(&ToolStartResult { run_id })
+    })?;
+    Ok(())
+}
+
+/// `tool.cancel` (#3353): signal a streaming run to stop. Idempotent.
+fn register_tool_cancel(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    module.register_async_method(pm::TOOL_CANCEL, |params, ctx, _ext| async move {
+        let tool_runs = {
+            let s = ctx.lock().await;
+            if !s.initialized {
+                return Err(not_initialized());
+            }
+            s.tool_runs.clone()
+        };
+        let p: ToolCancelParams = params
+            .parse()
+            .map_err(|e| invalid_params("tool.cancel", e))?;
+        to_result_value(&ToolCancelResult {
+            cancelled: tool_runs.cancel(&p.run_id),
+        })
     })?;
     Ok(())
 }
@@ -2872,11 +2956,12 @@ mod tests {
     /// The RPC must be advertised, and the bump is what tells an older desktop
     /// which additive capabilities (`agent.update_pending`, the `agent.forward.*`
     /// ssh-agent relay, the `tunnel.*` agent-hosted forwarding methods, the
-    /// `service.*` agent-hosted embedded servers, and the `service.pause/resume`
-    /// in-place monitor pause) may now arrive.
+    /// `service.*` agent-hosted embedded servers, the `service.pause/resume`
+    /// in-place monitor pause, and the streaming `tool.start/cancel` runs) may
+    /// now arrive.
     #[tokio::test]
     async fn the_protocol_version_advertises_the_coordinated_update() {
-        assert_eq!(AGENT_PROTOCOL_VERSION, "0.8.0");
+        assert_eq!(AGENT_PROTOCOL_VERSION, "0.9.0");
     }
 
     // ── agent.forward.* (ssh-agent relay, #1727) ───────────────────
@@ -4186,6 +4271,132 @@ mod tests {
         );
         // One-shot tool: no streamed events.
         assert_eq!(result["result"]["events"].as_array().map(Vec::len), Some(0));
+    }
+
+    // ── tool.start / tool.cancel (streaming runs, #3353) ───────────
+
+    /// A handler wired to a notification channel, as the transports build it.
+    fn make_streaming_handler() -> (
+        AgentHandler,
+        tokio::sync::mpsc::UnboundedReceiver<crate::protocol::messages::JsonRpcNotification>,
+    ) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (make_handler().with_notification_sender(tx), rx)
+    }
+
+    #[tokio::test]
+    async fn tool_streaming_capability_follows_the_notification_channel() {
+        let plain = make_handler();
+        let r = dispatch(&plain, "initialize", init_params(), 1).await;
+        assert_eq!(r["result"]["capabilities"]["toolStreaming"], false, "{r}");
+
+        let (streaming, _rx) = make_streaming_handler();
+        let r = dispatch(&streaming, "initialize", init_params(), 1).await;
+        assert_eq!(r["result"]["capabilities"]["toolStreaming"], true, "{r}");
+    }
+
+    #[tokio::test]
+    async fn tool_start_streams_done_notification() {
+        let (handler, mut rx) = make_streaming_handler();
+        init_handler(&handler).await;
+
+        let r = dispatch(
+            &handler,
+            "tool.start",
+            json!({ "runId": "run-1", "toolId": "open_ports", "params": {} }),
+            2,
+        )
+        .await;
+        assert_eq!(r["result"]["runId"], "run-1", "{r}");
+
+        // open_ports is one-shot: no tool.event, one tool.done with the list.
+        let done = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let n = rx.recv().await.expect("notification channel open");
+                if n.method == pm::TOOL_DONE {
+                    return n.params;
+                }
+            }
+        })
+        .await
+        .expect("tool.done arrives");
+        assert_eq!(done["runId"], "run-1");
+        assert!(done["result"]["ports"].is_array(), "{done}");
+        assert_eq!(done["cancelled"], false);
+    }
+
+    #[tokio::test]
+    async fn tool_start_rejects_unknown_tool_and_missing_channel() {
+        let (handler, _rx) = make_streaming_handler();
+        init_handler(&handler).await;
+        let r = dispatch(
+            &handler,
+            "tool.start",
+            json!({ "runId": "x", "toolId": "no_such_tool" }),
+            2,
+        )
+        .await;
+        assert_eq!(r["error"]["code"], errors::TOOL_RUN_REJECTED, "{r}");
+
+        let r = dispatch(
+            &handler,
+            "tool.start",
+            json!({ "runId": "", "toolId": "open_ports" }),
+            3,
+        )
+        .await;
+        assert_eq!(r["error"]["code"], errors::INVALID_PARAMS, "{r}");
+
+        // No notification channel → streaming unavailable → rejected, so the
+        // desktop falls back to `tool.run`.
+        let plain = make_handler();
+        init_handler(&plain).await;
+        let r = dispatch(
+            &plain,
+            "tool.start",
+            json!({ "runId": "y", "toolId": "open_ports" }),
+            2,
+        )
+        .await;
+        assert_eq!(r["error"]["code"], errors::TOOL_RUN_REJECTED, "{r}");
+    }
+
+    #[tokio::test]
+    async fn tool_cancel_unknown_run_is_a_no_op() {
+        let (handler, _rx) = make_streaming_handler();
+        init_handler(&handler).await;
+        let r = dispatch(&handler, "tool.cancel", json!({ "runId": "ghost" }), 2).await;
+        assert_eq!(r["result"]["cancelled"], false, "{r}");
+    }
+
+    #[tokio::test]
+    async fn tool_start_and_cancel_require_initialization() {
+        let (handler, _rx) = make_streaming_handler();
+        let r = dispatch(
+            &handler,
+            "tool.start",
+            json!({ "runId": "a", "toolId": "open_ports" }),
+            1,
+        )
+        .await;
+        assert_eq!(r["error"]["code"], errors::NOT_INITIALIZED);
+        let r = dispatch(&handler, "tool.cancel", json!({ "runId": "a" }), 2).await;
+        assert_eq!(r["error"]["code"], errors::NOT_INITIALIZED);
+    }
+
+    #[tokio::test]
+    async fn deregister_client_disables_streaming() {
+        let (handler, _rx) = make_streaming_handler();
+        init_handler(&handler).await;
+        handler.deregister_client();
+        let r = dispatch(
+            &handler,
+            "tool.start",
+            json!({ "runId": "late", "toolId": "open_ports" }),
+            2,
+        )
+        .await;
+        assert_eq!(r["error"]["code"], errors::TOOL_RUN_REJECTED, "{r}");
     }
 
     #[tokio::test]

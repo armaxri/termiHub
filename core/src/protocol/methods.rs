@@ -125,6 +125,15 @@ pub const SERVICE_RESUME: &str = "service.resume";
 pub const SERVICE_STATUS: &str = "service.status";
 pub const TOOL_LIST: &str = "tool.list";
 pub const TOOL_RUN: &str = "tool.run";
+/// Start a streaming tool run (#3353): returns at once; results arrive as
+/// [`TOOL_EVENT`] notifications and the run ends with one [`TOOL_DONE`].
+pub const TOOL_START: &str = "tool.start";
+/// Cancel a streaming tool run started with [`TOOL_START`] (#3353).
+pub const TOOL_CANCEL: &str = "tool.cancel";
+/// Notification (agent → desktop): a batch of streamed events of one run.
+pub const TOOL_EVENT: &str = "tool.event";
+/// Notification (agent → desktop): a streaming run finished (exactly once).
+pub const TOOL_DONE: &str = "tool.done";
 
 // Notification methods (agent → desktop; no id, no response).
 pub const CONNECTION_OUTPUT: &str = "connection.output";
@@ -197,6 +206,11 @@ pub struct Capabilities {
     pub available_docker_images: Vec<String>,
     /// Whether system monitoring is supported on this host.
     pub monitoring_supported: bool,
+    /// Whether the agent supports streaming tool runs — `tool.start` /
+    /// `tool.cancel` plus the `tool.event` / `tool.done` notifications (#3353).
+    /// Absent (read as `false`) on older agents, which only offer the
+    /// collect-and-return `tool.run`.
+    pub tool_streaming: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1198,6 +1212,90 @@ pub struct ServiceStartResult {
     pub state: Option<Value>,
 }
 
+// ── tool.start / tool.cancel / tool.event / tool.done (#3353) ─────────
+//
+// Streaming tool runs. `tool.start` launches a core `ToolRegistry` tool in a
+// cancellable task on the agent and returns at once; every streamed
+// `ToolEvent` reaches the desktop in `tool.event` notifications (batched), and
+// the run ends with exactly one `tool.done`. The desktop picks the `run_id` so it
+// can route notifications before `tool.start` even answers.
+
+/// Params for `tool.start`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStartParams {
+    /// Desktop-chosen run id (unique per connection), the key for every
+    /// `tool.event` / `tool.done` notification and for `tool.cancel`.
+    pub run_id: String,
+    /// Which registered tool to run (e.g. `"ping_sweep"`).
+    pub tool_id: String,
+    /// The tool's camelCase params — the same object `tool.run` takes.
+    #[serde(default)]
+    pub params: Value,
+}
+
+/// Result of `tool.start`: the run was accepted and is now running.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolStartResult {
+    /// The accepted run id (echoes the request).
+    pub run_id: String,
+}
+
+/// Params for `tool.cancel`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCancelParams {
+    /// The run to cancel.
+    pub run_id: String,
+}
+
+/// Result of `tool.cancel`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolCancelResult {
+    /// `true` when a running run was found and signalled; `false` when the id is
+    /// unknown or the run already finished (cancel is idempotent).
+    pub cancelled: bool,
+}
+
+/// `tool.event` notification params: one batch of a run's streamed events, in
+/// emission order. Each event has the same `{kind, payload}` shape `tool.run`
+/// returns in its `events` array.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolEventNotification {
+    /// The run these events belong to.
+    pub run_id: String,
+    /// The batched events (never empty).
+    pub events: Vec<crate::tool::ToolEvent>,
+}
+
+/// `tool.done` notification params: the run finished. Sent exactly once per
+/// accepted run, after its last `tool.event`.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolDoneNotification {
+    /// The run that finished.
+    pub run_id: String,
+    /// The run's aggregate (stats / summary), the same value `tool.run` returns
+    /// as `result`. Absent when the run failed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    /// Why the run failed. Absent on success (including a cancelled run that
+    /// returned its partial aggregate).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// `true` when the run stopped early — `tool.cancel`, or the agent's
+    /// per-run lifetime cap.
+    #[serde(default)]
+    pub cancelled: bool,
+    /// Events the agent had to drop because its bounded per-run buffer was full
+    /// (`0` in normal operation).
+    #[serde(default)]
+    pub dropped_events: u64,
+}
+
 /// Params for `service.stop`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1802,6 +1900,7 @@ mod tests {
                 }],
                 max_sessions: 20,
                 monitoring_supported: false,
+                tool_streaming: true,
                 available_shells: vec!["/bin/bash".to_string(), "/bin/zsh".to_string()],
                 available_serial_ports: vec!["/dev/ttyUSB0".to_string()],
                 docker_available: false,
@@ -2727,6 +2826,10 @@ mod tests {
         assert_eq!(SERVICE_STATUS, "service.status");
         assert_eq!(TOOL_LIST, "tool.list");
         assert_eq!(TOOL_RUN, "tool.run");
+        assert_eq!(TOOL_START, "tool.start");
+        assert_eq!(TOOL_CANCEL, "tool.cancel");
+        assert_eq!(TOOL_EVENT, "tool.event");
+        assert_eq!(TOOL_DONE, "tool.done");
         assert_eq!(CONNECTION_OUTPUT, "connection.output");
         assert_eq!(CONNECTION_EXIT, "connection.exit");
         assert_eq!(CONNECTION_MONITORING_DATA, "connection.monitoring.data");

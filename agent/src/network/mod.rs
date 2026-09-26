@@ -11,6 +11,8 @@
 //!
 //! HTTP monitoring is intentionally excluded — it is a desktop-only feature.
 
+pub mod streaming;
+
 use std::sync::OnceLock;
 
 use anyhow::Result;
