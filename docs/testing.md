@@ -1397,6 +1397,30 @@ module, but the live PDU exchange needs a real server:
 6. Leave **Receive Clipboard Files** off and reconnect. **Expected:** no file
    formats are advertised in either direction; text clipboard still works.
 
+#### Clipboard images (CLIPRDR `CF_DIB`, PROD-021 / #3469)
+
+Image clipboard works over RDP in both directions; VNC's standard RFB clipboard
+is Latin-1 text only, so the image section is hidden for VNC sessions. DIB ↔
+RGBA conversion, the size caps and the owner gate are unit-tested (`rdp-sidecar`
+`dib` + `clipboard` image tests, `termihub-core` `clipboard_image`, and
+`src-tauri` `remote_desktop_image`); the live PDU exchange needs a real server:
+
+1. Build the sidecar and point `TERMIHUB_RDP_HELPER` at it (as above), then
+   connect to a Windows RDP host.
+2. **Remote → local:** in the remote session take a screenshot or copy a picture
+   (e.g. Paint → Select all → Ctrl+C). Open the toolbar **Clipboard** panel.
+   **Expected:** the **Image** section reads `Remote image · W × H`; **Copy
+   image** shows a success toast and the picture pastes into a local image app.
+3. **Local → remote:** copy an image locally (e.g. a screenshot to the
+   clipboard), click **Send local image**. **Expected:** a success toast with its
+   size, and Ctrl+V in remote Paint pastes the picture.
+4. **Caps:** copy a local image larger than 32 MiB of RGBA (e.g. 5120 × 2880) and
+   click **Send local image**. **Expected:** an error toast; nothing is sent.
+5. **View-only:** reconnect with **View Only**. **Expected:** **Send local image**
+   is hidden; copying a remote image still works.
+6. **VNC:** open the clipboard panel on a VNC session. **Expected:** no Image
+   section; accented text (`café`) round-trips through the text clipboard.
+
 #### Delayed-render paste to the host OS clipboard (macOS, #1804)
 
 On macOS the remote-copied files are surfaced to the **host OS clipboard** with
