@@ -16,6 +16,7 @@ import {
 } from "@/services/api";
 import { FileEntry } from "@/types/connection";
 import { runBlockingTransfer } from "./transferFeedback";
+import { joinDirPath, type PasteOptions } from "@/utils/fileDragMove";
 
 /**
  * Hook for local filesystem operations.
@@ -184,35 +185,40 @@ export function useLocalFileSystem() {
     [currentPath]
   );
 
-  const pasteEntry = useCallback(async () => {
-    const clipboard = currentFileBrowsersView().clipboard;
-    if (!clipboard) return;
+  const pasteEntry = useCallback(
+    async (options?: PasteOptions) => {
+      // An explicit clipboard (drag-to-move / Move to… dialog) is a one-shot
+      // transfer that never touches — or clears — the user's copy/cut clipboard.
+      const clipboard = options?.clipboard ?? currentFileBrowsersView().clipboard;
+      if (!clipboard) return;
 
-    const destDir = currentPath;
+      const destDir = options?.destDir ?? currentPath;
 
-    for (const clipEntry of clipboard.entries) {
-      const destPath = destDir === "/" ? `/${clipEntry.name}` : `${destDir}/${clipEntry.name}`;
+      for (const clipEntry of clipboard.entries) {
+        const destPath = joinDirPath(destDir, clipEntry.name);
 
-      if (clipboard.sourceMode === "local") {
-        // local→local
-        if (clipboard.operation === "cut") {
-          await localRename(clipEntry.path, destPath);
-        } else {
-          await localCopyFile(clipEntry.path, destPath, clipEntry.isDirectory);
+        if (clipboard.sourceMode === "local") {
+          // local→local
+          if (clipboard.operation === "cut") {
+            await localRename(clipEntry.path, destPath);
+          } else {
+            await localCopyFile(clipEntry.path, destPath, clipEntry.isDirectory);
+          }
         }
+        // A session→local paste is not supported here (the remote source lives on
+        // the session transport, not the local disk); the session pane handles its
+        // own paste. The legacy sftp→local download path was retired with the
+        // standalone SFTP browser (#2422).
       }
-      // A session→local paste is not supported here (the remote source lives on
-      // the session transport, not the local disk); the session pane handles its
-      // own paste. The legacy sftp→local download path was retired with the
-      // standalone SFTP browser (#2422).
-    }
 
-    if (clipboard.operation === "cut") {
-      useAppStore.getState().setFileClipboard(null);
-    }
+      if (clipboard.operation === "cut" && !options?.clipboard) {
+        useAppStore.getState().setFileClipboard(null);
+      }
 
-    refreshLocal();
-  }, [currentPath, refreshLocal]);
+      refreshLocal();
+    },
+    [currentPath, refreshLocal]
+  );
 
   return {
     fileEntries,

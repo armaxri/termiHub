@@ -19,14 +19,15 @@
 
 ## Files & transfer
 
-| Capability           | Description                                                             | Status |
-| -------------------- | ----------------------------------------------------------------------- | ------ |
-| SFTP file browser    | Browse, upload, download, rename, delete remote files over SSH          | Stable |
-| Local file browser   | Browse the local filesystem, following the active shell's cwd           | Stable |
-| Built-in editor      | Monaco editor for local & remote files (syntax highlight, search, save) | Stable |
-| FTP / FTPS           | File-transfer connections with browse, upload, download, edit           | Beta   |
-| Transfer queue       | Managed queue: concurrency limit, pause/resume, cancel, auto-retry      | Beta   |
-| Drag-and-drop upload | Drop OS files onto the SFTP browser to upload                           | Stable |
+| Capability           | Description                                                              | Status |
+| -------------------- | ------------------------------------------------------------------------ | ------ |
+| SFTP file browser    | Browse, upload, download, rename, delete remote files over SSH           | Stable |
+| Local file browser   | Browse the local filesystem, following the active shell's cwd            | Stable |
+| Built-in editor      | Monaco editor for local & remote files (syntax highlight, search, save)  | Stable |
+| FTP / FTPS           | File-transfer connections with browse, upload, download, edit            | Beta   |
+| Transfer queue       | Managed queue: concurrency limit, pause/resume, cancel, auto-retry       | Beta   |
+| Drag-and-drop upload | Drop OS files onto the SFTP browser to upload                            | Stable |
+| Drag-to-move files   | Drag rows onto folders/breadcrumbs to move (Alt/Option copies); Move to… | Beta   |
 
 ## Tunnels & forwarding
 
