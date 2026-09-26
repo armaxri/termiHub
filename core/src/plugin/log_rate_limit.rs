@@ -154,8 +154,8 @@ impl PluginLogLimiter {
     }
 
     /// The limiter's tunables.
-    #[must_use]
-    pub fn config(&self) -> LogRateLimitConfig {
+    #[cfg(test)]
+    pub(crate) fn config(&self) -> LogRateLimitConfig {
         self.config
     }
 
@@ -219,8 +219,8 @@ impl PluginLogLimiter {
     }
 
     /// Lines dropped in the still-open suppression window.
-    #[must_use]
-    pub fn pending_suppressed(&self) -> u64 {
+    #[cfg(test)]
+    pub(crate) fn pending_suppressed(&self) -> u64 {
         self.lock().suppressed
     }
 }
