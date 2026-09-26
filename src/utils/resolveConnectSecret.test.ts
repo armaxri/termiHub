@@ -111,7 +111,7 @@ describe("resolveConnectSecret", () => {
       requestPassword,
     });
     expect(mockedUnlock).toHaveBeenCalledWith({ authMethod: "password", savePassword: undefined });
-    expect(mockedResolve).toHaveBeenCalledWith("c1", "password", undefined);
+    expect(mockedResolve).toHaveBeenCalledWith("c1", "password", undefined, undefined);
     expect(requestPassword).not.toHaveBeenCalled();
     expect(r).toEqual({
       status: "resolved",
@@ -300,7 +300,7 @@ describe("resolveConnectSecret — telnet auto-login schema", () => {
       connectionId: "t1",
       requestPassword,
     });
-    expect(mockedResolve).toHaveBeenCalledWith("t1", "password", undefined);
+    expect(mockedResolve).toHaveBeenCalledWith("t1", "password", undefined, undefined);
     expect(r).toEqual({
       status: "resolved",
       passwordKey: "password",

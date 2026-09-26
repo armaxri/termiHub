@@ -1816,6 +1816,25 @@ backend and dialogs are unit-tested; this checks the native save/open dialogs).
    **Import vault…** with the same file works and the credentials land in the OS
    keychain.
 
+### Shared named credentials (#3557, PROD-065)
+
+The model, resolution, migration and backup are unit-tested; this checks the real connect flow.
+
+1. Master Password mode. Settings → Security → **Shared Credentials** → **New shared credential…**
+   → name "Bastion", kind Password, the SSH password twice → **Create**. The list shows
+   "Password · Not used".
+2. Edit two SSH connections (password auth) to the same host: **Password source** → "Bastion".
+   The Password and Save fields disappear. Save both; the list shows "Used by 2 connections".
+3. Connect with each: no password prompt. Lock the store, connect again → unlock prompt first,
+   then it connects.
+4. Rotate "Bastion" to a wrong password → connecting prompts with "The shared credential was
+   rejected…" and no Save box; the shared credential is still listed. Rotate it back → both
+   connect without a prompt.
+5. **Delete** "Bastion" → refused, listing both connections. Switch one connection back to "This
+   connection's password", then the other; delete now succeeds.
+6. Switch the storage mode to OS Keychain (and back) with a shared credential in use → the
+   connections still connect without a prompt.
+
 ### OS re-authentication and biometric unlock (#3433, PROD-064)
 
 The gate logic is unit-tested against a mock verifier; the real OS prompts can only be checked by

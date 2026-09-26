@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useForm, useWatch, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ChevronRight } from "lucide-react";
@@ -40,6 +40,17 @@ interface ConnectionSettingsFormProps {
    * The parent uses this to disable Save/Save & Connect on invalid input.
    */
   onValidityChange?: (valid: boolean, errors: Record<string, string>) => void;
+  /**
+   * Field keys to hide (and exclude from validation) regardless of the
+   * schema — e.g. the password fields while a shared named credential
+   * supplies the secret (#3557). Values stay in the form untouched.
+   */
+  hiddenFieldKeys?: readonly string[];
+  /**
+   * Extra content rendered right after the field with `key` while that field
+   * is shown — e.g. the shared-credential picker after `authMethod` (#3557).
+   */
+  afterField?: { key: string; node: React.ReactNode };
 }
 
 /**
@@ -57,6 +68,8 @@ export function ConnectionSettingsForm({
   availablePorts,
   localContainerListing = true,
   onValidityChange,
+  hiddenFieldKeys,
+  afterField,
 }: ConnectionSettingsFormProps) {
   const zodSchema = useMemo(() => settingsSchemaToZod(schema), [schema]);
 
@@ -208,6 +221,11 @@ export function ConnectionSettingsForm({
     () => withSchemaDefaults(schema, watchedValues),
     [schema, watchedValues]
   );
+  const isShown = useCallback(
+    (field: SettingsGroup["fields"][number]) =>
+      isFieldVisible(field, visibilityValues) && !hiddenFieldKeys?.includes(field.key),
+    [visibilityValues, hiddenFieldKeys]
+  );
 
   // Port auto-adjust special-case (FTP): the schema `Condition` is `equals`-only
   // and cannot mutate a value, so when the user switches TLS Mode we snap the
@@ -248,13 +266,13 @@ export function ConnectionSettingsForm({
     const visibleErrors: Record<string, string> = {};
     for (const group of schema.groups) {
       for (const field of group.fields) {
-        if (isFieldVisible(field, visibilityValues) && errorMap[field.key]) {
+        if (isShown(field) && errorMap[field.key]) {
           visibleErrors[field.key] = errorMap[field.key];
         }
       }
     }
     return { valid: Object.keys(visibleErrors).length === 0, errors: visibleErrors };
-  }, [zodSchema, watchedValues, visibilityValues, schema]);
+  }, [zodSchema, watchedValues, isShown, schema]);
 
   // Only propagate when the reported validity actually changes, so typing more
   // characters into an already-valid (or already-invalid, same-errors) field
@@ -270,49 +288,59 @@ export function ConnectionSettingsForm({
   return (
     <div data-testid="connection-settings-form">
       {schema.groups.map((group) => {
-        const visibleFields = group.fields.filter((f) => isFieldVisible(f, visibilityValues));
+        const visibleFields = group.fields.filter(isShown);
         if (visibleFields.length === 0) return null;
         return (
           <FormGroupSection key={group.key} group={group}>
-            {visibleFields.map((field) =>
-              // Display-only notice fields carry no value, so they render
-              // standalone rather than through a react-hook-form Controller.
-              field.fieldType.type === "notice" ? (
-                <DynamicField key={field.key} field={field} value={undefined} onChange={() => {}} />
-              ) : (
-                <Controller
-                  key={field.key}
-                  name={field.key}
-                  control={control}
-                  render={({ field: rhfField, fieldState }) => (
+            {visibleFields.map((field) => (
+              <React.Fragment key={field.key}>
+                {
+                  // Display-only notice fields carry no value, so they render
+                  // standalone rather than through a react-hook-form Controller.
+                  field.fieldType.type === "notice" ? (
                     <DynamicField
+                      key={field.key}
                       field={field}
-                      value={rhfField.value}
-                      onChange={(value: unknown) => {
-                        rhfField.onChange(value);
-                        syncDisplayPort(field.key, value);
-                      }}
-                      onBlur={() => handleFieldBlur(field.key, rhfField.value)}
-                      error={fieldState.error?.message}
-                      credentialSaved={
-                        credentialSavedHint &&
-                        field.fieldType.type === "password" &&
-                        !rhfField.value
-                      }
-                      availablePorts={availablePorts}
-                      containerContext={
-                        field.fieldType.type === "dockerContainer"
-                          ? {
-                              runtime: visibilityValues.runtime as string | undefined,
-                              listingEnabled: localContainerListing,
-                            }
-                          : undefined
-                      }
+                      value={undefined}
+                      onChange={() => {}}
                     />
-                  )}
-                />
-              )
-            )}
+                  ) : (
+                    <Controller
+                      key={field.key}
+                      name={field.key}
+                      control={control}
+                      render={({ field: rhfField, fieldState }) => (
+                        <DynamicField
+                          field={field}
+                          value={rhfField.value}
+                          onChange={(value: unknown) => {
+                            rhfField.onChange(value);
+                            syncDisplayPort(field.key, value);
+                          }}
+                          onBlur={() => handleFieldBlur(field.key, rhfField.value)}
+                          error={fieldState.error?.message}
+                          credentialSaved={
+                            credentialSavedHint &&
+                            field.fieldType.type === "password" &&
+                            !rhfField.value
+                          }
+                          availablePorts={availablePorts}
+                          containerContext={
+                            field.fieldType.type === "dockerContainer"
+                              ? {
+                                  runtime: visibilityValues.runtime as string | undefined,
+                                  listingEnabled: localContainerListing,
+                                }
+                              : undefined
+                          }
+                        />
+                      )}
+                    />
+                  )
+                }
+                {afterField?.key === field.key && afterField.node}
+              </React.Fragment>
+            ))}
           </FormGroupSection>
         );
       })}

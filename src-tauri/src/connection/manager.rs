@@ -18,23 +18,30 @@ use super::tree::{
     deduplicate_sibling_names, flatten_tree,
 };
 use crate::credential::crypto::{decrypt_with_password, encrypt_with_password};
+use crate::credential::named;
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 use crate::utils::fs::write_atomic;
 use termihub_core::connection::LegacyTypeIdResolver;
 
 /// Route credentials to the active store (if `savePassword` is set),
 /// then strip the password field so it is never written to disk.
+///
+/// A connection that references a shared named credential (#3557) never
+/// stores a per-connection secret: the reference is authoritative, so a typed
+/// password is dropped rather than saved where it would never be read.
 pub(crate) fn prepare_for_storage(
     mut connection: SavedConnection,
     store: &dyn CredentialStore,
 ) -> Result<SavedConnection> {
+    let uses_named = named::settings_ref(&connection.config.settings).is_some();
     let settings = &mut connection.config.settings;
     if let Some(password) = settings
         .get("password")
         .and_then(|v| v.as_str())
         .map(String::from)
     {
-        if !password.is_empty()
+        if !uses_named
+            && !password.is_empty()
             && settings.get("savePassword").and_then(|v| v.as_bool()) == Some(true)
         {
             let auth_method = settings
@@ -60,8 +67,9 @@ pub(crate) fn prepare_agent_for_storage(
     mut agent: SavedRemoteAgent,
     store: &dyn CredentialStore,
 ) -> Result<SavedRemoteAgent> {
+    let uses_named = named::agent_ref(&agent).is_some();
     if let Some(ref password) = agent.config.password {
-        if agent.config.save_password == Some(true) {
+        if !uses_named && agent.config.save_password == Some(true) {
             let cred_type = if agent.config.auth_method == "key" {
                 CredentialType::KeyPassphrase
             } else {
@@ -1582,6 +1590,30 @@ mod tests {
         let agent = make_agent("a2", "password", Some("pw"), None);
         let result = prepare_agent_for_storage(agent, &store).unwrap();
         assert!(result.config.password.is_none());
+        assert!(store.stored.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn prepare_for_storage_never_stores_a_secret_for_a_named_reference() {
+        // #3557: a connection referencing a shared credential must not also
+        // keep a per-connection secret — it would never be read.
+        let store = MockStore::new();
+        let mut conn = make_ssh_conn("c5", "password", Some("typed"), Some(true));
+        conn.config.settings["credentialRef"] = serde_json::json!("nc-1");
+        let result = prepare_for_storage(conn, &store).unwrap();
+        assert!(result.config.settings.get("password").is_none());
+        assert_eq!(result.config.settings["credentialRef"], "nc-1");
+        assert!(store.stored.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn prepare_agent_for_storage_never_stores_a_secret_for_a_named_reference() {
+        let store = MockStore::new();
+        let mut agent = make_agent("a3", "password", Some("typed"), Some(true));
+        agent.config.credential_ref = Some("nc-1".to_string());
+        let result = prepare_agent_for_storage(agent, &store).unwrap();
+        assert!(result.config.password.is_none());
+        assert_eq!(result.config.credential_ref.as_deref(), Some("nc-1"));
         assert!(store.stored.lock().unwrap().is_empty());
     }
 

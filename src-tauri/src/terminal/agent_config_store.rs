@@ -177,6 +177,7 @@ mod tests {
             password: password.map(|s| s.to_string()),
             key_path: Some("~/.ssh/id_ed25519".to_string()),
             save_password: None,
+            credential_ref: None,
             agent_path: None,
             external_connection_files: Vec::new(),
             allow_self_update: false,

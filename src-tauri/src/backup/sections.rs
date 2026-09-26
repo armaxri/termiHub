@@ -18,6 +18,7 @@ use zeroize::Zeroizing;
 use crate::connection::config::{ConnectionStore, SavedRemoteAgent};
 use crate::connection::settings::AppSettings;
 use crate::connection::tree::{build_tree, flatten_tree};
+use crate::credential::named::{NamedCredentialStore, FILE_NAME};
 use crate::credential::types::CredentialKey;
 use crate::credential::vault::ConflictStrategy;
 use crate::embedded_servers::config::EmbeddedServerStore;
@@ -362,6 +363,22 @@ pub static SECTIONS: &[SectionSpec] = &[
         normalize: normalize_connections,
         legacy_secrets: None,
         default_doc: || to_doc(&ConnectionStore::default()),
+    },
+    SectionSpec {
+        id: "namedCredentials",
+        label: "Shared credentials",
+        description: "Names of shared credentials used by several connections (the secrets \
+                      themselves are in the credentials).",
+        file_name: FILE_NAME,
+        current_version: <NamedCredentialStore as VersionedStore>::CURRENT_VERSION,
+        shape: Shape::List {
+            field: "credentials",
+        },
+        contains_secrets: false,
+        integrity_sensitive: false,
+        normalize: normalize_versioned::<NamedCredentialStore>,
+        legacy_secrets: None,
+        default_doc: || to_doc(&NamedCredentialStore::default()),
     },
     SectionSpec {
         id: "settings",

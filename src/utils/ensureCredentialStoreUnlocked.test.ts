@@ -117,4 +117,21 @@ describe("ensureCredentialStoreUnlocked", () => {
     expect(requestUnlock).toHaveBeenCalledTimes(1);
     expect(proceed).toBe(true);
   });
+
+  it("prompts for key auth WITHOUT savePassword when a shared credential is referenced", async () => {
+    const requestUnlock = vi.fn().mockResolvedValue(true);
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "locked" },
+      requestUnlock,
+    });
+
+    const proceed = await ensureCredentialStoreUnlocked({
+      authMethod: "key",
+      savePassword: false,
+      credentialRef: "nc-1",
+    });
+
+    expect(requestUnlock).toHaveBeenCalledTimes(1);
+    expect(proceed).toBe(true);
+  });
 });

@@ -7,6 +7,12 @@ import type { UpdateStrategy } from "./UpdateStrategy";
  */
 export type RemoteAgentConfig = { host: string, port: number, username: string, authMethod: "password" | "key" | "agent", password?: string, keyPath?: string, savePassword?: boolean, 
 /**
+ * Id of a shared named credential (#3557) that supplies this agent's
+ * password / key passphrase instead of a per-agent secret. When set, the
+ * per-agent secret is neither stored nor consulted.
+ */
+credentialRef?: string, 
+/**
  * Path to the agent binary on the remote host.
  *
  * Defaults to `~/.local/bin/termihub-agent`. The `~` prefix is expanded

@@ -84,6 +84,9 @@ export function toRemoteAgentConfig(record: Record<string, unknown>): RemoteAgen
   const savePassword = readConfigBoolean(cc, "savePassword");
   if (savePassword !== undefined) config.savePassword = savePassword;
 
+  const credentialRef = readConfigString(cc, "credentialRef");
+  if (credentialRef) config.credentialRef = credentialRef;
+
   const agentPath = readConfigString(cc, "agentPath");
   if (agentPath !== undefined) config.agentPath = agentPath;
 
@@ -115,6 +118,7 @@ export function remoteAgentConfigToRecord(config: RemoteAgentConfig): Record<str
   if (config.password !== undefined) record.password = config.password;
   if (config.keyPath !== undefined) record.keyPath = config.keyPath;
   if (config.savePassword !== undefined) record.savePassword = config.savePassword;
+  if (config.credentialRef !== undefined) record.credentialRef = config.credentialRef;
   if (config.agentPath !== undefined) record.agentPath = config.agentPath;
   if (config.externalConnectionFiles !== undefined)
     record.externalConnectionFiles = config.externalConnectionFiles;

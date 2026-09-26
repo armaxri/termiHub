@@ -115,4 +115,27 @@ describe("ConnectionSettingsForm — validity reporting", () => {
 
     expect(onValidity.mock.calls[onValidity.mock.calls.length - 1][0]).toBe(false);
   });
+
+  it("hides hiddenFieldKeys and excludes them from validity (#3557)", async () => {
+    const onValidity = vi.fn();
+    await act(async () => {
+      root.render(
+        <ConnectionSettingsForm
+          schema={SCHEMA}
+          settings={{ port: 22 }}
+          onChange={() => {}}
+          onValidityChange={onValidity}
+          hiddenFieldKeys={["host"]}
+          afterField={{ key: "port", node: <span data-testid="after-port">extra</span> }}
+        />
+      );
+    });
+    await flush();
+
+    const last = onValidity.mock.calls[onValidity.mock.calls.length - 1];
+    expect(last[0]).toBe(true);
+    expect(container.querySelector("input[name='host'], [data-testid='field-host']")).toBeNull();
+    expect(container.textContent).not.toContain("Host");
+    expect(container.querySelector("[data-testid='after-port']")).not.toBeNull();
+  });
 });

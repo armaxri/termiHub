@@ -340,6 +340,23 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
     ],
   },
   {
+    id: "sharedCredentials",
+    label: "Shared Credentials",
+    description:
+      "Passwords and key passphrases shared by several connections, changed in one place",
+    category: "security",
+    keywords: [
+      "shared",
+      "credential",
+      "named",
+      "password",
+      "passphrase",
+      "rotate",
+      "bastion",
+      "reuse",
+    ],
+  },
+  {
     id: "credentialVaultBackup",
     label: "Credential Vault Backup",
     description:
