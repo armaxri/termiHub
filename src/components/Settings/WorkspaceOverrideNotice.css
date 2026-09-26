@@ -1,0 +1,22 @@
+.workspace-override-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--border-warning);
+  border-radius: var(--radius-sm);
+  background: var(--bg-warning);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+.workspace-override-notice__icon {
+  flex-shrink: 0;
+  color: var(--color-warning);
+}
+
+.workspace-override-notice__text {
+  flex: 1;
+  min-width: 0;
+}

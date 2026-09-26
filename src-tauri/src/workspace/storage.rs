@@ -75,7 +75,17 @@ impl WorkspaceStorage {
             WorkspaceStore::CURRENT_VERSION,
         )?;
 
-        let data = serde_json::to_string_pretty(store).context("Failed to serialize workspaces")?;
+        // Always stamp the current schema version: a store migrated in memory or
+        // built from an older default must not be written back under a stale one.
+        let mut value = serde_json::to_value(store).context("Failed to serialize workspaces")?;
+        if let Some(obj) = value.as_object_mut() {
+            obj.insert(
+                "version".to_string(),
+                serde_json::Value::String(WorkspaceStore::CURRENT_VERSION.to_string()),
+            );
+        }
+        let data =
+            serde_json::to_string_pretty(&value).context("Failed to serialize workspaces")?;
 
         write_atomic(&self.file_path, &data).context("Failed to write workspaces file")?;
 
@@ -364,5 +374,84 @@ mod tests {
             tabs[0].inline_config.as_ref().unwrap()["type"],
             "plugin:beta:k8s"
         );
+    }
+
+    /// PROD-052: a v1 file (no per-workspace settings) migrates forward to v2 on
+    /// load, keeps every workspace, and is rewritten on disk as v2 once.
+    #[test]
+    fn v1_file_migrates_to_v2() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        fs::write(
+            &storage.file_path,
+            r#"{"version":"1","workspaces":[{"id":"ws-1","name":"Work","tabGroups":[]}]}"#,
+        )
+        .unwrap();
+
+        let result = storage.load_with_recovery().unwrap();
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.data.workspaces.len(), 1);
+        assert!(result.data.workspaces[0].settings.is_none());
+        assert_eq!(result.data.version, "2");
+
+        let on_disk: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(on_disk["version"], "2", "migrated file is persisted as v2");
+    }
+
+    /// PROD-052: per-workspace settings survive a save → load round trip and the
+    /// file is always written as the current schema version.
+    #[test]
+    fn workspace_settings_round_trip_through_storage() {
+        use crate::workspace::settings::{WorkspaceEnvVar, WorkspaceSettings};
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        let mut store = WorkspaceStore {
+            version: "1".to_string(),
+            ..WorkspaceStore::default()
+        };
+        store
+            .workspaces
+            .push(crate::workspace::config::WorkspaceDefinition {
+                id: "ws-1".into(),
+                name: "Prod".into(),
+                description: None,
+                tab_groups: vec![],
+                windows: None,
+                settings: Some(WorkspaceSettings {
+                    theme: Some("light".into()),
+                    font_size: Some(18),
+                    default_working_directory: Some("/srv".into()),
+                    env_vars: vec![WorkspaceEnvVar {
+                        key: "STAGE".into(),
+                        value: "prod".into(),
+                    }],
+                    ..Default::default()
+                }),
+            });
+        storage.save(&store).unwrap();
+
+        let raw: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&storage.file_path).unwrap()).unwrap();
+        assert_eq!(raw["version"], "2");
+        assert_eq!(raw["workspaces"][0]["settings"]["theme"], "light");
+
+        let loaded = storage.load_with_recovery().unwrap().data;
+        let settings = loaded.workspaces[0].settings.as_ref().unwrap();
+        assert_eq!(settings.font_size, Some(18));
+        assert_eq!(settings.env_vars[0].key, "STAGE");
+    }
+
+    /// PROD-052 downgrade safety: a build that only knows v1 must refuse to
+    /// overwrite a v2 file (which would silently drop every workspace's
+    /// settings). Simulated with the shared guard at the old version.
+    #[test]
+    fn v1_build_refuses_to_overwrite_v2_file() {
+        let dir = TempDir::new().unwrap();
+        let storage = create_test_storage(&dir);
+        storage.save(&WorkspaceStore::default()).unwrap();
+        let err = crate::utils::migrate::guard_not_newer(&storage.file_path, "workspaces.json", 1)
+            .unwrap_err();
+        assert!(err.to_string().contains("newer version"));
     }
 }

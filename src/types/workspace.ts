@@ -64,6 +64,32 @@ export interface WorkspaceWindowDef {
   id: string;
 }
 
+/** One extra environment variable for new local sessions of a workspace (PROD-052). */
+export interface WorkspaceEnvVar {
+  /** Variable name (`[A-Za-z_][A-Za-z0-9_]*`). */
+  key: string;
+  /** Variable value — never meant for secrets. */
+  value: string;
+}
+
+/**
+ * Per-workspace settings overrides (PROD-052). Every field is optional; an
+ * absent field inherits the global setting. Precedence is
+ * `global < workspace < connection`.
+ */
+export interface WorkspaceSettings {
+  /** Theme override (same value space as `AppSettings.theme`). */
+  theme?: string;
+  /** Terminal font family override. */
+  fontFamily?: string;
+  /** Terminal font size override in pixels (8–32). */
+  fontSize?: number;
+  /** Default working directory for new local shells that do not set their own. */
+  defaultWorkingDirectory?: string;
+  /** Extra environment variables for new local shells (connection entries win). */
+  envVars?: WorkspaceEnvVar[];
+}
+
 /** A complete workspace definition. */
 export interface WorkspaceDefinition {
   id: string;
@@ -77,6 +103,16 @@ export interface WorkspaceDefinition {
    * restore entirely into the main window.
    */
   windows?: WorkspaceWindowDef[];
+  /** Per-workspace settings overrides (PROD-052); absent → inherit every global setting. */
+  settings?: WorkspaceSettings;
+}
+
+/** The active workspace as broadcast by the backend (`active-workspace-changed`). */
+export interface ActiveWorkspaceInfo {
+  id: string;
+  name: string;
+  /** The workspace's overrides; absent → it inherits every global setting. */
+  settings?: WorkspaceSettings;
 }
 
 /** Summary of a workspace for list display. */

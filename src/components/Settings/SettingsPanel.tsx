@@ -23,7 +23,7 @@ import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { applyTheme } from "@/themes/engine";
+import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
 import { filterSettings, getMatchingCategories } from "./settingsRegistry";
@@ -224,7 +224,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       // Apply theme immediately so the user sees the change without waiting
       // for the debounced save (which would compare against already-updated state).
       if (newSettings.theme !== base.theme) {
-        applyTheme(newSettings.theme);
+        applyEffectiveTheme(newSettings);
       }
 
       if (saveTimerRef.current) {
