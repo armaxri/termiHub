@@ -25,7 +25,7 @@ import "./Plugins.css";
 export interface PluginInstallDialogProps {
   /** Absolute path to the validated `.termihub-plugin` package. */
   filePath: string;
-  /** The manifest parsed from the package by `validate_plugin`. */
+  /** The manifest parsed from the package by `preview_plugin`. */
   manifest: PluginManifest;
   /** The package's assessed trust (from `assess_plugin_trust`). */
   trust: PluginTrustInfo;
