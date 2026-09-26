@@ -270,10 +270,23 @@ function JumpHostStatus() {
 }
 
 /**
+ * The color depth a remote-desktop session actually negotiates, as shown in
+ * the status bar. RDP shows its saved depth. VNC negotiates only 16-bit or
+ * 32-bit (#3464), so a stale value from the former shared select (e.g. "24")
+ * is shown as the 32-bit it connects at; other types show none.
+ */
+function effectiveColorDepth(type: string, value: unknown): string | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (type === "rdp") return String(value);
+  if (type === "vnc") return String(value) === "16" ? "16" : "32";
+  return undefined;
+}
+
+/**
  * Shared status-bar segment for the active graphical remote-desktop tab (#1709).
  *
  * Shows `<monitor> host:port · WxH · N-bit` while a `remote-desktop` tab is
- * active: `host:port` and (RDP) colour depth come from the connection config, and the
+ * active: `host:port` and (RDP / VNC) colour depth come from the connection config, and the
  * live `WxH` resolution comes from the framebuffer surfaced to the store
  * (`remoteDesktopResolutions`, keyed by session id). Renders nothing for any
  * other active tab, so it disappears the moment a non-graphical tab is focused.
@@ -294,15 +307,11 @@ function RemoteDesktopStatus() {
   const host = readConfigString(activeTab.config, "host") || activeTab.title || "remote";
   const port = cfg.port;
   const hostPort = port !== undefined && port !== null && port !== "" ? `${host}:${port}` : host;
-  // Only RDP negotiates a configurable color depth; VNC is always 32-bit, so a
-  // `colorDepth` left in an older VNC config is not shown (PROD-026).
-  const colorDepth = activeTab.config.type === "rdp" ? cfg.colorDepth : undefined;
+  const colorDepth = effectiveColorDepth(activeTab.config.type, cfg.colorDepth);
 
   const parts = [hostPort];
   if (resolution) parts.push(`${resolution.width}×${resolution.height}`);
-  if (colorDepth !== undefined && colorDepth !== null && colorDepth !== "") {
-    parts.push(`${colorDepth}-bit`);
-  }
+  if (colorDepth !== undefined) parts.push(`${colorDepth}-bit`);
   const label = parts.join(" · ");
 
   return (
