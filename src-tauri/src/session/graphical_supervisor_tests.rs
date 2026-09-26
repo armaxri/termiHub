@@ -48,13 +48,20 @@ enum Dial {
 enum Fatal {
     Auth,
     Connect,
+    /// The server sent data the client cannot handle (#3479).
+    Protocol,
 }
+
+/// The reason a [`Fatal::Protocol`] backend reports.
+const PROTOCOL_REASON: &str =
+    "The VNC server sent data termiHub can't handle: unsupported encoding 7";
 
 impl Fatal {
     fn error(self) -> SessionError {
         match self {
             Fatal::Auth => SessionError::AuthFailed,
             Fatal::Connect => SessionError::ConnectionFailed("tcp refused".into()),
+            Fatal::Protocol => SessionError::ProtocolError(PROTOCOL_REASON.into()),
         }
     }
 }
@@ -73,6 +80,9 @@ struct Control {
     inputs: StdMutex<Vec<(u32, InputEvent)>>,
     /// The settings every dial connected with (PROD-026).
     dial_settings: StdMutex<Vec<serde_json::Value>>,
+    /// A typed reason the live generation (by dial number) reports on
+    /// `fatal_error` once it ended mid-session (#3479).
+    live_fatal: StdMutex<Option<(u32, Fatal)>>,
 }
 
 impl Control {
@@ -88,6 +98,15 @@ impl Control {
     fn drop_stream(&self) {
         self.frame_tx.lock().unwrap().take();
         self.cursor_tx.lock().unwrap().take();
+    }
+
+    /// End the live generation with a typed reason, the way a backend that
+    /// hit a server protocol error mid-session does (#3479): record the
+    /// reason, then close its streams.
+    fn fail_live(&self, fatal: Fatal) {
+        let dial = self.frame_tx.lock().unwrap().as_ref().unwrap().0;
+        *self.live_fatal.lock().unwrap() = Some((dial, fatal));
+        self.drop_stream();
     }
 
     fn frame_sender(&self) -> mpsc::Sender<FrameUpdate> {
@@ -254,7 +273,11 @@ impl GraphicalBackend for FakeDesktop {
         Ok(())
     }
     fn fatal_error(&self) -> Option<SessionError> {
-        self.fatal.map(Fatal::error)
+        let live = match *self.ctl.live_fatal.lock().unwrap() {
+            Some((dial, fatal)) if dial == self.dial => Some(fatal),
+            _ => None,
+        };
+        self.fatal.or(live).map(Fatal::error)
     }
 }
 
@@ -751,6 +774,111 @@ async fn async_connect_failure_on_redial_is_still_retried() {
             (GraphicalState::Disconnected, 3),
         ]
     );
+}
+
+// ── Server protocol errors are terminal and carry their reason (#3479) ──
+
+/// No `Reconnecting` state was ever emitted.
+fn never_reconnected(sink: &Sink) -> bool {
+    sink.states()
+        .iter()
+        .all(|e| e.state != GraphicalState::Reconnecting)
+}
+
+#[tokio::test(start_paused = true)]
+async fn protocol_error_mid_session_rests_disconnected_with_reason_and_zero_retries() {
+    let h = open(serde_json::json!({}), vec![Dial::Ok, Dial::Ok, Dial::Ok]).await;
+    h.ctl.send_frame().await;
+    wait_until("first frame", || h.sink.frames.load(Ordering::SeqCst) == 1).await;
+
+    h.ctl.fail_live(Fatal::Protocol);
+    wait_until("disconnected", || {
+        last_state(&h.sink) == Some(GraphicalState::Disconnected)
+    })
+    .await;
+    idle().await;
+    assert_eq!(h.ctl.dials(), 1, "never re-dial into a protocol error");
+    assert!(never_reconnected(&h.sink));
+    assert_eq!(h.sink.tail(3), vec![(GraphicalState::Disconnected, 0)]);
+    assert_eq!(
+        h.sink.last().unwrap().message.as_deref(),
+        Some(PROTOCOL_REASON)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn protocol_error_on_first_connect_rests_disconnected_with_reason() {
+    let h = open_first(
+        serde_json::json!({}),
+        Dial::OkThenFail(Fatal::Protocol),
+        Vec::new(),
+    )
+    .await;
+    wait_until("disconnected", || {
+        last_state(&h.sink) == Some(GraphicalState::Disconnected)
+    })
+    .await;
+    idle().await;
+    assert_eq!(h.ctl.dials(), 1);
+    assert_eq!(h.sink.tail(3), vec![(GraphicalState::Disconnected, 0)]);
+    assert_eq!(
+        h.sink.last().unwrap().message.as_deref(),
+        Some(PROTOCOL_REASON)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn protocol_error_on_redial_stops_the_retry_loop() {
+    // A transport drop is retried; the re-dial then meets a protocol error,
+    // which ends the loop at once instead of spending the remaining budget.
+    let h = open(
+        serde_json::json!({}),
+        vec![
+            Dial::OkThenFail(Fatal::Protocol),
+            Dial::OkThenFail(Fatal::Protocol),
+            Dial::OkThenFail(Fatal::Protocol),
+        ],
+    )
+    .await;
+    h.ctl.drop_stream();
+    wait_until("disconnected", || {
+        last_state(&h.sink) == Some(GraphicalState::Disconnected)
+    })
+    .await;
+    idle().await;
+    assert_eq!(
+        h.ctl.dials(),
+        2,
+        "one retry for the drop, none for the error"
+    );
+    assert_eq!(
+        h.sink.tail(3),
+        vec![
+            (GraphicalState::Reconnecting, 1),
+            (GraphicalState::Disconnected, 1)
+        ]
+    );
+    assert_eq!(
+        h.sink.last().unwrap().message.as_deref(),
+        Some(PROTOCOL_REASON)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn transport_drop_without_a_typed_reason_is_still_retried() {
+    // The same mid-session end, minus the protocol reason: an ordinary drop
+    // keeps the normal retry behaviour.
+    let h = open(serde_json::json!({}), vec![Dial::Ok]).await;
+    h.ctl.send_frame().await;
+    wait_until("first frame", || h.sink.frames.load(Ordering::SeqCst) == 1).await;
+    h.ctl.drop_stream();
+    wait_until("re-dial", || h.ctl.dials() == 2).await;
+    h.ctl.send_frame().await;
+    wait_until("active again", || {
+        last_state(&h.sink) == Some(GraphicalState::Active)
+    })
+    .await;
+    assert!(!never_reconnected(&h.sink));
 }
 
 #[tokio::test(start_paused = true)]

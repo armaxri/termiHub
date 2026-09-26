@@ -49,6 +49,8 @@ pub(crate) fn build(
         .manage(app_tasks::AppTasks::new())
         .manage(TransferRegistry::new())
         .manage(files::watcher::FileWatchManager::new())
+        // Staging dirs for remote drag-out to the OS file manager (#3457).
+        .manage(files::drag_out::DragOutStaging::new())
         // NetworkManager needs the resolved config dir + AppHandle, neither of
         // which exists here. It is therefore constructed fully-initialised inside
         // `setup()` (below) and `manage`d there, like every other late-bound

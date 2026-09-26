@@ -99,6 +99,17 @@ pub enum SessionError {
     #[error("Verification code rejected")]
     SecondFactorFailed,
 
+    /// The remote sent protocol data this client cannot handle — a malformed
+    /// message, an unsupported encoding or pixel format, undecodable image
+    /// data — or the client's own protocol task failed internally (#3479).
+    ///
+    /// A **typed, terminal** discriminant: re-dialling the same server would
+    /// most likely replay the same data, so consumers must not auto-reconnect
+    /// into it (the user can still reconnect manually). The payload is a
+    /// complete, user-facing sentence and is displayed verbatim.
+    #[error("{0}")]
+    ProtocolError(String),
+
     /// The session configuration is invalid.
     #[error("Invalid config: {0}")]
     InvalidConfig(String),
@@ -186,6 +197,15 @@ mod tests {
         let err = SessionError::AuthCancelled;
         assert_eq!(err.to_string(), "Authentication cancelled");
         assert!(!matches!(err, SessionError::AuthFailed));
+    }
+
+    /// A protocol error displays its user-facing sentence verbatim and is a
+    /// distinct discriminant from a transport failure (#3479).
+    #[test]
+    fn protocol_error_is_distinct_and_displays_verbatim() {
+        let err = SessionError::ProtocolError("The server sent garbage.".into());
+        assert_eq!(err.to_string(), "The server sent garbage.");
+        assert!(!matches!(err, SessionError::ConnectionFailed(_)));
     }
 
     /// A rejected second factor is its own discriminant, never an auth failure

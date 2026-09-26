@@ -301,6 +301,79 @@ pub fn write_cheatsheet(html: String, app: tauri::AppHandle) -> Result<String, T
     })
 }
 
+// --- Native drag-out to the OS file manager (#3457) ---
+
+/// Resolve the per-user drag-out staging root under the app cache dir.
+fn drag_out_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, TerminalError> {
+    app.path()
+        .app_cache_dir()
+        .map(|dir| dir.join(crate::files::drag_out::STAGING_DIR_NAME))
+        .map_err(|e| TerminalError::InternalError(format!("could not resolve app cache dir: {e}")))
+}
+
+/// Create a private staging directory for a remote drag-out and return the local
+/// target path for each entry name (sanitized: a hostile remote name can never
+/// escape the directory). The caller downloads each entry to its path, then
+/// starts the drag with [`drag_out_start`].
+#[tauri::command]
+pub fn drag_out_create_staging(
+    names: Vec<String>,
+    app: tauri::AppHandle,
+    staging: State<'_, crate::files::drag_out::DragOutStaging>,
+) -> Result<crate::files::drag_out::StagingDir, TerminalError> {
+    let root = drag_out_root(&app)?;
+    staging
+        .create(&root, &names)
+        .map_err(TerminalError::InternalError)
+}
+
+/// Delete a staging directory created by [`drag_out_create_staging`]. Paths this
+/// process did not create are refused.
+#[tauri::command]
+pub fn drag_out_discard_staging(
+    dir: String,
+    staging: State<'_, crate::files::drag_out::DragOutStaging>,
+) -> Result<(), TerminalError> {
+    staging
+        .discard(std::path::Path::new(&dir))
+        .map_err(TerminalError::InvalidParams)
+}
+
+/// Start a native OS drag of existing local `paths` out of the calling window
+/// and resolve with how it ended (`dropped` / `cancelled`). Only file paths are
+/// accepted — never arbitrary pasteboard data — and each must be an existing
+/// absolute path.
+#[tauri::command]
+pub async fn drag_out_start(
+    paths: Vec<String>,
+    window: tauri::Window,
+    app: tauri::AppHandle,
+) -> Result<crate::files::drag_out::DragOutResult, TerminalError> {
+    let paths = crate::files::drag_out::validate_drag_paths(&paths)
+        .map_err(TerminalError::InvalidParams)?;
+    debug!(count = paths.len(), "Starting native drag-out");
+    let (start_tx, start_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+    // The drop callback is `Fn`, so hand the one-shot sender out exactly once.
+    let done_tx = std::sync::Mutex::new(Some(done_tx));
+    app.run_on_main_thread(move || {
+        let started = crate::files::drag_out::start_native_drag(&window, paths, move |result| {
+            if let Some(tx) = done_tx.lock().ok().and_then(|mut slot| slot.take()) {
+                let _ = tx.send(result);
+            }
+        });
+        let _ = start_tx.send(started);
+    })
+    .map_err(|e| TerminalError::InternalError(format!("could not reach the main thread: {e}")))?;
+    start_rx
+        .await
+        .map_err(|_| TerminalError::InternalError("drag-out start was dropped".to_string()))?
+        .map_err(|e| TerminalError::InternalError(format!("could not start drag: {e}")))?;
+    done_rx
+        .await
+        .map_err(|_| TerminalError::InternalError("drag-out ended without a result".to_string()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

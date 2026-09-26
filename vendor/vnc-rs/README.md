@@ -70,8 +70,13 @@ it allocate unbounded memory. Upstream `0.5.3` did both; this fork changes:
   replaced with zeroed / bounds-checked equivalents.
 - **Task boundary**: the internal decoder and connection tasks run behind a
   `catch_unwind` (`run_guarded`); a panic is logged and reported as
-  `VncEvent::Error` so the consumer ends the session cleanly.
-- Adds `VncError::Protocol` / `VncError::UnsupportedEncoding`. Regression and
+  `VncEvent::Error` (as `VncError::Internal`) so the consumer ends the session
+  cleanly.
+- **Typed error event** (#3479): `VncEvent::Error` carries the typed
+  `Arc<VncError>` instead of its rendered text, so the consumer can tell a server
+  protocol violation from a transport failure without parsing messages.
+- Adds `VncError::Protocol` / `VncError::UnsupportedEncoding` /
+  `VncError::Internal`. Regression and
   seeded fuzz tests live in `src/client/hostile_server_tests.rs`.
 
 Everything else is upstream `0.5.3`, under the original MIT/Apache-2.0 licenses

@@ -1,29 +1,142 @@
 @echo off
 REM Build the remote agent (termihub-agent) for Linux and Windows targets.
+REM Windows twin of scripts/build-agents.sh -- keep the two in feature parity
+REM (flags AND outputs); scripts/internal/check-script-parity.sh compares the
+REM flags each one parses and fails CI when they drift.
 REM
 REM Default mode cross-compiles the Linux musl targets via cross-rs.
-REM --native builds the Windows MSVC targets natively with cargo:
+REM --native builds with the local cargo toolchain. Without --targets it builds
+REM the Windows MSVC agents:
 REM   - x86_64-pc-windows-msvc (required)  -> termihub-agent.exe
 REM   - aarch64-pc-windows-msvc (best effort, needs the ARM64 MSVC build tools)
 REM cross-rs cannot build the MSVC ABI, so Windows agents must be built natively
 REM on a Windows host with the MSVC toolchain (Visual Studio Build Tools).
 REM
-REM Usage: scripts\build-agents.cmd [--native] [--help]
+REM Every built binary gets a "<binary>.sha256" sidecar ("<hex>  <name>", the
+REM sha256sum format release.yml publishes, #1350). A target whose sidecar cannot
+REM be written FAILS, and a final gate re-checks every built binary has a
+REM non-empty sidecar (WA-CI-036, same as build-agents.sh).
+REM
+REM Usage: scripts\build-agents.cmd [--targets <list>] [--sequential] [--native]
+REM                                 [--dev] [--features <list>] [--sign-key <pem>]
+REM                                 [--help]
 REM
 REM Prerequisites (default Linux mode): Rust, Docker/Podman (running), cross-rs.
 REM Run scripts\setup-agent-cross.cmd first to install required toolchains.
 REM Prerequisites (--native Windows mode): Rust + MSVC toolchain only.
+REM Hashing uses Windows PowerShell (Get-FileHash); --sign-key additionally needs
+REM Git Bash with OpenSSL 3 (Git for Windows ships both).
 
-if "%~1"=="--help" goto :usage
-if "%~1"=="-h" goto :usage
-if "%~1"=="--native" goto :native_start
-goto :start
+setlocal enabledelayedexpansion
+cd /d "%~dp0\.."
+
+set "TARGETS="
+set "NATIVE=0"
+set "DEV=0"
+set "FEATURES="
+set "SIGN_KEY="
+
+REM ------------------------------------------------------------------ REM
+REM Argument parsing (mirrors build-agents.sh)                            REM
+REM ------------------------------------------------------------------ REM
+:parse
+if "%~1"=="" goto :after_parse
+if /i "%~1"=="--help" goto :usage
+if /i "%~1"=="-h" goto :usage
+if /i "%~1"=="--native" (
+    set "NATIVE=1"
+    shift
+    goto :parse
+)
+if /i "%~1"=="--sequential" (
+    REM Accepted for parity with build-agents.sh; this script always builds
+    REM its targets one at a time.
+    shift
+    goto :parse
+)
+if /i "%~1"=="--dev" (
+    set "DEV=1"
+    shift
+    goto :parse
+)
+if /i "%~1"=="--targets" (
+    set "LIST_VAR=TARGETS"
+    set "LIST_FLAG=--targets"
+    shift
+    goto :collect_list
+)
+if /i "%~1"=="--features" (
+    set "LIST_VAR=FEATURES"
+    set "LIST_FLAG=--features"
+    shift
+    goto :collect_list
+)
+if /i "%~1"=="--sign-key" (
+    if "%~2"=="" (
+        echo ERROR: --sign-key requires a private key path.
+        exit /b 1
+    )
+    set "SIGN_KEY=%~2"
+    shift
+    shift
+    goto :parse
+)
+echo Unknown option: %~1
+echo Run with --help for usage information.
+exit /b 1
+
+REM Collect a comma-separated list value. cmd.exe splits unquoted arguments on
+REM commas, so "--targets a,b" arrives as two arguments: gather every following
+REM argument up to the next option and re-join them with commas. A quoted
+REM "a,b" arrives as one argument and is taken as-is.
+:collect_list
+set "LIST_COUNT=0"
+:collect_next
+if "%~1"=="" goto :collect_done
+set "LIST_ITEM=%~1"
+if "%LIST_ITEM:~0,1%"=="-" goto :collect_done
+if defined %LIST_VAR% (
+    set "%LIST_VAR%=!%LIST_VAR%!,%~1"
+) else (
+    set "%LIST_VAR%=%~1"
+)
+set /a LIST_COUNT+=1
+shift
+goto :collect_next
+:collect_done
+if %LIST_COUNT% equ 0 (
+    echo ERROR: %LIST_FLAG% requires a comma-separated list.
+    exit /b 1
+)
+goto :parse
 
 :usage
-echo Usage: build-agents.cmd [--native]
+echo Usage: build-agents.cmd [OPTIONS]
 echo.
-echo Default: cross-compile the agent for Linux targets via cross-rs (static musl).
-echo --native: build the Windows MSVC agent (.exe) natively with cargo.
+echo Build the remote agent for Linux and Windows targets.
+echo Linux builds use cross-rs (static musl). Windows builds use native cargo.
+echo Targets are built one at a time.
+echo.
+echo Options:
+echo   --targets ^<list^>   Comma-separated list of targets to build (default: all Linux
+echo                      targets in cross-rs mode; the Windows MSVC targets in --native
+echo                      mode, x64 required and ARM64 best effort)
+echo   --sequential       Accepted for parity with build-agents.sh (always sequential here)
+echo   --native           Build using the local cargo toolchain instead of cross-rs/Docker.
+echo                      Required for Windows targets.
+echo   --dev              Build in debug profile (omits --release). Much faster to compile;
+echo                      binary lands in target\^<triple^>\debug\ instead of release\.
+echo   --features ^<list^>  Comma-separated cargo features to enable (passed through as
+echo                      `--features ^<list^>`), e.g. test-hooks for the system-test
+echo                      harness; OFF for every real release build.
+echo   --sign-key ^<pem^>   Also write a ^<binary^>.sig update signature with this Ed25519
+echo                      private key (must match agent\keys\update-signing.pub.pem;
+echo                      AGT-005). Runs scripts/internal/agent-update-signing.sh via
+echo                      Git Bash + OpenSSL 3. Without it any stale .sig is removed.
+echo   --help, -h         Show this help message
+echo.
+echo Every built binary gets a ^<binary^>.sha256 checksum sidecar; a target whose
+echo sidecar cannot be written fails the build.
 echo.
 echo Linux targets (default, cross-rs):
 echo   x86_64-unknown-linux-musl       Static x64 binaries (musl)
@@ -42,58 +155,89 @@ echo.
 echo Prerequisites (--native Windows mode):
 echo   - Rust toolchain (rustup)
 echo   - MSVC toolchain (Visual Studio Build Tools); ARM64 tools for aarch64
+echo.
+echo Examples:
+echo   scripts\build-agents.cmd                                  (all Linux targets)
+echo   scripts\build-agents.cmd --targets aarch64-unknown-linux-musl
+echo   scripts\build-agents.cmd --native --dev                   (Windows agents, fast)
+echo   scripts\build-agents.cmd --native --targets x86_64-pc-windows-msvc --features test-hooks
 exit /b 0
 
 REM ------------------------------------------------------------------ REM
-REM Native Windows MSVC build (cargo, no cross-rs / container runtime)    REM
+REM Validation + profile/feature setup                                    REM
 REM ------------------------------------------------------------------ REM
-:native_start
-cd /d "%~dp0\.."
+:after_parse
+if "%DEV%"=="1" (
+    set "PROFILE_FLAG="
+    set "PROFILE_DIR=debug"
+) else (
+    set "PROFILE_FLAG=--release"
+    set "PROFILE_DIR=release"
+)
 
-echo === Building Windows agent natively (MSVC) ===
-echo.
+REM Rendered into each build command as `--features <list>` (empty when unset).
+set "FEATURES_FLAG="
+if defined FEATURES set "FEATURES_FLAG=--features %FEATURES%"
+
+REM --sign-key: fail fast (before any build) if signing cannot possibly work.
+REM The signing pipeline is scripts/internal/agent-update-signing.sh (bash +
+REM OpenSSL 3), the one release.yml uses; Git Bash provides both on Windows.
+if defined SIGN_KEY (
+    if not exist "%SIGN_KEY%" (
+        echo ERROR: --sign-key file not found: %SIGN_KEY%
+        exit /b 1
+    )
+    where bash >nul 2>&1
+    if errorlevel 1 (
+        echo ERROR: --sign-key needs bash + OpenSSL 3 to run scripts/internal/agent-update-signing.sh.
+        echo   Install Git for Windows, which provides Git Bash, and re-run.
+        exit /b 1
+    )
+    set "SIGN_KEY_FWD=%SIGN_KEY:\=/%"
+)
 
 set BUILT=0
 set FAILED=0
+set "PRODUCED="
 
-REM x64 is required; arm64 is best effort (warns instead of failing if the
-REM ARM64 MSVC build tools are not installed).
-call :build_native x86_64-pc-windows-msvc required
-call :build_native aarch64-pc-windows-msvc besteffort
+if "%NATIVE%"=="1" goto :native_start
+goto :start
 
+REM ------------------------------------------------------------------ REM
+REM Native build (cargo, no cross-rs / container runtime)                 REM
+REM ------------------------------------------------------------------ REM
+:native_start
+echo === Building agent natively with cargo (%PROFILE_DIR%) ===
 echo.
-echo === Summary ===
-echo Built: %BUILT%  Failed: %FAILED%
 
-if %FAILED% gtr 0 exit /b 1
-exit /b 0
+REM Default targets: x64 is required; arm64 is best effort (warns instead of
+REM failing if the ARM64 MSVC build tools are not installed).
+if defined TARGETS (
+    for %%T in (%TARGETS%) do call :build_one %%T native required
+) else (
+    call :build_one x86_64-pc-windows-msvc native required
+    call :build_one aarch64-pc-windows-msvc native besteffort
+)
+goto :finish
 
-:build_native
-echo --- %1 ---
+REM ------------------------------------------------------------------ REM
+REM Linux cross-rs build                                                  REM
+REM ------------------------------------------------------------------ REM
+:start
+if not defined TARGETS set "TARGETS=x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,armv7-unknown-linux-musleabihf"
 
-REM Ensure the Rust std for the target is installed
-rustup target add %1 >nul 2>&1
-
-echo   Building with cargo (native)...
-cargo build --release --target %1 -p termihub-agent
-if errorlevel 1 (
-    if "%2"=="besteffort" (
-        echo   WARNING: %1 build failed ^(best effort^) - skipping. Install the ARM64 MSVC build tools to enable it.
-        exit /b 0
+REM MSVC targets cannot be built via cross-rs (no MSVC ABI support). Fail fast
+REM with a clear message instead of a confusing linker error.
+for %%T in (%TARGETS%) do (
+    set "VT=%%T"
+    if not "!VT:-pc-windows-msvc=!"=="!VT!" (
+        echo ERROR: Windows target '%%T' requires --native.
+        echo   cross-rs cannot build MSVC targets. Re-run with --native.
+        exit /b 1
     )
-    echo   FAILED: %1
-    set /a FAILED+=1
-    exit /b 0
 )
 
-echo   -^> target\%1\release\termihub-agent.exe
-set /a BUILT+=1
-exit /b 0
-
-:start
-cd /d "%~dp0\.."
-
-echo === Building agent for 3 Linux targets ===
+echo === Building agent via cross-rs (%PROFILE_DIR%): %TARGETS% ===
 echo.
 
 REM Verify cross-rs
@@ -179,43 +323,140 @@ if defined CROSS_CONTAINER_ENGINE (
     podman container prune -f >nul 2>&1
 )
 
-set BUILT=0
-set FAILED=0
 
-for %%T in (
-    x86_64-unknown-linux-musl
-    aarch64-unknown-linux-musl
-    armv7-unknown-linux-musleabihf
-) do (
-    call :build_target %%T
+for %%T in (%TARGETS%) do call :build_one %%T cross required
+goto :finish
+
+REM ------------------------------------------------------------------ REM
+REM Checksum sidecar gate (WA-CI-036) + summary                           REM
+REM ------------------------------------------------------------------ REM
+:finish
+REM Every binary reported as built must carry a non-empty .sha256 sidecar.
+set "MISSING=0"
+if defined PRODUCED (
+    for %%B in (%PRODUCED%) do (
+        call :sidecar_nonempty "%%B.sha256"
+        if errorlevel 1 (
+            echo   ERROR: %%B has no checksum sidecar, expected %%B.sha256
+            set /a MISSING+=1
+        )
+    )
+)
+if %MISSING% gtr 0 (
+    echo   FAIL  %MISSING% built binaries missing a .sha256 sidecar
+    set /a FAILED+=MISSING
 )
 
 echo.
 echo === Summary ===
-echo Built: %BUILT%  Failed: %FAILED%
+echo Built: %BUILT% ^| Failed: %FAILED%
 
 if %FAILED% gtr 0 exit /b 1
 exit /b 0
 
-:build_target
-echo --- %1 ---
+REM ------------------------------------------------------------------ REM
+REM Subroutines                                                           REM
+REM ------------------------------------------------------------------ REM
 
-REM Ensure Rust target is installed
-rustup target add %1 >nul 2>&1
+REM Build one target, then checksum (+ optionally sign) its binary.
+REM   %1 = target triple, %2 = native or cross, %3 = required or besteffort
+:build_one
+set "BT=%~1"
+echo --- %BT% ---
 
-echo   Building with cross-rs...
-cross build --release --target %1 -p termihub-agent
-if errorlevel 1 (
-    echo   FAILED: %1
+REM Ensure the Rust std for the target is installed
+rustup target add %BT% >nul 2>&1
+
+set "BUILD_RC=0"
+if "%~2"=="native" (
+    echo   Building with cargo, native...
+    cargo build %PROFILE_FLAG% %FEATURES_FLAG% --target %BT% -p termihub-agent
+    set "BUILD_RC=!errorlevel!"
+) else (
+    echo   Building with cross-rs...
+    cross build %PROFILE_FLAG% %FEATURES_FLAG% --target %BT% -p termihub-agent
+    set "BUILD_RC=!errorlevel!"
+)
+if not "%BUILD_RC%"=="0" (
+    if "%~3"=="besteffort" (
+        echo   WARNING: %BT% build failed, best effort - skipping. Install the ARM64 MSVC build tools to enable it.
+        exit /b 0
+    )
+    echo   FAILED: %BT%
     set /a FAILED+=1
     REM Prune stopped containers so the failed build does not leave containers that
     REM consume Podman Machine memory and cause the next target to be OOM-killed.
-    if defined CROSS_CONTAINER_ENGINE (
-        podman container prune -f >nul 2>&1
-    )
+    if "%~2"=="cross" if defined CROSS_CONTAINER_ENGINE podman container prune -f >nul 2>&1
     exit /b 0
 )
 
-echo   -^> target\%1\release\termihub-agent
+REM Binary file name cargo emits for the target (Windows appends .exe).
+set "BIN_NAME=termihub-agent"
+if not "%BT:-pc-windows-msvc=%"=="%BT%" set "BIN_NAME=termihub-agent.exe"
+set "BIN=target\%BT%\%PROFILE_DIR%\%BIN_NAME%"
+
+if not exist "%BIN%" (
+    echo   FAILED: binary not found at %BIN%
+    set /a FAILED+=1
+    exit /b 0
+)
+call :write_checksum "%BIN%"
+if errorlevel 1 (
+    echo   FAILED: could not write %BIN%.sha256
+    set /a FAILED+=1
+    exit /b 0
+)
+call :write_signature "%BIN%"
+if errorlevel 1 (
+    echo   FAILED: could not sign %BIN%
+    set /a FAILED+=1
+    exit /b 0
+)
+set "PRODUCED=%PRODUCED% %BIN%"
+echo   -^> %BIN%
 set /a BUILT+=1
+exit /b 0
+
+REM Write "<binary>.sha256" next to a built binary: "<lowercase hex>  <file name>"
+REM plus LF, no BOM -- byte-identical to text-mode `sha256sum <name>` on Linux
+REM (the format release.yml publishes, #1350). Git for Windows' sha256sum
+REM defaults to binary mode ("<hex> *<name>"); both forms verify with
+REM `sha256sum -c`, and every consumer reads only the first token. Uses
+REM Windows PowerShell's Get-FileHash (built into every supported Windows; the
+REM output is locale-independent, unlike certutil's). Returns non-zero -- and the
+REM caller FAILS the target -- if hashing or the write fails or the sidecar is
+REM empty: the sidecar feeds the update checksum and the .sig flow, so a
+REM silently missing one must never pass as a successful build.
+REM   %1 = binary path
+:write_checksum
+if exist "%~1.sha256" del /q "%~1.sha256"
+powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference = 'Stop'; $p = (Resolve-Path -LiteralPath '%~1').Path; $h = (Get-FileHash -Algorithm SHA256 -LiteralPath $p).Hash.ToLowerInvariant(); [IO.File]::WriteAllText($p + '.sha256', $h + '  ' + [IO.Path]::GetFileName($p) + [char]10)"
+if errorlevel 1 (
+    echo   ERROR: could not compute SHA-256 of %~1
+    exit /b 1
+)
+call :sidecar_nonempty "%~1.sha256"
+exit /b %errorlevel%
+
+REM Exit 0 if %1 exists and is non-empty, 1 otherwise.
+:sidecar_nonempty
+if not exist "%~1" exit /b 1
+if %~z1 equ 0 exit /b 1
+exit /b 0
+
+REM Write (or clear) the "<binary>.sig" update-signature sidecar (AGT-005).
+REM With --sign-key, sign via scripts/internal/agent-update-signing.sh -- the same
+REM pipeline release.yml uses (the key must match agent\keys\update-signing.pub.pem).
+REM Without it, remove any stale .sig so an old signature is never paired with
+REM freshly built bytes.
+REM   %1 = binary path
+:write_signature
+if not defined SIGN_KEY (
+    if exist "%~1.sig" del /q "%~1.sig"
+    exit /b 0
+)
+set "SIG_BIN=%~1"
+set "SIG_BIN=%SIG_BIN:\=/%"
+bash scripts/internal/agent-update-signing.sh sign --key "%SIGN_KEY_FWD%" "%SIG_BIN%"
+if errorlevel 1 exit /b 1
 exit /b 0

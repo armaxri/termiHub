@@ -1,4 +1,6 @@
-use crate::PixelFormat;
+use std::sync::Arc;
+
+use crate::{PixelFormat, VncError};
 
 type ImageData = Vec<u8>;
 
@@ -83,7 +85,12 @@ pub enum VncEvent {
     Text(String),
     /// If any unexpected error happens in the async process routines
     /// This event will propagate the error to the current context
-    Error(String),
+    ///
+    /// termiHub fork (#3479): carries the typed [`VncError`] (shared, since
+    /// `VncError` is not `Clone`) instead of its rendered text, so a consumer
+    /// can tell a server protocol violation from a transport failure without
+    /// parsing the message. A caught internal panic is [`VncError::Internal`].
+    Error(Arc<VncError>),
 }
 
 /// X11 keyboard event to notify the server

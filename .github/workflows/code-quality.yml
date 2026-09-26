@@ -337,13 +337,17 @@ jobs:
 
   # Frontend Quality Checks
   # Also on docs-only PRs: Prettier + markdownlint over docs/**/*.md live here.
+  # Also on Rust-only PRs: the IPC invoke-contract step below cross-checks the
+  # #[tauri::command] parameter names in src-tauri against src/ (#3488), so a
+  # renamed Rust parameter must re-run it too.
   frontend-quality:
     name: Frontend Code Quality
     runs-on: ubuntu-latest
     needs: changes
     if: >-
       ${{ !cancelled() && (needs.changes.outputs.frontend != 'false' ||
-      needs.changes.outputs.markdown != 'false') }}
+      needs.changes.outputs.markdown != 'false' ||
+      needs.changes.outputs.rust != 'false') }}
 
     steps:
       - name: Checkout code
@@ -366,6 +370,12 @@ jobs:
 
       - name: Check TypeScript types
         run: pnpm exec tsc --noEmit
+
+      # Tauri matches invoke() args to #[tauri::command] params BY NAME; a wrong
+      # key is invisible to tsc and to mocked-invoke unit tests (#3488). Fails on
+      # unknown commands, missing required args and unknown extra args.
+      - name: Check IPC invoke argument contract
+        run: node scripts/internal/check-invoke-contract.mjs
 
       - name: Check formatting with Prettier
         run: pnpm run format:check
@@ -492,6 +502,73 @@ jobs:
       # deterministic, not flaky.
       - name: Headless smoke of shell scripts (--help paths)
         run: ./scripts/internal/check-script-headless.sh
+
+  # Windows .cmd smoke (#3340). The Shell Script Quality job above runs on
+  # Ubuntu, so it can compare the flags a .cmd parses but never RUNS one. This
+  # cheap job (no Rust/Node setup, no build) executes build-agents.cmd's
+  # --help and its fail-fast argument/validation paths on a real Windows cmd.exe,
+  # and runs the exact PowerShell line build-agents.cmd uses to write .sha256
+  # sidecars, checking the result is byte-identical to `sha256sum`. PR lane: only
+  # when scripts change. Post-merge: always.
+  cmd-scripts-windows:
+    name: Windows cmd Script Smoke
+    runs-on: windows-latest
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.scripts != 'false' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: build-agents.cmd --help and fail-fast paths
+        shell: cmd
+        run: |
+          call scripts\build-agents.cmd --help
+          if errorlevel 1 exit /b 1
+          call scripts\build-agents.cmd --no-such-flag
+          if not errorlevel 1 (echo expected failure: unknown option& exit /b 1)
+          call scripts\build-agents.cmd --targets
+          if not errorlevel 1 (echo expected failure: --targets without a value& exit /b 1)
+          call scripts\build-agents.cmd --targets x86_64-pc-windows-msvc
+          if not errorlevel 1 (echo expected failure: MSVC target without --native& exit /b 1)
+          call scripts\build-agents.cmd --native --sign-key does-not-exist.pem
+          if not errorlevel 1 (echo expected failure: missing signing key& exit /b 1)
+          echo build-agents.cmd smoke OK
+          rem echo keeps the last negative test's ERRORLEVEL; exit 0 explicitly.
+          exit /b 0
+
+      - name: Stage the build-agents.cmd checksum line
+        shell: bash
+        run: |
+          set -euo pipefail
+          dir="$(cygpath -u "$RUNNER_TEMP")/sha"
+          mkdir -p "$dir"
+          printf 'termihub agent checksum smoke\n' >"$dir/termihub-agent.exe"
+          line="$(grep -m1 -E '^powershell .*Get-FileHash' scripts/build-agents.cmd | tr -d '\r')"
+          [ -n "$line" ] || { echo "::error::checksum line not found in build-agents.cmd"; exit 1; }
+          printf '@echo off\r\n%s\r\nexit /b %%errorlevel%%\r\n' "$line" >"$dir/hash.cmd"
+
+      - name: Write a .sha256 sidecar with build-agents.cmd's PowerShell line
+        shell: cmd
+        run: |
+          call "%RUNNER_TEMP%\sha\hash.cmd" "%RUNNER_TEMP%\sha\termihub-agent.exe"
+          if errorlevel 1 exit /b 1
+
+      - name: Sidecar matches sha256sum byte-for-byte
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$(cygpath -u "$RUNNER_TEMP")/sha"
+          # Expected bytes: "<hex>  <name>" + LF, the Linux text-mode format.
+          # Built by hand because Git for Windows' sha256sum defaults to binary
+          # mode and prints "<hex> *<name>", which is not the published format.
+          hex="$(sha256sum <termihub-agent.exe | cut -c1-64)"
+          printf '%s  %s\n' "$hex" termihub-agent.exe >expected.sha256
+          if ! cmp expected.sha256 termihub-agent.exe.sha256; then
+            od -c termihub-agent.exe.sha256
+            exit 1
+          fi
+          sha256sum -c termihub-agent.exe.sha256
 
   # Run tests
   #

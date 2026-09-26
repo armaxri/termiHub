@@ -1604,6 +1604,37 @@ export async function localListDir(path: string): Promise<FileEntry[]> {
   return await invoke<FileEntry[]>("local_list_dir", { path });
 }
 
+/** A private staging directory for a remote drag-out and each entry's target path. */
+export interface DragOutStagingDir {
+  dir: string;
+  paths: string[];
+}
+
+/** How a native drag-out ended. */
+export type DragOutResult = "dropped" | "cancelled";
+
+/**
+ * Create a private (`0700`) staging directory for a remote drag-out (#3457) and
+ * return the local target path for each entry name — names are sanitized by the
+ * backend so a hostile remote name can never escape the directory.
+ */
+export async function dragOutCreateStaging(names: string[]): Promise<DragOutStagingDir> {
+  return await invoke<DragOutStagingDir>("drag_out_create_staging", { names });
+}
+
+/** Delete a staging directory created by {@link dragOutCreateStaging}. */
+export async function dragOutDiscardStaging(dir: string): Promise<void> {
+  await invoke("drag_out_discard_staging", { dir });
+}
+
+/**
+ * Start a native OS file drag of existing local `paths` out of this window and
+ * resolve with how it ended (#3457).
+ */
+export async function dragOutStart(paths: string[]): Promise<DragOutResult> {
+  return await invoke<DragOutResult>("drag_out_start", { paths });
+}
+
 /** Copy a file or directory on the local filesystem. */
 export async function localCopyFile(
   srcPath: string,
@@ -3009,17 +3040,17 @@ export async function revokeNativePluginTrust(id: string): Promise<void> {
 
 /** Uninstall the plugin with the given id. */
 export async function uninstallPlugin(pluginId: string): Promise<void> {
-  await invoke("uninstall_plugin", { pluginId });
+  await invoke("uninstall_plugin", { id: pluginId });
 }
 
 /** Enable (activate) the plugin with the given id. */
 export async function enablePlugin(pluginId: string): Promise<void> {
-  await invoke("enable_plugin", { pluginId });
+  await invoke("enable_plugin", { id: pluginId });
 }
 
 /** Disable the plugin with the given id. */
 export async function disablePlugin(pluginId: string): Promise<void> {
-  await invoke("disable_plugin", { pluginId });
+  await invoke("disable_plugin", { id: pluginId });
 }
 
 /**
