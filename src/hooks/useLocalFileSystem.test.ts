@@ -38,6 +38,18 @@ vi.mock("@/services/api", () => ({
   sftpDownload: vi.fn(() => Promise.resolve()),
 }));
 
+const toastMock = vi.hoisted(() => ({
+  success: vi.fn(),
+  error: vi.fn(),
+  info: vi.fn(),
+  loading: vi.fn(() => "toast-id"),
+  dismiss: vi.fn(),
+}));
+vi.mock("@/components/ui/Toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/components/ui/Toast")>()),
+  toast: toastMock,
+}));
+
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   save: vi.fn(() => Promise.resolve(null)),
   open: vi.fn(() => Promise.resolve(null)),
@@ -580,5 +592,79 @@ describe("useLocalFileSystem — action wiring", () => {
       await Promise.resolve();
     });
     expect(currentFileBrowsersView().local.path).toBe("/");
+  });
+
+  describe("failure feedback (#3458)", () => {
+    const fileEntry = (name: string, dir: string): FileEntry => ({
+      name,
+      path: `${dir}/${name}`,
+      isDirectory: false,
+      size: 1,
+      modified: "",
+      permissions: null,
+      writable: null,
+    });
+
+    it("pasteEntry reports a failed cut, keeps the clipboard and resolves", async () => {
+      vi.mocked(localRename).mockRejectedValueOnce("Permission denied");
+      const api = await mountHook("/dest");
+      act(() => {
+        useAppStore.getState().setFileClipboard({
+          entries: [fileEntry("a.txt", "/src"), fileEntry("b.txt", "/src")],
+          operation: "cut",
+          sourceMode: "local",
+          sourcePath: "/src",
+        });
+      });
+      await act(async () => {
+        await expect(api.pasteEntry()).resolves.toBeUndefined();
+      });
+      // The first failure stops the paste.
+      expect(vi.mocked(localRename)).toHaveBeenCalledTimes(1);
+      expect(toastMock.error).toHaveBeenCalledWith("Paste 2 items failed: Permission denied", {
+        id: "toast-id",
+      });
+      expect(toastMock.success).not.toHaveBeenCalled();
+      expect(currentFileBrowsersView().clipboard?.entries).toHaveLength(2);
+    });
+
+    it("pasteEntry shows one summary success toast", async () => {
+      const api = await mountHook("/dest");
+      act(() => {
+        useAppStore.getState().setFileClipboard({
+          entries: [fileEntry("a.txt", "/src"), fileEntry("b.txt", "/src")],
+          operation: "copy",
+          sourceMode: "local",
+          sourcePath: "/src",
+        });
+      });
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(vi.mocked(localCopyFile)).toHaveBeenCalledTimes(2);
+      expect(toastMock.success).toHaveBeenCalledTimes(1);
+      expect(toastMock.success).toHaveBeenCalledWith("Pasted 2 items", { id: "toast-id" });
+    });
+
+    it("uploadFileFromPath (OS drop) reports a failed copy instead of rejecting", async () => {
+      vi.mocked(localCopyFile).mockRejectedValueOnce("Disk full");
+      const api = await mountHook("/dest");
+      await act(async () => {
+        await expect(api.uploadFileFromPath("/elsewhere/big.iso")).resolves.toBeUndefined();
+      });
+      expect(toastMock.error).toHaveBeenCalledWith('Copy "big.iso" failed: Disk full', {
+        id: "toast-id",
+      });
+    });
+
+    it("downloadFile reports a Save-as picker that fails to open", async () => {
+      vi.mocked(save).mockRejectedValueOnce(new Error("dialog unavailable"));
+      const api = await mountHook("/home/user");
+      await act(async () => {
+        await expect(api.downloadFile("/home/user/a.txt", "a.txt")).resolves.toBeUndefined();
+      });
+      expect(toastMock.error).toHaveBeenCalledWith('Save "a.txt" failed: dialog unavailable');
+      expect(vi.mocked(localCopyFile)).not.toHaveBeenCalled();
+    });
   });
 });

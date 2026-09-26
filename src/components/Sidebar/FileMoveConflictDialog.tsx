@@ -29,7 +29,7 @@ export function FileMoveConflictDialog({
   onConfirm,
   onCancel,
 }: FileMoveConflictDialogProps) {
-  const verb = pending?.operation === "copy" ? "Copy" : "Move";
+  const verb = pending?.fromClipboard ? "Paste" : pending?.operation === "copy" ? "Copy" : "Move";
   const message = !pending
     ? ""
     : pending.conflicts === null
