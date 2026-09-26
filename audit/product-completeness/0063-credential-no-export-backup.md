@@ -9,7 +9,8 @@ subsystem: src-tauri/src/credential
 evidence:
   - src-tauri/src/credential/crypto.rs:39
   - src-tauri/src/commands/credential.rs:39
-status: open
+status: partial
+resolution: "#3435 — encrypted vault export/import (Argon2id+AES-GCM, versioned, all-or-nothing import); keychain-mode export blocked until OS re-auth #3433"
 ---
 
 ## What
