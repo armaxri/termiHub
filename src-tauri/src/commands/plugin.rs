@@ -17,8 +17,9 @@ use tauri::{AppHandle, Emitter, State};
 use serde::Serialize;
 use serde_json::{Map, Value};
 use termihub_core::plugin::{
-    native_library_hash, InstalledPlugin, NativeTrustStore, PluginHost, PluginManager,
-    PluginManifest, TrustAssessment, TrustLevel, TrustedPublisher, NATIVE_TRUST_DISCLOSURE,
+    native_library_hash, InstallOptions, InstalledPlugin, NativeTrustStore, PluginHost,
+    PluginManager, PluginManagerError, PluginManifest, TrustAssessment, TrustLevel,
+    TrustedPublisher, VersionChange, NATIVE_TRUST_DISCLOSURE,
 };
 
 /// Event emitted whenever the installed-plugin set or a plugin's state changes.
@@ -105,6 +106,42 @@ pub fn assess_plugin_trust(
     Ok(manager.assess_trust(std::path::Path::new(&path)).into())
 }
 
+/// The result of [`install_plugin`]: either the plugin was installed, or the
+/// install would replace the installed copy with an older / different /
+/// uncomparable version and needs the user's explicit confirmation first
+/// (PLG-012). Serialized with a `status` tag so the frontend can switch on it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "status", rename_all = "camelCase")]
+pub enum InstallPluginResult {
+    /// The plugin was installed.
+    Installed {
+        /// The installed plugin record.
+        plugin: InstalledPlugin,
+    },
+    /// Nothing was changed; re-issue the install with `confirm_version_change`
+    /// once the user has confirmed replacing `installed_version` with
+    /// `incoming_version`.
+    ConfirmationRequired {
+        /// Both versions and the kind of change, for the confirm dialog.
+        change: VersionChange,
+    },
+}
+
+/// Map the manager's install result onto the command result: an unconfirmed
+/// version change becomes a typed [`InstallPluginResult::ConfirmationRequired`]
+/// rather than an error string; every other error stays an error.
+fn install_outcome(
+    result: Result<InstalledPlugin, PluginManagerError>,
+) -> Result<InstallPluginResult, String> {
+    match result {
+        Ok(plugin) => Ok(InstallPluginResult::Installed { plugin }),
+        Err(PluginManagerError::VersionChangeUnconfirmed(change)) => {
+            Ok(InstallPluginResult::ConfirmationRequired { change: *change })
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 /// Install a plugin from the `.termihub-plugin` package at `path`. Emits
 /// [`EVENT_PLUGINS_CHANGED`] on success.
 ///
@@ -113,23 +150,32 @@ pub fn assess_plugin_trust(
 /// package requires `accept_untrusted`; a signed-but-unknown package installs and
 /// pins the key when `trust_publisher` is set (trust-on-first-use); a verified
 /// publisher installs with no risk gate.
+///
+/// It is also version-gated (PLG-012): replacing an installed plugin with an
+/// older version, a different build of the same version, or an uncomparable
+/// version returns [`InstallPluginResult::ConfirmationRequired`] (nothing
+/// changed) unless `confirm_version_change` is `true`.
 #[tauri::command]
 pub fn install_plugin(
     path: String,
     accept_untrusted: bool,
     trust_publisher: bool,
+    confirm_version_change: Option<bool>,
     app: AppHandle,
     manager: State<'_, PluginManager>,
-) -> Result<InstalledPlugin, String> {
-    let installed = manager
-        .install(
-            std::path::Path::new(&path),
+) -> Result<InstallPluginResult, String> {
+    let result = install_outcome(manager.install_with(
+        std::path::Path::new(&path),
+        InstallOptions {
             accept_untrusted,
             trust_publisher,
-        )
-        .map_err(|e| e.to_string())?;
-    emit_changed(&app);
-    Ok(installed)
+            confirm_version_change: confirm_version_change.unwrap_or(false),
+        },
+    ))?;
+    if matches!(result, InstallPluginResult::Installed { .. }) {
+        emit_changed(&app);
+    }
+    Ok(result)
 }
 
 /// List every trusted publisher key (bundled and user-pinned) for the Trusted
@@ -349,4 +395,88 @@ pub fn read_plugin_file(
     use base64::Engine;
     let bytes = manager.read_file(&id, &path).map_err(|e| e.to_string())?;
     Ok(base64::engine::general_purpose::STANDARD.encode(&bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use termihub_core::plugin::VersionChangeKind;
+
+    fn downgrade() -> VersionChange {
+        VersionChange {
+            plugin_id: "acme-tool".into(),
+            plugin_name: "Acme Tool".into(),
+            installed_version: Some("1.4.0".into()),
+            incoming_version: "1.2.0".into(),
+            kind: VersionChangeKind::Downgrade,
+        }
+    }
+
+    #[test]
+    fn unconfirmed_version_change_is_a_typed_result_not_an_error() {
+        let result = install_outcome(Err(PluginManagerError::VersionChangeUnconfirmed(Box::new(
+            downgrade(),
+        ))))
+        .unwrap();
+        let InstallPluginResult::ConfirmationRequired { change } = &result else {
+            panic!("expected ConfirmationRequired, got {result:?}");
+        };
+        assert_eq!(change, &downgrade());
+
+        let json = serde_json::to_value(&result).unwrap();
+        assert_eq!(json["status"], "confirmationRequired");
+        assert_eq!(json["change"]["installedVersion"], "1.4.0");
+        assert_eq!(json["change"]["incomingVersion"], "1.2.0");
+        assert_eq!(json["change"]["kind"], "downgrade");
+        assert_eq!(json["change"]["pluginName"], "Acme Tool");
+    }
+
+    #[test]
+    fn other_install_errors_stay_errors() {
+        let err = install_outcome(Err(PluginManagerError::UntrustedSourceNotAccepted)).unwrap_err();
+        assert!(err.contains("untrusted"), "{err}");
+    }
+
+    #[test]
+    fn install_then_downgrade_round_trips_through_the_command_mapping() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mgr = PluginManager::new(tmp.path().join("plugins"));
+        let make = |version: &str| {
+            let src = tmp.path().join(format!("src-{version}"));
+            std::fs::create_dir_all(src.join("themes")).unwrap();
+            std::fs::write(src.join("themes/dark.json"), "{}").unwrap();
+            let manifest = serde_json::json!({
+                "id": "acme-tool", "name": "Acme Tool", "version": version,
+                "author": "t", "description": "d", "license": "MIT", "apiVersion": "1.0",
+                "platforms": ["linux", "macos", "windows"], "permissions": [],
+                "extensions": { "theme": { "themes": [
+                    { "id": "dark", "name": "Dark", "file": "themes/dark.json" }
+                ] } }
+            });
+            std::fs::write(src.join("manifest.json"), manifest.to_string()).unwrap();
+            let out = tmp.path().join(format!("out-{version}"));
+            std::fs::create_dir_all(&out).unwrap();
+            termihub_core::plugin::pack_plugin(&src, &out).unwrap()
+        };
+        let opts = |confirm| InstallOptions {
+            accept_untrusted: true,
+            trust_publisher: false,
+            confirm_version_change: confirm,
+        };
+
+        let first = install_outcome(mgr.install_with(&make("1.4.0"), opts(false))).unwrap();
+        assert!(matches!(first, InstallPluginResult::Installed { .. }));
+
+        let older = make("1.2.0");
+        let refused = install_outcome(mgr.install_with(&older, opts(false))).unwrap();
+        assert!(matches!(
+            refused,
+            InstallPluginResult::ConfirmationRequired { .. }
+        ));
+        assert_eq!(mgr.get("acme-tool").unwrap().manifest.version, "1.4.0");
+
+        let confirmed = install_outcome(mgr.install_with(&older, opts(true))).unwrap();
+        assert!(matches!(confirmed, InstallPluginResult::Installed { .. }));
+        assert_eq!(mgr.get("acme-tool").unwrap().manifest.version, "1.2.0");
+    }
 }
