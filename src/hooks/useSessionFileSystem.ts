@@ -29,6 +29,7 @@ import {
   runMaybeTrackedTransfer,
   runTransfer,
   seedTransferQueueRow,
+  pickPathOrReport,
 } from "./transferFeedback";
 import { errorMessage } from "@/utils/errorMessage";
 import { joinDirPath, pasteVerbLabels, type PasteOptions } from "@/utils/fileDragMove";
@@ -206,7 +207,9 @@ export function useSessionFileSystem() {
   const downloadFile = useCallback(
     async (remotePath: string, fileName: string) => {
       if (!sessionFileBrowserId) return;
-      const localPath = await save({ title: "Save file as...", defaultPath: fileName });
+      const localPath = await pickPathOrReport(`Download "${fileName}"`, () =>
+        save({ title: "Save file as...", defaultPath: fileName })
+      );
       if (!localPath) return;
       if (transferQueueCapable) {
         // Queue-capable (SFTP/FTP): register a tracked transfer on the rich queue
@@ -239,11 +242,12 @@ export function useSessionFileSystem() {
 
   const uploadFile = useCallback(async () => {
     if (!sessionFileBrowserId) return;
-    const { open } = await import("@tauri-apps/plugin-dialog");
-    const localPath = await open({ title: "Select file to upload", multiple: false });
+    const localPath = await pickPathOrReport("Upload", async () => {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      return open({ title: "Select file to upload", multiple: false });
+    });
     if (!localPath) return;
-    const fileName =
-      (localPath as string).split("/").pop() ?? (localPath as string).split("\\").pop() ?? "upload";
+    const fileName = localPath.split("/").pop() ?? localPath.split("\\").pop() ?? "upload";
     const remotePath =
       sessionCurrentPath === "/" ? `/${fileName}` : `${sessionCurrentPath}/${fileName}`;
     if (transferQueueCapable) {
@@ -251,7 +255,7 @@ export function useSessionFileSystem() {
       // engine — progress/ETA/pause/resume/retry (#2421, PROD-010).
       const ok = await runTransfer(
         "Upload",
-        () => startUpload(sessionFileBrowserId, localPath as string, remotePath),
+        () => startUpload(sessionFileBrowserId, localPath, remotePath),
         { loading: `Uploading ${fileName}…` }
       );
       if (ok) refreshSession();
@@ -263,7 +267,7 @@ export function useSessionFileSystem() {
     const ok = await runBlockingTransfer(
       async () => {
         const { readFile } = await import("@tauri-apps/plugin-fs");
-        const data = await readFile(localPath as string);
+        const data = await readFile(localPath);
         await sessionWriteFile(sessionFileBrowserId, remotePath, data);
       },
       {

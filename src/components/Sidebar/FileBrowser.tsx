@@ -1232,9 +1232,9 @@ export function FileBrowser() {
 
   // Drag-to-move / Move to… engine (PROD-006): guards, conflict prompt, and the
   // shared paste plumbing with a one-shot clipboard.
-  const { requestTransfer, pendingConflict, confirmConflict, cancelConflict } = useFileMoveTransfer(
-    { mode, sessionId: sessionFileBrowserId, pasteEntry }
-  );
+  // The plain Paste reuses the same engine with the user's clipboard (#3458).
+  const { requestTransfer, requestPaste, pendingConflict, confirmConflict, cancelConflict } =
+    useFileMoveTransfer({ mode, sessionId: sessionFileBrowserId, pasteEntry });
 
   // Entries a drag of a selected row carries (the whole multi-selection).
   const selectedEntries = useMemo(
@@ -1431,9 +1431,10 @@ export function FileBrowser() {
   );
 
   const handlePaste = useCallback(() => {
-    // pasteEntry surfaces its own per-item success/error toast (see useFileSystem).
-    void pasteEntry();
-  }, [pasteEntry]);
+    // Same guards, conflict prompt and success/error feedback as drag-to-move and
+    // Move to… (#3458); requestPaste never rejects.
+    void requestPaste(currentPath);
+  }, [requestPaste, currentPath]);
 
   // Local-only: open the OS-native file manager at the currently-browsed folder.
   const handleOpenInExplorer = useCallback(() => {
