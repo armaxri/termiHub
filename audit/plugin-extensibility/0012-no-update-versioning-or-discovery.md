@@ -9,7 +9,8 @@ subsystem: core/src/plugin/manager.rs
 evidence:
   - core/src/plugin/manager.rs:372
   - core/src/plugin/manifest.rs:225
-status: open
+status: partial
+resolution: "#3383 — downgrade / same-version-changed / unverifiable installs require explicit confirmation (backend authoritative); update check + registry + migration hook tracked #3382"
 ---
 
 ## What
