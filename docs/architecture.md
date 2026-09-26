@@ -1204,14 +1204,55 @@ sequenceDiagram
 The exported file object is self-contained, and the unified backup below embeds it verbatim as its
 credentials section.
 
+#### Scheduled workflows and macros
+
+Scheduled runs (PROD-043, `src-tauri/src/schedules/`) are **backend-timed, frontend-executed**.
+The backend owns the clock and every safety rule; each window owns its tabs and runs the workflow
+runner, so it decides where a fired run can go.
+
+```mermaid
+sequenceDiagram
+    participant L as Scheduler loop (15 s tick)
+    participant M as ScheduleManager
+    participant W as Each app window
+    L->>M: tick(now, Local, open windows)
+    M-->>L: fires (due, enabled, not paused, not overlapping)
+    L->>W: schedule-fire {token, action, targets}
+    W->>W: open + connected tabs of the target connections only
+    W->>M: report_schedule_run(token, outcome)
+    M->>M: all windows reported -> record lastResult
+    M-->>W: schedules-changed
+```
+
+- **Model** — `schedules.json` (versioned, per-entry salvage, unknown keys preserved, part of the
+  backup): a workflow or macro, explicit targets (saved connection ids or a broadcast group, never
+  the active tab), a rule (every N minutes / daily / weekly at a local `HH:MM`), a missed-run
+  policy, and backend-owned state (`enabled`, `confirmedAt`, `enabledAt`, `lastRunAt`,
+  `lastResult`) plus a global `paused` switch.
+- **Timing** — `timing.rs` is pure and generic over `chrono::TimeZone` (production uses
+  `chrono::Local`). Intervals count absolute minutes from when the schedule was enabled; a local
+  time that does not exist (spring-forward) fires at the first valid minute after the gap, and a
+  time that occurs twice (fall-back) fires once, at the earlier occurrence.
+- **Safety rules** (`manager.rs`) — new schedules are disabled; the first enable must carry the
+  user's confirmation of the target hosts, and changing the action or targets disables the
+  schedule and drops that confirmation; a due run is skipped while the previous one is in flight;
+  a run more than 2 minutes late (app closed, machine asleep) is skipped with a logged reason or
+  run once (per schedule); a paused period is never replayed; a run no window settles within
+  6 hours is closed as failed.
+- **Execution** (`src/store/scheduledRuns.ts`) — unattended: only already-connected tabs opened
+  from a target connection, no connecting, no prompts (a required parameter without a default or
+  an un-allowlisted local program makes it skip/fail), and never while another run or macro
+  playback is active in that window. Workflow runs are recorded in the run history with the
+  `scheduled` origin; the status bar shows "N schedules active".
+
 #### Unified backup and restore
 
 Settings → **Backup & Restore** backs up all app data to one file and restores it (PROD-068,
 `src-tauri/src/backup/`). Each persisted store is one **section** carrying the store's own schema
 version; the registry in `backup/sections.rs` lists them — connections (with agents; passwords are
 stripped as defence in depth), settings (including custom themes and keyboard shortcuts),
-workspaces, macros, workflows, tunnels, embedded servers, Wake-on-LAN devices, HTTP monitors and
-network-tool history. Session history, workflow run history, the last session and transfer state
+workspaces, macros, workflows, schedules, tunnels, embedded servers, Wake-on-LAN devices, HTTP
+monitors and network-tool history. Session history, workflow run history, the last session and transfer state
 are deliberately not backed up. The optional **credentials** section is the credential-vault file
 object above, sealed with the backup passphrase and gated exactly like a vault export
 (master-password re-authentication; refused in OS-keychain mode until
