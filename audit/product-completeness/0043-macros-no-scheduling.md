@@ -9,8 +9,8 @@ subsystem: src/services/macroPlayback, src-tauri/src/workflows
 evidence:
   - src/services/macroPlayback.ts:1
   - src-tauri/src/workflows/config.rs:74
-status: fixed
-resolution: "#3530 — scheduled workflows/macros (interval/daily/weekly, DST-aware), explicit targets, disabled-by-default + confirm, no-overlap, global pause, backup section"
+status: in-progress
+resolution: "#3530 (pending merge) — scheduled runs"
 ---
 
 ## What
