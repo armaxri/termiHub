@@ -1382,3 +1382,95 @@ fn capabilities_without_tool_streaming_default_to_false() {
     .unwrap();
     assert!(caps.tool_streaming);
 }
+
+/// The production (non-test) part of a Rust source file.
+fn production_source(src: &str) -> &str {
+    src.split("#[cfg(test)]\nmod tests").next().unwrap_or(src)
+}
+
+/// Name of the function enclosing byte offset `at` in `src`.
+fn enclosing_fn(src: &str, at: usize) -> String {
+    let head = &src[..at];
+    let start = head.rfind("fn ").expect("occurrence inside a function") + 3;
+    head[start..]
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || *c == '_')
+        .collect()
+}
+
+/// Enclosing function names of every occurrence of `needle` in `src`.
+fn call_sites(src: &str, needle: &str) -> Vec<String> {
+    src.match_indices(needle)
+        .map(|(at, _)| enclosing_fn(src, at))
+        .collect()
+}
+
+/// #3395 audit (SM-003 single-attach, maintainer decision 2026-09-26): taking
+/// over another desktop's session must always be explicit. The desktop sends
+/// `connection.attach { takeover: true }` only from the explicit actions — the
+/// evicted tab's **Reclaim** (`reclaim_session` command) and the confirmed
+/// **Take over** in Running Sessions (`take_over_agent_session` command). Every
+/// implicit path (re-open, redrive, persistent re-attach) goes through the plain
+/// `attach_session`.
+#[test]
+fn takeover_attach_originates_only_from_explicit_actions() {
+    let agent_manager = production_source(include_str!("../agent_manager.rs"));
+    assert_eq!(
+        call_sites(agent_manager, "SessionAttachParams {"),
+        vec!["send_attach"],
+        "connection.attach params are built in one place"
+    );
+    assert_eq!(
+        call_sites(
+            agent_manager,
+            "self.send_attach(agent_id, remote_session_id, true)"
+        ),
+        vec!["reclaim_session"]
+    );
+    assert_eq!(
+        call_sites(
+            agent_manager,
+            "self.send_attach(agent_id, remote_session_id, false)"
+        ),
+        vec!["attach_session"]
+    );
+
+    // Who calls the takeover (`reclaim_session`) in production code.
+    let session_cmds = production_source(include_str!("../../commands/session.rs"));
+    assert_eq!(
+        call_sites(session_cmds, ".reclaim_session("),
+        vec!["reclaim_session"],
+        "the Reclaim command"
+    );
+    let agent_cmds = production_source(include_str!("../../commands/agent.rs"));
+    assert_eq!(
+        call_sites(agent_cmds, ".reclaim_session("),
+        vec!["take_over_agent_session"],
+        "the confirmed Take over command"
+    );
+    let session_manager = production_source(include_str!("../../session/manager.rs"));
+    assert_eq!(
+        call_sites(session_manager, ".reclaim_session("),
+        vec!["reclaim_session"],
+        "SessionManager::reclaim_session, reached only from the Reclaim command"
+    );
+    for (name, src) in [
+        (
+            "session/persistent_controller.rs",
+            include_str!("../../session/persistent_controller.rs"),
+        ),
+        (
+            "session/remote_proxy.rs",
+            include_str!("../../session/remote_proxy.rs"),
+        ),
+        (
+            "session_projection/redrive.rs",
+            include_str!("../../session_projection/redrive.rs"),
+        ),
+    ] {
+        assert!(
+            !production_source(src).contains("reclaim_session("),
+            "{name}: an implicit re-attach path must never take over"
+        );
+    }
+}
