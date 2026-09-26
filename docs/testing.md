@@ -3997,6 +3997,28 @@ real app. No step needs network access — run them offline to prove it.
    nothing from `logs/sessions/`. Click **Save…**, pick a folder, and open the
    zip: `hunter2`, `10.1.2.3`, your username and your hostname appear nowhere.
 
+### Agent crashed since last connect notice (#3593, OBS-010)
+
+The new/seen/first-connect decision, the seen-store, the old-agent skip and the
+redacted read are unit-tested (`src-tauri/src/utils/agent_crash_notice_tests.rs`,
+`src-tauri/src/utils/agent_crash_reports_tests.rs`); the notice and viewer are
+component-tested (`src/components/Diagnostics/AgentCrashReportNotice.test.tsx`,
+`CrashReportViewer.test.tsx`). These steps check the real app.
+
+1. Launch via `./scripts/dev.sh` and connect the dev agent. Expected: no agent
+   crash notice (the first check only records a baseline, even if the agent
+   already has old reports).
+2. On the agent host, create `<agent config dir>/logs/crash-reports/crash-20990101T000000Z-1.txt`
+   with any text (e.g. `message: test password=hunter2`). Disconnect and
+   reconnect the agent. Expected: one notice "Agent “…” crashed since it was
+   last connected" at the bottom; the connect itself is not delayed.
+3. Click **View Report**. Expected: the report opens in the crash-report
+   dialog with `hunter2` redacted. Reconnect the agent: no notice again.
+4. Add `crash-20990102T000000Z-2.txt`, reconnect, click **Export Diagnostics…**:
+   the export dialog opens and the notice is gone for good.
+5. Turn off **Settings → General → Diagnostics → Crash Report Notice**, add a
+   third report and reconnect: no notice.
+
 ### Scheduled workflows and macros (#3523, PROD-043)
 
 The timing, missed-run, overlap, pause and confirmation rules are unit-tested
