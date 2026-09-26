@@ -1270,7 +1270,7 @@ sequenceDiagram
     W->>M: ack_schedule_run(token)
     W->>W: open + connected tabs of the target connections only
     W->>M: report_schedule_run(token, outcome)
-    M->>M: all windows reported -> record lastResult
+    M->>M: all windows reported -> record lastResult + history
     M-->>W: schedules-changed
 ```
 
@@ -1278,7 +1278,14 @@ sequenceDiagram
   backup): a workflow or macro, explicit targets (saved connection ids or a broadcast group, never
   the active tab), a rule (every N minutes / daily / weekly at a local `HH:MM`), a missed-run
   policy, and backend-owned state (`enabled`, `confirmedAt`, `enabledAt`, `lastRunAt`,
-  `lastResult`) plus a global `paused` switch.
+  `lastResult`, `history`) plus a global `paused` switch.
+- **Attempt history** (`history.rs`, schema v2, #3528) — every settled attempt (a fired run or a
+  skipped slot with its reason) becomes `lastResult` and the newest entry of the schedule's
+  `history`, capped at the last 20. A fired run records its start time, duration and the ids of
+  the workflow run-history records it produced; a paused slot records nothing. The log stays in
+  `schedules.json` (a few KiB per schedule); the v1 → v2 migration seeds it from `lastResult`,
+  and the version bump keeps an older build from overwriting it. Macros have no run-history
+  store of their own: a scheduled macro's attempts live in this log.
 - **Timing** — `timing.rs` is pure and generic over `chrono::TimeZone` (production uses
   `chrono::Local`). Intervals count absolute minutes from when the schedule was enabled; a local
   time that does not exist (spring-forward) fires at the first valid minute after the gap, and a

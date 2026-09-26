@@ -39,10 +39,16 @@ export type MissedRunPolicy = "skip" | "run-once";
 /** How a scheduled run ended. */
 export type ScheduleRunOutcome = "completed" | "failed" | "cancelled" | "skipped";
 
-/** The recorded result of a schedule's most recent run attempt. */
+/** The recorded result of one run attempt of a schedule (a fired run or a skip). */
 export interface ScheduleRunResult {
   /** RFC 3339 time the attempt settled. */
   at: string;
+  /** RFC 3339 time the run fired (absent for a skipped slot). */
+  startedAt?: string;
+  /** Milliseconds from firing to settling (fired runs only). */
+  durationMs?: number;
+  /** Workflow run-history record ids this attempt produced (workflows only). */
+  workflowRunIds?: string[];
   outcome: ScheduleRunOutcome;
   /** The skip reason, the failure, or the target count. */
   message?: string;
@@ -64,6 +70,8 @@ export interface Schedule {
   enabledAt?: string;
   lastRunAt?: string;
   lastResult?: ScheduleRunResult;
+  /** Recent attempts, newest first, capped by the backend (20). */
+  history?: ScheduleRunResult[];
   createdAt: string;
   updatedAt: string;
 }
@@ -111,4 +119,6 @@ export interface WindowRunReport {
   message?: string;
   /** Terminals the run was started on in this window. */
   targetsRun: number;
+  /** Workflow run-history record ids the run produced in this window. */
+  workflowRunIds?: string[];
 }

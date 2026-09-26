@@ -1,31 +1,18 @@
 import { useCallback, useState } from "react";
-import { CalendarClock, Pencil, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, ChevronDown, ChevronRight, Pencil, Plus, Trash2 } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { Button, StatusDot, Toggle, Tooltip, toast } from "@/components/ui";
-import type { StatusTone } from "@/components/ui";
 import { ConfirmDeleteDialog } from "@/components/Sidebar/ConfirmDeleteDialog";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import { useDeleteConfirm } from "@/hooks/useDeleteConfirm";
-import type { ScheduleRunOutcome, ScheduleView } from "@/types/schedule";
+import type { ScheduleView } from "@/types/schedule";
 import { errorMessage } from "@/utils/errorMessage";
 import { formatAbsoluteTime, formatRelativeTime } from "@/utils/formatters";
 import { describeRule, formatNextRun } from "./scheduleForm";
+import { outcomeTone, ScheduleAttemptHistory } from "./ScheduleAttemptHistory";
 import { ScheduleEnableConfirmDialog } from "./ScheduleEnableConfirmDialog";
 import { useScheduleLabels } from "./useScheduleLabels";
 import "./Schedules.css";
-
-/** Status-dot tone of a run outcome. */
-function outcomeTone(outcome: ScheduleRunOutcome): StatusTone {
-  switch (outcome) {
-    case "completed":
-      return "success";
-    case "failed":
-      return "error";
-    case "cancelled":
-    case "skipped":
-      return "warning";
-  }
-}
 
 /** One-line status of a schedule: next run, running, paused, or disabled. */
 function scheduleStatus(s: ScheduleView, paused: boolean): string {
@@ -37,7 +24,8 @@ function scheduleStatus(s: ScheduleView, paused: boolean): string {
 
 /**
  * The schedules list (PROD-043): every scheduled workflow/macro run with its
- * rule, targets, next run and last result; per-schedule enable (the first
+ * rule, targets, next run and last result — expandable to its recent attempts
+ * (#3528); per-schedule enable (the first
  * enable asks for confirmation of the target hosts), edit and delete; and the
  * global pause switch. Lives in the Workflow sidebar.
  */
@@ -50,6 +38,15 @@ export function SchedulesSection() {
   const openScheduleEditor = useAppStore((s) => s.openScheduleEditor);
   const labels = useScheduleLabels();
   const [confirming, setConfirming] = useState<ScheduleView | null>(null);
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set());
+
+  const toggleExpanded = useCallback((id: string) => {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
+  }, []);
 
   const scheduleDelete = useDeleteConfirm<{ id: string; name: string }>(async ({ id, name }) => {
     try {
@@ -133,6 +130,8 @@ export function SchedulesSection() {
         <div className="schedules__list" data-testid="schedules-list">
           {schedules.map((s) => {
             const result = s.lastResult;
+            const attempts = s.history ?? [];
+            const open = expanded.has(s.id);
             return (
               <SidebarListItem
                 key={s.id}
@@ -197,6 +196,22 @@ export function SchedulesSection() {
                         {result.catchUp ? " (catch-up)" : ""}
                         {result.message ? ` — ${result.message}` : ""}
                       </span>
+                    ) : null}
+                    {attempts.length > 0 ? (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="schedules__attempts-toggle"
+                        aria-expanded={open}
+                        data-testid={`schedule-attempts-toggle-${s.id}`}
+                        icon={open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                        onClick={() => toggleExpanded(s.id)}
+                      >
+                        {open ? "Hide" : "Show"} recent attempts ({attempts.length})
+                      </Button>
+                    ) : null}
+                    {open && attempts.length > 0 ? (
+                      <ScheduleAttemptHistory scheduleId={s.id} attempts={attempts} />
                     ) : null}
                   </>
                 }
