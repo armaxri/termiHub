@@ -32,6 +32,20 @@ pub const MAX_NAME_CHARS: usize = 200;
 /// The longest scope key, in characters.
 pub const MAX_SCOPE_CHARS: usize = 512;
 
+/// The bookmark scope of a saved connection. Mirrors the frontend's
+/// `fileBookmarkScope` (`src/utils/fileBookmarkScope.ts`), which keys a tab
+/// opened from a saved connection — in the main store or an external file —
+/// as `connection:<id>`.
+pub fn connection_scope(connection_id: &str) -> String {
+    format!("connection:{connection_id}")
+}
+
+/// The prefix shared by every bookmark scope of a saved remote agent's
+/// sessions (`agent:<agent id>:<session type>`, see `fileBookmarkScope`).
+pub fn agent_scope_prefix(agent_id: &str) -> String {
+    format!("agent:{agent_id}:")
+}
+
 /// Central file-browser bookmark manager. Mirrors
 /// [`crate::network::tool_history_manager::NetworkToolHistoryManager`].
 pub struct FileBookmarkManager {
@@ -167,6 +181,66 @@ impl FileBookmarkManager {
         Ok(())
     }
 
+    /// Remove every bookmark in `scope` (#3562), e.g. when the saved
+    /// connection it belongs to is deleted. Returns how many were removed;
+    /// removing an empty or unknown scope is a no-op and does not write.
+    pub fn remove_scope(&self, scope: &str) -> Result<usize, TerminalError> {
+        self.remove_where(|b| b.scope == scope)
+    }
+
+    /// Remove every bookmark whose scope starts with `prefix` (#3562), e.g.
+    /// every session type of a deleted remote agent. An empty prefix is
+    /// rejected so a caller bug can never wipe every bookmark.
+    pub fn remove_scopes_with_prefix(&self, prefix: &str) -> Result<usize, TerminalError> {
+        if prefix.is_empty() {
+            return Err(invalid("bookmark scope prefix is empty"));
+        }
+        self.remove_where(|b| b.scope.starts_with(prefix))
+    }
+
+    /// Drop a deleted saved connection's bookmarks (#3562). Best-effort: the
+    /// connection is already gone, so a failure is logged, never surfaced.
+    /// Covers main-store and external-file connections alike — both are keyed
+    /// `connection:<id>`.
+    pub fn prune_deleted_connection(&self, connection_id: &str) {
+        match self.remove_scope(&connection_scope(connection_id)) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(
+                connection_id,
+                removed = n,
+                "Removed deleted connection's bookmarks"
+            ),
+            Err(e) => tracing::warn!(
+                connection_id,
+                "Failed to remove deleted connection's bookmarks: {e}"
+            ),
+        }
+    }
+
+    /// Drop a deleted remote agent's bookmarks — every session type (#3562).
+    /// Best-effort, like [`Self::prune_deleted_connection`].
+    pub fn prune_deleted_agent(&self, agent_id: &str) {
+        if agent_id.is_empty() {
+            return;
+        }
+        match self.remove_scopes_with_prefix(&agent_scope_prefix(agent_id)) {
+            Ok(0) => {}
+            Ok(n) => tracing::info!(agent_id, removed = n, "Removed deleted agent's bookmarks"),
+            Err(e) => tracing::warn!(agent_id, "Failed to remove deleted agent's bookmarks: {e}"),
+        }
+    }
+
+    fn remove_where(&self, doomed: impl Fn(&FileBookmark) -> bool) -> Result<usize, TerminalError> {
+        let mut store = self.lock()?;
+        let before = store.bookmarks.len();
+        store.bookmarks.retain(|b| !doomed(b));
+        let removed = before - store.bookmarks.len();
+        if removed > 0 {
+            self.persist(&store)?;
+        }
+        Ok(removed)
+    }
+
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, FileBookmarkStore>, TerminalError> {
         self.store
             .lock()
@@ -294,6 +368,68 @@ mod tests {
         let m = manager(&dir);
         let b = m.add("local", "/tmp", Some(&"n".repeat(500))).unwrap();
         assert_eq!(b.name.chars().count(), MAX_NAME_CHARS);
+    }
+
+    #[test]
+    fn remove_scope_drops_only_that_scope_and_persists() {
+        let dir = TempDir::new().unwrap();
+        let m = manager(&dir);
+        let scope = connection_scope("c1");
+        m.add(&scope, "/a", None).unwrap();
+        m.add(&scope, "/b", None).unwrap();
+        m.add("connection:c10", "/c", None).unwrap();
+        m.add("local", "/d", None).unwrap();
+
+        assert_eq!(m.remove_scope(&scope).unwrap(), 2);
+        // Idempotent: a second prune removes nothing.
+        assert_eq!(m.remove_scope(&scope).unwrap(), 0);
+
+        let reloaded = manager(&dir).list(None).unwrap();
+        let scopes: Vec<&str> = reloaded.iter().map(|b| b.scope.as_str()).collect();
+        assert_eq!(scopes, vec!["connection:c10", "local"]);
+    }
+
+    #[test]
+    fn remove_scopes_with_prefix_drops_every_agent_session_type() {
+        let dir = TempDir::new().unwrap();
+        let m = manager(&dir);
+        let prefix = agent_scope_prefix("ag1");
+        m.add("agent:ag1:local", "/a", None).unwrap();
+        m.add("agent:ag1:docker", "/b", None).unwrap();
+        m.add("agent:ag10:local", "/c", None).unwrap();
+
+        assert_eq!(m.remove_scopes_with_prefix(&prefix).unwrap(), 2);
+        assert_eq!(m.remove_scopes_with_prefix(&prefix).unwrap(), 0);
+        let reloaded = manager(&dir).list(None).unwrap();
+        assert_eq!(reloaded.len(), 1);
+        assert_eq!(reloaded[0].scope, "agent:ag10:local");
+    }
+
+    #[test]
+    fn pruning_a_deleted_connection_or_agent_is_idempotent() {
+        let dir = TempDir::new().unwrap();
+        let m = manager(&dir);
+        m.add("connection:c1", "/a", None).unwrap();
+        m.add("agent:ag1:ssh", "/b", None).unwrap();
+        m.add("local", "/c", None).unwrap();
+        for _ in 0..2 {
+            m.prune_deleted_connection("c1");
+            m.prune_deleted_agent("ag1");
+        }
+        // An empty agent id must not match every `agent:` scope.
+        m.prune_deleted_agent("");
+        let left = manager(&dir).list(None).unwrap();
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].scope, "local");
+    }
+
+    #[test]
+    fn an_empty_prefix_is_rejected() {
+        let dir = TempDir::new().unwrap();
+        let m = manager(&dir);
+        m.add("local", "/a", None).unwrap();
+        assert!(m.remove_scopes_with_prefix("").is_err());
+        assert_eq!(m.list(None).unwrap().len(), 1);
     }
 
     #[test]
