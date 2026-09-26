@@ -31,6 +31,11 @@ interface FileBookmarksState {
   rename: (id: string, name: string) => Promise<void>;
   /** Remove a bookmark. */
   remove: (id: string) => Promise<void>;
+  /**
+   * Drop every cached bookmark whose scope matches — the UI side of the
+   * backend's prune when a saved connection or agent is deleted (#3562).
+   */
+  forgetScopes: (matches: (scope: string) => boolean) => void;
 }
 
 /** The bookmarks of one scope, in the order they were added. */
@@ -69,5 +74,13 @@ export const useFileBookmarksStore = create<FileBookmarksState>((set) => ({
   remove: async (id) => {
     await removeFileBookmark(id);
     set((s) => ({ bookmarks: s.bookmarks.filter((b) => b.id !== id) }));
+  },
+
+  forgetScopes: (matches) => {
+    set((s) =>
+      s.bookmarks.some((b) => matches(b.scope))
+        ? { bookmarks: s.bookmarks.filter((b) => !matches(b.scope)) }
+        : s
+    );
   },
 }));

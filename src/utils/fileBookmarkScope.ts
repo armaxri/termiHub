@@ -13,6 +13,14 @@
  *
  * When nothing identifies the remote end, there is no scope and bookmarks are
  * unavailable for that browser.
+ *
+ * Lifetime (#3562): deleting a saved connection removes its `connection:<id>`
+ * list — main-store and external-file connections alike — and deleting a saved
+ * remote agent removes every `agent:<id>:<type>` list. The backend prunes them
+ * in the delete commands; the UI cache drops them once the delete is durable.
+ * `local` and `host:` lists have no owning record and are kept. Removing an
+ * external connections file (without deleting its connections) keeps their
+ * lists, since the file may come back.
  */
 
 import type { FileBrowserMode } from "@/store/fileBrowsersBridge";
@@ -26,6 +34,19 @@ import {
 /** The scope shared by every local file browser. */
 export const LOCAL_BOOKMARK_SCOPE = "local";
 
+/** The bookmark scope of a saved connection (main store or external file). */
+export function connectionBookmarkScope(connectionId: string): string {
+  return `connection:${connectionId}`;
+}
+
+/** The prefix shared by every bookmark scope of a saved remote agent's sessions. */
+export function agentBookmarkScopePrefix(agentId: string): string {
+  return `agent:${agentId}:`;
+}
+
+/** The parts of a tab the scope is derived from. */
+export type BookmarkScopeTab = Pick<TerminalTab, "connectionId" | "config" | "connectionType">;
+
 /**
  * Derive the bookmark scope for the file browser in `mode`, whose remote side
  * (in session mode) is owned by `tab`. Returns `null` when bookmarks cannot be
@@ -33,16 +54,16 @@ export const LOCAL_BOOKMARK_SCOPE = "local";
  */
 export function fileBookmarkScope(
   mode: FileBrowserMode,
-  tab: TerminalTab | null | undefined
+  tab: BookmarkScopeTab | null | undefined
 ): string | null {
   if (mode === "local") return LOCAL_BOOKMARK_SCOPE;
   if (mode !== "session" || !tab) return null;
-  if (tab.connectionId) return `connection:${tab.connectionId}`;
+  if (tab.connectionId) return connectionBookmarkScope(tab.connectionId);
 
   const config = tab.config;
   const agentId = readConfigString(config, "agentId");
   if (agentId) {
-    return `agent:${agentId}:${readConfigString(config, "sessionType") ?? "local"}`;
+    return `${agentBookmarkScopePrefix(agentId)}${readConfigString(config, "sessionType") ?? "local"}`;
   }
 
   const host = readConfigString(config, "host")?.trim().toLowerCase();

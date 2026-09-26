@@ -20,6 +20,8 @@ import {
 import { SavedConnection, ConnectionFolder } from "@/types/connection";
 import { TabContent } from "@/types/terminal";
 import { frontendLog } from "@/utils/frontendLog";
+import { connectionBookmarkScope } from "@/utils/fileBookmarkScope";
+import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import { readConfigBoolean, readConfigString } from "@/utils/connectionConfigFields";
 
 import type { AppState } from "../appStore";
@@ -133,6 +135,8 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
    *   here; it surfaces the dangling reference (the tunnel already renders as
    *   "Unknown") so the inconsistency is not silent. The authoritative cascade is
    *   backend-owned (tracked as a follow-up).
+   * - **file-browser bookmarks** — the backend `delete_connection` already pruned
+   *   the `connection:<id>` list (#3562); drop it from the UI cache too.
    */
   const sweepDeletedConnectionRefs = (deletedIds: readonly string[]): void => {
     const idSet = new Set(deletedIds);
@@ -182,6 +186,10 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         description: orphanedTunnels.map((t) => t.name).join(", "),
       });
     }
+
+    // 4. File-browser bookmarks — mirror the backend prune in the UI cache (#3562).
+    const deletedScopes = new Set(deletedIds.map(connectionBookmarkScope));
+    useFileBookmarksStore.getState().forgetScopes((scope) => deletedScopes.has(scope));
   };
 
   return {

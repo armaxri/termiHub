@@ -261,6 +261,8 @@ import {
   type ProjectedSettlement,
 } from "@/store/restoreCohortBridge";
 import { errorMessage } from "@/utils/errorMessage";
+import { agentBookmarkScopePrefix } from "@/utils/fileBookmarkScope";
+import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import { resolveWindowEviction } from "@/utils/tabOwnership";
 
 export type SidebarView =
@@ -5820,10 +5822,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // (the store's `remove` clears sessions/definitions/folders too, #2409);
       // the persisted-list fold reconciles server-side (#2403).
       mirrorAgentIntent("agent.remove", { id: agentId });
-      removeAgent(agentId).catch((err) => {
-        frontendLog("app_store", `Failed to persist agent deletion: ${errorMessage(err)}`);
-        toast.error(`Failed to delete agent ${agent?.name ?? ""}: ${errorMessage(err)}`);
-      });
+      removeAgent(agentId)
+        .then(() => {
+          // The backend pruned the agent's file-browser bookmarks (#3562);
+          // drop them from the UI cache too.
+          const prefix = agentBookmarkScopePrefix(agentId);
+          useFileBookmarksStore.getState().forgetScopes((scope) => scope.startsWith(prefix));
+        })
+        .catch((err) => {
+          frontendLog("app_store", `Failed to persist agent deletion: ${errorMessage(err)}`);
+          toast.error(`Failed to delete agent ${agent?.name ?? ""}: ${errorMessage(err)}`);
+        });
     },
 
     toggleRemoteAgent: (agentId) => {
