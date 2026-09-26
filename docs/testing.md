@@ -3870,6 +3870,25 @@ confirms history survives a real app restart.
    lookup → its **History** says recording is off and lists no new run. Turn it
    back on; **Clear Network Tool History** empties every tool's History.
 
+### HTTP monitor check history (#3462)
+
+Recording (desktop- and agent-hosted), the caps, the throttled persistence,
+rehydration and the CSV export are covered by unit and component tests
+(`monitor_history*.rs`, `httpMonitorHistory.test.ts`,
+`HttpMonitorPanel.history.test.tsx`, `SessionSettings.test.tsx`). This pass
+confirms the history survives a real app restart.
+
+1. Open **Network Tools → HTTP Monitor**, start a monitor on a reachable URL
+   with Interval `2` s → after a few checks, click **Stop** → the chart and
+   **Recent Checks** stay visible.
+2. Quit and relaunch the app (`./scripts/dev.sh`), reopen **HTTP Monitor** →
+   the monitor is listed stopped. Click its **Show checks** (chart icon) → the
+   earlier checks are back in the chart and table.
+3. Click **Resume** → new checks append after the earlier ones. **Export**
+   writes a CSV with one row per check (`timestamp,status_code,latency_ms,ok,error`).
+4. **Settings → Sessions → Clear Network Tool History**, then **Show checks**
+   on a stopped monitor → no checks. Removing a monitor also drops its checks.
+
 ### Run-location "Run on" selector — Network Tools & Servers (#2191)
 
 The selector, its desktop-only gating, and the backend wiring are covered by
