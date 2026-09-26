@@ -524,6 +524,12 @@ export interface AppSettings {
    */
   broadcastGroups?: BroadcastGroup[];
   /**
+   * Render inline images in the terminal (PROD-057): SIXEL graphics and the
+   * iTerm2 inline image protocol, via the lazily-loaded xterm image addon with
+   * conservative per-terminal memory caps. Defaults to true. Updated live.
+   */
+  terminalInlineImages?: boolean;
+  /**
    * Show a warning before starting a Port Scanner scan whose estimated probe
    * count is very large (many host/port combinations). Defaults to true. The
    * warning dialog's "Don't warn again" opt-out flips this off; it can be

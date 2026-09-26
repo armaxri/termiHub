@@ -1712,6 +1712,26 @@ correctly in both themes. See PR #1504.
    have no close button; confirm the toast they resolve into (success/error)
    does.
 
+### Credential vault export / import (PROD-063, #3432)
+
+Verifies the encrypted credential-vault backup round trip in the real app (the
+backend and dialogs are unit-tested; this checks the native save/open dialogs).
+
+1. Master Password mode with at least one saved connection password. Settings →
+   Security → **Export vault…** → enter the master password and a 12+ character
+   passphrase twice → **Export…** → save the file. Expect a success toast; open
+   the file in a text editor: no password or connection id is readable.
+2. Repeat with a wrong master password → inline "master password is incorrect",
+   no save dialog.
+3. Change one saved password, then **Import vault…** → choose the file → enter
+   a wrong passphrase → **Preview** → inline wrong-passphrase error.
+4. Enter the right passphrase → **Preview** shows 1 conflict; choose **Replace
+   them with the imported ones** → **Import** → success toast; connecting uses the
+   exported password again.
+5. Switch to OS Keychain mode: **Export vault…** is disabled with the "requires
+   system authentication … #3433" reason; **Import vault…** with the same file
+   works and the credentials land in the OS keychain.
+
 ### Zoomed tab repaints terminal content immediately (#1823)
 
 Verifies that zooming a terminal tab repaints its content at the new size right
@@ -1784,6 +1804,24 @@ Run on **Windows** against a **local CMD** session (the ConPTY path):
 5. Regression check: resizing the tab/window and high-throughput output
    (e.g. a large file dump) must still render and scroll normally with no
    visible slowdown.
+
+### Terminal inline images render (SIXEL / iTerm2, PROD-057, PR #3442)
+
+The image addon's wiring, limits and lifecycle are unit-tested
+(`inlineImages.test.ts`, `Terminal.inline-images.test.tsx`), but actual pixel
+rendering needs a real WebView, so it stays manual.
+
+1. In a local shell tab, install a SIXEL encoder (`brew install libsixel chafa`
+   or `apt install libsixel-bin chafa`) and run `img2sixel <some.png>`.
+   **Expected:** the picture renders inline, followed by the prompt.
+2. Run `chafa -f sixel <some.png>` and an iTerm2 `imgcat <some.png>`.
+   **Expected:** both render as pictures, not escape-sequence noise.
+3. Turn **Settings > Terminal > Inline Images** off and repeat step 1.
+   **Expected:** no image renders and the terminal stays usable.
+4. Turn it back on, render an image, then scroll it out of view and back.
+   **Expected:** it scrolls with the text, on both WebGL and DOM renderers.
+5. Disconnect and reconnect the tab. **Expected:** the text scrollback is
+   replayed; the earlier image is gone (by design); the terminal stays usable.
 
 ### Right-click paste inserts the clipboard exactly once (Windows/WebView2, #2595)
 

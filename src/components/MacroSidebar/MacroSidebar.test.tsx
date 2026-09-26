@@ -58,6 +58,15 @@ function query(testId: string): HTMLElement | null {
   return document.querySelector(`[data-testid="${testId}"]`);
 }
 
+function setInputValue(testId: string, value: string) {
+  const input = query(testId) as HTMLInputElement;
+  const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+  act(() => {
+    setter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+
 function setSearch(value: string) {
   const input = query("macro-search") as HTMLInputElement;
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
@@ -222,6 +231,54 @@ describe("MacroSidebar", () => {
     act(() => (query("macro-edit-macro-1") as HTMLButtonElement).click());
     expect(query("macro-editor-dialog")).not.toBeNull();
     expect((query("macro-editor-name") as HTMLInputElement).value).toBe("Deploy sequence");
+  });
+
+  it("authors a new macro by hand from the New button and saves it (PROD-039)", async () => {
+    const saveMacroToBackend = vi.fn().mockResolvedValue(undefined);
+    useAppStore.setState({ macros: sampleMacros, saveMacroToBackend });
+    render();
+
+    act(() => (query("macro-new-btn") as HTMLButtonElement).click());
+    expect(query("macro-editor-dialog")).not.toBeNull();
+    expect((query("macro-editor-name") as HTMLInputElement).value).toBe("");
+
+    setInputValue("macro-editor-name", "Restart service");
+    setInputValue("macro-editor-step-data-0", "sudo systemctl restart app\\r");
+    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    expect(saveMacroToBackend).toHaveBeenCalledTimes(1);
+    const saved = saveMacroToBackend.mock.calls[0][0] as Macro;
+    expect(saved.id).not.toBe("");
+    expect(sampleMacros.map((m) => m.id)).not.toContain(saved.id);
+    expect(saved.name).toBe("Restart service");
+    expect(saved.steps).toEqual([{ data: "sudo systemctl restart app\r", delayMs: 0 }]);
+    // The backend stamps authoritative timestamps.
+    expect(saved.createdAt).toBe("");
+    expect(toastSuccess).toHaveBeenCalledWith('Created macro "Restart service"');
+    expect(query("macro-editor-dialog")).toBeNull();
+  });
+
+  it("offers hand-authoring from the empty state", () => {
+    render();
+    act(() => (query("macro-empty-new-link") as HTMLButtonElement).click());
+    expect(query("macro-editor-dialog")).not.toBeNull();
+  });
+
+  it("keeps the new-macro dialog open when the save fails", async () => {
+    const saveMacroToBackend = vi.fn().mockRejectedValue(new Error("disk full"));
+    useAppStore.setState({ macros: [], saveMacroToBackend });
+    render();
+    act(() => (query("macro-new-btn") as HTMLButtonElement).click());
+    setInputValue("macro-editor-name", "X");
+    setInputValue("macro-editor-step-data-0", "x");
+    act(() => (query("macro-editor-save") as HTMLButtonElement).click());
+    await flush();
+    await flush();
+    expect(toastError).toHaveBeenCalled();
+    expect(query("macro-editor-dialog")).not.toBeNull();
+    expect((query("macro-editor-step-data-0") as HTMLInputElement).value).toBe("x");
   });
 
   it("disables Export All when there are no macros", () => {

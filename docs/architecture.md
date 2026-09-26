@@ -1117,6 +1117,69 @@ termiHub provides optional credential encryption with two storage modes:
 
 Credential storage is managed through the Security section in Settings.
 
+#### Credential vault export / import
+
+Settings → Security → **Credential Vault Backup** exports every saved credential to an encrypted
+file and imports such a file into the **current** store (PROD-063, `src-tauri/src/credential/vault/`).
+
+- **Export** requires re-authentication (in master-password mode the store must be unlocked and the
+  master password re-entered) and an **export passphrase** entered twice (minimum 12 characters,
+  different from the master password, with a strength hint). In **OS-keychain mode export is
+  refused** (backend and UI) until OS-level user authentication exists
+  ([#3433](https://github.com/armaxri/termiHub/issues/3433)) — termiHub can read its own keychain
+  items without a prompt, so there would be no re-authentication step. Import into the keychain is
+  allowed. The file is written only after encryption; plaintext never reaches the disk, the logs
+  or the clipboard, and in-memory copies are zeroized.
+- **File format** — a versioned JSON header around the standard envelope:
+
+  ```json
+  {
+    "format": "termihub-credential-vault",
+    "formatVersion": 1,
+    "createdAt": "2026-09-26T12:00:00+00:00",
+    "envelope": {
+      "version": 1,
+      "kdf": {
+        "algorithm": "argon2id",
+        "memoryCost": 65536,
+        "timeCost": 3,
+        "parallelism": 1,
+        "salt": "…"
+      },
+      "nonce": "…",
+      "data": "…"
+    }
+  }
+  ```
+
+  The envelope is the same Argon2id + AES-256-GCM format as `credentials.enc`, sealed at the
+  production KDF cost. The header is repeated inside the ciphertext and must match on import, so an
+  edited header is detected; no connection ids or counts are stored in the clear. A file written
+  by a newer format version is rejected with an "update termiHub" message.
+
+- **Import** decrypts with the passphrase, shows a preview (new / unchanged / conflicting
+  credentials, and credentials for connections not saved on this machine), lets the user keep or
+  replace conflicting credentials, then writes everything as one all-or-nothing batch. A wrong
+  passphrase or a tampered file fails before anything is written.
+
+```mermaid
+sequenceDiagram
+    participant UI as Settings → Security
+    participant BE as credential::vault
+    participant Store as Current store
+    UI->>BE: export(master password, passphrase)
+    BE->>Store: verify master password, read all credentials
+    BE-->>UI: sealed file text (ciphertext only)
+    UI->>UI: save dialog → write file
+    UI->>BE: preview(file, passphrase)
+    BE-->>UI: counts + conflicts (no secrets)
+    UI->>BE: import(file, passphrase, skip | overwrite)
+    BE->>Store: set_many (atomic, rolled back on failure)
+```
+
+The exported file object is self-contained so a future unified backup can embed it as its
+credentials section.
+
 ### Content-Security-Policy & capability scoping
 
 termiHub ships a deliberately tight webview Content-Security-Policy and a scoped Tauri capability

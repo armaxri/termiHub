@@ -197,7 +197,9 @@ pub async fn connect_and_authenticate_over_channel_with_liveness(
 /// it. See [`keyboard_interactive`](super::keyboard_interactive) for the
 /// prompt flow and the password auto-answer heuristic.
 async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<(), SessionError> {
-    let prompter = keyboard_interactive_prompter();
+    // A registered-but-unavailable prompter (the agent's relay with no capable
+    // desktop attached, #3375) is the same as none: auto-answer only.
+    let prompter = keyboard_interactive_prompter().filter(|p| p.is_available());
     authenticate_with_prompter(session, config, prompter.as_deref()).await
 }
 

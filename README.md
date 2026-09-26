@@ -105,6 +105,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 - **Split views** — Arrange terminals in horizontal and vertical splits with drag-and-drop
 - **Tab management** — Drag-and-drop tabs between panels, per-tab colors, CWD tracking
+- **Inline images** — SIXEL graphics and the iTerm2 inline image protocol render directly in the terminal (`img2sixel`, `chafa -f sixel`, `imgcat`)
 - **Connection management** — Organize connections in folder hierarchies with import/export from external files
 
 ### SSH Features
@@ -120,7 +121,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Plugin system** — Extend termiHub with installable plugins, managed from the Plugins sidebar. Includes **native (cdylib) backends** loaded over a C ABI with an Ed25519 signature / trust model — see the plugin trust warning under [Security](#security)
 - **Network diagnostics** — Built-in ping, traceroute, port scanner, DNS lookup, HTTP monitor, and Wake-on-LAN
 - **Embedded servers** — Run local HTTP, FTP, and TFTP servers with lifecycle management for quick file serving and device provisioning
-- **Macros** — Record and replay terminal input sequences — into the active terminal or, after an explicit confirmation listing every target, into many at once (all terminals, the current panel, the live broadcast set, or a saved broadcast group)
+- **Macros** — Record and replay terminal input sequences, or write them by hand in the Macro Manager (control keys via `\r` Enter, `\t` Tab, `\e` Esc, `\xHH`); replay into the active terminal or, after an explicit confirmation listing every target, into many at once (all terminals, the current panel, the live broadcast set, or a saved broadcast group)
 
 ### Workspace and Windows
 
@@ -141,6 +142,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 - **Credential storage** — Optional credential encryption via platform keychain (OS keychain), master password, or prompt-only mode
 - **Auto-lock** — Configurable timeout for credential store locking
+- **Credential vault backup** — Export saved credentials to a passphrase-protected, encrypted file (Settings → Security → Export vault…, Master Password mode) and import it on another machine or after a reinstall (Import vault…)
 
 > ⚠️ **Plugin trust warning.** termiHub's plugin system can load **native plugins that run arbitrary code with your full user privileges** (native cdylib backends over a C ABI). Plugins carry an Ed25519 signature / trust status (`Untrusted` / `Tampered` / `Signed` / `Verified`), but installing a plugin is a trust decision: **only install plugins from publishers you trust.** An untrusted native plugin can do anything your user account can.
 
@@ -223,6 +225,28 @@ Open terminals appear as tabs with type-specific icons and optional colored bord
 - **Right-click** a tab for: Save to File, Copy to Clipboard, Clear Terminal, Horizontal Scrolling, Set Color
 
 Each connection also has terminal options: **horizontal scrolling** and **tab color**, configurable in the editor or via the tab context menu.
+
+### Inline Images
+
+The terminal renders images that programs send inline, using
+[`@xterm/addon-image`](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-image):
+
+- **SIXEL** (DCS sixel) — e.g. `img2sixel`, `chafa -f sixel`, `lsix`, matplotlib's sixel backend
+- **iTerm2 inline image protocol** (`OSC 1337 ; File=…`) — e.g. `imgcat`
+
+Toggle it under **Settings > Terminal > Inline Images** (on by default; applies live). Because
+the shell (or a remote host) controls what is sent, each terminal enforces memory caps:
+
+| Limit                        | Value                  |
+| ---------------------------- | ---------------------- |
+| Pixels per image             | 2048 × 2048 (≈4.2 MP)  |
+| Image memory per terminal    | 32 MB (oldest evicted) |
+| Raw SIXEL sequence size      | 8 MB                   |
+| Raw iTerm2 IIP sequence size | 8 MB                   |
+
+An image over a cap is dropped without affecting the text; an evicted image leaves a
+placeholder. Images are not part of the preserved scrollback — after a reconnect the text is
+replayed but earlier images are gone. The Kitty graphics protocol is not supported.
 
 ### Split Views
 

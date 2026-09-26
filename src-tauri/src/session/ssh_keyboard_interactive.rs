@@ -59,6 +59,10 @@ pub struct SshKeyboardInteractivePromptEvent {
     pub prompts: Vec<SshKeyboardInteractivePromptItem>,
     /// 1-based round number within the exchange.
     pub round: u32,
+    /// The remote agent relaying this prompt (its host), when the connection
+    /// is authenticated by an agent rather than the desktop (#3375). `null`
+    /// for a direct connection. Shown as "via …" in the dialog.
+    pub via: Option<String>,
 }
 
 /// `ssh-keyboard-interactive-prompt-closed` payload: the prompt with this id is
@@ -192,6 +196,7 @@ impl KeyboardInteractivePrompter for SshKeyboardInteractivePrompter {
                 })
                 .collect(),
             round: request.round,
+            via: request.via.clone(),
         });
 
         match rx.await {
@@ -240,6 +245,7 @@ mod tests {
                 },
             ],
             round: 1,
+            via: None,
         }
     }
 
