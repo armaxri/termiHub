@@ -1067,6 +1067,154 @@ describe("appStore — workflow run slice (#1852)", () => {
       expect(() => useAppStore.getState().resolveLocalProcessPrompt("cancel")).not.toThrow();
     });
   });
+
+  describe("error handling and multi-target runs (PROD-045 / PROD-047)", () => {
+    /** Seed two terminal tabs in one leaf; `b` may be disconnected. */
+    function seedTwoTerminals(bSessionId: string | null = "sess-b") {
+      const mk = (id: string, sessionId: string | null, title: string): TerminalTab => ({
+        id,
+        sessionId,
+        title,
+        connectionType: "local",
+        contentType: "terminal",
+        config: { type: "local", config: {} },
+        panelId: "leaf-1",
+        isActive: id === "tab-a",
+      });
+      const leaf: LeafPanel = {
+        type: "leaf",
+        id: "leaf-1",
+        tabs: [mk("tab-a", "sess-a", "web-1"), mk("tab-b", bSessionId, "web-2")],
+        activeTabId: "tab-a",
+      };
+      seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
+    }
+
+    /** Record (tabId, data) pairs; `fail(tabId, data)` makes a send report failure. */
+    function captureSends(fail: (tabId: string, data: string) => boolean = () => false) {
+      const sends: [string, string][] = [];
+      registerTerminalInputInjector(async (tabId, data) => {
+        sends.push([tabId, data]);
+        return !fail(tabId, data);
+      });
+      return sends;
+    }
+
+    it("runs the workflow on every selected terminal in order, one history record each", async () => {
+      seedTwoTerminals();
+      const sends = captureSends();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("uptime")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+
+      expect(sends).toEqual([
+        ["tab-a", "uptime\n"],
+        ["tab-b", "uptime\n"],
+      ]);
+      const recorded = vi.mocked(apiRecordWorkflowRun).mock.calls.map(([r]) => r.tabId);
+      expect(recorded).toEqual(["tab-a", "tab-b"]);
+      expect(toast.success).toHaveBeenCalledWith(
+        'Ran workflow "Workflow w1" on 2 terminal(s)',
+        expect.objectContaining({ id: "workflow-run-w1-fanout" })
+      );
+    });
+
+    it("skips a disconnected terminal and reports it", async () => {
+      seedTwoTerminals(null);
+      const sends = captureSends();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("uptime")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+
+      expect(sends).toEqual([["tab-a", "uptime\n"]]);
+      expect(toast.info).toHaveBeenCalledWith(
+        'Ran workflow "Workflow w1" on 1 terminal(s)',
+        expect.objectContaining({ description: expect.stringContaining("1 skipped") })
+      );
+    });
+
+    it("refuses when none of the selected terminals are connected", async () => {
+      seedTwoTerminals(null);
+      const sends = captureSends();
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("uptime")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-b", "missing"] });
+
+      expect(sends).toEqual([]);
+      expect(toast.error).toHaveBeenCalledWith("None of the selected terminals are connected");
+    });
+
+    it("keeps going after one target fails and names it in the summary", async () => {
+      seedTwoTerminals();
+      const sends = captureSends((tabId) => tabId === "tab-a");
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("deploy")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+
+      expect(sends.map(([tabId]) => tabId)).toEqual(["tab-a", "tab-b"]);
+      expect(toast.error).toHaveBeenCalledWith(
+        'Workflow "Workflow w1" failed on 1 terminal(s)',
+        expect.objectContaining({ description: expect.stringContaining("web-1:") })
+      );
+    });
+
+    it("cancelling stops the remaining targets", async () => {
+      seedTwoTerminals();
+      const sends: [string, string][] = [];
+      registerTerminalInputInjector(async (tabId, data) => {
+        sends.push([tabId, data]);
+        useAppStore.getState().cancelWorkflowRun();
+        return true;
+      });
+      useAppStore.setState({ workflows: [workflow("w1", [cmd("one"), cmd("two")])] });
+
+      await useAppStore.getState().runWorkflow("w1", { targetTabIds: ["tab-a", "tab-b"] });
+
+      expect(sends).toEqual([["tab-a", "one\n"]]);
+      expect(toast.info).toHaveBeenCalledWith(
+        'Workflow "Workflow w1" cancelled',
+        expect.objectContaining({ id: "workflow-run-w1-fanout" })
+      );
+    });
+
+    it("records tolerated continue-on-error failures in the run history", async () => {
+      seedConnectedTerminal();
+      captureSends((_tabId, data) => data === "cleanup\n");
+      useAppStore.setState({
+        workflows: [workflow("w1", [{ ...cmd("cleanup"), continueOnError: true }, cmd("next")])],
+      });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
+      expect(run.status).toBe("completed");
+      expect(run.continuedFailures).toBe(1);
+      expect(toast.info).toHaveBeenCalledWith(
+        'Ran workflow "Workflow w1" with 1 tolerated step failure',
+        expect.anything()
+      );
+    });
+
+    it("retries a failing step and shows the attempt in the progress toast", async () => {
+      seedConnectedTerminal();
+      let calls = 0;
+      const sends = captureSends(() => ++calls === 1);
+      useAppStore.setState({
+        workflows: [workflow("w1", [{ ...cmd("flaky"), retry: { count: 2 } }])],
+      });
+
+      await useAppStore.getState().runWorkflow("w1");
+
+      expect(sends).toHaveLength(2);
+      expect(toast.loading).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ description: "Retrying step 1 (attempt 2 of 3)" })
+      );
+      const run = vi.mocked(apiRecordWorkflowRun).mock.calls[0][0];
+      expect(run.status).toBe("completed");
+      expect(run.continuedFailures).toBeUndefined();
+    });
+  });
 });
 
 describe("appStore — on-connect trigger dispatch (#1855)", () => {

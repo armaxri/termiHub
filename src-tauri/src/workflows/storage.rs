@@ -94,9 +94,13 @@ mod tests {
                 tags: vec!["ops".to_string()],
                 steps: vec![
                     WorkflowStep::SendCommand {
+                        error_handling: Default::default(),
                         command: "sudo -v".to_string(),
                     },
-                    WorkflowStep::Wait { delay_ms: 500 },
+                    WorkflowStep::Wait {
+                        error_handling: Default::default(),
+                        delay_ms: 500,
+                    },
                 ],
                 triggers: vec![WorkflowTrigger::OnConnect {
                     connection_ids: vec!["prod-web-1".to_string()],
@@ -134,6 +138,7 @@ mod tests {
         assert_eq!(
             result.data.workflows[0].steps[0],
             WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "sudo -v".to_string()
             }
         );

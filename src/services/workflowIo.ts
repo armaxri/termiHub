@@ -111,6 +111,44 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** Validate one raw step, throwing a clear error that names the offending step. */
 function validateStep(raw: unknown, where: string, stepIndex: number): WorkflowStep {
+  const step = validateStepBody(raw, where, stepIndex);
+  // `validateStepBody` already proved `raw` is a record.
+  applyErrorHandling(step, raw as Record<string, unknown>, `step ${stepIndex} of ${where}`);
+  return step;
+}
+
+/**
+ * Copy a raw step's optional error-handling policy (PROD-045) onto the validated
+ * step, type-checking each field. Out-of-range values are accepted here — the
+ * runner clamps the retry count and delay to its safety caps at run time.
+ */
+function applyErrorHandling(step: WorkflowStep, raw: Record<string, unknown>, at: string): void {
+  if (raw.continueOnError !== undefined) {
+    if (typeof raw.continueOnError !== "boolean") {
+      throw new Error(`Invalid workflow file: ${at} has an invalid "continueOnError".`);
+    }
+    step.continueOnError = raw.continueOnError;
+  }
+  if (raw.retry === undefined) return;
+  const retry = raw.retry;
+  const isNonNegative = (v: unknown): v is number =>
+    typeof v === "number" && Number.isFinite(v) && v >= 0;
+  if (
+    !isRecord(retry) ||
+    !isNonNegative(retry.count) ||
+    !Number.isInteger(retry.count) ||
+    (retry.delayMs !== undefined && !isNonNegative(retry.delayMs)) ||
+    (retry.backoff !== undefined && retry.backoff !== "fixed" && retry.backoff !== "exponential")
+  ) {
+    throw new Error(`Invalid workflow file: ${at} has an invalid "retry" policy.`);
+  }
+  step.retry = { count: retry.count };
+  if (retry.delayMs !== undefined) step.retry.delayMs = retry.delayMs;
+  if (retry.backoff !== undefined) step.retry.backoff = retry.backoff;
+}
+
+/** Validate the kind-specific fields of one raw step. */
+function validateStepBody(raw: unknown, where: string, stepIndex: number): WorkflowStep {
   const at = `step ${stepIndex} of ${where}`;
   if (!isRecord(raw) || typeof raw.kind !== "string") {
     throw new Error(`Invalid workflow file: ${at} is malformed.`);

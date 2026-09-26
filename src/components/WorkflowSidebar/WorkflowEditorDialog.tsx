@@ -19,6 +19,7 @@ import type { SavedConnection } from "@/types/connection";
 import { WorkflowStepRow, type WorkflowStepEntry } from "./WorkflowStepRow";
 import { WorkflowTriggersEditor } from "./WorkflowTriggersEditor";
 import { WorkflowParametersEditor } from "./WorkflowParametersEditor";
+import { workflowStepsPolicyValid } from "./workflowStepPolicySchema";
 import {
   WORKFLOW_STEP_KINDS,
   stepKindLabel,
@@ -161,8 +162,13 @@ export function WorkflowEditorDialog({
     }).success;
   }, [watched.name, watched.description, watched.tags]);
 
-  // Preserves today's exact gate: a valid form AND at least one step.
-  const canSave = formValid && entries.length > 0;
+  // A valid form AND at least one step AND every step's error-handling policy
+  // (PROD-045) within the runner's bounds.
+  const policiesValid = useMemo(
+    () => workflowStepsPolicyValid(entries.map((e) => e.step)),
+    [entries]
+  );
+  const canSave = formValid && entries.length > 0 && policiesValid;
 
   const updateStep = (uid: string, step: WorkflowStep) => {
     setEntries((prev) => prev.map((e) => (e.uid === uid ? { ...e, step } : e)));

@@ -129,6 +129,7 @@ mod tests {
             total: 2,
             failed_step_index: None,
             error: None,
+            continued_failures: None,
             tab_id: Some("tab-1".to_string()),
             triggered_by: WorkflowRunTrigger::Manual,
         }

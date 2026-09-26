@@ -22,6 +22,7 @@ function workflow(overrides: Partial<Workflow> = {}): Workflow {
 function handlers() {
   return {
     onRun: vi.fn(),
+    onRunOn: vi.fn(),
     onCancel: vi.fn(),
     onEdit: vi.fn(),
     onDuplicate: vi.fn(),
@@ -125,5 +126,16 @@ describe("WorkflowListItem", () => {
       query("workflow-item-w1")?.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
     });
     expect(h.onRun).toHaveBeenCalledWith("w1");
+  });
+
+  it("opens the Run on… picker for the workflow (PROD-047)", () => {
+    const h = render(workflow());
+    act(() => query("workflow-run-on-w1")?.click());
+    expect(h.onRunOn).toHaveBeenCalledWith("w1");
+  });
+
+  it("disables Run on… while the workflow is running", () => {
+    render(workflow(), true);
+    expect((query("workflow-run-on-w1") as HTMLButtonElement).disabled).toBe(true);
   });
 });

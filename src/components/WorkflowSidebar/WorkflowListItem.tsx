@@ -1,5 +1,5 @@
 import type React from "react";
-import { Play, Pencil, Copy, Download, Trash2, Zap, Square } from "lucide-react";
+import { Play, Pencil, Copy, Download, Trash2, Zap, Square, ListChecks } from "lucide-react";
 import { Button, Tooltip } from "@/components/ui";
 import { SidebarListItem } from "@/components/SidebarListItem";
 import type { Workflow } from "@/types/workflow";
@@ -10,6 +10,8 @@ interface WorkflowListItemProps {
   /** Whether this workflow is the one currently running (shows a stop affordance). */
   running: boolean;
   onRun: (workflowId: string) => void;
+  /** Open the "Run on…" multi-terminal picker (PROD-047). */
+  onRunOn: (workflowId: string) => void;
   onCancel: () => void;
   onEdit: (workflowId: string) => void;
   onDuplicate: (workflowId: string) => void;
@@ -29,7 +31,7 @@ function hasOnConnectTrigger(workflow: Workflow): boolean {
 /**
  * A single workflow row in the manager sidebar: name, a step-count badge, an
  * optional on-connect marker, a one-line preview of the step kinds, and the
- * Run / Edit / Duplicate / Export / Delete actions. Double-click runs the
+ * Run / Run on… / Edit / Duplicate / Export / Delete actions. Double-click runs the
  * workflow against the active session (matching the macro row's affordance).
  * Composed from the shared list-item shell.
  */
@@ -37,6 +39,7 @@ export function WorkflowListItem({
   workflow,
   running,
   onRun,
+  onRunOn,
   onCancel,
   onEdit,
   onDuplicate,
@@ -92,6 +95,21 @@ export function WorkflowListItem({
               />
             </Tooltip>
           )}
+          <Tooltip content="Run on…" side="top">
+            <Button
+              variant="ghost"
+              size="sm"
+              iconOnly
+              aria-label="Run on selected terminals"
+              data-testid={`workflow-run-on-${workflow.id}`}
+              icon={<ListChecks size={12} />}
+              disabled={running}
+              onClick={(e) => {
+                e.stopPropagation();
+                onRunOn(workflow.id);
+              }}
+            />
+          </Tooltip>
           <Tooltip content="Edit" side="top">
             <Button
               variant="ghost"

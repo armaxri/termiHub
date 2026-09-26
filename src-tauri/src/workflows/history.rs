@@ -62,6 +62,10 @@ pub struct WorkflowRun {
     /// For a failed run: a human-readable failure reason.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Number of step failures tolerated via `continueOnError` (PROD-045).
+    /// Omitted when none were tolerated, so older records round-trip unchanged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continued_failures: Option<u32>,
     /// The terminal tab the run targeted, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tab_id: Option<String>,
@@ -119,6 +123,7 @@ mod tests {
             total: 3,
             failed_step_index: None,
             error: None,
+            continued_failures: None,
             tab_id: Some("tab-1".to_string()),
             triggered_by: WorkflowRunTrigger::Manual,
         }
@@ -167,6 +172,21 @@ mod tests {
         assert!(json.contains("\"triggeredBy\":\"on-connect\""));
         let parsed: WorkflowRun = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed, run);
+    }
+
+    #[test]
+    fn continued_failures_round_trip_and_are_omitted_when_absent() {
+        let run = WorkflowRun {
+            continued_failures: Some(2),
+            ..sample_run("run-soft")
+        };
+        let json = serde_json::to_string(&run).unwrap();
+        assert!(json.contains("\"continuedFailures\":2"));
+        let parsed: WorkflowRun = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, run);
+
+        let plain = serde_json::to_string(&sample_run("run-plain")).unwrap();
+        assert!(!plain.contains("continuedFailures"));
     }
 
     #[test]

@@ -16,8 +16,54 @@
  * trigger dispatch).
  */
 
-/** A single, typed step of a workflow. Discriminated by {@link WorkflowStep.kind}. */
-export type WorkflowStep =
+/**
+ * A single, typed step of a workflow. Discriminated by {@link WorkflowStep.kind};
+ * every kind additionally carries the optional per-step error-handling policy
+ * ({@link WorkflowStepErrorHandling}, PROD-045).
+ */
+export type WorkflowStep = WorkflowStepBody & WorkflowStepErrorHandling;
+
+/**
+ * Backoff strategy between retry attempts of a failing step (PROD-045):
+ * `fixed` waits `delayMs` before every retry; `exponential` doubles the wait
+ * after each attempt (`delayMs`, `2×delayMs`, `4×delayMs`, …), capped by the
+ * runner's maximum retry delay.
+ */
+export type WorkflowRetryBackoff = "fixed" | "exponential";
+
+/**
+ * A bounded retry policy for a single step (PROD-045). A failing step is
+ * re-attempted up to `count` more times (so it runs at most `count + 1` times),
+ * waiting `delayMs` (shaped by `backoff`) between attempts. The runner clamps
+ * `count` and the delay to named safety caps so a policy can never retry
+ * forever or stall a run for hours. Mirrors the Rust `WorkflowStepRetry`.
+ */
+export interface WorkflowStepRetry {
+  /** Extra attempts after the first failure (clamped to the runner's cap). */
+  count: number;
+  /** Delay (ms) before the first retry; absent → retry immediately. */
+  delayMs?: number;
+  /** How the delay grows between attempts; absent → `fixed`. */
+  backoff?: WorkflowRetryBackoff;
+}
+
+/**
+ * Optional per-step error handling (PROD-045), shared by every step kind. Both
+ * fields are absent on a step authored before this feature, which then behaves
+ * exactly as before: no retry, and the first failure stops the run.
+ */
+export interface WorkflowStepErrorHandling {
+  /**
+   * When `true`, a failure of this step (after any retries) is recorded and the
+   * run continues with the next step instead of stopping. Absent → stop.
+   */
+  continueOnError?: boolean;
+  /** Retry this step when it fails. Absent → no retry. */
+  retry?: WorkflowStepRetry;
+}
+
+/** The kind-specific shape of a {@link WorkflowStep}, without the shared policy. */
+export type WorkflowStepBody =
   | {
       /** Send a single authored command line into the active session. */
       kind: "send-command";
@@ -246,6 +292,11 @@ export interface WorkflowRun {
   failedStepIndex?: number;
   /** For a failed run: a human-readable failure reason. */
   error?: string;
+  /**
+   * Number of steps that failed but were tolerated because they were marked
+   * `continueOnError` (PROD-045). Absent when no step failure was tolerated.
+   */
+  continuedFailures?: number;
   /** The terminal tab the run targeted, when known. */
   tabId?: string;
   /** What launched the run. */

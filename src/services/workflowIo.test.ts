@@ -342,3 +342,53 @@ describe("parseWorkflowEnvelope loop and wait-for-output steps (PROD-044)", () =
     expect(() => parseWorkflowEnvelope(json)).toThrow(/missing "pattern"/);
   });
 });
+
+describe("parseWorkflowEnvelope step error handling (PROD-045)", () => {
+  const envelopeWith = (step: unknown): string =>
+    JSON.stringify({ version: WORKFLOW_EXPORT_VERSION, workflows: [{ name: "X", steps: [step] }] });
+
+  it("round-trips continueOnError and a retry policy, including nested steps", () => {
+    const wf = sampleWorkflow({
+      steps: [
+        {
+          kind: "send-command",
+          command: "flaky",
+          continueOnError: true,
+          retry: { count: 3, delayMs: 250, backoff: "exponential" },
+        },
+        {
+          kind: "loop",
+          loop: { kind: "count", count: 2 },
+          body: [{ kind: "wait", delayMs: 10, retry: { count: 1 } }],
+        },
+      ],
+    });
+    const [parsed] = parseWorkflowEnvelope(serializeWorkflows([wf]));
+    expect(parsed.steps).toEqual(wf.steps);
+  });
+
+  it("does not add error-handling keys to a step that has none", () => {
+    const [parsed] = parseWorkflowEnvelope(envelopeWith({ kind: "send-command", command: "ls" }));
+    expect(parsed.steps[0]).toEqual({ kind: "send-command", command: "ls" });
+  });
+
+  it("rejects a non-boolean continueOnError", () => {
+    expect(() =>
+      parseWorkflowEnvelope(
+        envelopeWith({ kind: "send-command", command: "ls", continueOnError: "yes" })
+      )
+    ).toThrow(/invalid "continueOnError"/);
+  });
+
+  it.each([
+    [{ count: -1 }],
+    [{ count: 1.5 }],
+    [{ count: 2, delayMs: -10 }],
+    [{ count: 2, backoff: "linear" }],
+    ["3"],
+  ])("rejects a malformed retry policy %j", (retry) => {
+    expect(() =>
+      parseWorkflowEnvelope(envelopeWith({ kind: "send-command", command: "ls", retry }))
+    ).toThrow(/invalid "retry" policy/);
+  });
+});

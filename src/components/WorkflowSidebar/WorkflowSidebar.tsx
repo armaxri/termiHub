@@ -1,7 +1,9 @@
 import { useCallback, useState } from "react";
 import { Plus, ChevronDown, Play } from "lucide-react";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
-import { useAppStore } from "@/store/appStore";
+import { collectLiveTabs, getActiveTab, useAppStore } from "@/store/appStore";
+import { currentBroadcastView } from "@/store/broadcastBridge";
+import { resolveConnectedTargets, type RunnableTarget } from "@/store/slices/workflowFanout";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
 import { useProjectedWorkflowRun } from "@/store/useProjectedWorkflowRun";
 import { Button, SearchInput, toast } from "@/components/ui";
@@ -18,6 +20,7 @@ import { WorkflowListItem } from "./WorkflowListItem";
 import { WorkflowHistorySection } from "./WorkflowHistorySection";
 import { WorkflowRunOutput } from "./WorkflowRunOutput";
 import { WorkflowEditorDialog, type WorkflowEditorResult } from "./WorkflowEditorDialog";
+import { WorkflowRunTargetsDialog } from "./WorkflowRunTargetsDialog";
 import { newId } from "@/services/transport/ids";
 import { slugify } from "@/utils/slugify";
 import "./WorkflowSidebar.css";
@@ -27,6 +30,18 @@ import { errorMessage } from "@/utils/errorMessage";
 function generateWorkflowId(): string {
   return newId("workflow");
 }
+
+/** The open "Run on…" picker (PROD-047): its workflow and a snapshot of targets. */
+interface RunTargetsState {
+  workflow: Workflow;
+  candidates: RunnableTarget[];
+  broadcastTabIds: string[];
+  initialSelection: string[];
+}
+
+/** Stable empty props for the closed picker (avoids re-seeding on every render). */
+const NO_TARGETS: RunnableTarget[] = [];
+const NO_IDS: string[] = [];
 
 /** Build a fresh, empty workflow draft (backend stamps the timestamps on save). */
 function blankWorkflow(): Workflow {
@@ -66,6 +81,7 @@ export function WorkflowSidebar() {
 
   // The workflow being edited: an existing one (isNew=false) or a fresh draft.
   const [editing, setEditing] = useState<{ workflow: Workflow; isNew: boolean } | null>(null);
+  const [runTargets, setRunTargets] = useState<RunTargetsState | null>(null);
   const { query, setQuery, filtered } = useListFilter(workflows, nameDescriptionTagsMatcher);
   const exportWorkflowsToFile = useJsonFileExport("workflows");
   const importWorkflowsFromFile = useJsonFileImport("workflows");
@@ -107,6 +123,30 @@ export function WorkflowSidebar() {
       void runWorkflow(workflowId);
     },
     [runWorkflow]
+  );
+
+  const openRunTargets = useCallback(
+    (workflowId: string) => {
+      const workflow = workflows.find((w) => w.id === workflowId);
+      if (!workflow) return;
+      // Snapshot the connected terminals and broadcast group at open time.
+      const state = useAppStore.getState();
+      const { targets } = resolveConnectedTargets(
+        state,
+        collectLiveTabs(state).map((t) => t.id)
+      );
+      const broadcast = currentBroadcastView();
+      const broadcastTabIds = broadcast.active ? broadcast.targetTabIds : [];
+      const activeId = getActiveTab(state)?.id;
+      const preferred = broadcastTabIds.length > 0 ? broadcastTabIds : activeId ? [activeId] : [];
+      setRunTargets({
+        workflow,
+        candidates: targets,
+        broadcastTabIds,
+        initialSelection: targets.filter((t) => preferred.includes(t.id)).map((t) => t.id),
+      });
+    },
+    [workflows]
   );
 
   const handleEdit = useCallback(
@@ -332,6 +372,7 @@ export function WorkflowSidebar() {
                 workflow={workflow}
                 running={workflowRun?.workflowId === workflow.id}
                 onRun={handleRun}
+                onRunOn={openRunTargets}
                 onCancel={cancelWorkflowRun}
                 onEdit={handleEdit}
                 onDuplicate={handleDuplicate}
@@ -356,6 +397,19 @@ export function WorkflowSidebar() {
           if (!open) setEditing(null);
         }}
         onSave={handleSaveEdit}
+      />
+      <WorkflowRunTargetsDialog
+        open={runTargets !== null}
+        workflowName={runTargets?.workflow.name ?? ""}
+        candidates={runTargets?.candidates ?? NO_TARGETS}
+        broadcastTabIds={runTargets?.broadcastTabIds ?? NO_IDS}
+        initialSelection={runTargets?.initialSelection ?? NO_IDS}
+        onOpenChange={(open) => {
+          if (!open) setRunTargets(null);
+        }}
+        onRun={(tabIds) => {
+          if (runTargets) void runWorkflow(runTargets.workflow.id, { targetTabIds: tabIds });
+        }}
       />
       <ConfirmDeleteDialog
         {...workflowDelete.dialogProps}

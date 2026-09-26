@@ -4,6 +4,8 @@ import { createRoot, Root } from "react-dom/client";
 import { WorkflowSidebar } from "./WorkflowSidebar";
 import { withTooltip } from "@/test/tooltip";
 import type { Workflow } from "@/types/workflow";
+import type { LeafPanel, TerminalTab } from "@/types/terminal";
+import { seedLayoutState } from "@/test/layoutState";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -178,6 +180,37 @@ describe("WorkflowSidebar", () => {
     render();
     act(() => (query("workflow-run-workflow-1") as HTMLButtonElement).click());
     expect(runWorkflow).toHaveBeenCalledWith("workflow-1");
+  });
+
+  it("runs a workflow on terminals chosen in the Run on… picker (PROD-047)", () => {
+    const runWorkflow = vi.fn().mockResolvedValue(undefined);
+    const tab = (id: string, title: string): TerminalTab => ({
+      id,
+      sessionId: `sess-${id}`,
+      title,
+      connectionType: "local",
+      contentType: "terminal",
+      config: { type: "local", config: {} },
+      panelId: "leaf-1",
+      isActive: id === "tab-a",
+    });
+    const leaf: LeafPanel = {
+      type: "leaf",
+      id: "leaf-1",
+      tabs: [tab("tab-a", "web-1"), tab("tab-b", "web-2")],
+      activeTabId: "tab-a",
+    };
+    seedLayoutState({ rootPanel: leaf, activePanelId: "leaf-1" });
+    useAppStore.setState({ workflows: sampleWorkflows, runWorkflow });
+    render();
+
+    act(() => (query("workflow-run-on-workflow-1") as HTMLButtonElement).click());
+    // The active terminal is preselected; add the second one and run.
+    expect(query("workflow-run-target-tab-a")?.getAttribute("aria-checked")).toBe("true");
+    act(() => query("workflow-run-target-tab-b")?.click());
+    act(() => (query("workflow-run-targets-run") as HTMLButtonElement).click());
+
+    expect(runWorkflow).toHaveBeenCalledWith("workflow-1", { targetTabIds: ["tab-a", "tab-b"] });
   });
 
   it("shows a stop affordance for the running workflow and cancels on click", () => {

@@ -143,6 +143,7 @@ mod tests {
             description: None,
             tags: vec![],
             steps: vec![WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "echo hi".to_string(),
             }],
             triggers: vec![WorkflowTrigger::Manual],
@@ -217,6 +218,7 @@ mod tests {
         assert_eq!(
             got.steps[0],
             WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "echo hi".to_string()
             }
         );
