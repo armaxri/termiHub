@@ -1315,6 +1315,20 @@ section, whose preview labels them "`<name>` (shared credential)". Restoring bot
 reference back. Older builds skip the unknown section and ignore `credentialRef` (they prompt), so
 a downgrade loses no secret.
 
+**Connection export / import** (#3564). The "Export Connections" file adds a `namedCredentials`
+list (id, name, kind — no secret) of only the credentials the exported connections and agents
+reference, and — with an export password — their secrets in a separate `$namedCredentialSecrets`
+envelope sealed like the per-connection `$encrypted` one. Without a password only the references
+travel. In OS-keychain mode an export with credentials requires OS user verification first (the
+same fail-closed gate as the vault export). Before the connections are imported, each referenced
+credential is mapped: the **same id** already present is kept untouched (only a missing local
+secret is filled in); a local credential with the **same name, kind and identical secret** is
+reused and the references re-pointed; otherwise it is **created** under its id with an
+`(imported)` name suffix on a clash — an existing credential is never silently overwritten.
+Without the secret it is created secret-less and connections prompt until it is rotated. With
+storage off the references are dropped with a warning (connections prompt); a locked store refuses
+the import. Older builds ignore both new fields.
+
 ```mermaid
 flowchart LR
     C1[Connection A<br/>credentialRef: nc-1] --> R{resolve}

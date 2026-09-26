@@ -51,6 +51,7 @@ import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
 import type { ImportPreview } from "@/types/generated/ImportPreview";
 import type { ImportResult } from "@/types/generated/ImportResult";
+import type { ConnectionImportResult } from "@/types/generated/ConnectionImportResult";
 import type { ConnectionCreateParams } from "@/types/generated/ConnectionCreateParams";
 import type { ConnectionUpdateParams } from "@/types/generated/ConnectionUpdateParams";
 import type { FolderUpdateParams } from "@/types/generated/FolderUpdateParams";
@@ -1233,11 +1234,12 @@ export async function importConnections(json: string): Promise<number> {
   return await invoke<number>("import_connections", { json });
 }
 
-// `ImportPreview` (import-file summary) and `ImportResult` (completed-import
-// counts) are generated from their Rust source of truth
-// (`connection::config::ImportPreview` / `ImportResult`) via ts-rs and re-exported
-// here so existing consumers keep importing them from `@/services/api` (DUP-030).
-export type { ImportPreview, ImportResult };
+// `ImportPreview` (import-file summary), `ImportResult` (completed-import
+// counts) and `ConnectionImportResult` (those counts plus the shared named
+// credentials the import carried, #3564) are generated from their Rust source of
+// truth via ts-rs and re-exported here so existing consumers keep importing them
+// from `@/services/api` (DUP-030).
+export type { ImportPreview, ImportResult, ConnectionImportResult };
 
 /**
  * Structured failure from {@link importConnectionsWithCredentials}, mirroring
@@ -1281,8 +1283,8 @@ export async function exportConnectionsEncrypted(
 export async function importConnectionsWithCredentials(
   json: string,
   importPassword: string | null
-): Promise<ImportResult> {
-  return await invoke<ImportResult>("import_connections_with_credentials", {
+): Promise<ConnectionImportResult> {
+  return await invoke<ConnectionImportResult>("import_connections_with_credentials", {
     json,
     importPassword,
   });

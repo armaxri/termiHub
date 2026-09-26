@@ -79,7 +79,12 @@ describe("ImportDialog", () => {
       agentCount: 0,
       hasEncryptedCredentials: false,
     });
-    mockedImport.mockResolvedValueOnce({ connectionsImported: 1, credentialsImported: 0 });
+    mockedImport.mockResolvedValueOnce({
+      connectionsImported: 1,
+      credentialsImported: 0,
+      sharedCredentialsImported: 0,
+      warnings: [],
+    });
 
     await open("{}");
 
@@ -90,6 +95,53 @@ describe("ImportDialog", () => {
 
     expect(mockedImport).toHaveBeenCalledWith("{}", null);
     expect(query("import-dialog-success")).not.toBeNull();
+  });
+
+  it("reports imported shared credentials and the import's warnings", async () => {
+    mockedPreview.mockResolvedValueOnce({
+      connectionCount: 2,
+      folderCount: 0,
+      agentCount: 0,
+      hasEncryptedCredentials: false,
+    });
+    mockedImport.mockResolvedValueOnce({
+      connectionsImported: 2,
+      credentialsImported: 0,
+      sharedCredentialsImported: 1,
+      warnings: ['Shared credential "Bastion" was imported as "Bastion (imported)".'],
+    });
+
+    await open("{}");
+    await act(async () => {
+      (query("import-submit") as HTMLButtonElement).click();
+    });
+
+    expect(query("import-dialog-success")?.textContent).toContain("1 shared credential");
+    const warnings = query("import-dialog-warnings");
+    expect(warnings?.textContent).toContain("Bastion (imported)");
+  });
+
+  it("renders no warning list when the import has none", async () => {
+    mockedPreview.mockResolvedValueOnce({
+      connectionCount: 1,
+      folderCount: 0,
+      agentCount: 0,
+      hasEncryptedCredentials: false,
+    });
+    mockedImport.mockResolvedValueOnce({
+      connectionsImported: 1,
+      credentialsImported: 0,
+      sharedCredentialsImported: 0,
+      warnings: [],
+    });
+
+    await open("{}");
+    await act(async () => {
+      (query("import-submit") as HTMLButtonElement).click();
+    });
+
+    expect(query("import-dialog-success")?.textContent).not.toContain("shared credential");
+    expect(query("import-dialog-warnings")).toBeNull();
   });
 
   it("shows the wrong-password affordance on a wrongPassword error code", async () => {

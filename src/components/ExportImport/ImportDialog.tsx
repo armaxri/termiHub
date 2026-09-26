@@ -18,12 +18,14 @@ export function ImportDialog() {
   const [error, setError] = useState("");
   const [importing, setImporting] = useState(false);
   const [success, setSuccess] = useState("");
+  const [warnings, setWarnings] = useState<string[]>([]);
 
   useEffect(() => {
     if (open && fileContent) {
       setPassword("");
       setError("");
       setSuccess("");
+      setWarnings([]);
       setImporting(false);
 
       previewImport(fileContent)
@@ -56,6 +58,10 @@ export function ImportDialog() {
         if (result.credentialsImported > 0) {
           message += ` and ${result.credentialsImported} credential${result.credentialsImported !== 1 ? "s" : ""}`;
         }
+        if (result.sharedCredentialsImported > 0) {
+          message += `, ${result.sharedCredentialsImported} shared credential${result.sharedCredentialsImported !== 1 ? "s" : ""}`;
+        }
+        setWarnings(result.warnings);
         setSuccess(message);
         await loadFromBackend();
       } catch (err) {
@@ -141,9 +147,18 @@ export function ImportDialog() {
       {error && !success && <p className="import-dialog__error">{error}</p>}
 
       {success ? (
-        <p className="import-dialog__success" data-testid="import-dialog-success">
-          {success}
-        </p>
+        <>
+          <p className="import-dialog__success" data-testid="import-dialog-success">
+            {success}
+          </p>
+          {warnings.length > 0 && (
+            <ul className="import-dialog__warnings" data-testid="import-dialog-warnings">
+              {warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          )}
+        </>
       ) : preview ? (
         <>
           <p className="import-dialog__description">
