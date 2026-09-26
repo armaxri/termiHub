@@ -5,7 +5,7 @@
  * step that lists every receiving terminal and ignores Enter.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 
 vi.mock("@/services/storage", () => ({
@@ -35,7 +35,7 @@ vi.mock("@/themes", () => ({
   onThemeChange: vi.fn(() => vi.fn()),
 }));
 
-import { MacroPlaybackDialog } from "./MacroPlaybackDialog";
+import { MacroPlaybackDialog, type MacroPlaybackDialogProps } from "./MacroPlaybackDialog";
 import { useAppStore } from "@/store/appStore";
 import { seedLayoutState } from "@/test/layoutState";
 import { seedSettings, setupSettingsRegion } from "@/test/settingsRegionTestHarness";
@@ -101,7 +101,7 @@ function pick(testId: string, label: string) {
   });
 }
 
-function render(onPlay: ReturnType<typeof vi.fn>) {
+function render(onPlay: MacroPlaybackDialogProps["onPlay"]) {
   act(() => {
     root.render(
       <MacroPlaybackDialog open macros={[macro]} onOpenChange={() => {}} onPlay={onPlay} />
