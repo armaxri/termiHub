@@ -85,6 +85,38 @@ fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
     assert!(other.is_err());
 }
 
+/// #3404: the agent's typed `SESSION_HELD_BY_OTHER` refusal maps to the typed
+/// desktop error by its JSON-RPC code (never by message text); every other code —
+/// and a local failure without one — stays a generic remote error.
+#[test]
+fn agent_rpc_failure_maps_the_held_code_to_a_typed_error() {
+    let held = AgentRpcFailure {
+        code: Some(termihub_core::protocol::errors::SESSION_HELD_BY_OTHER),
+        message: "anything".to_string(),
+    };
+    assert!(matches!(
+        held.into_terminal_error(),
+        TerminalError::SessionHeldByPeer(m) if m == "anything"
+    ));
+
+    // Same message, generic code: not classified by text.
+    let not_found = AgentRpcFailure {
+        code: Some(termihub_core::protocol::errors::SESSION_NOT_FOUND),
+        message: "Session is held by another desktop".to_string(),
+    };
+    assert!(matches!(
+        not_found.into_terminal_error(),
+        TerminalError::RemoteError(_)
+    ));
+
+    let local = AgentRpcFailure::from("Agent connection lost".to_string());
+    assert_eq!(local.code, None);
+    assert!(matches!(
+        local.into_terminal_error(),
+        TerminalError::RemoteError(_)
+    ));
+}
+
 /// Verify the desktop deserializes the agent's `connection.list` entry
 /// (snake_case, with optional `definition_id`). Without correct serde
 /// settings the entry would parse as empty and the Active Sessions list

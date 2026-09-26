@@ -1273,9 +1273,20 @@ pub async fn attach_persistent_tab(
     manager: State<'_, SessionManager>,
 ) -> Result<u32, TerminalError> {
     debug!(connection_id, tab_id, "Attaching tab to persistent session");
-    manager
-        .attach_persistent_tab(&connection_id, &tab_id, app_handle)
-        .await
+    let attach = manager
+        .attach_persistent_tab(&connection_id, &tab_id, app_handle.clone())
+        .await?;
+    if attach.held_by_peer {
+        // SM-003 (#3404): another desktop holds the session — the tab rests in
+        // the explicit `Evicted` state with Reclaim, not an attach error.
+        crate::session_projection::projection::fold_agent_session_held_by_peer(
+            &app_handle,
+            &tab_id,
+            Some(attach.session_id.clone()),
+            true,
+        );
+    }
+    Ok(attach.count)
 }
 
 /// Unregister `tab_id` from its persistent session, keeping the backend process alive.

@@ -37,10 +37,10 @@ use crate::utils::errors::TerminalError;
 
 use super::line_ending::LineEnding;
 use super::manager::{
-    EventEmitter, PersistentRecord, PersistentSessionStateEvent, PersistentSessionSummary,
-    SessionEntry, SessionInfo, SessionManager,
+    EventEmitter, PersistentAttach, PersistentRecord, PersistentSessionStateEvent,
+    PersistentSessionSummary, SessionEntry, SessionInfo, SessionManager, TabBinding,
 };
-use super::remote_proxy::RemoteProxy;
+use super::remote_proxy::{ReattachOutcome, RemoteProxy};
 
 /// Borrowing facade exposing the manager's persistent-session operations.
 ///
@@ -239,12 +239,19 @@ impl<'a> PersistentController<'a> {
     /// [`RemoteProxy::reconnect_existing`] to re-establish the desktop side, reusing
     /// the same session ID so the tab's `existingSessionId` prop keeps working without
     /// any frontend state update.
+    ///
+    /// When that re-attach is refused because **another desktop holds the
+    /// session** (SM-003, #3404) the desktop entry is still re-created and the
+    /// tab bound to it (so an explicit Reclaim can take the session over and
+    /// resume output), and the result reports
+    /// [`PersistentAttach::held_by_peer`] for the caller to fold the tab
+    /// `Evicted` — not an error.
     pub(super) async fn attach_persistent_tab<E: EventEmitter>(
         &self,
         connection_id: &str,
         tab_id: &str,
         emitter: E,
-    ) -> Result<u32, TerminalError> {
+    ) -> Result<PersistentAttach, TerminalError> {
         // Phase 1: Read record info without holding the persistent_sessions lock so we
         // never hold it simultaneously with the sessions lock (avoids deadlock ordering).
         let (session_id, opt_agent_id, opt_remote_sid) = {
@@ -264,6 +271,7 @@ impl<'a> PersistentController<'a> {
         // Phase 2: Check if the backend session is alive. If not, try to re-create
         // the RemoteProxy by reconnecting to the surviving daemon on the agent.
         let session_alive = self.manager.sessions.lock().await.contains_key(&session_id);
+        let mut held_by_peer = false;
         if !session_alive {
             match (opt_agent_id, opt_remote_sid) {
                 (Some(agent_id), Some(remote_sid)) => {
@@ -277,12 +285,13 @@ impl<'a> PersistentController<'a> {
                     let agent_mgr = self.manager.agent_manager.clone();
                     let agent_id_clone = agent_id.clone();
                     let remote_sid_clone = remote_sid.clone();
-                    let proxy = tokio::task::spawn_blocking(move || {
+                    let (proxy, outcome) = tokio::task::spawn_blocking(move || {
                         RemoteProxy::reconnect_existing(agent_id_clone, remote_sid_clone, agent_mgr)
                     })
                     .await
                     .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
                     .map_err(|e| TerminalError::SpawnFailed(e.to_string()))?;
+                    held_by_peer = outcome == ReattachOutcome::HeldByPeer;
 
                     let output_rx = proxy.subscribe_output();
 
@@ -338,11 +347,32 @@ impl<'a> PersistentController<'a> {
                         .await;
                     });
 
-                    info!(
-                        connection_id,
-                        session_id = %session_id,
-                        "Persistent session backend re-created after agent reconnect"
-                    );
+                    if held_by_peer {
+                        // SM-003 (#3404): bind the tab to the re-created entry so an
+                        // explicit Reclaim (`reclaim_session`, resolved through this
+                        // identity bridge) can take the session over. Only when no
+                        // tab is bound yet — an existing binding is left alone.
+                        self.manager
+                            .session_tab_ids
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .entry(session_id.clone())
+                            .or_insert_with(|| TabBinding {
+                                tab_id: tab_id.to_string(),
+                                resilient: false,
+                            });
+                        info!(
+                            connection_id,
+                            session_id = %session_id,
+                            "Persistent session re-attach refused: held by another desktop (SM-003)"
+                        );
+                    } else {
+                        info!(
+                            connection_id,
+                            session_id = %session_id,
+                            "Persistent session backend re-created after agent reconnect"
+                        );
+                    }
                 }
                 _ => {
                     return Err(TerminalError::SessionNotFound(format!(
@@ -368,13 +398,17 @@ impl<'a> PersistentController<'a> {
         let state = if count > 0 { "attached" } else { "running" }.to_string();
         emitter.emit_persistent_state(&PersistentSessionStateEvent {
             connection_id: connection_id.to_string(),
-            session_id: Some(session_id),
+            session_id: Some(session_id.clone()),
             state,
             attached_tab_count: count,
             error_message: None,
         });
 
-        Ok(count)
+        Ok(PersistentAttach {
+            session_id,
+            count,
+            held_by_peer,
+        })
     }
 
     /// Unregister `tab_id` from the persistent session identified by `session_id`.

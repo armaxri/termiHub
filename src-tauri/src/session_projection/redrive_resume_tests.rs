@@ -93,6 +93,9 @@ struct FakeAgent {
     /// Keep output senders alive so create_connection's reader does not end
     /// (which would tear the session down + fold a drop).
     senders: Mutex<Vec<OutputSender>>,
+    /// When set, a plain `attach_session` is refused because another desktop
+    /// holds the session (SM-003, #3404) — until a `reclaim_session`.
+    held_by_peer: AtomicBool,
 }
 impl FakeAgent {
     fn new() -> Self {
@@ -105,6 +108,7 @@ impl FakeAgent {
             created_ids: Mutex::new(Vec::new()),
             session_recoverable: AtomicBool::new(true),
             senders: Mutex::new(Vec::new()),
+            held_by_peer: AtomicBool::new(false),
         }
     }
 }
@@ -170,6 +174,11 @@ impl AgentRpcClient for FakeAgent {
         _remote_session_id: &str,
     ) -> Result<(), TerminalError> {
         self.attach_count.fetch_add(1, Ordering::SeqCst);
+        if self.held_by_peer.load(Ordering::SeqCst) {
+            return Err(TerminalError::SessionHeldByPeer(
+                "Session is held by another desktop".into(),
+            ));
+        }
         Ok(())
     }
     fn reclaim_session(
@@ -178,6 +187,7 @@ impl AgentRpcClient for FakeAgent {
         _remote_session_id: &str,
     ) -> Result<(), TerminalError> {
         self.reclaim_count.fetch_add(1, Ordering::SeqCst);
+        self.held_by_peer.store(false, Ordering::SeqCst);
         Ok(())
     }
     fn close_session(
@@ -1454,4 +1464,139 @@ fn evicted_agent_tab_never_auto_reconnects_and_reclaim_flips_ownership() {
 
     // Reclaim of a tab with no agent session is a clean error, not a panic.
     assert!(tauri::async_runtime::block_on(manager_ref.reclaim_session("ghost")).is_err());
+}
+
+/// SM-003 (#3404): the redrive's implicit plain re-attach refused because
+/// another desktop holds the live session folds the tab to the explicit
+/// `Evicted` state — not a reconnect failure: no retry is armed, no reconnect
+/// error is recorded, exactly one plain attach is sent (and no takeover). The
+/// re-attached desktop entry is kept and its id published, so the explicit
+/// Reclaim (a takeover attach) resolves the session and settles `Connected`.
+#[test]
+fn held_by_peer_reattach_folds_evicted_without_retry_and_reclaims() {
+    use crate::session_projection::projection::{
+        fold_agent_session_reclaimed, EVICTED_HELD_BY_OTHER_DESKTOP,
+    };
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+
+    let agent = Arc::new(FakeAgent::new());
+    let manager = SessionManager::new(
+        ConnectionTypeRegistry::new(),
+        agent.clone() as Arc<dyn AgentRpcClient>,
+    );
+    handle.manage(manager);
+
+    let store = Arc::new(SessionLifecycleStore::new());
+    store.set_rand_for_test(Box::new(|| 0.5));
+    handle.manage(store.clone());
+
+    let projection = ProjectionState::new();
+    projection
+        .projector
+        .register_region(SESSION_LIFECYCLE_REGION, store.snapshot());
+    let projector = projection.projector.clone();
+    let projector_seed = projection.projector.clone();
+    let store_for_publish = store.clone();
+    handle.manage(projection);
+
+    let scheduler = Arc::new(ManualScheduler::default());
+    let redrive: Arc<dyn ReconnectRedrive> = Arc::new(AppReconnectRedrive::new(handle.clone()));
+    let driver = Arc::new(
+        ReconnectTimerDriver::new(
+            store.clone(),
+            scheduler.clone(),
+            Arc::new(move || {
+                publish_sessions(&projector, &store_for_publish);
+            }),
+        )
+        .with_redrive(redrive),
+    );
+    handle.manage(driver.clone());
+
+    let manager_ref = handle.state::<SessionManager>();
+    let s1 = tauri::async_runtime::block_on(manager_ref.create_connection(
+        "shell",
+        serde_json::json!({ "config": {} }),
+        Some("agent-1"),
+        Some("tab-1:0"),
+        false,
+        true, // resilient
+        handle.clone(),
+    ))
+    .expect("initial connect succeeds");
+    store.connect("tab-1");
+    store.connected("tab-1");
+    store.set_backend_session_id("tab-1", Some(s1.clone()));
+    publish_sessions(&projector_seed, &store);
+
+    // Drop; meanwhile another desktop opened the (detached) live session.
+    store.reconnect("tab-1");
+    driver.sync("tab-1");
+    assert!(scheduler.armed("tab-1"));
+    agent.held_by_peer.store(true, Ordering::SeqCst);
+
+    let attaches_before = agent.attach_count.load(Ordering::SeqCst);
+    scheduler.fire("tab-1");
+    poll_until(
+        || store.status("tab-1") == Some(SessionStatus::Evicted),
+        "held re-attach folds Evicted",
+    );
+    let life = store.get("tab-1").unwrap();
+    assert_eq!(life.error.as_deref(), Some(EVICTED_HELD_BY_OTHER_DESKTOP));
+    assert_eq!(life.reconnect_error, None, "not a reconnect failure");
+    assert_eq!(life.reconnect.phase, ReconnectPhase::Idle, "loop stopped");
+    assert!(!scheduler.armed("tab-1"), "a held refusal is never retried");
+    assert_eq!(
+        agent.attach_count.load(Ordering::SeqCst) - attaches_before,
+        1,
+        "exactly one plain attach"
+    );
+    assert_eq!(
+        agent.reclaim_count.load(Ordering::SeqCst),
+        0,
+        "no implicit takeover"
+    );
+    let held_sid = life
+        .backend_session_id
+        .clone()
+        .expect("the registered desktop entry is published");
+    assert_ne!(held_sid, s1);
+    assert!(
+        tauri::async_runtime::block_on(manager_ref.agent_session_for_tab("tab-1")).is_some(),
+        "the tab keeps its agent binding so Reclaim can resolve it"
+    );
+
+    // The explicit Reclaim: takeover attach, then Evicted → Connected, on the
+    // same desktop session the frontend already bound to.
+    tauri::async_runtime::block_on(manager_ref.reclaim_session("tab-1")).expect("reclaim");
+    fold_agent_session_reclaimed(&handle, "tab-1");
+    assert_eq!(agent.reclaim_count.load(Ordering::SeqCst), 1);
+    let life = store.get("tab-1").unwrap();
+    assert_eq!(life.status, SessionStatus::Connected);
+    assert_eq!(life.backend_session_id.as_deref(), Some(held_sid.as_str()));
+}
+
+/// SM-003 (#3404): a persistent tab re-attached through `attach_persistent_tab`
+/// never folded a `connect`, so the held-by-peer fold creates its region entry
+/// first — otherwise the eviction would be dropped as an unknown session and the
+/// tab would show neither the overlay nor Reclaim.
+#[test]
+fn held_by_peer_fold_creates_the_entry_for_a_persistent_tab() {
+    use crate::session_projection::projection::fold_agent_session_held_by_peer;
+
+    let app = tauri::test::mock_app();
+    let handle = app.handle().clone();
+    let store = Arc::new(SessionLifecycleStore::new());
+    handle.manage(store.clone());
+
+    fold_agent_session_held_by_peer(&handle, "tab-p", Some("sess-p".to_string()), true);
+    let life = store.get("tab-p").expect("entry created");
+    assert_eq!(life.status, SessionStatus::Evicted);
+    assert_eq!(life.backend_session_id.as_deref(), Some("sess-p"));
+
+    // Without `ensure_entry` an unknown tab stays unknown (SM-006).
+    fold_agent_session_held_by_peer(&handle, "tab-ghost", None, false);
+    assert!(store.get("tab-ghost").is_none());
 }

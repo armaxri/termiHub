@@ -129,6 +129,10 @@ pub enum IpcErrorCode {
     /// (#3376). Deliberately NOT `auth_failed`: the frontend must keep the saved
     /// credential and just ask for a fresh code.
     SecondFactorFailed,
+    /// A plain re-attach was refused because another desktop holds the agent
+    /// session (SM-003, #3404). The tab is shown "Taken over by another desktop"
+    /// with Reclaim rather than an error.
+    SessionHeldByPeer,
 }
 
 impl IpcErrorCode {
@@ -234,6 +238,13 @@ pub enum TerminalError {
     /// shared agent DTO, AGT-028). Raised before anything reaches the agent.
     #[error("Invalid params: {0}")]
     InvalidParams(String),
+
+    /// A plain (non-takeover) re-attach of an agent session was refused because
+    /// another desktop holds it (SM-003 single-attach, agent error
+    /// `SESSION_HELD_BY_OTHER`, #3404). Not a failure: the implicit re-attach
+    /// paths fold the tab `Evicted` (with Reclaim) on it and never retry.
+    #[error("{0}")]
+    SessionHeldByPeer(String),
 }
 
 impl TerminalError {
@@ -274,6 +285,7 @@ impl TerminalError {
             TerminalError::SpawnFailed(_) => C::SpawnFailed,
             TerminalError::AuthFailed(_) => C::AuthFailed,
             TerminalError::SecondFactorFailed => C::SecondFactorFailed,
+            TerminalError::SessionHeldByPeer(_) => C::SessionHeldByPeer,
             TerminalError::WriteFailed(_) => C::WriteFailed,
             TerminalError::ResizeFailed(_) => C::ResizeFailed,
             TerminalError::ConnectionFailed(msg) => marker_slug(msg)

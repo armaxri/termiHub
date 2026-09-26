@@ -71,13 +71,48 @@ const AGENT_REQUEST_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 mod types;
 pub use types::*;
 
+/// A failed agent JSON-RPC request: the agent's error `code` (when it answered
+/// with a JSON-RPC error) plus the human message. Carrying the code lets
+/// [`AgentConnectionManager::send_request`] map typed refusals to a typed
+/// [`TerminalError`] instead of parsing message text (#3404). Local failures
+/// (write error, connection lost) carry no code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AgentRpcFailure {
+    pub code: Option<i64>,
+    pub message: String,
+}
+
+impl From<String> for AgentRpcFailure {
+    fn from(message: String) -> Self {
+        Self {
+            code: None,
+            message,
+        }
+    }
+}
+
+impl AgentRpcFailure {
+    /// The typed desktop error for this failure. A plain attach refused because
+    /// another desktop holds the session (`SESSION_HELD_BY_OTHER`, SM-003) maps
+    /// to [`TerminalError::SessionHeldByPeer`]; everything else stays a generic
+    /// [`TerminalError::RemoteError`].
+    pub(crate) fn into_terminal_error(self) -> TerminalError {
+        match self.code {
+            Some(termihub_core::protocol::errors::SESSION_HELD_BY_OTHER) => {
+                TerminalError::SessionHeldByPeer(self.message)
+            }
+            _ => TerminalError::RemoteError(self.message),
+        }
+    }
+}
+
 /// Commands sent to the agent I/O task.
 pub(crate) enum AgentIoCommand {
     /// Send JSON-RPC request and get a response via a oneshot channel.
     Request {
         method: String,
         params: Value,
-        response_tx: oneshot::Sender<Result<Value, String>>,
+        response_tx: oneshot::Sender<Result<Value, AgentRpcFailure>>,
     },
     /// Send input to a specific session (fire-and-forget).
     SessionInput { session_id: String, data: Vec<u8> },
@@ -1286,7 +1321,7 @@ impl<R: Runtime> AgentConnectionManager<R> {
             Ok(Err(_recv)) => Err(TerminalError::RemoteError(
                 "Agent connection lost".to_string(),
             )),
-            Ok(Ok(inner)) => inner.map_err(TerminalError::RemoteError),
+            Ok(Ok(inner)) => inner.map_err(AgentRpcFailure::into_terminal_error),
         }
     }
 
@@ -2430,7 +2465,7 @@ async fn agent_io_task<R: Runtime>(
     let mut monitoring_outputs: HashMap<String, MonitoringRoute> = HashMap::new();
     // Streaming tool runs (#3353): run id → where its notifications go.
     let mut tool_runs: HashMap<String, ToolRunSender> = HashMap::new();
-    let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, String>>> =
+    let mut pending_responses: HashMap<u64, oneshot::Sender<Result<Value, AgentRpcFailure>>> =
         HashMap::new();
     // Desktop end of the ssh-agent relay (#1727): bridges forwarded ssh-agent
     // streams the agent opens to the operator's own local agent.
@@ -2486,13 +2521,13 @@ async fn agent_io_task<R: Runtime>(
                                 Ok(line) => {
                                     if let Err(e) = channel.data(line.as_bytes()).await {
                                         let _ = response_tx
-                                            .send(Err(format!("Write failed: {}", e)));
+                                            .send(Err(format!("Write failed: {}", e).into()));
                                     } else {
                                         pending_responses.insert(request_id, response_tx);
                                     }
                                 }
                                 Err(e) => {
-                                    let _ = response_tx.send(Err(e));
+                                    let _ = response_tx.send(Err(e.into()));
                                 }
                             }
                         }
@@ -2626,9 +2661,9 @@ async fn agent_io_task<R: Runtime>(
                                             let _ = tx.send(Ok(result));
                                         }
                                     }
-                                    Ok(jsonrpc::JsonRpcMessage::Error { id, message, .. }) => {
+                                    Ok(jsonrpc::JsonRpcMessage::Error { id, code, message }) => {
                                         if let Some(tx) = pending_responses.remove(&id) {
-                                            let _ = tx.send(Err(message));
+                                            let _ = tx.send(Err(AgentRpcFailure { code, message }));
                                         }
                                     }
                                     Ok(jsonrpc::JsonRpcMessage::Notification { method, params }) => {
@@ -2737,7 +2772,7 @@ async fn agent_io_task<R: Runtime>(
         // drains below then run against an already-empty map (the io_task does
         // not touch `command_rx`/`pending_responses` while reconnecting).
         for (_, tx) in pending_responses.drain() {
-            let _ = tx.send(Err("Agent connection lost".to_string()));
+            let _ = tx.send(Err("Agent connection lost".to_string().into()));
         }
 
         match reconnect_agent(&config, &agent_settings, &mut request_id, &alive).await {
@@ -2850,7 +2885,7 @@ async fn agent_io_task<R: Runtime>(
                 log_agent_reconnected(&agent_id);
                 // Notify all pending requests that the connection was lost
                 for (_, tx) in pending_responses.drain() {
-                    let _ = tx.send(Err("Connection lost during request".to_string()));
+                    let _ = tx.send(Err("Connection lost during request".to_string().into()));
                 }
                 continue 'outer;
             }
@@ -2872,7 +2907,7 @@ async fn agent_io_task<R: Runtime>(
                 reap_agent(&agents, &agent_id);
                 // Notify all pending requests
                 for (_, tx) in pending_responses.drain() {
-                    let _ = tx.send(Err("Agent disconnected".to_string()));
+                    let _ = tx.send(Err("Agent disconnected".to_string().into()));
                 }
                 return;
             }
