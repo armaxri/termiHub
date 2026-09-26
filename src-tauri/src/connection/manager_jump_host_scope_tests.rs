@@ -282,3 +282,87 @@ fn renaming_the_only_holder_of_an_id_still_rewrites_every_file() {
 
     assert_eq!(hop_ids(&external_connections(&file), "ext-t"), ["main-gw"]);
 }
+
+// ── Tunnel SSH connections (#3619) ─────────────────────────────────────────
+//
+// A tunnel's `sshConnectionId` resolves through the same scope and rule as a
+// jump-host reference, so a tunnel bound to an SSH connection the Tunnel editor
+// offers (the unified view) can start.
+
+fn tunnel_host(mgr: &ConnectionManager, id: &str) -> anyhow::Result<SavedConnection> {
+    mgr.resolve_saved_connection(id, ReferenceRole::TunnelHost)
+}
+
+#[test]
+fn a_tunnel_host_in_an_enabled_external_file_resolves() {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+    let file = external_file(
+        dir.path(),
+        "shared",
+        vec![ssh("ext-ssh", "ext-ssh-host", &[])],
+    );
+    configure_external_files(&mgr, &[(&file, true)]);
+
+    let conn = tunnel_host(&mgr, "ext-ssh").unwrap();
+
+    assert_eq!(conn.config.settings["host"], "ext-ssh-host");
+    assert_eq!(conn.source_file.as_deref(), Some(file.as_str()));
+}
+
+#[test]
+fn a_tunnel_host_in_the_main_store_still_resolves() {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+    mgr.save_connection(ssh("main-ssh", "main-ssh-host", &[]))
+        .unwrap();
+
+    let conn = tunnel_host(&mgr, "main-ssh").unwrap();
+
+    assert_eq!(conn.config.settings["host"], "main-ssh-host");
+}
+
+#[test]
+fn an_ambiguous_tunnel_host_is_refused_naming_both_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+    mgr.save_connection(ssh("db", "main-host", &[])).unwrap();
+    let file = external_file(dir.path(), "shared", vec![ssh("db", "ext-host", &[])]);
+    configure_external_files(&mgr, &[(&file, true)]);
+
+    let err = tunnel_host(&mgr, "db").unwrap_err().to_string();
+
+    assert!(err.contains("ambiguous"), "{err}");
+    assert!(err.contains("tunnel SSH connection 'db'"), "{err}");
+    assert!(err.contains("main connection store"), "{err}");
+    assert!(err.contains(&file), "{err}");
+}
+
+#[test]
+fn a_tunnel_host_in_a_disabled_external_file_names_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+    let file = external_file(dir.path(), "off", vec![ssh("ext-ssh", "ext-host", &[])]);
+    configure_external_files(&mgr, &[(&file, false)]);
+
+    let err = tunnel_host(&mgr, "ext-ssh").unwrap_err().to_string();
+
+    assert!(err.contains("not found"), "{err}");
+    assert!(err.contains("disabled"), "{err}");
+    assert!(err.contains(&file), "{err}");
+    assert!(err.contains("host tunnels on it"), "{err}");
+}
+
+#[test]
+fn a_tunnel_host_that_exists_nowhere_is_not_found() {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+
+    let err = tunnel_host(&mgr, "ghost").unwrap_err().to_string();
+
+    assert!(
+        err.contains("tunnel SSH connection 'ghost' not found"),
+        "{err}"
+    );
+    assert!(!err.contains("jump host"), "{err}");
+}

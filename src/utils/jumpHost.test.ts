@@ -7,6 +7,7 @@ import {
   jumpHostGatewayConnection,
   connectionPathLabel,
   sshJumpHostOptions,
+  ambiguousConnectionIds,
   findJumpHostDependents,
   jumpHostInlineFields,
 } from "./jumpHost";
@@ -219,6 +220,28 @@ describe("sshJumpHostOptions", () => {
       { id: "gw", label: "gw", ambiguous: true },
       { id: "other", label: "other" },
     ]);
+  });
+});
+
+describe("ambiguousConnectionIds (#3619)", () => {
+  const sshConn = (id: string, name: string, folderId: string | null): SavedConnection => ({
+    id,
+    name,
+    folderId,
+    config: sshConfig({ host: "h" }),
+  });
+
+  it("returns only the ids held by more than one connection", () => {
+    const ids = ambiguousConnectionIds([
+      sshConn("gw", "gw", null),
+      { ...sshConn("gw", "gw", null), sourceFile: "/a.json" },
+      sshConn("solo", "solo", null),
+    ]);
+    expect([...ids]).toEqual(["gw"]);
+  });
+
+  it("is empty when every id is unique", () => {
+    expect(ambiguousConnectionIds([sshConn("a", "a", null), sshConn("b", "b", null)]).size).toBe(0);
   });
 });
 

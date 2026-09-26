@@ -33,6 +33,7 @@ use super::storage::TunnelStorage;
 use crate::agent_service::{
     agent_rpc_client, AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
 };
+use crate::connection::jump_host_resolver::ReferenceRole;
 use crate::connection::manager::ConnectionManager;
 use crate::connection::recovery::RecoveryWarning;
 use crate::run_location::{Locality, ResolvedLocation, RunLocationResolver};
@@ -1548,17 +1549,12 @@ impl TunnelManager {
                 TerminalError::TunnelError("ConnectionManager not available".to_string())
             })?;
 
-        let store = conn_mgr.get_all().map_err(|e| {
-            TerminalError::TunnelError(format!("Failed to load connections: {}", e))
-        })?;
-
-        let conn = store
-            .connections
-            .iter()
-            .find(|c| c.id == connection_id)
-            .ok_or_else(|| {
-                TerminalError::TunnelError(format!("SSH connection not found: {}", connection_id))
-            })?;
+        // Look the connection up where the Tunnel editor found it: the main store
+        // plus every enabled external connection file, under the same rule as
+        // jump-host references (unique id resolves, ambiguous id refused) — #3619.
+        let conn = conn_mgr
+            .resolve_saved_connection(connection_id, ReferenceRole::TunnelHost)
+            .map_err(|e| TerminalError::TunnelError(e.to_string()))?;
 
         // Gate on the declared tunnel-hosting capability rather than a hardcoded
         // `type_id == "ssh"` string (PARITY-001): whether a backend can host a

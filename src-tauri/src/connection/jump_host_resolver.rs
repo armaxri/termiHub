@@ -46,6 +46,10 @@ const MAX_RESOLVE_DEPTH: usize = 16;
 ///   external file that holds it, and any enabled file that failed to load, so
 ///   the user knows why a hop they can see on disk does not resolve.
 ///
+/// The same scope and rule also resolve the saved SSH connection a tunnel is
+/// hosted on (#3619, [`ReferenceRole::TunnelHost`]), so a tunnel and a jump-host
+/// hop can never disagree about which connection an id names.
+///
 /// References stay plain ids (no file qualifier): an id already survives a
 /// connection moving between files (#3592), which a file-qualified reference
 /// would not, and refusing ambiguity keeps plain references safe.
@@ -82,12 +86,23 @@ impl<'a> JumpHostScope<'a> {
         self
     }
 
-    /// The one connection `id` refers to, or an error when it is ambiguous or
-    /// not in the scope (see the type docs for the rule).
+    /// The one connection a jump-host reference `id` points at, or an error
+    /// when it is ambiguous or not in the scope (see the type docs for the rule).
     fn find(&self, id: &str) -> Result<&'a SavedConnection> {
+        self.find_as(id, ReferenceRole::JumpHost)
+    }
+
+    /// The one connection `id` refers to when used as `role`, or an error when
+    /// it is ambiguous or not in the scope (see the type docs for the rule).
+    ///
+    /// Every by-id lookup of a saved connection that must honour external
+    /// connection files goes through here — jump hosts (#3602) and the SSH
+    /// connection a tunnel is hosted on (#3619) — so they cannot drift apart.
+    /// `role` only shapes the wording of the error.
+    pub(crate) fn find_as(&self, id: &str, role: ReferenceRole) -> Result<&'a SavedConnection> {
         let mut matches = self.connections.iter().filter(|c| c.id == id);
         let Some(first) = matches.next() else {
-            bail!("{}", self.not_found_message(id));
+            bail!("{}", self.not_found_message(id, role));
         };
         let rest: Vec<&SavedConnection> = matches.collect();
         if rest.is_empty() {
@@ -98,20 +113,23 @@ impl<'a> JumpHostScope<'a> {
             .map(|c| source_label(c.source_file.as_deref()))
             .collect();
         bail!(
-            "Referenced jump host connection '{id}' is ambiguous: a connection with this id \
-             exists in {}. Rename or move one of them, or configure the hop inline.",
-            sources.join(" and ")
+            "Referenced {} '{id}' is ambiguous: a connection with this id exists in {}. \
+             Rename or move one of them, or {}.",
+            role.noun(),
+            sources.join(" and "),
+            role.ambiguous_remedy()
         )
     }
 
-    fn not_found_message(&self, id: &str) -> String {
-        let mut msg = format!("Referenced jump host connection '{id}' not found.");
+    fn not_found_message(&self, id: &str, role: ReferenceRole) -> String {
+        let mut msg = format!("Referenced {} '{id}' not found.", role.noun());
         for file in &self.unavailable {
             match file {
                 UnavailableFile::Disabled { path, ids } if ids.contains(id) => {
                     msg.push_str(&format!(
                         " It is in the disabled external connection file '{path}'; enable \
-                         that file to use it as a jump host."
+                         that file to {}.",
+                        role.use_phrase()
                     ));
                 }
                 UnavailableFile::FailedToLoad { path, error } => {
@@ -122,8 +140,49 @@ impl<'a> JumpHostScope<'a> {
                 UnavailableFile::Disabled { .. } => {}
             }
         }
-        msg.push_str(" Pick an existing SSH connection or switch to inline configuration.");
+        msg.push(' ');
+        msg.push_str(role.not_found_remedy());
         msg
+    }
+}
+
+/// What a saved-connection reference is used for. The lookup rule is the same
+/// for every role ([`JumpHostScope::find_as`]); only the error wording differs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ReferenceRole {
+    /// A `proxyJump` hop referencing a saved SSH connection (#940, #3602).
+    JumpHost,
+    /// The saved SSH connection a tunnel is hosted on (`sshConnectionId`, #3619).
+    TunnelHost,
+}
+
+impl ReferenceRole {
+    fn noun(self) -> &'static str {
+        match self {
+            Self::JumpHost => "jump host connection",
+            Self::TunnelHost => "tunnel SSH connection",
+        }
+    }
+
+    fn use_phrase(self) -> &'static str {
+        match self {
+            Self::JumpHost => "use it as a jump host",
+            Self::TunnelHost => "host tunnels on it",
+        }
+    }
+
+    fn ambiguous_remedy(self) -> &'static str {
+        match self {
+            Self::JumpHost => "configure the hop inline",
+            Self::TunnelHost => "pick another SSH connection for the tunnel",
+        }
+    }
+
+    fn not_found_remedy(self) -> &'static str {
+        match self {
+            Self::JumpHost => "Pick an existing SSH connection or switch to inline configuration.",
+            Self::TunnelHost => "Pick an existing SSH connection for the tunnel.",
+        }
     }
 }
 
