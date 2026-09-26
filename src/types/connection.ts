@@ -212,6 +212,8 @@ export interface AgentCapabilities {
   availableDockerImages?: string[];
   /** Whether `/proc`-based (or platform-equivalent) monitoring is available. */
   monitoringSupported?: boolean;
+  /** Whether the agent streams network-tool runs live (`tool.start`, #3353). */
+  toolStreaming?: boolean;
   /** Agent binary version string, e.g. "1.4.2". */
   agentVersion?: string;
 }
