@@ -2991,7 +2991,7 @@ pub(crate) async fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
 }
 
 /// Whether the tab is in the sticky SM-003 `Evicted` state.
-fn is_evicted_tab<R: Runtime>(app: &AppHandle<R>, tab_id: &str) -> bool {
+pub(crate) fn is_evicted_tab<R: Runtime>(app: &AppHandle<R>, tab_id: &str) -> bool {
     app.try_state::<Arc<SessionLifecycleStore>>()
         .and_then(|store| store.status(tab_id))
         == Some(SessionStatus::Evicted)
