@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/Terminal
 evidence:
   - src/components/Terminal/Terminal.tsx:1
-status: open
+status: fixed
+resolution: "#3422 — OSC 133 command marks: jump prev/next prompt, select/copy last output, exit-status gutter; emitted by bash/zsh/fish3/pwsh/cmd integration; mark restore after reconnect #3420"
 ---
 
 ## What
