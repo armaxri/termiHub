@@ -58,6 +58,9 @@ pub enum OsAuthPurpose {
     BiometricUnlock,
 }
 
+// Only the macOS verifier (and the test mock) picks a policy per purpose;
+// Windows Hello has a single consent prompt and Linux has no verifier.
+#[cfg(any(test, target_os = "macos"))]
 impl OsAuthPurpose {
     /// `true` for the purposes that must use a biometric-bound policy, so the
     /// enrollment fingerprint is meaningful and comparable between calls.
@@ -86,6 +89,13 @@ pub struct OsAuthCapability {
 
 impl OsAuthCapability {
     /// A capability that is available through `method_label`.
+    #[cfg_attr(
+        not(any(test, target_os = "macos", windows)),
+        expect(
+            dead_code,
+            reason = "only real OS verifiers report availability; Linux has none"
+        )
+    )]
     pub fn available(method_label: impl Into<String>) -> Self {
         Self {
             available: true,
@@ -119,15 +129,36 @@ pub struct OsAuthSuccess {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OsAuthError {
     /// The user dismissed the prompt (or chose the fallback button).
+    #[cfg_attr(
+        not(any(test, target_os = "macos", windows)),
+        expect(
+            dead_code,
+            reason = "only produced by a real OS verifier; Linux has none"
+        )
+    )]
     #[error("System authentication was cancelled.")]
     Cancelled,
     /// The OS rejected the user (wrong finger, too many attempts, lockout, …).
+    #[cfg_attr(
+        not(any(test, target_os = "macos", windows)),
+        expect(
+            dead_code,
+            reason = "only produced by a real OS verifier; Linux has none"
+        )
+    )]
     #[error("System authentication failed: {0}")]
     Failed(String),
     /// OS verification cannot be used on this machine right now.
     #[error("System authentication is not available: {0}")]
     Unavailable(String),
     /// Any other error from the OS API.
+    #[cfg_attr(
+        not(any(test, target_os = "macos", windows)),
+        expect(
+            dead_code,
+            reason = "only produced by a real OS verifier; Linux has none"
+        )
+    )]
     #[error("System authentication error: {0}")]
     Other(String),
 }
