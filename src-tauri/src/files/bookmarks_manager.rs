@@ -16,11 +16,11 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use super::bookmarks::{FileBookmark, FileBookmarkStore};
 use super::bookmarks_storage::FileBookmarkStorage;
-use crate::connection::manager::{ConnectionIdChange, ConnectionManager};
+use crate::connection::manager::ConnectionIdChange;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
 
@@ -60,32 +60,27 @@ pub struct ScopeRekey {
     pub to: String,
 }
 
-/// Make saved connections' bookmarks follow their id changes (#3569): register
-/// a listener on the [`ConnectionManager`] that re-keys the bookmarks of every
-/// renamed or moved connection right after the change is persisted, then tells
-/// every window's cache. Call once both managers are managed; without either,
-/// this is a no-op.
-pub fn follow_connection_renames(app: &AppHandle) {
-    let Some(connections) = app.try_state::<ConnectionManager>() else {
+/// Make saved connections' bookmarks follow their id changes (#3569): re-key
+/// the bookmarks of every renamed or moved connection in `changes` (already
+/// persisted), then tell every window's cache. Called from the connection
+/// manager's id-change listener that the boot phase registers (see
+/// `crate::boot::connection_id_changes`); without a managed
+/// [`FileBookmarkManager`] this is a no-op.
+pub fn follow_connection_renames<R: Runtime>(app: &AppHandle<R>, changes: &[ConnectionIdChange]) {
+    let Some(bookmarks) = app.try_state::<FileBookmarkManager>() else {
         return;
     };
-    let handle = app.clone();
-    connections.set_id_change_listener(std::sync::Arc::new(move |changes| {
-        let Some(bookmarks) = handle.try_state::<FileBookmarkManager>() else {
-            return;
-        };
-        let moved = bookmarks.follow_connection_id_changes(changes);
-        if moved.is_empty() {
-            return;
-        }
-        let payload: Vec<ScopeRekey> = moved
-            .into_iter()
-            .map(|(from, to)| ScopeRekey { from, to })
-            .collect();
-        if let Err(e) = handle.emit(FILE_BOOKMARKS_REKEYED_EVENT, payload) {
-            tracing::warn!("Failed to announce re-keyed bookmarks: {e}");
-        }
-    }));
+    let moved = bookmarks.follow_connection_id_changes(changes);
+    if moved.is_empty() {
+        return;
+    }
+    let payload: Vec<ScopeRekey> = moved
+        .into_iter()
+        .map(|(from, to)| ScopeRekey { from, to })
+        .collect();
+    if let Err(e) = app.emit(FILE_BOOKMARKS_REKEYED_EVENT, payload) {
+        tracing::warn!("Failed to announce re-keyed bookmarks: {e}");
+    }
 }
 
 /// Central file-browser bookmark manager. Mirrors
