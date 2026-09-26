@@ -14,7 +14,12 @@ use crate::config::SshConfig;
 use crate::errors::SessionError;
 
 use super::handler::{ForwardedChannelRegistry, LivenessWatch, SshSession, TermiHubHandler};
+use super::keyboard_interactive::{
+    keyboard_interactive_prompter, offers_keyboard_interactive, run_keyboard_interactive,
+    KeyboardInteractivePrompter, KiContext, KiMode, AUTH_METHOD_KEYBOARD_INTERACTIVE,
+};
 use super::legacy_pem;
+use super::prompt_clock::timeout_excluding_prompts;
 
 /// Connect to an SSH server, perform handshake, and authenticate.
 ///
@@ -57,7 +62,9 @@ pub async fn connect_and_authenticate_cancellable_with_liveness(
 ) -> Result<(SshSession, ForwardedChannelRegistry, LivenessWatch), SessionError> {
     let timeout = config.connect_timeout();
     let connect = async {
-        tokio::time::timeout(timeout, do_connect_and_authenticate(config))
+        // Time the user spends answering a keyboard-interactive prompt does not
+        // count against the network connect timeout (#3371).
+        timeout_excluding_prompts(timeout, do_connect_and_authenticate(config))
             .await
             .map_err(|_| {
                 SessionError::SpawnFailed(format!(
@@ -182,8 +189,40 @@ pub async fn connect_and_authenticate_over_channel_with_liveness(
 }
 
 /// Perform SSH authentication on an already-connected session.
+///
+/// Runs the configured primary method (`agent` / `key` / `password`, or
+/// `keyboard-interactive`), then — when the server asks for more — continues
+/// with keyboard-interactive (#3371): as a second factor after a partial
+/// success, or as a fallback after a refused password when the server offers
+/// it. See [`keyboard_interactive`](super::keyboard_interactive) for the
+/// prompt flow and the password auto-answer heuristic.
 async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<(), SessionError> {
-    let success = match config.auth_method.as_str() {
+    let prompter = keyboard_interactive_prompter();
+    authenticate_with_prompter(session, config, prompter.as_deref()).await
+}
+
+/// [`authenticate`] with an explicit keyboard-interactive prompter, generic over
+/// the client handler so tests can drive it against an in-process server.
+async fn authenticate_with_prompter<H>(
+    session: &mut russh::client::Handle<H>,
+    config: &SshConfig,
+    prompter: Option<&dyn KeyboardInteractivePrompter>,
+) -> Result<(), SessionError>
+where
+    H: russh::client::Handler,
+{
+    let ki = KiContext {
+        host: &config.host,
+        port: config.port,
+        username: &config.username,
+        password: config.password.as_deref().filter(|p| !p.is_empty()),
+    };
+
+    let primary = match config.auth_method.as_str() {
+        AUTH_METHOD_KEYBOARD_INTERACTIVE => {
+            return run_keyboard_interactive(session, &ki, KiMode::Explicit, prompter).await;
+        }
+
         "agent" => authenticate_with_agent(session, &config.username).await?,
 
         "key" => {
@@ -218,7 +257,6 @@ async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<()
                 )
                 .await
                 .map_err(|e| SessionError::SpawnFailed(format!("Key auth failed: {e}")))?
-                .success()
         }
 
         _ => {
@@ -228,21 +266,62 @@ async fn authenticate(session: &mut SshSession, config: &SshConfig) -> Result<()
                 .authenticate_password(&config.username, password)
                 .await
                 .map_err(|e| SessionError::SpawnFailed(format!("Password auth failed: {e}")))?
-                .success()
         }
     };
 
-    if !success {
+    match continuation_after(&config.auth_method, &primary) {
+        Continuation::Done => Ok(()),
+        Continuation::KeyboardInteractive(mode) => {
+            run_keyboard_interactive(session, &ki, mode, prompter).await
+        }
         // Genuine credential rejection (wrong password/passphrase or refused
         // key). Surface the typed, locale-independent discriminant so the
         // frontend can gate the destructive stored-credential discard on the
         // machine-stable signal rather than on English message text (I18N-001).
         // A transport/protocol error *during* the auth exchange is a different
         // failure and keeps its `SpawnFailed` mapping above.
-        return Err(SessionError::AuthFailed);
+        Continuation::Rejected => Err(SessionError::AuthFailed),
     }
+}
 
-    Ok(())
+/// What to do after the primary auth method returned `result`.
+#[derive(Debug, PartialEq, Eq)]
+enum Continuation {
+    /// Authenticated.
+    Done,
+    /// Continue with keyboard-interactive in the given mode (#3371).
+    KeyboardInteractive(KiMode),
+    /// Credentials rejected.
+    Rejected,
+}
+
+/// Decide whether a primary-method result is final or should continue with
+/// keyboard-interactive (#3371).
+///
+/// - Success → done.
+/// - Partial success with keyboard-interactive remaining → second factor.
+/// - A refused `password` while the server offers keyboard-interactive →
+///   password fallback (PAM / `PasswordAuthentication no`).
+/// - Anything else (e.g. a refused key without partial success) → rejected, as
+///   before: a key-configured connection never turns into a surprise prompt.
+fn continuation_after(auth_method: &str, result: &russh::client::AuthResult) -> Continuation {
+    match result {
+        russh::client::AuthResult::Success => Continuation::Done,
+        russh::client::AuthResult::Failure {
+            remaining_methods,
+            partial_success,
+        } => {
+            if !offers_keyboard_interactive(remaining_methods) {
+                Continuation::Rejected
+            } else if *partial_success {
+                Continuation::KeyboardInteractive(KiMode::SecondFactor)
+            } else if auth_method != "key" && auth_method != "agent" {
+                Continuation::KeyboardInteractive(KiMode::PasswordFallback)
+            } else {
+                Continuation::Rejected
+            }
+        }
+    }
 }
 
 /// Fallback loader for passphrase-protected **legacy-PEM** EC keys.
@@ -271,10 +350,10 @@ fn load_legacy_pem_ec_key(
 
 /// Try each identity offered by the SSH agent until one succeeds (Unix).
 #[cfg(unix)]
-async fn authenticate_with_agent(
-    session: &mut SshSession,
+async fn authenticate_with_agent<H: russh::client::Handler>(
+    session: &mut russh::client::Handle<H>,
     username: &str,
-) -> Result<bool, SessionError> {
+) -> Result<russh::client::AuthResult, SessionError> {
     let agent = russh::keys::agent::client::AgentClient::connect_env()
         .await
         .map_err(|e| SessionError::SpawnFailed(format!("SSH agent connect failed: {e}")))?;
@@ -283,10 +362,10 @@ async fn authenticate_with_agent(
 
 /// Try each identity offered by the SSH agent until one succeeds (Windows OpenSSH named pipe).
 #[cfg(windows)]
-async fn authenticate_with_agent(
-    session: &mut SshSession,
+async fn authenticate_with_agent<H: russh::client::Handler>(
+    session: &mut russh::client::Handle<H>,
     username: &str,
-) -> Result<bool, SessionError> {
+) -> Result<russh::client::AuthResult, SessionError> {
     let agent =
         russh::keys::agent::client::AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent")
             .await
@@ -300,12 +379,13 @@ async fn authenticate_with_agent(
 /// signs each challenge via the agent (which implements `Signer`). Certificate
 /// identities are skipped — termiHub only authenticates with plain public keys.
 #[cfg(any(unix, windows))]
-async fn authenticate_with_agent_client<S>(
-    session: &mut SshSession,
+async fn authenticate_with_agent_client<H, S>(
+    session: &mut russh::client::Handle<H>,
     username: &str,
     mut agent: russh::keys::agent::client::AgentClient<S>,
-) -> Result<bool, SessionError>
+) -> Result<russh::client::AuthResult, SessionError>
 where
+    H: russh::client::Handler,
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
 {
     use russh::keys::agent::AgentIdentity;
@@ -322,6 +402,11 @@ where
         .map_err(|e| SessionError::SpawnFailed(format!("Agent auth failed: {e}")))?
         .flatten();
 
+    // With no usable identity the outcome is a plain rejection.
+    let mut last = russh::client::AuthResult::Failure {
+        remaining_methods: russh::MethodSet::empty(),
+        partial_success: false,
+    };
     for identity in identities {
         let public_key = match identity {
             AgentIdentity::PublicKey { key, .. } => key,
@@ -331,19 +416,29 @@ where
             .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
             .await
             .map_err(|e| SessionError::SpawnFailed(format!("Agent auth failed: {e}")))?;
-        if result.success() {
-            return Ok(true);
+        // Stop on success, and on a partial success: the key was accepted and
+        // the server now wants a second factor (#3371).
+        if matches!(
+            result,
+            russh::client::AuthResult::Success
+                | russh::client::AuthResult::Failure {
+                    partial_success: true,
+                    ..
+                }
+        ) {
+            return Ok(result);
         }
+        last = result;
     }
-    Ok(false)
+    Ok(last)
 }
 
 /// SSH agent authentication is not supported on this platform.
 #[cfg(not(any(unix, windows)))]
-async fn authenticate_with_agent(
-    _session: &mut SshSession,
+async fn authenticate_with_agent<H: russh::client::Handler>(
+    _session: &mut russh::client::Handle<H>,
     _username: &str,
-) -> Result<bool, SessionError> {
+) -> Result<russh::client::AuthResult, SessionError> {
     Err(SessionError::SpawnFailed(
         "SSH agent authentication is not supported on this platform".to_string(),
     ))
@@ -483,6 +578,163 @@ mod tests {
             elapsed < Duration::from_secs(2),
             "cancellation took too long: {elapsed:?}"
         );
+    }
+
+    // ── keyboard-interactive continuation (#3371) ─────────────────────
+
+    use crate::backends::ssh::ki_test_server::{
+        connect as ki_connect, PasswordPolicy, Round, Script, ScriptedPrompter,
+    };
+
+    fn failure(methods: &[russh::MethodKind], partial: bool) -> russh::client::AuthResult {
+        russh::client::AuthResult::Failure {
+            remaining_methods: russh::MethodSet::from(methods),
+            partial_success: partial,
+        }
+    }
+
+    #[test]
+    fn continuation_decisions() {
+        use russh::MethodKind::{KeyboardInteractive as Ki, Password, PublicKey};
+        assert_eq!(
+            continuation_after("password", &russh::client::AuthResult::Success),
+            Continuation::Done
+        );
+        // Second factor after any primary method.
+        for method in ["key", "agent", "password"] {
+            assert_eq!(
+                continuation_after(method, &failure(&[Ki], true)),
+                Continuation::KeyboardInteractive(KiMode::SecondFactor),
+                "{method}"
+            );
+        }
+        // Refused password with keyboard-interactive offered → fallback.
+        assert_eq!(
+            continuation_after("password", &failure(&[Password, Ki], false)),
+            Continuation::KeyboardInteractive(KiMode::PasswordFallback)
+        );
+        // A refused key never turns into a surprise prompt.
+        assert_eq!(
+            continuation_after("key", &failure(&[PublicKey, Ki], false)),
+            Continuation::Rejected
+        );
+        assert_eq!(
+            continuation_after("agent", &failure(&[PublicKey, Ki], false)),
+            Continuation::Rejected
+        );
+        // Nothing interactive on offer → plain rejection.
+        assert_eq!(
+            continuation_after("password", &failure(&[Password], false)),
+            Continuation::Rejected
+        );
+    }
+
+    fn ki_config(auth_method: &str, password: Option<&str>) -> SshConfig {
+        SshConfig {
+            host: "bastion.test".to_string(),
+            port: 22,
+            username: "alice".to_string(),
+            auth_method: auth_method.to_string(),
+            password: password.map(str::to_string),
+            ..SshConfig::default()
+        }
+    }
+
+    /// `PasswordAuthentication no` + PAM: the refused password falls back to
+    /// keyboard-interactive, the password prompt is auto-answered, and the OTP
+    /// is asked of the user.
+    #[tokio::test]
+    async fn password_falls_back_to_keyboard_interactive_with_otp() {
+        let (mut session, observed) = ki_connect(Script {
+            rounds: vec![
+                Round::new(vec![("Password: ", false)], vec!["hunter2"]),
+                Round::new(vec![("Verification code: ", false)], vec!["314159"]),
+            ],
+            password: PasswordPolicy::Disabled,
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![Some(vec!["314159"])]);
+
+        authenticate_with_prompter(
+            &mut session,
+            &ki_config("password", Some("hunter2")),
+            Some(&prompter),
+        )
+        .await
+        .expect("authenticated");
+        assert_eq!(prompter.seen().len(), 1, "only the OTP is prompted");
+        assert_eq!(observed.lock().unwrap().responses.len(), 2);
+    }
+
+    /// `AuthenticationMethods password,keyboard-interactive`: a correct password
+    /// is a partial success and the OTP completes the login.
+    #[tokio::test]
+    async fn partial_success_continues_with_second_factor() {
+        let (mut session, _observed) = ki_connect(Script {
+            rounds: vec![Round::new(
+                vec![("Verification code: ", false)],
+                vec!["271828"],
+            )],
+            password: PasswordPolicy::FirstFactor("hunter2"),
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![Some(vec!["271828"])]);
+
+        authenticate_with_prompter(
+            &mut session,
+            &ki_config("password", Some("hunter2")),
+            Some(&prompter),
+        )
+        .await
+        .expect("authenticated");
+        let seen = prompter.seen();
+        assert_eq!(seen.len(), 1);
+        assert_eq!(seen[0].prompts[0].prompt, "Verification code: ");
+    }
+
+    /// A wrong second factor surfaces as the typed `AuthFailed`.
+    #[tokio::test]
+    async fn wrong_second_factor_is_auth_failed() {
+        let (mut session, _observed) = ki_connect(Script {
+            rounds: vec![Round::new(
+                vec![("Verification code: ", false)],
+                vec!["271828"],
+            )],
+            password: PasswordPolicy::FirstFactor("hunter2"),
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![Some(vec!["000000"])]);
+
+        let err = authenticate_with_prompter(
+            &mut session,
+            &ki_config("password", Some("hunter2")),
+            Some(&prompter),
+        )
+        .await
+        .expect_err("rejected");
+        assert!(matches!(err, SessionError::AuthFailed), "got {err:?}");
+    }
+
+    /// The explicit `keyboard-interactive` method skips the password method
+    /// entirely and prompts; cancelling is a typed cancel.
+    #[tokio::test]
+    async fn explicit_method_prompts_and_cancel_is_typed() {
+        let (mut session, _observed) = ki_connect(Script {
+            rounds: vec![Round::new(vec![("Verification code: ", false)], vec!["1"])],
+            password: PasswordPolicy::Disabled,
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![None]);
+
+        let err = authenticate_with_prompter(
+            &mut session,
+            &ki_config(AUTH_METHOD_KEYBOARD_INTERACTIVE, None),
+            Some(&prompter),
+        )
+        .await
+        .expect_err("cancelled");
+        assert!(matches!(err, SessionError::AuthCancelled), "got {err:?}");
+        assert_eq!(prompter.seen().len(), 1);
     }
 
     #[test]

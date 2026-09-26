@@ -7784,6 +7784,7 @@ dependencies = [
  "which",
  "windows-sys 0.59.0",
  "winreg 0.55.0",
+ "zeroize",
  "zip",
  "zune-jpeg 0.4.21",
 ]

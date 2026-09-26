@@ -12,9 +12,13 @@ mod file_browser;
 pub mod handler;
 pub mod host_key;
 pub mod jump_host;
+pub mod keyboard_interactive;
+#[cfg(test)]
+mod ki_test_server;
 mod legacy_pem;
 mod monitoring;
 mod process;
+mod prompt_clock;
 pub mod session_pool;
 pub mod sftp;
 pub mod sftp_ops;
@@ -381,6 +385,13 @@ impl ConnectionType for Ssh {
                                     SelectOption {
                                         value: "agent".to_string(),
                                         label: "SSH Agent".to_string(),
+                                    },
+                                    // OTP / 2FA / PAM challenges answered in an
+                                    // in-app prompt (#3371).
+                                    SelectOption {
+                                        value: keyboard_interactive::AUTH_METHOD_KEYBOARD_INTERACTIVE
+                                            .to_string(),
+                                        label: "Keyboard-Interactive (OTP / 2FA)".to_string(),
                                     },
                                 ],
                             },
