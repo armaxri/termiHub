@@ -12,7 +12,7 @@ use super::config::{
 use super::credential_migration::follow_id_changes;
 use super::id_changes::{diff_connection_ids, ConnectionIdRemap};
 pub use super::id_changes::{ConnectionIdChange, ConnectionIdChangeListener};
-use super::jump_host_resolver::follow_jump_host_refs_in;
+use super::jump_host_resolver::{follow_jump_host_refs_in, JumpHostScope, UnavailableFile};
 use super::placement::{place_connection, PlaceMode};
 use super::plugin_type_ids::migrate_connections;
 use super::recovery::RecoveryWarning;
@@ -314,6 +314,13 @@ impl ConnectionManager {
     /// has no jump-host chain or no references. `root_id` is the connection being
     /// connected, when known, so a hop that references its own connection is
     /// rejected as circular.
+    ///
+    /// References resolve against the [unified view](Self::load_unified_view) —
+    /// the main store plus every enabled external file, the same set the
+    /// editor's jump-host picker offers (#3602). An id held by several files is
+    /// refused as ambiguous; see [`JumpHostScope`] for the rule.
+    ///
+    /// [`JumpHostScope`]: super::jump_host_resolver::JumpHostScope
     pub fn resolve_jump_host_refs(
         &self,
         settings: &mut serde_json::Value,
@@ -324,13 +331,43 @@ impl ConnectionManager {
         if !super::jump_host_resolver::chain_has_reference(settings) {
             return Ok(());
         }
-        let connections = self.get_all()?.connections;
+        let view = self.load_unified_view()?;
+        let mut unavailable: Vec<UnavailableFile> = view
+            .external_errors
+            .into_iter()
+            .map(|(path, error)| UnavailableFile::FailedToLoad { path, error })
+            .collect();
+        unavailable.extend(self.disabled_external_files());
+        let scope = JumpHostScope::new(&view.connections).with_unavailable(unavailable);
         super::jump_host_resolver::resolve_proxy_jump_refs(
             settings,
-            &connections,
+            &scope,
             &*self.credential_store,
             root_id,
         )
+    }
+
+    /// Every configured-but-disabled external file with the connection ids it
+    /// holds, read without migrating or rewriting it. A file that is missing or
+    /// unreadable contributes no ids — it only feeds an error message.
+    fn disabled_external_files(&self) -> Vec<UnavailableFile> {
+        self.get_settings()
+            .external_connection_files
+            .into_iter()
+            .filter(|f| !f.enabled)
+            .map(|f| {
+                let ids = read_external_store(&f.path)
+                    .map(|store| {
+                        flatten_tree(&store.children, None)
+                            .0
+                            .into_iter()
+                            .map(|c| c.id)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                UnavailableFile::Disabled { path: f.path, ids }
+            })
+            .collect()
     }
 
     /// Reload the in-memory store from disk before a mutation.

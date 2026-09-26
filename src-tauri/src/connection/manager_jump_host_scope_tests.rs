@@ -78,7 +78,11 @@ fn hop_hosts(settings: &serde_json::Value) -> Vec<String> {
 fn a_main_store_connection_resolves_a_hop_in_an_enabled_external_file() {
     let dir = tempfile::tempdir().unwrap();
     let mgr = manager(dir.path());
-    let file = external_file(dir.path(), "shared", vec![ssh("ext-gw", "ext-gw-host", &[])]);
+    let file = external_file(
+        dir.path(),
+        "shared",
+        vec![ssh("ext-gw", "ext-gw-host", &[])],
+    );
     configure_external_files(&mgr, &[(&file, true)]);
 
     let settings = resolve(&mgr, &["ext-gw"]).unwrap();
