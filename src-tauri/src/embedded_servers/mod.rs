@@ -11,4 +11,4 @@
 pub mod server_manager;
 pub mod storage;
 
-pub use termihub_core::embedded_servers::{config, service};
+pub use termihub_core::embedded_servers::{activity, config, service};

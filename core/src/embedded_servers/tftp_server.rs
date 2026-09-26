@@ -8,19 +8,24 @@
 //! against the [`ShutdownSignal`]. Stopping the server therefore wakes all of them
 //! at once — there is no fixed read-timeout poll re-checking a flag (WA-RS-001,
 //! #2782). The only remaining timer is the RFC 1350 retransmit timeout while an
-//! RRQ waits for an ACK, which is protocol behaviour, not shutdown polling.
+//! RRQ waits for an ACK (and a WRQ waits for the next DATA block), which is
+//! protocol behaviour, not shutdown polling.
+//!
+//! Every RRQ/WRQ — including refused ones — is recorded in the server's access
+//! log (PROD-034) and listed as a current transfer while in flight.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::task::JoinSet;
 
+use super::activity::{AccessRecord, TransferGuard};
 use super::config::{AtomicServerStats, EmbeddedServerConfig};
 use super::service::BindSignal;
 use super::shutdown::ShutdownSignal;
@@ -38,9 +43,10 @@ const BLOCK_SIZE: usize = 512;
 /// Maximum number of DATA (re)transmissions before an RRQ block is abandoned.
 const MAX_RETRIES: u32 = 5;
 
-/// How long an RRQ waits for the ACK to one DATA block before retransmitting it
-/// (RFC 1350 retransmit timeout). Shutdown does not wait on this: every receive is
-/// `select!`ed against the [`ShutdownSignal`] and aborts the instant it fires.
+/// How long an RRQ waits for the ACK to one DATA block (and a WRQ for the next
+/// DATA block) before retransmitting (RFC 1350 retransmit timeout). Shutdown
+/// does not wait on this: every receive is `select!`ed against the
+/// [`ShutdownSignal`] and aborts the instant it fires.
 const ACK_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Default ceiling on the size of a single TFTP transfer when the server config
@@ -63,6 +69,37 @@ const ERR_ACCESS: u16 = 2;
 const ERR_DISK_FULL: u16 = 3;
 const ERR_ILLEGAL_OP: u16 = 4;
 const ERR_UNKNOWN_TID: u16 = 5;
+
+/// How a single RRQ/WRQ transfer ended (other than with an I/O error).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TransferEnd {
+    /// The whole file was transferred.
+    Completed,
+    /// The server was stopped mid-transfer.
+    Aborted,
+    /// The request was refused before any data moved (bad path).
+    Denied(&'static str),
+    /// The transfer was refused or cut off by the size cap.
+    Rejected(&'static str),
+    /// The client went silent past the retransmit budget.
+    TimedOut,
+}
+
+/// Map a transfer's result onto its access-log record.
+fn transfer_record(kind: &str, result: &Result<TransferEnd>) -> AccessRecord {
+    match result {
+        Ok(TransferEnd::Completed) => AccessRecord::new(kind, "ok", true),
+        Ok(TransferEnd::Aborted) => {
+            AccessRecord::new(kind, "aborted", false).detail("server stopped")
+        }
+        Ok(TransferEnd::Denied(why)) => AccessRecord::new(kind, "denied", false).detail(*why),
+        Ok(TransferEnd::Rejected(why)) => AccessRecord::new(kind, "rejected", false).detail(*why),
+        Ok(TransferEnd::TimedOut) => {
+            AccessRecord::new(kind, "timeout", false).detail("client stopped responding")
+        }
+        Err(e) => AccessRecord::new(kind, "error", false).detail(e.to_string()),
+    }
+}
 
 // ─── Public entry point ───────────────────────────────────────────────────────
 
@@ -159,14 +196,25 @@ async fn run_tftp_server(
         match opcode {
             OP_RRQ | OP_WRQ => {
                 let is_write = opcode == OP_WRQ;
-                if is_write && read_only {
-                    let _ = send_error(&socket, peer, ERR_ACCESS, "Server is read-only").await;
-                    continue;
-                }
+                let kind = if is_write { "WRQ" } else { "RRQ" };
                 let Some((filename, _mode)) = parse_request(payload) else {
                     continue;
                 };
+                let refuse = |status: &str, detail: &str| {
+                    stats.activity.record(
+                        AccessRecord::new(kind, status, false)
+                            .client(peer.ip())
+                            .path(filename.clone())
+                            .detail(detail),
+                    );
+                };
+                if is_write && read_only {
+                    refuse("denied", "server is read-only");
+                    let _ = send_error(&socket, peer, ERR_ACCESS, "Server is read-only").await;
+                    continue;
+                }
                 let Some(slot) = TransferSlot::reserve(&in_flight, &stats) else {
+                    refuse("busy", "too many concurrent transfers");
                     let _ = send_error(
                         &socket,
                         peer,
@@ -185,21 +233,34 @@ async fn run_tftp_server(
                     // Held for the transfer's lifetime; releases the slot and the
                     // active-connection count on every exit path.
                     let _slot = slot;
+                    let started = Instant::now();
+                    let progress =
+                        stats
+                            .activity
+                            .begin_transfer(kind, Some(peer.ip()), Some(&filename));
                     let result = if is_write {
                         handle_wrq(
-                            &root, &filename, peer, &bind_host, max_bytes, &stats, &shutdown,
+                            &root, &filename, peer, &bind_host, max_bytes, &stats, &progress,
+                            &shutdown,
                         )
                         .await
                     } else {
                         handle_rrq(
-                            &root, &filename, peer, &bind_host, max_bytes, &stats, &shutdown,
+                            &root, &filename, peer, &bind_host, max_bytes, &stats, &progress,
+                            &shutdown,
                         )
                         .await
                     };
-                    if let Err(e) = result {
-                        let kind = if is_write { "WRQ" } else { "RRQ" };
+                    if let Err(e) = &result {
                         tracing::debug!(%peer, "TFTP {kind} error: {e}");
                     }
+                    stats.activity.record(
+                        transfer_record(kind, &result)
+                            .client(peer.ip())
+                            .path(filename)
+                            .bytes(progress.bytes())
+                            .elapsed_since(started),
+                    );
                 });
             }
             _ => {
@@ -251,6 +312,7 @@ impl Drop for TransferSlot {
 
 // ─── RRQ handler (server → client) ───────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_rrq(
     root: &Path,
     filename: &str,
@@ -258,9 +320,12 @@ async fn handle_rrq(
     bind_host: &str,
     max_bytes: u64,
     stats: &AtomicServerStats,
+    progress: &TransferGuard,
     shutdown: &ShutdownSignal,
-) -> Result<()> {
-    let path = safe_path(root, filename).ok_or_else(|| anyhow::anyhow!("Access denied"))?;
+) -> Result<TransferEnd> {
+    let Some(path) = safe_path(root, filename) else {
+        return Ok(TransferEnd::Denied("path outside the served root"));
+    };
 
     // Open the file and stream it block-by-block rather than reading the whole
     // thing into memory, so a large served file cannot balloon host memory
@@ -286,11 +351,21 @@ async fn handle_rrq(
             "File exceeds maximum transfer size",
         )
         .await;
-        return Ok(());
+        return Ok(TransferEnd::Rejected("file exceeds maximum transfer size"));
     }
 
     let mut reader = tokio::io::BufReader::new(file);
-    stream_file(&socket, peer, &mut reader, 1, ACK_TIMEOUT, stats, shutdown).await
+    stream_file(
+        &socket,
+        peer,
+        &mut reader,
+        1,
+        ACK_TIMEOUT,
+        stats,
+        progress,
+        shutdown,
+    )
+    .await
 }
 
 /// Stream `reader` to `peer` as TFTP DATA packets, starting at block number
@@ -310,6 +385,7 @@ async fn handle_rrq(
 ///   exact multiple of [`BLOCK_SIZE`] (including a zero-length file) still
 ///   emits an explicit final empty DATA block. Without it the client would
 ///   wait forever for EOF.
+#[allow(clippy::too_many_arguments)]
 async fn stream_file<R: AsyncRead + Unpin>(
     socket: &UdpSocket,
     peer: SocketAddr,
@@ -317,8 +393,9 @@ async fn stream_file<R: AsyncRead + Unpin>(
     start_block: u16,
     ack_timeout: Duration,
     stats: &AtomicServerStats,
+    progress: &TransferGuard,
     shutdown: &ShutdownSignal,
-) -> Result<()> {
+) -> Result<TransferEnd> {
     let mut block_num = start_block;
 
     loop {
@@ -337,6 +414,7 @@ async fn stream_file<R: AsyncRead + Unpin>(
         stats
             .bytes_sent
             .fetch_add(block_data.len() as u64, Ordering::Relaxed);
+        progress.add_bytes(block_data.len() as u64);
 
         match wait_for_ack(
             socket,
@@ -352,7 +430,7 @@ async fn stream_file<R: AsyncRead + Unpin>(
             AckOutcome::Acked => {}
             // Server was stopped mid-transfer: abort at once instead of burning
             // the remaining retry budget (up to ~25s). (#1145 / G1, #2782)
-            AckOutcome::Aborted => return Ok(()),
+            AckOutcome::Aborted => return Ok(TransferEnd::Aborted),
         }
 
         // A short block (including the empty block for a zero-length file, and
@@ -366,7 +444,7 @@ async fn stream_file<R: AsyncRead + Unpin>(
         block_num = block_num.wrapping_add(1);
     }
 
-    Ok(())
+    Ok(TransferEnd::Completed)
 }
 
 /// Fill `buf` from `reader`, returning the number of bytes read. Returns fewer
@@ -517,6 +595,7 @@ async fn wait_for_ack(
 
 // ─── WRQ handler (client → server) ───────────────────────────────────────────
 
+#[allow(clippy::too_many_arguments)]
 async fn handle_wrq(
     root: &Path,
     filename: &str,
@@ -524,9 +603,12 @@ async fn handle_wrq(
     bind_host: &str,
     max_bytes: u64,
     stats: &AtomicServerStats,
+    progress: &TransferGuard,
     shutdown: &ShutdownSignal,
-) -> Result<()> {
-    let path = safe_path(root, filename).ok_or_else(|| anyhow::anyhow!("Access denied"))?;
+) -> Result<TransferEnd> {
+    let Some(path) = safe_path(root, filename) else {
+        return Ok(TransferEnd::Denied("path outside the served root"));
+    };
 
     let transfer_addr = format!("{bind_host}:0");
     let socket = UdpSocket::bind(&transfer_addr)
@@ -542,15 +624,20 @@ async fn handle_wrq(
         .with_context(|| format!("Cannot write {}", path.display()))?;
 
     // Send initial ACK block 0.
-    let ack0 = make_ack(0);
+    let mut last_ack = make_ack(0);
     socket
-        .send_to(&ack0, peer)
+        .send_to(&last_ack, peer)
         .await
         .context("Send initial ACK failed")?;
 
     let mut buf = [0u8; 516];
     let mut expected_block: u16 = 1;
     let mut total_written: u64 = 0;
+    // Retransmit budget for a silent client (#3306): the deadline only moves on
+    // real progress from the transfer's peer, so neither stray datagrams nor
+    // duplicate blocks can keep a stalled upload (and its slot) alive forever.
+    let mut deadline = tokio::time::Instant::now() + ACK_TIMEOUT;
+    let mut retries: u32 = 0;
 
     loop {
         let received = tokio::select! {
@@ -558,16 +645,28 @@ async fn handle_wrq(
             // parked on a stalled client. (#1145 / G1, #2782)
             _ = shutdown.wait() => {
                 discard_partial(file, &path).await;
-                return Ok(());
+                return Ok(TransferEnd::Aborted);
             }
             // Transient Windows ICMP resets are skipped, not fatal.
-            received = recv_skipping_resets(&socket, &mut buf) => received,
+            received = tokio::time::timeout_at(deadline, recv_skipping_resets(&socket, &mut buf)) => received,
         };
         let (len, src) = match received {
-            Ok(r) => r,
-            Err(e) => {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
                 discard_partial(file, &path).await;
                 return Err(anyhow::Error::new(e).context("Receive DATA failed"));
+            }
+            // No DATA within the retransmit timeout: re-send the last ACK, and
+            // give up once the retry budget is spent (RFC 1350, #3306).
+            Err(_elapsed) => {
+                retries += 1;
+                if retries >= MAX_RETRIES {
+                    discard_partial(file, &path).await;
+                    return Ok(TransferEnd::TimedOut);
+                }
+                let _ = socket.send_to(&last_ack, peer).await;
+                deadline = tokio::time::Instant::now() + ACK_TIMEOUT;
+                continue;
             }
         };
         // Enforce the transfer's TID (RFC 1350 §4, CORE-024): only the peer that
@@ -590,8 +689,7 @@ async fn handle_wrq(
         }
         if block_num != expected_block {
             // Resend previous ACK.
-            let ack = make_ack(expected_block.wrapping_sub(1));
-            let _ = socket.send_to(&ack, peer).await;
+            let _ = socket.send_to(&last_ack, peer).await;
             continue;
         }
 
@@ -609,7 +707,9 @@ async fn handle_wrq(
             )
             .await;
             discard_partial(file, &path).await;
-            return Ok(());
+            return Ok(TransferEnd::Rejected(
+                "upload exceeds maximum transfer size",
+            ));
         }
 
         file.write_all(data_slice)
@@ -619,14 +719,17 @@ async fn handle_wrq(
         stats
             .bytes_received
             .fetch_add(data_slice.len() as u64, Ordering::Relaxed);
+        progress.add_bytes(data_slice.len() as u64);
 
-        let ack = make_ack(block_num);
+        last_ack = make_ack(block_num);
         socket
-            .send_to(&ack, peer)
+            .send_to(&last_ack, peer)
             .await
             .context("Send ACK failed")?;
 
         expected_block = expected_block.wrapping_add(1);
+        retries = 0;
+        deadline = tokio::time::Instant::now() + ACK_TIMEOUT;
 
         // Last block is < 512 bytes.
         if data_slice.len() < BLOCK_SIZE {
@@ -640,7 +743,7 @@ async fn handle_wrq(
         .await
         .with_context(|| format!("Cannot flush {}", path.display()))?;
 
-    Ok(())
+    Ok(TransferEnd::Completed)
 }
 
 /// Best-effort removal of a partially-written upload after an aborted WRQ, so a
@@ -964,7 +1067,7 @@ mod tests {
         StdUdpSocket,
         SocketAddr,
         ShutdownSignal,
-        std::thread::JoinHandle<Result<()>>,
+        std::thread::JoinHandle<Result<TransferEnd>>,
     ) {
         let client = StdUdpSocket::bind("127.0.0.1:0").expect("bind client");
         client
@@ -977,6 +1080,7 @@ mod tests {
         let shutdown = ShutdownSignal::new();
         let server_shutdown = shutdown.clone();
         let handle = on_runtime(async move {
+            let progress = stats.activity.begin_transfer("WRQ", None, None);
             handle_wrq(
                 &root,
                 &filename,
@@ -984,6 +1088,7 @@ mod tests {
                 "127.0.0.1",
                 max_bytes,
                 &stats,
+                &progress,
                 &server_shutdown,
             )
             .await
@@ -1015,12 +1120,13 @@ mod tests {
         filename: &str,
         peer: SocketAddr,
         max_bytes: u64,
-    ) -> (ShutdownSignal, std::thread::JoinHandle<Result<()>>) {
+    ) -> (ShutdownSignal, std::thread::JoinHandle<Result<TransferEnd>>) {
         let filename = filename.to_string();
         let stats = AtomicServerStats::new();
         let shutdown = ShutdownSignal::new();
         let server_shutdown = shutdown.clone();
         let handle = on_runtime(async move {
+            let progress = stats.activity.begin_transfer("RRQ", None, None);
             handle_rrq(
                 &root,
                 &filename,
@@ -1028,6 +1134,7 @@ mod tests {
                 "127.0.0.1",
                 max_bytes,
                 &stats,
+                &progress,
                 &server_shutdown,
             )
             .await
@@ -1218,6 +1325,7 @@ mod tests {
         let handle = on_runtime(async move {
             let server = UdpSocket::bind("127.0.0.1:0").await.expect("bind server");
             let mut reader = Cursor::new(payload_for_thread);
+            let progress = stats.activity.begin_transfer("RRQ", None, None);
             stream_file(
                 &server,
                 peer,
@@ -1225,6 +1333,7 @@ mod tests {
                 65534,
                 Duration::from_secs(2),
                 &stats,
+                &progress,
                 &shutdown,
             )
             .await
@@ -1500,22 +1609,40 @@ mod tests {
         ShutdownSignal,
         std::thread::JoinHandle<Result<()>>,
     ) {
+        let (addr, shutdown, handle, _stats) = start_real_tftp_with(root, false);
+        (addr, shutdown, handle)
+    }
+
+    /// As [`start_real_tftp`], optionally read-only, also returning the stats
+    /// (and access log) the server records into.
+    fn start_real_tftp_with(
+        root: &Path,
+        read_only: bool,
+    ) -> (
+        SocketAddr,
+        ShutdownSignal,
+        std::thread::JoinHandle<Result<()>>,
+        Arc<AtomicServerStats>,
+    ) {
         for _ in 0..5 {
             let port = StdUdpSocket::bind("127.0.0.1:0")
                 .and_then(|s| s.local_addr())
                 .expect("find free port")
                 .port();
-            let config = tftp_test_config(root, port);
+            let mut config = tftp_test_config(root, port);
+            config.read_only = read_only;
             let shutdown = ShutdownSignal::new();
+            let stats = AtomicServerStats::new();
             let (ready, ready_rx) = BindSignal::for_test();
             let server_shutdown = shutdown.clone();
+            let server_stats = Arc::clone(&stats);
             let handle = std::thread::spawn(move || {
-                start_tftp_server(&config, server_shutdown, AtomicServerStats::new(), ready)
+                start_tftp_server(&config, server_shutdown, server_stats, ready)
             });
             match ready_rx.recv_timeout(Duration::from_secs(5)) {
                 Ok(Ok(())) => {
                     let addr = SocketAddr::from(([127, 0, 0, 1], port));
-                    return (addr, shutdown, handle);
+                    return (addr, shutdown, handle, stats);
                 }
                 _ => {
                     let _ = handle.join();
@@ -1565,5 +1692,180 @@ mod tests {
             !dir.path().join("stalled.bin").exists(),
             "the in-flight upload must be discarded on shutdown, not left partial"
         );
+    }
+
+    // ── Access log (PROD-034) ──────────────────────────────────────────────────
+
+    /// Poll the access log until `n` entries are present (the entry is written
+    /// by the transfer task right after the last packet).
+    fn wait_for_entries(
+        stats: &AtomicServerStats,
+        n: usize,
+    ) -> Vec<crate::embedded_servers::activity::AccessLogEntry> {
+        let mut entries = Vec::new();
+        for _ in 0..100 {
+            entries = stats.activity.snapshot(None, &stats.snapshot()).entries;
+            if entries.len() >= n {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        entries
+    }
+
+    #[test]
+    fn rrq_is_recorded_in_access_log() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("fw.bin"), b"firmware image").expect("write");
+        let (server_addr, shutdown, handle, stats) = start_real_tftp_with(dir.path(), false);
+
+        let (client, _) = rrq_client();
+        let mut rrq = OP_RRQ.to_be_bytes().to_vec();
+        rrq.extend_from_slice(b"fw.bin\0octet\0");
+        client.send_to(&rrq, server_addr).expect("send RRQ");
+        let mut buf = [0u8; 516];
+        let (n, transfer_addr) = client.recv_from(&mut buf).expect("recv DATA 1");
+        assert_eq!(&buf[4..n], b"firmware image");
+        client
+            .send_to(&make_ack(1), transfer_addr)
+            .expect("send ACK 1");
+
+        let entries = wait_for_entries(&stats, 1);
+        shutdown.trigger();
+        let _ = handle.join();
+
+        assert_eq!(entries.len(), 1, "entries: {entries:?}");
+        let e = &entries[0];
+        assert_eq!(e.method, "RRQ");
+        assert_eq!(e.path.as_deref(), Some("fw.bin"));
+        assert_eq!(e.client.as_deref(), Some("127.0.0.1"));
+        assert_eq!(e.status, "ok");
+        assert!(e.success);
+        assert_eq!(e.bytes, 14);
+    }
+
+    #[test]
+    fn wrq_to_read_only_server_is_recorded_as_denied() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let (server_addr, shutdown, handle, stats) = start_real_tftp_with(dir.path(), true);
+
+        let (client, _) = rrq_client();
+        let mut wrq = OP_WRQ.to_be_bytes().to_vec();
+        wrq.extend_from_slice(b"evil.bin\0octet\0");
+        client.send_to(&wrq, server_addr).expect("send WRQ");
+        let mut buf = [0u8; 516];
+        let (_, _) = client.recv_from(&mut buf).expect("recv ERROR");
+        assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), OP_ERROR);
+
+        let entries = wait_for_entries(&stats, 1);
+        shutdown.trigger();
+        let _ = handle.join();
+
+        assert_eq!(entries[0].method, "WRQ");
+        assert_eq!(entries[0].status, "denied");
+        assert!(!entries[0].success);
+        let snap = stats.activity.snapshot(None, &stats.snapshot());
+        assert_eq!(snap.stats.errors, 1);
+    }
+
+    #[test]
+    fn transfer_record_maps_every_outcome() {
+        let status = |r: Result<TransferEnd>| {
+            let rec = transfer_record("RRQ", &r);
+            let activity = crate::embedded_servers::activity::ServerActivity::new();
+            activity.record(rec);
+            let e = activity
+                .snapshot(None, &Default::default())
+                .entries
+                .remove(0);
+            (e.status, e.success)
+        };
+        assert_eq!(status(Ok(TransferEnd::Completed)), ("ok".into(), true));
+        assert_eq!(status(Ok(TransferEnd::Aborted)), ("aborted".into(), false));
+        assert_eq!(
+            status(Ok(TransferEnd::Denied("x"))),
+            ("denied".into(), false)
+        );
+        assert_eq!(
+            status(Ok(TransferEnd::Rejected("x"))),
+            ("rejected".into(), false)
+        );
+        assert_eq!(status(Ok(TransferEnd::TimedOut)), ("timeout".into(), false));
+        assert_eq!(
+            status(Err(anyhow::anyhow!("boom"))),
+            ("error".into(), false)
+        );
+    }
+
+    // ── #3306: a stalled WRQ gives up after the retransmit budget ──────────────
+
+    /// A client that sends a WRQ and then goes silent must not hold its transfer
+    /// (slot + partial file) forever: after `MAX_RETRIES` retransmit timeouts the
+    /// WRQ is abandoned, the partial file removed and the transfer released.
+    /// Paused clock: the 5 × 5 s budget elapses in virtual time, deterministically.
+    #[tokio::test(start_paused = true)]
+    async fn stalled_wrq_times_out_after_retry_budget_and_discards_partial() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let client = UdpSocket::bind("127.0.0.1:0").await.expect("bind client");
+        let peer = client.local_addr().expect("client addr");
+        let stats = AtomicServerStats::new();
+        let shutdown = ShutdownSignal::new();
+
+        let started = tokio::time::Instant::now();
+        let outcome = {
+            let progress = stats.activity.begin_transfer("WRQ", None, None);
+            // While in flight the upload is listed as a current transfer.
+            assert_eq!(
+                stats
+                    .activity
+                    .snapshot(None, &stats.snapshot())
+                    .stats
+                    .current_transfers
+                    .len(),
+                1
+            );
+            handle_wrq(
+                dir.path(),
+                "stalled.bin",
+                peer,
+                "127.0.0.1",
+                1024 * 1024,
+                &stats,
+                &progress,
+                &shutdown,
+            )
+            .await
+        };
+
+        assert!(
+            matches!(outcome, Ok(TransferEnd::TimedOut)),
+            "expected TimedOut, got {outcome:?}"
+        );
+        assert!(
+            tokio::time::Instant::now() - started >= ACK_TIMEOUT * MAX_RETRIES,
+            "gave up before the retransmit budget was spent"
+        );
+        assert!(
+            !dir.path().join("stalled.bin").exists(),
+            "a timed-out upload must not leave a partial file"
+        );
+        assert!(
+            stats
+                .activity
+                .snapshot(None, &stats.snapshot())
+                .stats
+                .current_transfers
+                .is_empty(),
+            "the timed-out transfer must be released"
+        );
+
+        // The client saw ACK 0 plus one retransmission per timeout but the last.
+        let mut acks = 0;
+        let mut buf = [0u8; 16];
+        while let Ok((n, _)) = client.try_recv_from(&mut buf) {
+            assert_eq!(&buf[..n], &make_ack(0));
+            acks += 1;
+        }
+        assert_eq!(acks, MAX_RETRIES as usize);
     }
 }

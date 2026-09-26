@@ -139,3 +139,124 @@
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
 }
+
+/* ─── Per-server activity panel: stats + access log (PROD-034/036) ────────── */
+
+.server-activity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  margin-top: var(--spacing-xs);
+  padding: var(--spacing-xs) var(--spacing-sm);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+  background: var(--bg-secondary);
+  cursor: default;
+}
+
+.server-activity__stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(64px, 1fr));
+  gap: var(--spacing-xs);
+  margin: 0;
+}
+
+.server-activity__stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.server-activity__stat dt {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-label);
+}
+
+.server-activity__stat dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.server-activity__heading {
+  font-size: var(--font-size-2xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-label);
+}
+
+.server-activity__top ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.server-activity__top li {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.server-activity__mono {
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.server-activity__count {
+  color: var(--text-primary);
+  flex-shrink: 0;
+}
+
+.server-activity__toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs);
+}
+
+.server-activity__toolbar > :first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.server-activity__empty {
+  color: var(--text-muted);
+  padding: var(--spacing-xs) 0;
+}
+
+.server-activity__log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.server-activity__row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  column-gap: var(--spacing-sm);
+  padding: var(--spacing-xxs) 0;
+  border-bottom: 1px solid var(--border-primary);
+}
+
+.server-activity__row--error .server-activity__status {
+  color: var(--color-error);
+}
+
+.server-activity__time {
+  color: var(--text-muted);
+}
+
+.server-activity__status {
+  color: var(--color-success);
+  font-family: var(--font-mono);
+}
+
+.server-activity__meta {
+  grid-column: 2 / 4;
+  color: var(--text-muted);
+}

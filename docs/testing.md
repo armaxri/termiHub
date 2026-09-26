@@ -2309,6 +2309,27 @@ for #1399.
 2. Right-click a file → **Copy Path** → a `Copied path` toast appears and the
    file's full path is on the clipboard.
 
+### File browser drag-to-move (#3454, PROD-006)
+
+Covers the pointer gesture, which the jsdom unit tests cannot hit-test.
+
+1. Open the file browser on a local directory that has a sub-folder `docs` and a
+   file `a.txt`. Drag `a.txt` onto the `docs` row → while you hover, `docs` has
+   an accent highlight and a floating chip reads `Move "a.txt"`. Release →
+   `a.txt` moves into `docs` (a `Moved "a.txt" to …` toast appears).
+2. Drag a file onto `docs` and hold **Alt/Option** before releasing → the chip
+   switches to `Copy …` and the file is copied (the original stays).
+3. Ctrl/Cmd-click two files, then drag one of them onto a parent breadcrumb in
+   the path bar → both files move up to that folder.
+4. Drag `docs` onto its own row → the row turns red (refused). Releasing shows a
+   "Cannot move … into itself" error and nothing changes.
+5. Put a file with the same name in the destination and drop it again → a
+   **Move and Replace?** dialog appears. Cancel leaves both files untouched.
+6. Repeat step 1 on an SFTP session → the move is an instant server-side rename
+   (no transfer row). Alt-drop copies server-side.
+7. Right-click a file → **Move to…**, type a folder path, press **Enter** → the
+   file moves there. You can do this from the keyboard alone.
+
 ### Network Tools shared field validation (#1381)
 
 Verifies every Network Tools text input shares one label + input + inline-error
@@ -2876,6 +2897,16 @@ To verify SSH tunnels actually work on macOS, do this manually against the tunne
 3. Open the **Tunnels** sidebar → New Tunnel → **Local** forward: local `127.0.0.1:18083` → remote `localhost:8080`, referencing the SSH connection above. **Save & Start**.
 4. Confirm the tunnel reaches a running state (sidebar shows Stop control) and `curl http://127.0.0.1:18083` returns `TUNNEL_TEST_OK`.
 5. Click **Stop** and confirm the tunnel returns to disconnected and the Start control reappears.
+
+#### Per-connection port forwards (PROD-023, #3449)
+
+The section CRUD, the `startWithConnection` flag, the on-connect trigger and the backend selection are unit-tested (`ConnectionPortForwardingSection.test.tsx`, `TunnelEditor.startWithConnection.test.tsx`, `tunnelSlice.startForConnection.test.ts`, `tunnel_manager.rs` `connection_bound_tunnel_ids_*`). The live "forward comes up when the terminal connects" path is manual, against the same `ssh-tunnel-target` fixture as above:
+
+1. Edit the SSH connection to `127.0.0.1:2207` → **Port Forwarding** → **Add port forward**. The Tunnel editor opens with that connection pre-selected and **Start when a session to this SSH connection opens** on. Create a Local forward `127.0.0.1:18084` → `localhost:8080` and **Save** (not Save & Start).
+2. The connection editor's Port Forwarding section and the **Tunnels** sidebar both list the forward, stopped.
+3. Open a terminal to the connection. Once it connects, the forward turns running and `curl http://127.0.0.1:18084` returns `TUNNEL_TEST_OK`.
+4. Open a second terminal to the same connection — the forward is not restarted (no status flicker).
+5. Turn the row's **Start with connection** toggle off, stop the forward, reconnect the terminal — the forward stays stopped. **Remove** it from the section — it disappears from the Tunnels sidebar too.
 
 ### SSH keyboard-interactive / OTP prompts (#3371)
 

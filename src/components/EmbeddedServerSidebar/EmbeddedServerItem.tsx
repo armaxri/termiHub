@@ -1,6 +1,15 @@
 import type React from "react";
-import { useCallback } from "react";
-import { Play, Square, Pencil, Copy, Trash2, ExternalLink, Clipboard } from "lucide-react";
+import { useCallback, useState } from "react";
+import {
+  Activity,
+  Play,
+  Square,
+  Pencil,
+  Copy,
+  Trash2,
+  ExternalLink,
+  Clipboard,
+} from "lucide-react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { writeText as writeClipboard } from "@tauri-apps/plugin-clipboard-manager";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -8,6 +17,7 @@ import { Button, toast, Tooltip } from "@/components/ui";
 import { SidebarListItem, SidebarStatusDot } from "@/components/SidebarListItem";
 import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { RunLocationSelect } from "@/components/RunLocationSelect";
+import { EmbeddedServerActivityPanel } from "./EmbeddedServerActivityPanel";
 import { serverStatusLabel } from "@/utils/statusLabel";
 import { formatBytes } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
@@ -85,6 +95,8 @@ export function EmbeddedServerItem({
   const status = state?.status;
   const active = isActive(status);
   const url = serverUrl(config);
+  // Expandable access log + detailed stats (PROD-034/036).
+  const [showActivity, setShowActivity] = useState(false);
 
   // Start/Stop drive the shared Button's async lifecycle: returning the promise
   // makes the pressed control show the spinner + disable itself while in flight
@@ -181,6 +193,21 @@ export function EmbeddedServerItem({
                   />
                 </Tooltip>
               )}
+              <Tooltip content={showActivity ? "Hide activity" : "Show activity"} side="top">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  iconOnly
+                  aria-label={showActivity ? "Hide activity" : "Show activity"}
+                  aria-pressed={showActivity}
+                  data-testid={`server-activity-toggle-${config.id}`}
+                  icon={<Activity size={12} />}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setShowActivity((v) => !v);
+                  }}
+                />
+              </Tooltip>
               <Tooltip content="Edit" side="top">
                 <Button
                   variant="ghost"
@@ -250,6 +277,9 @@ export function EmbeddedServerItem({
                   data-testid={`server-runloc-${config.id}`}
                 />
               </span>
+              {showActivity && (
+                <EmbeddedServerActivityPanel serverId={config.id} live={status === "running"} />
+              )}
             </>
           }
         />
@@ -298,6 +328,13 @@ export function EmbeddedServerItem({
             data-testid={`ctx-duplicate-${config.id}`}
           >
             <Copy size={14} /> Duplicate
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="context-menu__item"
+            onSelect={() => setShowActivity((v) => !v)}
+            data-testid={`ctx-activity-${config.id}`}
+          >
+            <Activity size={14} /> {showActivity ? "Hide Activity" : "Show Activity"}
           </ContextMenu.Item>
           <ContextMenu.Separator className="context-menu__separator" />
           <ContextMenu.Item

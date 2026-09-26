@@ -1,6 +1,7 @@
 use tauri::State;
 use termihub_core::service::ServiceInfo;
 
+use crate::embedded_servers::activity::ActivitySnapshot;
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState};
 use crate::embedded_servers::server_manager::EmbeddedServerManager;
 use crate::run_location::RunLocation;
@@ -93,6 +94,29 @@ pub fn get_embedded_server_states(
     manager: State<'_, EmbeddedServerManager>,
 ) -> Result<Vec<ServerState>, TerminalError> {
     manager.get_states()
+}
+
+/// Read a server's access log and detailed statistics (PROD-034, PROD-036).
+///
+/// Returns only entries newer than `since_seq` (all retained entries when
+/// omitted), so the UI can poll incrementally. `null` when the server has no
+/// desktop-hosted log (never started here, or hosted on an agent).
+#[tauri::command]
+pub fn get_embedded_server_activity(
+    server_id: String,
+    since_seq: Option<u64>,
+    manager: State<'_, EmbeddedServerManager>,
+) -> Result<Option<ActivitySnapshot>, TerminalError> {
+    manager.get_activity(&server_id, since_seq)
+}
+
+/// Clear a server's access log and its request/error/top counters.
+#[tauri::command]
+pub fn clear_embedded_server_activity(
+    server_id: String,
+    manager: State<'_, EmbeddedServerManager>,
+) -> Result<(), TerminalError> {
+    manager.clear_activity(&server_id)
 }
 
 /// Set (or clear) which machine hosts a server — "This computer" or a named

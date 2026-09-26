@@ -53,6 +53,15 @@ pub struct TunnelConfig {
     /// Whether to start this tunnel automatically when the app launches.
     #[serde(default)]
     pub auto_start: bool,
+    /// Whether to start this tunnel whenever a terminal session for its SSH
+    /// connection (`ssh_connection_id`) connects — the per-connection
+    /// `LocalForward`/`RemoteForward`/`DynamicForward` binding of PROD-023.
+    ///
+    /// Independent of [`auto_start`](Self::auto_start) (app launch). Defaulted on
+    /// deserialize so tunnels saved before this field existed load unchanged, as
+    /// not bound to their connection's sessions.
+    #[serde(default)]
+    pub start_with_connection: bool,
     /// Whether to reconnect automatically on disconnect.
     #[serde(default)]
     pub reconnect_on_disconnect: bool,
@@ -209,6 +218,7 @@ mod tests {
             }),
             host: RunLocation::ThisComputer,
             auto_start: true,
+            start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
         };
@@ -239,6 +249,7 @@ mod tests {
             }),
             host: RunLocation::ThisComputer,
             auto_start: false,
+            start_with_connection: false,
             reconnect_on_disconnect: true,
             companion_of: None,
         };
@@ -266,6 +277,7 @@ mod tests {
             }),
             host: RunLocation::ThisComputer,
             auto_start: false,
+            start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
         };
@@ -294,6 +306,7 @@ mod tests {
                 }),
                 host: RunLocation::ThisComputer,
                 auto_start: false,
+                start_with_connection: false,
                 reconnect_on_disconnect: false,
                 companion_of: None,
             }],
@@ -396,6 +409,7 @@ mod tests {
         }"#;
         let config: TunnelConfig = serde_json::from_str(json).unwrap();
         assert!(!config.auto_start);
+        assert!(!config.start_with_connection);
         assert!(!config.reconnect_on_disconnect);
         // A config saved before the run-location field existed loads as
         // desktop-hosted, so agent hosting is opt-in (S3, #2155).
@@ -417,6 +431,7 @@ mod tests {
             }),
             host: RunLocation::Agent("build-box".to_string()),
             auto_start: false,
+            start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
         };
@@ -446,6 +461,7 @@ mod tests {
             }),
             host: RunLocation::ThisComputer,
             auto_start: false,
+            start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: Some("tun-parent".to_string()),
         };
@@ -485,6 +501,7 @@ mod tests {
             }),
             host: RunLocation::ThisComputer,
             auto_start: false,
+            start_with_connection: false,
             reconnect_on_disconnect: false,
             companion_of: None,
         };
@@ -493,6 +510,7 @@ mod tests {
         assert!(json.get("sshConnectionId").is_some());
         assert!(json.get("tunnelType").is_some());
         assert!(json.get("autoStart").is_some());
+        assert!(json.get("startWithConnection").is_some());
         // Check tagged enum format
         let tunnel_type = json.get("tunnelType").unwrap();
         assert_eq!(tunnel_type.get("type").unwrap(), "local");

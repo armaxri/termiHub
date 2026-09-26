@@ -27,6 +27,7 @@ use anyhow::{Context, Result};
 use tauri::{AppHandle, Emitter};
 use termihub_core::service::drain_broadcast;
 
+use super::activity::ActivitySnapshot;
 use super::config::{
     EmbeddedServerConfig, EmbeddedServerStore, ServerState, ServerStats, ServerStatus,
 };
@@ -427,6 +428,31 @@ impl EmbeddedServerManager {
         Ok(())
     }
 
+    /// Read a server's access log (entries newer than `since`) plus its detailed
+    /// statistics (PROD-034, PROD-036).
+    ///
+    /// `None` when the server has never run on this desktop, or is hosted on an
+    /// agent (the agent keeps its own log; surfacing it over the agent RPC is a
+    /// follow-up).
+    pub fn get_activity(
+        &self,
+        server_id: &str,
+        since: Option<u64>,
+    ) -> Result<Option<ActivitySnapshot>, TerminalError> {
+        let hosted_on_agent = self.lock_agent_servers()?.contains_key(server_id);
+        let services = self.lock_services()?;
+        Ok(read_activity(&services, hosted_on_agent, server_id, since))
+    }
+
+    /// Clear a server's access log and its request/error/top counters. A no-op
+    /// for a server with no desktop-hosted log.
+    pub fn clear_activity(&self, server_id: &str) -> Result<(), TerminalError> {
+        if let Some(service) = self.lock_services()?.get(server_id) {
+            service.clear_activity();
+        }
+        Ok(())
+    }
+
     /// Stop all running servers (called on app shutdown).
     pub fn stop_all(&self) {
         if let Ok(mut services) = self.services.lock() {
@@ -509,6 +535,23 @@ impl EmbeddedServerManager {
             .lock()
             .map_err(|e| TerminalError::EmbeddedServerError(format!("Lock error: {e}")))
     }
+}
+
+/// Resolve the activity snapshot for `server_id` (see
+/// [`EmbeddedServerManager::get_activity`]). A pure helper so the routing can be
+/// unit-tested without an `AppHandle`.
+fn read_activity(
+    services: &HashMap<String, EmbeddedServerService>,
+    hosted_on_agent: bool,
+    server_id: &str,
+    since: Option<u64>,
+) -> Option<ActivitySnapshot> {
+    if hosted_on_agent {
+        return None;
+    }
+    services
+        .get(server_id)
+        .map(|svc| svc.activity_snapshot(since))
 }
 
 /// Build the [`ServiceRegistry`] with the run-location-routable server types.
@@ -924,5 +967,33 @@ mod tests {
         let state = server_state_from_status_reply("srv-1", &reply).expect("running → some");
         assert_eq!(state.status, ServerStatus::Running);
         assert_eq!(state.stats.total_connections, 3);
+    }
+
+    // ── access log routing (PROD-034) ─────────────────────────────────────────
+
+    #[test]
+    fn read_activity_returns_desktop_service_log() {
+        let mut services = HashMap::new();
+        services.insert(
+            "srv-1".to_string(),
+            EmbeddedServerService::new(ServerType::Http),
+        );
+        let snap = read_activity(&services, false, "srv-1", None).expect("desktop log");
+        assert!(snap.entries.is_empty());
+        assert_eq!(
+            snap.capacity,
+            termihub_core::embedded_servers::activity::ACCESS_LOG_CAPACITY
+        );
+    }
+
+    #[test]
+    fn read_activity_is_none_for_unknown_or_agent_hosted_servers() {
+        let mut services = HashMap::new();
+        services.insert(
+            "srv-1".to_string(),
+            EmbeddedServerService::new(ServerType::Http),
+        );
+        assert!(read_activity(&services, false, "missing", None).is_none());
+        assert!(read_activity(&services, true, "srv-1", None).is_none());
     }
 }

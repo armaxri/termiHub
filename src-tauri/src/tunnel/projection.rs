@@ -36,6 +36,7 @@
 //! | `tunnel.start`     | `{ "id": "…" }`    | start a tunnel (async; result as diffs)  |
 //! | `tunnel.stop`      | `{ "id": "…" }`    | stop an active tunnel                     |
 //! | `tunnel.reconnect` | `{ "id": "…" }`    | force stop-then-start (async)            |
+//! | `tunnel.startForConnection` | `{ "connectionId": "…" }` | start the connection's `startWithConnection` tunnels (async) |
 //!
 //! Per the substrate contract the result of an intent is never returned inline —
 //! it always arrives as a projection diff on the `tunnels` region. `start` and
@@ -154,13 +155,28 @@ pub fn register_tunnel_intents(registry: &mut HandlerRegistry, app_handle: AppHa
         Ok(Vec::new())
     });
 
-    let handle = app_handle;
+    let handle = app_handle.clone();
     registry.route("tunnel.reconnect", move |intent, _projector| {
         let id = tunnel_id(intent)?;
         let manager = manager_of(&handle)?;
         tauri::async_runtime::spawn_blocking(move || {
             let _ = manager.stop_tunnel(&id);
             let _ = manager.start_tunnel(&id);
+        });
+        Ok(Vec::new())
+    });
+
+    // PROD-023: a terminal session for a saved SSH connection just connected —
+    // bring up the tunnels bound to it with `startWithConnection`. The selection
+    // and the skip-if-already-active guard live in the manager, so a repeated
+    // dispatch (a second tab, a reconnect) is harmless. Fire-and-forget like
+    // `tunnel.start`: each start's status reaches the UI as diffs.
+    let handle = app_handle;
+    registry.route("tunnel.startForConnection", move |intent, _projector| {
+        let connection_id = connection_id(intent)?;
+        let manager = manager_of(&handle)?;
+        tauri::async_runtime::spawn_blocking(move || {
+            let _ = manager.start_connection_tunnels(&connection_id);
         });
         Ok(Vec::new())
     });
@@ -187,6 +203,22 @@ fn tunnel_id(intent: &Intent) -> Result<String, (String, String)> {
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| ("bad_payload".to_string(), "missing tunnel id".to_string()))
+}
+
+/// Extract the required, non-empty `connectionId` string from an intent payload.
+fn connection_id(intent: &Intent) -> Result<String, (String, String)> {
+    intent
+        .payload
+        .get("connectionId")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            (
+                "bad_payload".to_string(),
+                "missing connection id".to_string(),
+            )
+        })
 }
 
 /// Parse a full [`TunnelConfig`] from an intent payload.
