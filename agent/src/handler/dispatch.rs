@@ -6,7 +6,7 @@
 //! `Arc<Mutex<HandlerState>>`; the shutdown signal is conveyed through
 //! `Arc<AtomicBool>` so the transport can stop after `agent.shutdown`.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
@@ -35,7 +35,8 @@ use crate::protocol::methods::{
     AgentRequestDeferredUpdateResult, AgentRequestUpdateParams, AgentRequestUpdateResult,
     AgentSettings, AgentSettingsUpdateParams, AgentShutdownParams, AgentShutdownResult,
     Capabilities, ConnectionCreateParams, ConnectionDeleteParams, ConnectionInfo,
-    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams,
+    ConnectionListResult, ConnectionTypesResult, ConnectionUpdateParams, CrashReportSummary,
+    CrashReportsListResult, CrashReportsReadParams, CrashReportsReadResult,
     EmbeddedServerActivityParams, EmbeddedServerActivityResult, EmbeddedServerClearActivityParams,
     EmbeddedServerClearActivityResult, FilesCopyParams, FilesCreateSymlinkParams,
     FilesDeleteParams, FilesListParams, FilesListResult, FilesMkdirParams, FilesReadParams,
@@ -147,6 +148,10 @@ struct HandlerState {
     /// This connection's keyboard-interactive prompt relay binding (#3375).
     /// Shared with [`AgentHandler::ki_binding`] so disconnect detaches it.
     ki_binding: Arc<KiBinding>,
+    /// Crash-report directory override (#3574). Empty in production, where the
+    /// agent's own `<config>/logs/crash-reports` is used; tests point it at a
+    /// temp dir via [`AgentHandler::with_crash_dir`].
+    crash_dir: Arc<OnceLock<PathBuf>>,
 }
 
 // ── AgentHandler ───────────────────────────────────────────────────
@@ -187,6 +192,9 @@ pub struct AgentHandler {
     /// address (a server started on port `0`, #3533) without an RPC for it.
     #[cfg_attr(not(test), allow(dead_code))]
     service_registry: Arc<AgentServiceRegistry>,
+    /// Shared with [`HandlerState::crash_dir`]; see [`with_crash_dir`](Self::with_crash_dir).
+    #[cfg_attr(not(test), allow(dead_code))]
+    crash_dir: Arc<OnceLock<PathBuf>>,
 }
 
 impl AgentHandler {
@@ -213,6 +221,7 @@ impl AgentHandler {
         let tunnel_registry = Arc::new(AgentTunnelRegistry::new());
         let tool_runs = ToolRunManager::new(RunLimits::default());
         let ki_binding = KiBinding::new();
+        let crash_dir: Arc<OnceLock<PathBuf>> = Arc::new(OnceLock::new());
 
         let state = Mutex::new(HandlerState {
             session_manager,
@@ -230,6 +239,7 @@ impl AgentHandler {
             tunnel_registry,
             tool_runs: tool_runs.clone(),
             ki_binding: ki_binding.clone(),
+            crash_dir: crash_dir.clone(),
         });
 
         let mut module: RpcModule<Mutex<HandlerState>> = RpcModule::new(state);
@@ -245,7 +255,17 @@ impl AgentHandler {
             tool_runs,
             ki_binding,
             service_registry,
+            crash_dir,
         })
+    }
+
+    /// Serve `agent.crash_reports.*` from `dir` instead of the agent's own
+    /// crash-report directory (#3574). Test-only seam, so handler tests never
+    /// read the real `<config>/logs/crash-reports`.
+    #[cfg(test)]
+    pub fn with_crash_dir(self, dir: PathBuf) -> Self {
+        let _ = self.crash_dir.set(dir);
+        self
     }
 
     /// Relay SSH keyboard-interactive (OTP / 2FA) prompts of connects this agent
@@ -629,6 +649,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_agent_request_deferred_update(module)?;
     register_agent_request_update(module)?;
     register_agent_list_connections(module)?;
+    register_agent_crash_reports(module)?;
     Ok(())
 }
 
@@ -2523,6 +2544,100 @@ fn register_agent_list_connections(
             };
 
             to_result_value(&ConnectionListResult { connections })
+        },
+    )?;
+    Ok(())
+}
+
+// ── agent.crash_reports.* (#3574) ──────────────────────────────────
+
+/// The crash-report directory the `agent.crash_reports.*` methods serve: the
+/// test override when set, otherwise the agent's own (fixed, not wire-chosen)
+/// `<config>/logs/crash-reports`.
+async fn get_crash_dir(
+    ctx: &tokio::sync::Mutex<HandlerState>,
+) -> Result<PathBuf, ErrorObjectOwned> {
+    let s = ctx.lock().await;
+    if !s.initialized {
+        return Err(not_initialized());
+    }
+    Ok(s.crash_dir
+        .get()
+        .cloned()
+        .unwrap_or_else(crate::panic_hook::crash_dir))
+}
+
+/// `agent.crash_reports.list` / `agent.crash_reports.read` — let a connected
+/// desktop pull this agent's own crash reports into its diagnostics bundle.
+///
+/// Read-only and confined to the agent's crash-report directory: the list takes
+/// no params, and `read` accepts only a name the listing currently returns (no
+/// path can be expressed). The reports were redacted when written; each read is
+/// capped at `MAX_REMOTE_REPORT_BYTES` and the listing at `MAX_REMOTE_REPORTS`.
+fn register_agent_crash_reports(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<()> {
+    use termihub_core::diagnostics::crash_report;
+
+    module.register_async_method(
+        pm::AGENT_CRASH_REPORTS_LIST,
+        |_params, ctx, _ext| async move {
+            let dir = get_crash_dir(&ctx).await?;
+            let reports = tokio::task::spawn_blocking(move || crash_report::list_reports(&dir))
+                .await
+                .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?
+                .into_iter()
+                .filter(|r| crash_report::is_plain_report_name(&r.name))
+                .take(crash_report::MAX_REMOTE_REPORTS)
+                .map(|r| CrashReportSummary {
+                    name: r.name,
+                    size: r.size,
+                })
+                .collect();
+            to_result_value(&CrashReportsListResult { reports })
+        },
+    )?;
+
+    module.register_async_method(
+        pm::AGENT_CRASH_REPORTS_READ,
+        |params, ctx, _ext| async move {
+            let dir = get_crash_dir(&ctx).await?;
+            let p: CrashReportsReadParams = params
+                .parse()
+                .map_err(|e| invalid_params("agent.crash_reports.read", e))?;
+            if !crash_report::is_plain_report_name(&p.name) {
+                return Err(invalid_params(
+                    "agent.crash_reports.read",
+                    "not a crash report name",
+                ));
+            }
+            let name = p.name.clone();
+            let read = tokio::task::spawn_blocking(move || {
+                // Only names in the current (capped) listing are readable.
+                let listed = crash_report::list_reports(&dir)
+                    .into_iter()
+                    .take(crash_report::MAX_REMOTE_REPORTS)
+                    .any(|r| r.name == name);
+                if !listed {
+                    return Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+                }
+                crash_report::read_listed_report(&dir, &name, crash_report::MAX_REMOTE_REPORT_BYTES)
+            })
+            .await
+            .map_err(|e| rpc_err(errors::INTERNAL_ERROR, e.to_string()))?;
+            match read {
+                Ok((text, truncated)) => to_result_value(&CrashReportsReadResult {
+                    name: p.name,
+                    text,
+                    truncated,
+                }),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(rpc_err(
+                    errors::FILE_NOT_FOUND,
+                    format!("no crash report named {}", p.name),
+                )),
+                Err(e) => Err(rpc_err(
+                    errors::FILE_OPERATION_FAILED,
+                    format!("could not read crash report: {e}"),
+                )),
+            }
         },
     )?;
     Ok(())
@@ -5934,4 +6049,7 @@ mod tests {
 
     /// Keyboard-interactive prompt relay through dispatch + transport (#3375).
     mod ki_prompt_tests;
+
+    /// `agent.crash_reports.*` — listing, reading, caps, invalid names (#3574).
+    mod crash_reports_tests;
 }

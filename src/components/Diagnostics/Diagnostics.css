@@ -94,3 +94,14 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+.diagnostics__agents {
+  margin-top: var(--spacing-md);
+}
+
+.diagnostics__check {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}

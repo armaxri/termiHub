@@ -6,14 +6,57 @@
 //! save dialog.
 
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
+use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use serde::Serialize;
+use serde_json::Value;
+use tauri::State;
 use termihub_core::diagnostics::crash_report;
 use termihub_core::diagnostics::redact::Redactor;
 
+use crate::terminal::agent_manager::AgentRpcClient;
+use crate::utils::agent_crash_reports::{
+    self, AgentCallError, AgentCrashReportRef, AgentCrashReports, AgentReportSource,
+};
 use crate::utils::diagnostics_bundle::{self, BuildInfo, BundleEntryInfo};
+use crate::utils::errors::TerminalError;
 use crate::utils::file_log;
+
+/// Wait bound for one crash-report call to a connected agent (#3574): the
+/// export is best-effort and must not stall on an unresponsive agent.
+const AGENT_REPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Adapts the agent connection manager to the narrow
+/// [`AgentReportSource`] the remote crash-report export uses (#3574).
+struct ConnectedAgents<'a>(&'a dyn AgentRpcClient);
+
+impl AgentReportSource for ConnectedAgents<'_> {
+    fn connected_agents(&self) -> Vec<String> {
+        self.0.connected_agent_ids()
+    }
+
+    fn call(&self, agent_id: &str, method: &str, params: Value) -> Result<Value, AgentCallError> {
+        // Re-check right before the call: never contact an agent that is not
+        // (still) connected.
+        if !self.0.is_connected(agent_id) {
+            return Err(AgentCallError::Failed("agent is not connected".into()));
+        }
+        self.0
+            .send_request_bounded(agent_id, method, params, AGENT_REPORT_TIMEOUT)
+            .map_err(agent_call_error)
+    }
+}
+
+/// An older agent's "method not found" (typed as
+/// [`TerminalError::AgentUnsupported`], classified by code) means "skip this
+/// agent"; everything else is a per-agent failure shown in the preview.
+fn agent_call_error(e: TerminalError) -> AgentCallError {
+    match e {
+        TerminalError::AgentUnsupported(_) => AgentCallError::Unsupported,
+        other => AgentCallError::Failed(other.to_string()),
+    }
+}
 
 /// The newest crash report the user has not yet been told about.
 #[derive(Debug, Clone, Serialize)]
@@ -79,19 +122,48 @@ pub fn preview_diagnostics_bundle() -> Vec<BundleEntryInfo> {
         .collect()
 }
 
+/// The crash reports of every **already connected** remote agent, for the
+/// export preview (#3574). An agent too old to share them is listed with
+/// `supported: false`; nothing connects to an agent that is not connected.
+#[tauri::command]
+pub async fn list_agent_crash_reports(
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<Vec<AgentCrashReports>, String> {
+    let manager = agent_manager.inner().clone();
+    tokio::task::spawn_blocking(move || {
+        agent_crash_reports::list_connected_agent_reports(&ConnectedAgents(manager.as_ref()))
+    })
+    .await
+    .map_err(|e| format!("listing agent crash reports failed: {e}"))
+}
+
 /// Write the redacted diagnostics zip to the user-chosen `destination`.
+///
+/// `agent_reports` are the remote agent crash reports the user kept selected in
+/// the preview (#3574); they are fetched from their (connected) agents over the
+/// existing connection, capped, and redacted again locally before bundling.
 #[tauri::command]
 pub async fn export_diagnostics_bundle(
     destination: String,
+    agent_reports: Option<Vec<AgentCrashReportRef>>,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
 ) -> Result<DiagnosticsExportResult, String> {
     let dest = validate_destination(&destination)?;
+    let manager = agent_manager.inner().clone();
+    let selection = agent_reports.unwrap_or_default();
     tokio::task::spawn_blocking(move || {
         let log_dir = file_log::log_dir();
-        let entries = diagnostics_bundle::plan_bundle(
+        let mut entries = diagnostics_bundle::plan_bundle(
             log_dir.as_deref(),
             &BuildInfo::current(),
             SystemTime::now(),
         );
+        if !selection.is_empty() {
+            entries.extend(agent_crash_reports::fetch_agent_report_entries(
+                &ConnectedAgents(manager.as_ref()),
+                &selection,
+            ));
+        }
         let redactor = Redactor::for_current_environment();
         let file_count = diagnostics_bundle::write_bundle(&dest, &entries, &redactor)
             .map_err(|e| format!("failed to write diagnostics bundle: {e}"))?;
@@ -138,6 +210,21 @@ mod tests {
         assert!(
             validate_destination(tmp.path().join("nope").join("d.zip").to_str().unwrap()).is_err()
         );
+    }
+
+    #[test]
+    fn an_old_agents_method_not_found_means_unsupported() {
+        // `send_request` classifies JSON-RPC -32601 as AgentUnsupported (#3408).
+        let old = crate::terminal::agent_manager::AgentRpcFailure {
+            code: Some(termihub_core::protocol::errors::METHOD_NOT_FOUND),
+            message: "Method not found".into(),
+        }
+        .into_terminal_error();
+        assert_eq!(agent_call_error(old), AgentCallError::Unsupported);
+        assert!(matches!(
+            agent_call_error(TerminalError::RemoteError("timed out".into())),
+            AgentCallError::Failed(m) if m.contains("timed out")
+        ));
     }
 
     #[test]

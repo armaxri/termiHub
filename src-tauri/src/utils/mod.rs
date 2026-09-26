@@ -1,3 +1,4 @@
+pub mod agent_crash_reports;
 pub mod config_paths;
 pub mod diagnostics_bundle;
 pub mod docker_detect;

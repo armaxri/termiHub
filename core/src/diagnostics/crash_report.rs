@@ -40,6 +40,15 @@ pub const MAX_MESSAGE_BYTES: usize = 4 * 1024;
 /// Cap on the rendered backtrace.
 pub const MAX_BACKTRACE_BYTES: usize = 64 * 1024;
 
+/// Largest single crash report served to a remote reader (the desktop pulling a
+/// connected agent's reports into a diagnostics bundle, #3574). A rendered report
+/// is bounded by [`MAX_MESSAGE_BYTES`] + [`MAX_BACKTRACE_BYTES`] plus a small
+/// header, so a larger file was not written by the panic hook and is cut here.
+pub const MAX_REMOTE_REPORT_BYTES: u64 = 96 * 1024;
+
+/// Most crash reports a remote listing returns ([`MAX_REPORTS`], newest first).
+pub const MAX_REMOTE_REPORTS: usize = MAX_REPORTS;
+
 /// File-name prefix / extension of a crash report.
 const REPORT_PREFIX: &str = "crash-";
 const REPORT_EXT: &str = ".txt";
@@ -218,6 +227,49 @@ pub fn read_report(dir: &Path, name: &str) -> io::Result<String> {
         ));
     }
     fs::read_to_string(dir.join(name))
+}
+
+/// Read one listed report for a **remote** reader (#3574), capped at `max_bytes`.
+///
+/// Stricter than [`read_report`]: `name` must be a plain report name *and* one of
+/// the entries [`list_reports`] currently returns for `dir`, so the caller can
+/// only ever name a file the listing showed — never a path, never a file that
+/// merely looks like a report name. Returns the (lossily UTF-8 decoded) text and
+/// whether it was cut at `max_bytes`.
+pub fn read_listed_report(dir: &Path, name: &str, max_bytes: u64) -> io::Result<(String, bool)> {
+    if !is_plain_report_name(name) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not a crash report name",
+        ));
+    }
+    let Some(entry) = list_reports(dir).into_iter().find(|r| r.name == name) else {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "no such crash report",
+        ));
+    };
+    let mut bytes = Vec::new();
+    io::Read::read_to_end(
+        &mut io::Read::take(fs::File::open(&entry.path)?, max_bytes.saturating_add(1)),
+        &mut bytes,
+    )?;
+    let truncated = bytes.len() as u64 > max_bytes;
+    bytes.truncate(usize::try_from(max_bytes).unwrap_or(usize::MAX));
+    Ok((String::from_utf8_lossy(&bytes).into_owned(), truncated))
+}
+
+/// Whether `name` is a plain crash-report file name: the `crash-…txt` shape, no
+/// path separators or `..`, printable ASCII only and a sane length. Used to
+/// validate names crossing a trust boundary (agent RPC params, and the names an
+/// agent returns, which the desktop turns into zip entry paths).
+pub fn is_plain_report_name(name: &str) -> bool {
+    is_report_name(name)
+        && name.len() <= 128
+        && !name.contains("..")
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
 fn is_report_name(name: &str) -> bool {

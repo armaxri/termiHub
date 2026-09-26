@@ -12,8 +12,15 @@ vi.mock("@/services/api", async (importOriginal) => {
     ...actual,
     previewDiagnosticsBundle: vi.fn(),
     exportDiagnosticsBundle: vi.fn(),
+    listAgentCrashReports: vi.fn(),
   };
 });
+
+vi.mock("@/store/useProjectedAgents", () => ({
+  useProjectedAgents: () => ({
+    remoteAgents: [{ id: "agent-a", name: "Build box" }],
+  }),
+}));
 
 const mockedApi = vi.mocked(api);
 const mockedSave = vi.mocked(save);
@@ -59,6 +66,7 @@ describe("DiagnosticsExportDialog", () => {
     useDiagnosticsDialogStore.setState({ exportOpen: false, viewedReport: null });
     mockedApi.previewDiagnosticsBundle.mockResolvedValue(ENTRIES);
     mockedApi.exportDiagnosticsBundle.mockResolvedValue({ path: "/tmp/d.zip", fileCount: 4 });
+    mockedApi.listAgentCrashReports.mockResolvedValue([]);
   });
 
   afterEach(() => {
@@ -80,7 +88,10 @@ describe("DiagnosticsExportDialog", () => {
     await renderOpen();
     await clickSave();
     expect(mockedSave).toHaveBeenCalledTimes(1);
-    expect(mockedApi.exportDiagnosticsBundle).toHaveBeenCalledWith("/Users/me/Desktop/diag.zip");
+    expect(mockedApi.exportDiagnosticsBundle).toHaveBeenCalledWith(
+      "/Users/me/Desktop/diag.zip",
+      []
+    );
     expect(useDiagnosticsDialogStore.getState().exportOpen).toBe(false);
   });
 
@@ -98,6 +109,63 @@ describe("DiagnosticsExportDialog", () => {
     await renderOpen();
     await clickSave();
     expect(byTestId("diagnostics-export-error")?.textContent).toContain("disk full");
+  });
+
+  describe("remote agent crash reports (#3574)", () => {
+    const R1 = "crash-20260926T120102Z-1.txt";
+    const R2 = "crash-20260925T080000Z-2.txt";
+
+    beforeEach(() => {
+      mockedApi.listAgentCrashReports.mockResolvedValue([
+        {
+          agentId: "agent-a",
+          supported: true,
+          reports: [
+            { name: R1, size: 900 },
+            { name: R2, size: 800 },
+          ],
+        },
+        { agentId: "agent-old", supported: false, reports: [] },
+        { agentId: "agent-down", supported: true, reports: [], error: "timed out" },
+      ]);
+    });
+
+    it("previews each connected agent's reports under its name", async () => {
+      await renderOpen();
+      const section = byTestId("diagnostics-agent-reports");
+      expect(section?.textContent).toContain(`Build box: ${R1}`);
+      expect(section?.textContent).toContain(`Build box: ${R2}`);
+      expect(byTestId(`diagnostics-agent-report-agent-a-${R1}`)?.getAttribute("aria-checked")).toBe(
+        "true"
+      );
+    });
+
+    it("notes agents that are too old or unreachable instead of failing", async () => {
+      await renderOpen();
+      expect(byTestId("diagnostics-agent-agent-old")?.textContent).toContain(
+        "cannot share crash reports"
+      );
+      expect(byTestId("diagnostics-agent-agent-down")?.textContent).toContain("timed out");
+    });
+
+    it("exports the included reports and leaves out excluded ones", async () => {
+      mockedSave.mockResolvedValue("/tmp/d.zip");
+      await renderOpen();
+      await act(async () => {
+        byTestId(`diagnostics-agent-report-agent-a-${R2}`)?.click();
+      });
+      await clickSave();
+      expect(mockedApi.exportDiagnosticsBundle).toHaveBeenCalledWith("/tmp/d.zip", [
+        { agentId: "agent-a", name: R1 },
+      ]);
+    });
+
+    it("shows nothing extra when no agent is connected", async () => {
+      mockedApi.listAgentCrashReports.mockResolvedValue([]);
+      await renderOpen();
+      expect(byTestId("diagnostics-agent-reports")).toBeNull();
+      expect(byTestId("diagnostics-agent-reports-loading")).toBeNull();
+    });
   });
 
   it("suggests a dated zip file name", () => {

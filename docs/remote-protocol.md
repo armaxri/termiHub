@@ -1026,6 +1026,112 @@ Primary consumer is the **connected-host update guard**: before updating an agen
 
 ---
 
+### `agent.crash_reports.list`
+
+List the agent's own local crash reports (OBS-010 follow-up, #3574) so a connected desktop can
+offer them in its **Export Diagnostics** bundle. Read-only, takes no parameters, and only ever
+looks at the agent's fixed crash-report directory (`<config-dir>/logs/crash-reports/`, written by
+the agent panic hook — see ADR-16 in `docs/architecture.md`). Added append-only without a
+protocol bump: an older agent answers `-32601` Method not found, which the desktop treats as
+"this agent cannot share crash reports" and skips with a note in the export preview.
+
+The desktop calls this only on agents that are **already connected**, only when the user opens
+the Export Diagnostics dialog, and never opens a connection for it.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.crash_reports.list",
+  "params": {},
+  "id": 12
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "reports": [{ "name": "crash-20260926T120102Z-4242.txt", "size": 2311 }]
+  },
+  "id": 12
+}
+```
+
+| Result Field     | Type     | Description                                                    |
+| ---------------- | -------- | -------------------------------------------------------------- |
+| `reports`        | `array`  | Crash reports, newest first, at most 10 (`MAX_REMOTE_REPORTS`) |
+| `reports[].name` | `string` | Report file name (never a path); pass to `.read`               |
+| `reports[].size` | `number` | Size on disk in bytes                                          |
+
+A missing crash-report directory yields an empty list.
+
+**Errors:**
+
+- `-32007` Not initialized (must call `initialize` first)
+
+---
+
+### `agent.crash_reports.read`
+
+Read one crash report by a name returned from [`agent.crash_reports.list`](#agentcrash_reportslist)
+(#3574). The report was redacted when the agent wrote it; the desktop redacts it **again** with its
+own redactor before writing it into the bundle.
+
+- `name` must be a plain report name (`crash-….txt`, ASCII letters/digits/`-`/`_`/`.`, no `..`,
+  no path separators) **and** one of the names the current, capped listing returns. There is no
+  way to express a path, so the method cannot read outside the crash-report directory; symlinked
+  entries are never listed.
+- The text is capped at 96 KiB (`MAX_REMOTE_REPORT_BYTES`); a longer file is cut and flagged
+  `truncated`. The desktop re-applies this cap and a 1 MiB total cap per export.
+
+**Request:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "agent.crash_reports.read",
+  "params": { "name": "crash-20260926T120102Z-4242.txt" },
+  "id": 13
+}
+```
+
+**Response:**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "name": "crash-20260926T120102Z-4242.txt",
+    "text": "termiHub crash report\n=====================\n…",
+    "truncated": false
+  },
+  "id": 13
+}
+```
+
+| Param  | Type     | Required | Description                            |
+| ------ | -------- | -------- | -------------------------------------- |
+| `name` | `string` | Yes      | A name from `agent.crash_reports.list` |
+
+| Result Field | Type      | Description                                |
+| ------------ | --------- | ------------------------------------------ |
+| `name`       | `string`  | The report's name                          |
+| `text`       | `string`  | The (already redacted) report text, capped |
+| `truncated`  | `boolean` | `true` when the file exceeded the cap      |
+
+**Errors:**
+
+- `-32007` Not initialized (must call `initialize` first)
+- `-32602` Invalid params (missing `name`, or not a plain crash-report name)
+- `-32010` File not found (no such report in the current listing)
+- `-32012` File operation failed (the report could not be read)
+
+---
+
 ### `agent.shutdown`
 
 Gracefully shut down the agent process. Active sessions are detached (left running in their daemon processes) so they can be recovered by the next agent instance. The agent sends the response before exiting.

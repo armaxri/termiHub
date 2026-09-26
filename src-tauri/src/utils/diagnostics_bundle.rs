@@ -2,7 +2,9 @@
 //!
 //! Builds a zip the user can attach to a bug report: the recent application log
 //! files, the local crash reports, and a version/platform summary — every text
-//! run through the shared [`Redactor`] before it is written. The bundle is only
+//! run through the shared [`Redactor`] before it is written. The export command
+//! may append crash reports pulled from connected remote agents
+//! ([`super::agent_crash_reports`], #3574) as text entries, redacted the same way. The bundle is only
 //! ever written to a destination the user picked in a save dialog; nothing is
 //! uploaded anywhere.
 //!
@@ -88,6 +90,7 @@ Contents:\n\
   system-info.txt   app version, build and platform\n\
   logs/             the recent termiHub application log files\n\
   crash-reports/    local crash reports, if termiHub has crashed\n\
+  agents/           crash reports of connected remote agents you chose to add\n\
 \n\
 Every file was redacted before it was written: passwords, tokens, keys and\n\
 other credential-shaped values, host names, IP addresses, usernames and home\n\
