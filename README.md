@@ -170,7 +170,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 termiHub uses a VS Code-inspired three-column layout:
 
-```
+```text
 ┌──────────┬────────────────┬──────────────────────────────────────────┐
 │ Activity │    Sidebar     │           Terminal View                  │
 │   Bar    │                │  ┌──────┬──────┬──────┐                 │

@@ -6,7 +6,7 @@ termiHub uses a multi-layered testing approach to ensure quality across the enti
 
 ## Testing Layers
 
-```
+```text
 ┌──────────────────────────────────────────┐
 │   System / E2E Tests (Python bridge)      │  ← User flows, click automation
 ├──────────────────────────────────────────┤
@@ -352,7 +352,7 @@ test("terminal UI should match baseline", async ({ page }) => {
 
 ### Naming Convention
 
-```
+```text
 data-testid="<component>-<element>-<action>"
 
 Examples:
@@ -522,7 +522,7 @@ the Rust tool once with `cargo install cargo-llvm-cov` (it needs the
 
 ### 1. Test Pyramid
 
-```
+```text
         /\
        /  \     Few E2E tests (slow, expensive)
       /____\

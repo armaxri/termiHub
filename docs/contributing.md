@@ -417,7 +417,7 @@ git checkout -b feature/my-feature
 
 Follow [Conventional Commits](https://www.conventionalcommits.org/):
 
-```
+```text
 <type>(<scope>): <subject>
 
 <body>
@@ -440,7 +440,7 @@ Messages fails. Use `fix(config): resolve the dev port collision`, not
 
 **Examples:**
 
-```
+```text
 feat(terminal): add horizontal scrolling option
 
 Add per-connection horizontal scroll toggle with runtime
@@ -449,7 +449,7 @@ switching via tab context menu.
 Closes #42
 ```
 
-```
+```text
 fix(ssh): handle connection timeout gracefully
 
 Previously, a connection timeout would crash the app.
@@ -597,14 +597,14 @@ The preferred approach for all bug fixes and feature work is **test-driven devel
 
 **Example commit sequence for a bug fix:**
 
-```
+```text
 test(scope): add regression test for <bug description>
 fix(scope): fix <bug description> (Closes #N)
 ```
 
 **Example commit sequence for a new feature:**
 
-```
+```text
 test(scope): add tests for <feature name>
 feat(scope): implement <feature name> (Closes #N)
 ```
@@ -736,7 +736,7 @@ scripts\build-agents.cmd          # Windows
 
 Binaries are placed in:
 
-```
+```text
 agent/target/<triple>/release/termihub-agent
 ```
 
@@ -980,7 +980,7 @@ Then verify:
 
 ### WebKitGTK not found (Linux)
 
-```
+```text
 error: could not find system library 'webkit2gtk-4.1'
 ```
 
@@ -995,7 +995,7 @@ Install the WebKitGTK development package for your distribution (see [Linux](#li
 
 ### Serial port compilation errors (Linux)
 
-```
+```text
 error: could not find system library 'libudev'
 ```
 
