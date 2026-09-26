@@ -9,8 +9,11 @@
 //! Two knobs let the single fixture drive every test scenario:
 //!
 //! * `termihub_plugin_abi_version` reads the `TERMIHUB_TEST_PLUGIN_ABI`
-//!   environment variable at call time, so the test can force an incompatible
-//!   value without rebuilding.
+//!   environment variable at call time (`"major.minor"`, or a raw packed `u32`
+//!   to simulate a pre-freeze plugin), so the test can force an incompatible
+//!   value without rebuilding. `TERMIHUB_TEST_PLUGIN_INFO_ABI` likewise
+//!   overrides the version reported in `PluginInfo`, to simulate a plugin whose
+//!   two version reports disagree.
 //! * `termihub_plugin_init` is gated behind the `export-init` feature (on by
 //!   default), so a `--no-default-features` build omits it and exercises the
 //!   loader's missing-symbol path.
@@ -23,7 +26,7 @@ use serde::Deserialize;
 use termihub_plugin_api::PluginInfo;
 use termihub_plugin_api::{
     PluginBackend, PluginError, PluginHostBridge, PluginOutputSender, PluginSessionConfig,
-    PluginStatus, PluginTerminalBackend, PluginWriteMode, CURRENT_PLUGIN_API_VERSION,
+    AbiVersion, PluginStatus, PluginTerminalBackend, PluginWriteMode, CURRENT_PLUGIN_ABI_VERSION,
 };
 
 /// A backend that echoes written input straight back to the host output sink.
@@ -51,14 +54,19 @@ impl PluginTerminalBackend for EchoBackend {
     }
 }
 
+/// Read an ABI override from `var`: `"major.minor"`, or a raw packed `u32`.
+fn abi_override(var: &str) -> Option<u32> {
+    let value = std::env::var(var).ok()?;
+    AbiVersion::parse(&value)
+        .map(AbiVersion::to_packed)
+        .or_else(|| value.parse().ok())
+}
+
 /// Report the ABI version. Honours `TERMIHUB_TEST_PLUGIN_ABI` so the test can
 /// force an incompatible value at load time.
 #[no_mangle]
 pub extern "C" fn termihub_plugin_abi_version() -> u32 {
-    std::env::var("TERMIHUB_TEST_PLUGIN_ABI")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(CURRENT_PLUGIN_API_VERSION)
+    abi_override("TERMIHUB_TEST_PLUGIN_ABI").unwrap_or(CURRENT_PLUGIN_ABI_VERSION.to_packed())
 }
 
 /// Fill in the plugin metadata. Omitted from `--no-default-features` builds so
@@ -75,12 +83,11 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
     }
     // SAFETY: caller guarantees `out_info` is valid and writable.
     unsafe {
-        out_info.write(PluginInfo::new(
-            "test-echo",
-            "Test Echo",
-            "0.1.0",
-            CURRENT_PLUGIN_API_VERSION,
-        ));
+        let mut info = PluginInfo::new("test-echo", "Test Echo", "0.1.0");
+        if let Some(packed) = abi_override("TERMIHUB_TEST_PLUGIN_INFO_ABI") {
+            info.api_version = packed;
+        }
+        out_info.write(info);
     }
     PluginStatus::Ok
 }

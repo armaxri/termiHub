@@ -166,6 +166,31 @@ pub type PluginListDirFn = unsafe extern "C" fn(
 /// Signature of the destructor for the host-provided bridge context.
 pub type PluginBridgeDestroyFn = unsafe extern "C" fn(ctx: *mut c_void);
 
+/// Stable `#[repr(C)]` table of the host's capability-bridge callbacks.
+///
+/// **Host-owned** (normally a `'static` in the host) and reached through the
+/// bridge's [`vtable`](PluginHostBridge) pointer, so it is the growth point for
+/// host capabilities: an ABI **minor** may append a new callback at the end,
+/// and a plugin built against an older minor simply never reads past the prefix
+/// it was compiled with. A plugin built against the newer minor only reaches the
+/// new entry on a host of at least that minor, because the load gate refuses a
+/// plugin whose minor exceeds the host's. Existing entries are never reordered,
+/// removed or retyped within a major (see [`crate::version`]).
+#[repr(C)]
+pub struct PluginHostBridgeVTable {
+    /// Open a TCP connection (`network` permission). See [`PluginOpenConnectionFn`].
+    pub open_connection: PluginOpenConnectionFn,
+    /// Read a file (`filesystem` scope). See [`PluginReadFileFn`].
+    pub read_file: PluginReadFileFn,
+    /// Write / append / create a file (`filesystem` scope). See [`PluginWriteFileFn`].
+    pub write_file: PluginWriteFileFn,
+    /// Stat a path (`filesystem` scope). See [`PluginStatPathFn`].
+    pub stat_path: PluginStatPathFn,
+    /// List a directory (`filesystem` scope). See [`PluginListDirFn`].
+    pub list_dir: PluginListDirFn,
+    // Append-only (ABI 1.x): new host capabilities go here, at the end.
+}
+
 /// FFI-safe handle to the host's capability bridge.
 ///
 /// Constructed by the host (its `ctx` owns the session's granted permission set),
@@ -174,14 +199,14 @@ pub type PluginBridgeDestroyFn = unsafe extern "C" fn(ctx: *mut c_void);
 /// and [`read_file`](PluginHostBridge::read_file) on it; both route through the
 /// host's permission checks. Dropping the bridge runs the host-provided
 /// `destroy`, releasing the context.
+///
+/// Because it is passed by value its own layout is **frozen for ABI 1.x**; new
+/// host capabilities are appended to the pointed-to [`PluginHostBridgeVTable`]
+/// instead.
 #[repr(C)]
 pub struct PluginHostBridge {
     ctx: *mut c_void,
-    open_connection: PluginOpenConnectionFn,
-    read_file: PluginReadFileFn,
-    write_file: PluginWriteFileFn,
-    stat_path: PluginStatPathFn,
-    list_dir: PluginListDirFn,
+    vtable: *const PluginHostBridgeVTable,
     destroy: Option<PluginBridgeDestroyFn>,
 }
 
@@ -201,30 +226,27 @@ impl PluginHostBridge {
     ///
     /// # Safety
     ///
-    /// * `open_connection`, `read_file`, `write_file`, `stat_path`, `list_dir`
-    ///   and `destroy` (if any) must be safe to call with `ctx`.
+    /// * Every callback in `vtable`, and `destroy` (if any), must be safe to call
+    ///   with `ctx`.
     /// * `ctx` must remain valid until `destroy` is invoked; ownership of it is
     ///   transferred to the returned bridge.
     #[must_use]
-    #[allow(clippy::too_many_arguments)]
     pub unsafe fn from_raw(
         ctx: *mut c_void,
-        open_connection: PluginOpenConnectionFn,
-        read_file: PluginReadFileFn,
-        write_file: PluginWriteFileFn,
-        stat_path: PluginStatPathFn,
-        list_dir: PluginListDirFn,
+        vtable: &'static PluginHostBridgeVTable,
         destroy: Option<PluginBridgeDestroyFn>,
     ) -> Self {
         Self {
             ctx,
-            open_connection,
-            read_file,
-            write_file,
-            stat_path,
-            list_dir,
+            vtable,
             destroy,
         }
+    }
+
+    fn vtable(&self) -> &PluginHostBridgeVTable {
+        // SAFETY: `vtable` came from a `&'static` in `from_raw` and is never
+        // mutated, so it is valid for the bridge's whole lifetime.
+        unsafe { &*self.vtable }
     }
 
     /// Ask the host to open a TCP connection to `host:port`.
@@ -240,8 +262,9 @@ impl PluginHostBridge {
         // SAFETY: `ctx`/`open_connection` were validated at construction; `host`
         // outlives the call; `&mut stream` is a valid out-parameter the host fills
         // in on `Ok`.
-        let status =
-            unsafe { (self.open_connection)(self.ctx, FfiStr::new(host), port, &mut stream) };
+        let status = unsafe {
+            (self.vtable().open_connection)(self.ctx, FfiStr::new(host), port, &mut stream)
+        };
         status.into_result()?;
         // SAFETY: on `Ok` the host wrote a live, host-owned stream handle whose
         // ownership now transfers to the wrapper.
@@ -257,7 +280,7 @@ impl PluginHostBridge {
         let mut bytes = FfiOwnedBytes::empty();
         // SAFETY: `ctx`/`read_file` were validated at construction; `path` outlives
         // the call; `&mut bytes` is a valid out-parameter the host fills in on `Ok`.
-        let status = unsafe { (self.read_file)(self.ctx, FfiStr::new(path), &mut bytes) };
+        let status = unsafe { (self.vtable().read_file)(self.ctx, FfiStr::new(path), &mut bytes) };
         status.into_result()?;
         Ok(bytes.into_vec())
     }
@@ -277,7 +300,7 @@ impl PluginHostBridge {
         // SAFETY: `ctx`/`write_file` were validated at construction; `path` and
         // `data` outlive the call.
         let status = unsafe {
-            (self.write_file)(
+            (self.vtable().write_file)(
                 self.ctx,
                 FfiStr::new(path),
                 FfiByteSlice::from_slice(data),
@@ -314,7 +337,7 @@ impl PluginHostBridge {
         let mut meta = PluginFileMetadata::absent();
         // SAFETY: `ctx`/`stat_path` were validated at construction; `path` outlives
         // the call; `&mut meta` is a valid out-parameter the host fills in on `Ok`.
-        let status = unsafe { (self.stat_path)(self.ctx, FfiStr::new(path), &mut meta) };
+        let status = unsafe { (self.vtable().stat_path)(self.ctx, FfiStr::new(path), &mut meta) };
         status.into_result()?;
         Ok(meta)
     }
@@ -335,7 +358,7 @@ impl PluginHostBridge {
         let mut entries = FfiOwnedBytes::empty();
         // SAFETY: `ctx`/`list_dir` were validated at construction; `path` outlives
         // the call; `&mut entries` is a valid out-parameter the host fills in on `Ok`.
-        let status = unsafe { (self.list_dir)(self.ctx, FfiStr::new(path), &mut entries) };
+        let status = unsafe { (self.vtable().list_dir)(self.ctx, FfiStr::new(path), &mut entries) };
         status.into_result()?;
         Ok(decode_dir_entries(&entries.into_vec()))
     }
@@ -411,6 +434,7 @@ pub struct PluginTcpStreamVTable {
     ) -> PluginStatus,
     /// Drop the stream and free its `state`. Called exactly once.
     pub destroy: unsafe extern "C" fn(state: *mut c_void),
+    // Append-only (ABI 1.x): host-owned, so later minors may add entries here.
 }
 
 /// FFI-safe handle to a host-mediated TCP stream: an opaque host-owned `state`
@@ -831,17 +855,14 @@ mod teardown_tests {
         // SAFETY: the callbacks are safe to call with the (ignored) dangling ctx,
         // and `destroy` (if any) reclaims it exactly once — but no test here calls
         // a mediated operation, only exercises teardown.
-        unsafe {
-            PluginHostBridge::from_raw(
-                dangling_state(),
-                stub_open,
-                stub_read_file,
-                stub_write_file,
-                stub_stat,
-                stub_list,
-                destroy,
-            )
-        }
+        static STUB_VTABLE: PluginHostBridgeVTable = PluginHostBridgeVTable {
+            open_connection: stub_open,
+            read_file: stub_read_file,
+            write_file: stub_write_file,
+            stat_path: stub_stat,
+            list_dir: stub_list,
+        };
+        unsafe { PluginHostBridge::from_raw(dangling_state(), &STUB_VTABLE, destroy) }
     }
 
     #[test]

@@ -26,7 +26,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use serde::Deserialize;
 use termihub_plugin_api::{
     PluginBackend, PluginError, PluginHostBridge, PluginInfo, PluginOutputSender,
-    PluginSessionConfig, PluginStatus, PluginTerminalBackend, CURRENT_PLUGIN_API_VERSION,
+    PluginSessionConfig, PluginStatus, PluginTerminalBackend, CURRENT_PLUGIN_ABI_VERSION,
 };
 
 /// Session configuration this backend accepts, matching the `configSchema`
@@ -102,11 +102,13 @@ fn build_backend(
     })
 }
 
-/// ABI version this plugin was compiled against. The host compares it to its own
-/// [`CURRENT_PLUGIN_API_VERSION`] before calling anything else.
+/// ABI version this plugin was compiled against, packed as `major << 16 | minor`.
+/// The host checks it against its own ABI before calling anything else: same
+/// major, and a minor no newer than the host's. `manifest.json`'s `apiVersion`
+/// must mirror it (`"1.0"`).
 #[no_mangle]
 pub extern "C" fn termihub_plugin_abi_version() -> u32 {
-    CURRENT_PLUGIN_API_VERSION
+    CURRENT_PLUGIN_ABI_VERSION.to_packed()
 }
 
 /// Report this plugin's metadata into the host-allocated `out_info`.
@@ -126,7 +128,6 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
             "echo-backend",
             "Echo Backend",
             env!("CARGO_PKG_VERSION"),
-            CURRENT_PLUGIN_API_VERSION,
         ));
     }
     PluginStatus::Ok
@@ -222,7 +223,22 @@ mod tests {
 
     #[test]
     fn abi_version_matches_the_api_crate() {
-        assert_eq!(termihub_plugin_abi_version(), CURRENT_PLUGIN_API_VERSION);
+        assert_eq!(
+            termihub_plugin_abi_version(),
+            CURRENT_PLUGIN_ABI_VERSION.to_packed()
+        );
+    }
+
+    #[test]
+    fn manifest_api_version_mirrors_the_abi() {
+        // The manifest's `apiVersion` is a checked mirror of the ABI the library
+        // exports; the host refuses a package whose two disagree.
+        let manifest: serde_json::Value =
+            serde_json::from_str(include_str!("../manifest.json")).unwrap();
+        assert_eq!(
+            manifest["apiVersion"].as_str(),
+            Some(CURRENT_PLUGIN_ABI_VERSION.to_string().as_str())
+        );
     }
 
     #[test]
@@ -255,6 +271,6 @@ mod tests {
         let status = unsafe { termihub_plugin_init(&mut info) };
         assert_eq!(status, PluginStatus::Ok);
         assert_eq!(info.id.as_str(), "echo-backend");
-        assert_eq!(info.api_version, CURRENT_PLUGIN_API_VERSION);
+        assert_eq!(info.abi_version(), CURRENT_PLUGIN_ABI_VERSION);
     }
 }

@@ -17,28 +17,45 @@ pub struct PluginInfo {
     pub name: FfiString,
     /// Plugin's own semantic version string (independent of the ABI version).
     pub version: FfiString,
-    /// ABI version the plugin was built against; the host compares this to
-    /// [`crate::CURRENT_PLUGIN_API_VERSION`] and refuses incompatible plugins.
+    /// ABI version the plugin was built against, [packed](crate::AbiVersion::to_packed)
+    /// (`major << 16 | minor`). Must equal the value the plugin's
+    /// `termihub_plugin_abi_version` returns; the host refuses a plugin whose
+    /// two reports disagree.
     pub api_version: u32,
+    // Append-only (ABI 1.x): the host allocates this struct and a plugin writes
+    // it, so later minors may append fields here; the host reads an appended
+    // field only when the plugin's ABI `supports` the minor that added it.
 }
 
 impl PluginInfo {
-    /// Build a [`PluginInfo`], reporting the given ABI `api_version`.
-    ///
-    /// Plugins should pass [`crate::CURRENT_PLUGIN_API_VERSION`].
+    /// Build a [`PluginInfo`] reporting the ABI version this crate defines
+    /// ([`crate::CURRENT_PLUGIN_ABI_VERSION`]) — what every real plugin wants.
     #[must_use]
-    pub fn new(
+    pub fn new(id: impl Into<String>, name: impl Into<String>, version: impl Into<String>) -> Self {
+        Self::with_abi_version(id, name, version, crate::CURRENT_PLUGIN_ABI_VERSION)
+    }
+
+    /// Build a [`PluginInfo`] reporting an explicit ABI version. Only useful for
+    /// tests that simulate a plugin built against a different ABI.
+    #[must_use]
+    pub fn with_abi_version(
         id: impl Into<String>,
         name: impl Into<String>,
         version: impl Into<String>,
-        api_version: u32,
+        abi_version: crate::AbiVersion,
     ) -> Self {
         Self {
             id: FfiString::from_string(id.into()),
             name: FfiString::from_string(name.into()),
             version: FfiString::from_string(version.into()),
-            api_version,
+            api_version: abi_version.to_packed(),
         }
+    }
+
+    /// The reported ABI version, decoded from [`api_version`](Self::api_version).
+    #[must_use]
+    pub fn abi_version(&self) -> crate::AbiVersion {
+        crate::AbiVersion::from_packed(self.api_version)
     }
 
     /// An empty placeholder the host allocates before calling `plugin_init`,
@@ -74,8 +91,8 @@ impl PluginInfo {
 /// pre-existing field is unchanged: a plugin built against the earlier
 /// single-field struct that reads only `config_json` keeps working unchanged
 /// (it simply ignores the new field), and the host always writes the full
-/// struct. Because the addition is layout-compatible for readers of the earlier
-/// field, it does not bump [`crate::CURRENT_PLUGIN_API_VERSION`].
+/// struct. This is the append-only pattern ABI 1.x minors follow for host-owned,
+/// by-pointer structs (see [`crate::version`]); both fields are part of ABI 1.0.
 #[repr(C)]
 pub struct PluginSessionConfig {
     /// Per-connection JSON configuration, matching the plugin's `configSchema`.
@@ -84,6 +101,8 @@ pub struct PluginSessionConfig {
     /// with the user's stored overrides), shared across the plugin's sessions.
     /// Empty when the plugin declares no settings and none are stored.
     pub settings_json: FfiStr,
+    // Append-only (ABI 1.x): host-owned and passed by pointer, so later minors
+    // may append fields; an older-minor plugin reads only its prefix.
 }
 
 impl PluginSessionConfig {

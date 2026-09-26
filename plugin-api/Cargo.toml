@@ -1,17 +1,18 @@
 [package]
 name = "termihub-plugin-api"
 # Independently versioned from the rest of the workspace: this crate is the
-# ABI contract compiled into BOTH the host and every third-party plugin, so its
-# semver is the plugin-compatibility promise. Bump it (and
-# `CURRENT_PLUGIN_API_VERSION`) deliberately — see the crate docs.
+# ABI contract compiled into BOTH the host and every plugin. The compatibility
+# promise is the native ABI version `CURRENT_PLUGIN_ABI_VERSION` (frozen at 1.0,
+# major/minor, append-only minors — see the crate docs and #3367).
 version = "0.1.0"
 description = "Stable ABI contract for termiHub native (dynamically-loaded) terminal-backend plugins"
 edition = "2021"
-# First-party workspace crate — not currently published to crates.io (the repo
-# is MIT, see /LICENSE). Marks it private so cargo-deny's `[licenses]
-# private.ignore` skips its missing per-crate license field (#2096). If this ABI
-# contract is ever published for third-party plugin authors, drop this and add a
-# real `license` field.
+# Internal for 0.1 (maintainer decision 2026-09-26, #3367): the ABI is frozen,
+# but the SDK is not published — native-plugin authoring is in-repo only (see
+# docs/plugin-authoring.md, "The SDK is internal for 0.1"). The repo is MIT (see
+# /LICENSE); marking it private lets cargo-deny's `[licenses] private.ignore`
+# skip its missing per-crate license field (#2096). When the SDK is published,
+# drop this, add a real `license` field, and tie the crate version to the ABI.
 publish = false
 
 [dependencies]

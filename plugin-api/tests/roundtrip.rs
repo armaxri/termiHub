@@ -8,7 +8,7 @@ use std::sync::mpsc;
 
 use termihub_plugin_api::{
     FfiString, LoadedBackend, PluginBackend, PluginError, PluginInfo, PluginOutputSender,
-    PluginSessionConfig, PluginStatus, PluginTerminalBackend, CURRENT_PLUGIN_API_VERSION,
+    PluginSessionConfig, PluginStatus, PluginTerminalBackend, CURRENT_PLUGIN_ABI_VERSION,
 };
 
 /// A backend whose behavior each test can steer.
@@ -116,16 +116,12 @@ fn plugin_info_owns_and_frees_its_strings() {
     // Host allocates an empty slot; "plugin" fills it; host reads then drops.
     let mut info = PluginInfo::empty();
     assert_eq!(info.id.as_str(), "");
-    info = PluginInfo::new(
-        "k8s-exec",
-        "Kubernetes Exec",
-        "1.2.0",
-        CURRENT_PLUGIN_API_VERSION,
-    );
+    info = PluginInfo::new("k8s-exec", "Kubernetes Exec", "1.2.0");
     assert_eq!(info.id.as_str(), "k8s-exec");
     assert_eq!(info.name.as_str(), "Kubernetes Exec");
     assert_eq!(info.version.as_str(), "1.2.0");
-    assert_eq!(info.api_version, CURRENT_PLUGIN_API_VERSION);
+    assert_eq!(info.api_version, CURRENT_PLUGIN_ABI_VERSION.to_packed());
+    assert_eq!(info.abi_version(), CURRENT_PLUGIN_ABI_VERSION);
     drop(info); // must not leak or double-free the embedded FfiStrings
 }
 
