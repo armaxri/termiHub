@@ -171,17 +171,17 @@ graph LR
     DOCKER_API --> CONTAINERS[Containers]
 ```
 
-| Channel            | Technology                                                | Format                             |
-| ------------------ | --------------------------------------------------------- | ---------------------------------- |
-| Frontend ↔ Backend | Tauri IPC (commands + events)                             | JSON-serialized Rust structs       |
-| Backend → PTY      | `portable-pty` crate (ConPTY on Windows, forkpty on Unix) | Raw bytes                          |
-| Backend → Serial   | `serialport` crate                                        | Raw bytes                          |
-| Backend → SSH      | `russh` crate (pure-Rust)                                 | SSH protocol (encrypted)           |
-| Backend → Telnet   | `tokio::net::TcpStream`                                   | Telnet protocol (IAC, NAWS, TTYPE) |
-| Backend → Docker   | `bollard` crate (Docker Engine API) or Docker CLI         | Raw bytes via PTY/exec             |
-| Backend → WSL      | `wsl.exe` invocation (Windows only)                       | Raw bytes via PTY                  |
-| Backend → FTP      | `suppaftp` crate (async, `async-rustls` TLS)              | FTP/FTPS control + data channels   |
-| Backend → Files    | `std::fs` (local) / `russh-sftp` (remote)                 | File I/O                           |
+| Channel            | Technology                                                | Format                                        |
+| ------------------ | --------------------------------------------------------- | --------------------------------------------- |
+| Frontend ↔ Backend | Tauri IPC (commands + events)                             | JSON-serialized Rust structs                  |
+| Backend → PTY      | `portable-pty` crate (ConPTY on Windows, forkpty on Unix) | Raw bytes                                     |
+| Backend → Serial   | `serialport` crate                                        | Raw bytes                                     |
+| Backend → SSH      | `russh` crate (pure-Rust)                                 | SSH protocol (encrypted)                      |
+| Backend → Telnet   | `tokio::net::TcpStream`                                   | Telnet protocol (IAC, NAWS, TTYPE, ECHO, SGA) |
+| Backend → Docker   | `bollard` crate (Docker Engine API) or Docker CLI         | Raw bytes via PTY/exec                        |
+| Backend → WSL      | `wsl.exe` invocation (Windows only)                       | Raw bytes via PTY                             |
+| Backend → FTP      | `suppaftp` crate (async, `async-rustls` TLS)              | FTP/FTPS control + data channels              |
+| Backend → Files    | `std::fs` (local) / `russh-sftp` (remote)                 | File I/O                                      |
 
 ---
 
@@ -404,18 +404,18 @@ graph TD
     CT --> REG
 ```
 
-| Module         | Location               | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| -------------- | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Connection** | `core/src/connection/` | The central abstraction layer: `ConnectionType` async trait (the unified interface all backends implement), `ConnectionTypeRegistry` (runtime registry with factory functions), `SettingsSchema` types for dynamic UI form generation (groups, fields, field types including text, password, number, boolean, select, port, file path, key-value list, object list), `Condition` for conditional field visibility, `Capabilities` (monitoring, file browser, resize, persistent), and settings validation                           |
-| **Backends**   | `core/src/backends/`   | Concrete `ConnectionType` implementations, each gated behind a cargo feature flag: `local_shell` (portable-pty), `ssh` (russh + russh-sftp with auth, file browser, monitoring, X11), `serial` (serialport crate), `telnet` (raw TCP + IAC, NAWS window size, TERMINAL-TYPE, optional prompt-driven auto-login), `docker` (bollard + file browser), `wsl` (Windows only), `ftp` (suppaftp — FTP/FTPS client with file browser + transfers, desktop-only; see [§8 FTP client sessions](#ftp-client-sessions-and-the-transfer-queue)) |
-| **Buffer**     | `core/src/buffer/`     | `RingBuffer` — 1 MiB circular byte buffer for output replay and serial capture                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| **Config**     | `core/src/config/`     | Unified configuration types (`ShellConfig`, `SshConfig`, `DockerConfig`, `SerialConfig`, `WslConfig`, `PtySize`, `EnvVar`, `VolumeMount`) with config value expansion utilities (`${VAR}` and tilde expansion via `shellexpand`)                                                                                                                                                                                                                                                                                                    |
-| **Errors**     | `core/src/errors.rs`   | Shared error types (`CoreError`, `SessionError`, `FileError`) with `From` conversions for `std::io::Error`                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| **Files**      | `core/src/files/`      | `FileBrowser` async trait (the single file-capability interface across core, desktop and agent), `LocalFileBrowser` implementation, `FileEntry` struct, and utilities (`chrono_from_epoch`, `format_permissions`, `normalize_path_separators`, `list_dir_sync`)                                                                                                                                                                                                                                                                     |
-| **Monitoring** | `core/src/monitoring/` | `MonitoringProvider` trait, `SystemStats`, `CpuCounters`, `StatsCollector` trait, and parsers (`parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`)                                                                                                                                                                                                                                                                                                           |
-| **Output**     | `core/src/output/`     | `OutputCoalescer` for batching terminal output and `contains_screen_clear` for ANSI screen-clear detection                                                                                                                                                                                                                                                                                                                                                                                                                          |
-| **Protocol**   | `core/src/protocol/`   | `JsonRpcNotification` (agent → desktop push) and standard/application error code constants; request/response handling is delegated to [`jsonrpsee`](https://crates.io/crates/jsonrpsee)                                                                                                                                                                                                                                                                                                                                             |
-| **Session**    | `core/src/session/`    | Transport traits (`OutputSink`, `ProcessSpawner`, `ProcessHandle`) and session helpers — shell command building, SSH argument building, Docker CLI argument building, serial config parsing and port management                                                                                                                                                                                                                                                                                                                     |
+| Module         | Location               | Responsibility                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| -------------- | ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Connection** | `core/src/connection/` | The central abstraction layer: `ConnectionType` async trait (the unified interface all backends implement), `ConnectionTypeRegistry` (runtime registry with factory functions), `SettingsSchema` types for dynamic UI form generation (groups, fields, field types including text, password, number, boolean, select, port, file path, key-value list, object list), `Condition` for conditional field visibility, `Capabilities` (monitoring, file browser, resize, persistent), and settings validation                                                                   |
+| **Backends**   | `core/src/backends/`   | Concrete `ConnectionType` implementations, each gated behind a cargo feature flag: `local_shell` (portable-pty), `ssh` (russh + russh-sftp with auth, file browser, monitoring, X11), `serial` (serialport crate), `telnet` (raw TCP + IAC, NAWS window size, TERMINAL-TYPE, ECHO/SGA, character or line input mode, optional prompt-driven auto-login), `docker` (bollard + file browser), `wsl` (Windows only), `ftp` (suppaftp — FTP/FTPS client with file browser + transfers, desktop-only; see [§8 FTP client sessions](#ftp-client-sessions-and-the-transfer-queue)) |
+| **Buffer**     | `core/src/buffer/`     | `RingBuffer` — 1 MiB circular byte buffer for output replay and serial capture                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| **Config**     | `core/src/config/`     | Unified configuration types (`ShellConfig`, `SshConfig`, `DockerConfig`, `SerialConfig`, `WslConfig`, `PtySize`, `EnvVar`, `VolumeMount`) with config value expansion utilities (`${VAR}` and tilde expansion via `shellexpand`)                                                                                                                                                                                                                                                                                                                                            |
+| **Errors**     | `core/src/errors.rs`   | Shared error types (`CoreError`, `SessionError`, `FileError`) with `From` conversions for `std::io::Error`                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Files**      | `core/src/files/`      | `FileBrowser` async trait (the single file-capability interface across core, desktop and agent), `LocalFileBrowser` implementation, `FileEntry` struct, and utilities (`chrono_from_epoch`, `format_permissions`, `normalize_path_separators`, `list_dir_sync`)                                                                                                                                                                                                                                                                                                             |
+| **Monitoring** | `core/src/monitoring/` | `MonitoringProvider` trait, `SystemStats`, `CpuCounters`, `StatsCollector` trait, and parsers (`parse_stats`, `parse_cpu_line`, `cpu_percent_from_delta`, `parse_meminfo_value`, `parse_df_output`, `MONITORING_COMMAND`)                                                                                                                                                                                                                                                                                                                                                   |
+| **Output**     | `core/src/output/`     | `OutputCoalescer` for batching terminal output and `contains_screen_clear` for ANSI screen-clear detection                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Protocol**   | `core/src/protocol/`   | `JsonRpcNotification` (agent → desktop push) and standard/application error code constants; request/response handling is delegated to [`jsonrpsee`](https://crates.io/crates/jsonrpsee)                                                                                                                                                                                                                                                                                                                                                                                     |
+| **Session**    | `core/src/session/`    | Transport traits (`OutputSink`, `ProcessSpawner`, `ProcessHandle`) and session helpers — shell command building, SSH argument building, Docker CLI argument building, serial config parsing and port management                                                                                                                                                                                                                                                                                                                                                             |
 
 ### Level 2: Agent Modules
 
@@ -1182,9 +1182,11 @@ Supported field types: `text`, `password`, `number`, `boolean`, `select` (dropdo
 
 ### Credential Storage
 
-termiHub provides optional credential encryption with two storage modes:
+termiHub provides optional credential storage with three modes (`StorageMode` in
+`src-tauri/src/credential/types.rs`):
 
-- **Master Password** — Encrypts all credentials into a single `credentials.enc` file using Argon2id key derivation and AES-256-GCM authenticated encryption. Supports auto-lock after a configurable inactivity timeout.
+- **Master Password** — Encrypts all credentials into a single `credentials.enc` file using Argon2id key derivation and AES-256-GCM authenticated encryption. Supports auto-lock after a configurable inactivity timeout, and optional biometric unlock (see below).
+- **OS keychain** — Stores each credential as an entry in the native OS credential store (macOS Keychain, Windows Credential Manager, Linux Secret Service) through the `keyring` crate (`src-tauri/src/credential/os_keychain.rs`). There is no in-app lock: the OS protects the entries with the login session. Because termiHub can read its own entries without an OS prompt, exporting them requires a fresh [OS user verification](#os-user-verification-and-biometric-unlock). See [ADR-6](#adr-6-credential-storage-evolved) for the trade-offs.
 - **None** — Passwords are prompted at connection time and never persisted (the default for new installations).
 
 Credential storage is managed through the Security section in Settings.
@@ -1198,9 +1200,11 @@ file and imports such a file into the **current** store (PROD-063, `src-tauri/sr
   master password re-entered) and an **export passphrase** entered twice (minimum 12 characters,
   different from the master password, with a strength hint). In **OS-keychain mode** termiHub can
   read its own keychain items without a prompt, so every export instead requires a fresh **OS user
-  verification** (Touch ID / login password on macOS, Windows Hello on Windows — see
+  verification** (Touch ID / login password on macOS, Windows Hello on Windows, the account password
+  through polkit on Linux — see
   [OS user verification and biometric unlock](#os-user-verification-and-biometric-unlock));
-  where the OS cannot verify the user (Linux) the export stays refused (backend and UI). Import into
+  where the OS cannot verify the user (e.g. a Linux AppImage without the polkit action) the export
+  stays refused (backend and UI). Import into
   the keychain is allowed. The file is written only after encryption; plaintext never reaches the disk, the logs
   or the clipboard, and in-memory copies are zeroized.
 - **File format** — a versioned JSON header around the standard envelope:
@@ -1261,11 +1265,38 @@ PROD-064). Every platform implements the `OsUserVerifier` trait; the contract is
 only an explicit OS confirmation is success, and cancel, failure, timeout and "not available" all
 refuse the operation.
 
-| Platform      | Mechanism                                                                                                                                                                                                     | Enrollment binding                                                               |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| macOS         | LocalAuthentication `LAContext` (`objc2-local-authentication`): `deviceOwnerAuthentication` (Touch ID **or** login password) for export; `deviceOwnerAuthenticationWithBiometrics` (Touch ID only) for unlock | SHA-256 of `evaluatedPolicyDomainState` (changes when a finger is added/removed) |
-| Windows       | Windows Hello `UserConsentVerifier` (face / fingerprint / PIN) via `IUserConsentVerifierInterop`, parented to the termiHub window (`windows` crate)                                                           | None — Windows exposes no enrollment state                                       |
-| Linux / other | **Unavailable.** There is no standard per-user re-authentication API (polkit authorizes _administrative_ actions and needs a system-installed policy file), so verification always fails closed               | —                                                                                |
+| Platform | Mechanism                                                                                                                                                                                                                                                                        | Enrollment binding                                                               |
+| -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| macOS    | LocalAuthentication `LAContext` (`objc2-local-authentication`): `deviceOwnerAuthentication` (Touch ID **or** login password) for export; `deviceOwnerAuthenticationWithBiometrics` (Touch ID only) for unlock                                                                    | SHA-256 of `evaluatedPolicyDomainState` (changes when a finger is added/removed) |
+| Windows  | Windows Hello `UserConsentVerifier` (face / fingerprint / PIN) via `IUserConsentVerifierInterop`, parented to the termiHub window (`windows` crate)                                                                                                                              | None — Windows exposes no enrollment state                                       |
+| Linux    | polkit ([#3535](https://github.com/armaxri/termiHub/issues/3535)): `CheckAuthorization` with `AllowUserInteraction` on the `com.termihub.app.reauthenticate` action (`zbus`); the session's polkit agent asks for the user's **own** password. Export only — no biometric unlock | None — password only                                                             |
+| Other    | **Unavailable** — verification always fails closed                                                                                                                                                                                                                               | —                                                                                |
+
+**Linux (polkit).** Linux has no per-user "confirm it is you" API, so termiHub ships a polkit
+action, `src-tauri/packaging/linux/com.termihub.app.policy`, installed to
+`/usr/share/polkit-1/actions/` by the `.deb` and `.rpm` packages (`bundle.linux.*.files` in
+`tauri.conf.json`). Its only default is `allow_active = auth_self` — the user's own password, not an
+administrator's, and **not** `auth_self_keep`, so polkit retains nothing and every export prompts
+again; inactive and remote sessions get `no`. The subject is termiHub's own system-bus connection
+(`system-bus-name`), which polkit resolves to this process, user and session without the PID-reuse
+race of a `unix-process` subject. The mapping is fail closed:
+
+| polkit outcome                                                           | Result                                                     |
+| ------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `is_authorized = true`                                                   | success (the only one)                                     |
+| `polkit.dismissed` detail (dialog closed)                                | cancelled                                                  |
+| `is_challenge = true` despite `AllowUserInteraction` (no agent running)  | unavailable — "no polkit authentication agent"             |
+| not authorized otherwise                                                 | failed                                                     |
+| action not registered (AppImage / portable build, package not installed) | unavailable — install the .deb/.rpm or use Master Password |
+| polkit / system bus unreachable, D-Bus error                             | unavailable / error                                        |
+| prompt open longer than 5 minutes                                        | `CancelCheckAuthorization`, failed                         |
+
+Known limitations: the AppImage and portable builds cannot install a system polkit action, so
+keychain export stays blocked there (switch to Master Password storage to export); a headless or
+SSH session without a polkit agent is likewise refused; and a local administrator can override the
+action with a polkit rule (e.g. `return polkit.Result.YES`) — that is their machine's policy, the
+same way an administrator can reconfigure PAM. The prompt text comes from the installed policy
+file, not from termiHub at runtime.
 
 It is used for two things:
 
@@ -1875,7 +1906,7 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
 
 **Context:** SSH connections require authentication credentials. The original decision (Phase 1) was to prompt for passwords at connection time and never persist them. As the project matured, a credential storage system was implemented.
 
-**Decision:** Provide two credential storage modes — master password encryption and no storage (prompt-only). The user chooses their mode in Security settings.
+**Decision:** Provide three credential storage modes — master password encryption, the native OS keychain, and no storage (prompt-only). The user chooses their mode in Security settings.
 
 **Rationale:**
 
@@ -1883,9 +1914,34 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
 - No-storage mode preserves the original Phase 1 behavior for users who prefer it
 - Key-based authentication (recommended) doesn't require password storage regardless of mode
 - Auto-lock timeout adds an additional security layer
-- An OS keychain backend was implemented and later removed: it offered no additional security over master password on macOS (login.keychain is silently unlocked during the session) while adding platform-specific complexity and inconsistent behaviour across OSes
 
-**Trade-off:** Master password mode requires the user to remember a master password. If lost, stored credentials are unrecoverable.
+**Amendment — OS keychain mode returned ([#956](https://github.com/armaxri/termiHub/issues/956), [#3433](https://github.com/armaxri/termiHub/issues/3433), [#3535](https://github.com/armaxri/termiHub/issues/3535)):**
+An earlier OS keychain backend had been removed because it added no security over the master
+password on macOS (the login keychain is silently unlocked for the session) while adding
+platform-specific complexity. It was re-introduced as a third, opt-in mode over the maintained
+`keyring` crate (macOS Keychain / Windows Credential Manager / Linux Secret Service):
+
+- **Why it came back:** users expect saved passwords to live in the store their OS already manages
+  (backed up, synced and administered with the rest of their secrets, no extra password to
+  remember), and the `keyring` crate removed most of the per-platform code that made the first
+  attempt costly. The security argument is unchanged — it is a convenience mode, not a stronger one;
+  Master Password remains the recommended mode where portability or an extra secret matters.
+- **Trade-offs:** there is no in-app lock or auto-lock (the OS unlocks the store with the login
+  session), and anyone with the unlocked session can read the entries through termiHub. Behaviour
+  differs per OS (e.g. Secret Service needs a running keyring daemon), and the store is not
+  enumerable, so migration relies on termiHub's own connection list.
+- **OS-verification gate:** because termiHub reads its keychain entries without an OS prompt,
+  exporting them (vault export, the credentials section of a backup) requires a fresh
+  `OsUserVerifier` confirmation every time — Touch ID / login password on macOS, Windows Hello on
+  Windows, the account password through a shipped polkit action on Linux. See
+  [OS user verification and biometric unlock](#os-user-verification-and-biometric-unlock).
+- **Known limitation:** the gate only works where the OS can verify the user. On Linux that
+  requires the polkit action installed by the `.deb` / `.rpm` packages and a running polkit agent;
+  AppImage and portable builds, and sessions without an agent, fail closed and cannot export from
+  the keychain (switch to Master Password storage to export). The gate protects **export only** —
+  it does not stop another process running as the same user from reading the OS store directly.
+
+**Trade-off:** Master password mode requires the user to remember a master password. If lost, stored credentials are unrecoverable. OS keychain mode trades an extra secret for the OS login session's protection and the export gate above.
 
 ### ADR-7: ConnectionType Trait and Registry
 

@@ -1,6 +1,7 @@
-//! Telnet option negotiation (RFC 854 / RFC 855) for the two options the
-//! client performs: **NAWS** (window size, RFC 1073) and **TERMINAL-TYPE**
-//! (RFC 1091).
+//! Telnet option negotiation (RFC 854 / RFC 855) for the options the client
+//! performs — **NAWS** (window size, RFC 1073), **TERMINAL-TYPE** (RFC 1091)
+//! and **SUPPRESS-GO-AHEAD** (RFC 858) — and the options it lets the server
+//! perform: **ECHO** (RFC 857) and **SUPPRESS-GO-AHEAD**.
 //!
 //! [`Negotiator`] is a pure state machine — it never touches a socket. Callers
 //! feed it the `DO`/`DONT`/`WILL`/`WONT` commands and subnegotiations the
@@ -15,8 +16,24 @@
 //! | State     | Meaning                                             |
 //! | --------- | --------------------------------------------------- |
 //! | `No`      | Option off.                                         |
-//! | `WantYes` | We sent `WILL` and await the server's `DO`/`DONT`.  |
-//! | `Yes`     | Option on (the server sent `DO` and we agreed).     |
+//! | `WantYes` | We asked (`WILL`/`DO`) and await the server's answer. |
+//! | `Yes`     | Option on (both sides agreed).                      |
+//!
+//! The same three states are tracked for options the *server* performs
+//! (`WILL`/`WONT` from the server, answered with `DO`/`DONT`). The client
+//! never asks to *disable* an option, so the RFC 1143 `WantNo` states are not
+//! needed. A redundant request for an option already in the requested state
+//! is never answered, which is what makes the machine loop-safe.
+//!
+//! Which server options are accepted depends on the [`InputMode`]:
+//!
+//! | Server offers | Character mode (default) | Line mode            |
+//! | ------------- | ------------------------ | -------------------- |
+//! | `WILL ECHO`   | `DO` (server echoes)     | `DO` (hides passwords) |
+//! | `WILL SGA`    | `DO`                     | `DONT`               |
+//!
+//! Character mode also requests `DO SGA` up front, like classic telnet
+//! clients.
 
 /// Interpret As Command.
 pub(super) const IAC: u8 = 255;
@@ -29,6 +46,10 @@ pub(super) const WONT: u8 = 252;
 pub(super) const DO: u8 = 253;
 pub(super) const DONT: u8 = 254;
 
+/// ECHO option code (RFC 857).
+pub(super) const OPT_ECHO: u8 = 1;
+/// SUPPRESS-GO-AHEAD option code (RFC 858).
+pub(super) const OPT_SGA: u8 = 3;
 /// TERMINAL-TYPE option code (RFC 1091).
 pub(super) const OPT_TTYPE: u8 = 24;
 /// Negotiate About Window Size option code (RFC 1073).
@@ -53,7 +74,35 @@ pub(super) const DEFAULT_ROWS: u16 = 24;
 /// misconfiguration and is truncated rather than sent verbatim.
 const MAX_TERMINAL_TYPE_LEN: usize = 40;
 
-/// Client-side negotiation state of one option.
+/// How keyboard input is handled (`inputMode` setting).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum InputMode {
+    /// Every keystroke is sent immediately; the server echoes (the default,
+    /// and what every saved connection without the setting gets).
+    #[default]
+    Character,
+    /// termiHub edits the line locally and sends it on Enter, echoing typed
+    /// text itself whenever the server is not echoing.
+    Line,
+}
+
+impl InputMode {
+    /// `inputMode` setting value for [`InputMode::Character`].
+    pub const CHARACTER: &'static str = "character";
+    /// `inputMode` setting value for [`InputMode::Line`].
+    pub const LINE: &'static str = "line";
+
+    /// Parse the `inputMode` setting; absent or unknown values fall back to
+    /// character mode.
+    pub fn from_setting(value: Option<&str>) -> Self {
+        match value.map(|v| v.trim().to_ascii_lowercase()) {
+            Some(v) if v == Self::LINE => Self::Line,
+            _ => Self::Character,
+        }
+    }
+}
+
+/// Negotiation state of one option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum OptState {
     No,
@@ -61,12 +110,20 @@ enum OptState {
     Yes,
 }
 
-/// Telnet option negotiator for NAWS and TERMINAL-TYPE.
+/// Telnet option negotiator.
 #[derive(Debug)]
 pub(super) struct Negotiator {
     terminal_type: String,
+    input_mode: InputMode,
+    /// Options the client performs.
     naws: OptState,
     ttype: OptState,
+    sga_us: OptState,
+    /// Options the server performs.
+    echo_him: OptState,
+    sga_him: OptState,
+    /// Whether the up-front offers were already produced.
+    offered: bool,
     cols: u16,
     rows: u16,
 }
@@ -77,11 +134,46 @@ impl Negotiator {
     pub(super) fn new(terminal_type: &str) -> Self {
         Self {
             terminal_type: sanitize_terminal_type(terminal_type),
+            input_mode: InputMode::Character,
             naws: OptState::No,
             ttype: OptState::No,
+            sga_us: OptState::No,
+            echo_him: OptState::No,
+            sga_him: OptState::No,
+            offered: false,
             cols: DEFAULT_COLS,
             rows: DEFAULT_ROWS,
         }
+    }
+
+    /// Use `mode` for keyboard input (builder style).
+    pub(super) fn with_input_mode(mut self, mode: InputMode) -> Self {
+        self.input_mode = mode;
+        self
+    }
+
+    /// The configured input mode.
+    #[cfg(test)]
+    pub(super) fn input_mode(&self) -> InputMode {
+        self.input_mode
+    }
+
+    /// Whether the server currently echoes our input (ECHO enabled).
+    pub(super) fn remote_echo(&self) -> bool {
+        self.echo_him == OptState::Yes
+    }
+
+    /// Whether the server suppresses go-ahead (SGA enabled on its side).
+    #[cfg(test)]
+    pub(super) fn remote_sga(&self) -> bool {
+        self.sga_him == OptState::Yes
+    }
+
+    /// Whether input should be line-edited and echoed locally: line mode,
+    /// and the server is not echoing (it takes over echo e.g. while it
+    /// reads a password).
+    pub(super) fn local_line_editing(&self) -> bool {
+        self.input_mode == InputMode::Line && !self.remote_echo()
     }
 
     /// The terminal type this negotiator reports.
@@ -95,41 +187,61 @@ impl Negotiator {
         self.naws == OptState::Yes
     }
 
-    /// Bytes to send right after the TCP connect: proactively offer
-    /// `WILL NAWS` so servers that never ask (many embedded telnetds) still
-    /// learn the window size. A refusing server answers `DONT NAWS`, which
-    /// quietly returns the option to `No`.
+    /// Bytes to send right after the TCP connect (produced once):
+    /// proactively offer `WILL NAWS` so servers that never ask (many embedded
+    /// telnetds) still learn the window size, and — in character mode —
+    /// request `DO SGA`. A refusing server answers `DONT NAWS` / `WONT SGA`,
+    /// which quietly returns the option to `No`.
     pub(super) fn initial_offer(&mut self) -> Vec<u8> {
-        if self.naws == OptState::No {
-            self.naws = OptState::WantYes;
-            vec![IAC, WILL, OPT_NAWS]
-        } else {
-            Vec::new()
+        if self.offered {
+            return Vec::new();
         }
+        self.offered = true;
+        let mut out = Vec::new();
+        Self::request(&mut self.naws, WILL, OPT_NAWS, &mut out);
+        if self.input_mode == InputMode::Character {
+            Self::request(&mut self.sga_him, DO, OPT_SGA, &mut out);
+        }
+        out
     }
 
     /// Handle `IAC <cmd> <opt>` from the server, appending any reply to `out`.
     pub(super) fn on_command(&mut self, cmd: u8, opt: u8, out: &mut Vec<u8>) {
         match (cmd, opt) {
             (DO, OPT_NAWS) => {
-                if Self::accept(&mut self.naws, OPT_NAWS, out) {
+                if Self::accept(&mut self.naws, WILL, OPT_NAWS, out) {
                     // Newly enabled: report the current size straight away.
                     out.extend_from_slice(&naws_subnegotiation(self.cols, self.rows));
                 }
             }
             (DO, OPT_TTYPE) => {
                 // The type itself is only sent on `SB TTYPE SEND`.
-                Self::accept(&mut self.ttype, OPT_TTYPE, out);
+                Self::accept(&mut self.ttype, WILL, OPT_TTYPE, out);
             }
-            (DONT, OPT_NAWS) => Self::refuse(&mut self.naws, OPT_NAWS, out),
-            (DONT, OPT_TTYPE) => Self::refuse(&mut self.ttype, OPT_TTYPE, out),
-            // Any other option we are asked to perform: decline.
+            // We never send go-aheads, so suppressing them is free.
+            (DO, OPT_SGA) => {
+                Self::accept(&mut self.sga_us, WILL, OPT_SGA, out);
+            }
+            (DONT, OPT_NAWS) => Self::refuse(&mut self.naws, WONT, OPT_NAWS, out),
+            (DONT, OPT_TTYPE) => Self::refuse(&mut self.ttype, WONT, OPT_TTYPE, out),
+            (DONT, OPT_SGA) => Self::refuse(&mut self.sga_us, WONT, OPT_SGA, out),
+            // Any other option we are asked to perform — including ECHO: the
+            // client never echoes the server's output back — is declined.
             (DO, other) => out.extend_from_slice(&[IAC, WONT, other]),
-            // Options the server offers to perform: decline (unchanged
-            // historical behaviour — the backend runs a plain byte stream).
+            (WILL, OPT_ECHO) => {
+                Self::accept(&mut self.echo_him, DO, OPT_ECHO, out);
+            }
+            (WILL, OPT_SGA) if self.input_mode == InputMode::Character => {
+                Self::accept(&mut self.sga_him, DO, OPT_SGA, out);
+            }
+            (WONT, OPT_ECHO) => Self::refuse(&mut self.echo_him, DONT, OPT_ECHO, out),
+            (WONT, OPT_SGA) => Self::refuse(&mut self.sga_him, DONT, OPT_SGA, out),
+            // Other options the server offers to perform (and SGA in line
+            // mode): decline. The state stays `No`, so this is RFC 1143's
+            // "refuse in NO" and cannot loop.
             (WILL, other) => out.extend_from_slice(&[IAC, DONT, other]),
-            // DONT for an option we never enabled, or WONT for any option:
-            // nothing to acknowledge.
+            // DONT for an option we never enabled, or WONT for any other
+            // option: nothing to acknowledge.
             _ => {}
         }
     }
@@ -156,17 +268,27 @@ impl Negotiator {
         (changed && self.naws_enabled()).then(|| naws_subnegotiation(cols, rows))
     }
 
-    /// Server sent `DO <opt>` for an option we support. Returns `true` when
+    /// Ask for `opt` to be enabled (`WILL` for our side, `DO` for the
+    /// server's) unless it is already on or pending.
+    fn request(slot: &mut OptState, cmd: u8, opt: u8, out: &mut Vec<u8>) {
+        if *slot == OptState::No {
+            out.extend_from_slice(&[IAC, cmd, opt]);
+            *slot = OptState::WantYes;
+        }
+    }
+
+    /// The server asked for (`DO`) or offered (`WILL`) an option we support;
+    /// `agree` is our agreeing reply (`WILL` resp. `DO`). Returns `true` when
     /// the option transitioned to enabled by this call.
-    fn accept(slot: &mut OptState, opt: u8, out: &mut Vec<u8>) -> bool {
+    fn accept(slot: &mut OptState, agree: u8, opt: u8, out: &mut Vec<u8>) -> bool {
         match *slot {
             // Unsolicited request: agree.
             OptState::No => {
-                out.extend_from_slice(&[IAC, WILL, opt]);
+                out.extend_from_slice(&[IAC, agree, opt]);
                 *slot = OptState::Yes;
                 true
             }
-            // Acknowledgement of our own `WILL`: no reply (that would loop).
+            // Acknowledgement of our own request: no reply (that would loop).
             OptState::WantYes => {
                 *slot = OptState::Yes;
                 true
@@ -176,11 +298,12 @@ impl Negotiator {
         }
     }
 
-    /// Server sent `DONT <opt>`: a refusal of our offer, or a request to stop.
-    fn refuse(slot: &mut OptState, opt: u8, out: &mut Vec<u8>) {
+    /// The server sent `DONT`/`WONT`: a refusal of our request, or a request
+    /// to stop. `ack` is the acknowledging reply (`WONT` resp. `DONT`).
+    fn refuse(slot: &mut OptState, ack: u8, opt: u8, out: &mut Vec<u8>) {
         match *slot {
             OptState::Yes => {
-                out.extend_from_slice(&[IAC, WONT, opt]);
+                out.extend_from_slice(&[IAC, ack, opt]);
                 *slot = OptState::No;
             }
             // Refusal of our offer — the negotiation simply ends.

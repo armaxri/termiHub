@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<!--
+  termiHub polkit action (#3535). Installed to /usr/share/polkit-1/actions/ by
+  the .deb and .rpm packages. termiHub checks this action before exporting
+  credentials from the OS keychain so the person at the keyboard must enter
+  their own account password:
+  - auth_self (not auth_self_keep): polkit retains nothing, so every export
+    prompts again;
+  - inactive and remote sessions are refused.
+  Keep the action id in sync with ACTION_ID in
+  src-tauri/src/credential/os_auth/polkit.rs.
+-->
+<policyconfig>
+  <vendor>termiHub</vendor>
+  <vendor_url>https://github.com/armaxri/termiHub</vendor_url>
+
+  <action id="com.termihub.app.reauthenticate">
+    <description>Confirm your identity to export saved credentials</description>
+    <message>termiHub is trying to export the credentials saved in your keyring. Enter your password to allow this.</message>
+    <defaults>
+      <allow_any>no</allow_any>
+      <allow_inactive>no</allow_inactive>
+      <allow_active>auth_self</allow_active>
+    </defaults>
+  </action>
+</policyconfig>

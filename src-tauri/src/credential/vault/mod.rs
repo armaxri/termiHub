@@ -65,7 +65,7 @@ pub const MIN_EXPORT_PASSPHRASE_LEN: usize = 12;
 /// because OS user verification is unavailable here (#3433). The OS-specific
 /// reason follows it.
 pub const KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE: &str = "Exporting from the OS keychain requires \
-     system authentication (Touch ID / Windows Hello), which is not available on this computer.";
+     system authentication (Touch ID / Windows Hello / polkit), which is not available on this computer.";
 /// The prompt reason for export re-authentication; completes the OS sentence
 /// "termiHub is trying to …".
 pub const EXPORT_REAUTH_REASON: &str = "export your saved credentials";
@@ -258,10 +258,12 @@ pub struct VaultImportResult {
 ///   be used to walk off with every secret.
 /// - OS keychain: termiHub can read its own keychain items without an OS
 ///   prompt, so the OS must verify the user (Touch ID / login password on
-///   macOS, Windows Hello on Windows) **for every export** — nothing is cached
-///   (#3433). Cancelled or failed verification refuses the export
-///   (`reauthFailed`); where OS verification is unavailable (Linux) the
-///   export stays refused (`reauthUnavailable`). Fails closed.
+///   macOS, Windows Hello on Windows, the account password via polkit on
+///   Linux) **for every export** — nothing is cached (#3433, #3535).
+///   Cancelled or failed verification refuses the export (`reauthFailed`);
+///   where OS verification is unavailable (e.g. a Linux AppImage without the
+///   polkit action) the export stays refused (`reauthUnavailable`). Fails
+///   closed.
 pub fn authorize_export(
     manager: &CredentialManager,
     master_password: Option<&str>,

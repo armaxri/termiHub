@@ -544,7 +544,7 @@ fn keychain_manager(dir: &Path, verifier: Arc<MockVerifier>) -> CredentialManage
 
 #[test]
 fn keychain_export_refused_when_os_verification_unavailable() {
-    // No OS verification (e.g. Linux) → the export stays blocked, with the
+    // No OS verification (e.g. Linux AppImage) → the export stays blocked, with the
     // OS reason, and no prompt is attempted (#3433).
     let dir = tempfile::tempdir().unwrap();
     let verifier = Arc::new(MockVerifier::unavailable());

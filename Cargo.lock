@@ -7757,6 +7757,7 @@ dependencies = [
  "windows-sys 0.59.0",
  "winreg 0.55.0",
  "x11rb",
+ "zbus 5.15.0",
  "zeroize",
  "zip",
 ]

@@ -29,7 +29,7 @@ function unavailableReason(mode: CredentialStorageMode, status: string | undefin
  * enforces the gate independently (#3433).
  */
 export const KEYCHAIN_EXPORT_UNAVAILABLE_REASON =
-  "Exporting from the OS keychain requires system authentication (Touch ID / Windows Hello), which is not available on this computer.";
+  "Exporting from the OS keychain requires system authentication (Touch ID / Windows Hello / polkit), which is not available on this computer.";
 
 /** Shown while the OS-verification capability is still being read. */
 export const KEYCHAIN_EXPORT_CHECKING_REASON = "Checking system authentication…";

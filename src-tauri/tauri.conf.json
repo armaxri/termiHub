@@ -58,6 +58,18 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "linux": {
+      "deb": {
+        "files": {
+          "/usr/share/polkit-1/actions/com.termihub.app.policy": "packaging/linux/com.termihub.app.policy"
+        }
+      },
+      "rpm": {
+        "files": {
+          "/usr/share/polkit-1/actions/com.termihub.app.policy": "packaging/linux/com.termihub.app.policy"
+        }
+      }
+    }
   }
 }

@@ -204,3 +204,79 @@ async fn tel_03_command_execution() {
         .await
         .expect("Disconnect should succeed");
 }
+
+// ── TEL-04/05: ECHO / SGA negotiation and input modes (#3396) ────────
+
+/// Accumulate output until `pred` holds or `secs` elapse; returns the text.
+async fn collect_until(
+    rx: &mut termihub_core::connection::OutputReceiver,
+    secs: u64,
+    pred: impl Fn(&str) -> bool,
+) -> String {
+    let mut acc = String::new();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+    while !pred(&acc) {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Some(data)) => acc.push_str(&String::from_utf8_lossy(&data)),
+            Ok(None) | Err(_) => break,
+        }
+    }
+    acc
+}
+
+/// Connect with `input_mode`, log in as testuser and return the session with
+/// its output receiver, positioned at the shell prompt.
+async fn login(input_mode: &str) -> (Telnet, termihub_core::connection::OutputReceiver) {
+    let mut telnet = Telnet::new();
+    telnet
+        .connect(serde_json::json!({
+            "host": "127.0.0.1",
+            "port": port_telnet(),
+            "inputMode": input_mode,
+        }))
+        .await
+        .expect("telnet connect should succeed");
+    let mut rx = telnet.subscribe_output();
+    collect_until(&mut rx, 10, |s| s.to_lowercase().contains("login")).await;
+    telnet.write(b"testuser\r").expect("username write");
+    collect_until(&mut rx, 10, |s| s.to_lowercase().contains("password")).await;
+    telnet.write(b"testpass\r").expect("password write");
+    let prompt = collect_until(&mut rx, 10, |s| s.contains('$')).await;
+    assert!(prompt.contains('$'), "no shell prompt: {prompt}");
+    (telnet, rx)
+}
+
+#[tokio::test]
+async fn tel_04_character_mode_server_echo_once() {
+    require_docker!(port_telnet());
+    let (mut telnet, mut rx) = login("character").await;
+    // Typed keystrokes are echoed by the server (ECHO accepted) — exactly once,
+    // since character mode never echoes locally.
+    telnet
+        .write(b"echo tel04-$((6*7))\r")
+        .expect("command write");
+    let out = collect_until(&mut rx, 10, |s| s.contains("tel04-42")).await;
+    assert!(
+        out.contains("tel04-42"),
+        "TEL-04: command output missing: {out}"
+    );
+    assert_eq!(
+        out.matches("echo tel04-").count(),
+        1,
+        "TEL-04: typed command must be echoed exactly once: {out:?}"
+    );
+    telnet.disconnect().await.expect("disconnect");
+}
+
+#[tokio::test]
+async fn tel_05_line_mode_login_and_command() {
+    require_docker!(port_telnet());
+    let (mut telnet, mut rx) = login("line").await;
+    telnet.write(b"whoami\r").expect("command write");
+    let out = collect_until(&mut rx, 10, |s| s.contains("testuser")).await;
+    assert!(
+        out.contains("testuser"),
+        "TEL-05: whoami output missing: {out}"
+    );
+    telnet.disconnect().await.expect("disconnect");
+}
