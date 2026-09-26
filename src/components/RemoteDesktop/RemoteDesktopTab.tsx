@@ -11,7 +11,7 @@ import { remoteDesktopGetClipboard } from "@/services/api";
 import { fireAndForget } from "@/utils/frontendLog";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import type { RemoteClipboardFile, ScaleMode } from "@/types/remoteDesktop";
-import { SCALE_MODE_LABELS } from "@/types/remoteDesktop";
+import { SCALE_MODE_LABELS, effectiveScaleMode, scaleModesFor } from "@/types/remoteDesktop";
 import { RemoteDesktopCanvas } from "./RemoteDesktopCanvas";
 import { RemoteDesktopToolbar } from "./RemoteDesktopToolbar";
 import { RemoteDesktopOverlay } from "./RemoteDesktopOverlay";
@@ -22,9 +22,6 @@ interface RemoteDesktopTabProps {
   tabId: string;
   isVisible: boolean;
 }
-
-/** Cycle order for the scaling toolbar button. */
-const SCALE_CYCLE: ScaleMode[] = ["fit", "pixel", "match"];
 
 /**
  * Tab body for a graphical remote-desktop connection (`Capabilities.graphical`,
@@ -46,7 +43,13 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   const [scaleModeOverride, setScaleModeOverride] = useState<ScaleMode | null>(null);
 
   const session = useRemoteDesktopSession(tabId);
-  const scaleMode = scaleModeOverride ?? session.scaleMode;
+  // A fixed-resolution session (PROD-026) only toggles Fit ↔ 1:1: it scales
+  // locally and never asks the remote to resize.
+  const scaleCycle = scaleModesFor(session.fixedResolution);
+  const scaleMode = effectiveScaleMode(
+    scaleModeOverride ?? session.scaleMode,
+    session.fixedResolution
+  );
   // #3388 (SM-003 single-attach for windows): another window of this app has
   // taken this graphical session over. The canvas stays mounted but frozen on
   // its last frame (frames now go only to the controlling window), dimmed under
@@ -92,11 +95,11 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
   }, [session]);
 
   const handleCycleScaleMode = useCallback(() => {
-    const idx = SCALE_CYCLE.indexOf(scaleMode);
-    const next = SCALE_CYCLE[(idx + 1) % SCALE_CYCLE.length];
+    const idx = scaleCycle.indexOf(scaleMode);
+    const next = scaleCycle[(idx + 1) % scaleCycle.length];
     setScaleModeOverride(next);
     toast.success(`Scaling: ${SCALE_MODE_LABELS[next]}`);
-  }, [scaleMode]);
+  }, [scaleMode, scaleCycle]);
 
   const handleFullscreen = useCallback(() => {
     const el = surfaceRef.current;
