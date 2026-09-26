@@ -314,6 +314,25 @@ export type { ConnectionConfig };
 export type BroadcastScope = "all" | "panel" | "custom";
 
 /**
+ * A persistent, named broadcast group (PROD-061, #3443): a reusable set of
+ * **saved connections** the user can broadcast to (or replay a macro on) without
+ * re-picking a custom selection every session. Stored in `AppSettings.broadcastGroups`.
+ *
+ * Membership is keyed by saved-connection id — tab ids are ephemeral — so a group
+ * resolves to every open terminal tab opened from one of its connections. Ad-hoc
+ * tabs (local shells, spawned containers) have no saved connection and cannot be
+ * group members; the picker says so rather than guessing by title.
+ */
+export interface BroadcastGroup {
+  /** Stable group id. */
+  id: string;
+  /** User-visible group name (unique, case-insensitive). */
+  name: string;
+  /** Saved-connection ids that belong to the group. */
+  connectionIds: string[];
+}
+
+/**
  * Broadcast-input state (#1955). When {@link BroadcastState.broadcastActive} is
  * set, typed input in the source terminal is mirrored to every connected target
  * session. The source tab is itself included in `broadcastTargetTabIds`, so the
