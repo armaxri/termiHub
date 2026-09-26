@@ -84,9 +84,16 @@ fn trust_stores_round_trip_and_load_in_the_real_stores() {
         SSH_FILE,
         &json!({"a.example:22": ["SHA256:A1", "SHA256:A2"]}),
     );
-    write_doc(src.path(), RDP_FILE, &json!({"b.example:3389": ["sha256:B1"]}));
+    write_doc(
+        src.path(),
+        RDP_FILE,
+        &json!({"b.example:3389": ["sha256:B1"]}),
+    );
     let json = backup_of(src.path(), &["sshKnownHosts", "rdpKnownHosts"], true).unwrap();
-    assert!(!json.contains("a.example"), "host leaked into the ciphertext");
+    assert!(
+        !json.contains("a.example"),
+        "host leaked into the ciphertext"
+    );
 
     let dst = tempfile::tempdir().unwrap();
     let opened = restore::open(&json, Some(PASSPHRASE)).unwrap();
@@ -106,8 +113,14 @@ fn trust_stores_round_trip_and_load_in_the_real_stores() {
 
     // The restored files are in the stores' own (unversioned) format.
     let ssh = SshTrustStore::open(dst.path().to_path_buf());
-    assert_eq!(ssh.lookup("a.example:22", "SHA256:A2"), TrustLookup::Trusted);
-    assert_eq!(ssh.lookup("a.example:22", "SHA256:XX"), TrustLookup::Changed);
+    assert_eq!(
+        ssh.lookup("a.example:22", "SHA256:A2"),
+        TrustLookup::Trusted
+    );
+    assert_eq!(
+        ssh.lookup("a.example:22", "SHA256:XX"),
+        TrustLookup::Changed
+    );
     let rdp = RdpTrustStore::open(dst.path().to_path_buf());
     assert!(rdp.entries()["b.example:3389"] == vec!["sha256:B1".to_string()]);
     assert!(read_doc(dst.path(), SSH_FILE).get("version").is_none());

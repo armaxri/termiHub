@@ -307,7 +307,13 @@ fn merge_skip_keeps_installed_plugins_and_overwrite_replaces_them() {
     );
     assert!(!preview.conflicts_keep_existing);
 
-    restore_and_boot(&json, dst.path(), RestoreMode::Merge, ConflictStrategy::Skip).unwrap();
+    restore_and_boot(
+        &json,
+        dst.path(),
+        RestoreMode::Merge,
+        ConflictStrategy::Skip,
+    )
+    .unwrap();
     assert_eq!(file(dst.path(), THEME_ID, "themes/dark.json"), b"mine");
     assert!(plugins_root(dst.path()).join(NATIVE_ID).is_dir());
     assert!(plugins_root(dst.path()).join("local-only").is_dir());
@@ -534,7 +540,11 @@ fn hostile_plugin_sections_are_refused() {
 #[test]
 fn failed_startup_swap_rolls_plugin_directories_back() {
     let (src, _) = populated_source();
-    std::fs::write(src.path().join("macros.json"), r#"{"version":"1","macros":[]}"#).unwrap();
+    std::fs::write(
+        src.path().join("macros.json"),
+        r#"{"version":"1","macros":[]}"#,
+    )
+    .unwrap();
     let json = export::build(
         src.path(),
         &BackupExportOptions {
