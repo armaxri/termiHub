@@ -216,3 +216,97 @@ describe("resolveConnectSecret", () => {
     expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "password");
   });
 });
+
+/**
+ * Telnet auto-login (#3393) reuses the SSH credential path: its schema gates
+ * the password on `authMethod === "password"` (auto-login) and defaults to
+ * `"none"` (manual login in the terminal).
+ */
+describe("resolveConnectSecret — telnet auto-login schema", () => {
+  const TELNET_SCHEMA: SettingsSchema = {
+    groups: [
+      {
+        key: "telnet",
+        label: "Telnet",
+        fields: [
+          { key: "host", label: "Host", fieldType: { type: "text" }, required: true },
+          { key: "port", label: "Port", fieldType: { type: "port" }, required: true },
+        ],
+      },
+      {
+        key: "login",
+        label: "Login",
+        fields: [
+          {
+            key: "authMethod",
+            label: "Login",
+            fieldType: {
+              type: "select",
+              options: [
+                { value: "none", label: "Manual" },
+                { value: "password", label: "Auto-login" },
+              ],
+            },
+            required: false,
+            default: "none",
+          },
+          {
+            key: "username",
+            label: "Username",
+            fieldType: { type: "text" },
+            required: false,
+            visibleWhen: { field: "authMethod", equals: "password" },
+          },
+          {
+            key: "password",
+            label: "Password",
+            fieldType: { type: "password" },
+            required: false,
+            visibleWhen: { field: "authMethod", equals: "password" },
+          },
+        ],
+      },
+    ],
+  } as unknown as SettingsSchema;
+
+  const requestPassword = vi.fn<ResolveConnectSecretOptions["requestPassword"]>();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedUnlock.mockResolvedValue(true);
+  });
+
+  it("needs no secret for manual login", async () => {
+    const r = await resolveConnectSecret({
+      schema: TELNET_SCHEMA,
+      settings: { host: "sw1", port: 23, authMethod: "none" },
+      connectionId: "t1",
+      requestPassword,
+    });
+    expect(r).toEqual({ status: "none" });
+    expect(mockedResolve).not.toHaveBeenCalled();
+    expect(requestPassword).not.toHaveBeenCalled();
+  });
+
+  it("resolves the stored password for auto-login", async () => {
+    mockedResolve.mockResolvedValue({
+      password: "stored-pw",
+      usedStoredCredential: true,
+      credentialType: "password",
+    });
+    const r = await resolveConnectSecret({
+      schema: TELNET_SCHEMA,
+      settings: { host: "sw1", port: 23, authMethod: "password", username: "admin" },
+      connectionId: "t1",
+      requestPassword,
+    });
+    expect(mockedResolve).toHaveBeenCalledWith("t1", "password", undefined);
+    expect(r).toEqual({
+      status: "resolved",
+      passwordKey: "password",
+      secret: "stored-pw",
+      source: "stored",
+      credentialType: "password",
+    });
+  });
+});
