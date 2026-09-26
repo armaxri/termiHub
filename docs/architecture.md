@@ -1329,7 +1329,9 @@ passes the same auto-lock fail-safe gate (WA-RS-004) as a password unlock.
 **Known limitation.** The wrapping key is gated by termiHub's own OS verification, not by a
 hardware-bound access control. Binding it cryptographically (macOS `SecAccessControl`
 `.biometryCurrentSet` in the data-protection keychain, Windows Hello `KeyCredentialManager`
-signatures) needs a code-signed build with keychain entitlements and is tracked as a follow-up.
+signatures) needs a code-signed build with keychain entitlements and is tracked in
+[#3534](https://github.com/armaxri/termiHub/issues/3534); Linux support in
+[#3535](https://github.com/armaxri/termiHub/issues/3535).
 
 #### Unified backup and restore
 
