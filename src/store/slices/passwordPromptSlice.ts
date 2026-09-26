@@ -27,6 +27,17 @@ import type { AppState } from "../appStore";
  */
 export type PasswordPromptKind = "password" | "key_passphrase";
 
+/** Per-request options for {@link PasswordPromptSlice.requestPassword}. */
+export interface PasswordPromptOptions {
+  /**
+   * Whether the prompt may offer its "Save password" control. Defaults to
+   * `true`. A caller that never persists the entered secret — e.g. Test
+   * Connection (#3316) — passes `false` so the prompt shows no no-op Save box,
+   * and a submit from such a prompt never reports `shouldSave`.
+   */
+  allowSave?: boolean;
+}
+
 export interface PasswordPromptSlice {
   passwordPromptOpen: boolean;
   passwordPromptHost: string;
@@ -47,11 +58,18 @@ export interface PasswordPromptSlice {
    * `"password"`.
    */
   passwordPromptKind: PasswordPromptKind;
+  /**
+   * Whether the open prompt may offer its "Save password" control (#3316).
+   * `false` when the requesting flow never persists the secret. Defaults to
+   * `true`.
+   */
+  passwordPromptAllowSave: boolean;
   requestPassword: (
     host: string,
     username: string,
     notice?: string,
-    kind?: PasswordPromptKind
+    kind?: PasswordPromptKind,
+    options?: PasswordPromptOptions
   ) => Promise<string | null>;
   submitPassword: (password: string, shouldSave?: boolean) => void;
   dismissPasswordPrompt: () => void;
@@ -68,8 +86,9 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
   passwordPromptShouldSave: false,
   passwordPromptNotice: "",
   passwordPromptKind: "password",
+  passwordPromptAllowSave: true,
 
-  requestPassword: (host, username, notice = "", kind = "password") => {
+  requestPassword: (host, username, notice = "", kind = "password", options = {}) => {
     return new Promise<string | null>((resolve) => {
       set({
         passwordPromptOpen: true,
@@ -79,21 +98,24 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
         passwordPromptShouldSave: false,
         passwordPromptNotice: notice,
         passwordPromptKind: kind,
+        passwordPromptAllowSave: options.allowSave ?? true,
       });
     });
   },
 
   submitPassword: (password, shouldSave = false) => {
-    const { passwordPromptResolve } = get();
+    const { passwordPromptResolve, passwordPromptAllowSave } = get();
     if (passwordPromptResolve) passwordPromptResolve(password);
     set({
       passwordPromptOpen: false,
       passwordPromptHost: "",
       passwordPromptUsername: "",
       passwordPromptResolve: null,
-      passwordPromptShouldSave: shouldSave,
+      // A prompt that offered no Save control can never report a save (#3316).
+      passwordPromptShouldSave: passwordPromptAllowSave && shouldSave,
       passwordPromptNotice: "",
       passwordPromptKind: "password",
+      passwordPromptAllowSave: true,
     });
   },
 
@@ -108,6 +130,7 @@ export const createPasswordPromptSlice: StateCreator<AppState, [], [], PasswordP
       passwordPromptShouldSave: false,
       passwordPromptNotice: "",
       passwordPromptKind: "password",
+      passwordPromptAllowSave: true,
     });
   },
 });

@@ -207,4 +207,40 @@ describe("PasswordPrompt", () => {
     const result = await promise;
     expect(result).toBeNull();
   });
+
+  it("hides the save checkbox when the caller disallows saving (#3316)", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+    await act(async () => {
+      useAppStore
+        .getState()
+        .requestPassword("example.com", "alice", "", "password", { allowSave: false });
+    });
+    render();
+
+    expect(query("password-prompt-input")).not.toBeNull();
+    expect(query("password-prompt-save-checkbox")).toBeNull();
+    expect(query("password-prompt-save-label")).toBeNull();
+  });
+
+  it("submits without saving from a prompt that disallows saving (#3316)", async () => {
+    useAppStore.setState({
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+    });
+    let resolved: Promise<string | null> = Promise.resolve(null);
+    await act(async () => {
+      resolved = useAppStore
+        .getState()
+        .requestPassword("example.com", "alice", "", "password", { allowSave: false });
+    });
+    render();
+
+    act(() => {
+      query("password-prompt-connect")!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await expect(resolved).resolves.toBe("");
+    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+  });
 });

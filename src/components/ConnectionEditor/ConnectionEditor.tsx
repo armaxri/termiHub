@@ -1161,9 +1161,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
 
     // Resolve a stored credential / key passphrase the form does not carry,
     // exactly as Save & Connect does — but in a non-persisting mode (#3284):
-    // nothing is saved, a prompt-entered secret is never stored (the prompt's
-    // Save box is ignored), and the secret goes only into this in-memory probe
-    // config — never into form state, so it is neither dirty-tracked nor
+    // nothing is saved, a prompt-entered secret is never stored (the prompt
+    // shows no Save box, #3316), and the secret goes only into this in-memory
+    // probe config — never into form state, so it is neither dirty-tracked nor
     // persisted on a later Save. Agent-definition sessions resolve credentials
     // agent-side, as Save & Connect does. An unsaved (create-flow) connection
     // has no persisted id to key the vault, so no stored credential can exist
@@ -1174,6 +1174,8 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         settings: connSettings,
         connectionId: existingConnection?.id ?? existingAgent?.id ?? null,
         requestPassword,
+        // Test never persists the secret, so the prompt offers no Save box (#3316).
+        allowSave: false,
       });
       if (secret.status === "canceled") {
         // Cancel cleanly: no probe ran, so no auth-failure toast. Rethrow so the
