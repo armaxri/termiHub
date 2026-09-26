@@ -185,6 +185,7 @@ fn capabilities_round_trip_serialization() {
         })],
         max_sessions: 5,
         monitoring_supported: false,
+        tool_streaming: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -721,6 +722,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             docker_available: false,
             available_docker_images: vec![],
             monitoring_supported: false,
+            tool_streaming: false,
             agent_version: String::new(),
         },
         client_id: String::new(),
@@ -855,6 +857,7 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
             docker_available: false,
             available_docker_images: vec![],
             monitoring_supported: false,
+            tool_streaming: false,
             agent_version: String::new(),
         },
         client_id: String::new(),
@@ -1274,4 +1277,66 @@ fn golden_vector_agent_backoff_sequence_then_give_up() {
         state.attempt, config.max_attempts,
         "exactly `max_attempts` (10) attempts are made before giving up"
     );
+}
+
+// ── Streaming tool-run routing (#3353) ─────────────────────────────
+
+#[test]
+fn tool_run_notifications_route_to_their_run_and_done_drops_the_route() {
+    use termihub_core::protocol::methods::{TOOL_DONE, TOOL_EVENT};
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    let mut routes: HashMap<String, ToolRunSender> = HashMap::new();
+    routes.insert("r1".to_string(), tx);
+
+    let ev = json!({ "runId": "r1", "events": [{ "kind": "result", "payload": { "i": 1 } }] });
+    assert!(route_tool_run_notification(&mut routes, TOOL_EVENT, &ev));
+    match rx.try_recv().expect("event routed") {
+        ToolRunMessage::Events(events) => {
+            assert_eq!(events.len(), 1);
+            assert_eq!(events[0].payload["i"], 1);
+        }
+        other => panic!("expected events, got {other:?}"),
+    }
+
+    // An unknown run's notification is consumed and dropped.
+    let stray = json!({ "runId": "other", "events": [] });
+    assert!(route_tool_run_notification(&mut routes, TOOL_EVENT, &stray));
+    assert!(rx.try_recv().is_err());
+
+    let done = json!({ "runId": "r1", "result": { "total": 1 }, "cancelled": true });
+    assert!(route_tool_run_notification(&mut routes, TOOL_DONE, &done));
+    match rx.try_recv().expect("done routed") {
+        ToolRunMessage::Done(d) => {
+            assert!(d.cancelled);
+            assert_eq!(d.result, Some(json!({ "total": 1 })));
+            assert_eq!(d.dropped_events, 0);
+        }
+        other => panic!("expected done, got {other:?}"),
+    }
+    assert!(routes.is_empty(), "tool.done drops the route");
+
+    // Anything else is not a tool-run notification.
+    assert!(!route_tool_run_notification(
+        &mut routes,
+        "connection.output",
+        &json!({})
+    ));
+}
+
+#[test]
+fn capabilities_without_tool_streaming_default_to_false() {
+    // An older agent's `initialize` has no `toolStreaming` → one-shot fallback.
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+    }))
+    .unwrap();
+    assert!(!caps.tool_streaming);
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+        "toolStreaming": true,
+    }))
+    .unwrap();
+    assert!(caps.tool_streaming);
 }

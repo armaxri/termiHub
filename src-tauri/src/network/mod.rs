@@ -4,6 +4,7 @@
 //! Manages running task lifetimes (port scans, ping sessions, traceroutes) and
 //! the persistent HTTP monitors.
 
+pub mod agent_stream;
 pub mod agent_tools;
 pub mod events;
 pub mod http_monitor;
