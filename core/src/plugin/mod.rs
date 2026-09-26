@@ -64,6 +64,7 @@ mod connection;
 mod fat_pack;
 mod host;
 mod host_context;
+mod log_rate_limit;
 mod manager;
 mod manifest;
 mod native_trust;

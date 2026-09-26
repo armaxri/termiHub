@@ -14,7 +14,10 @@
 //!   unwind into plugin frames;
 //! * treats plugin-supplied data as untrusted — the log level is a validated
 //!   `u32`, the message is read only up to [`MAX_LOG_MESSAGE_BYTES`], decoded
-//!   lossily and stripped of control characters.
+//!   lossily and stripped of control characters;
+//! * is **rate-limited per plugin** by a [`PluginLogLimiter`] shared by every
+//!   session of the plugin (see [`super::log_rate_limit`]): excess lines are
+//!   dropped with an `Ok` status and reported by one summary line per window.
 //!
 //! The context is an [`Arc`]'d [`ServicesState`] whose strong count is the
 //! handle count: `retain`/`release` map to `Arc::increment_strong_count` /
@@ -31,6 +34,7 @@ use termihub_plugin_api::{
     MAX_LOG_MESSAGE_BYTES,
 };
 
+use super::log_rate_limit::{emit_suppression_summary, PluginLogLimiter};
 use super::manifest::is_valid_plugin_id;
 
 /// The `tracing` target every plugin log line is emitted under. A `tracing`
@@ -56,16 +60,25 @@ pub(crate) struct ServicesState {
     session_cancelled: AtomicBool,
     /// Set when the whole plugin is unloaded; shared by all its sessions.
     plugin_shutdown: Arc<AtomicBool>,
+    /// The plugin-wide log rate limiter; shared by all its sessions so opening
+    /// more sessions does not raise the plugin's log budget.
+    log_limiter: Arc<PluginLogLimiter>,
 }
 
 impl ServicesState {
     /// Create the state for one session of plugin `plugin_id`, observing the
-    /// plugin-wide `plugin_shutdown` flag.
-    pub(crate) fn new(plugin_id: String, plugin_shutdown: Arc<AtomicBool>) -> Arc<Self> {
+    /// plugin-wide `plugin_shutdown` flag and charging its log lines to the
+    /// plugin-wide `log_limiter`.
+    pub(crate) fn new(
+        plugin_id: String,
+        plugin_shutdown: Arc<AtomicBool>,
+        log_limiter: Arc<PluginLogLimiter>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             plugin_id,
             session_cancelled: AtomicBool::new(false),
             plugin_shutdown,
+            log_limiter,
         })
     }
 
@@ -151,6 +164,16 @@ unsafe extern "C" fn services_log(ctx: *mut c_void, level: u32, message: FfiStr)
         let Some(level) = PluginLogLevel::from_wire(level) else {
             return PluginStatus::InvalidConfig;
         };
+        // Rate limit before touching the message: a dropped line costs no read,
+        // no allocation. Dropped lines still report `Ok` (documented in the
+        // plugin API) — a plugin cannot usefully react to a dropped log line.
+        let admission = state.log_limiter.admit(&state.plugin_id);
+        if let Some(count) = admission.summary {
+            emit_suppression_summary(&state.plugin_id, count);
+        }
+        if !admission.emit {
+            return PluginStatus::Ok;
+        }
         // Read at most MAX_LOG_MESSAGE_BYTES of the plugin's buffer, never past.
         let bounded = message.len.min(MAX_LOG_MESSAGE_BYTES);
         let bytes: &[u8] = if bounded == 0 || message.ptr.is_null() {

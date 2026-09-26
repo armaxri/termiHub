@@ -6,6 +6,7 @@ import {
   persistConnection,
   removeConnection,
   moveConnectionToFile as apiMoveConnectionToFile,
+  saveConnectionToFile as apiSaveConnectionToFile,
   persistFolder,
   removeFolder,
   reorderConnections as persistConnectionOrder,
@@ -73,6 +74,17 @@ export interface ConnectionTreeSlice {
    */
   reorderConnections: (oldIndex: number, newIndex: number) => void;
   moveConnectionToFile: (connectionId: string, targetSource: string | null) => Promise<void>;
+  /**
+   * Save an edit that also changes the connection's storage file (#3590): one
+   * backend command writes the edited connection to `connection.sourceFile` and
+   * removes it from `currentSource`, so it ends up there exactly once. Resolves
+   * to the connection as persisted (its id may change), or `null` when the save
+   * failed — the failure is toasted and the region reverted.
+   */
+  saveConnectionToFile: (
+    connection: SavedConnection,
+    currentSource: string | null
+  ) => Promise<SavedConnection | null>;
   /**
    * Re-point open tabs at their connections' new ids after a rename or move
    * (#3579) — the frontend side of the backend `connection-ids-changed` event —
@@ -459,6 +471,32 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
       } catch (err) {
         frontendLog("app_store", `Failed to move connection to file: ${errorMessage(err)}`);
         toast.error(`Failed to move ${conn.name}: ${errorMessage(err)}`);
+      }
+    },
+
+    saveConnectionToFile: async (connection, currentSource) => {
+      const prior = currentConnectionsView().connections.find((c) => c.id === connection.id);
+      frontendLog(
+        "connection_sync",
+        `saveConnectionToFile: persisting ${connection.id} from ${currentSource ?? "main"}`
+      );
+      try {
+        const saved = await persistConnectionMutation(
+          { kind: "connection.update", payload: { connection } },
+          () => apiSaveConnectionToFile(stripPassword(connection), currentSource),
+          prior
+            ? { kind: "connection.update", payload: { connection: prior } }
+            : { kind: "connection.remove", payload: { connectionId: connection.id } }
+        );
+        // The command folds the refreshed view into the region server-side
+        // (#2394); mirror the result so the region reflects it immediately.
+        mirrorConnectionIntent("connection.update", { connection: saved });
+        toast.success(`Saved ${saved.name}`);
+        return saved;
+      } catch (err) {
+        frontendLog("app_store", `Failed to save connection to file: ${errorMessage(err)}`);
+        toast.error(`Failed to save ${connection.name}: ${errorMessage(err)}`);
+        return null;
       }
     },
 

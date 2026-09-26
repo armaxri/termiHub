@@ -249,6 +249,65 @@ fn moving_a_connection_to_a_file_where_it_is_renamed_rewrites_references() {
 }
 
 #[test]
+fn saving_an_edit_renamed_into_another_file_rewrites_references_once() {
+    // An edit that renames `gw` and moves it into an external file (#3601's
+    // save_connection_to_file) re-points jump hosts in the main store and the
+    // target file and the broadcast groups, and reports its id change in one
+    // batch — the one the saved workspaces, schedules and workflows follow.
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = manager(dir.path());
+    let batches: Arc<std::sync::Mutex<Vec<Vec<ConnectionIdChange>>>> = Arc::default();
+    let sink = batches.clone();
+    mgr.set_id_change_listener(Arc::new(move |changes| {
+        sink.lock().unwrap().push(changes.to_vec());
+    }));
+    let file = dir.path().join("shared.json");
+    let file = file.to_str().unwrap().to_string();
+    save_external_file(
+        &file,
+        "shared",
+        vec![],
+        vec![ssh("ext", "ext", None, &["gw"])],
+        &NullStore,
+    )
+    .unwrap();
+    let mut settings: AppSettings = serde_json::from_value(json!({
+        "version": "1",
+        "broadcastGroups": [{ "id": "g", "name": "G", "connectionIds": ["gw", "t"] }]
+    }))
+    .unwrap();
+    settings.external_connection_files = vec![ExternalFileConfig {
+        path: file.clone(),
+        enabled: true,
+    }];
+    mgr.save_settings(settings).unwrap();
+    mgr.save_connection(ssh("gw", "gw", None, &[])).unwrap();
+    mgr.save_connection(ssh("t", "t", None, &["gw"])).unwrap();
+    batches.lock().unwrap().clear();
+
+    let mut edited = ssh("gw", "gateway", None, &[]);
+    edited.source_file = Some(file.clone());
+    let saved = mgr.save_connection_to_file(edited, None).unwrap();
+
+    assert_eq!(saved.id, "gateway");
+    assert_eq!(
+        hops_of(&mgr.get_all().unwrap().connections, "t"),
+        ["gateway"]
+    );
+    assert_eq!(hops_of(&external_connections(&file), "ext"), ["gateway"]);
+    let reloaded = serde_json::to_value(manager(dir.path()).get_settings()).unwrap();
+    assert_eq!(
+        reloaded["broadcastGroups"][0]["connectionIds"],
+        json!(["gateway", "t"])
+    );
+    let batches = std::mem::take(&mut *batches.lock().unwrap());
+    assert_eq!(batches.len(), 1, "one id-change batch: {batches:?}");
+    assert_eq!(batches[0].len(), 1);
+    assert_eq!(batches[0][0].old_id, "gw");
+    assert_eq!(batches[0][0].new_id, "gateway");
+}
+
+#[test]
 fn broadcast_groups_and_shell_entries_follow_a_folder_rename() {
     let dir = tempfile::tempdir().unwrap();
     let mgr = manager(dir.path());

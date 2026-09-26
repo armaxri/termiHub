@@ -1,11 +1,30 @@
 //! Unit tests for the host side of the ABI 1.1 host context (#3576).
 
 use super::*;
+use crate::plugin::log_rate_limit::LogRateLimitConfig;
+use std::time::{Duration, Instant};
+
+/// A limiter whose clock never advances, so the burst never refills.
+fn frozen_limiter(burst: u32) -> Arc<PluginLogLimiter> {
+    let t0 = Instant::now();
+    Arc::new(PluginLogLimiter::with_clock(
+        LogRateLimitConfig {
+            burst,
+            lines_per_sec: 20,
+            summary_interval: Duration::from_secs(1),
+        },
+        Box::new(move || t0),
+    ))
+}
 
 fn state(id: &str) -> (Arc<ServicesState>, Arc<AtomicBool>) {
     let shutdown = Arc::new(AtomicBool::new(false));
     (
-        ServicesState::new(id.to_owned(), Arc::clone(&shutdown)),
+        ServicesState::new(
+            id.to_owned(),
+            Arc::clone(&shutdown),
+            Arc::new(PluginLogLimiter::default()),
+        ),
         shutdown,
     )
 }
@@ -43,7 +62,11 @@ fn cancellation_is_sticky_and_covers_session_and_plugin() {
 
 fn state_pair_sharing(shutdown: &Arc<AtomicBool>) -> (Arc<ServicesState>, Arc<AtomicBool>) {
     (
-        ServicesState::new("echo".to_owned(), Arc::clone(shutdown)),
+        ServicesState::new(
+            "echo".to_owned(),
+            Arc::clone(shutdown),
+            Arc::new(PluginLogLimiter::default()),
+        ),
         Arc::clone(shutdown),
     )
 }
@@ -126,6 +149,72 @@ fn sanitize_strips_control_characters_replaces_bad_utf8_and_marks_truncation() {
     assert_eq!(
         sanitize_log_message(&euro[..2], true),
         "\u{fffd} …[truncated]"
+    );
+}
+
+/// Log `n` lines through the FFI callback of `state`, asserting each is `Ok`.
+fn log_n(state: &Arc<ServicesState>, n: usize) {
+    let ctx = Arc::as_ptr(state).cast_mut().cast::<c_void>();
+    for i in 0..n {
+        // SAFETY: the caller's `state` Arc keeps `ctx` alive for the call.
+        let status = unsafe { services_log(ctx, 3, FfiStr::new("flood")) };
+        assert_eq!(
+            status,
+            PluginStatus::Ok,
+            "line {i}: dropped lines still report Ok"
+        );
+    }
+}
+
+#[test]
+fn log_callback_drops_a_flood_but_still_reports_ok() {
+    let limiter = frozen_limiter(5);
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let state = ServicesState::new("echo".to_owned(), shutdown, Arc::clone(&limiter));
+    log_n(&state, 50);
+    assert_eq!(limiter.pending_suppressed(), 45, "5 accepted, 45 dropped");
+}
+
+#[test]
+fn sessions_of_one_plugin_share_its_log_budget() {
+    let limiter = frozen_limiter(5);
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let a = ServicesState::new(
+        "echo".to_owned(),
+        Arc::clone(&shutdown),
+        Arc::clone(&limiter),
+    );
+    let b = ServicesState::new("echo".to_owned(), shutdown, Arc::clone(&limiter));
+    log_n(&a, 3);
+    log_n(&b, 3);
+    assert_eq!(
+        limiter.pending_suppressed(),
+        1,
+        "a second session adds no budget"
+    );
+}
+
+#[test]
+fn a_flooding_plugin_does_not_starve_another_plugin() {
+    let noisy = frozen_limiter(5);
+    let quiet = frozen_limiter(5);
+    let noisy_state = ServicesState::new(
+        "noisy".to_owned(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::clone(&noisy),
+    );
+    let quiet_state = ServicesState::new(
+        "quiet".to_owned(),
+        Arc::new(AtomicBool::new(false)),
+        Arc::clone(&quiet),
+    );
+    log_n(&noisy_state, 1000);
+    log_n(&quiet_state, 5);
+    assert_eq!(noisy.pending_suppressed(), 995);
+    assert_eq!(
+        quiet.pending_suppressed(),
+        0,
+        "the quiet plugin's burst is intact"
     );
 }
 
