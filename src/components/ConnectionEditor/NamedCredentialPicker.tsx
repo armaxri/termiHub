@@ -5,7 +5,7 @@ import { useNamedCredentials } from "@/hooks/useNamedCredentials";
 import type { NamedCredentialKind } from "@/types/generated/NamedCredentialKind";
 
 /** Select value meaning "no shared credential — use this connection's own". */
-export const OWN_CREDENTIAL_VALUE = "__own__";
+const OWN_CREDENTIAL_VALUE = "__own__";
 /** Select value shown while the reference points at a credential that is gone. */
 const MISSING_VALUE = "__missing__";
 

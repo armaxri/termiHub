@@ -14,9 +14,6 @@ import type { NamedCredentialEntry } from "@/types/generated/NamedCredentialEntr
 import type { NamedCredentialError } from "@/types/generated/NamedCredentialError";
 import type { NamedCredentialKind } from "@/types/generated/NamedCredentialKind";
 
-/** The connection-settings key that references a named credential. */
-export const CREDENTIAL_REF_KEY = "credentialRef";
-
 /** Window event fired after any named-credential change, so pickers refresh. */
 export const NAMED_CREDENTIALS_CHANGED_EVENT = "termihub:named-credentials-changed";
 
