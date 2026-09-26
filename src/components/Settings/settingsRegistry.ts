@@ -756,6 +756,9 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "transfer",
       "credentials",
       "vault",
+      "plugins",
+      "host keys",
+      "known hosts",
     ],
   },
   {

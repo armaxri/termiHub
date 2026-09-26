@@ -32,6 +32,7 @@ vi.mock("@/components/ui", async () => {
   };
 });
 
+import { toast } from "@/components/ui";
 import {
   applyBackupRestore,
   exportBackup,
@@ -50,6 +51,7 @@ const SECTIONS: BackupSectionInfo[] = [
     label: "Connections",
     description: "Saved connections",
     containsSecrets: false,
+    requiresEncryption: false,
     present: true,
     itemCount: 3,
   },
@@ -58,6 +60,7 @@ const SECTIONS: BackupSectionInfo[] = [
     label: "Embedded servers",
     description: "Servers",
     containsSecrets: true,
+    requiresEncryption: true,
     present: true,
     itemCount: 1,
   },
@@ -66,8 +69,18 @@ const SECTIONS: BackupSectionInfo[] = [
     label: "Tunnels",
     description: "Tunnels",
     containsSecrets: false,
+    requiresEncryption: false,
     present: false,
     itemCount: 0,
+  },
+  {
+    id: "sshKnownHosts",
+    label: "Trusted SSH host keys",
+    description: "Host keys",
+    containsSecrets: false,
+    requiresEncryption: true,
+    present: true,
+    itemCount: 2,
   },
 ];
 
@@ -85,6 +98,8 @@ function sectionPreview(overrides: Partial<BackupSectionPreview>): BackupSection
     newCount: 1,
     conflictCount: 1,
     unchangedCount: 0,
+    conflictsKeepExisting: false,
+    notes: [],
     ...overrides,
   };
 }
@@ -101,6 +116,12 @@ const PREVIEW: BackupRestorePreview = {
       label: "Workflows",
       status: "newer",
       message: "Workflows was backed up by a newer version of termiHub.",
+    }),
+    sectionPreview({
+      id: "sshKnownHosts",
+      label: "Trusted SSH host keys",
+      conflictsKeepExisting: true,
+      notes: ["1 host is already trusted here with a different key: a:22."],
     }),
   ],
   credentials: {
@@ -218,6 +239,7 @@ describe("backup restore helpers", () => {
       sections: [
         { id: "macros", mode: "merge", conflicts: "skip" },
         { id: "settings", mode: "replace", conflicts: "skip" },
+        { id: "sshKnownHosts", mode: "merge", conflicts: "skip" },
       ],
       credentials: "overwrite",
     });
@@ -268,6 +290,7 @@ describe("BackupRestoreSettings", () => {
       json: BACKUP_JSON,
       sections: ["connections", "embeddedServers"],
       credentialCount: null,
+      warnings: [],
     });
     vi.mocked(save).mockResolvedValue("/tmp/backup.json");
     setInputValue("backup-export-passphrase", PASSPHRASE);
@@ -276,7 +299,7 @@ describe("BackupRestoreSettings", () => {
 
     expect(exportBackup).toHaveBeenCalledWith(
       {
-        sections: ["connections", "embeddedServers"],
+        sections: ["connections", "embeddedServers", "sshKnownHosts"],
         includeCredentials: false,
         encrypt: true,
       },
@@ -284,6 +307,27 @@ describe("BackupRestoreSettings", () => {
       null
     );
     expect(writeTextFile).toHaveBeenCalledWith("/tmp/backup.json", BACKUP_JSON);
+    expect(toast.success).toHaveBeenCalled();
+  });
+
+  it("tells the user what an export left out", async () => {
+    render("none");
+    await openExport();
+    vi.mocked(exportBackup).mockResolvedValue({
+      json: BACKUP_JSON,
+      sections: ["plugins"],
+      credentialCount: null,
+      warnings: ['Plugin "huge" was not included because it is too large.'],
+    });
+    vi.mocked(save).mockResolvedValue("/tmp/backup.json");
+    setInputValue("backup-export-passphrase", PASSPHRASE);
+    setInputValue("backup-export-confirm", PASSPHRASE);
+    await click("backup-export-submit");
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledWith(
+      expect.stringMatching(/left out/),
+      expect.objectContaining({ description: expect.stringMatching(/"huge"/) })
+    );
   });
 
   it("includes credentials in master-password mode and requires re-authentication", async () => {
@@ -301,6 +345,7 @@ describe("BackupRestoreSettings", () => {
       json: BACKUP_JSON,
       sections: ["connections"],
       credentialCount: 4,
+      warnings: [],
     });
     vi.mocked(save).mockResolvedValue(null);
     setInputValue("backup-export-master-password", "master-pw");
@@ -321,6 +366,10 @@ describe("BackupRestoreSettings", () => {
     expect((query("backup-export-section-embeddedServers") as HTMLButtonElement).disabled).toBe(
       true
     );
+    // Trust decisions (host keys, plugins) are encrypted-only too.
+    expect(isChecked("backup-export-section-sshKnownHosts")).toBe(false);
+    expect((query("backup-export-section-sshKnownHosts") as HTMLButtonElement).disabled).toBe(true);
+    expect(document.body.textContent).toMatch(/Trust decisions — needs encryption/);
     expect(query("backup-export-plain-warning")).not.toBeNull();
     expect(query("backup-export-passphrase")).toBeNull();
   });
@@ -354,8 +403,15 @@ describe("BackupRestoreSettings", () => {
     expect(query("backup-restore-replace-warning")?.textContent).toMatch(/Settings/);
     expect(isChecked("backup-restore-include-credentials")).toBe(true);
 
-    // Leave macros out.
+    // Trust-store conflicts always keep the current keys: no strategy to pick,
+    // and the kept hosts are listed.
+    expect(query("backup-restore-conflicts-macros")).not.toBeNull();
+    expect(query("backup-restore-conflicts-sshKnownHosts")).toBeNull();
+    expect(query("backup-restore-note-sshKnownHosts")?.textContent).toMatch(/a:22/);
+
+    // Leave macros and the host keys out.
     await click("backup-restore-include-macros");
+    await click("backup-restore-include-sshKnownHosts");
     await click("backup-restore-submit");
 
     expect(applyBackupRestore).toHaveBeenCalledWith(BACKUP_JSON, PASSPHRASE, {

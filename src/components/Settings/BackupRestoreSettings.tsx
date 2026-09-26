@@ -20,9 +20,9 @@ export function BackupRestoreSettings() {
       <h3 className="settings-panel__section-title">Backup &amp; Restore</h3>
       <p className="settings-panel__description">
         Save everything — connections, settings, themes, keyboard shortcuts, workspaces, macros,
-        workflows, tunnels and optionally your saved credentials — to one passphrase-protected file,
-        to keep a backup or move to another machine. Restore lets you pick what to bring back and
-        whether to merge it with or replace what is here.
+        workflows, tunnels, trusted host keys, plugins and optionally your saved credentials — to
+        one passphrase-protected file, to keep a backup or move to another machine. Restore lets you
+        pick what to bring back and whether to merge it with or replace what is here.
       </p>
       <div className="credential-vault__actions">
         <Button

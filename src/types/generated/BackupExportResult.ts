@@ -18,4 +18,8 @@ sections: Array<string>,
 /**
  * Number of credentials in the vault section, when included.
  */
-credentialCount: number | null, };
+credentialCount: number | null, 
+/**
+ * Things that were left out and why (e.g. a plugin over the size cap).
+ */
+warnings: Array<string>, };
