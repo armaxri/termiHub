@@ -96,7 +96,7 @@ Prefer to build it yourself? See [Development](#development) below.
 - **Local shells** — zsh, bash, PowerShell, cmd, Git Bash with automatic shell detection
 - **SSH** — Remote terminal sessions with key-based and password authentication, plus jump host / `ProxyJump` chains, X11 forwarding, tunneling, and SFTP
 - **Serial** — Direct serial port connections for hardware debugging and IoT devices
-- **Telnet** — Classic telnet connections with window-size (NAWS) and terminal-type negotiation, plus optional prompt-driven auto-login
+- **Telnet** — Classic telnet connections with window-size (NAWS), terminal-type and echo / suppress-go-ahead negotiation, a character or line input mode, plus optional prompt-driven auto-login
 - **Docker** — Start a new container from an image and open a shell in it (run-new; attaching to an already-running container is not yet supported)
 - **WSL** — Windows Subsystem for Linux distribution sessions (Windows only)
 - **FTP / FTPS** — File-transfer connections with a managed transfer queue (browse, upload, download, edit)
@@ -359,6 +359,7 @@ By default the file records **Info** level and above — enough to be readable w
 
 - **Window size** — termiHub offers NAWS (RFC 1073) on connect and reports the terminal size again after every resize, so full-screen programs (vim, htop, device menus) reflow with the window. Servers that refuse NAWS simply keep their own size.
 - **Terminal type** — reported when the server asks (TERMINAL-TYPE, RFC 1091); it usually becomes `TERM` on the remote side. Defaults to `xterm-256color`; set it to e.g. `vt100` for older devices.
+- **Echo and input mode** — termiHub accepts the server's ECHO (RFC 857) and SUPPRESS-GO-AHEAD (RFC 858) options, so the server echoes what you type without double echo. **Input Mode** _Character_ (default) sends every keystroke immediately; _Line_ echoes and edits the line locally (Backspace, Ctrl+U) and sends it on Enter — for line-oriented devices that never echo. In line mode, while the server takes over echo (for example at a password prompt), keystrokes pass straight through.
 - **Auto-login (optional, off by default)** — set **Login** to _Auto-login_ and enter a username and password. termiHub types the username when the output ends with a login prompt (default `login:`, `username:`, or `user name:`) and the password at the password prompt (default `password:`). Matching is case-insensitive; alternatives are separated with `|`. A device that asks only for a password gets the password at the first prompt. If a prompt does not appear within the prompt timeout (default 10 s), or the login prompt reappears after the username was sent (the login was rejected), auto-login stops and the session stays interactive — it never retries.
   - The password is kept in the credential store (keychain or master-password vault) when **Save password** is on and is never written to the connection file or logged. Leave it empty to be asked on connect.
   - **Telnet is unencrypted**: the username and password travel in cleartext and can be read by anyone on the network path. Only use auto-login on trusted networks and prefer SSH where the device supports it.
