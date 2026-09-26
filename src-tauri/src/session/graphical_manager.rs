@@ -30,6 +30,7 @@ use termihub_core::connection::{
     CursorUpdate, FrameUpdate, GraphicalState, InputEvent, RemoteClipboardFile,
     SessionStateMachine,
 };
+use termihub_core::errors::SessionError;
 
 use crate::session::frame_guard::{FrameGuard, FrameVerdict};
 use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
@@ -253,15 +254,22 @@ impl GraphicalSessionManager {
             let msg = e.to_string();
             warn!(session_id = %session_id, error = %msg, "graphical connect failed");
             let mut sm = state.lock().await;
-            sm.connect_failed();
-            emit_state(
-                &sink,
-                &session_id,
-                GraphicalState::ConnectFailed,
-                0,
-                Some(msg.clone()),
-            );
-            return Err(TerminalError::ConnectionFailed(msg));
+            // A rejected credential (e.g. a wrong VNC password) is a typed
+            // `AuthFailed`, not a transport failure (#3390): emit the state the
+            // frontend's "Check the credentials" overlay keys on, and return the
+            // coded auth error every other backend uses.
+            let auth = matches!(e, SessionError::AuthFailed);
+            let failed = if auth {
+                sm.auth_failed()
+            } else {
+                sm.connect_failed()
+            };
+            emit_state(&sink, &session_id, failed, 0, Some(msg.clone()));
+            return Err(if auth {
+                TerminalError::AuthFailed(msg)
+            } else {
+                TerminalError::ConnectionFailed(msg)
+            });
         }
 
         // Subscribe to the framebuffer surface (and any cert-prompt channel)
