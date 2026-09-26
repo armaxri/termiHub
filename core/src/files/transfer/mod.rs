@@ -46,6 +46,9 @@ pub use progress::{
     CHUNK_SIZE, PROGRESS_THROTTLE, QUEUE_TEARDOWN,
 };
 pub use registry::{TransferHandle, TransferRegistry, TransferSnapshot};
-pub use retry::{backoff_delay, resume_offset, ThroughputMeter, BASE_BACKOFF};
+pub use retry::{
+    backoff_delay, decide_resume, resume_offset, ResumeDecision, SourceFingerprint,
+    ThroughputMeter, BASE_BACKOFF,
+};
 pub use scheduler::{Admission, SessionScheduler, DEFAULT_MAX_CONCURRENT};
 pub use state::{InvalidTransition, TransferEvent, TransferState, TransferStateTag, MAX_RETRIES};

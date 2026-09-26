@@ -12,13 +12,17 @@
 //! [`SftpFileBrowser`], so the browsing session stays live during a transfer
 //! and a broken channel is re-established transparently on retry.
 //!
-//! **Resume (PROD-0012).** A paused or retried transfer resumes from the byte
-//! offset already at the destination. Before appending, the offset is
-//! *byte-verified* — the destination must already hold exactly `offset` bytes
-//! (re-`stat`'d each stint) — mirroring [`super::retry::resume_offset`]; on any
-//! mismatch, or when the server rejects the seek/append open, the transfer
-//! restarts from zero and surfaces which path it took. The resume protocol is
-//! selectable via [`ResumeMode`] (maintainer default: [`DEFAULT_RESUME_MODE`]).
+//! **Resume (PROD-0012, hardened by PARITY-004 / #3567).** A paused or retried
+//! transfer resumes from the byte offset already at the destination. Before
+//! **every** attempt the resume point is re-verified on that attempt's own
+//! channel ([`apply_resume_gate`] over the pure
+//! [`decide_resume`](super::retry::decide_resume)): the source must still match
+//! the size + mtime fingerprint captured when its bytes were read, and the
+//! destination must hold a prefix we wrote — the resume starts from the bytes
+//! actually present, so pipelined writes lost on a dropped connection never
+//! leave a hole. On any doubt, or when the server rejects the seek/append open,
+//! the transfer restarts from zero and surfaces which path it took. The resume
+//! protocol is selectable via [`ResumeMode`] (maintainer default: [`DEFAULT_RESUME_MODE`]).
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -28,8 +32,15 @@ use crate::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
 use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
 use tracing::{debug, info, warn};
 
+mod resume;
+
+pub use resume::STALL_TIMEOUT;
+use resume::{
+    apply_resume_gate, guard_stall, local_fingerprint, local_size, rehydrate_start_offset,
+    ResumeCursor,
+};
+
 use super::registry::{TransferHandle, TransferRegistry};
-use super::retry::resume_offset;
 use super::state::TransferEvent;
 use super::{
     ProgressSink, ThroughputMeter, TransferDirection, TransferPhase, TransferProgress, CHUNK_SIZE,
@@ -103,24 +114,22 @@ enum AttemptsResult {
     FailedPermanent,
 }
 
-/// The byte offset a resume may safely start from, given the offset requested,
-/// the bytes actually present at the destination, and the (optional) total size.
-///
-/// This is the byte-verification gate (PROD-0012): the destination must already
-/// hold *exactly* `requested` bytes, otherwise a stale/divergent partial cannot
-/// be trusted and the transfer restarts from zero. When the count matches, the
-/// value is passed through [`resume_offset`] so a resume never seeks past a
-/// known EOF. Pure function — unit-tested directly.
-fn verified_offset(requested: u64, present: Option<u64>, total: u64) -> u64 {
-    if requested == 0 {
-        return 0;
+/// Best-effort: settle a writer after an attempt stopped short (pause/cancel)
+/// so the bytes counted as transferred have actually landed — pipelined SFTP
+/// writes are acknowledged asynchronously. A failure is harmless: the next
+/// attempt byte-verifies the destination anyway.
+async fn settle_writer<W: tokio::io::AsyncWrite + Unpin>(
+    writer: &mut W,
+    outcome: &ChunkedCopyOutcome<StopReason>,
+) {
+    use tokio::io::AsyncWriteExt;
+    if matches!(outcome, ChunkedCopyOutcome::Stopped { .. }) {
+        match tokio::time::timeout(STALL_TIMEOUT, writer.shutdown()).await {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => debug!(error = %e, "could not settle writer after stop (best-effort)"),
+            Err(_) => debug!("settling writer after stop timed out (best-effort)"),
+        }
     }
-    // Byte-verify: the destination must already hold exactly `requested` bytes.
-    // An un-stattable destination (`None`) is treated as untrustworthy.
-    if present != Some(requested) {
-        return 0;
-    }
-    resume_offset(requested, (total > 0).then_some(total))
 }
 
 /// Map a live handle's control flags to a stop decision for the copy loop.
@@ -330,6 +339,7 @@ where
         copy_error,
     )
     .await?;
+    settle_writer(&mut local, &outcome).await;
     Ok(map_copy_outcome(outcome))
 }
 
@@ -380,6 +390,7 @@ where
         copy_error,
     )
     .await?;
+    settle_writer(&mut remote, &outcome).await;
     Ok(map_copy_outcome(outcome))
 }
 
@@ -397,20 +408,54 @@ fn map_copy_outcome(outcome: ChunkedCopyOutcome<StopReason>) -> AttemptOutcome {
     }
 }
 
-/// Bytes currently present at the transfer's destination, for byte-verifying a
-/// resume offset. Download → the local file; Upload → the remote file.
-async fn destination_present(
-    browser: &Arc<SftpFileBrowser>,
-    direction: TransferDirection,
-    remote_path: &str,
-    local_path: &str,
-) -> Option<u64> {
-    match direction {
-        TransferDirection::Download => tokio::fs::metadata(local_path).await.map(|m| m.len()).ok(),
-        TransferDirection::Upload => match browser.open_dedicated_channel().await {
-            Ok(ch) => ch.remote_file_size(remote_path).await,
-            Err(_) => None,
-        },
+/// Settle one attempt's result into the cursor and the handle's state.
+/// Returns `Some(..)` when the stint ends, or `None` to run another attempt
+/// (a rejected offset-resume, or a transient failure that is being retried).
+async fn settle_attempt(
+    result: Result<AttemptOutcome, SftpTransferError>,
+    cursor: &mut ResumeCursor,
+    attempt: &mut u32,
+    handle: &Arc<TransferHandle>,
+    sink: &ProgressSink,
+) -> Option<AttemptsResult> {
+    match result {
+        Ok(AttemptOutcome::Completed { transferred }) => {
+            cursor.offset = transferred;
+            handle.set_metrics(transferred, cursor.total.max(transferred), 0);
+            handle.transition(TransferEvent::Complete);
+            Some(AttemptsResult::Completed)
+        }
+        Ok(AttemptOutcome::Stopped {
+            transferred,
+            reason: StopReason::Cancel,
+        }) => {
+            cursor.offset = transferred;
+            handle.transition(TransferEvent::Cancel);
+            Some(AttemptsResult::Cancelled)
+        }
+        Ok(AttemptOutcome::Stopped {
+            transferred,
+            reason: StopReason::Pause,
+        }) => {
+            cursor.offset = transferred;
+            handle.transition(TransferEvent::Pause);
+            Some(AttemptsResult::Paused)
+        }
+        Ok(AttemptOutcome::ResumeRejected) => {
+            // The server refused the offset open. Restart this stint from
+            // zero (surfaced above via `warn!`); do not consume a retry.
+            cursor.offset = 0;
+            *attempt -= 1;
+            emit(
+                handle,
+                sink,
+                TransferPhase::Transferring,
+                None,
+                Some("resume not supported by server; restarting from start".to_string()),
+            );
+            None
+        }
+        Err(e) => handle_attempt_error(handle, sink, *attempt, &e).await,
     }
 }
 
@@ -423,31 +468,11 @@ async fn run_attempts(
     direction: TransferDirection,
     remote_path: &str,
     local_path: &str,
-    offset: &mut u64,
-    total: u64,
+    cursor: &mut ResumeCursor,
     handle: &Arc<TransferHandle>,
     sink: &ProgressSink,
     resume_mode: ResumeMode,
 ) -> AttemptsResult {
-    // Byte-verify the resume offset once per Active stint, before the first
-    // attempt of the stint appends to the destination (PROD-0012).
-    if resume_mode == ResumeMode::RestartOnly {
-        *offset = 0;
-    } else if *offset > 0 {
-        let present = destination_present(browser, direction, remote_path, local_path).await;
-        let verified = verified_offset(*offset, present, total);
-        if verified != *offset {
-            info!(
-                transfer_id = %handle.transfer_id,
-                requested = *offset, ?present, verified,
-                "SFTP resume offset failed byte-verify; restarting from zero"
-            );
-        } else {
-            info!(transfer_id = %handle.transfer_id, offset = verified, "SFTP resuming from offset");
-        }
-        *offset = verified;
-    }
-
     let mut attempt = 0u32;
     loop {
         if handle.is_cancelled() {
@@ -458,7 +483,9 @@ async fn run_attempts(
         handle.set_attempt(attempt);
 
         // Open a fresh dedicated channel per attempt, so a broken channel is
-        // re-established on retry and browsing stays live meanwhile.
+        // re-established on retry and browsing stays live meanwhile. A failed
+        // open keeps the requested offset: nothing is written, and the next
+        // attempt re-verifies it.
         let channel = match browser.open_dedicated_channel().await {
             Ok(c) => c,
             Err(e) => {
@@ -470,83 +497,72 @@ async fn run_attempts(
             }
         };
 
-        let progress = Arc::new(AtomicU64::new(*offset));
+        // Re-verify the resume point on this attempt's channel (PARITY-004).
+        if resume_mode == ResumeMode::RestartOnly {
+            cursor.offset = 0;
+        } else {
+            let resuming = cursor.offset > 0;
+            let (current, present) = match direction {
+                TransferDirection::Download => (
+                    channel.remote_fingerprint(remote_path).await,
+                    if resuming {
+                        local_size(local_path).await
+                    } else {
+                        None
+                    },
+                ),
+                TransferDirection::Upload => (
+                    local_fingerprint(local_path).await,
+                    if resuming {
+                        channel.remote_file_size(remote_path).await
+                    } else {
+                        None
+                    },
+                ),
+            };
+            apply_resume_gate(cursor, handle, sink, current, present);
+        }
+
+        let progress = Arc::new(AtomicU64::new(cursor.offset));
         let mut reporter = ProgressReporter::new(
             handle.clone(),
             sink.clone(),
-            total,
+            cursor.total,
             progress.clone(),
-            *offset,
+            cursor.offset,
         );
         let stop_handle = handle.clone();
-        let result = match direction {
-            TransferDirection::Download => {
-                download_attempt(
-                    &channel,
-                    remote_path,
-                    local_path,
-                    *offset,
-                    |t| reporter.report(t),
-                    move || stop_reason(&stop_handle),
-                )
-                .await
-            }
-            TransferDirection::Upload => {
-                upload_attempt(
-                    &channel,
-                    local_path,
-                    remote_path,
-                    *offset,
-                    |t| reporter.report(t),
-                    move || stop_reason(&stop_handle),
-                )
-                .await
-            }
-        };
-        *offset = progress.load(Ordering::Relaxed);
-
-        match result {
-            Ok(AttemptOutcome::Completed { transferred }) => {
-                *offset = transferred;
-                handle.set_metrics(transferred, total.max(transferred), 0);
-                handle.transition(TransferEvent::Complete);
-                return AttemptsResult::Completed;
-            }
-            Ok(AttemptOutcome::Stopped {
-                transferred,
-                reason: StopReason::Cancel,
-            }) => {
-                *offset = transferred;
-                handle.transition(TransferEvent::Cancel);
-                return AttemptsResult::Cancelled;
-            }
-            Ok(AttemptOutcome::Stopped {
-                transferred,
-                reason: StopReason::Pause,
-            }) => {
-                *offset = transferred;
-                handle.transition(TransferEvent::Pause);
-                return AttemptsResult::Paused;
-            }
-            Ok(AttemptOutcome::ResumeRejected) => {
-                // The server refused the offset open. Restart this stint from
-                // zero (surfaced above via `warn!`); do not consume a retry.
-                *offset = 0;
-                attempt -= 1;
-                emit(
-                    handle,
-                    sink,
-                    TransferPhase::Transferring,
-                    None,
-                    Some("resume not supported by server; restarting from start".to_string()),
-                );
-                continue;
-            }
-            Err(e) => {
-                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
-                    return outcome;
+        let attempt_fut = async {
+            match direction {
+                TransferDirection::Download => {
+                    download_attempt(
+                        &channel,
+                        remote_path,
+                        local_path,
+                        cursor.offset,
+                        |t| reporter.report(t),
+                        move || stop_reason(&stop_handle),
+                    )
+                    .await
+                }
+                TransferDirection::Upload => {
+                    upload_attempt(
+                        &channel,
+                        local_path,
+                        remote_path,
+                        cursor.offset,
+                        |t| reporter.report(t),
+                        move || stop_reason(&stop_handle),
+                    )
+                    .await
                 }
             }
+        };
+        let result = guard_stall(attempt_fut, &progress, handle, STALL_TIMEOUT).await;
+        cursor.offset = progress.load(Ordering::Relaxed);
+
+        if let Some(outcome) = settle_attempt(result, cursor, &mut attempt, handle, sink).await {
+            return outcome;
         }
     }
 }
@@ -644,18 +660,33 @@ pub async fn run_sftp_transfer(
     resume_mode: ResumeMode,
     start_offset: u64,
 ) {
-    // Establish the total up front so progress/ETA are meaningful.
-    let total = match direction {
-        TransferDirection::Download => browser.remote_size(&remote_path).await,
-        TransferDirection::Upload => tokio::fs::metadata(&local_path)
-            .await
-            .map(|m| m.len())
-            .unwrap_or(0),
+    // Establish the source identity + total up front so progress/ETA are
+    // meaningful and a later resume can detect a changed source (PARITY-004).
+    let baseline = match direction {
+        TransferDirection::Download => match browser.open_dedicated_channel().await {
+            Ok(ch) => ch.remote_fingerprint(&remote_path).await,
+            Err(_) => None,
+        },
+        TransferDirection::Upload => local_fingerprint(&local_path).await,
     };
-    handle.set_metrics(start_offset, total, 0);
+    let total = match (baseline, direction) {
+        (Some(fp), _) => fp.size,
+        (None, TransferDirection::Download) => browser.remote_size(&remote_path).await,
+        (None, TransferDirection::Upload) => 0,
+    };
+    // A rehydrated transfer's handle was registered with its persisted total.
+    let offset = rehydrate_start_offset(start_offset, handle.snapshot().total, baseline);
+    if offset != start_offset {
+        info!(transfer_id = %handle.transfer_id, start_offset, "SFTP source changed since the checkpoint; restarting from zero");
+    }
+    handle.set_metrics(offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
-    let mut offset = start_offset;
+    let mut cursor = ResumeCursor {
+        offset,
+        total,
+        baseline,
+    };
     loop {
         // Acquire (or re-acquire) a concurrency slot; the handle becomes Active.
         if !wait_for_active(&handle, &registry).await {
@@ -672,8 +703,7 @@ pub async fn run_sftp_transfer(
             direction,
             &remote_path,
             &local_path,
-            &mut offset,
-            total,
+            &mut cursor,
             &handle,
             &sink,
             resume_mode,
@@ -681,7 +711,7 @@ pub async fn run_sftp_transfer(
         .await
         {
             AttemptsResult::Completed => {
-                info!(transfer_id = %handle.transfer_id, transferred = offset, "SFTP transfer complete");
+                info!(transfer_id = %handle.transfer_id, transferred = cursor.offset, "SFTP transfer complete");
                 emit(&handle, &sink, TransferPhase::Done, None, None);
                 registry.drop_entry(&handle.transfer_id);
                 return;
@@ -720,19 +750,6 @@ pub async fn run_sftp_transfer(
                 handle.transition(TransferEvent::Retry); // Failed → Queued
             }
         }
-    }
-}
-
-/// Bytes currently present at the destination remote file, for byte-verifying a
-/// resume offset on a remote→remote copy (PROD-0013). `None` (un-stattable /
-/// absent) is treated as untrustworthy, so the caller restarts from zero.
-async fn remote_destination_present(
-    dst_browser: &Arc<SftpFileBrowser>,
-    dst_path: &str,
-) -> Option<u64> {
-    match dst_browser.open_dedicated_channel().await {
-        Ok(ch) => ch.remote_file_size(dst_path).await,
-        Err(_) => None,
     }
 }
 
@@ -809,44 +826,26 @@ where
         copy_error,
     )
     .await?;
+    settle_writer(&mut dst, &outcome).await;
     Ok(map_copy_outcome(outcome))
 }
 
 /// Run attempts (with auto-retry/backoff) for one Active stint of a remote→remote
 /// copy. The remote→remote counterpart of [`run_attempts`]: it opens a fresh
 /// dedicated channel on **both** the source and destination browsers per attempt
-/// and byte-verifies the resume offset against the destination remote file.
+/// and re-verifies the resume point (source fingerprint + destination size) on
+/// those channels before every attempt.
 #[allow(clippy::too_many_arguments)]
 async fn run_remote_attempts(
     src_browser: &Arc<SftpFileBrowser>,
     dst_browser: &Arc<SftpFileBrowser>,
     src_path: &str,
     dst_path: &str,
-    offset: &mut u64,
-    total: u64,
+    cursor: &mut ResumeCursor,
     handle: &Arc<TransferHandle>,
     sink: &ProgressSink,
     resume_mode: ResumeMode,
 ) -> AttemptsResult {
-    // Byte-verify the resume offset once per Active stint (PROD-0013), against
-    // the destination remote file.
-    if resume_mode == ResumeMode::RestartOnly {
-        *offset = 0;
-    } else if *offset > 0 {
-        let present = remote_destination_present(dst_browser, dst_path).await;
-        let verified = verified_offset(*offset, present, total);
-        if verified != *offset {
-            info!(
-                transfer_id = %handle.transfer_id,
-                requested = *offset, ?present, verified,
-                "SFTP resume offset failed byte-verify; restarting from zero"
-            );
-        } else {
-            info!(transfer_id = %handle.transfer_id, offset = verified, "SFTP resuming from offset");
-        }
-        *offset = verified;
-    }
-
     let mut attempt = 0u32;
     loop {
         if handle.is_cancelled() {
@@ -880,69 +879,42 @@ async fn run_remote_attempts(
             }
         };
 
-        let progress = Arc::new(AtomicU64::new(*offset));
+        // Re-verify the resume point on this attempt's channels (PARITY-004).
+        if resume_mode == ResumeMode::RestartOnly {
+            cursor.offset = 0;
+        } else {
+            let current = src_channel.remote_fingerprint(src_path).await;
+            let present = if cursor.offset > 0 {
+                dst_channel.remote_file_size(dst_path).await
+            } else {
+                None
+            };
+            apply_resume_gate(cursor, handle, sink, current, present);
+        }
+
+        let progress = Arc::new(AtomicU64::new(cursor.offset));
         let mut reporter = ProgressReporter::new(
             handle.clone(),
             sink.clone(),
-            total,
+            cursor.total,
             progress.clone(),
-            *offset,
+            cursor.offset,
         );
         let stop_handle = handle.clone();
-        let result = remote_copy_attempt(
+        let attempt_fut = remote_copy_attempt(
             &src_channel,
             &dst_channel,
             src_path,
             dst_path,
-            *offset,
+            cursor.offset,
             |t| reporter.report(t),
             move || stop_reason(&stop_handle),
-        )
-        .await;
-        *offset = progress.load(Ordering::Relaxed);
+        );
+        let result = guard_stall(attempt_fut, &progress, handle, STALL_TIMEOUT).await;
+        cursor.offset = progress.load(Ordering::Relaxed);
 
-        match result {
-            Ok(AttemptOutcome::Completed { transferred }) => {
-                *offset = transferred;
-                handle.set_metrics(transferred, total.max(transferred), 0);
-                handle.transition(TransferEvent::Complete);
-                return AttemptsResult::Completed;
-            }
-            Ok(AttemptOutcome::Stopped {
-                transferred,
-                reason: StopReason::Cancel,
-            }) => {
-                *offset = transferred;
-                handle.transition(TransferEvent::Cancel);
-                return AttemptsResult::Cancelled;
-            }
-            Ok(AttemptOutcome::Stopped {
-                transferred,
-                reason: StopReason::Pause,
-            }) => {
-                *offset = transferred;
-                handle.transition(TransferEvent::Pause);
-                return AttemptsResult::Paused;
-            }
-            Ok(AttemptOutcome::ResumeRejected) => {
-                // The server refused the offset open. Restart this stint from
-                // zero (surfaced above via `warn!`); do not consume a retry.
-                *offset = 0;
-                attempt -= 1;
-                emit(
-                    handle,
-                    sink,
-                    TransferPhase::Transferring,
-                    None,
-                    Some("resume not supported by server; restarting from start".to_string()),
-                );
-                continue;
-            }
-            Err(e) => {
-                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
-                    return outcome;
-                }
-            }
+        if let Some(outcome) = settle_attempt(result, cursor, &mut attempt, handle, sink).await {
+            return outcome;
         }
     }
 }
@@ -972,13 +944,24 @@ pub async fn run_sftp_remote_copy(
     sink: ProgressSink,
     resume_mode: ResumeMode,
 ) {
-    // Establish the total up front (the source size) so progress/ETA are
-    // meaningful.
-    let total = src_browser.remote_size(&src_path).await;
+    // Establish the source identity + total up front so progress/ETA are
+    // meaningful and a later resume can detect a changed source (PARITY-004).
+    let baseline = match src_browser.open_dedicated_channel().await {
+        Ok(ch) => ch.remote_fingerprint(&src_path).await,
+        Err(_) => None,
+    };
+    let total = match baseline {
+        Some(fp) => fp.size,
+        None => src_browser.remote_size(&src_path).await,
+    };
     handle.set_metrics(0, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
-    let mut offset = 0u64;
+    let mut cursor = ResumeCursor {
+        offset: 0,
+        total,
+        baseline,
+    };
     loop {
         // Acquire (or re-acquire) a concurrency slot; the handle becomes Active.
         if !wait_for_active(&handle, &registry).await {
@@ -995,8 +978,7 @@ pub async fn run_sftp_remote_copy(
             &dst_browser,
             &src_path,
             &dst_path,
-            &mut offset,
-            total,
+            &mut cursor,
             &handle,
             &sink,
             resume_mode,
@@ -1004,7 +986,7 @@ pub async fn run_sftp_remote_copy(
         .await
         {
             AttemptsResult::Completed => {
-                info!(transfer_id = %handle.transfer_id, transferred = offset, "SFTP remote-to-remote copy complete");
+                info!(transfer_id = %handle.transfer_id, transferred = cursor.offset, "SFTP remote-to-remote copy complete");
                 emit(&handle, &sink, TransferPhase::Done, None, None);
                 registry.drop_entry(&handle.transfer_id);
                 return;
@@ -1049,45 +1031,6 @@ pub async fn run_sftp_remote_copy(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn verified_offset_zero_request_never_resumes() {
-        assert_eq!(verified_offset(0, Some(0), 100), 0);
-        assert_eq!(verified_offset(0, None, 100), 0);
-    }
-
-    #[test]
-    fn verified_offset_matching_partial_resumes() {
-        // Destination holds exactly the requested bytes, below the total.
-        assert_eq!(verified_offset(300, Some(300), 1000), 300);
-    }
-
-    #[test]
-    fn verified_offset_mismatch_restarts_from_zero() {
-        // Destination diverged from the requested offset — can't be trusted.
-        assert_eq!(verified_offset(300, Some(250), 1000), 0);
-        assert_eq!(verified_offset(300, Some(400), 1000), 0);
-    }
-
-    #[test]
-    fn verified_offset_unstattable_destination_restarts() {
-        // No size available → treat the partial as untrustworthy.
-        assert_eq!(verified_offset(300, None, 1000), 0);
-    }
-
-    #[test]
-    fn verified_offset_complete_or_oversized_restarts() {
-        // present == requested == total → already complete; don't seek past EOF.
-        assert_eq!(verified_offset(1000, Some(1000), 1000), 0);
-        // present == requested but beyond a (smaller) known total → restart.
-        assert_eq!(verified_offset(1200, Some(1200), 1000), 0);
-    }
-
-    #[test]
-    fn verified_offset_unknown_total_resumes_from_verified_partial() {
-        // total == 0 (indeterminate) but the partial byte-verifies → resume.
-        assert_eq!(verified_offset(500, Some(500), 0), 500);
-    }
 
     #[test]
     fn resume_mode_default_is_resume() {

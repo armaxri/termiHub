@@ -18,6 +18,7 @@ use tokio::sync::Mutex;
 
 use crate::config::SshConfig;
 use crate::errors::FileError;
+use crate::files::transfer::SourceFingerprint;
 use crate::files::{FileBrowser, FileEntry};
 
 use super::handler::SshSession;
@@ -275,6 +276,18 @@ impl SftpTransferChannel {
     /// partial" and restarts from zero.
     pub async fn remote_file_size(&self, path: &str) -> Option<u64> {
         self.sftp.metadata(path).await.ok().and_then(|m| m.size)
+    }
+
+    /// Best-effort identity (size + mtime) of a remote file via SFTP `stat`, used
+    /// to detect a **source** that changed between resumed attempts (PARITY-004,
+    /// #3567). `None` when the file is absent or reports no size, so the caller
+    /// cannot trust a resume against it and restarts from zero.
+    pub async fn remote_fingerprint(&self, path: &str) -> Option<SourceFingerprint> {
+        let meta = self.sftp.metadata(path).await.ok()?;
+        Some(SourceFingerprint {
+            size: meta.size?,
+            mtime: meta.mtime.map(u64::from),
+        })
     }
 
     /// Remove a remote file — used to clean up a partial upload on cancel/error.

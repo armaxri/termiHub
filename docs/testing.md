@@ -422,7 +422,7 @@ dedicated `-- --ignored` job.
 ### `require_docker!` — visible skips and enforceable presence (TBE-006)
 
 The `core/tests` integration suites (SSH/telnet/monitoring/tunnel/SFTP/…) and
-the desktop `src-tauri/tests/sftp_transfer.rs` suite gate each test behind a
+the desktop `src-tauri/tests/sftp_transfer.rs` / `sftp_transfer_resume.rs` suites gate each test behind a
 runtime `require_docker!` / `require_sftp_stress!` guard rather than `#[ignore]`,
 so they compile and self-skip when the Docker fixtures are not up. Two
 properties keep a skip from hiding a broken lane:
@@ -437,6 +437,14 @@ reachable on port <n> …` line to stderr, so a human or CI scanning the output
   nothing) reds the lane rather than skipping to a false green. Local and per-PR
   runs leave the var unset and keep skipping gracefully. Truthy values are `1`,
   `true`, `yes`, `on` (case-insensitive).
+
+`sftp_transfer_resume.rs` (PARITY-004, #3567) also injects faults: it kills the
+fixture's `sftp-server` serving a transfer mid-flight through a long-lived
+`docker exec --privileged` shell into `$TERMIHUB_TEST_PROJECT-sftp-stress`
+(privileged because OpenSSH marks `sftp-server` non-dumpable, hiding its
+`/proc/<pid>/fd`), then asserts the queue's auto-retry resumed rather than
+restarted and the file is byte-exact. Without `docker exec` access those tests
+print `SKIPPED:` (or fail under `TERMIHUB_REQUIRE_DOCKER=1`).
 
 The [`integration-fixtures.yml`](../.github/workflows/integration-fixtures.yml)
 lane (nightly + on `tests/docker`/`core/tests`/backend changes) brings the
