@@ -408,12 +408,22 @@ context**. Read it — only from a plugin built for 1.1 or later, i.e. every
 plugin built against the current SDK — with `(*config).context()`, which
 returns an owned `HostContext`:
 
-| Field                      | What it is                                                                                                                                                               |
-| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `host_version`             | The termiHub version (e.g. `"0.1.0"`).                                                                                                                                   |
-| `data_dir`                 | A private directory the host created for this plugin (`<plugins>/.data/<id>`, user-only permissions). Shared by all sessions, kept across updates, removed on uninstall. |
-| `services.log(level, msg)` | Log into termiHub's Log Viewer and log file under the `plugin` target, tagged `[<plugin id>]`. Messages over 8 KiB are truncated; control characters are replaced.       |
-| `services.is_cancelled()`  | A sticky flag the host sets when the session is torn down (before `close`) or the plugin is disabled/unloaded. Poll it in worker loops and stop when it flips.           |
+| Field                      | What it is                                                                                                                                                                                              |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `host_version`             | The termiHub version (e.g. `"0.1.0"`).                                                                                                                                                                  |
+| `data_dir`                 | A private directory the host created for this plugin (`<plugins>/.data/<id>`, user-only permissions). Shared by all sessions, kept across updates, removed on uninstall.                                |
+| `services.log(level, msg)` | Log into termiHub's Log Viewer and log file under the `plugin` target, tagged `[<plugin id>]`. Messages over 8 KiB are truncated; control characters are replaced. Rate-limited per plugin (see below). |
+| `services.is_cancelled()`  | A sticky flag the host sets when the session is torn down (before `close`) or the plugin is disabled/unloaded. Poll it in worker loops and stop when it flips.                                          |
+
+**Log rate limit.** The host rate-limits each plugin's log lines with a token
+bucket shared by all of the plugin's sessions: a **burst of 100 lines**, then
+**20 lines per second** sustained. Lines over the limit are dropped, and
+`services.log` still returns `Ok` for them — a dropped line is not an error
+your plugin should handle. The host instead logs one warning,
+`[<plugin id>] N log lines suppressed (host log rate limit exceeded)`, per
+suppression window (at most once per second, on your plugin's next log call
+or when it is unloaded). The limits are host policy and may be tuned; log
+diagnostics, not per-byte traffic.
 
 The plugin-level settings are **not** duplicated in the context: they stay in
 `PluginSessionConfig::settings_json` (ABI 1.0).
