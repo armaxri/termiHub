@@ -61,6 +61,7 @@
 
 mod capabilities;
 mod connection;
+mod fat_pack;
 mod host;
 mod manager;
 mod manifest;
@@ -80,6 +81,10 @@ pub use capabilities::{
     DEFAULT_MAX_CONNECTIONS,
 };
 pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
+pub use fat_pack::{
+    merge_packages, package_platform_entries, platform_library_map, MultiPlatformPackError,
+    PlatformEntry,
+};
 pub use host::{
     find_backend_library, load_backend_library, load_backend_library_for_manifest,
     select_backend_library, HostError, HostLifecycleHook, LoadedLibrary, LoadedPluginInfo,
