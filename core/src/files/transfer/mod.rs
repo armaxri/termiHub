@@ -46,6 +46,8 @@ pub mod docker;
 pub mod ftp;
 #[cfg(feature = "local-transfer")]
 pub mod local;
+#[cfg(feature = "local-transfer")]
+pub mod local_folder;
 #[cfg(feature = "ssh")]
 pub mod sftp;
 

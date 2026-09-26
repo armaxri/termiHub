@@ -308,7 +308,7 @@ fn copy_dir_recursive(src: &Path, dest: &Path) -> std::io::Result<()> {
 /// broken or relative link is preserved as-is. On Windows the file/dir variant
 /// is chosen from the resolved target's kind, defaulting to a file symlink when
 /// the target cannot be stat'd (e.g. a broken link).
-fn copy_symlink(src: &Path, dest: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_symlink(src: &Path, dest: &Path) -> std::io::Result<()> {
     let target = std::fs::read_link(src)?;
     #[cfg(unix)]
     {
