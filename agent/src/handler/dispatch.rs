@@ -5299,6 +5299,9 @@ mod tests {
         registry: ConnectionTypeRegistry,
         create_error: Option<SessionCreateError>,
         sessions: Arc<AsyncMutex<Vec<SessionSnapshot>>>,
+        /// When set, `create` asks this hub one OTP round first, standing in
+        /// for an SSH connect that needs a keyboard-interactive answer (#3375).
+        ki_hub: Option<Arc<KiPromptHub>>,
     }
 
     impl MockSessionManager {
@@ -5307,6 +5310,7 @@ mod tests {
                 registry: crate::registry::build_registry(),
                 create_error: None,
                 sessions: Arc::new(AsyncMutex::new(Vec::new())),
+                ki_hub: None,
             }
         }
 
@@ -5315,6 +5319,14 @@ mod tests {
                 registry: crate::registry::build_registry(),
                 create_error: Some(error),
                 sessions: Arc::new(AsyncMutex::new(Vec::new())),
+                ki_hub: None,
+            }
+        }
+
+        fn with_ki_prompt(hub: Arc<KiPromptHub>) -> Self {
+            Self {
+                ki_hub: Some(hub),
+                ..Self::new()
             }
         }
     }
@@ -5332,6 +5344,9 @@ mod tests {
             _settings: serde_json::Value,
             definition_id: Option<String>,
         ) -> Result<SessionSnapshot, SessionCreateError> {
+            if let Some(hub) = &self.ki_hub {
+                ki_prompt_tests::mock_otp_round(hub).await?;
+            }
             if let Some(ref e) = self.create_error {
                 return Err(match e {
                     SessionCreateError::LimitReached => SessionCreateError::LimitReached,
@@ -5628,4 +5643,7 @@ mod tests {
         )));
         assert_eq!(err.code() as i64, errors::DEFERRED_UPDATE_FAILED);
     }
+
+    /// Keyboard-interactive prompt relay through dispatch + transport (#3375).
+    mod ki_prompt_tests;
 }

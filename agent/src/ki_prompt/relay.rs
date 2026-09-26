@@ -320,6 +320,13 @@ async fn serve_connection(
 
 // ── Daemon side ─────────────────────────────────────────────────────
 
+/// Connect to the worker's relay endpoint. It was bound before the daemon was
+/// spawned, so a live worker accepts at once — use the short fail-fast connect
+/// rather than the spawn-path wait.
+async fn connect_to_worker(endpoint: &str) -> std::io::Result<(BoxedReader, BoxedWriter)> {
+    crate::daemon::transport::connect_for_recovery(endpoint).await
+}
+
 /// Core prompter for a session daemon: relays each round to the spawning
 /// worker over [`KI_PROMPT_ENDPOINT_ENV`].
 pub struct DaemonRelayPrompter {
@@ -333,7 +340,7 @@ impl DaemonRelayPrompter {
     }
 
     async fn exchange(&self, request: &KbdInteractiveRequest) -> std::io::Result<KiAnswerOrClosed> {
-        let (mut reader, mut writer) = crate::daemon::transport::connect(&self.endpoint).await?;
+        let (mut reader, mut writer) = connect_to_worker(&self.endpoint).await?;
         let payload = serde_json::to_vec(&RelayPrompt::from_request(request))
             .map_err(std::io::Error::other)?;
         write_frame_async(&mut writer, FRAME_PROMPT, &payload).await?;
@@ -394,7 +401,7 @@ pub async fn report_connect_failure(endpoint: &str, error: &SessionError) {
         return;
     };
     let report = async {
-        let (mut reader, mut writer) = crate::daemon::transport::connect(endpoint).await?;
+        let (mut reader, mut writer) = connect_to_worker(endpoint).await?;
         let payload = serde_json::to_vec(&RelayFailure { kind }).map_err(std::io::Error::other)?;
         write_frame_async(&mut writer, FRAME_FAILURE, &payload).await?;
         let _ack = read_frame_async(&mut reader).await?;

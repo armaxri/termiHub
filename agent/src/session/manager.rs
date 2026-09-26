@@ -2305,6 +2305,12 @@ mod tests {
             Some("/tmp/agent.sock"),
             Some("/tmp/ki.sock"),
         );
+        assert!(
+            command
+                .get_envs()
+                .any(|(k, v)| k == KI_PROMPT_ENDPOINT_ENV && v == Some("/tmp/ki.sock".as_ref())),
+            "the prompt-relay endpoint is exported to the daemon (#3375)"
+        );
 
         for (key, value) in command.get_envs() {
             assert_ne!(
@@ -4407,4 +4413,7 @@ mod tests {
             assert_eq!(mgr.pending_creates_len_for_test().await, 0);
         }
     }
+
+    /// Keyboard-interactive prompt relay through daemon launches (#3375).
+    mod ki_prompt_tests;
 }
