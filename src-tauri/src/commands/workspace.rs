@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use tauri::{Emitter, State};
+use tauri::{Emitter, Manager, State};
 use tauri_plugin_cli::CliExt;
 
 use crate::connection::manager::ConnectionManager;
@@ -55,6 +55,17 @@ fn broadcast_active_workspace(app_handle: &tauri::AppHandle, manager: &Workspace
     }
 }
 
+/// Record the current active workspace in the stored last session so a restart
+/// re-activates it (#3517). Best-effort: a failure only logs.
+fn persist_active_workspace(app_handle: &tauri::AppHandle, manager: &WorkspaceManager) {
+    let Some(last_session) = app_handle.try_state::<LastSessionManager>() else {
+        return;
+    };
+    if let Err(e) = last_session.set_active_workspace_id(manager.active_id()) {
+        tracing::warn!("Failed to persist the active workspace: {e}");
+    }
+}
+
 /// The active workspace whose settings overrides are in effect, if any
 /// (PROD-052). A newly opened window reads this once at startup.
 #[tauri::command]
@@ -74,6 +85,7 @@ pub fn set_active_workspace(
     manager: State<'_, WorkspaceManager>,
 ) -> Result<(), TerminalError> {
     manager.set_active_workspace(workspace_id)?;
+    persist_active_workspace(&app_handle, &manager);
     broadcast_active_workspace(&app_handle, &manager);
     Ok(())
 }
@@ -88,6 +100,7 @@ pub fn delete_workspace(
     let was_active = manager.is_active(&workspace_id);
     manager.delete_workspace(&workspace_id)?;
     if was_active {
+        persist_active_workspace(&app_handle, &manager);
         broadcast_active_workspace(&app_handle, &manager);
     }
     Ok(())
@@ -205,15 +218,20 @@ pub fn preview_import_workspaces(json: String) -> Result<WorkspaceImportPreview,
     WorkspaceManager::preview_import_json(&json)
 }
 
-/// Persist the current session (open tab groups and layout) for restore on next startup.
+/// Persist the current session (open tab groups and layout, plus the active
+/// workspace) for restore on next startup.
 /// An empty session clears the stored file.
 #[tauri::command]
 pub fn save_last_session(
     session: LastSession,
+    app_handle: tauri::AppHandle,
     manager: State<'_, LastSessionManager>,
 ) -> Result<(), TerminalError> {
+    // The backend owns which workspace is active: stamp it here so the stored
+    // session always re-activates the right one on restore (#3517).
+    let workspaces = app_handle.try_state::<WorkspaceManager>();
     manager
-        .save(session)
+        .save_with_active(session, || workspaces.and_then(|w| w.active_id()))
         .map_err(|e| TerminalError::WorkspaceError(e.to_string()))
 }
 

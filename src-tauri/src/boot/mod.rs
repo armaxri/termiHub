@@ -1064,6 +1064,7 @@ pub(crate) fn init_secondary_managers(
     // session restore is simply unavailable until the next launch.
     match workspace::last_session::LastSessionManager::new(app.handle()) {
         Ok(manager) => {
+            restore_active_workspace(app, &manager);
             app.manage(manager);
         }
         Err(e) => {
@@ -1099,6 +1100,38 @@ pub(crate) fn init_secondary_managers(
             });
         }
     }
+}
+
+/// Re-activate the workspace recorded in the last session (#3517) when the
+/// session is restored silently ("always"), so its settings overrides are in
+/// effect before the first window reads them — no global-theme flash. In "ask"
+/// mode the frontend re-activates it once the user accepts the restore; in
+/// "never" mode the stored session is discarded, so nothing is re-activated.
+fn restore_active_workspace(
+    app: &tauri::App,
+    last_session: &workspace::last_session::LastSessionManager,
+) {
+    let Some(connections) = app.try_state::<ConnectionManager>() else {
+        return;
+    };
+    let settings = connections.get_settings();
+    let restore_settings = termihub_core::restore_mode::AppSettings {
+        restore_last_session_mode: settings.restore_last_session_mode,
+        restore_last_session_on_startup: Some(settings.restore_last_session_on_startup),
+    };
+    if termihub_core::restore_mode::resolve_restore_mode(&restore_settings)
+        != termihub_core::restore_mode::RestoreLastSessionMode::Always
+    {
+        return;
+    }
+    let Some(workspaces) = app.try_state::<workspace::manager::WorkspaceManager>() else {
+        return;
+    };
+    last_session.restore_active_workspace(|id| {
+        workspaces
+            .set_active_workspace(Some(id.to_string()))
+            .is_ok()
+    });
 }
 
 pub(crate) fn handle_cli_list_workspaces(app: &tauri::App) {

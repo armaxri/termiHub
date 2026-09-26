@@ -21,4 +21,10 @@ export interface LastSession {
    * restores entirely into the main window.
    */
   windows?: WorkspaceWindowDef[];
+  /**
+   * Id of the workspace whose settings overrides were active when the session
+   * was saved (#3517). Stamped by the backend on save (a value sent here is
+   * ignored) and re-activated on restore when the workspace still exists.
+   */
+  activeWorkspaceId?: string;
 }

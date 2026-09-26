@@ -1131,6 +1131,14 @@ the same name, or a per-connection terminal font always wins.
   marks it active on the backend (`set_active_workspace`). The backend broadcasts
   `active-workspace-changed` to every window, including when the active workspace is
   edited or deleted; a newly opened window reads `get_active_workspace`.
+- **Active workspace across restarts (#3517).** The active workspace id is persisted in
+  `last-session.json` (`activeWorkspaceId`, additive — schema version unchanged). The
+  backend stamps it on every `save_last_session` and patches the stored session when the
+  active workspace is set or deleted. With restore mode `always` the backend re-activates
+  it at boot, before the first window reads it, and the frontend reads it before its
+  first theme apply (no flash of the global theme); with `ask` the frontend re-activates
+  it when the user accepts the restore. A recorded workspace that no longer exists is
+  logged and cleared. The frontend's `activeWorkspaceName` follows the broadcast.
 - **Session defaults.** `create_connection` merges the active workspace's directory and
   env vars into the settings of a **new direct `local`** session only
   (`apply_session_defaults`). Running sessions, agent sessions and other connection
