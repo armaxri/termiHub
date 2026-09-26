@@ -1443,7 +1443,10 @@ mod tests {
     #[test]
     fn container_runtime_parses_like_the_backend() {
         assert_eq!(parse_container_runtime(None), ContainerRuntime::Auto);
-        assert_eq!(parse_container_runtime(Some("auto")), ContainerRuntime::Auto);
+        assert_eq!(
+            parse_container_runtime(Some("auto")),
+            ContainerRuntime::Auto
+        );
         assert_eq!(
             parse_container_runtime(Some("docker")),
             ContainerRuntime::Docker
@@ -1452,7 +1455,10 @@ mod tests {
             parse_container_runtime(Some("podman")),
             ContainerRuntime::Podman
         );
-        assert_eq!(parse_container_runtime(Some("bogus")), ContainerRuntime::Auto);
+        assert_eq!(
+            parse_container_runtime(Some("bogus")),
+            ContainerRuntime::Auto
+        );
     }
 
     #[test]
