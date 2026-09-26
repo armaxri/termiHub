@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src/components/Sidebar/FileBrowser
 evidence:
   - src/components/Sidebar/FileBrowser.tsx:851
-status: open
+status: partial
+resolution: "#3459 — drag-to-move/copy within browser + breadcrumbs, guards, overwrite confirm, Move to/Copy to; app->OS drag-out #3457"
 ---
 
 ## What
