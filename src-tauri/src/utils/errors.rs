@@ -245,6 +245,15 @@ pub enum TerminalError {
     /// paths fold the tab `Evicted` (with Reclaim) on it and never retry.
     #[error("{0}")]
     SessionHeldByPeer(String),
+
+    /// The agent reported that it lacks the requested capability — it answered
+    /// the JSON-RPC `METHOD_NOT_FOUND` (-32601, an older agent predating the
+    /// method) or `PROCESS_NOT_SUPPORTED` code (#3408). Classified by the
+    /// agent's error *code*, never by message text, so a reworded or localized
+    /// message cannot misclassify an old agent. Renders and serializes exactly
+    /// like [`TerminalError::RemoteError`], so the IPC wire is unchanged.
+    #[error("Remote agent error: {0}")]
+    AgentUnsupported(String),
 }
 
 impl TerminalError {
@@ -297,6 +306,7 @@ impl TerminalError {
             TerminalError::RemoteError(msg) => marker_slug(msg)
                 .and_then(C::from_slug)
                 .unwrap_or(C::RemoteError),
+            TerminalError::AgentUnsupported(_) => C::RemoteError,
             TerminalError::Cancelled => C::Cancelled,
             TerminalError::SftpSessionNotFound(_) => C::SftpSessionNotFound,
             TerminalError::TunnelError(_) => C::TunnelError,

@@ -68,21 +68,77 @@ fn parse_host_sessions_reply_decodes_holders() {
     assert_eq!(wire["sessions"][0]["type"], "shell");
 }
 
-/// #3369: an older agent without the method is "unsupported", not an error;
-/// any other failure still surfaces.
+/// #3369 / #3408: an older agent without the method is "unsupported", not an
+/// error — classified by the JSON-RPC `METHOD_NOT_FOUND` code, never by text.
+/// Any other failure still surfaces.
 #[test]
 fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
-    let old = parse_host_sessions_reply(Err(TerminalError::RemoteError(
-        "Method not found".to_string(),
-    )))
-    .expect("an older agent is not an error");
+    use termihub_core::protocol::errors;
+
+    let old_agent = AgentRpcFailure {
+        code: Some(errors::METHOD_NOT_FOUND),
+        message: "Method not found".to_string(),
+    };
+    let old = parse_host_sessions_reply(Err(old_agent.into_terminal_error()))
+        .expect("an older agent is not an error");
     assert!(!old.supported);
     assert!(old.sessions.is_empty());
+
+    // A reworded / localized message with the standard code is still unsupported.
+    let reworded = AgentRpcFailure {
+        code: Some(-32601),
+        message: "Methode nicht gefunden".to_string(),
+    };
+    let parsed =
+        parse_host_sessions_reply(Err(reworded.into_terminal_error())).expect("classified by code");
+    assert!(!parsed.supported);
+
+    // The same text with a different code is a real error, not "unsupported".
+    let same_text = AgentRpcFailure {
+        code: Some(errors::INTERNAL_ERROR),
+        message: "Method not found".to_string(),
+    };
+    assert!(parse_host_sessions_reply(Err(same_text.into_terminal_error())).is_err());
+
+    // A local failure without a code is a real error, even with that text.
+    let local = AgentRpcFailure::from("Method not found".to_string());
+    assert!(parse_host_sessions_reply(Err(local.into_terminal_error())).is_err());
 
     let other = parse_host_sessions_reply(Err(TerminalError::RemoteError(
         "Agent connection lost".to_string(),
     )));
     assert!(other.is_err());
+}
+
+/// #3408: `METHOD_NOT_FOUND` and `PROCESS_NOT_SUPPORTED` map to the typed
+/// `AgentUnsupported` error, which renders and serializes like `RemoteError`.
+#[test]
+fn agent_rpc_failure_maps_unsupported_codes_to_a_typed_error() {
+    use crate::utils::errors::IpcErrorCode;
+    use termihub_core::protocol::errors;
+
+    for code in [errors::METHOD_NOT_FOUND, errors::PROCESS_NOT_SUPPORTED] {
+        let err = AgentRpcFailure {
+            code: Some(code),
+            message: "nope".to_string(),
+        }
+        .into_terminal_error();
+        assert!(
+            matches!(&err, TerminalError::AgentUnsupported(m) if m == "nope"),
+            "code {code} → {err:?}"
+        );
+        assert_eq!(err.to_string(), "Remote agent error: nope");
+        assert_eq!(err.code(), IpcErrorCode::RemoteError);
+    }
+
+    let generic = AgentRpcFailure {
+        code: Some(errors::FILE_BROWSING_NOT_SUPPORTED),
+        message: "Method not found".to_string(),
+    };
+    assert!(matches!(
+        generic.into_terminal_error(),
+        TerminalError::RemoteError(_)
+    ));
 }
 
 /// #3404: the agent's typed `SESSION_HELD_BY_OTHER` refusal maps to the typed

@@ -929,14 +929,34 @@ mod processes_params {
     }
 }
 
+/// Map a failed process-management `send_request` to a [`ProcessError`].
+///
+/// An agent that lacks the capability — it answered `PROCESS_NOT_SUPPORTED`, or
+/// it predates the method and answered `METHOD_NOT_FOUND` — is surfaced by
+/// `send_request` as [`TerminalError::AgentUnsupported`] and becomes
+/// [`ProcessError::NotSupported`]. The classification uses the agent's JSON-RPC
+/// code, never the message text (#3408). Every other failure is a kill failure
+/// (when `pid` is set) or a list failure.
+fn map_process_rpc_error(e: TerminalError, pid: Option<u32>) -> ProcessError {
+    if matches!(e, TerminalError::AgentUnsupported(_)) {
+        return ProcessError::NotSupported;
+    }
+    let msg = e.to_string();
+    match pid {
+        Some(pid) => ProcessError::KillFailed { pid, message: msg },
+        None => ProcessError::ListFailed(msg),
+    }
+}
+
 impl RemoteProcessProxy {
     /// Run a sync `send_request` on the blocking pool (mirrors
     /// [`RemoteFileBrowserProxy::rpc`]) and map the outcome to [`ProcessError`].
     ///
     /// `is_kill` selects the fallback error variant so a transport/agent failure
     /// is reported as a kill or a list failure appropriately; the agent's
-    /// "not supported" message is recognised and surfaced as
-    /// [`ProcessError::NotSupported`] so the desktop keeps the typed distinction.
+    /// `PROCESS_NOT_SUPPORTED` / `METHOD_NOT_FOUND` code (surfaced by
+    /// `send_request` as [`TerminalError::AgentUnsupported`]) is mapped to
+    /// [`ProcessError::NotSupported`] by code, never by message text (#3408).
     async fn rpc(
         &self,
         method: &'static str,
@@ -951,18 +971,7 @@ impl RemoteProcessProxy {
             tokio::task::spawn_blocking(move || mgr.send_request(&agent_id, method, params))
                 .await
                 .map_err(|e| ProcessError::ListFailed(format!("spawn_blocking join: {e}")))?;
-        result.map_err(|e| {
-            let msg = e.to_string();
-            if msg.to_ascii_lowercase().contains("not supported")
-                || msg.to_ascii_lowercase().contains("not yet supported")
-            {
-                ProcessError::NotSupported
-            } else if let Some(pid) = pid {
-                ProcessError::KillFailed { pid, message: msg }
-            } else {
-                ProcessError::ListFailed(msg)
-            }
-        })
+        result.map_err(|e| map_process_rpc_error(e, pid))
     }
 }
 
@@ -3671,5 +3680,30 @@ mod tests {
             drop(raw_tx);
             handle.await.expect("driver ends when raw channel closes");
         }
+    }
+
+    /// #3408: a process RPC is "not supported" by the agent's code (surfaced as
+    /// `AgentUnsupported`), never by message text.
+    #[test]
+    fn process_rpc_error_classifies_not_supported_by_code() {
+        assert!(matches!(
+            map_process_rpc_error(TerminalError::AgentUnsupported("x".into()), None),
+            ProcessError::NotSupported
+        ));
+        assert!(matches!(
+            map_process_rpc_error(TerminalError::AgentUnsupported("x".into()), Some(7)),
+            ProcessError::NotSupported
+        ));
+        // The old text match's trigger phrase with no unsupported code is a real
+        // failure now.
+        let text = "Process management is not yet supported for 'x' sessions";
+        assert!(matches!(
+            map_process_rpc_error(TerminalError::RemoteError(text.into()), None),
+            ProcessError::ListFailed(m) if m.contains(text)
+        ));
+        assert!(matches!(
+            map_process_rpc_error(TerminalError::RemoteError(text.into()), Some(7)),
+            ProcessError::KillFailed { pid: 7, .. }
+        ));
     }
 }
