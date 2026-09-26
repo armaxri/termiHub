@@ -59,7 +59,7 @@ it allocate unbounded memory. Upstream `0.5.3` did both; this fork changes:
   being silently decoded as Raw (which desynchronised the stream).
 - **Geometry and lengths**: every pixel-carrying rectangle (and a CopyRect source)
   must fit the 16-bit coordinate space and stay within `MAX_RECT_PIXELS`
-  (8192 x 8192); ZRLE/TRLE length prefixes are bounded by `MAX_ENCODED_BYTES`;
+  (8192 x 8192); ZRLE length prefixes are bounded by `MAX_ENCODED_BYTES`;
   the `ServerInit` desktop name by 64 KiB; RFB/VeNCrypt failure reasons are read
   length-bounded (`auth::read_reason`) instead of `read_to_string` to EOF. All
   violations are `VncError::Protocol`.
@@ -127,6 +127,21 @@ Not ported (features or tooling): desktop resizing (`cc4472d`, `6528704`,
 parsers), version/author/CI bumps and merge commits. Regression tests are in
 `src/client/upstream_060_tests.rs`, `hostile_server_tests.rs`,
 `connection.rs`, `config.rs` and `codec/mod.rs`.
+
+## Spec-conformant TRLE decoder (#3478)
+
+Upstream decoded TRLE (encoding 15) as ZRLE without the zlib layer: it read a
+`u32` length prefix and that many bytes before the tiles (ZRLE's framing, absent
+from TRLE), used 64x64 tiles, and did not implement the palette-reuse
+subencodings — so a real TRLE rectangle desynchronised the stream.
+`src/codec/trle.rs` now follows RFC 6143 §7.7.5: 16x16 tiles read straight from
+the stream, subencodings 0 (raw), 1 (solid), 2–16 (packed palette, rows
+byte-padded), 127 (packed, previous palette), 128 (plain RLE), 129 (palette RLE,
+previous palette) and 130–255 (palette RLE); 17–126 and a reuse before any
+palette was sent are `VncError::InvalidImageData`. The reusable palette lives in
+the decoder (so it spans rectangles) and is dropped when the pixel format
+changes. Every read stays bounded by the tile geometry. termiHub still does not
+advertise TRLE. Tests: `src/codec/trle.rs` and `hostile_server_tests.rs`.
 
 ## Decoded-event queue bounded by bytes (#3511)
 

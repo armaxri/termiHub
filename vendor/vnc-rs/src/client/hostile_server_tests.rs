@@ -502,8 +502,8 @@ async fn zrle_rect_of_65535_rows_does_not_overflow_the_tile_cursor() {
 async fn trle_rect_of_65535_rows_does_not_overflow_the_tile_cursor() {
     let mut bytes = fb_update(1);
     bytes.extend(rect(0, 0, 1, u16::MAX, TRLE));
-    bytes.extend_from_slice(&0_u32.to_be_bytes()); // (vendored TRLE length prefix)
-    for _ in 0..65535_usize.div_ceil(64) {
+    // TRLE has no length prefix and uses 16-row tiles (#3478).
+    for _ in 0..65535_usize.div_ceil(16) {
         bytes.extend_from_slice(&[1, 9, 9, 9]);
     }
     bytes.push(BELL);
@@ -516,7 +516,6 @@ async fn trle_rect_of_65535_rows_does_not_overflow_the_tile_cursor() {
 async fn trle_palette_index_out_of_range_is_invalid_data() {
     let mut bytes = fb_update(1);
     bytes.extend(rect(0, 0, 2, 1, TRLE));
-    bytes.extend_from_slice(&0_u32.to_be_bytes());
     // Indexed RLE, 2-colour palette, then index 50.
     bytes.extend_from_slice(&[0x82, 1, 1, 1, 2, 2, 2, 50]);
     let (result, _) = run(&bytes, &PixelFormat::rgba()).await;

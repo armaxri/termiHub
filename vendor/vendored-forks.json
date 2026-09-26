@@ -46,6 +46,10 @@
           ]
         },
         {
+          "summary": "Spec-conformant TRLE decoder (RFC 6143 7.7.5): no ZRLE length prefix, 16x16 tiles, palette-reuse subencodings 127/129",
+          "refs": ["https://github.com/armaxri/termiHub/issues/3478"]
+        },
+        {
           "summary": "VncEvent::Error carries the typed Arc<VncError> instead of rendered text",
           "refs": [
             "https://github.com/armaxri/termiHub/issues/3479",
