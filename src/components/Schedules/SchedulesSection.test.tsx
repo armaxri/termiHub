@@ -199,6 +199,20 @@ describe("SchedulesSection (PROD-043)", () => {
     expect(query("schedule-attempts-s1")).toBeNull();
   });
 
+  it("links a scheduled macro attempt to its macro run-history record (#3543)", () => {
+    const attempt = {
+      at: new Date().toISOString(),
+      outcome: "completed" as const,
+      message: "Ran on 1 terminal",
+      macroRunIds: ["mrun-1"],
+    };
+    render([view({ lastResult: attempt, history: [attempt] })]);
+
+    act(() => query("schedule-attempts-toggle-s1")!.click());
+    expect(query("schedule-attempt-runs-s1-0")!.textContent).toBe("1 macro run in history");
+    expect(query("schedule-attempt-runs-s1-0")!.getAttribute("title")).toBe("mrun-1");
+  });
+
   it("offers no attempts toggle before the first attempt", () => {
     render([view()]);
     expect(query("schedule-attempts-toggle-s1")).toBeNull();
