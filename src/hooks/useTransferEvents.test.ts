@@ -153,6 +153,18 @@ describe("useTransferEvents — terminal-phase toasts (D2, #1286)", () => {
     expect(vi.mocked(toast.success).mock.calls[0][0]).toContain("report.pdf");
   });
 
+  it("labels a queued local copy with 'Copied' / 'Copy' (#3567)", async () => {
+    await mountHook();
+
+    act(() => {
+      emit!(progress({ sessionId: "local", fileName: "disk.img", phase: "done" }));
+      emit!(progress({ sessionId: "local", fileName: "disk.img", phase: "error", message: "EIO" }));
+    });
+
+    expect(vi.mocked(toast.success).mock.calls[0][0]).toBe("Copied disk.img");
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe("Copy of disk.img failed: EIO");
+  });
+
   it("shows exactly one recoverable error toast using the event message on error", async () => {
     await mountHook();
 

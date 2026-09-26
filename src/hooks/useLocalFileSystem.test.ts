@@ -32,7 +32,8 @@ vi.mock("@/services/api", () => ({
   localRename: vi.fn(() => Promise.resolve()),
   localSetPermissions: vi.fn(() => Promise.resolve()),
   localWriteFile: vi.fn(() => Promise.resolve()),
-  localCopyFile: vi.fn(() => Promise.resolve()),
+  localCopyStart: vi.fn(() => Promise.resolve(false)),
+  LOCAL_TRANSFER_SESSION: "local",
   vscodeAvailable: vi.fn(() => Promise.resolve(false)),
   vscodeOpenLocal: vi.fn(() => Promise.resolve()),
   sftpDownload: vi.fn(() => Promise.resolve()),
@@ -48,6 +49,12 @@ const toastMock = vi.hoisted(() => ({
 vi.mock("@/components/ui/Toast", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/components/ui/Toast")>()),
   toast: toastMock,
+}));
+
+const seedRowMock = vi.hoisted(() => vi.fn());
+vi.mock("./transferFeedback", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./transferFeedback")>()),
+  seedTransferQueueRow: seedRowMock,
 }));
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -179,7 +186,7 @@ describe("useLocalFileSystem — store integration", () => {
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { localCopyFile } from "@/services/api";
+import { localCopyStart } from "@/services/api";
 import { useLocalFileSystem } from "./useLocalFileSystem";
 
 describe("useLocalFileSystem — uploadFileFromPath API call", () => {
@@ -199,7 +206,7 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
     container.remove();
   });
 
-  it("calls localCopyFile with the correct destination path", async () => {
+  it("calls localCopyStart with the correct destination path", async () => {
     seedFileBrowsers({
       local: { path: "/destination/dir", entries: [], loading: false, error: null },
     });
@@ -219,10 +226,10 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
       await uploadFn!("/source/photo.jpg");
     });
 
-    expect(vi.mocked(localCopyFile)).toHaveBeenCalledWith(
+    expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
       "/source/photo.jpg",
       "/destination/dir/photo.jpg",
-      false
+      expect.any(Function)
     );
   });
 
@@ -244,7 +251,7 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
       await uploadFn!("/source/photo.jpg");
     });
 
-    expect(vi.mocked(localCopyFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(localCopyStart)).not.toHaveBeenCalled();
   });
 
   it("handles Windows-style backslash source path", async () => {
@@ -265,10 +272,10 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
       await uploadFn!("C:\\Users\\Alice\\report.docx");
     });
 
-    expect(vi.mocked(localCopyFile)).toHaveBeenCalledWith(
+    expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
       "C:\\Users\\Alice\\report.docx",
       "/uploads/report.docx",
-      false
+      expect.any(Function)
     );
   });
 });
@@ -383,7 +390,7 @@ describe("useLocalFileSystem — action wiring", () => {
     expect(vi.mocked(vscodeOpenLocal)).toHaveBeenCalledWith("/home/user/file.ts");
   });
 
-  it("downloadFile copies to the chosen save target, honouring the entry's isDirectory", async () => {
+  it("downloadFile copies to the chosen save target (the backend detects a folder)", async () => {
     vi.mocked(save).mockResolvedValueOnce("/dest/copy");
     const api = await mountHook("/home/user", [
       {
@@ -399,7 +406,11 @@ describe("useLocalFileSystem — action wiring", () => {
     await act(async () => {
       await api.downloadFile("/home/user/docs", "docs");
     });
-    expect(vi.mocked(localCopyFile)).toHaveBeenCalledWith("/home/user/docs", "/dest/copy", true);
+    expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
+      "/home/user/docs",
+      "/dest/copy",
+      expect.any(Function)
+    );
   });
 
   it("downloadFile is a no-op when the save dialog is cancelled", async () => {
@@ -408,7 +419,7 @@ describe("useLocalFileSystem — action wiring", () => {
     await act(async () => {
       await api.downloadFile("/home/user/file.txt", "file.txt");
     });
-    expect(vi.mocked(localCopyFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(localCopyStart)).not.toHaveBeenCalled();
   });
 
   it("copyEntry stores a local copy clipboard", async () => {
@@ -452,7 +463,7 @@ describe("useLocalFileSystem — action wiring", () => {
     expect(clip?.sourceMode).toBe("local");
   });
 
-  it("pasteEntry copies a local→local clipboard via localCopyFile", async () => {
+  it("pasteEntry copies a local→local clipboard via localCopyStart", async () => {
     const api = await mountHook("/dest");
     act(() => {
       useAppStore.getState().setFileClipboard({
@@ -475,7 +486,11 @@ describe("useLocalFileSystem — action wiring", () => {
     await act(async () => {
       await api.pasteEntry();
     });
-    expect(vi.mocked(localCopyFile)).toHaveBeenCalledWith("/src/a.txt", "/dest/a.txt", false);
+    expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
+      "/src/a.txt",
+      "/dest/a.txt",
+      expect.any(Function)
+    );
   });
 
   it("pasteEntry moves a local→local cut clipboard via localRename and clears it", async () => {
@@ -560,7 +575,7 @@ describe("useLocalFileSystem — action wiring", () => {
     await act(async () => {
       await api.pasteEntry();
     });
-    expect(vi.mocked(localCopyFile)).not.toHaveBeenCalled();
+    expect(vi.mocked(localCopyStart)).not.toHaveBeenCalled();
     expect(vi.mocked(localRename)).not.toHaveBeenCalled();
   });
 
@@ -641,13 +656,41 @@ describe("useLocalFileSystem — action wiring", () => {
       await act(async () => {
         await api.pasteEntry();
       });
-      expect(vi.mocked(localCopyFile)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(localCopyStart)).toHaveBeenCalledTimes(2);
       expect(toastMock.success).toHaveBeenCalledTimes(1);
       expect(toastMock.success).toHaveBeenCalledWith("Pasted 2 items", { id: "toast-id" });
     });
 
+    it("pasteEntry of a queued (large) copy seeds a local queue row and defers the toast", async () => {
+      vi.mocked(localCopyStart).mockImplementationOnce(async (_src, _dest, onRegistered) => {
+        onRegistered?.("xfer-1");
+        return true;
+      });
+      const api = await mountHook("/dest");
+      act(() => {
+        useAppStore.getState().setFileClipboard({
+          entries: [fileEntry("big.iso", "/src")],
+          operation: "copy",
+          sourceMode: "local",
+          sourcePath: "/src",
+        });
+      });
+      await act(async () => {
+        await api.pasteEntry();
+      });
+      expect(seedRowMock).toHaveBeenCalledWith({
+        transferId: "xfer-1",
+        sessionId: "local",
+        direction: "download",
+        remotePath: "/src/big.iso",
+      });
+      // The transfer-progress event path owns the terminal toast of a tracked copy.
+      expect(toastMock.success).not.toHaveBeenCalled();
+      expect(toastMock.dismiss).toHaveBeenCalledWith("toast-id");
+    });
+
     it("uploadFileFromPath (OS drop) reports a failed copy instead of rejecting", async () => {
-      vi.mocked(localCopyFile).mockRejectedValueOnce("Disk full");
+      vi.mocked(localCopyStart).mockRejectedValueOnce("Disk full");
       const api = await mountHook("/dest");
       await act(async () => {
         await expect(api.uploadFileFromPath("/elsewhere/big.iso")).resolves.toBeUndefined();
@@ -664,7 +707,7 @@ describe("useLocalFileSystem — action wiring", () => {
         await expect(api.downloadFile("/home/user/a.txt", "a.txt")).resolves.toBeUndefined();
       });
       expect(toastMock.error).toHaveBeenCalledWith('Save "a.txt" failed: dialog unavailable');
-      expect(vi.mocked(localCopyFile)).not.toHaveBeenCalled();
+      expect(vi.mocked(localCopyStart)).not.toHaveBeenCalled();
     });
   });
 });
