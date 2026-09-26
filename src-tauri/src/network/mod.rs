@@ -28,15 +28,13 @@ use uuid::Uuid;
 use crate::agent_service::{
     AgentHosted, AgentInstances, AgentStatusPollDelegate, AgentStatusPoller,
 };
-use http_monitor::{
-    register_http_monitor, HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState,
-};
+use http_monitor::{HttpCheckResult, HttpMonitorConfig, HttpMonitorService, HttpMonitorState};
 use termihub_core::network::WolDevice;
 use termihub_core::protocol::methods::{
     ServicePauseParams, ServiceResumeParams, ServiceStartParams, ServiceStatusParams,
     ServiceStatusResult, ServiceStopParams,
 };
-use termihub_core::service::{Service, ServiceInfo, ServiceRegistry};
+use termihub_core::service::Service;
 
 use crate::run_location::{Locality, ResolvedLocation, RunLocation, RunLocationResolver};
 use crate::terminal::agent_manager::AgentRpcClient;
@@ -118,9 +116,6 @@ pub struct NetworkManager {
     /// least one agent-hosted monitor exists, self-reaping once none remain; the
     /// shared [`AgentStatusPoller`] owns the task lifecycle (DUP-020).
     agent_status_poller: AgentStatusPoller,
-    /// Desktop-side registry of run-location-routable services. The HTTP monitor
-    /// is registered here (discovery, schema, capabilities) as the S2 pilot.
-    service_registry: ServiceRegistry,
     /// Resolver deciding where a tool/service runs (local vs agent). Honours the
     /// per-tool preference in `run_locations`; a tool with no recorded preference
     /// resolves local, so users see no behaviour change (#2190).
@@ -148,19 +143,12 @@ impl NetworkManager {
             agent_monitors: AgentInstances::new(),
             monitor_run_locations: Mutex::new(HashMap::new()),
             agent_status_poller: AgentStatusPoller::new(),
-            service_registry: build_service_registry(),
             run_location: RunLocationResolver::new(),
             run_locations: Mutex::new(HashMap::new()),
             wol_devices: Mutex::new(Vec::new()),
             config_dir: PathBuf::new(),
             app_handle: Arc::new(Mutex::new(None)),
         }
-    }
-
-    /// The services registered for run-location routing (currently just the
-    /// HTTP monitor). Backs future discovery / the run-location selector UI.
-    pub fn available_services(&self) -> Vec<ServiceInfo> {
-        self.service_registry.available_services()
     }
 
     // ── Run-location routing (#2190) ─────────────────────────────────────────
@@ -947,17 +935,6 @@ impl Default for NetworkManager {
     }
 }
 
-/// Build the desktop [`ServiceRegistry`] with the run-location-routable services.
-///
-/// Delegates to the shared [`register_http_monitor`] so the desktop host and the
-/// agent register an identical HTTP-monitor factory from one source of truth
-/// (#2592) — the same pattern the embedded servers use.
-fn build_service_registry() -> ServiceRegistry {
-    let mut registry = ServiceRegistry::new();
-    register_http_monitor(&mut registry);
-    registry
-}
-
 /// Bridge a monitor's core [`EventChannel`](termihub_core::service::EventChannel)
 /// to the desktop's Tauri emitter.
 ///
@@ -1141,22 +1118,6 @@ mod tests {
 
         // Every monitor is stopped and drained so nothing lingers.
         assert!(mgr.list_http_monitors().is_empty());
-    }
-
-    #[test]
-    fn http_monitor_registered_in_service_registry() {
-        // The S2 pilot registers the HTTP monitor in the desktop ServiceRegistry
-        // with the run-location-routable capabilities.
-        let mgr = NetworkManager::new();
-        let services = mgr.available_services();
-        let monitor = services
-            .iter()
-            .find(|s| s.service_id == http_monitor::SERVICE_ID)
-            .expect("http_monitor must be registered");
-        assert_eq!(monitor.display_name, http_monitor::DISPLAY_NAME);
-        assert!(monitor.capabilities.emits_events);
-        // A network probe may run on an agent — not desktop-only.
-        assert!(!monitor.capabilities.desktop_only);
     }
 
     // ── Per-monitor run-location + agent hosting (#2592) ─────────────────────

@@ -745,7 +745,6 @@ pub fn run() -> anyhow::Result<()> {
             commands::files::unwatch_local_dir,
             commands::files::vscode_available,
             commands::files::vscode_open_local,
-            commands::files::write_cheatsheet,
             // Agent management
             commands::agent::connect_agent,
             commands::agent::cancel_connect_agent,
@@ -874,10 +873,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::network::network_http_monitor_stop_all,
             commands::network::network_http_monitor_list,
             commands::network::set_http_monitor_run_location,
-            commands::network::network_services_list,
             commands::network::set_network_tool_run_location,
             // Embedded servers
-            commands::embedded_servers::embedded_servers_services_list,
             commands::embedded_servers::list_embedded_servers,
             commands::embedded_servers::save_embedded_server,
             commands::embedded_servers::delete_embedded_server,
