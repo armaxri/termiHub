@@ -20,7 +20,13 @@ import { newId } from "@/services/transport/ids";
 
 import { currentSessionView, regionExited } from "../sessionBridge";
 
-import { collectLiveTabs, getActiveTab, type AppState } from "../appStore";
+import {
+  collectLiveTabs,
+  filterConnectedTerminalTabIds,
+  getActiveTab,
+  type AppState,
+} from "../appStore";
+import { createMacroFanoutInjector, describeMacroFanoutOutcome } from "./macroFanout";
 import { errorMessage } from "@/utils/errorMessage";
 
 /** UI-facing metadata describing an in-flight macro playback (#1675). */
@@ -37,12 +43,25 @@ export interface MacroPlaybackState {
   total: number;
   /** Steps injected so far. */
   played: number;
+  /**
+   * Every terminal receiving the macro when it plays into several at once
+   * (PROD-042, #3443); `undefined` for a single-terminal run. `tabId` is the
+   * first of these.
+   */
+  targetTabIds?: string[];
 }
 
 /** Options for {@link AppState.playMacro}. */
 export interface PlayMacroOptions {
   /** Tab to inject into; defaults to the active terminal tab. */
   targetTabId?: string;
+  /**
+   * Play into several terminals at once (PROD-042, #3443). With more than one
+   * id, each step is delivered to every connected target in lock-step; targets
+   * that are not connected are skipped and reported in the summary. Takes
+   * precedence over {@link targetTabId}.
+   */
+  targetTabIds?: string[];
   /** Timing mode; defaults to `"real-time"`. */
   timingMode?: MacroTimingMode;
   /** Per-step delay (ms) for the `"fixed"` timing mode. */
@@ -140,262 +159,358 @@ export interface MacrosSlice {
   cancelMacroPlayback: () => void;
 }
 
-export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (set, get) => ({
-  // Macros
-  macros: [],
-
-  loadMacros: async () => {
-    try {
-      const macros = await apiListMacros();
-      set({ macros });
-    } catch (err) {
-      frontendLog("app_store", `Failed to load macros: ${errorMessage(err)}`);
-    }
-  },
-
-  saveMacroToBackend: async (macro) => {
-    const saved = await apiSaveMacro(macro);
-    await get().loadMacros();
-    return saved;
-  },
-
-  deleteMacroFromBackend: async (macroId) => {
-    // Only mutate local state after the backend delete resolves, and rethrow
-    // on failure so the caller can surface the error (mirrors workspaces).
-    await apiDeleteMacro(macroId);
-    set((state) => ({
-      macros: state.macros.filter((m) => m.id !== macroId),
-    }));
-  },
-
-  importMacros: async (json) => {
-    // Parse+validate first: a malformed file throws here, before any backend
-    // write, so a bad import can never corrupt the existing library (#1677).
-    const parsed = parseMacroEnvelope(json);
-    const prepared = resolveImportCollisions(parsed, get().macros, generateMacroId);
-    for (const macro of prepared) {
-      await apiSaveMacro(macro);
-    }
-    // Refresh once, after all saves, rather than per-macro.
-    await get().loadMacros();
-    return prepared.length;
-  },
-
-  // Macro recording (#1674)
-  macroRecording: false,
-  macroRecordingSteps: [],
-  macroRecordingLastTime: null,
-  macroSaveDialogOpen: false,
-
-  startMacroRecording: () => {
-    set({
-      macroRecording: true,
-      macroRecordingSteps: [],
-      macroRecordingLastTime: null,
-      macroSaveDialogOpen: false,
-    });
-    toast.info("Recording macro — type in the terminal, then stop to save");
-  },
-
-  recordMacroInput: (data) => {
-    const state = get();
-    if (!state.macroRecording) return;
-    const now = Date.now();
-    const last = state.macroRecordingLastTime;
-    const delayMs = last === null ? 0 : Math.max(0, now - last);
-    set({
-      macroRecordingSteps: [...state.macroRecordingSteps, { data, delayMs }],
-      macroRecordingLastTime: now,
-    });
-  },
-
-  stopMacroRecording: () => {
-    const state = get();
-    if (!state.macroRecording) return;
-    if (state.macroRecordingSteps.length === 0) {
-      // Nothing was typed — discard the empty recording rather than prompting.
-      set({
-        macroRecording: false,
-        macroRecordingLastTime: null,
-        macroSaveDialogOpen: false,
-      });
-      toast.info("No input was recorded");
+export const createMacrosSlice: StateCreator<AppState, [], [], MacrosSlice> = (set, get) => {
+  /**
+   * Multi-target playback (PROD-042, #3443): replay `macro` into every connected
+   * terminal in `requested`, in lock-step, through the shared `send_input` seam.
+   * Uses the broadcast fan-out's connected-terminal filter, so a disconnected or
+   * taken-over tab is never typed into; the summary reports skipped / dropped
+   * targets rather than implying the whole fleet got the macro.
+   */
+  const playMacroOnTargets = async (
+    macro: Macro,
+    requested: string[],
+    opts: PlayMacroOptions | undefined
+  ): Promise<void> => {
+    const targets = filterConnectedTerminalTabIds(get(), requested);
+    const skipped = requested.length - targets.length;
+    if (targets.length === 0) {
+      toast.error("None of the selected terminals are connected");
       return;
     }
-    set({
-      macroRecording: false,
-      macroRecordingLastTime: null,
-      macroSaveDialogOpen: true,
-    });
-  },
-
-  toggleMacroRecording: () => {
-    if (get().macroRecording) {
-      get().stopMacroRecording();
-    } else {
-      get().startMacroRecording();
-    }
-  },
-
-  cancelMacroRecording: () => {
-    set({
-      macroRecording: false,
-      macroRecordingSteps: [],
-      macroRecordingLastTime: null,
-      macroSaveDialogOpen: false,
-    });
-    toast.info("Recording discarded");
-  },
-
-  saveRecordedMacro: async ({ name, description, tags }) => {
-    const steps = get().macroRecordingSteps;
-    const macro: Macro = {
-      id: generateMacroId(),
-      name,
-      description,
-      tags,
-      steps,
-      // The backend stamps authoritative created/updated timestamps.
-      createdAt: "",
-      updatedAt: "",
-    };
-    try {
-      await get().saveMacroToBackend(macro);
-      set({
-        macroRecordingSteps: [],
-        macroRecordingLastTime: null,
-        macroSaveDialogOpen: false,
-      });
-      toast.success(`Saved macro "${name}"`);
-    } catch (err) {
-      // Keep the dialog open so the user can retry without losing the capture.
-      toast.error(`Failed to save macro: ${errorMessage(err)}`);
-      throw err;
-    }
-  },
-
-  discardRecordedMacro: () => {
-    set({
-      macroRecordingSteps: [],
-      macroRecordingLastTime: null,
-      macroSaveDialogOpen: false,
-    });
-  },
-
-  // Macro playback (#1675)
-  macroPlayback: null,
-
-  playMacro: async (macroId, opts) => {
-    const state = get();
-    const macro = state.macros.find((m) => m.id === macroId);
-    if (!macro) {
-      toast.error("Macro not found");
-      return;
-    }
-
-    const targetTabId = opts?.targetTabId ?? getActiveTab(state)?.id ?? null;
-    if (!targetTabId) {
-      toast.error("No active terminal to play the macro into");
-      return;
-    }
-
-    // Guard: only inject into a connected, non-exited terminal session.
-    const tab = collectLiveTabs(state).find((t) => t.id === targetTabId);
-    if (
-      !tab ||
-      tab.contentType !== "terminal" ||
-      !tab.sessionId ||
-      // #2625: exited is region-only now the per-client `terminalExitedTabs` slice
-      // is deleted.
-      regionExited(currentSessionView()[targetTabId])
-    ) {
-      toast.error("The target terminal is not connected");
-      return;
-    }
-
     if (macro.steps.length === 0) {
       toast.info(`Macro "${macro.name}" has no steps to play`);
       return;
     }
-
-    // Only one playback at a time — cancel any in-flight run first.
     if (activeMacroPlayback) {
       activeMacroPlayback.cancel();
       activeMacroPlayback = null;
     }
 
     const timingMode = opts?.timingMode ?? "real-time";
-    const injector = getTerminalInputInjector();
-    const inject: MacroInjector = (data) => {
-      if (!injector) return false;
-      return injector(targetTabId, data);
-    };
-
-    const toastId = `macro-playback-${macroId}-${targetTabId}`;
+    const fanout = createMacroFanoutInjector(targets, getTerminalInputInjector(), (ids) =>
+      filterConnectedTerminalTabIds(get(), ids)
+    );
+    const firstTab = targets[0];
+    const toastId = `macro-playback-${macro.id}-multi`;
     const total = macro.steps.length;
-    toast.loading(`Playing macro "${macro.name}"…`, {
-      id: toastId,
-      description: `0 / ${total} steps`,
-    });
+    const title = `Playing macro "${macro.name}" on ${targets.length} terminals…`;
+    toast.loading(title, { id: toastId, description: `0 / ${total} steps` });
     set({
       macroPlayback: {
-        macroId,
+        macroId: macro.id,
         macroName: macro.name,
-        tabId: targetTabId,
+        tabId: firstTab,
         timingMode,
         total,
         played: 0,
+        targetTabIds: targets,
       },
     });
+    frontendLog("macro_playback", `fan-out macro=${macro.id} targets=${targets.length}`);
 
     const handle = runMacroPlayback(
       macro.steps,
-      inject,
+      fanout.inject,
       { timingMode, fixedDelayMs: opts?.fixedDelayMs },
       {
         onProgress: (played, stepTotal) => {
           set((s) =>
             s.macroPlayback &&
-            s.macroPlayback.macroId === macroId &&
-            s.macroPlayback.tabId === targetTabId
+            s.macroPlayback.macroId === macro.id &&
+            s.macroPlayback.tabId === firstTab
               ? { macroPlayback: { ...s.macroPlayback, played } }
               : {}
           );
-          toast.loading(`Playing macro "${macro.name}"…`, {
+          toast.loading(title, {
             id: toastId,
-            description: `${played} / ${stepTotal} steps`,
+            description: `${played} / ${stepTotal} steps · ${fanout.live().length} receiving`,
           });
         },
       }
     );
     activeMacroPlayback = handle;
-
     const result = await handle.done;
-
-    // Only clear shared state when this run is still the current one — a newer
-    // playMacro may have replaced it while this one was cancelled.
     if (activeMacroPlayback === handle) {
       activeMacroPlayback = null;
       set({ macroPlayback: null });
     }
 
-    if (result.status === "completed") {
-      toast.success(`Played macro "${macro.name}"`, { id: toastId });
-    } else if (result.status === "cancelled") {
-      toast.info(`Playback of "${macro.name}" cancelled`, {
-        id: toastId,
-        description: `Stopped after ${result.stepsPlayed} of ${total} steps`,
-      });
-    } else {
-      toast.error(`Could not play "${macro.name}" — the terminal is no longer connected`, {
-        id: toastId,
-      });
-    }
-  },
+    const summary = describeMacroFanoutOutcome(macro.name, {
+      status: result.status,
+      requested: requested.length,
+      delivered: fanout.live().length,
+      dropped: fanout.dropped().length,
+      skipped,
+      stepsPlayed: result.stepsPlayed,
+      totalSteps: total,
+    });
+    toast[summary.kind](summary.message, { id: toastId, description: summary.description });
+  };
 
-  cancelMacroPlayback: () => {
-    if (activeMacroPlayback) {
-      activeMacroPlayback.cancel();
-    }
-  },
-});
+  return {
+    // Macros
+    macros: [],
+
+    loadMacros: async () => {
+      try {
+        const macros = await apiListMacros();
+        set({ macros });
+      } catch (err) {
+        frontendLog("app_store", `Failed to load macros: ${errorMessage(err)}`);
+      }
+    },
+
+    saveMacroToBackend: async (macro) => {
+      const saved = await apiSaveMacro(macro);
+      await get().loadMacros();
+      return saved;
+    },
+
+    deleteMacroFromBackend: async (macroId) => {
+      // Only mutate local state after the backend delete resolves, and rethrow
+      // on failure so the caller can surface the error (mirrors workspaces).
+      await apiDeleteMacro(macroId);
+      set((state) => ({
+        macros: state.macros.filter((m) => m.id !== macroId),
+      }));
+    },
+
+    importMacros: async (json) => {
+      // Parse+validate first: a malformed file throws here, before any backend
+      // write, so a bad import can never corrupt the existing library (#1677).
+      const parsed = parseMacroEnvelope(json);
+      const prepared = resolveImportCollisions(parsed, get().macros, generateMacroId);
+      for (const macro of prepared) {
+        await apiSaveMacro(macro);
+      }
+      // Refresh once, after all saves, rather than per-macro.
+      await get().loadMacros();
+      return prepared.length;
+    },
+
+    // Macro recording (#1674)
+    macroRecording: false,
+    macroRecordingSteps: [],
+    macroRecordingLastTime: null,
+    macroSaveDialogOpen: false,
+
+    startMacroRecording: () => {
+      set({
+        macroRecording: true,
+        macroRecordingSteps: [],
+        macroRecordingLastTime: null,
+        macroSaveDialogOpen: false,
+      });
+      toast.info("Recording macro — type in the terminal, then stop to save");
+    },
+
+    recordMacroInput: (data) => {
+      const state = get();
+      if (!state.macroRecording) return;
+      const now = Date.now();
+      const last = state.macroRecordingLastTime;
+      const delayMs = last === null ? 0 : Math.max(0, now - last);
+      set({
+        macroRecordingSteps: [...state.macroRecordingSteps, { data, delayMs }],
+        macroRecordingLastTime: now,
+      });
+    },
+
+    stopMacroRecording: () => {
+      const state = get();
+      if (!state.macroRecording) return;
+      if (state.macroRecordingSteps.length === 0) {
+        // Nothing was typed — discard the empty recording rather than prompting.
+        set({
+          macroRecording: false,
+          macroRecordingLastTime: null,
+          macroSaveDialogOpen: false,
+        });
+        toast.info("No input was recorded");
+        return;
+      }
+      set({
+        macroRecording: false,
+        macroRecordingLastTime: null,
+        macroSaveDialogOpen: true,
+      });
+    },
+
+    toggleMacroRecording: () => {
+      if (get().macroRecording) {
+        get().stopMacroRecording();
+      } else {
+        get().startMacroRecording();
+      }
+    },
+
+    cancelMacroRecording: () => {
+      set({
+        macroRecording: false,
+        macroRecordingSteps: [],
+        macroRecordingLastTime: null,
+        macroSaveDialogOpen: false,
+      });
+      toast.info("Recording discarded");
+    },
+
+    saveRecordedMacro: async ({ name, description, tags }) => {
+      const steps = get().macroRecordingSteps;
+      const macro: Macro = {
+        id: generateMacroId(),
+        name,
+        description,
+        tags,
+        steps,
+        // The backend stamps authoritative created/updated timestamps.
+        createdAt: "",
+        updatedAt: "",
+      };
+      try {
+        await get().saveMacroToBackend(macro);
+        set({
+          macroRecordingSteps: [],
+          macroRecordingLastTime: null,
+          macroSaveDialogOpen: false,
+        });
+        toast.success(`Saved macro "${name}"`);
+      } catch (err) {
+        // Keep the dialog open so the user can retry without losing the capture.
+        toast.error(`Failed to save macro: ${errorMessage(err)}`);
+        throw err;
+      }
+    },
+
+    discardRecordedMacro: () => {
+      set({
+        macroRecordingSteps: [],
+        macroRecordingLastTime: null,
+        macroSaveDialogOpen: false,
+      });
+    },
+
+    // Macro playback (#1675)
+    macroPlayback: null,
+
+    playMacro: async (macroId, opts) => {
+      const state = get();
+      const macro = state.macros.find((m) => m.id === macroId);
+      if (!macro) {
+        toast.error("Macro not found");
+        return;
+      }
+
+      const requested = opts?.targetTabIds?.length ? [...new Set(opts.targetTabIds)] : null;
+      if (requested && requested.length > 1) {
+        await playMacroOnTargets(macro, requested, opts);
+        return;
+      }
+
+      const targetTabId = requested?.[0] ?? opts?.targetTabId ?? getActiveTab(state)?.id ?? null;
+      if (!targetTabId) {
+        toast.error("No active terminal to play the macro into");
+        return;
+      }
+
+      // Guard: only inject into a connected, non-exited terminal session.
+      const tab = collectLiveTabs(state).find((t) => t.id === targetTabId);
+      if (
+        !tab ||
+        tab.contentType !== "terminal" ||
+        !tab.sessionId ||
+        // #2625: exited is region-only now the per-client `terminalExitedTabs` slice
+        // is deleted.
+        regionExited(currentSessionView()[targetTabId])
+      ) {
+        toast.error("The target terminal is not connected");
+        return;
+      }
+
+      if (macro.steps.length === 0) {
+        toast.info(`Macro "${macro.name}" has no steps to play`);
+        return;
+      }
+
+      // Only one playback at a time — cancel any in-flight run first.
+      if (activeMacroPlayback) {
+        activeMacroPlayback.cancel();
+        activeMacroPlayback = null;
+      }
+
+      const timingMode = opts?.timingMode ?? "real-time";
+      const injector = getTerminalInputInjector();
+      const inject: MacroInjector = (data) => {
+        if (!injector) return false;
+        return injector(targetTabId, data);
+      };
+
+      const toastId = `macro-playback-${macroId}-${targetTabId}`;
+      const total = macro.steps.length;
+      toast.loading(`Playing macro "${macro.name}"…`, {
+        id: toastId,
+        description: `0 / ${total} steps`,
+      });
+      set({
+        macroPlayback: {
+          macroId,
+          macroName: macro.name,
+          tabId: targetTabId,
+          timingMode,
+          total,
+          played: 0,
+        },
+      });
+
+      const handle = runMacroPlayback(
+        macro.steps,
+        inject,
+        { timingMode, fixedDelayMs: opts?.fixedDelayMs },
+        {
+          onProgress: (played, stepTotal) => {
+            set((s) =>
+              s.macroPlayback &&
+              s.macroPlayback.macroId === macroId &&
+              s.macroPlayback.tabId === targetTabId
+                ? { macroPlayback: { ...s.macroPlayback, played } }
+                : {}
+            );
+            toast.loading(`Playing macro "${macro.name}"…`, {
+              id: toastId,
+              description: `${played} / ${stepTotal} steps`,
+            });
+          },
+        }
+      );
+      activeMacroPlayback = handle;
+
+      const result = await handle.done;
+
+      // Only clear shared state when this run is still the current one — a newer
+      // playMacro may have replaced it while this one was cancelled.
+      if (activeMacroPlayback === handle) {
+        activeMacroPlayback = null;
+        set({ macroPlayback: null });
+      }
+
+      if (result.status === "completed") {
+        toast.success(`Played macro "${macro.name}"`, { id: toastId });
+      } else if (result.status === "cancelled") {
+        toast.info(`Playback of "${macro.name}" cancelled`, {
+          id: toastId,
+          description: `Stopped after ${result.stepsPlayed} of ${total} steps`,
+        });
+      } else {
+        toast.error(`Could not play "${macro.name}" — the terminal is no longer connected`, {
+          id: toastId,
+        });
+      }
+    },
+
+    cancelMacroPlayback: () => {
+      if (activeMacroPlayback) {
+        activeMacroPlayback.cancel();
+      }
+    },
+  };
+};

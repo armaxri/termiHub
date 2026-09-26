@@ -437,6 +437,98 @@ describe("pasteToTerminal", () => {
   });
 });
 
+describe("multi-line broadcast paste confirmation (#3443)", () => {
+  const mkTab = (id: string): TerminalTab => ({
+    id,
+    sessionId: `session-${id}`,
+    title: id,
+    connectionType: "local",
+    contentType: "terminal",
+    config: { type: "local", config: {} },
+    panelId: "leaf-1",
+    isActive: false,
+  });
+
+  async function setup(active: boolean, p: string) {
+    vi.mocked(sendInput).mockClear();
+    const harness = installBroadcastHarness();
+    await ensureBroadcastSubscribed();
+    seedLayoutState({
+      ...useAppStore.getInitialState(),
+      rootPanel: {
+        type: "leaf",
+        id: "leaf-1",
+        tabs: [mkTab(`${p}src`), mkTab(`${p}t2`)],
+        activeTabId: `${p}src`,
+      },
+      activePanelId: "leaf-1",
+    });
+    harness.transport.seed({
+      active,
+      sourceTabId: active ? `${p}src` : null,
+      scope: "all",
+      targetTabIds: active ? [`${p}src`, `${p}t2`] : [],
+    });
+    act(() => {
+      registryActions.registerSession(`${p}src`, `session-${p}src`);
+      registryActions.registerSession(`${p}t2`, `session-${p}t2`);
+    });
+    return harness;
+  }
+
+  afterEach(() => {
+    act(() => useAppStore.getState().closeLargePasteDialog());
+  });
+
+  it("asks before sending a multi-line paste to several broadcast targets", async () => {
+    const harness = await setup(true, "m");
+    mockReadClipboard.mockResolvedValueOnce("rm -rf build\nmake\n");
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("msrc");
+    });
+
+    expect(sendInput).not.toHaveBeenCalled();
+    const dialog = useAppStore.getState().largePasteDialog;
+    expect(dialog.open).toBe(true);
+    expect(dialog.broadcastTargetCount).toBe(2);
+
+    await act(async () => {
+      await dialog.onConfirm?.();
+    });
+    expect(sendInput).toHaveBeenCalledWith("session-msrc", "rm -rf build\nmake\n");
+    expect(sendInput).toHaveBeenCalledWith("session-mt2", "rm -rf build\nmake\n");
+    harness.teardown();
+  });
+
+  it("pastes a single-line broadcast paste straight away", async () => {
+    const harness = await setup(true, "s");
+    mockReadClipboard.mockResolvedValueOnce("hostname");
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("ssrc");
+    });
+
+    expect(useAppStore.getState().largePasteDialog.open).toBe(false);
+    expect(sendInput).toHaveBeenCalledTimes(2);
+    harness.teardown();
+  });
+
+  it("does not ask for a multi-line paste when broadcast is off", async () => {
+    const harness = await setup(false, "o");
+    mockReadClipboard.mockResolvedValueOnce("a\nb\n");
+
+    await act(async () => {
+      await registryActions.pasteToTerminal("osrc");
+    });
+
+    expect(useAppStore.getState().largePasteDialog.open).toBe(false);
+    expect(sendInput).toHaveBeenCalledTimes(1);
+    expect(sendInput).toHaveBeenCalledWith("session-osrc", "a\nb\n");
+    harness.teardown();
+  });
+});
+
 describe("pasteToTerminal debounce against bounced mouse signals (#2595)", () => {
   let nowSpy: ReturnType<typeof vi.spyOn>;
   let currentNow: number;

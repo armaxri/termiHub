@@ -1,4 +1,10 @@
-import { ConnectionConfig, RemoteAgentConfig, TerminalOptions, LineEnding } from "./terminal";
+import {
+  BroadcastGroup,
+  ConnectionConfig,
+  RemoteAgentConfig,
+  TerminalOptions,
+  LineEnding,
+} from "./terminal";
 // DTOs generated from their Rust source of truth via ts-rs (audit DUP-030 /
 // MOCK-005). Imported here so this module can both re-export them (below) and
 // reference them locally (e.g. the tree-node union, DEFAULT_AGENT_SETTINGS).
@@ -512,6 +518,11 @@ export interface AppSettings {
    * integration). Defaults to true (#3415).
    */
   terminalCommandDecorations?: boolean;
+  /**
+   * Persistent named broadcast groups (PROD-061, #3443). Frontend-owned; the
+   * backend round-trips the key verbatim through `AppSettings.extra`.
+   */
+  broadcastGroups?: BroadcastGroup[];
   /**
    * Render inline images in the terminal (PROD-057): SIXEL graphics and the
    * iTerm2 inline image protocol, via the lazily-loaded xterm image addon with

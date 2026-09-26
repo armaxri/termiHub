@@ -49,6 +49,26 @@ describe("LargePasteDialog", () => {
     expect(dialog!.textContent).toContain(baseProps.charCount.toLocaleString());
   });
 
+  it("names the target count for a multi-line broadcast paste (#3443)", () => {
+    const onConfirm = vi.fn();
+    render(<LargePasteDialog {...baseProps} broadcastTargetCount={4} onConfirm={onConfirm} />);
+    const dialog = document.querySelector('[data-testid="large-paste-dialog"]');
+    expect(dialog!.textContent).toContain("Paste to 4 terminals?");
+    expect(dialog!.textContent).toContain("will be sent to 4 terminals at once");
+    const confirm = document.querySelector(
+      '[data-testid="large-paste-confirm"]'
+    ) as HTMLButtonElement;
+    expect(confirm.textContent).toContain("Paste to 4 terminals");
+    act(() => confirm.click());
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the plain large-paste wording for a single target", () => {
+    render(<LargePasteDialog {...baseProps} broadcastTargetCount={1} />);
+    const dialog = document.querySelector('[data-testid="large-paste-dialog"]');
+    expect(dialog!.textContent).toContain("Large Paste");
+  });
+
   it("Paste button fires onConfirm", () => {
     const onConfirm = vi.fn();
     render(<LargePasteDialog {...baseProps} onConfirm={onConfirm} />);

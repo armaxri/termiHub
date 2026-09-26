@@ -22,8 +22,25 @@ import type { AppState } from "../appStore";
 
 export interface DialogsSlice {
   // Large paste confirmation
-  largePasteDialog: { open: boolean; charCount: number; onConfirm: (() => void) | null };
-  showLargePasteDialog: (charCount: number, onConfirm: () => void) => void;
+  largePasteDialog: {
+    open: boolean;
+    charCount: number;
+    onConfirm: (() => void) | null;
+    /**
+     * Set when the paste is multi-line and fans out to more than one broadcast
+     * target (#3443): the dialog then names the target count before sending.
+     */
+    broadcastTargetCount?: number;
+  };
+  /**
+   * Ask before pasting. `broadcastTargetCount` (> 1) marks a multi-line
+   * broadcast paste so the confirmation states how many terminals receive it.
+   */
+  showLargePasteDialog: (
+    charCount: number,
+    onConfirm: () => void,
+    broadcastTargetCount?: number
+  ) => void;
   closeLargePasteDialog: () => void;
 
   // Open-saved-file-in-tab confirmation
@@ -47,8 +64,13 @@ export interface DialogsSlice {
 export const createDialogsSlice: StateCreator<AppState, [], [], DialogsSlice> = (set) => ({
   // Large paste confirmation
   largePasteDialog: { open: false, charCount: 0, onConfirm: null },
-  showLargePasteDialog: (charCount, onConfirm) =>
-    set({ largePasteDialog: { open: true, charCount, onConfirm } }),
+  showLargePasteDialog: (charCount, onConfirm, broadcastTargetCount) =>
+    set({
+      largePasteDialog:
+        broadcastTargetCount !== undefined && broadcastTargetCount > 1
+          ? { open: true, charCount, onConfirm, broadcastTargetCount }
+          : { open: true, charCount, onConfirm },
+    }),
   closeLargePasteDialog: () =>
     set({ largePasteDialog: { open: false, charCount: 0, onConfirm: null } }),
 
