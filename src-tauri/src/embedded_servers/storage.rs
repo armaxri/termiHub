@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use tauri::AppHandle;
 
-use super::config::{EmbeddedServerConfig, EmbeddedServerStore, STORE_VERSION};
+use super::config::{EmbeddedServerConfig, EmbeddedServerStore};
 use super::secrets::strip_store;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
 use crate::utils::config_paths::resolve_config_dir;
@@ -117,7 +117,7 @@ impl EmbeddedServerStorage {
     pub fn save(&self, store: &EmbeddedServerStore) -> Result<()> {
         let mut stripped = store.clone();
         strip_store(&mut stripped);
-        stripped.version = STORE_VERSION.to_string();
+        stripped.version = EmbeddedServerStore::CURRENT_VERSION.to_string();
         let mut value =
             serde_json::to_value(&stripped).context("Failed to serialize embedded servers")?;
         remove_password_keys(&mut value);
@@ -146,7 +146,7 @@ impl EmbeddedServerStorage {
 /// (after backing the file up to `embedded_servers.json.bak`). That fails
 /// closed — writing `"password": ""` instead would make such a build serve
 /// the FTP login / HTTP Basic auth with an empty password.
-fn remove_password_keys(value: &mut serde_json::Value) {
+pub(crate) fn remove_password_keys(value: &mut serde_json::Value) {
     let Some(servers) = value.get_mut("servers").and_then(|s| s.as_array_mut()) else {
         return;
     };
@@ -209,7 +209,10 @@ mod tests {
 
         let reloaded = storage.load_with_recovery().unwrap();
         assert!(reloaded.warnings.is_empty());
-        assert_eq!(reloaded.data.version, STORE_VERSION);
+        assert_eq!(
+            reloaded.data.version,
+            EmbeddedServerStore::CURRENT_VERSION.to_string()
+        );
         assert_eq!(reloaded.data.servers.len(), 2);
     }
 

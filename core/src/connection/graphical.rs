@@ -431,6 +431,103 @@ pub struct CursorShape {
     pub data: Vec<u8>,
 }
 
+/// Upper bound on either cursor-bitmap dimension, in pixels.
+///
+/// A [`CursorShape`] is `width * height * 4` bytes of server-supplied RGBA, so
+/// the frontend would size an image from untrusted dimensions. Real pointers are
+/// 32–64 px (up to ~128 px under heavy HiDPI scaling); 256 leaves ample room
+/// while bounding one cursor bitmap to `256 * 256 * 4` = 256 KiB. Enforced once,
+/// at the shared cursor pump every backend's cursor updates flow through
+/// ([`CursorUpdate::sanitize`]), so no backend — mock, VNC or RDP — can bypass it.
+pub const MAX_CURSOR_DIMENSION: u32 = 256;
+
+/// Why a [`CursorShape`] was rejected by [`CursorShape::check`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CursorViolation {
+    /// A cursor dimension was zero — there is no image to draw.
+    #[error("cursor shape has a zero dimension ({width}x{height})")]
+    ZeroDimension {
+        /// Advertised width.
+        width: u32,
+        /// Advertised height.
+        height: u32,
+    },
+    /// A cursor dimension exceeded [`MAX_CURSOR_DIMENSION`].
+    #[error(
+        "cursor shape {width}x{height} exceeds the {max}x{max} cap",
+        max = MAX_CURSOR_DIMENSION
+    )]
+    Oversize {
+        /// Advertised width.
+        width: u32,
+        /// Advertised height.
+        height: u32,
+    },
+    /// The hotspot does not lie inside the cursor image.
+    #[error("cursor hotspot ({hotspot_x},{hotspot_y}) lies outside the image")]
+    HotspotOutside {
+        /// Advertised hotspot X.
+        hotspot_x: u32,
+        /// Advertised hotspot Y.
+        hotspot_y: u32,
+    },
+    /// `data.len()` does not equal `width * height * 4`.
+    #[error("cursor shape data length {actual} does not match width*height*4")]
+    LengthMismatch {
+        /// The actual byte length of `data`.
+        actual: usize,
+    },
+}
+
+impl CursorShape {
+    /// Validate this (untrusted) cursor bitmap against the shared bound:
+    /// non-zero and within [`MAX_CURSOR_DIMENSION`] on both axes, hotspot
+    /// strictly inside the image, and exactly `width * height * 4` bytes.
+    ///
+    /// Uses overflow-checked arithmetic and never allocates, so it is safe on
+    /// any shape a backend produces.
+    pub fn check(&self) -> Result<(), CursorViolation> {
+        let (width, height) = (self.width, self.height);
+        if width == 0 || height == 0 {
+            return Err(CursorViolation::ZeroDimension { width, height });
+        }
+        if width > MAX_CURSOR_DIMENSION || height > MAX_CURSOR_DIMENSION {
+            return Err(CursorViolation::Oversize { width, height });
+        }
+        if self.hotspot_x >= width || self.hotspot_y >= height {
+            return Err(CursorViolation::HotspotOutside {
+                hotspot_x: self.hotspot_x,
+                hotspot_y: self.hotspot_y,
+            });
+        }
+        let length_ok = rgba_len(width, height)
+            .and_then(|len| usize::try_from(len).ok())
+            .is_some_and(|len| len == self.data.len());
+        if !length_ok {
+            return Err(CursorViolation::LengthMismatch {
+                actual: self.data.len(),
+            });
+        }
+        Ok(())
+    }
+}
+
+impl CursorUpdate {
+    /// Enforce the shared cursor bound on an (untrusted) backend update.
+    ///
+    /// An invalid [`shape`](Self::shape) is removed — the update is kept as a
+    /// position/visibility change, so the frontend keeps its current cursor
+    /// image — and the violation is returned for logging. A valid shape, or an
+    /// update without one, passes through unchanged.
+    pub fn sanitize(mut self) -> (CursorUpdate, Option<CursorViolation>) {
+        let violation = self.shape.as_ref().and_then(|shape| shape.check().err());
+        if violation.is_some() {
+            self.shape = None;
+        }
+        (self, violation)
+    }
+}
+
 /// A protocol-agnostic input event travelling from the frontend to the backend.
 ///
 /// The backend encodes it to the wire protocol (RFB `KeyEvent`/`PointerEvent`
@@ -1263,5 +1360,123 @@ mod tests {
         assert!(!hostile.is_well_formed());
         assert_eq!(rgba_len(u32::MAX, u32::MAX), None);
         assert_eq!(rgba_len(2, 3), Some(24));
+    }
+
+    // ── Shared cursor bound: hostile cursor shapes ────────────────────
+
+    fn shape(width: u32, height: u32, hotspot_x: u32, hotspot_y: u32) -> CursorShape {
+        CursorShape {
+            width,
+            height,
+            hotspot_x,
+            hotspot_y,
+            data: vec![0u8; (width as usize) * (height as usize) * 4],
+        }
+    }
+
+    fn cursor(shape: Option<CursorShape>) -> CursorUpdate {
+        CursorUpdate {
+            x: 12,
+            y: 34,
+            visible: true,
+            shape,
+        }
+    }
+
+    #[test]
+    fn cursor_check_accepts_well_formed_shapes() {
+        assert_eq!(shape(32, 32, 0, 0).check(), Ok(()));
+        assert_eq!(shape(1, 1, 0, 0).check(), Ok(()));
+        let max = MAX_CURSOR_DIMENSION;
+        assert_eq!(shape(max, max, max - 1, max - 1).check(), Ok(()));
+    }
+
+    #[test]
+    fn cursor_check_rejects_zero_dimension() {
+        assert_eq!(
+            shape(0, 16, 0, 0).check(),
+            Err(CursorViolation::ZeroDimension {
+                width: 0,
+                height: 16
+            })
+        );
+        assert!(matches!(
+            shape(16, 0, 0, 0).check(),
+            Err(CursorViolation::ZeroDimension { .. })
+        ));
+    }
+
+    #[test]
+    fn cursor_check_rejects_oversize_before_touching_data() {
+        // No allocation from the hostile sizes: data is empty.
+        for (w, h) in [
+            (MAX_CURSOR_DIMENSION + 1, 1),
+            (1, MAX_CURSOR_DIMENSION + 1),
+            (65_535, 65_535),
+            (u32::MAX, u32::MAX),
+        ] {
+            let hostile = CursorShape {
+                width: w,
+                height: h,
+                hotspot_x: 0,
+                hotspot_y: 0,
+                data: Vec::new(),
+            };
+            assert_eq!(
+                hostile.check(),
+                Err(CursorViolation::Oversize {
+                    width: w,
+                    height: h
+                }),
+                "{w}x{h}"
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_check_rejects_hotspot_outside_image() {
+        for (hx, hy) in [(16, 0), (0, 16), (u32::MAX, u32::MAX)] {
+            assert_eq!(
+                shape(16, 16, hx, hy).check(),
+                Err(CursorViolation::HotspotOutside {
+                    hotspot_x: hx,
+                    hotspot_y: hy
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_check_rejects_length_mismatch() {
+        let mut short = shape(8, 8, 0, 0);
+        short.data.pop();
+        assert_eq!(
+            short.check(),
+            Err(CursorViolation::LengthMismatch { actual: 255 })
+        );
+        let mut long = shape(8, 8, 0, 0);
+        long.data.push(0);
+        assert_eq!(
+            long.check(),
+            Err(CursorViolation::LengthMismatch { actual: 257 })
+        );
+    }
+
+    #[test]
+    fn cursor_sanitize_strips_invalid_shape_but_keeps_position() {
+        let (out, violation) = cursor(Some(shape(16, 16, 99, 0))).sanitize();
+        assert_eq!(out, cursor(None));
+        assert!(matches!(
+            violation,
+            Some(CursorViolation::HotspotOutside { .. })
+        ));
+    }
+
+    #[test]
+    fn cursor_sanitize_passes_valid_or_shapeless_updates_unchanged() {
+        let valid = cursor(Some(shape(16, 16, 3, 4)));
+        assert_eq!(valid.clone().sanitize(), (valid, None));
+        let moved = cursor(None);
+        assert_eq!(moved.clone().sanitize(), (moved, None));
     }
 }

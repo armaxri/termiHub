@@ -20,6 +20,7 @@ mod agents_projection;
 /// held in managed state, so long-lived background tasks are cancelled and
 /// awaited (bounded) at teardown instead of outliving it — see [`app_tasks`].
 mod app_tasks;
+mod backup;
 /// Ordered application boot phases (ARCH-002 / TAURI-009): the wiring the
 /// Tauri `setup()` callback runs, extracted from the former god-closure into
 /// phase functions called in the identical order — see [`boot`].
@@ -797,6 +798,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::workspace::save_workspace,
             commands::workspace::delete_workspace,
             commands::workspace::duplicate_workspace,
+            commands::workspace::set_active_workspace,
+            commands::workspace::get_active_workspace,
             commands::workspace::get_cli_workspace,
             commands::workspace::export_workspaces,
             commands::workspace::import_workspaces,
@@ -901,6 +904,13 @@ pub fn run() -> anyhow::Result<()> {
             commands::credential_vault::export_credential_vault,
             commands::credential_vault::preview_credential_vault_import,
             commands::credential_vault::import_credential_vault,
+            // Unified backup and restore (PROD-068)
+            commands::backup::list_backup_sections,
+            commands::backup::export_backup,
+            commands::backup::read_backup_header,
+            commands::backup::preview_backup_restore,
+            commands::backup::apply_backup_restore,
+            commands::backup::restart_after_backup_restore,
             // Portable mode
             commands::portable::get_app_mode,
             commands::portable::list_config_files,

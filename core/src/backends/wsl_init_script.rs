@@ -78,21 +78,11 @@ pub(crate) fn distro_create_args(distribution: &str, path: &str) -> Option<Vec<S
     if distribution.is_empty() || !is_safe_init_path(path) {
         return None;
     }
-    Some(
-        [
-            "-d",
-            distribution,
-            "--exec",
-            "sh",
-            "-c",
-            CREATE_INIT_SCRIPT_SH,
-            "sh",
-            path,
-        ]
-        .iter()
-        .map(|s| (*s).to_string())
-        .collect(),
-    )
+    Some(super::wsl_exec::distro_sh_args(
+        distribution,
+        CREATE_INIT_SCRIPT_SH,
+        &[path],
+    ))
 }
 
 /// The init-script body: the setup command followed by the `rm -f` that

@@ -13,6 +13,7 @@ export type SettingsCategory =
   | "external-files"
   | "editor"
   | "plugins"
+  | "backup"
   | "portable";
 
 export interface CategoryDefinition {
@@ -43,6 +44,7 @@ export const CATEGORIES: CategoryDefinition[] = [
   { id: "external-files", label: "External Files" },
   { id: "editor", label: "Editor" },
   { id: "plugins", label: "Plugins" },
+  { id: "backup", label: "Backup & Restore" },
   { id: "portable", label: "Portable Mode" },
 ];
 
@@ -736,6 +738,27 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
       "configure",
       "manifest",
       "schema",
+    ],
+  },
+  {
+    id: "backupRestore",
+    label: "Backup & Restore",
+    description:
+      "Back up all app data (optionally with encrypted credentials) to one file and restore it",
+    category: "backup",
+    keywords: [
+      "backup",
+      "restore",
+      "export",
+      "import",
+      "migrate",
+      "new machine",
+      "transfer",
+      "credentials",
+      "vault",
+      "plugins",
+      "host keys",
+      "known hosts",
     ],
   },
   {

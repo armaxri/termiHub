@@ -28,6 +28,12 @@ pub mod wsl;
 #[cfg(any(all(feature = "wsl", windows), test))]
 pub(crate) mod wsl_init_script;
 
+// Pure, platform-independent argument building + `CREATE_NO_WINDOW` for the
+// helper `wsl.exe` spawns (monitoring, process manager, init-script create;
+// #3313). Compiled on every platform under `test`, like `wsl_init_script`.
+#[cfg(any(all(feature = "wsl", windows), test))]
+pub(crate) mod wsl_exec;
+
 #[cfg(feature = "ftp")]
 pub mod ftp;
 

@@ -15,6 +15,7 @@ import {
   FileJson,
   FileCode2,
   HardDrive,
+  DatabaseBackup,
   Puzzle,
   Check,
 } from "lucide-react";
@@ -22,7 +23,7 @@ import type { LucideIcon } from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { mirrorSettingsIntent } from "@/store/settingsBridge";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
-import { applyTheme } from "@/themes/engine";
+import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import { AppSettings } from "@/types/connection";
 import { SettingsCategory, CATEGORIES } from "./settingsRegistry";
 import { filterSettings, getMatchingCategories } from "./settingsRegistry";
@@ -43,6 +44,7 @@ import { SshTrustSettings } from "./SshTrustSettings";
 import { SerialPortSettings } from "./SerialPortSettings";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
+import { BackupRestoreSettings } from "./BackupRestoreSettings";
 import { PluginSettingsSection } from "./PluginSettingsSection";
 import { FrontendPluginGateSettings } from "./FrontendPluginGateSettings";
 import { PluginUpdateCheckSettings } from "./PluginUpdateCheckSettings";
@@ -77,6 +79,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   "external-files": FileJson,
   editor: FileCode2,
   plugins: Puzzle,
+  backup: DatabaseBackup,
   portable: HardDrive,
 };
 
@@ -221,7 +224,7 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
       // Apply theme immediately so the user sees the change without waiting
       // for the debounced save (which would compare against already-updated state).
       if (newSettings.theme !== base.theme) {
-        applyTheme(newSettings.theme);
+        applyEffectiveTheme(newSettings);
       }
 
       if (saveTimerRef.current) {
@@ -411,6 +414,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         sections.push(<PluginUpdateCheckSettings key="plugin-update-check" />);
         sections.push(<TrustedPublishersSettings key="trusted-publishers" />);
       }
+      if (highlightedCategories?.has("backup")) {
+        sections.push(<BackupRestoreSettings key="backup" />);
+      }
       if (highlightedCategories?.has("portable")) {
         sections.push(<PortableModeSettings key="portable" />);
       }
@@ -467,6 +473,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             <TrustedPublishersSettings />
           </>
         );
+      case "backup":
+        return <BackupRestoreSettings />;
       case "portable":
         return <PortableModeSettings />;
     }

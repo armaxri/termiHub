@@ -29,6 +29,8 @@ use crate::utils::errors::TerminalError;
 use crate::utils::fs::file_name_of;
 use crate::utils::shell_detect;
 use crate::window::WindowManager;
+use crate::workspace::manager::WorkspaceManager;
+use crate::workspace::settings::apply_session_defaults;
 
 /// Create a new connection session.
 ///
@@ -71,6 +73,20 @@ pub async fn create_connection(
     conn_manager
         .resolve_jump_host_refs(&mut settings, None)
         .map_err(|e| TerminalError::ConnectionFailed(e.to_string()))?;
+
+    // Per-workspace session defaults (PROD-052): a new direct local shell picks
+    // up the active workspace's default working directory and extra environment
+    // variables, with the connection's own values winning. Only new sessions are
+    // affected — a live session is never re-spawned by a workspace switch.
+    let active_workspace = app_handle
+        .try_state::<WorkspaceManager>()
+        .and_then(|mgr| mgr.active_settings());
+    apply_session_defaults(
+        &type_id,
+        agent_id.as_deref(),
+        active_workspace.as_ref(),
+        &mut settings,
+    );
 
     // Server-authority fold (#2431): make the *initial* connect's lifecycle
     // server-authoritative in the shared `session-lifecycle` region, keyed by the

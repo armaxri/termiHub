@@ -1813,6 +1813,40 @@ backend and dialogs are unit-tested; this checks the native save/open dialogs).
    system authentication … #3433" reason; **Import vault…** with the same file
    works and the credentials land in the OS keychain.
 
+### Unified backup and restore (PROD-068, #3509)
+
+Verifies the backup round trip in the real app, including the restart that applies a restore (the
+backend and dialogs are unit-tested; this checks the native dialogs and the restart).
+
+1. Master Password mode, with a few connections, a macro, a custom theme and a saved password.
+   Settings → **Backup & Restore** → **Back up everything…** → leave everything checked, enter the
+   master password and a 12+ character passphrase twice → **Save backup…** → save the file. Expect a
+   success toast; the file shows only the `termihub-backup` header and ciphertext.
+2. Delete a connection and the macro, and change the theme.
+3. **Restore…** → choose the file → enter the passphrase → **Preview**: every part is listed with
+   counts; Settings says it replaces the current settings.
+4. Keep the defaults (merge) → **Restore and restart**. termiHub restarts; the deleted connection
+   and macro are back, the theme is the backed-up one, and the saved password still connects.
+5. Switch to OS Keychain mode and open **Back up everything…**: Credentials is disabled with the
+   "requires system authentication … #3433" reason; a backup of the rest still saves.
+
+### Backup of trusted host keys and plugins (#3515)
+
+Verifies the new backup parts in the real app (merge/replace, trust rules and the plugin swap are
+unit-tested; this checks the restart and the plugin manager after a restore).
+
+1. Connect once to an SSH host and accept its key; install a theme plugin and a native plugin, turn
+   native plugins on and trust the native plugin.
+2. **Back up everything…** with encryption on: "Trusted SSH host keys" and "Plugins" are listed.
+   Turn encryption off: both are unchecked and disabled ("Trust decisions — needs encryption").
+3. Uninstall both plugins and forget the SSH host key, then **Restore…** the backup (merge) →
+   **Restore and restart**. Expect: the SSH host connects without a host-key prompt; both plugins
+   are installed; the theme plugin is on; the native plugin is **off** and turning it on asks for
+   trust again.
+4. Accept a different key for the SSH host (or edit `ssh_known_hosts.json`), restore again with
+   merge: the preview notes the host is already trusted with a different key, offers no "Use
+   backup" choice, and after the restart the current key is kept.
+
 ### Zoomed tab repaints terminal content immediately (#1823)
 
 Verifies that zooming a terminal tab repaints its content at the new size right

@@ -4,7 +4,7 @@
 
 use anyhow::{Context, Result};
 
-use super::config::{EmbeddedServerStore, STORE_VERSION};
+use super::config::EmbeddedServerStore;
 use super::secrets::ServerSecrets;
 use super::storage::EmbeddedServerStorage;
 use crate::connection::recovery::{RecoveryResult, RecoveryWarning};
@@ -60,7 +60,7 @@ pub(crate) fn persist_store(
     store: &EmbeddedServerStore,
 ) -> Result<()> {
     let view = secrets.disk_view(store);
-    if view.version == STORE_VERSION {
+    if view.version == EmbeddedServerStore::CURRENT_VERSION.to_string() {
         storage.save(&view)
     } else {
         storage.save_verbatim(&view)
@@ -75,7 +75,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::embedded_servers::config::{FtpAuth, STORE_VERSION_LEGACY_PLAINTEXT};
+    use crate::embedded_servers::config::FtpAuth;
     use crate::embedded_servers::secrets::tests::{
         ftp, http, FakeStore, LOCKED, UNAVAILABLE, UNLOCKED,
     };
@@ -87,7 +87,7 @@ mod tests {
     fn legacy_file(dir: &TempDir) -> EmbeddedServerStorage {
         let path = dir.path().join(FILE);
         let legacy = EmbeddedServerStore {
-            version: STORE_VERSION_LEGACY_PLAINTEXT.to_string(),
+            version: EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string(),
             servers: vec![ftp("srv-1", "hunter2"), http("srv-2", "s3cret")],
         };
         fs::write(&path, serde_json::to_string_pretty(&legacy).unwrap()).unwrap();
@@ -134,7 +134,10 @@ mod tests {
         );
         assert!(!file.contains("password"), "{file}");
         assert!(
-            file.contains(&format!("\"version\": \"{STORE_VERSION}\"")),
+            file.contains(&format!(
+                "\"version\": \"{}\"",
+                EmbeddedServerStore::CURRENT_VERSION
+            )),
             "{file}"
         );
 

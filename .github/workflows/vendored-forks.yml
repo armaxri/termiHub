@@ -1,0 +1,147 @@
+name: Vendored Forks
+
+# Supply-chain watch for the in-tree forks of third-party crates (SUP-005) and
+# the untrusted-input parser watchlist (SUP-012). See docs/supply-chain.md ->
+# "Vendored forks" / "Untrusted-input parser watchlist".
+#
+#   * consistency   — offline, seconds. vendor/vendored-forks.json lists every
+#                     vendored dir, each fork README records its base, and the
+#                     watchlist versions match the lockfiles. Runs on PRs/pushes
+#                     that touch those files only (#3326 lane policy).
+#   * upstream-drift — weekly + manual. Asks crates.io, GitHub and OSV whether
+#                     upstream moved past the reviewed state or an advisory hits
+#                     the fork base, and keeps ONE tracking issue in sync.
+#                     A path/[patch] fork is invisible to cargo update,
+#                     cargo-audit and cargo-deny, so nothing else reports this.
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'vendor/**'
+      - 'rdp-sidecar/vendor/**'
+      - 'Cargo.lock'
+      - 'rdp-sidecar/Cargo.lock'
+      - 'docs/supply-chain.md'
+      - 'scripts/internal/check-vendored-forks.mjs'
+      - 'scripts/internal/vendored-fork-drift.mjs'
+      - '.github/workflows/vendored-forks.yml'
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'vendor/**'
+      - 'rdp-sidecar/vendor/**'
+      - 'Cargo.lock'
+      - 'rdp-sidecar/Cargo.lock'
+      - 'docs/supply-chain.md'
+      - 'scripts/internal/check-vendored-forks.mjs'
+      - 'scripts/internal/vendored-fork-drift.mjs'
+      - '.github/workflows/vendored-forks.yml'
+  schedule:
+    # Mondays 05:23 UTC (off the hour to dodge scheduler congestion).
+    - cron: '23 5 * * 1'
+  workflow_dispatch:
+
+concurrency:
+  group: vendored-forks-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least-privilege default (CI-010); only the drift job may write issues.
+permissions:
+  contents: read
+
+jobs:
+  consistency:
+    name: Vendored Forks Consistency
+    if: github.event_name == 'pull_request' || github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      # Dependency-free script: no pnpm install needed.
+      - name: Check fork register and parser watchlist
+        run: node scripts/internal/check-vendored-forks.mjs
+
+  upstream-drift:
+    name: Vendored Forks Upstream Drift
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+
+    steps:
+      # A scheduled run starts on the default branch (main); the register that
+      # is kept current lives on develop, so read that one.
+      - name: Checkout code
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event_name == 'schedule' && 'develop' || '' }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '22'
+
+      # Fails (and leaves the tracking issue untouched) when an upstream query
+      # fails, so a network blip never reads as "all clear".
+      - name: Query upstream releases, commits and advisories
+        id: drift
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/internal/vendored-fork-drift.mjs --out "$RUNNER_TEMP/drift-report.md"
+
+      # One tracking issue, found by exact title + label. Updated in place only
+      # when the findings digest changes (with a comment, so watchers are
+      # notified); closed once nothing is left to review.
+      - name: Sync tracking issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTENTION: ${{ steps.drift.outputs.attention }}
+          DIGEST: ${{ steps.drift.outputs.digest }}
+          REPORT: ${{ runner.temp }}/drift-report.md
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          title="Vendored forks: upstream drift or advisories need review"
+          label="supply-chain"
+          # REST issues endpoint, not `gh issue list --label` (search-backed:
+          # a just-created issue can be missing from it, which would duplicate).
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues?labels=$label&state=open&per_page=100" \
+            --jq "map(select(.pull_request == null and .title == \"$title\")) | .[0].number // empty" \
+            || true)
+
+          if [ "$ATTENTION" = "true" ]; then
+            if [ -z "$existing" ]; then
+              gh label create "$label" --repo "$GITHUB_REPOSITORY" --color 5319E7 \
+                --description "Supply-chain drift, advisories and vendored forks" 2>/dev/null || true
+              url=$(gh issue create --repo "$GITHUB_REPOSITORY" --title "$title" \
+                --label "$label" --body-file "$REPORT")
+              echo "Opened $url" | tee -a "$GITHUB_STEP_SUMMARY"
+            else
+              old_body=$(gh issue view "$existing" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+              if printf '%s' "$old_body" | grep -qF "vendored-fork-drift digest: $DIGEST"; then
+                echo "Issue #$existing is already current (digest $DIGEST)." | tee -a "$GITHUB_STEP_SUMMARY"
+              else
+                gh issue edit "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$REPORT"
+                gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" \
+                  --body "The upstream findings changed; the description now holds the current report ($RUN_URL)."
+                echo "Updated issue #$existing (digest $DIGEST)." | tee -a "$GITHUB_STEP_SUMMARY"
+              fi
+            fi
+          elif [ -n "$existing" ]; then
+            gh issue close "$existing" --repo "$GITHUB_REPOSITORY" \
+              --comment "Every vendored fork is level with its reviewed upstream state and no advisory applies ($RUN_URL). Closing."
+            echo "Closed issue #$existing." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No drift and no open tracking issue." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi

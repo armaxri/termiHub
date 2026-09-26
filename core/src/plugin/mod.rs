@@ -97,10 +97,11 @@ pub use manager::{
     PluginLifecycleHook, PluginManager, PluginManagerError, PluginState,
 };
 pub use manifest::{
-    check_api_compatibility, parse_manifest, ApiCompatibility, ConnectionPolicyManifest,
-    ManifestParseError, ManifestValidationError, Platform, PluginExtensions, PluginManifest,
-    PluginPermission, PluginSettingSchema, ProtocolParserExtension, SettingType,
-    StatusBarWidgetExtension, TerminalBackendExtension, ThemeEntry, ThemeExtension, WidgetPosition,
+    check_api_compatibility, is_valid_plugin_id, parse_manifest, ApiCompatibility,
+    ConnectionPolicyManifest, ManifestParseError, ManifestValidationError, Platform,
+    PluginExtensions, PluginManifest, PluginPermission, PluginSettingSchema,
+    ProtocolParserExtension, SettingType, StatusBarWidgetExtension, TerminalBackendExtension,
+    ThemeEntry, ThemeExtension, WidgetPosition,
 };
 pub use native_trust::{
     native_library_hash, NativeAck, NativeTrustError, NativeTrustStore, NATIVE_TRUST_DISCLOSURE,

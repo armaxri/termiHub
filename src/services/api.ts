@@ -28,6 +28,15 @@ import type {
   VaultImportPreview,
   VaultImportResult,
 } from "@/types/credential";
+import type {
+  BackupExportOptions,
+  BackupExportResult,
+  BackupHeader,
+  BackupRestorePreview,
+  BackupRestoreRequest,
+  BackupRestoreResult,
+  BackupSectionInfo,
+} from "@/types/backup";
 import type { SpawnRequestPayload } from "@/services/events";
 import { base64ToBytes, bytesToBase64 } from "@/services/events";
 import type { ImportPreview } from "@/types/generated/ImportPreview";
@@ -2790,6 +2799,66 @@ export async function importCredentialVault(
     passphrase,
     strategy,
   });
+}
+
+// --- Unified backup and restore (PROD-068) ---
+
+/** List every section a backup can carry, with whether it exists here. */
+export async function listBackupSections(): Promise<BackupSectionInfo[]> {
+  return await invoke<BackupSectionInfo[]>("list_backup_sections");
+}
+
+/**
+ * Create a backup and return its file text plus a summary.
+ *
+ * `passphrase` is required when the backup is encrypted or includes the
+ * credential vault. `masterPassword` re-authenticates a master-password store
+ * when credentials are included. Rejects with a {@link VaultError}.
+ */
+export async function exportBackup(
+  options: BackupExportOptions,
+  passphrase: string | null,
+  masterPassword: string | null
+): Promise<BackupExportResult> {
+  return await invoke<BackupExportResult>("export_backup", {
+    options,
+    passphrase,
+    masterPassword,
+  });
+}
+
+/** Read a backup file's cleartext header (no passphrase needed). */
+export async function readBackupHeader(json: string): Promise<BackupHeader> {
+  return await invoke<BackupHeader>("read_backup_header", { json });
+}
+
+/** Decrypt a backup and preview the restore without writing anything. */
+export async function previewBackupRestore(
+  json: string,
+  passphrase: string | null
+): Promise<BackupRestorePreview> {
+  return await invoke<BackupRestorePreview>("preview_backup_restore", { json, passphrase });
+}
+
+/**
+ * Restore the chosen parts of a backup (all-or-nothing). When the result says
+ * `restartRequired`, call {@link restartAfterBackupRestore} to apply it.
+ */
+export async function applyBackupRestore(
+  json: string,
+  passphrase: string | null,
+  request: BackupRestoreRequest
+): Promise<BackupRestoreResult> {
+  return await invoke<BackupRestoreResult>("apply_backup_restore", {
+    json,
+    passphrase,
+    request,
+  });
+}
+
+/** Restart termiHub so a staged restore is applied before any store loads. */
+export async function restartAfterBackupRestore(): Promise<void> {
+  await invoke("restart_after_backup_restore");
 }
 
 /**

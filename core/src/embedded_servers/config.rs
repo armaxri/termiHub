@@ -194,14 +194,6 @@ pub struct ServerState {
     pub started_at: Option<String>,
 }
 
-/// `embedded_servers.json` schema version whose files may still carry
-/// plaintext FTP / HTTP Basic passwords (before #3514).
-pub const STORE_VERSION_LEGACY_PLAINTEXT: &str = "1";
-
-/// Current `embedded_servers.json` schema version: passwords are kept in the
-/// credential store and never written to the file (#3514).
-pub const STORE_VERSION: &str = "2";
-
 /// Top-level schema for the embedded_servers.json file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddedServerStore {
@@ -209,10 +201,25 @@ pub struct EmbeddedServerStore {
     pub servers: Vec<EmbeddedServerConfig>,
 }
 
+impl EmbeddedServerStore {
+    /// The schema version this build reads and writes. The single source of
+    /// truth for the store's version: the default document and the unified
+    /// backup (PROD-068) both take it from here, so a bump is picked up
+    /// everywhere at once.
+    ///
+    /// Version 2 (#3514): FTP / HTTP Basic passwords are kept in the credential
+    /// store and never written to the file.
+    pub const CURRENT_VERSION: u32 = 2;
+
+    /// The schema version whose files may still carry plaintext FTP / HTTP
+    /// Basic passwords (before #3514).
+    pub const LEGACY_PLAINTEXT_VERSION: u32 = 1;
+}
+
 impl Default for EmbeddedServerStore {
     fn default() -> Self {
         Self {
-            version: STORE_VERSION.to_string(),
+            version: Self::CURRENT_VERSION.to_string(),
             servers: Vec::new(),
         }
     }
@@ -311,7 +318,10 @@ mod tests {
     #[test]
     fn server_store_default_is_empty() {
         let store = EmbeddedServerStore::default();
-        assert_eq!(store.version, STORE_VERSION);
+        assert_eq!(
+            store.version,
+            EmbeddedServerStore::CURRENT_VERSION.to_string()
+        );
         assert!(store.servers.is_empty());
     }
 

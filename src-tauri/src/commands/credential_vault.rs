@@ -26,7 +26,7 @@ use crate::embedded_servers::server_manager::EmbeddedServerManager;
 ///
 /// Embedded-server passwords (#3514) are owned by their server, labelled
 /// "<server name> (FTP login | HTTP Basic auth)".
-fn known_owners(
+pub(crate) fn known_owners(
     connection_manager: &ConnectionManager,
     app_handle: &AppHandle,
 ) -> Result<HashMap<String, String>, String> {

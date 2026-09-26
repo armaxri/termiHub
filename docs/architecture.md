@@ -1113,6 +1113,46 @@ flowchart LR
 
 The theme engine writes CSS custom properties directly to `:root` via JavaScript — no separate CSS files per theme. When "System" is selected, a `matchMedia` listener auto-switches between Dark and Light when the OS preference changes. The activity bar stays dark in all themes (VS Code convention).
 
+### Per-Workspace Settings (PROD-052)
+
+A saved workspace may override a curated subset of the global settings while it is
+active: the **theme**, the terminal **font family / size**, a **default working
+directory** and extra **environment variables** for new local shells. Precedence is
+`global < workspace < connection` — a connection's own starting directory, an env var of
+the same name, or a per-connection terminal font always wins.
+
+- **Storage.** The overrides live in the workspace record (`settings` on
+  `WorkspaceDefinition`, `src-tauri/src/workspace/settings.rs`) inside `workspaces.json`,
+  so export/import, duplicate and the unified backup carry them. The store moved to schema
+  **v2**; the v1 → v2 step is additive, and the bump makes it downgrade-safe (an older
+  build refuses to overwrite a v2 file instead of dropping the overrides, PER-004).
+  Unknown override keys round-trip verbatim.
+- **Active workspace.** Launching a workspace (or saving the current layout as one)
+  marks it active on the backend (`set_active_workspace`). The backend broadcasts
+  `active-workspace-changed` to every window, including when the active workspace is
+  edited or deleted; a newly opened window reads `get_active_workspace`.
+- **Session defaults.** `create_connection` merges the active workspace's directory and
+  env vars into the settings of a **new direct `local`** session only
+  (`apply_session_defaults`). Running sessions, agent sessions and other connection
+  types are never changed.
+- **Display settings.** The frontend never writes overrides into the global settings
+  document. `src/services/workspaceSettings.ts` layers them over it
+  (`useEffectiveSettings`), re-applies the theme live on a switch, and Settings shows an
+  "Overridden in workspace X" notice with a per-key **Reset to global**.
+
+```mermaid
+sequenceDiagram
+    participant UI as Window (frontend)
+    participant WM as WorkspaceManager
+    participant SM as create_connection
+    UI->>WM: set_active_workspace(id)
+    WM-->>UI: active-workspace-changed {id, name, settings} (all windows)
+    UI->>UI: apply theme / font overrides live
+    UI->>SM: create_connection("local", settings)
+    SM->>WM: active_settings()
+    SM->>SM: fill startingDirectory / prepend envVars (connection wins)
+```
+
 ### Schema-Driven Connection Settings
 
 Connection types declare their configuration fields as a `SettingsSchema` — groups of typed fields with labels, defaults, validation rules, and conditional visibility. The frontend renders these schemas generically using the `DynamicField` component, requiring zero knowledge of any specific connection type.
@@ -1201,8 +1241,101 @@ sequenceDiagram
     BE->>Store: set_many (atomic, rolled back on failure)
 ```
 
-The exported file object is self-contained so a future unified backup can embed it as its
+The exported file object is self-contained, and the unified backup below embeds it verbatim as its
 credentials section.
+
+#### Unified backup and restore
+
+Settings → **Backup & Restore** backs up all app data to one file and restores it (PROD-068,
+`src-tauri/src/backup/`). Each persisted store is one **section** carrying the store's own schema
+version; the registry in `backup/sections.rs` lists them — connections (with agents; passwords are
+stripped as defence in depth), settings (including custom themes and keyboard shortcuts),
+workspaces, macros, workflows, tunnels, embedded servers, Wake-on-LAN devices, HTTP monitors and
+network-tool history. Session history, workflow run history, the last session and transfer state
+are deliberately not backed up. The optional **credentials** section is the credential-vault file
+object above, sealed with the backup passphrase and gated exactly like a vault export
+(master-password re-authentication; refused in OS-keychain mode until
+[#3433](https://github.com/armaxri/termiHub/issues/3433), while the rest of the backup still works).
+
+```json
+{
+  "format": "termihub-backup",
+  "formatVersion": 1,
+  "createdAt": "2026-09-26T12:00:00+00:00",
+  "appVersion": "0.1.0",
+  "encrypted": true,
+  "envelope": {
+    "version": 1,
+    "kdf": { "algorithm": "argon2id", "…": "…" },
+    "nonce": "…",
+    "data": "…"
+  }
+}
+```
+
+- **Encryption** (default on): the whole contents — sections plus the credentials section — are
+  sealed in the standard Argon2id + AES-256-GCM envelope with the backup passphrase (same rules as
+  the vault export passphrase). The header is repeated inside the ciphertext and must match. An
+  unencrypted backup keeps the contents in a `contents` field; sections that hold secrets in their
+  own store (embedded-server passwords) are refused there, and credentials stay sealed in their own
+  vault envelope, so a secret never appears in plaintext.
+- **Restore preview** decrypts, runs each section through its store's typed model and
+  `VersionedStore` gate (older schemas are migrated forward, newer ones and unknown sections are
+  refused) and compares items by id with the current store (new / differ / unchanged).
+- **Restore** is per section: **merge** (add new items; keep or overwrite items with the same id —
+  connections merge by their path-based id) or **replace** (settings are replace-only and always
+  keep this machine's credential-storage mode). It is all-or-nothing across the chosen sections:
+
+```mermaid
+sequenceDiagram
+    participant UI as Settings → Backup & Restore
+    participant BE as backup::restore
+    participant Cred as Credential store
+    participant Boot as Next start (backup::pending)
+    UI->>BE: apply(file, passphrase, choices)
+    BE->>BE: compute every chosen store's new file (validate, migrate, merge/replace)
+    BE->>BE: write them to .backup-restore-staging + manifest
+    BE->>Cred: set_many (atomic)
+    BE->>BE: rename staging → .backup-restore-pending (commit)
+    Note over BE,Cred: any failure: discard staging, put the credentials back
+    UI->>BE: restart_after_backup_restore
+    Boot->>Boot: snapshot originals → .backup-restore-rollback
+    Boot->>Boot: swap every staged file in before any store loads
+    Note over Boot: a failed file rolls every file back and shows a startup warning
+```
+
+Store files are swapped at the next start rather than live, so no running store ever has its file
+changed underneath it (and cannot overwrite the restored data with stale in-memory state). The
+startup swap snapshots the originals before touching anything, so a crash mid-swap resumes from the
+original snapshot, and the manifest may only name known store files.
+
+##### Trusted host keys and plugins (#3515)
+
+- **Trust stores** — `ssh_known_hosts.json` and `rdp_known_hosts.json` are sections of shape
+  `TrustMap` (`host:port` → trusted fingerprints). They are **integrity-sensitive**: only exported
+  in an encrypted backup and only restored from one (AES-GCM authenticates the whole contents, so a
+  hand-edited file cannot inject a key). A **merge** is a union by host, but a host already trusted
+  here always keeps exactly its current keys — whatever conflict strategy is picked — and the
+  preview lists those hosts; only **replace** adopts the backup's keys.
+- **Trust-store versioning** — the files keep their flat, unversioned on-disk format: adding a
+  `version` key inside that object would make every older termiHub read the file as corrupt and
+  start with an empty store (the downgrade loss the migration layer exists to prevent). The format
+  is versioned where it leaves the machine: the backup section records schema version 1
+  (`TRUST_STORE_SCHEMA_VERSION`), and a section with a newer version is refused. The on-disk
+  migration story itself is still open in [#2745](https://github.com/armaxri/termiHub/issues/2745).
+- **Plugins** (`backup/plugins/`) — one section with every installed plugin's files
+  (base64), its `plugin-state.json` record (including the signer record, as-is), its settings and
+  the pinned publisher keys (each must still hash to its `keyId`). Encrypted-only as well. Each
+  restored plugin's manifest must validate and name its directory, and file paths must stay inside
+  it. Plugins over 16 MB, or past 24 MB in total, are skipped with a warning at export time.
+- **Plugin trust is never restored** — `native-plugin-trust.json` (the global "native plugins on"
+  switch and the per-plugin, library-hash-bound acknowledgments) is neither backed up nor written by
+  a restore, and every restored **native** plugin comes back turned off. It loads only after the
+  user turns it on and acknowledges trust on this machine.
+- **Swap** — plugin directories are staged whole and swapped at startup by renames (the original
+  moves into the rollback directory; a replace removes plugins not in the backup the same way), so
+  a failure or crash restores the original directories exactly. The manifest format that can name
+  plugin paths is version 2, which older builds refuse instead of half-applying.
 
 ### Content-Security-Policy & capability scoping
 

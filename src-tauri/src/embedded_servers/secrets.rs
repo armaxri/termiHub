@@ -45,10 +45,7 @@ use std::time::{Duration, Instant};
 
 use zeroize::{Zeroize, Zeroizing};
 
-use super::config::{
-    EmbeddedServerConfig, EmbeddedServerStore, FtpAuth, STORE_VERSION,
-    STORE_VERSION_LEGACY_PLAINTEXT,
-};
+use super::config::{EmbeddedServerConfig, EmbeddedServerStore, FtpAuth};
 use crate::credential::{CredentialKey, CredentialStore, CredentialStoreStatus, CredentialType};
 use crate::utils::errors::TerminalError;
 
@@ -297,9 +294,9 @@ impl ServerSecrets {
             }
         }
         view.version = if legacy {
-            STORE_VERSION_LEGACY_PLAINTEXT
+            EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION
         } else {
-            STORE_VERSION
+            EmbeddedServerStore::CURRENT_VERSION
         }
         .to_string();
         view
@@ -734,7 +731,7 @@ pub(crate) mod tests {
         let store = FakeStore::new(UNLOCKED);
         let secrets = ServerSecrets::new(store.clone());
         let mut loaded = EmbeddedServerStore {
-            version: STORE_VERSION_LEGACY_PLAINTEXT.to_string(),
+            version: EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string(),
             servers: vec![ftp("srv-1", "hunter2"), http("srv-2", "s3cret")],
         };
         assert_eq!(secrets.absorb_legacy(&mut loaded), 2);
@@ -746,7 +743,10 @@ pub(crate) mod tests {
         assert_eq!(store.len(), 2);
 
         let view = secrets.disk_view(&loaded);
-        assert_eq!(view.version, STORE_VERSION);
+        assert_eq!(
+            view.version,
+            EmbeddedServerStore::CURRENT_VERSION.to_string()
+        );
         let json = serde_json::to_string(&view).unwrap();
         assert!(
             !json.contains("hunter2") && !json.contains("s3cret"),
@@ -759,7 +759,7 @@ pub(crate) mod tests {
         let store = FakeStore::new(LOCKED);
         let secrets = ServerSecrets::new(store.clone());
         let mut loaded = EmbeddedServerStore {
-            version: STORE_VERSION_LEGACY_PLAINTEXT.to_string(),
+            version: EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string(),
             servers: vec![ftp("srv-1", "hunter2")],
         };
         secrets.absorb_legacy(&mut loaded);
@@ -767,7 +767,10 @@ pub(crate) mod tests {
 
         // Any rewrite while locked keeps the legacy plaintext (the only copy).
         let view = secrets.disk_view(&loaded);
-        assert_eq!(view.version, STORE_VERSION_LEGACY_PLAINTEXT);
+        assert_eq!(
+            view.version,
+            EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string()
+        );
         assert_eq!(ftp_password(&view.servers[0]), "hunter2");
         // The server can still start with it meanwhile.
         let mut start = ftp("srv-1", "");
@@ -788,7 +791,7 @@ pub(crate) mod tests {
     fn migration_in_none_mode_strips_the_file_and_keeps_the_session_copy() {
         let secrets = ServerSecrets::new(FakeStore::new(UNAVAILABLE));
         let mut loaded = EmbeddedServerStore {
-            version: STORE_VERSION_LEGACY_PLAINTEXT.to_string(),
+            version: EmbeddedServerStore::LEGACY_PLAINTEXT_VERSION.to_string(),
             servers: vec![ftp("srv-1", "hunter2")],
         };
         secrets.absorb_legacy(&mut loaded);
@@ -797,7 +800,10 @@ pub(crate) mod tests {
         assert!(outcome.rewrite);
         let view = secrets.disk_view(&loaded);
         assert_eq!(ftp_password(&view.servers[0]), "");
-        assert_eq!(view.version, STORE_VERSION);
+        assert_eq!(
+            view.version,
+            EmbeddedServerStore::CURRENT_VERSION.to_string()
+        );
         let mut start = ftp("srv-1", "");
         secrets.resolve(&mut start).unwrap();
         assert_eq!(ftp_password(&start), "hunter2");

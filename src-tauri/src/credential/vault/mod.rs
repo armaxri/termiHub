@@ -44,7 +44,7 @@ mod export;
 mod import;
 
 pub use export::{collect_entries, seal, to_json};
-pub use import::{apply_import, open_json, plan_import};
+pub use import::{apply_import, open as open_file, open_json, plan_import};
 
 /// Format identifier stamped on every vault export file.
 pub const VAULT_FORMAT_ID: &str = "termihub-credential-vault";
