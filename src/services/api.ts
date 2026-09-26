@@ -1624,12 +1624,45 @@ export interface DragOutStagingDir {
 export type DragOutResult = "dropped" | "cancelled";
 
 /**
+ * One entry of a drag-out staging tree (#3491): its name segments relative to
+ * the dragged selection (`["logs", "a.txt"]`) and whether it is a folder. A
+ * one-segment entry is a dragged row itself.
+ */
+export interface DragOutStagingEntry {
+  segments: string[];
+  isDirectory: boolean;
+}
+
+/**
  * Create a private (`0700`) staging directory for a remote drag-out (#3457) and
- * return the local target path for each entry name — names are sanitized by the
+ * return the local target path for each entry, in order. Folders (and every
+ * file's parent) are created up front (#3491). Each segment is sanitized by the
  * backend so a hostile remote name can never escape the directory.
  */
-export async function dragOutCreateStaging(names: string[]): Promise<DragOutStagingDir> {
-  return await invoke<DragOutStagingDir>("drag_out_create_staging", { names });
+export async function dragOutCreateStaging(
+  entries: DragOutStagingEntry[]
+): Promise<DragOutStagingDir> {
+  return await invoke<DragOutStagingDir>("drag_out_create_staging", { entries });
+}
+
+/** A dragged row of a byte-based session, as {@link dragOutStageSession} takes it. */
+export interface DragOutSessionEntry {
+  path: string;
+  name: string;
+  isDirectory: boolean;
+}
+
+/**
+ * Stage dragged rows of a byte-based session (Docker / remote agent) for a
+ * drag-out (#3491): the backend reads them through the session — recursing into
+ * folders within bounds — and writes them into a staging directory it owns.
+ * Returns the directory and the local path of each dragged row, in order.
+ */
+export async function dragOutStageSession(
+  sessionId: string,
+  entries: DragOutSessionEntry[]
+): Promise<DragOutStagingDir> {
+  return await invoke<DragOutStagingDir>("drag_out_stage_session", { sessionId, entries });
 }
 
 /** Delete a staging directory created by {@link dragOutCreateStaging}. */

@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef } from "react";
-import { Play, Pause, StopCircle, Trash2, RefreshCw } from "lucide-react";
+import { Play, StopCircle, RefreshCw } from "lucide-react";
 import { Button, Tooltip, toast, Field, Input, NumberInput, Select } from "@/components/ui";
 import { useAutofocusSelect } from "@/hooks/useAutofocusSelect";
 import {
@@ -16,11 +16,15 @@ import { RunLocationSelect } from "@/components/RunLocationSelect";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useRunLocationStore } from "@/store/runLocationStore";
 import { THIS_COMPUTER, isAgentHost, type RunLocation } from "@/utils/runLocation";
-import { LatencyChart } from "./LatencyChart";
+import { listHttpMonitorChecks } from "@/services/networkHistoryApi";
+import { HttpMonitorChecks } from "./HttpMonitorChecks";
+import { HttpMonitorRow } from "./HttpMonitorRow";
+import { exportNetworkResults } from "./exportResults";
+import { httpMonitorChecksToCsv, mergeChecks } from "./httpMonitorHistory";
 import { isValidHttpUrl, validateIntRange } from "@/utils/fieldValidation";
 import { frontendLog } from "@/utils/frontendLog";
-import { resolveUiLocale } from "@/utils/locale";
 
+/** How many of the newest checks the chart shows (and loads from history). */
 const MAX_HISTORY = 120;
 
 /** HTTP methods offered by the monitor's Method dropdown. */
@@ -105,16 +109,65 @@ export function HttpMonitorPanel() {
 
   /** Append a check result to the rolling history (capped at MAX_HISTORY). */
   const appendCheck = useCallback((result: HttpCheckResult) => {
-    setHistory((prev) =>
-      prev.length >= MAX_HISTORY ? [...prev.slice(1), result] : [...prev, result]
-    );
+    setHistory((prev) => mergeChecks(prev, [result], MAX_HISTORY));
   }, []);
 
   const clearActiveMonitor = useCallback(() => {
     activeMonitorIdRef.current = null;
     setActiveMonitorId(null);
+    setHistory([]);
     stopListening();
   }, [stopListening]);
+
+  /**
+   * Display an existing monitor's checks (#3462): rehydrate the chart and table
+   * from the backend-recorded history, then keep appending its live checks. The
+   * listener is attached before the history loads so no check falls in between;
+   * the merge drops a check that is in both.
+   */
+  const showMonitor = useCallback(
+    async (id: string) => {
+      stopListening();
+      activeMonitorIdRef.current = id;
+      setActiveMonitorId(id);
+      setHistory([]);
+      try {
+        const unlisten = await onHttpMonitorCheck((result: HttpCheckResult) => {
+          if (result.monitorId === activeMonitorIdRef.current) appendCheck(result);
+        });
+        // The user may have switched monitors while the listener registered.
+        if (activeMonitorIdRef.current !== id) {
+          unlisten();
+          return;
+        }
+        unlistenCheckRef.current = unlisten;
+        const stored = await listHttpMonitorChecks(id, MAX_HISTORY);
+        if (activeMonitorIdRef.current === id) {
+          setHistory((prev) => mergeChecks(stored, prev, MAX_HISTORY));
+        }
+      } catch (err) {
+        frontendLog("http_monitor", `Failed to load check history: ${err}`);
+      }
+    },
+    [stopListening, appendCheck]
+  );
+
+  /** Export the displayed monitor's full recorded history as CSV. */
+  const handleExport = useCallback(async () => {
+    const id = activeMonitorIdRef.current;
+    if (!id) return;
+    let checks = history;
+    try {
+      checks = mergeChecks(await listHttpMonitorChecks(id), history, Number.MAX_SAFE_INTEGER);
+    } catch (err) {
+      frontendLog("http_monitor", `Failed to load full check history: ${err}`);
+    }
+    const url = monitors.find((m) => m.config.id === id)?.config.url ?? id;
+    await exportNetworkResults(
+      `http-monitor-${url.replace(/^https?:\/\//, "")}`,
+      httpMonitorChecksToCsv(checks)
+    );
+  }, [history, monitors]);
 
   // Inline validation. A real scheme+host URL check replaces the brittle
   // `url === "https://"` sentinel, and the numeric fields are range-checked.
@@ -206,15 +259,15 @@ export function HttpMonitorPanel() {
   const handleStop = useCallback(async () => {
     if (!activeMonitorIdRef.current) return;
     try {
+      // Keep the stopped monitor displayed: its checks stay visible (#3462).
       await networkHttpMonitorStop(activeMonitorIdRef.current);
-      clearActiveMonitor();
       await loadMonitors();
       toast.success("Monitor stopped");
     } catch (err) {
       setError(String(err));
       toast.error(`Failed to stop monitor: ${err}`);
     }
-  }, [loadMonitors, clearActiveMonitor]);
+  }, [loadMonitors]);
 
   const handleStopMonitor = useCallback(
     async (id: string) => {
@@ -250,12 +303,14 @@ export function HttpMonitorPanel() {
         await networkHttpMonitorResume(id);
         await loadMonitors();
         toast.success("Monitor resumed");
+        // Show the resumed monitor with its past checks rehydrated (#3462).
+        if (id !== activeMonitorIdRef.current) await showMonitor(id);
       } catch (err) {
         setError(String(err));
         toast.error(`Failed to resume monitor: ${err}`);
       }
     },
-    [loadMonitors]
+    [loadMonitors, showMonitor]
   );
 
   const handleRemoveMonitor = useCallback(
@@ -276,17 +331,10 @@ export function HttpMonitorPanel() {
   // Tear the listener down on unmount.
   useEffect(() => stopListening, [stopListening]);
 
-  const latencyPoints = history.map((r) => r.latencyMs ?? null);
-  // Chart x axis uses the active monitor's real check interval (not the form field).
-  const activeIntervalMs = monitors.find((m) => m.config.id === activeMonitorId)?.config.intervalMs;
-  const successCount = history.filter((r) => r.ok).length;
-  const lossPercent =
-    history.length > 0 ? ((history.length - successCount) / history.length) * 100 : 0;
-  const avgMs =
-    history.length > 0
-      ? history.filter((r) => r.latencyMs != null).reduce((a, r) => a + (r.latencyMs ?? 0), 0) /
-        Math.max(history.filter((r) => r.latencyMs != null).length, 1)
-      : null;
+  const activeMonitor = monitors.find((m) => m.config.id === activeMonitorId);
+  // The header offers Stop while the displayed monitor runs. A monitor missing
+  // from the list was just started (the list refresh is still in flight).
+  const activeRunning = activeMonitorId !== null && (activeMonitor?.running ?? true);
 
   return (
     <form className="network-panel" data-testid="http-monitor-panel">
@@ -302,7 +350,7 @@ export function HttpMonitorPanel() {
               aria-label="Refresh monitor list"
             />
           </Tooltip>
-          {activeMonitorId ? (
+          {activeRunning ? (
             <Button
               variant="danger"
               size="sm"
@@ -424,130 +472,34 @@ export function HttpMonitorPanel() {
 
       {error && <div className="network-panel__error">{error}</div>}
 
-      {/* Active monitor stats */}
+      {/* Displayed monitor's checks — persisted history plus live (#3462) */}
       {activeMonitorId && history.length > 0 && (
-        <>
-          <div className="network-panel__chart-section" data-testid="http-monitor-chart">
-            <span className="network-panel__chart-title">Response Time</span>
-            <LatencyChart points={latencyPoints} intervalMs={activeIntervalMs} />
-          </div>
-          <div className="network-panel__stats">
-            <span>
-              Checks: {history.length} · Success: {successCount} · Loss: {lossPercent.toFixed(1)}%
-            </span>
-            {avgMs != null && <span>Avg response: {avgMs.toFixed(0)}ms</span>}
-            <span>
-              Last:{" "}
-              {history[history.length - 1]?.ok ? (
-                <span className="network-panel__ok">
-                  {history[history.length - 1].statusCode} OK
-                </span>
-              ) : (
-                <span className="network-panel__fail">
-                  {history[history.length - 1].error ?? "Failed"}
-                </span>
-              )}
-            </span>
-          </div>
-
-          {/* Recent checks table */}
-          <div className="network-panel__section-title">Recent Checks</div>
-          <div className="network-panel__table-wrapper" data-testid="http-monitor-history">
-            <table className="network-panel__table">
-              <thead>
-                <tr>
-                  <th>Time</th>
-                  <th>Status</th>
-                  <th>Response</th>
-                  <th>Result</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...history]
-                  .reverse()
-                  .slice(0, 20)
-                  .map((r, i) => (
-                    <tr
-                      key={i}
-                      className={r.ok ? "" : "network-panel__row--error"}
-                      data-testid={`http-monitor-entry-${i}`}
-                    >
-                      <td>{new Date(r.timestampMs).toLocaleTimeString(resolveUiLocale())}</td>
-                      <td>{r.statusCode ?? "—"}</td>
-                      <td>{r.latencyMs != null ? `${r.latencyMs}ms` : "—"}</td>
-                      <td>{r.ok ? "OK" : (r.error ?? "Failed")}</td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
-        </>
+        <HttpMonitorChecks
+          history={history}
+          intervalMs={activeMonitor?.config.intervalMs}
+          onExport={handleExport}
+        />
       )}
 
       {/* All monitors (running, paused, and stopped-but-listed) */}
       {monitors.length > 0 && (
         <>
           <div className="network-panel__section-title">Monitors</div>
-          {monitors.map((m) => (
-            <div
-              key={m.config.id}
-              className="http-monitor-row"
-              data-testid={`monitor-row-${m.config.id}`}
-            >
-              <span className="http-monitor-row__url" title={m.config.url}>
-                {m.config.url}
-              </span>
-              <span className="http-monitor-row__meta">
-                {m.config.method} · every {m.config.intervalMs / 1000}s
-                {isAgentHost(monitorLocations[m.config.id] ?? THIS_COMPUTER)
-                  ? ` · on ${(monitorLocations[m.config.id] as { agentId: string }).agentId}`
-                  : ""}
-                {!m.running ? " · stopped" : m.paused ? " · paused" : ""}
-              </span>
-              {m.running && !m.paused && (
-                <Tooltip content="Pause" side="left">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Pause size={13} />}
-                    onClick={() => handlePauseMonitor(m.config.id)}
-                    aria-label={`Pause monitoring ${m.config.url}`}
-                  />
-                </Tooltip>
-              )}
-              {(m.paused || !m.running) && (
-                <Tooltip content="Resume" side="left">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<Play size={13} />}
-                    onClick={() => handleResumeMonitor(m.config.id)}
-                    aria-label={`Resume monitoring ${m.config.url}`}
-                  />
-                </Tooltip>
-              )}
-              {m.running && (
-                <Tooltip content="Stop" side="left">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    icon={<StopCircle size={13} />}
-                    onClick={() => handleStopMonitor(m.config.id)}
-                    aria-label={`Stop monitoring ${m.config.url}`}
-                  />
-                </Tooltip>
-              )}
-              <Tooltip content="Remove" side="left">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  icon={<Trash2 size={13} />}
-                  onClick={() => handleRemoveMonitor(m.config.id)}
-                  aria-label={`Remove monitor ${m.config.url}`}
-                />
-              </Tooltip>
-            </div>
-          ))}
+          {monitors.map((m) => {
+            const location = monitorLocations[m.config.id] ?? THIS_COMPUTER;
+            return (
+              <HttpMonitorRow
+                key={m.config.id}
+                monitor={m}
+                agentId={isAgentHost(location) ? location.agentId : undefined}
+                onShow={(id) => void showMonitor(id)}
+                onPause={handlePauseMonitor}
+                onResume={handleResumeMonitor}
+                onStop={handleStopMonitor}
+                onRemove={handleRemoveMonitor}
+              />
+            );
+          })}
         </>
       )}
 

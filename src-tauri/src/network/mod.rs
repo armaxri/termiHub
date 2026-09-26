@@ -9,6 +9,9 @@ pub mod agent_tools;
 pub mod events;
 pub mod http_monitor;
 pub mod http_monitor_storage;
+pub mod monitor_history;
+pub mod monitor_history_manager;
+pub mod monitor_history_storage;
 pub mod tool_history;
 pub mod tool_history_manager;
 pub mod tool_history_storage;
@@ -599,6 +602,11 @@ impl NetworkManager {
     /// (or the next launch) can bring it back. Use [`remove_http_monitor`] to
     /// truly delete it.
     pub fn stop_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        // Write the checks recorded since the last persist, so a stopped
+        // monitor's history is complete on disk (#3462).
+        if let Some(app) = self.app_handle() {
+            monitor_history_manager::flush_history(&app);
+        }
         // Agent-hosted monitors live in their own track: tell the agent to tear
         // the poll loop down, but keep the control handle listed as `running:
         // false` so a later Resume can re-host it (#2592).
@@ -632,6 +640,10 @@ impl NetworkManager {
     ///
     /// Audit Gap #6: this is the destructive counterpart to [`stop_http_monitor`].
     pub fn remove_http_monitor(&self, monitor_id: &str) -> Result<(), TerminalError> {
+        // A removed monitor's check history goes with it (#3462).
+        if let Some(app) = self.app_handle() {
+            monitor_history_manager::forget_monitor(&app, monitor_id);
+        }
         // Agent-hosted monitor: `service.stop` on the agent, drop the control
         // handle and its run-location preference, and delete the persisted config
         // (#2592).
@@ -873,6 +885,11 @@ impl NetworkManager {
         }
         self.agent_monitors.clear();
         self.agent_status_poller.stop();
+
+        // Persist the checks recorded since the last write (app shutdown, #3462).
+        if let Some(app) = self.app_handle() {
+            monitor_history_manager::flush_history(&app);
+        }
     }
 
     /// List all HTTP monitors (running and stopped), desktop- and agent-hosted.
@@ -946,6 +963,12 @@ fn spawn_event_bridge(app: AppHandle, events: termihub_core::service::ServiceEve
     tauri::async_runtime::spawn(async move {
         drain_broadcast(events, move |event| {
             if event.kind == http_monitor::CHECK_EVENT_KIND {
+                // Record the check backend-side (#3462) so the monitor's history
+                // survives stop/resume and restart even with the panel closed.
+                if let Ok(result) = serde_json::from_value::<HttpCheckResult>(event.payload.clone())
+                {
+                    monitor_history_manager::record_check(&app, &result);
+                }
                 let _ = app.emit(HTTP_MONITOR_CHECK_EVENT, event.payload);
             }
         })
@@ -1010,6 +1033,8 @@ impl AgentStatusPollDelegate for AgentMonitorPoll {
             }
         }
         for result in fresh {
+            // Agent-hosted checks are recorded on the desktop too (#3462).
+            monitor_history_manager::record_check(&self.app, &result);
             let _ = self.app.emit(HTTP_MONITOR_CHECK_EVENT, result);
         }
     }

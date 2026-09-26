@@ -36,6 +36,11 @@ vi.mock("@/store/networkToolHistoryStore", () => ({
     selector({ clear: clearNetworkToolHistory }),
 }));
 
+const clearHttpMonitorHistory = vi.fn(() => Promise.resolve());
+vi.mock("@/services/networkHistoryApi", () => ({
+  clearHttpMonitorHistory: () => clearHttpMonitorHistory(),
+}));
+
 // The dropdown resolves its value asynchronously via core::restore_mode; return the
 // explicit mode synchronously so the trigger label is deterministic.
 vi.mock("@/utils/restoreMode", () => ({
@@ -192,6 +197,13 @@ describe("SessionSettings", () => {
       renderWith(defaultSettings);
       act(() => (query("settings-clear-network-tool-history") as HTMLButtonElement).click());
       expect(clearNetworkToolHistory).toHaveBeenCalledWith();
+    });
+
+    it("also clears every HTTP monitor's check history (#3462)", () => {
+      clearHttpMonitorHistory.mockClear();
+      renderWith(defaultSettings);
+      act(() => (query("settings-clear-network-tool-history") as HTMLButtonElement).click());
+      expect(clearHttpMonitorHistory).toHaveBeenCalledTimes(1);
     });
 
     it("is hidden when search excludes it", () => {

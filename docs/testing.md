@@ -2451,11 +2451,21 @@ command mocked. Run on macOS, Windows and Linux (X11 and Wayland).
 again to save` toast appears. Drag it out again → the OS drag starts at once
    without a second download. Cancel a staging download from the Transfer
    Queue → no drag starts and no error toast appears.
-7. Drag a remote folder out, and a file out of a Docker / agent session → an
-   info toast explains it is not supported and suggests Download.
-8. While a staged copy exists, check its directory under the app cache
-   (`…/drag-out/<pid>-<uuid>`) is `drwx------`; quit termiHub → the
-   `drag-out` directory is empty.
+7. In the SFTP session, drag a remote folder with a nested subfolder out and
+   keep holding (#3491) → one Transfer Queue row per file appears; once they
+   finish the OS drag starts. Release over the desktop → the folder lands
+   with its whole tree. Cancel one of its rows mid-staging → no drag starts.
+8. Open a Docker session (and, separately, a remote-agent session). Drag a
+   file out and keep holding → a `Preparing … to drag out…` toast appears (no
+   Transfer Queue row — these sessions have no queue); then the OS drag
+   starts and the file lands with the remote name. Drag a folder out → it
+   lands with its contents.
+9. In the Docker session, drag out a folder holding more than 1 GiB → an
+   error toast explains the selection is too large and suggests Download; no
+   drag starts and no staging directory is left behind.
+10. While a staged copy exists, check its directory under the app cache
+    (`…/drag-out/<pid>-<uuid>`) and any staged subfolder are `drwx------`;
+    quit termiHub → the `drag-out` directory is empty.
 
 ### Network Tools shared field validation (#1381)
 
@@ -3897,6 +3907,25 @@ confirms history survives a real app restart.
 4. **Settings → Sessions → Network Tool History**: turn recording off, run a DNS
    lookup → its **History** says recording is off and lists no new run. Turn it
    back on; **Clear Network Tool History** empties every tool's History.
+
+### HTTP monitor check history (#3462)
+
+Recording (desktop- and agent-hosted), the caps, the throttled persistence,
+rehydration and the CSV export are covered by unit and component tests
+(`monitor_history*.rs`, `httpMonitorHistory.test.ts`,
+`HttpMonitorPanel.history.test.tsx`, `SessionSettings.test.tsx`). This pass
+confirms the history survives a real app restart.
+
+1. Open **Network Tools → HTTP Monitor**, start a monitor on a reachable URL
+   with Interval `2` s → after a few checks, click **Stop** → the chart and
+   **Recent Checks** stay visible.
+2. Quit and relaunch the app (`./scripts/dev.sh`), reopen **HTTP Monitor** →
+   the monitor is listed stopped. Click its **Show checks** (chart icon) → the
+   earlier checks are back in the chart and table.
+3. Click **Resume** → new checks append after the earlier ones. **Export**
+   writes a CSV with one row per check (`timestamp,status_code,latency_ms,ok,error`).
+4. **Settings → Sessions → Clear Network Tool History**, then **Show checks**
+   on a stopped monitor → no checks. Removing a monitor also drops its checks.
 
 ### Run-location "Run on" selector — Network Tools & Servers (#2191)
 

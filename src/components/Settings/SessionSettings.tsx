@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { AppSettings } from "@/types/connection";
 import { useAppStore } from "@/store/appStore";
 import { useNetworkToolHistoryStore } from "@/store/networkToolHistoryStore";
+import { clearHttpMonitorHistory } from "@/services/networkHistoryApi";
 import { resolveRestoreMode, type RestoreLastSessionMode } from "@/utils/restoreMode";
 import { Button, NumberInput, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
@@ -157,7 +158,7 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           <SettingsField
             label="Record Network Tool History"
-            hint="Keep finished ping, traceroute, port scan, ping sweep, DNS, open-ports and Wake-on-LAN runs so they can be revisited, re-run and exported from each tool's History section. Results can contain hostnames and IP addresses; they are stored only on this computer. The newest 50 runs per tool are kept, for up to 30 days."
+            hint="Keep finished ping, traceroute, port scan, ping sweep, DNS, open-ports and Wake-on-LAN runs so they can be revisited, re-run and exported from each tool's History section, and keep each HTTP monitor's checks so its chart survives a stop or restart. Results can contain hostnames and IP addresses; they are stored only on this computer. The newest 50 runs per tool are kept for up to 30 days, and the newest 1,000 checks per monitor for up to 7 days."
           >
             <Toggle
               checked={settings.networkToolHistoryEnabled ?? true}
@@ -170,14 +171,14 @@ export function SessionSettings({ settings, onChange, visibleFields }: SessionSe
 
           <SettingsField
             label="Clear Network Tool History"
-            hint="Remove every recorded network tool run for all tools."
+            hint="Remove every recorded network tool run for all tools and every recorded HTTP monitor check."
           >
             <Button
               variant="danger"
               size="sm"
               data-testid="settings-clear-network-tool-history"
               onClick={async () => {
-                await clearNetworkToolHistory();
+                await Promise.all([clearNetworkToolHistory(), clearHttpMonitorHistory()]);
                 toast.success("Cleared network tool history");
               }}
             >

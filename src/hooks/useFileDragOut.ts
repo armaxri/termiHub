@@ -4,17 +4,22 @@ import {
   TransferTerminalError,
   dragOutCreateStaging,
   dragOutDiscardStaging,
+  dragOutStageSession,
   dragOutStart,
   sessionDownload,
+  sessionListFiles,
 } from "@/services/api";
 import type { FileEntry } from "@/types/connection";
 import type { DragOutControl } from "@/components/Sidebar/FileBrowserDndProvider";
 import { describeEntries } from "@/utils/fileDragMove";
 import {
+  DragOutLimitError,
   STAGED_DRAG_OUT_TTL_MS,
   beginDragOut,
+  buildStagingTree,
   endDragOut,
   planDragOut,
+  runBounded,
   stagedDragOutCache,
   stagedEntryKey,
   type DragOutSource,
@@ -47,47 +52,89 @@ async function startNativeDrag(paths: string[], control: DragOutControl): Promis
 }
 
 /**
- * Download remote `entries` into a fresh private staging directory through the
- * transfer queue (progress / cancel / retry), returning the local copies, or
- * `null` when staging failed or was cancelled (already surfaced to the user).
+ * How many staging downloads run at once. The backend queue bounds its own
+ * concurrency too; this keeps a large folder from flooding the queue at once
+ * and lets a cancel / failure stop the rest promptly.
+ */
+export const DRAG_OUT_DOWNLOAD_CONCURRENCY = 4;
+
+/** Remember a finished staging for reuse and schedule its discard. */
+function rememberStaging(
+  sessionId: string,
+  entries: FileEntry[],
+  dir: string,
+  paths: string[]
+): void {
+  stagedDragOutCache.add(sessionId, entries, dir, paths, Date.now());
+  setTimeout(discardExpiredStaging, STAGED_DRAG_OUT_TTL_MS + 1000);
+}
+
+/** Surface a staging failure (quiet on a cancelled transfer). */
+function reportStagingFailure(err: unknown, label: string, toastId: string | number): void {
+  if (err instanceof TransferTerminalError) {
+    // The transfer-progress event path already surfaced it (quiet on cancel).
+    toast.dismiss(toastId);
+  } else if (err instanceof DragOutLimitError) {
+    toast.info(`Can't drag ${label} out: ${err.message}`, { id: toastId });
+  } else {
+    toast.error(`Preparing ${label} failed: ${errorMessage(err)}`, { id: toastId });
+  }
+}
+
+/**
+ * Download remote `entries` (files, and folders walked recursively) into a
+ * fresh private staging directory through the transfer queue (progress /
+ * cancel / retry), returning the local copy of each dragged row, or `null` when
+ * staging failed or was cancelled (already surfaced to the user).
  */
 async function stageRemote(sessionId: string, entries: FileEntry[]): Promise<string[] | null> {
   const label = describeEntries(entries);
   const toastId = toast.loading(`Preparing ${label} to drag out…`);
   let dir: string | null = null;
   try {
-    const staging = await dragOutCreateStaging(entries.map((e) => e.name));
+    const tree = await buildStagingTree(entries, (path) => sessionListFiles(sessionId, path));
+    const staging = await dragOutCreateStaging(tree.staging);
     dir = staging.dir;
-    // Let every download settle before judging, so a failed leg never has its
-    // staging dir discarded under a sibling that is still writing into it.
-    const results = await Promise.allSettled(
-      entries.map((entry, i) =>
-        sessionDownload(sessionId, entry.path, staging.paths[i], (transferId) =>
-          seedTransferQueueRow({
-            transferId,
-            sessionId,
-            direction: "download",
-            remotePath: entry.path,
-          })
-        )
+    await runBounded(tree.downloads, DRAG_OUT_DOWNLOAD_CONCURRENCY, ({ index, remotePath }) =>
+      sessionDownload(sessionId, remotePath, staging.paths[index], (transferId) =>
+        seedTransferQueueRow({ transferId, sessionId, direction: "download", remotePath })
       )
     );
-    const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
-    if (failed) throw failed.reason;
-    stagedDragOutCache.add(sessionId, entries, staging.dir, staging.paths, Date.now());
-    setTimeout(discardExpiredStaging, STAGED_DRAG_OUT_TTL_MS + 1000);
+    const roots = tree.roots.map((i) => staging.paths[i]);
+    rememberStaging(sessionId, entries, staging.dir, roots);
     toast.dismiss(toastId);
-    return staging.paths;
+    return roots;
   } catch (err) {
     if (dir) {
       dragOutDiscardStaging(dir).catch(() => {});
     }
-    if (err instanceof TransferTerminalError) {
-      // The transfer-progress event path already surfaced it (quiet on cancel).
-      toast.dismiss(toastId);
-    } else {
-      toast.error(`Preparing ${label} failed: ${errorMessage(err)}`, { id: toastId });
-    }
+    reportStagingFailure(err, label, toastId);
+    return null;
+  }
+}
+
+/**
+ * Stage byte-based session rows (Docker / remote agent — no transfer queue):
+ * the backend reads them through the session into a staging directory it owns
+ * (#3491). Returns the local copy of each dragged row, or `null` on failure
+ * (already surfaced; the backend discards a failed staging dir itself).
+ */
+async function stageSessionBytes(
+  sessionId: string,
+  entries: FileEntry[]
+): Promise<string[] | null> {
+  const label = describeEntries(entries);
+  const toastId = toast.loading(`Preparing ${label} to drag out…`);
+  try {
+    const staging = await dragOutStageSession(
+      sessionId,
+      entries.map(({ path, name, isDirectory }) => ({ path, name, isDirectory }))
+    );
+    rememberStaging(sessionId, entries, staging.dir, staging.paths);
+    toast.dismiss(toastId);
+    return staging.paths;
+  } catch (err) {
+    reportStagingFailure(err, label, toastId);
     return null;
   }
 }
@@ -98,12 +145,13 @@ async function stageRemote(sessionId: string, entries: FileEntry[]): Promise<str
  * Returns the `onDragOut` handler for {@link FileBrowserDndProvider}:
  *
  * - local rows start a native OS file drag of their real paths immediately;
- * - SFTP / FTP rows are downloaded to a private staging directory through the
- *   transfer queue first. If the pointer is still held outside the window when
+ * - SFTP / FTP rows (files, and folders walked recursively) are downloaded to a
+ *   private staging directory through the transfer queue first; Docker / agent
+ *   rows are staged by the backend through the session (#3491). If the pointer is still held outside the window when
  *   that finishes, the native drag starts right away; otherwise the user is told
  *   the files are ready, and dragging the same unchanged rows out again within
  *   the reuse window starts the native drag instantly from the staged copies;
- * - remote folders and byte-based sessions are refused with a hint to use
+ * - a selection beyond the staging limits is refused with a hint to use
  *   Download.
  */
 export function useFileDragOut(
@@ -133,7 +181,8 @@ export function useFileDragOut(
     const key = plan.entries.map((e) => stagedEntryKey(sessionId, e)).join("\u0001");
     if (inFlight.current.has(key)) return;
     inFlight.current.add(key);
-    void stageRemote(sessionId, plan.entries)
+    const stage = plan.kind === "remote" ? stageRemote : stageSessionBytes;
+    void stage(sessionId, plan.entries)
       .then((paths) => {
         if (!paths) return;
         if (control.isStillDragging()) {
