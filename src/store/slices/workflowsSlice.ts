@@ -1,21 +1,12 @@
 import { StateCreator } from "zustand";
 
 import { toast } from "@/components/ui";
-import { localReadFile } from "@/services/api";
-import {
-  invokeRunLocalProcess,
-  cancelLocalProcess,
-  subscribeLocalProcessOutput,
-} from "@/services/localProcessApi";
-import { runMacroPlayback, getTerminalInputInjector } from "@/services/macroPlayback";
-import { onTerminalOutput } from "@/services/events";
 import { newId } from "@/services/transport/ids";
 import {
   listWorkflows as apiListWorkflows,
   saveWorkflow as apiSaveWorkflow,
   deleteWorkflow as apiDeleteWorkflow,
   listWorkflowRuns as apiListWorkflowRuns,
-  recordWorkflowRun as apiRecordWorkflowRun,
   clearWorkflowRunHistory as apiClearWorkflowRunHistory,
 } from "@/services/workflowApi";
 import {
@@ -24,38 +15,19 @@ import {
   summarizeLocalProcessSteps,
   type WorkflowImportResult,
 } from "@/services/workflowIo";
-import {
-  runWorkflow as runWorkflowSteps,
-  matchesOutput,
-  type WorkflowSendSeam,
-  type WorkflowRunMacroSeam,
-  type WorkflowRunHandle,
-  type WorkflowAuthorizeLocalProcessSeam,
-  type WorkflowRunLocalProcessSeam,
-  type WorkflowWaitForOutputSeam,
-  type WaitForOutputResult,
-  type WorkflowParamValues,
-} from "@/services/workflowRunner";
+import type { WorkflowParamValues } from "@/services/workflowRunner";
 import { Workflow, WorkflowParameter, WorkflowRun, WorkflowRunTrigger } from "@/types/workflow";
 import { frontendLog } from "@/utils/frontendLog";
-
-import { currentSessionView, regionExited } from "../sessionBridge";
-import { currentSettingsView } from "../settingsBridge";
-import {
-  appendWorkflowOutputLine,
-  clearWorkflowOutputContent,
-  dispatchWorkflowDismissOutput,
-  dispatchWorkflowOutputOpened,
-  dispatchWorkflowRunSettled,
-  dispatchWorkflowRunStarted,
-  dispatchWorkflowStepAdvanced,
-  ensureWorkflowSubscribed,
-  openWorkflowOutputContent,
-  setWorkflowOutputProcessResult,
-} from "../workflowRunBridge";
-
-import { collectLiveTabs, getActiveTab, type AppState } from "../appStore";
 import { errorMessage } from "@/utils/errorMessage";
+
+import { clearWorkflowOutputContent, dispatchWorkflowDismissOutput } from "../workflowRunBridge";
+import { getActiveTab, type AppState } from "../appStore";
+import { resolveConnectedTargets, toastFanoutSummary, type FanoutOutcome } from "./workflowFanout";
+import {
+  cancelActiveWorkflowRun,
+  replaceActiveWorkflowRun,
+  runWorkflowOnTarget,
+} from "./workflowRunOnTarget";
 
 /** UI-facing metadata describing an in-flight workflow run (#1852). */
 export interface WorkflowRunState {
@@ -121,6 +93,12 @@ export interface RunWorkflowOptions {
   /** Tab to run against; defaults to the active terminal tab. */
   targetTabId?: string;
   /**
+   * Run against this set of tabs instead, one after another (PROD-047). Takes
+   * precedence over {@link targetTabId}. Tabs that are not connected are
+   * skipped and reported; each target gets its own run-history record.
+   */
+  targetTabIds?: string[];
+  /**
    * What launched the run, recorded in the persisted run history (PROD-0046).
    * Defaults to `"manual"` (palette / sidebar / toolbar); on-connect and hotkey
    * dispatch pass their own value.
@@ -163,43 +141,14 @@ export interface LocalProcessPromptState {
   resolve: (decision: LocalProcessAuthDecision) => void;
 }
 
-/**
- * Default timeout (ms) applied to a `run-local-process` step from the frontend.
- * The backend clamps to its own hard cap regardless.
- */
-const LOCAL_PROCESS_TIMEOUT_MS = 60_000;
+/** Cancellation flag of the in-flight multi-target run (PROD-047). */
+interface FanoutState {
+  /** Set when the fan-out was cancelled or superseded by a newer run. */
+  cancelled: boolean;
+}
 
-/** How often (ms) a running local process polls the workflow cancel signal. */
-const LOCAL_PROCESS_CANCEL_POLL_MS = 200;
-
-/** How often (ms) a `wait-for-output` step polls the workflow cancel signal. */
-const WAIT_FOR_OUTPUT_CANCEL_POLL_MS = 200;
-
-/**
- * Max characters of recent terminal output a `wait-for-output` step retains
- * while matching, so a chatty session cannot grow the match buffer without
- * bound. A pattern longer than a chunk still matches across chunk boundaries
- * because the tail is preserved.
- */
-const WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS = 65_536;
-
-/**
- * Strips the common ANSI/VT escape sequences (CSI/SGR and friends) from
- * terminal output so a `wait-for-output` pattern matches the visible text, not
- * the control codes. Built with `\u001b`/`\u009b` escapes so no literal control
- * character appears in the source; `no-control-regex` is disabled because
- * matching the escape introducer is exactly the intent.
- */
-const ANSI_ESCAPE_RE =
-  // eslint-disable-next-line no-control-regex
-  /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g;
-
-/**
- * Handle for the currently-running workflow, held at module scope so
- * {@link AppState.cancelWorkflowRun} can stop it without threading the handle
- * through store state (it is not serializable). `null` when nothing is running.
- */
-let activeWorkflowRun: WorkflowRunHandle | null = null;
+/** The in-flight multi-target run, or `null` when none is running. */
+let activeFanout: FanoutState | null = null;
 
 /** Generate a unique workflow id. */
 function generateWorkflowId(): string {
@@ -351,37 +300,42 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       return;
     }
 
-    const targetTabId = opts?.targetTabId ?? getActiveTab(state)?.id ?? null;
-    if (!targetTabId) {
-      toast.error("No active terminal to run the workflow against");
+    // Resolve the target set: an explicit multi-target selection (PROD-047), an
+    // explicit single tab, or the active terminal tab.
+    const multi = opts?.targetTabIds !== undefined;
+    const requested = multi
+      ? [...new Set(opts.targetTabIds)]
+      : [opts?.targetTabId ?? getActiveTab(state)?.id].filter((id): id is string => !!id);
+    if (requested.length === 0) {
+      toast.error(
+        multi
+          ? "No terminals selected to run the workflow against"
+          : "No active terminal to run the workflow against"
+      );
       return;
     }
 
-    // Guard: only run against a connected, non-exited terminal session.
-    const tab = collectLiveTabs(state).find((t) => t.id === targetTabId);
-    if (
-      !tab ||
-      tab.contentType !== "terminal" ||
-      !tab.sessionId ||
-      // #2625: exited is region-only now the per-client slice is deleted.
-      regionExited(currentSessionView()[targetTabId])
-    ) {
-      toast.error("The target terminal is not connected");
+    // Guard: only run against connected, non-exited terminal sessions. A
+    // multi-target run skips (and reports) the ones that are not connected.
+    const { targets, skipped } = resolveConnectedTargets(state, requested);
+    if (targets.length === 0) {
+      toast.error(
+        multi && requested.length > 1
+          ? "None of the selected terminals are connected"
+          : "The target terminal is not connected"
+      );
       return;
     }
-    // The backend session id backing the target tab — the key a `wait-for-output`
-    // step filters terminal-output events on. Narrowed to a string by the guard.
-    const targetSessionId = tab.sessionId;
 
     if (workflow.steps.length === 0) {
       toast.info(`Workflow "${workflow.name}" has no steps to run`);
       return;
     }
 
-    // Collect declared parameter values before starting the run (PROD-0040).
-    // The prompt pre-fills each field from its `default`; cancelling it aborts
-    // the run before any in-flight run is disturbed. A parameter-free workflow
-    // skips this entirely and runs with an empty value map (identity pass).
+    // Collect declared parameter values before starting the run (PROD-0040) —
+    // once for the whole run, shared by every target. Cancelling the prompt
+    // aborts the run before any in-flight run is disturbed. A parameter-free
+    // workflow skips this entirely and runs with an empty value map.
     let paramValues: WorkflowParamValues = {};
     const parameters = workflow.parameters ?? [];
     if (parameters.length > 0) {
@@ -398,330 +352,49 @@ export const createWorkflowsSlice: StateCreator<AppState, [], [], WorkflowsSlice
       paramValues = collected;
     }
 
-    // Only one run at a time — cancel any in-flight run first.
-    if (activeWorkflowRun) {
-      activeWorkflowRun.cancel();
-      activeWorkflowRun = null;
-    }
+    // Only one run at a time — cancel any in-flight run (and fan-out) first.
+    if (activeFanout) activeFanout.cancelled = true;
+    replaceActiveWorkflowRun();
 
-    // The workflow runner reuses the macro `send_input` injector seam, bound to
-    // the target tab, so send-based steps (send-command, run-script) route
-    // through the single choke point.
-    const injector = getTerminalInputInjector();
-    const send: WorkflowSendSeam = (data) => {
-      if (!injector) return false;
-      return injector(targetTabId, data);
-    };
-
-    // A `run-macro` step replays a stored macro by id through the macro-playback
-    // service, into the same target tab, reusing the macro's recorded timing.
-    const runMacro: WorkflowRunMacroSeam = async (macroId) => {
-      if (!injector) return false;
-      const macro = get().macros.find((m) => m.id === macroId);
-      if (!macro || macro.steps.length === 0) return false;
-      const macroHandle = runMacroPlayback(macro.steps, (data) => injector(targetTabId, data), {
-        timingMode: "real-time",
-      });
-      const macroResult = await macroHandle.done;
-      return macroResult.status === "completed";
-    };
-
-    // The authorization gate for a `run-local-process` step (#1857). Fails
-    // closed: unless the user has opted in AND authorized this specific
-    // program (allowlist hit or an interactive confirmation), it returns
-    // false and the step never spawns. An imported workflow's step is never
-    // pre-authorized — the program is not on the allowlist and the master
-    // opt-in defaults off, so it lands here and is gated exactly like any
-    // other untrusted program.
-    const authorizeLocalProcess: WorkflowAuthorizeLocalProcessSeam = async (program, args) => {
-      const settings = currentSettingsView();
-      if (!settings.workflowLocalProcessEnabled) {
-        toast.error("Local process execution is disabled", {
-          description:
-            "Enable it in Settings → Security before this workflow can run a local program.",
-        });
-        return false;
-      }
-      const allowlist = settings.workflowLocalProcessAllowlist ?? [];
-      if (allowlist.includes(program)) return true;
-
-      // Not yet trusted — ask the user, once, via the confirmation dialog.
-      const decision = await new Promise<LocalProcessAuthDecision>((resolve) => {
-        set({
-          localProcessPrompt: { program, args, workflowName: workflow.name, resolve },
-        });
-      });
-      set({ localProcessPrompt: null });
-
-      if (decision === "cancel") return false;
-      if (decision === "always") {
-        const current = currentSettingsView();
-        const nextAllowlist = [...(current.workflowLocalProcessAllowlist ?? [])];
-        if (!nextAllowlist.includes(program)) nextAllowlist.push(program);
-        await get().updateSettings({
-          ...current,
-          workflowLocalProcessAllowlist: nextAllowlist,
-        });
-      }
-      return true;
-    };
-
-    // Spawn an authorized local process through the guarded backend command,
-    // streaming its output into the LogViewer (the app's observable surface)
-    // and forwarding a cancel from the run's signal to the backend.
-    const runLocalProcess: WorkflowRunLocalProcessSeam = async (program, args, options) => {
-      const runId = `wf-lp-${workflowId}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      frontendLog("workflow", `local process starting: ${[program, ...args].join(" ")}`);
-
-      // Open the inline run-output surface for this spawn (#1865). A fresh
-      // spawn owns the panel — its program/args and a clean line buffer — so a
-      // second run-local-process step shows its own process, not the prior one.
-      // The panel's identity + status are authoritative in the projected region
-      // (dispatched below); its streamed lines/exitCode/timedOut are frontend-
-      // owned and live in the bridge's content store (#2206 reducer-removal).
-      let lineSeq = 0;
-      openWorkflowOutputContent(workflowId);
-      await dispatchWorkflowOutputOpened({
-        workflowId,
-        workflowName: workflow.name,
-        program,
-        args,
-      });
-
-      // Reuse the exact streamed-output events #1857 already emits (keyed by
-      // run id): each line lands in the LogViewer AND the inline surface.
-      const unlisten = await subscribeLocalProcessOutput(runId, (chunk) => {
-        frontendLog("workflow", `[${chunk.stream}] ${chunk.line}`);
-        const nextLine: WorkflowRunOutputLine = {
-          id: lineSeq++,
-          stream: chunk.stream,
-          text: chunk.line,
-        };
-        // Frontend-owned streamed content — appended to the bridge's content
-        // store (bounded there), not the projection.
-        appendWorkflowOutputLine(nextLine);
-      });
-      // Poll the run's cancel signal and forward it to the backend so a
-      // long-running process is killed when the run is cancelled.
-      const poll = window.setInterval(() => {
-        if (options.signal?.isCancelled()) {
-          void cancelLocalProcess(runId);
-        }
-      }, LOCAL_PROCESS_CANCEL_POLL_MS);
-
-      try {
-        const outcome = await invokeRunLocalProcess({
-          runId,
-          program,
-          args,
-          timeoutMs: LOCAL_PROCESS_TIMEOUT_MS,
-        });
-        frontendLog(
-          "workflow",
-          `local process finished: exitCode=${outcome.exitCode ?? "null"} ` +
-            `timedOut=${outcome.timedOut} cancelled=${outcome.cancelled}`
-        );
-        // Record the process outcome on the inline surface (frontend-owned
-        // streamed content). The overall run status (completed / cancelled /
-        // failed) is stamped on the projected panel once the run resolves; here
-        // we surface only the raw exit code / timeout (#1865).
-        setWorkflowOutputProcessResult(outcome.exitCode, outcome.timedOut);
-        return outcome;
-      } catch (err) {
-        // A backend rejection (e.g. opt-in disabled at the trust boundary)
-        // surfaces as a failed step rather than crashing the run.
-        const message = errorMessage(err);
-        frontendLog("workflow", `local process error: ${message}`);
-        setWorkflowOutputProcessResult(1, false);
-        return { exitCode: 1, timedOut: false, cancelled: false };
-      } finally {
-        window.clearInterval(poll);
-        unlisten();
-      }
-    };
-
-    // The `wait-for-output` seam (PROD-044): subscribe to the target session's
-    // terminal-output events, accumulate a bounded, ANSI-stripped buffer, and
-    // resolve on the first match, the timeout, or a run cancel. The runner has
-    // already resolved `${param}` in the pattern and clamped the timeout.
-    const waitForOutput: WorkflowWaitForOutputSeam = (matcher, timeoutMs, options) =>
-      new Promise<WaitForOutputResult>((resolve) => {
-        let settled = false;
-        let buffer = "";
-        const decoder = new TextDecoder();
-        let unlisten: (() => void) | null = null;
-
-        // A cancel already requested before we start waiting ends immediately.
-        if (options.signal?.isCancelled()) {
-          resolve({ matched: false, timedOut: false, cancelled: true });
-          return;
-        }
-
-        const finish = (result: WaitForOutputResult): void => {
-          if (settled) return;
-          settled = true;
-          window.clearTimeout(timer);
-          window.clearInterval(poll);
-          unlisten?.();
-          resolve(result);
-        };
-
-        const feed = (text: string): void => {
-          buffer += text.replace(ANSI_ESCAPE_RE, "");
-          if (buffer.length > WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS) {
-            buffer = buffer.slice(buffer.length - WAIT_FOR_OUTPUT_BUFFER_MAX_CHARS);
-          }
-          if (matchesOutput(buffer, matcher)) {
-            finish({ matched: true, timedOut: false, cancelled: false });
-          }
-        };
-
-        const poll = window.setInterval(() => {
-          if (options.signal?.isCancelled()) {
-            finish({ matched: false, timedOut: false, cancelled: true });
-          }
-        }, WAIT_FOR_OUTPUT_CANCEL_POLL_MS);
-        const timer = window.setTimeout(
-          () => finish({ matched: false, timedOut: true, cancelled: false }),
-          timeoutMs
-        );
-
-        void onTerminalOutput((sid, data) => {
-          if (settled || sid !== targetSessionId) return;
-          feed(decoder.decode(data, { stream: true }));
-        })
-          .then((un) => {
-            // If the wait already settled before the listener attached, drop it.
-            if (settled) un();
-            else unlisten = un;
-          })
-          .catch((err) => {
-            frontendLog("workflow", `wait-for-output could not subscribe: ${errorMessage(err)}`);
-            finish({ matched: false, timedOut: true, cancelled: false });
-          });
-      });
-
-    const toastId = `workflow-run-${workflowId}-${targetTabId}`;
-    const total = workflow.steps.length;
-    // Captured up front so the persisted history record (PROD-0046) carries the
-    // real run duration; `triggeredBy` defaults to a manual launch.
-    const startedAt = new Date().toISOString();
     const triggeredBy: WorkflowRunTrigger = opts?.triggeredBy ?? "manual";
-    toast.loading(`Running workflow "${workflow.name}"…`, {
-      id: toastId,
-      description: `0 / ${total} steps`,
-    });
-    // Clear any prior run's frontend-owned streamed content when a fresh run
-    // starts; a new panel is created lazily only if this run spawns a local
-    // process (#1865). The projected panel is reset by `runStarted` below.
-    clearWorkflowOutputContent();
-    // The workflow-run region is authoritative (#2206 reducer-removal): the run
-    // progress + output-panel status are driven solely by dispatching the
-    // `workflow.*` intents. Keep the subscription warm so the render hook
-    // receives the resulting diffs.
-    try {
-      void ensureWorkflowSubscribed().catch(() => {
-        /* logged in the bridge; render simply stays on the last-known view */
+    const base = { set, get, workflow, paramValues, triggeredBy };
+
+    if (!multi) {
+      const [target] = targets;
+      await runWorkflowOnTarget({
+        ...base,
+        targetTabId: target.id,
+        targetSessionId: target.sessionId,
       });
-    } catch {
-      /* non-Tauri env without a socket — dispatch logs + no-ops */
-    }
-    await dispatchWorkflowRunStarted({
-      workflowId,
-      workflowName: workflow.name,
-      tabId: targetTabId,
-      total,
-    });
-
-    const handle = runWorkflowSteps(
-      workflow.steps,
-      {
-        send,
-        runMacro,
-        readScriptFile: localReadFile,
-        authorizeLocalProcess,
-        runLocalProcess,
-        waitForOutput,
-      },
-      {
-        onProgress: (completed, stepTotal) => {
-          // Advance the authoritative run progress (guarded server-side to the
-          // still-current run). Fire-and-forget: the intent is submitted
-          // synchronously, so successive advances apply in order.
-          void dispatchWorkflowStepAdvanced({ workflowId, tabId: targetTabId, completed });
-          toast.loading(`Running workflow "${workflow.name}"…`, {
-            id: toastId,
-            description: `${completed} / ${stepTotal} steps`,
-          });
-        },
-      },
-      paramValues
-    );
-    activeWorkflowRun = handle;
-
-    const result = await handle.done;
-
-    // Persist a metadata-only record of this run (PROD-0046). Fire-and-forget:
-    // a history-write failure must NEVER fail or block the run, so it is logged
-    // (never rethrown) and the returned, capped list is mirrored into the store.
-    const runRecord: WorkflowRun = {
-      id: newId("workflow-run"),
-      workflowId,
-      workflowName: workflow.name,
-      startedAt,
-      endedAt: new Date().toISOString(),
-      status: result.status,
-      stepsCompleted: result.stepsCompleted,
-      total,
-      failedStepIndex: result.status === "failed" ? result.failedStepIndex : undefined,
-      error: result.status === "failed" ? result.error : undefined,
-      tabId: targetTabId,
-      triggeredBy,
-    };
-    try {
-      void apiRecordWorkflowRun(runRecord)
-        .then((runs) => set({ workflowRuns: Array.isArray(runs) ? runs : [] }))
-        .catch((err) => {
-          frontendLog("workflow", `Failed to record workflow run: ${errorMessage(err)}`);
-        });
-    } catch (err) {
-      // Guard even a synchronous throw (e.g. no Tauri bridge): recording must
-      // never fail or block the run.
-      frontendLog("workflow", `Failed to record workflow run: ${errorMessage(err)}`);
+      return;
     }
 
-    // Only settle the run when it is still the current one — a newer
-    // runWorkflow may have replaced it while this one was cancelled. The settle
-    // clears the projected run and stamps the terminal status onto the projected
-    // output panel; the frontend streamed content (exit code / lines) is kept.
-    if (activeWorkflowRun === handle) {
-      activeWorkflowRun = null;
-      await dispatchWorkflowRunSettled(
-        result.status,
-        result.status === "failed" ? result.error : undefined
-      );
-    }
-
-    if (result.status === "completed") {
-      toast.success(`Ran workflow "${workflow.name}"`, { id: toastId });
-    } else if (result.status === "cancelled") {
-      toast.info(`Workflow "${workflow.name}" cancelled`, {
-        id: toastId,
-        description: `Stopped after ${result.stepsCompleted} of ${total} steps`,
+    // Fan-out (PROD-047): run the targets one after another under one shared
+    // toast. Each target is an ordinary run (own history record); a failure on
+    // one target does not stop the next. Cancel stops the whole fan-out.
+    const fanout: FanoutState = { cancelled: false };
+    activeFanout = fanout;
+    const toastId = `workflow-run-${workflowId}-fanout`;
+    const outcomes: FanoutOutcome[] = [];
+    for (let index = 0; index < targets.length; index++) {
+      if (fanout.cancelled) break;
+      const target = targets[index];
+      const result = await runWorkflowOnTarget({
+        ...base,
+        targetTabId: target.id,
+        targetSessionId: target.sessionId,
+        fanout: { index, total: targets.length, toastId },
       });
-    } else {
-      const stepNumber = (result.failedStepIndex ?? result.stepsCompleted) + 1;
-      toast.error(`Workflow "${workflow.name}" failed at step ${stepNumber}`, {
-        id: toastId,
-        description: result.error,
-      });
+      outcomes.push({ title: target.title, result });
+      if (result.status === "cancelled") break;
     }
+    if (activeFanout === fanout) activeFanout = null;
+    toastFanoutSummary(workflow.name, outcomes, targets.length, skipped, toastId);
   },
 
   cancelWorkflowRun: () => {
-    if (activeWorkflowRun) {
-      activeWorkflowRun.cancel();
-    }
+    if (activeFanout) activeFanout.cancelled = true;
+    cancelActiveWorkflowRun();
   },
 
   dismissWorkflowRunOutput: () => {
