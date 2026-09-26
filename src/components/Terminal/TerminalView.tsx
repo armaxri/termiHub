@@ -604,7 +604,9 @@ export function TerminalView() {
         open={macroPlaybackDialogOpen}
         macros={macros}
         onOpenChange={setMacroPlaybackDialogOpen}
-        onPlay={(macroId, timingMode) => void playMacro(macroId, { timingMode })}
+        onPlay={(macroId, timingMode, targetTabIds) =>
+          void playMacro(macroId, { timingMode, targetTabIds })
+        }
       />
       <BroadcastScopeDialog
         open={broadcastDialogOpen}
