@@ -230,6 +230,99 @@ async fn wrong_answer_is_auth_failed() {
     assert!(matches!(err, SessionError::AuthFailed), "got {err:?}");
 }
 
+// ── Which factor failed (#3376) ────────────────────────────────────
+
+/// The configured password was auto-answered and accepted (the server moved on
+/// to an OTP round); a wrong user-typed code is a second-factor failure, not a
+/// credential rejection, so the saved password is not discarded.
+#[tokio::test]
+async fn wrong_otp_after_auto_answered_password_is_second_factor_failed() {
+    let rounds = vec![
+        Round::new(vec![("Password: ", false)], vec!["hunter2"]),
+        Round::new(vec![("Verification code: ", false)], vec!["000111"]),
+    ];
+    let (mut session, observed) = connect(script(rounds)).await;
+    let prompter = ScriptedPrompter::new(vec![Some(vec!["999999"])]);
+
+    let err = run_keyboard_interactive(
+        &mut session,
+        &ctx(Some("hunter2")),
+        KiMode::PasswordFallback,
+        Some(&prompter),
+    )
+    .await
+    .expect_err("rejected");
+    assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+    assert_eq!(observed.lock().unwrap().responses.len(), 2);
+}
+
+/// The same holds for the explicit keyboard-interactive method.
+#[tokio::test]
+async fn wrong_otp_after_auto_answered_password_explicit_is_second_factor_failed() {
+    let rounds = vec![
+        Round::new(vec![("Password: ", false)], vec!["hunter2"]),
+        Round::new(vec![("Verification code: ", false)], vec!["000111"]),
+    ];
+    let (mut session, _observed) = connect(script(rounds)).await;
+    let prompter = ScriptedPrompter::new(vec![Some(vec!["999999"])]);
+
+    let err = run_keyboard_interactive(
+        &mut session,
+        &ctx(Some("hunter2")),
+        KiMode::Explicit,
+        Some(&prompter),
+    )
+    .await
+    .expect_err("rejected");
+    assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+}
+
+/// The auto-answered password itself is rejected: that IS a stored-credential
+/// failure, so it stays the typed `AuthFailed` (discard allowed).
+#[tokio::test]
+async fn rejected_auto_answered_password_is_auth_failed() {
+    let rounds = vec![
+        Round::new(vec![("Password: ", false)], vec!["correct"]),
+        Round::new(vec![("Verification code: ", false)], vec!["000111"]),
+    ];
+    let (mut session, observed) = connect(script(rounds)).await;
+    let prompter = ScriptedPrompter::new(vec![]);
+
+    let err = run_keyboard_interactive(
+        &mut session,
+        &ctx(Some("stale")),
+        KiMode::PasswordFallback,
+        Some(&prompter),
+    )
+    .await
+    .expect_err("rejected");
+    assert!(matches!(err, SessionError::AuthFailed), "got {err:?}");
+    assert!(prompter.seen().is_empty(), "the OTP round was never reached");
+    assert_eq!(observed.lock().unwrap().responses.len(), 1);
+}
+
+/// After a primary method's partial success, a wrong typed answer is always a
+/// second-factor failure — the primary credential was accepted.
+#[tokio::test]
+async fn wrong_answer_in_second_factor_mode_is_second_factor_failed() {
+    let rounds = vec![Round::new(
+        vec![("Verification code: ", false)],
+        vec!["right"],
+    )];
+    let (mut session, _observed) = connect(script(rounds)).await;
+    let prompter = ScriptedPrompter::new(vec![Some(vec!["wrong"])]);
+
+    let err = run_keyboard_interactive(
+        &mut session,
+        &ctx(None),
+        KiMode::SecondFactor,
+        Some(&prompter),
+    )
+    .await
+    .expect_err("rejected");
+    assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+}
+
 /// With no prompter (headless), an unanswerable prompt fails clearly — and in
 /// password-fallback mode keeps the plain credential-rejection outcome.
 #[tokio::test]

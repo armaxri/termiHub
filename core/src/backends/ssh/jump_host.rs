@@ -318,6 +318,22 @@ async fn connect_hop_over_channel_with_liveness(
     .await
 }
 
+/// Label a first-hop connect failure with its hop, keeping the typed
+/// interactive-auth outcomes intact: a dismissed keyboard-interactive prompt
+/// stays [`SessionError::AuthCancelled`] (a cancel, not a failure — #3371) and a
+/// rejected one-time code stays [`SessionError::SecondFactorFailed`] (so the UI
+/// says "verification code rejected" — #3376). Every other failure becomes a
+/// hop-labelled `SpawnFailed`, as before.
+fn label_first_hop_error(e: SessionError, first_cfg: &SshConfig) -> SessionError {
+    match e {
+        SessionError::AuthCancelled | SessionError::SecondFactorFailed => e,
+        other => SessionError::SpawnFailed(format!(
+            "Jump host {}: {other}",
+            hop_label(1, &first_cfg.host, first_cfg.port)
+        )),
+    }
+}
+
 /// Stable pool key for a jump-host chain.
 ///
 /// Two connections whose chains resolve to the same ordered hops share one
@@ -373,15 +389,7 @@ pub async fn connect_gateway_chain(
     let (mut current, mut registry) =
         connect_and_authenticate_cancellable(&first_cfg, cancel.cloned())
             .await
-            .map_err(|e| match e {
-                // A dismissed keyboard-interactive prompt stays typed so the UI
-                // treats it as a cancel, not a failure (#3371).
-                SessionError::AuthCancelled => e,
-                other => SessionError::SpawnFailed(format!(
-                    "Jump host {}: {other}",
-                    hop_label(1, &first_cfg.host, first_cfg.port)
-                )),
-            })?;
+            .map_err(|e| label_first_hop_error(e, &first_cfg))?;
     let mut intermediate_sessions: Vec<SshSession> = Vec::new();
 
     // Each subsequent hop: open a direct-tcpip channel on the current session to
@@ -578,6 +586,28 @@ mod tests {
             auth_method: "agent".to_string(),
             ..JumpHostConfig::default()
         }
+    }
+
+    /// A first-hop failure is hop-labelled, but the typed interactive-auth
+    /// outcomes survive so the UI neither shows a cancel as a failure (#3371)
+    /// nor a mistyped one-time code as a credential rejection (#3376).
+    #[test]
+    fn first_hop_error_keeps_typed_interactive_auth_outcomes() {
+        let cfg = hop("bastion", 2200, "u").to_ssh_config();
+        assert!(matches!(
+            label_first_hop_error(SessionError::SecondFactorFailed, &cfg),
+            SessionError::SecondFactorFailed
+        ));
+        assert!(matches!(
+            label_first_hop_error(SessionError::AuthCancelled, &cfg),
+            SessionError::AuthCancelled
+        ));
+        let labelled = label_first_hop_error(SessionError::AuthFailed, &cfg);
+        assert!(
+            matches!(&labelled, SessionError::SpawnFailed(m)
+                if m == "Jump host hop 1 (bastion:2200): Authentication failed"),
+            "got {labelled:?}"
+        );
     }
 
     /// Build an SSH target config with the given inline jump-host chain. A short

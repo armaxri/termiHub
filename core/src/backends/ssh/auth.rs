@@ -692,9 +692,11 @@ mod tests {
         assert_eq!(seen[0].prompts[0].prompt, "Verification code: ");
     }
 
-    /// A wrong second factor surfaces as the typed `AuthFailed`.
+    /// A wrong second factor after the saved password was accepted surfaces as
+    /// the typed `SecondFactorFailed` — never `AuthFailed`, which would make the
+    /// frontend discard the (correct) saved password (#3376).
     #[tokio::test]
-    async fn wrong_second_factor_is_auth_failed() {
+    async fn wrong_second_factor_is_second_factor_failed() {
         let (mut session, _observed) = ki_connect(Script {
             rounds: vec![Round::new(
                 vec![("Verification code: ", false)],
@@ -712,7 +714,57 @@ mod tests {
         )
         .await
         .expect_err("rejected");
+        assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+    }
+
+    /// PAM password fallback: the saved password is auto-answered and accepted,
+    /// then the user mistypes the OTP → `SecondFactorFailed`, so the saved
+    /// password survives (#3376).
+    #[tokio::test]
+    async fn password_fallback_wrong_otp_is_second_factor_failed() {
+        let (mut session, _observed) = ki_connect(Script {
+            rounds: vec![
+                Round::new(vec![("Password: ", false)], vec!["hunter2"]),
+                Round::new(vec![("Verification code: ", false)], vec!["314159"]),
+            ],
+            password: PasswordPolicy::Disabled,
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![Some(vec!["000000"])]);
+
+        let err = authenticate_with_prompter(
+            &mut session,
+            &ki_config("password", Some("hunter2")),
+            Some(&prompter),
+        )
+        .await
+        .expect_err("rejected");
+        assert!(matches!(err, SessionError::SecondFactorFailed), "got {err:?}");
+    }
+
+    /// PAM password fallback with a stale saved password: the auto-answered
+    /// password round is rejected → the typed `AuthFailed` (discard allowed).
+    #[tokio::test]
+    async fn password_fallback_wrong_saved_password_is_auth_failed() {
+        let (mut session, _observed) = ki_connect(Script {
+            rounds: vec![
+                Round::new(vec![("Password: ", false)], vec!["hunter2"]),
+                Round::new(vec![("Verification code: ", false)], vec!["314159"]),
+            ],
+            password: PasswordPolicy::Disabled,
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![]);
+
+        let err = authenticate_with_prompter(
+            &mut session,
+            &ki_config("password", Some("stale")),
+            Some(&prompter),
+        )
+        .await
+        .expect_err("rejected");
         assert!(matches!(err, SessionError::AuthFailed), "got {err:?}");
+        assert!(prompter.seen().is_empty());
     }
 
     /// The explicit `keyboard-interactive` method skips the password method

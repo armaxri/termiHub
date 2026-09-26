@@ -196,6 +196,76 @@ pub(crate) fn offers_keyboard_interactive(remaining: &russh::MethodSet) -> bool 
     remaining.contains(&MethodKind::KeyboardInteractive)
 }
 
+/// Who answered a keyboard-interactive round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answerer {
+    /// The configured (saved) password, via the auto-answer heuristic.
+    SavedPassword,
+    /// The user, through the prompter dialog.
+    User,
+}
+
+/// Tracks which authentication factor a server rejection refers to (#3376).
+///
+/// A rejection must only surface as [`SessionError::AuthFailed`] — which lets
+/// the frontend discard the saved credential — when the saved credential may be
+/// what was wrong. Once an earlier factor has been **accepted** and the user then
+/// types a later answer (typically a one-time code) that is rejected, the
+/// failure is [`SessionError::SecondFactorFailed`] instead:
+///
+/// - In [`KiMode::SecondFactor`] the primary method (password / key / agent)
+///   already returned partial success, so it counts as accepted from the start.
+/// - An auto-answered saved-password round counts as accepted once the server
+///   **moves on** to another info-request round instead of failing.
+///
+/// Limitation: a PAM stack that defers the password verdict until after the
+/// OTP ("fail late") is indistinguishable from an accepted password; such a
+/// rejection is reported as a second-factor failure, which errs on the side of
+/// keeping the saved password rather than destroying it.
+struct FactorTracker {
+    /// An earlier factor is known to have been accepted.
+    earlier_factor_accepted: bool,
+    /// Who answered the most recent non-empty round, pending the server's verdict.
+    pending: Option<Answerer>,
+    /// The user typed an answer after an earlier factor was accepted.
+    user_answered_after_acceptance: bool,
+}
+
+impl FactorTracker {
+    fn new(mode: KiMode) -> Self {
+        Self {
+            earlier_factor_accepted: mode == KiMode::SecondFactor,
+            pending: None,
+            user_answered_after_acceptance: false,
+        }
+    }
+
+    /// The server sent another info-request round: the previous answers were
+    /// not rejected.
+    fn server_moved_on(&mut self) {
+        if self.pending.take() == Some(Answerer::SavedPassword) {
+            self.earlier_factor_accepted = true;
+        }
+    }
+
+    /// Record who is answering the current (non-empty) round.
+    fn answered(&mut self, by: Answerer) {
+        if by == Answerer::User && self.earlier_factor_accepted {
+            self.user_answered_after_acceptance = true;
+        }
+        self.pending = Some(by);
+    }
+
+    /// The typed error for a server rejection at this point of the exchange.
+    fn rejection(&self) -> SessionError {
+        if self.earlier_factor_accepted && self.user_answered_after_acceptance {
+            SessionError::SecondFactorFailed
+        } else {
+            SessionError::AuthFailed
+        }
+    }
+}
+
 fn protocol_error(e: russh::Error) -> SessionError {
     SessionError::SpawnFailed(format!("Keyboard-interactive auth failed: {e}"))
 }
@@ -203,7 +273,9 @@ fn protocol_error(e: russh::Error) -> SessionError {
 /// Run a full keyboard-interactive exchange on `session`.
 ///
 /// Returns `Ok(())` on success, [`SessionError::AuthFailed`] when the server
-/// rejects the answers, [`SessionError::AuthCancelled`] when the user cancels,
+/// rejects the answers, [`SessionError::SecondFactorFailed`] when it rejects a
+/// user-typed answer after an earlier factor was accepted (see
+/// [`FactorTracker`]), [`SessionError::AuthCancelled`] when the user cancels,
 /// and a `SpawnFailed` for protocol errors, timeouts, or a prompt that cannot
 /// be answered in this context (no prompter registered).
 pub(crate) async fn run_keyboard_interactive<H>(
@@ -220,12 +292,13 @@ where
         .await
         .map_err(protocol_error)?;
     let mut round: u32 = 0;
+    let mut factors = FactorTracker::new(mode);
 
     loop {
         let (name, instructions, prompts) = match response {
             KeyboardInteractiveAuthResponse::Success => return Ok(()),
             KeyboardInteractiveAuthResponse::Failure { .. } => {
-                return Err(SessionError::AuthFailed);
+                return Err(factors.rejection());
             }
             KeyboardInteractiveAuthResponse::InfoRequest {
                 name,
@@ -233,6 +306,7 @@ where
                 prompts,
             } => (name, instructions, prompts),
         };
+        factors.server_moved_on();
 
         round += 1;
         if round > MAX_ROUNDS {
@@ -260,6 +334,7 @@ where
                 round,
                 "answering keyboard-interactive password prompt with the configured password"
             );
+            factors.answered(Answerer::SavedPassword);
             vec![Zeroizing::new(password.to_string())]
         } else {
             let Some(prompter) = prompter else {
@@ -296,7 +371,10 @@ where
             })?;
             match answer {
                 KbdInteractiveAnswer::Cancelled => return Err(SessionError::AuthCancelled),
-                KbdInteractiveAnswer::Responses(r) if r.len() == request.prompts.len() => r,
+                KbdInteractiveAnswer::Responses(r) if r.len() == request.prompts.len() => {
+                    factors.answered(Answerer::User);
+                    r
+                }
                 KbdInteractiveAnswer::Responses(r) => {
                     return Err(SessionError::SpawnFailed(format!(
                         "Keyboard-interactive answer count mismatch: {} prompts, {} responses",
