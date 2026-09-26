@@ -9,8 +9,8 @@ subsystem: core/backends/rdp_sidecar, core/backends/vnc
 evidence:
   - core/src/backends/rdp_sidecar/config.rs:83
   - core/src/backends/rdp_sidecar/config.rs:326
-status: partial
-resolution: "#3465, #3546 — RDP resolution mode (dynamic/fixed WxH) + color depth 16/24/32 wired to sidecar; VNC 16-bit + Tight quality done (#3546); VNC resolution (ExtendedDesktopSize) pending #3463"
+status: fixed
+resolution: "#3465, #3546, #3556 — RDP resolution mode + color depth; VNC 16-bit + Tight quality (#3546); VNC server/fixed/dynamic resolution via ExtendedDesktopSize (#3556)"
 ---
 
 ## What
