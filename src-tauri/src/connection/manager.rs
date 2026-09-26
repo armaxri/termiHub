@@ -2895,3 +2895,7 @@ mod tests {
 #[cfg(test)]
 #[path = "manager_id_change_tests.rs"]
 mod id_change_tests;
+
+#[cfg(test)]
+#[path = "manager_move_credential_tests.rs"]
+mod move_credential_tests;
