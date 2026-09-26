@@ -131,8 +131,13 @@ pub async fn network_port_scan(
                 };
                 if agent_stream::supports_streaming(&client, &agent_id) {
                     // Live results, no 60 s cap, Stop cancels on the agent (#3353).
-                    let params =
-                        agent_tools::port_scan_tool_params(&host, &ports, timeout_ms, concurrency);
+                    let params = agent_tools::port_scan_tool_params(
+                        &host,
+                        &targets,
+                        &ports,
+                        timeout_ms,
+                        concurrency,
+                    );
                     agent_stream::run_streaming_to_app(
                         StreamTool::PortScan,
                         client,
@@ -145,8 +150,13 @@ pub async fn network_port_scan(
                     .await;
                 } else {
                     // Older agent: one-shot `network.port_scan`.
-                    let params =
-                        agent_tools::port_scan_params(&host, &ports, timeout_ms, concurrency);
+                    let params = agent_tools::port_scan_params(
+                        &host,
+                        &targets,
+                        &ports,
+                        timeout_ms,
+                        concurrency,
+                    );
                     let (app2, tid2) = (app.clone(), tid.clone());
                     let _ = tokio::task::spawn_blocking(move || {
                         agent_tools::dispatch_port_scan(&client, &agent_id, &app2, &tid2, params);

@@ -101,15 +101,20 @@ pub const AGENT_PING_DEFAULT_COUNT: u32 = 4;
 // tests — the param field names are snake_case with no serde rename, exactly the
 // shape the agent deserializes.
 
-/// Build `network.port_scan` params.
+/// Build `network.port_scan` params. `targets` is the spec already expanded
+/// with the core `parse_target_spec` (as the local path does), so the agent
+/// probes exactly the local host set; `host` keeps the raw spec for older
+/// agents that do not read `targets`.
 pub fn port_scan_params(
     host: &str,
+    targets: &[String],
     ports: &str,
     timeout_ms: Option<u64>,
     concurrency: Option<usize>,
 ) -> NetworkPortScanParams {
     NetworkPortScanParams {
         host: host.to_string(),
+        targets: Some(targets.to_vec()),
         ports: ports.to_string(),
         timeout_ms,
         concurrency,
@@ -355,15 +360,18 @@ pub fn ping_sweep_tool_run_params(
 // The core `ToolRegistry` tools take camelCase params. Absent optionals get the
 // local path's defaults, so a streamed agent run probes exactly like a local one.
 
-/// `port_scan` tool params.
+/// `port_scan` tool params. Carries the expanded `targets` (see
+/// [`port_scan_params`]) alongside the raw `host` spec.
 pub fn port_scan_tool_params(
     host: &str,
+    targets: &[String],
     ports: &str,
     timeout_ms: Option<u64>,
     concurrency: Option<usize>,
 ) -> Value {
     json!({
         "host": host,
+        "targets": targets,
         "ports": ports,
         "timeoutMs": timeout_ms.unwrap_or(defaults::PORT_SCAN_TIMEOUT_MS),
         "concurrency": concurrency.unwrap_or(defaults::PORT_SCAN_CONCURRENCY),
@@ -471,6 +479,7 @@ mod tests {
         });
         let typed = serde_json::to_value(NetworkPortScanParams {
             host: "host.example".to_string(),
+            targets: None,
             ports: "1-1024".to_string(),
             timeout_ms: Some(2000),
             concurrency: Some(100),
@@ -491,6 +500,7 @@ mod tests {
         });
         let typed_none = serde_json::to_value(NetworkPortScanParams {
             host: "h".to_string(),
+            targets: None,
             ports: "22".to_string(),
             timeout_ms: None,
             concurrency: None,
@@ -700,8 +710,10 @@ mod tests {
     #[test]
     fn port_scan_params_are_snake_case() {
         // The builder returns the shared DTO; its serialized wire is snake_case.
+        let targets = vec!["host.example".to_string()];
         let p = serde_json::to_value(port_scan_params(
             "host.example",
+            &targets,
             "1-1024",
             Some(2000),
             Some(100),
@@ -711,6 +723,34 @@ mod tests {
         assert_eq!(p["ports"], "1-1024");
         assert_eq!(p["timeout_ms"], 2000);
         assert_eq!(p["concurrency"], 100);
+    }
+
+    /// #3385 parity: for any spec, the targets the desktop sends (expanded
+    /// locally with `parse_target_spec`, as the local scan does) resolve on the
+    /// agent to the same host set — and an agent given only the raw `host`
+    /// (an older desktop) expands it to that same set too.
+    #[test]
+    fn port_scan_targets_match_the_agent_expansion() {
+        use termihub_core::network::{parse_target_spec, resolve_targets};
+        for spec in [
+            "10.0.0.5",
+            "scan.example",
+            "192.168.0.0/28",
+            "10.0.0.1, 192.168.1.0/30, scan.example",
+        ] {
+            let local = parse_target_spec(spec).unwrap();
+            let fallback = port_scan_params(spec, &local, "22", None, None);
+            let streamed = port_scan_tool_params(spec, &local, "22", None, None);
+            let sent: Vec<String> = fallback.targets.clone().unwrap();
+            assert_eq!(sent, local, "{spec}: fallback targets");
+            assert_eq!(
+                streamed["targets"],
+                json!(local),
+                "{spec}: streamed targets"
+            );
+            assert_eq!(resolve_targets(Some(spec), Some(&sent)).unwrap(), local);
+            assert_eq!(resolve_targets(Some(spec), None).unwrap(), local);
+        }
     }
 
     #[test]
@@ -803,9 +843,10 @@ mod tests {
     #[test]
     fn streaming_tool_params_are_camel_case_with_local_defaults() {
         assert_eq!(
-            port_scan_tool_params("h", "1-1024", None, Some(8)),
+            port_scan_tool_params("h", &["h".to_string()], "1-1024", None, Some(8)),
             json!({
                 "host": "h",
+                "targets": ["h"],
                 "ports": "1-1024",
                 "timeoutMs": defaults::PORT_SCAN_TIMEOUT_MS,
                 "concurrency": 8,
