@@ -41,15 +41,18 @@ interface FileBrowserDndProviderProps {
 export interface DragOutControl {
   /** Whether the in-app drag that left the window is still held. */
   isStillDragging: () => boolean;
-  /** End the in-app drag (as Escape would) so the native OS drag takes over. */
+  /** End the in-app drag (as cancelling it would) so the native OS drag takes over. */
   cancelInAppDrag: () => void;
 }
 
-/** End the active dnd-kit pointer drag: its sensor cancels on an Escape keydown. */
+/**
+ * End the active dnd-kit pointer drag. Its PointerSensor cancels on a window
+ * `visibilitychange`; that event is used rather than a synthetic Escape keydown
+ * because app-wide Escape handlers (terminal zoom, tree selection) would also
+ * react to — and the zoom one swallow — an Escape.
+ */
 function cancelActivePointerDrag(): void {
-  document.dispatchEvent(
-    new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true })
-  );
+  window.dispatchEvent(new Event("visibilitychange"));
 }
 
 /** Whether a pointer/keyboard event carries the copy modifier (Alt / Option). */

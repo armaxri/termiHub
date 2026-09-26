@@ -2,7 +2,8 @@
  * The hand-off from the in-app dnd-kit row drag to a native OS drag-out (#3457):
  * the first pointer move outside the window reports the dragged rows once, the
  * control reflects whether the in-app drag is still held, and cancelling it
- * ends the dnd-kit drag the way Escape does. jsdom cannot hit-test dnd-kit, so
+ * signals dnd-kit's own cancel (window visibilitychange) rather than a synthetic
+ * Escape. jsdom cannot hit-test dnd-kit, so
  * the DndContext's own handlers are driven directly (as in the drag-move test).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
@@ -98,11 +99,13 @@ describe("FileBrowserDndProvider — drag-out hand-off", () => {
     expect(onDragOut).not.toHaveBeenCalled();
   });
 
-  it("exposes whether the in-app drag is still held and cancels it with Escape", () => {
-    const escapes = vi.fn();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.code === "Escape") escapes();
-    };
+  it("exposes whether the in-app drag is still held and cancels it", () => {
+    // dnd-kit's PointerSensor cancels a drag on a window visibilitychange.
+    const cancels = vi.fn();
+    const onKey = vi.fn();
+    const onCancelSignal = () => cancels();
+    window.addEventListener("visibilitychange", onCancelSignal);
+    // No synthetic Escape: app-wide Escape handlers must not see the hand-off.
     document.addEventListener("keydown", onKey);
     try {
       startDrag();
@@ -111,16 +114,18 @@ describe("FileBrowserDndProvider — drag-out hand-off", () => {
       expect(control.isStillDragging()).toBe(true);
 
       control.cancelInAppDrag();
-      expect(escapes).toHaveBeenCalledTimes(1);
+      expect(cancels).toHaveBeenCalledTimes(1);
 
       act(() => {
         dndProps?.onDragCancel?.({} as DndCore.DragCancelEvent);
       });
       expect(control.isStillDragging()).toBe(false);
-      // Once the drag is over, cancelling again must not inject another Escape.
+      // Once the drag is over, cancelling again must not signal again.
       control.cancelInAppDrag();
-      expect(escapes).toHaveBeenCalledTimes(1);
+      expect(cancels).toHaveBeenCalledTimes(1);
+      expect(onKey).not.toHaveBeenCalled();
     } finally {
+      window.removeEventListener("visibilitychange", onCancelSignal);
       document.removeEventListener("keydown", onKey);
     }
   });
