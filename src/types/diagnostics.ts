@@ -31,3 +31,29 @@ export interface DiagnosticsExportResult {
   /** Number of files in the bundle. */
   fileCount: number;
 }
+
+/** One crash report on a remote agent (`CrashReportSummary`, #3574). */
+export interface AgentCrashReportSummary {
+  /** Report file name on the agent. */
+  name: string;
+  /** Size on the agent, in bytes. */
+  size: number;
+}
+
+/** A connected agent's crash reports, for the export preview (#3574). */
+export interface AgentCrashReports {
+  /** The agent's id. */
+  agentId: string;
+  /** `false` when the agent is too old to share crash reports. */
+  supported: boolean;
+  /** The agent's crash reports, newest first. */
+  reports: AgentCrashReportSummary[];
+  /** Why listing failed, when it did. */
+  error?: string;
+}
+
+/** A remote agent crash report the user chose to include in the export. */
+export interface AgentCrashReportRef {
+  agentId: string;
+  name: string;
+}
