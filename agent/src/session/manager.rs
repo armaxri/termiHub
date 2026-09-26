@@ -1792,13 +1792,6 @@ mod tests {
         Arc::new(crate::registry::build_registry())
     }
 
-    // ── AGT-019: dead-session socket/log reclaim during recovery ─────────
-    //
-    // A daemon killed with SIGKILL never runs `cleanup()`, so its `.sock`/`.log`
-    // files linger. Recovery used to remove only the `state.json` entry, leaking
-    // the on-disk files forever. These drive the real `recover_sessions` and
-    // prove a *dead* session's files are reclaimed while a *live* one's are not.
-    #[cfg(unix)]
     /// SM-003 (single-attach): eviction + explicit Reclaim through the manager,
     /// against a real session-daemon loop.
     mod single_attach {
@@ -1963,6 +1956,13 @@ mod tests {
         }
     }
 
+    // ── AGT-019: dead-session socket/log reclaim during recovery ─────────
+    //
+    // A daemon killed with SIGKILL never runs `cleanup()`, so its `.sock`/`.log`
+    // files linger. Recovery used to remove only the `state.json` entry, leaking
+    // the on-disk files forever. These drive the real `recover_sessions` and
+    // prove a *dead* session's files are reclaimed while a *live* one's are not.
+    #[cfg(unix)]
     mod recovery_file_reclaim {
         use super::*;
         use crate::daemon::protocol;
