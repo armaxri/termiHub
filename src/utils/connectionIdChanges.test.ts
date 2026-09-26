@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   connectionIdRemapper,
+  inferFolderFollow,
   remapConnectionIdList,
   remapJumpHostRefs,
   remapTabContentConnectionIds,
@@ -57,6 +58,28 @@ describe("remapTabContentConnectionIds", () => {
     expect(next?.other).toBe(other);
     // The input is not mutated.
     expect(tabs.t1.connectionId).toBe("a");
+  });
+
+  it("re-points an open connection editor's own connection (#3622)", () => {
+    const tabs = {
+      ed: content("ed", {
+        contentType: "connection-editor",
+        connectionEditorMeta: { connectionId: "Work/x", folderId: null },
+      }),
+      def: content("def", {
+        contentType: "connection-editor",
+        connectionEditorMeta: { connectionId: "Work/x", folderId: null, agentDefinitionId: "d1" },
+      }),
+      fresh: content("fresh", {
+        contentType: "connection-editor",
+        connectionEditorMeta: { connectionId: "new", folderId: "Work" },
+      }),
+    };
+    const next = remapTabContentConnectionIds(tabs, [{ oldId: "Work/x", newId: "Job/x" }]);
+    expect(next?.ed.connectionEditorMeta).toEqual({ connectionId: "Job/x", folderId: null });
+    // An agent-definition editor's id is an agent id, and a new editor has none.
+    expect(next?.def).toBe(tabs.def);
+    expect(next?.fresh).toBe(tabs.fresh);
   });
 
   it("returns null when nothing references a changed id", () => {
@@ -137,5 +160,46 @@ describe("draft remappers (#3603)", () => {
     expect(remapJumpHostRefs(settings, none)).toBe(settings);
     const plain = { host: "h" };
     expect(remapJumpHostRefs(plain, remap)).toBe(plain);
+  });
+});
+
+describe("inferFolderFollow (#3622)", () => {
+  const before = ["Work/x", "Work/sub/y", "Other/z", "root"];
+
+  it("follows a folder rename or move", () => {
+    const changes = [
+      { oldId: "Work/x", newId: "Job/x" },
+      { oldId: "Work/sub/y", newId: "Job/sub/y" },
+    ];
+    expect(inferFolderFollow("Work", changes, before)).toEqual({ from: "Work", to: "Job" });
+    expect(inferFolderFollow("Work/sub", changes, before)).toEqual({
+      from: "Work/sub",
+      to: "Job/sub",
+    });
+    const moved = [
+      { oldId: "Work/x", newId: "Other/Work/x" },
+      { oldId: "Work/sub/y", newId: "Other/Work/sub/y" },
+    ];
+    expect(inferFolderFollow("Work", moved, before)).toEqual({ from: "Work", to: "Other/Work" });
+  });
+
+  it("follows a deleted folder's contents up to the root", () => {
+    const changes = [
+      { oldId: "Work/x", newId: "x" },
+      { oldId: "Work/sub/y", newId: "sub/y" },
+    ];
+    expect(inferFolderFollow("Work", changes, before)).toEqual({ from: "Work", to: null });
+  });
+
+  it("returns null when the folder's connections did not all move together", () => {
+    // Only one of the folder's connections moved.
+    expect(inferFolderFollow("Work", [{ oldId: "Work/x", newId: "Job/x" }], before)).toBeNull();
+    // A rename of the connection itself, not of the folder.
+    expect(
+      inferFolderFollow("Work/sub", [{ oldId: "Work/sub/y", newId: "Work/sub/w" }], before)
+    ).toBeNull();
+    // An empty folder / untouched folder.
+    expect(inferFolderFollow("Empty", [{ oldId: "Work/x", newId: "Job/x" }], before)).toBeNull();
+    expect(inferFolderFollow("Other", [{ oldId: "Work/x", newId: "Job/x" }], before)).toBeNull();
   });
 });
