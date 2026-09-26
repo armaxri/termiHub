@@ -25,3 +25,6 @@ serde_json = "1"
 # exercise the loader's missing-symbol handling.
 default = ["export-init"]
 export-init = []
+# Build a faithful ABI 1.0 plugin (#3576): reports ABI 1.0, writes only the 1.0
+# PluginInfo prefix, never reads the 1.1 host context.
+abi-1-0 = []

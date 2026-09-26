@@ -90,6 +90,14 @@ pub struct NativeAck {
     pub library_sha256: String,
     /// RFC 3339-ish timestamp the acknowledgment was recorded. Informational.
     pub acknowledged_at: String,
+    /// Whether the user **explicitly accepted** that this plugin's build
+    /// toolchain cannot be verified (#3576, ADR-15). Only a plugin built for
+    /// native ABI 1.0 needs this: it predates the toolchain record, so the host
+    /// cannot prove it was built with a compatible compiler and panic strategy,
+    /// and refuses it unless this is set. **Absent → `false`** (fail closed),
+    /// including for every acknowledgment recorded before the field existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unverified_toolchain_accepted: bool,
 }
 
 /// The persisted `native-plugin-trust.json` document: the global default-OFF
@@ -161,6 +169,20 @@ impl NativeTrustStore {
                 .is_some_and(|ack| ack.library_sha256 == library_sha256)
     }
 
+    /// Whether plugin `id`'s acknowledgment for exactly this library hash also
+    /// records the user's explicit acceptance of an **unverifiable build
+    /// toolchain** (ABI 1.0 plugins, #3576). Implies
+    /// [`is_acknowledged`](Self::is_acknowledged); `false` in every other case.
+    #[must_use]
+    pub fn accepts_unverified_toolchain(&self, id: &str, library_sha256: &str) -> bool {
+        self.is_acknowledged(id, library_sha256)
+            && self
+                .doc
+                .acks
+                .get(id)
+                .is_some_and(|ack| ack.unverified_toolchain_accepted)
+    }
+
     /// The acknowledgment recorded for `id`, if any (regardless of the global
     /// flag) — for the settings surface that lists trusted native plugins.
     #[must_use]
@@ -191,16 +213,33 @@ impl NativeTrustStore {
     /// `library_sha256`, and persist. Re-acknowledging with a new hash replaces
     /// the old one — the mechanism by which a user re-trusts a plugin after its
     /// library legitimately changed.
+    ///
+    /// A plain acknowledgment does **not** accept an unverifiable build
+    /// toolchain; see [`acknowledge_with_toolchain_acceptance`](Self::acknowledge_with_toolchain_acceptance).
     pub fn acknowledge(
         &mut self,
         id: &str,
         library_sha256: impl Into<String>,
+    ) -> Result<(), NativeTrustError> {
+        self.acknowledge_with_toolchain_acceptance(id, library_sha256, false)
+    }
+
+    /// [`acknowledge`](Self::acknowledge), additionally recording whether the
+    /// user explicitly accepted that the plugin's build toolchain cannot be
+    /// verified (an ABI 1.0 plugin — #3576, ADR-15). The acceptance is part of
+    /// the hash-bound acknowledgment, so a changed binary loses it too.
+    pub fn acknowledge_with_toolchain_acceptance(
+        &mut self,
+        id: &str,
+        library_sha256: impl Into<String>,
+        accept_unverified_toolchain: bool,
     ) -> Result<(), NativeTrustError> {
         self.doc.acks.insert(
             id.to_owned(),
             NativeAck {
                 library_sha256: library_sha256.into(),
                 acknowledged_at: now_rfc3339(),
+                unverified_toolchain_accepted: accept_unverified_toolchain,
             },
         );
         self.save()
@@ -324,6 +363,55 @@ mod tests {
         // Turning the global switch on makes the existing ack effective.
         store.set_native_enabled(true).unwrap();
         assert!(store.is_acknowledged("echo", "hash-A"));
+    }
+
+    #[test]
+    fn unverified_toolchain_acceptance_is_explicit_hash_bound_and_persisted() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let mut store = NativeTrustStore::load(tmp.path());
+        store.set_native_enabled(true).unwrap();
+
+        // A plain acknowledgment does NOT accept an unverifiable toolchain
+        // (ABI 1.0 plugins, #3576): the default fails closed.
+        store.acknowledge("old", "hash-A").unwrap();
+        assert!(store.is_acknowledged("old", "hash-A"));
+        assert!(!store.accepts_unverified_toolchain("old", "hash-A"));
+
+        // The explicit acceptance is recorded and bound to the same hash.
+        store
+            .acknowledge_with_toolchain_acceptance("old", "hash-A", true)
+            .unwrap();
+        assert!(store.accepts_unverified_toolchain("old", "hash-A"));
+        assert!(!store.accepts_unverified_toolchain("old", "hash-B"));
+        assert!(!store.accepts_unverified_toolchain("other", "hash-A"));
+
+        // It survives a reload…
+        let reloaded = NativeTrustStore::load(tmp.path());
+        assert!(reloaded.accepts_unverified_toolchain("old", "hash-A"));
+
+        // …is withdrawn by a plain re-acknowledgment…
+        store.acknowledge("old", "hash-A").unwrap();
+        assert!(!store.accepts_unverified_toolchain("old", "hash-A"));
+
+        // …and never authorizes anything while native plugins are off.
+        store
+            .acknowledge_with_toolchain_acceptance("old", "hash-A", true)
+            .unwrap();
+        store.set_native_enabled(false).unwrap();
+        assert!(!store.accepts_unverified_toolchain("old", "hash-A"));
+    }
+
+    #[test]
+    fn a_store_written_before_the_acceptance_field_reads_as_not_accepted() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::fs::write(
+            tmp.path().join(NATIVE_TRUST_FILE_NAME),
+            r#"{"nativePluginsEnabled":true,"acks":{"old":{"librarySha256":"hash-A","acknowledgedAt":"t"}}}"#,
+        )
+        .unwrap();
+        let store = NativeTrustStore::load(tmp.path());
+        assert!(store.is_acknowledged("old", "hash-A"));
+        assert!(!store.accepts_unverified_toolchain("old", "hash-A"));
     }
 
     #[test]

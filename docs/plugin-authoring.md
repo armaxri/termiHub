@@ -71,7 +71,7 @@ silently ignored.
   "author": "k8s-contrib",
   "description": "Terminal backend for Kubernetes pod exec sessions",
   "license": "MIT",
-  "apiVersion": "1.0",
+  "apiVersion": "1.1",
   "platforms": ["windows", "linux", "macos"],
   "permissions": ["terminal", "network", "filesystem"],
   "extensions": {
@@ -97,20 +97,20 @@ silently ignored.
 
 ### Fields
 
-| Field         | Type     | Required | Notes                                                                                                                                                                          |
-| ------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`          | string   | yes      | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`). |
-| `name`        | string   | yes      | Human-readable display name.                                                                                                                                                   |
-| `version`     | string   | yes      | Plugin [semver](https://semver.org) version. Installing an older version, or a different build of the same one, over an installed copy asks the user to confirm.               |
-| `author`      | string   | yes      | Plugin author.                                                                                                                                                                 |
-| `description` | string   | yes      | Short description.                                                                                                                                                             |
-| `license`     | string   | yes      | SPDX-style license identifier.                                                                                                                                                 |
-| `apiVersion`  | string   | yes      | Plugin ABI version as canonical `"major.minor"` (currently `"1.0"`); must mirror the native library's ABI — see [API-version compatibility](#api-version-compatibility).       |
-| `platforms`   | string[] | yes      | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                      |
-| `permissions` | string[] | yes      | Requested capabilities (see below). May be empty.                                                                                                                              |
-| `extensions`  | object   | yes      | Extension points provided; **at least one** required.                                                                                                                          |
-| `settings`    | object   | no       | User-configurable settings, keyed by setting name.                                                                                                                             |
-| `updateUrl`   | string   | no       | HTTPS URL of the plugin's [update document](#updates-and-the-01-distribution-model). Enables "Check for updates"; never installs anything by itself.                           |
+| Field         | Type     | Required | Notes                                                                                                                                                                                                            |
+| ------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`          | string   | yes      | Stable, filesystem-safe identifier; becomes the install directory name. Must be a slug of lowercase letters, digits and single interior hyphens, 1–64 chars (e.g. `k8s-exec`).                                   |
+| `name`        | string   | yes      | Human-readable display name.                                                                                                                                                                                     |
+| `version`     | string   | yes      | Plugin [semver](https://semver.org) version. Installing an older version, or a different build of the same one, over an installed copy asks the user to confirm.                                                 |
+| `author`      | string   | yes      | Plugin author.                                                                                                                                                                                                   |
+| `description` | string   | yes      | Short description.                                                                                                                                                                                               |
+| `license`     | string   | yes      | SPDX-style license identifier.                                                                                                                                                                                   |
+| `apiVersion`  | string   | yes      | Plugin ABI version as canonical `"major.minor"` (currently `"1.1"`; theme/JS-only plugins may keep `"1.0"`); must mirror the native library's ABI — see [API-version compatibility](#api-version-compatibility). |
+| `platforms`   | string[] | yes      | Supported desktop platforms: `windows`, `linux`, `macos`.                                                                                                                                                        |
+| `permissions` | string[] | yes      | Requested capabilities (see below). May be empty.                                                                                                                                                                |
+| `extensions`  | object   | yes      | Extension points provided; **at least one** required.                                                                                                                                                            |
+| `settings`    | object   | no       | User-configurable settings, keyed by setting name.                                                                                                                                                               |
+| `updateUrl`   | string   | no       | HTTPS URL of the plugin's [update document](#updates-and-the-01-distribution-model). Enables "Check for updates"; never installs anything by itself.                                                             |
 
 ### Permissions
 
@@ -141,8 +141,8 @@ Each entry under `settings` describes one user-configurable value:
 ### API-version compatibility
 
 termiHub has **one** plugin version number: the native plugin **ABI version**,
-`major.minor`, currently **1.0** (frozen — see
-[ABI 1.0 and the compatibility promise](#abi-10-and-the-compatibility-promise)).
+`major.minor`, currently **1.1** (frozen at 1.0, append-only since — see
+[ABI 1.x and the compatibility promise](#abi-1x-and-the-compatibility-promise)).
 The manifest's `apiVersion` is a checked **mirror** of it, never an independent
 number:
 
@@ -312,8 +312,8 @@ sequenceDiagram
     Host->>Lib: termihub_plugin_abi_version()
     Note over Host: refuse: other major, newer minor,<br/>or manifest apiVersion ≠ library ABI
     Host->>Lib: termihub_plugin_init(&mut PluginInfo)
-    Note over Host: refuse if PluginInfo ABI ≠ exported ABI
-    Host->>Lib: termihub_plugin_create_backend(config, output) -> PluginBackend
+    Note over Host: refuse if PluginInfo ABI ≠ exported ABI,<br/>or the build toolchain ≠ the host's (ABI 1.1)
+    Host->>Lib: termihub_plugin_create_backend(config + host context, output, bridge) -> PluginBackend
     loop session
         Host->>Lib: write_input / resize
         Lib-->>Host: output.send(bytes)
@@ -325,11 +325,14 @@ sequenceDiagram
 [`echo-backend/src/lib.rs`](../examples/plugins/echo-backend/src/lib.rs) is a
 complete, tested implementation of all four symbols. `termihub_plugin_abi_version`
 returns `CURRENT_PLUGIN_ABI_VERSION.to_packed()` (the version packed into a `u32`
-as `major << 16 | minor`), and `PluginInfo::new` fills in the same value.
+as `major << 16 | minor`), and `PluginInfo::new` fills in the same value — plus,
+from ABI 1.1, the build toolchain (see [below](#the-toolchain-rule-abi-11)).
 
-### ABI 1.0 and the compatibility promise
+### ABI 1.x and the compatibility promise
 
-The native ABI is **frozen at 1.0** (maintainer decision 2026-09-26, #3367). A
+The current ABI is **1.1**. It was **frozen at 1.0** (maintainer decision
+2026-09-26, #3367) and has grown by one append-only minor since (#3576: the
+toolchain record and the host context). A
 host at ABI `H.h` loads a plugin built for ABI `P.p` only when `P == H` and
 `p <= h`:
 
@@ -367,6 +370,70 @@ or owned by the plugin (`PluginBackend`, `PluginBackendVTable`,
 the `Ffi*` carriers). `plugin-api/tests/abi_layout.rs` pins the 1.0 layout so an
 accidental break fails CI.
 
+### The toolchain rule (ABI 1.1)
+
+Every type at the boundary is `#[repr(C)]`, but the host's panic containment
+and FFI assumptions are validated only for the **exact compiler it was built
+with**. So from ABI 1.1 a plugin reports its build toolchain in `PluginInfo`
+— `rustc` (`"<release> (<commit-hash>)"`, captured by the SDK's build script)
+and `panic_strategy` — and the host loads it **only if both match its own
+exactly**:
+
+| Plugin vs host                                         | Outcome                                                                              |
+| ------------------------------------------------------ | ------------------------------------------------------------------------------------ |
+| same rustc release **and** commit, same panic strategy | loads                                                                                |
+| different rustc (even a patch release)                 | refused, naming both toolchains                                                      |
+| built with `panic = "abort"` (host unwinds)            | refused                                                                              |
+| claims ABI 1.1 but reports no/garbled toolchain        | refused (fail closed)                                                                |
+| built for ABI 1.0 (no toolchain record)                | refused, unless the user explicitly accepts an unverified toolchain when trusting it |
+
+`PluginInfo::new` fills the record in automatically — you only have to **build
+with the right compiler**. termiHub releases are built with the Rust version in
+[`.github/rust-version`](../.github/rust-version) (currently the one CI pins);
+build your plugin with exactly that toolchain (`--toolchain release` in the
+packaging script, below) and keep the default `panic = "unwind"`. For a local
+host you built yourself, use the same toolchain that built it.
+
+A plugin built for ABI **1.0** predates the record, so termiHub cannot verify
+it. It still loads and behaves exactly as before — but only after the user,
+when trusting it under **Settings → Plugins → Native Plugins**, explicitly
+accepts the unverified toolchain (the row explains the risk). Rebuild such a
+plugin for 1.1 to drop that step. See ADR-15 in
+[architecture.md](architecture.md) for the rationale.
+
+### The host context (ABI 1.1)
+
+From ABI 1.1, `termihub_plugin_create_backend` also receives a **host
+context**. Read it — only from a plugin built for 1.1 or later, i.e. every
+plugin built against the current SDK — with `(*config).context()`, which
+returns an owned `HostContext`:
+
+| Field                      | What it is                                                                                                                                                               |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `host_version`             | The termiHub version (e.g. `"0.1.0"`).                                                                                                                                   |
+| `data_dir`                 | A private directory the host created for this plugin (`<plugins>/.data/<id>`, user-only permissions). Shared by all sessions, kept across updates, removed on uninstall. |
+| `services.log(level, msg)` | Log into termiHub's Log Viewer and log file under the `plugin` target, tagged `[<plugin id>]`. Messages over 8 KiB are truncated; control characters are replaced.       |
+| `services.is_cancelled()`  | A sticky flag the host sets when the session is torn down (before `close`) or the plugin is disabled/unloaded. Poll it in worker loops and stop when it flips.           |
+
+The plugin-level settings are **not** duplicated in the context: they stay in
+`PluginSessionConfig::settings_json` (ABI 1.0).
+
+`PluginHostServices` is reference-counted by the host: keep it (or clones of it)
+in your backend and worker threads for as long as you need; every call stays
+safe even after the session ends. The context struct and its strings are only
+borrowed for the `create_backend` call — `context()` copies them for you.
+
+```rust
+let ctx = unsafe { (*config).context() }; // Option<HostContext>
+if let Some(ctx) = &ctx {
+    ctx.services.info("session starting");
+}
+// …spawn a reader thread that checks ctx.services.is_cancelled()…
+```
+
+A plugin built for ABI 1.0 never receives a context (nor a data directory)
+and must not read it.
+
 ### The SDK is internal for 0.1
 
 `termihub-plugin-api` is **not published** (it stays `publish = false`) for the
@@ -386,7 +453,9 @@ native plugin is therefore only sound to load when it was:
 1. built against an ABI version the target host accepts — **the same major, and a
    minor no newer than the host's** (see above); the host calls
    `termihub_plugin_abi_version` first and **refuses anything else**; and
-2. built with a **compatible Rust toolchain**.
+2. built with **exactly the host's Rust toolchain** — same rustc release and
+   commit, same panic strategy. From ABI 1.1 the host checks this and refuses a
+   mismatch (see [the toolchain rule](#the-toolchain-rule-abi-11)).
 
 Consequences for authors:
 
@@ -415,7 +484,15 @@ validates** the result against the same checks the host applies on install.
 
 # Native backend plugin (builds the cdylib, then packages):
 ./scripts/package-plugin.sh examples/plugins/echo-backend --out dist
+
+# …built with the exact rustc termiHub releases use (.github/rust-version):
+./scripts/package-plugin.sh examples/plugins/echo-backend --out dist --toolchain release
 ```
+
+For a native backend the script prints the rustc it builds with — the record
+the plugin will report — and warns when that is not the release rustc.
+`--toolchain <ver>` builds with any installed rustup toolchain
+(`cargo +<ver>`); `release` is shorthand for `.github/rust-version`.
 
 JavaScript plugins need no build step either — package them with `--no-build`
 the same way (e.g. `examples/plugins/log-highlighter`). On Windows use

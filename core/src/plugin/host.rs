@@ -36,6 +36,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use libloading::{Library, Symbol};
@@ -46,13 +47,15 @@ use termihub_plugin_api::symbols::{
 };
 use termihub_plugin_api::{
     AbiIncompatibility, AbiVersion, LoadedBackend, PluginBackend, PluginError, PluginHostBridge,
-    PluginInfo, PluginOutputSender, PluginSessionConfig, CURRENT_PLUGIN_ABI_VERSION,
+    PluginHostContext, PluginInfo, PluginOutputSender, PluginSessionConfig, Toolchain,
+    ToolchainIncompatibility, ABI_1_1, CURRENT_PLUGIN_ABI_VERSION,
 };
 
 use crate::connection::{plugin_type_id, ConnectionFactory, ConnectionTypeRegistry};
 
 use super::capabilities::ConnectionPolicy;
-use super::connection::PluginConnectionType;
+use super::connection::{PluginConnectionType, SessionHostContext};
+use super::host_context::{prepare_plugin_data_dir, PluginDataDirError};
 use super::manager::InstalledPlugin;
 use super::manifest::TerminalBackendExtension;
 use super::native_trust::NativeTrustStore;
@@ -167,6 +170,33 @@ pub enum HostError {
     #[error("plugin initialization failed: {0}")]
     Init(String),
 
+    /// The plugin reports a build toolchain (ABI 1.1+) that does not match this
+    /// host's exactly — a different rustc or panic strategy — or reports none
+    /// despite claiming an ABI that records it (PLG-013, ADR-15). Refused: the
+    /// host's panic containment and FFI assumptions are only validated for its
+    /// own toolchain. The message names both toolchains.
+    #[error("{0}")]
+    IncompatibleToolchain(ToolchainIncompatibility),
+
+    /// The plugin was built for ABI 1.0, which predates the toolchain record,
+    /// so its build toolchain cannot be verified, and the user has not
+    /// explicitly accepted that for this exact library (PLG-013, ADR-15).
+    /// Refused (fail closed).
+    #[error(
+        "plugin was built for ABI {abi}, which does not record its build toolchain, so termiHub \
+         cannot verify it was built with a compatible compiler; rebuild it for ABI 1.1 or later, \
+         or trust it again and explicitly accept the unverified toolchain"
+    )]
+    UnverifiedToolchain {
+        /// The ABI version the plugin reported.
+        abi: AbiVersion,
+    },
+
+    /// The plugin's private data directory could not be prepared (ABI 1.1 host
+    /// context, PLG-014).
+    #[error("{0}")]
+    DataDir(#[from] PluginDataDirError),
+
     /// The plugin's declared permissions are inconsistent with what it provides
     /// (e.g. a terminal backend without the `terminal` permission), so it is
     /// refused rather than loaded with a capability it never requested.
@@ -217,7 +247,9 @@ impl HostError {
     pub fn is_incompatible(&self) -> bool {
         matches!(
             self,
-            HostError::IncompatibleAbi(_) | HostError::PlatformUnavailable { .. }
+            HostError::IncompatibleAbi(_)
+                | HostError::IncompatibleToolchain(_)
+                | HostError::PlatformUnavailable { .. }
         )
     }
 }
@@ -235,15 +267,22 @@ pub struct LoadedPluginInfo {
     /// ABI version the plugin was built against (already checked compatible
     /// with this host, and consistent with the library's exported version).
     pub abi_version: AbiVersion,
+    /// The build toolchain the plugin reported — `Some` only for a plugin whose
+    /// ABI records it (1.1+); `None` for an ABI 1.0 plugin, which never wrote
+    /// those fields and must not have them read.
+    pub toolchain: Option<Toolchain>,
 }
 
 impl LoadedPluginInfo {
     fn from_ffi(info: &PluginInfo) -> Self {
+        let abi_version = info.abi_version();
         Self {
             id: info.id.as_str().to_owned(),
             name: info.name.as_str().to_owned(),
             version: info.version.as_str().to_owned(),
-            abi_version: info.abi_version(),
+            abi_version,
+            // Read the appended 1.1 fields only when the plugin's ABI has them.
+            toolchain: abi_version.supports(ABI_1_1).then(|| info.toolchain()),
         }
     }
 }
@@ -260,6 +299,9 @@ pub struct LoadedLibrary {
     create_backend: PluginCreateBackendFn,
     /// Resolved `plugin_shutdown`, called once on drop.
     shutdown: PluginShutdownFn,
+    /// Plugin-wide cancellation flag (ABI 1.1 host context): set when the host
+    /// unloads the plugin, observed by every session's services handle.
+    shutdown_signal: Arc<AtomicBool>,
     /// The open library. Never read directly — held solely to keep the mapping
     /// alive (the resolved function pointers point into it) and to unmap on drop.
     /// **Must be the last field** so it is dropped last, after [`Drop`] runs.
@@ -290,6 +332,18 @@ impl LoadedLibrary {
         self.info.abi_version.supports(since)
     }
 
+    /// Signal every session of this plugin to wind down (sticky): their host
+    /// services report cancelled from now on. Called when the host unloads or
+    /// disables the plugin, and again on drop.
+    pub fn signal_shutdown(&self) {
+        self.shutdown_signal.store(true, Ordering::SeqCst);
+    }
+
+    /// The plugin-wide cancellation flag sessions observe.
+    pub(crate) fn shutdown_signal(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.shutdown_signal)
+    }
+
     /// Create a new backend session from this plugin.
     ///
     /// Calls the plugin's `create_backend` entry point with the borrowed
@@ -310,7 +364,27 @@ impl LoadedLibrary {
         output: PluginOutputSender,
         bridge: PluginHostBridge,
     ) -> Result<LoadedBackend, PluginError> {
-        let config = PluginSessionConfig::with_settings(config_json, settings_json);
+        self.create_backend_with_context(config_json, settings_json, output, bridge, None)
+    }
+
+    /// [`create_backend`](Self::create_backend), additionally passing the ABI
+    /// 1.1 host `context` (PLG-014). The context is handed over **only** when
+    /// this plugin's ABI supports 1.1 — a 1.0 plugin gets exactly the 1.0 call
+    /// (a null `host_context`, which it never reads anyway).
+    pub fn create_backend_with_context(
+        &self,
+        config_json: &str,
+        settings_json: &str,
+        output: PluginOutputSender,
+        bridge: PluginHostBridge,
+        context: Option<&PluginHostContext>,
+    ) -> Result<LoadedBackend, PluginError> {
+        let config = match context {
+            Some(context) if self.supports(ABI_1_1) => {
+                PluginSessionConfig::with_context(config_json, settings_json, context)
+            }
+            _ => PluginSessionConfig::with_settings(config_json, settings_json),
+        };
         let mut backend = PluginBackend {
             state: std::ptr::null_mut(),
             vtable: std::ptr::null(),
@@ -335,6 +409,8 @@ impl LoadedLibrary {
 
 impl Drop for LoadedLibrary {
     fn drop(&mut self) {
+        // Any handle a plugin thread still holds reports cancelled from here on.
+        self.signal_shutdown();
         // Give the plugin a chance to release process-wide resources before the
         // library unmaps. Contain any panic rather than unwinding across FFI.
         let shutdown = self.shutdown;
@@ -376,9 +452,11 @@ impl LoadedLibrary {
                 name: "Drop Order Test".to_owned(),
                 version: "0.0.0".to_owned(),
                 abi_version: CURRENT_PLUGIN_ABI_VERSION,
+                toolchain: Some(Toolchain::current()),
             },
             create_backend: unused_create_backend,
             shutdown,
+            shutdown_signal: Arc::new(AtomicBool::new(false)),
             library,
         }
     }
@@ -515,7 +593,13 @@ pub fn load_backend_library(
     library_path: &Path,
     expected_digest: Option<&str>,
 ) -> Result<Arc<LoadedLibrary>, HostError> {
-    load_backend_library_impl(library_path, expected_digest, None)
+    load_backend_library_with(
+        library_path,
+        &BackendLoadOptions {
+            expected_digest,
+            ..BackendLoadOptions::default()
+        },
+    )
 }
 
 /// [`load_backend_library`], additionally requiring the plugin manifest's
@@ -530,7 +614,64 @@ pub fn load_backend_library_for_manifest(
     expected_digest: Option<&str>,
     manifest_api_version: &str,
 ) -> Result<Arc<LoadedLibrary>, HostError> {
-    load_backend_library_impl(library_path, expected_digest, Some(manifest_api_version))
+    load_backend_library_with(
+        library_path,
+        &BackendLoadOptions {
+            expected_digest,
+            manifest_api_version: Some(manifest_api_version),
+            ..BackendLoadOptions::default()
+        },
+    )
+}
+
+/// Options for [`load_backend_library_with`]. The default is the strictest
+/// load: no digest binding, no manifest mirror check, and **no** acceptance of
+/// an unverifiable toolchain.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BackendLoadOptions<'a> {
+    /// Signed digest the library bytes must match immediately before `dlopen`
+    /// (CORE-034); `None` for an unsigned plugin.
+    pub expected_digest: Option<&'a str>,
+    /// The manifest `apiVersion` the library's ABI must mirror (PLG-002).
+    pub manifest_api_version: Option<&'a str>,
+    /// Whether the user explicitly accepted an **unverifiable build toolchain**
+    /// for this exact library (recorded in its trust acknowledgment). Only an
+    /// ABI 1.0 plugin, which predates the toolchain record, needs it; without it
+    /// such a plugin is refused ([`HostError::UnverifiedToolchain`]). It never
+    /// relaxes the check for a plugin that does report a toolchain.
+    pub accept_unverified_toolchain: bool,
+}
+
+/// [`load_backend_library`] with explicit [`BackendLoadOptions`].
+///
+/// After the ABI gate and `plugin_init`, this enforces the **toolchain rule**
+/// (PLG-013, ADR-15): a plugin whose ABI records its build toolchain (1.1+) must
+/// report exactly this host's rustc and panic strategy, and one that cannot
+/// (ABI 1.0) loads only with `accept_unverified_toolchain`.
+pub fn load_backend_library_with(
+    library_path: &Path,
+    options: &BackendLoadOptions<'_>,
+) -> Result<Arc<LoadedLibrary>, HostError> {
+    load_backend_library_impl(library_path, options)
+}
+
+/// Enforce the toolchain rule for a plugin that passed the ABI gate: exact
+/// match when its ABI records a toolchain, explicit acceptance otherwise. Pure
+/// so the matrix can be tested without a library.
+fn check_library_toolchain(
+    info: &LoadedPluginInfo,
+    host: &Toolchain,
+    accept_unverified_toolchain: bool,
+) -> Result<(), HostError> {
+    match &info.toolchain {
+        Some(plugin) => plugin
+            .check_host_compatibility(host)
+            .map_err(HostError::IncompatibleToolchain),
+        None if accept_unverified_toolchain => Ok(()),
+        None => Err(HostError::UnverifiedToolchain {
+            abi: info.abi_version,
+        }),
+    }
 }
 
 /// Decide whether a library that exported ABI `found` may be loaded by a host
@@ -558,9 +699,13 @@ fn check_library_abi(
 
 fn load_backend_library_impl(
     library_path: &Path,
-    expected_digest: Option<&str>,
-    manifest_api_version: Option<&str>,
+    options: &BackendLoadOptions<'_>,
 ) -> Result<Arc<LoadedLibrary>, HostError> {
+    let BackendLoadOptions {
+        expected_digest,
+        manifest_api_version,
+        accept_unverified_toolchain,
+    } = *options;
     // Re-check the exact bytes about to be loaded against the digest they were
     // signature-verified with, as late as possible before the open. This is the
     // verify-then-load TOCTOU guard (CORE-034); the residual check→open race is
@@ -635,6 +780,10 @@ fn load_backend_library_impl(
                 info: loaded.abi_version,
             });
         }
+        // Toolchain rule (PLG-013): exact match, or explicit acceptance for a
+        // 1.0 plugin that cannot report one. Before any entry point beyond
+        // `plugin_init` is resolved or called.
+        check_library_toolchain(&loaded, &Toolchain::current(), accept_unverified_toolchain)?;
         loaded
     };
 
@@ -664,6 +813,7 @@ fn load_backend_library_impl(
         info,
         create_backend,
         shutdown,
+        shutdown_signal: Arc::new(AtomicBool::new(false)),
         library,
     }))
 }
@@ -811,7 +961,8 @@ const PLUGIN_TYPE_ICON: &str = "puzzle";
 /// library backing it.
 struct HostEntry {
     connection_type: String,
-    #[allow(dead_code)] // Held to keep the library loaded for the plugin's lifetime.
+    /// Held to keep the library loaded for the plugin's lifetime, and to signal
+    /// its sessions on unload.
     library: Arc<LoadedLibrary>,
 }
 
@@ -851,6 +1002,10 @@ pub struct PluginHost {
     /// Per-plugin error-recovery counters (concept "Error recovery state
     /// machine"). Keyed by plugin id; created lazily on first failure.
     recovery: Mutex<HashMap<String, RestartTracker>>,
+    /// The application version handed to ABI 1.1 plugins in their host
+    /// context (PLG-014). Defaults to this crate's version; the desktop sets the
+    /// app's own via [`with_host_version`](Self::with_host_version).
+    host_version: String,
 }
 
 impl PluginHost {
@@ -866,7 +1021,16 @@ impl PluginHost {
             loaded: Mutex::new(HashMap::new()),
             active: Mutex::new(HashSet::new()),
             recovery: Mutex::new(HashMap::new()),
+            host_version: env!("CARGO_PKG_VERSION").to_owned(),
         }
+    }
+
+    /// Set the application version reported to plugins in their ABI 1.1 host
+    /// context (PLG-014).
+    #[must_use]
+    pub fn with_host_version(mut self, version: impl Into<String>) -> Self {
+        self.host_version = version.into();
+        self
     }
 
     /// The shared connection-type registry this host feeds.
@@ -969,17 +1133,39 @@ impl PluginHost {
         if !trust.is_acknowledged(&id, &library_sha256) {
             return Err(HostError::NativePluginNotTrusted { id });
         }
+        // An ABI 1.0 plugin cannot prove its build toolchain; the loader refuses
+        // it unless this same hash-bound acknowledgment records the user's
+        // explicit acceptance of that (PLG-013, ADR-15). Never relaxes the
+        // exact-match check for a plugin that does report its toolchain.
+        let accept_unverified_toolchain = trust.accepts_unverified_toolchain(&id, &library_sha256);
 
         // Bind the exact library bytes about to be loaded to the signed digest
         // (CORE-034): re-verify the extracted plugin against its co-located
         // signature and re-check the library file immediately before `dlopen`. An
         // unsigned plugin yields `None` — nothing to bind — as before.
         let expected_digest = signed_backend_digest(&plugin_dir, &lib_path)?;
-        let library = load_backend_library_for_manifest(
+        let library = load_backend_library_with(
             &lib_path,
-            expected_digest.as_deref(),
-            &plugin.manifest.api_version,
+            &BackendLoadOptions {
+                expected_digest: expected_digest.as_deref(),
+                manifest_api_version: Some(&plugin.manifest.api_version),
+                accept_unverified_toolchain,
+            },
         )?;
+
+        // ABI 1.1 host context (PLG-014): a private, host-created data directory
+        // plus the app version and plugin-wide cancellation, handed to every
+        // session. Built only for a plugin that can read it — a 1.0 plugin gets
+        // no directory and exactly the 1.0 call.
+        let host_context = if library.supports(ABI_1_1) {
+            Some(SessionHostContext {
+                plugin_id: id.clone(),
+                host_version: self.host_version.clone(),
+                data_dir: prepare_plugin_data_dir(&self.root, &id)?,
+            })
+        } else {
+            None
+        };
 
         // Translate the plugin's declared `configSchema` into the form schema the
         // dynamic connection editor renders (#1999). Derived once here and cloned
@@ -1027,7 +1213,8 @@ impl PluginHost {
                                 perms_for_factory.clone(),
                             )
                             .with_connection_policy(policy_for_factory)
-                            .with_plugin_settings(settings_for_factory.clone()),
+                            .with_plugin_settings(settings_for_factory.clone())
+                            .with_host_context(host_context.clone()),
                         )
                     })
                 },
@@ -1068,6 +1255,9 @@ impl PluginHost {
             .unwrap_or_else(|e| e.into_inner())
             .remove(id);
         if let Some(entry) = entry {
+            // Tell every live session of this plugin to wind down (ABI 1.1
+            // cancellation): sessions keep the library mapped past this point.
+            entry.library.signal_shutdown();
             self.registry
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
@@ -1993,7 +2183,77 @@ mod tests {
         unsafe extern "C" fn noop_shutdown() {}
         let lib = LoadedLibrary::for_drop_order_test(noop_shutdown);
         assert!(lib.supports(AbiVersion::new(1, 0)));
-        assert!(!lib.supports(AbiVersion::new(1, 1)));
+        assert!(lib.supports(AbiVersion::new(1, 1)));
+        assert!(!lib.supports(AbiVersion::new(1, 2)));
+    }
+
+    // --- Toolchain rule (PLG-013, #3576) ---
+
+    fn info_with(abi: AbiVersion, toolchain: Option<Toolchain>) -> LoadedPluginInfo {
+        LoadedPluginInfo {
+            id: "t".into(),
+            name: "T".into(),
+            version: "0".into(),
+            abi_version: abi,
+            toolchain,
+        }
+    }
+
+    #[test]
+    fn toolchain_rule_matrix() {
+        let host = Toolchain::current();
+        let v1_1 = AbiVersion::new(1, 1);
+        // Exact match loads, with or without the 1.0 acceptance.
+        for accept in [false, true] {
+            assert!(
+                check_library_toolchain(&info_with(v1_1, Some(host.clone())), &host, accept)
+                    .is_ok()
+            );
+        }
+        // A mismatch or an unknown record is refused even with the acceptance:
+        // it only ever covers a 1.0 plugin that cannot report one.
+        let other = Toolchain {
+            rustc: "0.0.1 (abc)".into(),
+            ..host.clone()
+        };
+        let unknown = Toolchain {
+            rustc: String::new(),
+            ..host.clone()
+        };
+        for plugin in [other, unknown] {
+            for accept in [false, true] {
+                let err =
+                    check_library_toolchain(&info_with(v1_1, Some(plugin.clone())), &host, accept)
+                        .unwrap_err();
+                assert!(
+                    matches!(err, HostError::IncompatibleToolchain(_)),
+                    "{err:?}"
+                );
+                assert!(err.is_incompatible());
+            }
+        }
+        // A 1.0 plugin (no record) needs the explicit acceptance.
+        let v1_0 = info_with(AbiVersion::new(1, 0), None);
+        let err = check_library_toolchain(&v1_0, &host, false).unwrap_err();
+        assert!(
+            matches!(err, HostError::UnverifiedToolchain { abi } if abi == AbiVersion::new(1, 0))
+        );
+        assert!(!err.is_incompatible());
+        assert!(
+            err.to_string().contains("accept the unverified toolchain"),
+            "{err}"
+        );
+        assert!(check_library_toolchain(&v1_0, &host, true).is_ok());
+    }
+
+    #[test]
+    fn unload_signals_the_plugin_shutdown_flag() {
+        unsafe extern "C" fn noop_shutdown() {}
+        let lib = LoadedLibrary::for_drop_order_test(noop_shutdown);
+        let flag = lib.shutdown_signal();
+        assert!(!flag.load(Ordering::SeqCst));
+        lib.signal_shutdown();
+        assert!(flag.load(Ordering::SeqCst));
     }
 
     // --- FFI teardown / unload soundness (TBE-010) ---

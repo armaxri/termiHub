@@ -9,7 +9,7 @@
 # `backend/` directory alongside the manifest, and packages that staged tree.
 #
 # Usage: ./scripts/package-plugin.sh <plugin-source-dir> [--out <dir>] [--no-build]
-#                                    [--target <triple>]... [--sign <key>]
+#                                    [--target <triple>]... [--toolchain <ver>] [--sign <key>]
 #        ./scripts/package-plugin.sh --merge <pkg> --merge <pkg>... [--out <dir>] [--sign <key>]
 #   <plugin-source-dir>   Directory containing manifest.json (required unless --merge).
 #   --out <dir>           Output directory for the package (default: ./dist).
@@ -18,6 +18,10 @@
 #   --target <triple>     Build the backend for this Rust target triple and stage
 #                         it as backend/<triple>/ (multi-platform format). Repeat
 #                         for several targets; `host` means this machine's triple.
+#   --toolchain <ver>     Build the backend with this rustup toolchain (`cargo +<ver>`).
+#                         `release` = the rustc termiHub releases use
+#                         (.github/rust-version). The host refuses a plugin not
+#                         built with exactly its own rustc and panic strategy.
 #   --merge <pkg>         Merge per-platform packages (each built with --target)
 #                         into one multi-platform package. Repeat per input.
 #   --sign <key-file>     After packaging, sign the package with a keypair from
@@ -33,6 +37,7 @@ SOURCE=""
 OUT_DIR="dist"
 BUILD=1
 SIGN_KEY=""
+TOOLCHAIN=""
 TARGETS=()
 MERGE_INPUTS=()
 
@@ -58,8 +63,12 @@ while [ $# -gt 0 ]; do
         SIGN_KEY="${2:?--sign requires a key file}"
         shift 2
         ;;
+    --toolchain)
+        TOOLCHAIN="${2:?--toolchain requires a rustup toolchain (or 'release')}"
+        shift 2
+        ;;
     --help | -h)
-        sed -n '2,26p' "$0"
+        sed -n '2,30p' "$0"
         exit 0
         ;;
     -*)
@@ -109,7 +118,7 @@ fi
 
 if [ -z "$SOURCE" ]; then
     echo "ERROR: no plugin source directory given" >&2
-    sed -n '11,24p' "$0" >&2
+    sed -n '11,28p' "$0" >&2
     exit 2
 fi
 if [ ! -f "$SOURCE/manifest.json" ]; then
@@ -168,7 +177,35 @@ find_built() {
     return 1
 }
 
+# The rustc termiHub releases are built with (#2549). A native plugin must be
+# built with exactly the host's rustc and panic strategy (ABI 1.1, #3576).
+RELEASE_RUSTC="$(tr -d '[:space:]' <"$ROOT/.github/rust-version")"
+if [ "$TOOLCHAIN" = "release" ]; then
+    TOOLCHAIN="$RELEASE_RUSTC"
+fi
+TC_ARGS=()
+if [ -n "$TOOLCHAIN" ]; then
+    TC_ARGS=("+$TOOLCHAIN")
+fi
+
+# Print the toolchain the backend is built with — the same record the plugin
+# reports in its PluginInfo — and warn when it is not the release rustc.
+record_toolchain() {
+    local vv release hash
+    vv="$(rustc ${TC_ARGS[@]+"${TC_ARGS[@]}"} -vV)"
+    release="$(printf '%s\n' "$vv" | sed -n 's/^release: //p')"
+    hash="$(printf '%s\n' "$vv" | sed -n 's/^commit-hash: //p')"
+    echo "Backend toolchain: rustc $release ($hash) — recorded in the plugin's PluginInfo"
+    if [ "$release" != "$RELEASE_RUSTC" ]; then
+        echo "WARNING: termiHub releases are built with rustc $RELEASE_RUSTC (.github/rust-version)." >&2
+        echo "         A host refuses a plugin built with any other compiler; pass" >&2
+        echo "         --toolchain release to build for a released termiHub." >&2
+    fi
+}
+
 if [ "$BUILD" -eq 1 ] && [ -f "$SOURCE/Cargo.toml" ]; then
+    record_toolchain
+
     # Predict the cdylib file name from the crate's [lib] name (or package name),
     # then apply the platform's dynamic-library naming convention.
     LIB_NAME="$(sed -n 's/^[[:space:]]*name[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' "$SOURCE/Cargo.toml" | head -1)"
@@ -188,7 +225,7 @@ if [ "$BUILD" -eq 1 ] && [ -f "$SOURCE/Cargo.toml" ]; then
     if [ "${#TARGETS[@]}" -eq 0 ]; then
         # Legacy single-platform package: this OS's library, flat in backend/.
         echo "=== Building backend crate ($SOURCE) ==="
-        cargo build --release --manifest-path "$SOURCE/Cargo.toml"
+        cargo ${TC_ARGS[@]+"${TC_ARGS[@]}"} build --release --manifest-path "$SOURCE/Cargo.toml"
         DYLIB="$(dylib_name "$LIB_BASE" "")"
         BUILT="$(find_built "$DYLIB" release)"
         cp "$BUILT" "$STAGE/backend/$DYLIB"
@@ -201,7 +238,8 @@ if [ "$BUILD" -eq 1 ] && [ -f "$SOURCE/Cargo.toml" ]; then
                 TRIPLE="$(rustc -vV | sed -n 's/^host: //p')"
             fi
             echo "=== Building backend crate ($SOURCE) for $TRIPLE ==="
-            cargo build --release --manifest-path "$SOURCE/Cargo.toml" --target "$TRIPLE"
+            cargo ${TC_ARGS[@]+"${TC_ARGS[@]}"} build --release \
+                --manifest-path "$SOURCE/Cargo.toml" --target "$TRIPLE"
             DYLIB="$(dylib_name "$LIB_BASE" "$TRIPLE")"
             BUILT="$(find_built "$DYLIB" "$TRIPLE/release")"
             mkdir -p "$STAGE/backend/$TRIPLE"

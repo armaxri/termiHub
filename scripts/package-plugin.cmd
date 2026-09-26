@@ -8,7 +8,7 @@ REM builds the cdylib in --release, stages the DLL into a temp backend\ director
 REM next to the manifest, and packages that staged tree.
 REM
 REM Usage: scripts\package-plugin.cmd <plugin-source-dir> [--out <dir>] [--no-build]
-REM                                   [--target <triple>]... [--sign <key>]
+REM                                   [--target <triple>]... [--toolchain <ver>] [--sign <key>]
 REM        scripts\package-plugin.cmd --merge <pkg> --merge <pkg>... [--out <dir>] [--sign <key>]
 REM   <plugin-source-dir>   Directory containing manifest.json (required unless --merge).
 REM   --out <dir>           Output directory for the package (default: dist).
@@ -16,6 +16,10 @@ REM   --no-build            Do not build a backend crate; package the tree as-is
 REM   --target <triple>     Build the backend for this Rust target triple and stage
 REM                         it as backend\<triple>\ (multi-platform format). Repeat
 REM                         for several targets; `host` means this machine's triple.
+REM   --toolchain <ver>     Build the backend with this rustup toolchain (cargo +<ver>).
+REM                         `release` = the rustc termiHub releases use
+REM                         (.github\rust-version). The host refuses a plugin not
+REM                         built with exactly its own rustc and panic strategy.
 REM   --merge <pkg>         Merge per-platform packages (each built with --target)
 REM                         into one multi-platform package. Repeat per input.
 REM   --sign <key-file>     After packaging, sign with a termihub-plugin-keygen key.
@@ -29,6 +33,7 @@ set "SOURCE="
 set "OUT_DIR=dist"
 set "BUILD=1"
 set "SIGN_KEY="
+set "TOOLCHAIN="
 set "TARGETS="
 set "MERGE_ARGS="
 set "MERGE_COUNT=0"
@@ -63,6 +68,16 @@ if "%~1"=="--merge" (
     )
     set "MERGE_ARGS=!MERGE_ARGS! --merge "%~2""
     set /a MERGE_COUNT+=1
+    shift
+    shift
+    goto parse
+)
+if "%~1"=="--toolchain" (
+    if "%~2"=="" (
+        echo --toolchain requires a rustup toolchain ^(or 'release'^) 1>&2
+        exit /b 2
+    )
+    set "TOOLCHAIN=%~2"
     shift
     shift
     goto parse
@@ -121,6 +136,14 @@ if defined TARGETS (
 
 set "STAGE=%SOURCE%"
 
+REM The rustc termiHub releases are built with (#2549). A native plugin must be
+REM built with exactly the host's rustc and panic strategy (ABI 1.1, #3576).
+set "RELEASE_RUSTC="
+for /f "usebackq delims=" %%v in ("%ROOT%\.github\rust-version") do if not defined RELEASE_RUSTC set "RELEASE_RUSTC=%%v"
+if /i "!TOOLCHAIN!"=="release" set "TOOLCHAIN=!RELEASE_RUSTC!"
+set "TC="
+if defined TOOLCHAIN set "TC=+!TOOLCHAIN!"
+
 if "%BUILD%"=="1" if exist "%SOURCE%\Cargo.toml" (
     REM Predict the cdylib name from the crate's [lib]/[package] name.
     set "LIB_NAME="
@@ -139,6 +162,17 @@ if "%BUILD%"=="1" if exist "%SOURCE%\Cargo.toml" (
     if exist "%SOURCE%\frontend" xcopy /e /i /q "%SOURCE%\frontend" "!STAGE!\frontend" >nul
     mkdir "!STAGE!\backend"
 
+    REM Print the toolchain the backend is built with, which is the record the
+    REM plugin reports in its PluginInfo, and warn when it is not the release rustc.
+    set "BUILD_RUSTC="
+    for /f "tokens=2" %%r in ('rustc !TC! -vV ^| findstr /b /c:"release:"') do set "BUILD_RUSTC=%%r"
+    echo Backend toolchain: rustc !BUILD_RUSTC! -- recorded in the plugin's PluginInfo
+    if not "!BUILD_RUSTC!"=="!RELEASE_RUSTC!" (
+        echo WARNING: termiHub releases are built with rustc !RELEASE_RUSTC! ^(.github\rust-version^). 1>&2
+        echo          A host refuses a plugin built with any other compiler; pass 1>&2
+        echo          --toolchain release to build for a released termiHub. 1>&2
+    )
+
     if defined TARGETS (
         REM Multi-platform package: one backend\<triple>\ directory per target.
         REM The packer derives the manifest `libraries` map from this tree.
@@ -152,7 +186,7 @@ if "%BUILD%"=="1" if exist "%SOURCE%\Cargo.toml" (
     ) else (
         REM Legacy single-platform package: this OS's DLL, flat in backend\.
         echo === Building backend crate (%SOURCE%^) ===
-        cargo build --release --manifest-path "%SOURCE%\Cargo.toml"
+        cargo !TC! build --release --manifest-path "%SOURCE%\Cargo.toml"
         if errorlevel 1 (
             set "RC=1"
             goto done
@@ -217,7 +251,7 @@ if /i "!TRIPLE!"=="host" (
     for /f "tokens=2" %%h in ('rustc -vV ^| findstr /b /c:"host:"') do set "TRIPLE=%%h"
 )
 echo === Building backend crate (%SOURCE%^) for !TRIPLE! ===
-cargo build --release --manifest-path "%SOURCE%\Cargo.toml" --target "!TRIPLE!"
+cargo !TC! build --release --manifest-path "%SOURCE%\Cargo.toml" --target "!TRIPLE!"
 if errorlevel 1 exit /b 1
 set "DYLIB=lib!LIB_BASE!.so"
 echo !TRIPLE! | findstr /i /c:"apple" /c:"darwin" >nul && set "DYLIB=lib!LIB_BASE!.dylib"
@@ -250,11 +284,11 @@ exit /b !errorlevel!
 
 :help
 echo Usage: scripts\package-plugin.cmd ^<plugin-source-dir^> [--out ^<dir^>] [--no-build]
-echo                                   [--target ^<triple^>]... [--sign ^<key^>]
+echo                                   [--target ^<triple^>]... [--toolchain ^<ver^>] [--sign ^<key^>]
 echo        scripts\package-plugin.cmd --merge ^<pkg^> --merge ^<pkg^>... [--out ^<dir^>] [--sign ^<key^>]
 exit /b 0
 
 :usage
-echo Usage: scripts\package-plugin.cmd ^<plugin-source-dir^> [--out ^<dir^>] [--no-build] [--target ^<triple^>]... [--sign ^<key^>] 1>&2
+echo Usage: scripts\package-plugin.cmd ^<plugin-source-dir^> [--out ^<dir^>] [--no-build] [--target ^<triple^>]... [--toolchain ^<ver^>] [--sign ^<key^>] 1>&2
 echo        scripts\package-plugin.cmd --merge ^<pkg^> --merge ^<pkg^>... [--out ^<dir^>] [--sign ^<key^>] 1>&2
 exit /b 2

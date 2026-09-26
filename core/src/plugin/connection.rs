@@ -32,7 +32,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use termihub_plugin_api::{LoadedBackend, PluginError, PluginOutputSender};
+use termihub_plugin_api::{
+    LoadedBackend, PluginError, PluginHostContext, PluginOutputSender, ABI_1_1,
+};
 
 use crate::connection::{
     Capabilities, ConnectionType, FieldType, OutputReceiver, OutputSender, SelectOption,
@@ -44,10 +46,23 @@ use crate::monitoring::MonitoringProvider;
 
 use super::capabilities::ConnectionPolicy;
 use super::host::LoadedLibrary;
+use super::host_context::ServicesState;
 use super::security::{PermissionError, PermissionSet};
 use super::PluginPermission;
 
 use crate::output::OUTPUT_CHANNEL_CAPACITY;
+
+/// The per-plugin parts of the ABI 1.1 host context (PLG-014) the host resolves
+/// once at load time and hands to every session of the plugin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionHostContext {
+    /// The host-trusted plugin id (from the manifest) — the log tag.
+    pub plugin_id: String,
+    /// The application version.
+    pub host_version: String,
+    /// The plugin's private, already-created data directory (UTF-8).
+    pub data_dir: String,
+}
 
 /// A [`ConnectionType`] backed by a dynamically-loaded plugin library.
 ///
@@ -83,6 +98,14 @@ pub struct PluginConnectionType {
     /// resolves it once at load time via
     /// [`with_plugin_settings`](Self::with_plugin_settings).
     plugin_settings_json: String,
+    /// The ABI 1.1 host context for this plugin's sessions (PLG-014), resolved
+    /// by the host at load time. `None` outside the host (e.g. a library loaded
+    /// directly), in which case an ABI 1.1 session still gets logging and
+    /// cancellation, with the library's reported id and no data directory.
+    host_context: Option<SessionHostContext>,
+    /// This session's services state (logging tag + cancellation), present
+    /// while connected to an ABI 1.1 plugin. Cancelled on disconnect / drop.
+    services: Option<Arc<ServicesState>>,
     /// Current output sink; swapped by
     /// [`subscribe_output`](ConnectionType::subscribe_output). The forwarding
     /// thread reads the latest value each iteration.
@@ -104,6 +127,8 @@ impl Drop for PluginConnectionType {
         // `Drop` runs `plugin_shutdown` + unmaps the library, guarantees that
         // ordering regardless of field-declaration order, closing the
         // use-after-free window (CORE-029).
+        // Cancel first (ABI 1.1): a plugin worker polling the flag winds down.
+        self.cancel_session();
         drop(self.backend.take());
     }
 }
@@ -131,6 +156,8 @@ impl PluginConnectionType {
             permissions,
             connection_policy: ConnectionPolicy::default(),
             plugin_settings_json: "{}".to_string(),
+            host_context: None,
+            services: None,
             backend: None,
             output_tx: Arc::new(Mutex::new(None)),
         }
@@ -149,6 +176,22 @@ impl PluginConnectionType {
     pub fn with_plugin_settings(mut self, settings_json: String) -> Self {
         self.plugin_settings_json = settings_json;
         self
+    }
+
+    /// Set the ABI 1.1 host context (data directory, app version, log tag)
+    /// delivered to every session of this type (PLG-014). The host resolves it
+    /// once at load time; `None` keeps the default (see the field docs).
+    #[must_use]
+    pub fn with_host_context(mut self, context: Option<SessionHostContext>) -> Self {
+        self.host_context = context;
+        self
+    }
+
+    /// Cancel this session's host services (sticky), if any.
+    fn cancel_session(&mut self) {
+        if let Some(services) = self.services.take() {
+            services.cancel();
+        }
     }
 
     /// Set the host-side [`ConnectionPolicy`] for sessions of this type (#2028).
@@ -379,10 +422,44 @@ impl ConnectionType for PluginConnectionType {
             self.connection_policy,
         );
 
-        let backend = self
-            .library
-            .create_backend(&config_json, &self.plugin_settings_json, output, bridge)
-            .map_err(map_plugin_error)?;
+        // ABI 1.1 host context (PLG-014) — built only for a plugin that reads it.
+        let (backend, services) = if self.library.supports(ABI_1_1) {
+            let (plugin_id, host_version, data_dir) = match &self.host_context {
+                Some(ctx) => (
+                    ctx.plugin_id.clone(),
+                    ctx.host_version.as_str(),
+                    ctx.data_dir.as_str(),
+                ),
+                None => (
+                    self.library.info().id.clone(),
+                    env!("CARGO_PKG_VERSION"),
+                    "",
+                ),
+            };
+            let state = ServicesState::new(plugin_id, self.library.shutdown_signal());
+            // The host's own reference, borrowed by the context for the call.
+            let handle = ServicesState::handle(&state);
+            let context = PluginHostContext::new(host_version, data_dir, &handle);
+            let backend = self.library.create_backend_with_context(
+                &config_json,
+                &self.plugin_settings_json,
+                output,
+                bridge,
+                Some(&context),
+            );
+            drop(handle);
+            (backend, Some(state))
+        } else {
+            let backend = self.library.create_backend(
+                &config_json,
+                &self.plugin_settings_json,
+                output,
+                bridge,
+            );
+            (backend, None)
+        };
+        let backend = backend.map_err(map_plugin_error)?;
+        self.services = services;
 
         let output_tx = Arc::clone(&self.output_tx);
         std::thread::spawn(move || {
@@ -403,6 +480,8 @@ impl ConnectionType for PluginConnectionType {
     }
 
     async fn disconnect(&mut self) -> Result<(), SessionError> {
+        // Signal cancellation before closing, so plugin workers wind down.
+        self.cancel_session();
         if let Some(backend) = self.backend.take() {
             // Best-effort graceful close; the backend drops (running its FFI
             // destructor) at the end of this scope regardless.

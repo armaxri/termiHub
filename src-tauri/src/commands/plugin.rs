@@ -347,6 +347,9 @@ pub struct NativeAckInfo {
     pub library_sha256: String,
     /// RFC 3339-ish timestamp the acknowledgment was recorded.
     pub acknowledged_at: String,
+    /// Whether the user explicitly accepted an unverifiable build toolchain
+    /// (native ABI 1.0 plugins, #3576).
+    pub unverified_toolchain_accepted: bool,
 }
 
 /// The native-plugin trust state for the Settings surface (SEC-002 / PLG-006 /
@@ -377,6 +380,7 @@ pub fn get_native_plugin_trust(manager: State<'_, PluginManager>) -> NativePlugi
             id,
             library_sha256: ack.library_sha256,
             acknowledged_at: ack.acknowledged_at,
+            unverified_toolchain_accepted: ack.unverified_toolchain_accepted,
         })
         .collect();
     NativePluginTrust {
@@ -416,16 +420,29 @@ pub fn set_native_plugins_enabled(
 /// library cannot be read. After recording the acknowledgment it re-runs the
 /// enable/load path so the now-trusted plugin activates, and returns the refreshed
 /// [`InstalledPlugin`]. Emits [`EVENT_PLUGINS_CHANGED`].
+///
+/// `accept_unverified_toolchain` records the user's explicit acceptance that the
+/// plugin's build toolchain cannot be verified — only meaningful for a plugin
+/// built for native ABI 1.0, which the host otherwise refuses (#3576, ADR-15).
+/// Absent means `false`; the host never uses it to relax the exact toolchain
+/// check of a plugin that does report its toolchain.
 #[tauri::command]
 pub fn acknowledge_native_plugin(
     id: String,
+    accept_unverified_toolchain: Option<bool>,
     app: AppHandle,
     manager: State<'_, PluginManager>,
 ) -> Result<InstalledPlugin, String> {
     // Bind consent to the exact library bytes on disk.
     let hash = native_library_hash(manager.root(), &id).map_err(|e| e.to_string())?;
     let mut store = NativeTrustStore::load(manager.root());
-    store.acknowledge(&id, hash).map_err(|e| e.to_string())?;
+    store
+        .acknowledge_with_toolchain_acceptance(
+            &id,
+            hash,
+            accept_unverified_toolchain.unwrap_or(false),
+        )
+        .map_err(|e| e.to_string())?;
     // Drive the load path now that the plugin is trusted (re-runs on_enable →
     // host.load, which now passes the gate).
     let plugin = manager.enable(&id).map_err(|e| e.to_string())?;

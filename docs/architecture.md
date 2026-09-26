@@ -2354,10 +2354,43 @@ the graceful "incompatible, auto-disabled" path — could not see that skew at a
 
 - Plugins keep loading across the whole 1.x line; honest ABI skew surfaces through the manifest
   gate as the graceful _Incompatible_ state, and a package whose manifest lies is refused at load.
-- Planned ABI additions — a toolchain record in `PluginInfo` (PLG-013) and host context for backends
-  (PLG-014) — fit as future **minor** additions instead of breaking bumps.
+- The planned additions — a toolchain record in `PluginInfo` (PLG-013) and host context for backends
+  (PLG-014) — landed as the first **minor**, ABI 1.1 (below), not as a breaking bump.
 - A breaking change now costs a major bump that orphans every plugin, so it is a deliberate
   maintainer decision rather than a routine counter increment.
+
+**Amendment — ABI 1.1: toolchain record and host context** (#3576, PLG-013/PLG-014):
+
+- **Strictly append-only.** `PluginInfo` gains `rustc` + `panic_strategy` after `api_version`;
+  `PluginSessionConfig` gains a `host_context` pointer after `settings_json`. Both are host-allocated
+  and reached by pointer, so a 1.0 plugin writes/reads only its unchanged prefix. The host reads the
+  toolchain fields and builds a context only when the plugin's ABI `supports(1.1)`.
+  `abi_layout.rs` pins the new offsets; `abi_minor_compat.rs` drives the 1.1 host types with a
+  1.0-shaped plugin, and `core/tests/plugin_abi_1_1.rs` does the same across a real `dlopen`.
+- **Toolchain rule: exact match, fail closed.** A plugin at 1.1+ loads only if its rustc (release
+  **and** commit hash) and panic strategy equal the host's own record. Layouts are `#[repr(C)]` and
+  toolchain-independent, but the host's panic containment (a `panic = "abort"` plugin turns any panic
+  into a host abort) and the SDK's FFI assumptions are validated only against the one compiler CI
+  pins (`.github/rust-version`) — so "same minor" would be a claim the test suite does not back,
+  while an exact match is cheap to satisfy (`package-plugin --toolchain release`). An unknown or
+  malformed record on either side refuses. Both halves are captured by the SDK itself (a build script
+  runs the compiler's `rustc -vV`; `cfg!(panic)`), so authors cannot forget them.
+- **ABI 1.0 plugins: refused unless explicitly accepted.** A 1.0 plugin cannot prove its toolchain.
+  Warn-and-allow was rejected: native plugins run in-process, and under the ventilator-grade bar an
+  unverifiable reliability risk must be an informed, recorded decision, not a log line. Refusing
+  outright was rejected too, since it would break the append-only promise. So a 1.0 plugin loads —
+  and then behaves exactly as under 1.0 (no context, no data directory) — only when its **hash-bound
+  trust acknowledgment** (SEC-002/PLG-006) records `unverifiedToolchainAccepted`, which the native
+  plugin settings row asks for explicitly with a warning. A plain acknowledgment, including every one
+  recorded before 1.1, does not carry it (fail closed); since 1.0 never shipped in a release, no
+  installed base is affected.
+- **Host context.** App version; a per-plugin data directory `<plugins>/.data/<id>` the host creates
+  (user-only permissions, symlink- and traversal-refusing, kept across updates, removed on
+  uninstall); a host-refcounted services handle whose `log` callback is panic-contained, reads at
+  most 8 KiB, strips control characters and tags the line with the **manifest** id under the
+  `plugin` target (so it lands in the Log Viewer and cannot be spoofed); and a sticky cancellation
+  flag set on session disconnect/drop (before `close`) and on plugin unload/disable. Settings are
+  not duplicated — they remain `settings_json` (PLG-008).
 
 ### ADR-16: Local-Only Diagnosability — No Telemetry, No Phone-Home Crash Reporting
 

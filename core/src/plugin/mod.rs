@@ -63,6 +63,7 @@ mod capabilities;
 mod connection;
 mod fat_pack;
 mod host;
+mod host_context;
 mod manager;
 mod manifest;
 mod native_trust;
@@ -81,15 +82,19 @@ pub use capabilities::{
     build_host_bridge, build_host_bridge_with_policy, ConnectionPolicy, DEFAULT_CONNECT_TIMEOUT,
     DEFAULT_MAX_CONNECTIONS,
 };
-pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
+pub use connection::{config_schema_to_settings_schema, PluginConnectionType, SessionHostContext};
 pub use fat_pack::{
     merge_packages, package_platform_entries, platform_library_map, MultiPlatformPackError,
     PlatformEntry,
 };
 pub use host::{
     find_backend_library, load_backend_library, load_backend_library_for_manifest,
-    select_backend_library, HostError, HostLifecycleHook, LoadedLibrary, LoadedPluginInfo,
-    PluginHost,
+    load_backend_library_with, select_backend_library, BackendLoadOptions, HostError,
+    HostLifecycleHook, LoadedLibrary, LoadedPluginInfo, PluginHost,
+};
+pub use host_context::{
+    prepare_plugin_data_dir, remove_plugin_data_dir, PluginDataDirError, PLUGIN_DATA_DIR_NAME,
+    PLUGIN_LOG_TARGET,
 };
 pub use manager::{
     installed_backend_types, read_stored_settings, resolve_plugin_settings,
@@ -132,7 +137,10 @@ pub use signer_change::{
     classify_signer_change, InstalledSigner, PackageSigner, SignerChange, SignerChangeKind,
 };
 /// The one authoritative plugin version: the native plugin ABI (PLG-002).
-pub use termihub_plugin_api::{AbiIncompatibility, AbiVersion, CURRENT_PLUGIN_ABI_VERSION};
+pub use termihub_plugin_api::{
+    AbiIncompatibility, AbiVersion, PanicStrategy, Toolchain, ToolchainIncompatibility, ABI_1_1,
+    CURRENT_PLUGIN_ABI_VERSION,
+};
 pub use trust_store::{TrustSource, TrustStore, TrustStoreError, TrustedPublisher};
 pub use update_check::{
     evaluate_update, parse_update_document, validate_https_url, verify_package_sha256,

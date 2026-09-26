@@ -44,18 +44,25 @@ acceptance test (`improper_ctypes`).
 
    | Symbol | Purpose |
    | --- | --- |
-   | `termihub_plugin_abi_version` | Return `CURRENT_PLUGIN_API_VERSION` you built against. |
+   | `termihub_plugin_abi_version` | Return `CURRENT_PLUGIN_ABI_VERSION.to_packed()` you built against. |
    | `termihub_plugin_init` | Fill an out `PluginInfo` with your metadata. |
    | `termihub_plugin_create_backend` | Build a backend from the borrowed config + host output sender; return it via `PluginBackend::from_boxed`. |
    | `termihub_plugin_shutdown` | Process-wide cleanup before unload. |
 
 The host checks your reported ABI version against its own and refuses
-incompatible plugins.
+incompatible plugins. From ABI 1.1 it also refuses a plugin built with a
+different Rust toolchain (rustc release + commit, panic strategy) — recorded
+automatically by this crate's build script and reported by `PluginInfo::new`.
+
+From ABI 1.1 `plugin_create_backend` also receives a **host context** through
+`PluginSessionConfig::context()`: the app version, a private data directory,
+a log callback that lands in the Log Viewer, and a cancellation flag (see the
+`context` module).
 
 See the crate-level rustdoc for a complete, compiling round-trip example.
 
 ## Versioning
 
-`CURRENT_PLUGIN_API_VERSION` is the machine-readable half of the compatibility
-promise; the crate's semver is the other half. Bump both deliberately whenever
-the ABI changes in a way that breaks previously-built plugins.
+`CURRENT_PLUGIN_ABI_VERSION` (currently **1.1**) is the compatibility promise:
+`major.minor`, append-only minors (see the `version` module and ADR-15 in
+`docs/architecture.md`). A minor bump only appends; anything else is a major.

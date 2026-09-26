@@ -39,7 +39,8 @@
 //! ) -> PluginStatus {
 //!     // parse `(*config).config_json`, spawn the session — routing any network or
 //!     // filesystem access through `bridge` so the host enforces this plugin's
-//!     // declared permissions — then:
+//!     // declared permissions, and keeping the ABI 1.1 host context (data dir,
+//!     // logging, cancellation) from `(*config).context()` — then:
 //!     let backend = PluginBackend::from_boxed(Box::new(my_backend));
 //!     unsafe { out_backend.write(backend); }
 //!     PluginStatus::Ok
@@ -172,4 +173,29 @@ mod ffi_safety_check {
     const _: PluginWriteFileFn = _write_file;
     const _: PluginStatPathFn = _stat_path;
     const _: PluginListDirFn = _list_dir;
+
+    // Host-services callback shapes (ABI 1.1, PLG-014).
+    unsafe extern "C" fn _services_ref(_c: *mut core::ffi::c_void) {}
+    unsafe extern "C" fn _services_log(
+        _c: *mut core::ffi::c_void,
+        _level: u32,
+        _m: FfiStr,
+    ) -> PluginStatus {
+        PluginStatus::Ok
+    }
+    unsafe extern "C" fn _services_cancelled(_c: *mut core::ffi::c_void) -> bool {
+        false
+    }
+    // The ABI 1.1 structs reached through the session config, as a parameter
+    // so the lint checks their field types too.
+    unsafe extern "C" fn _context(
+        _c: *const crate::context::PluginHostContext,
+        _i: *mut PluginInfo,
+    ) {
+    }
+
+    const _: crate::context::PluginServicesRetainFn = _services_ref;
+    const _: crate::context::PluginServicesReleaseFn = _services_ref;
+    const _: crate::context::PluginServicesLogFn = _services_log;
+    const _: crate::context::PluginServicesIsCancelledFn = _services_cancelled;
 }

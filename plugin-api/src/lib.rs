@@ -102,11 +102,13 @@
 
 pub mod backend;
 pub mod capabilities;
+pub mod context;
 pub mod error;
 pub mod ffi;
 pub mod info;
 pub mod output;
 pub mod symbols;
+pub mod toolchain;
 pub mod version;
 
 pub use backend::{LoadedBackend, PluginBackend, PluginBackendVTable, PluginTerminalBackend};
@@ -114,13 +116,19 @@ pub use capabilities::{
     HostTcpStream, PluginFileMetadata, PluginHostBridge, PluginHostBridgeVTable, PluginTcpStream,
     PluginTcpStreamVTable, PluginWriteMode, StreamDropGuard,
 };
+pub use context::{
+    HostContext, PluginHostContext, PluginHostServices, PluginHostServicesVTable, PluginLogLevel,
+    MAX_LOG_MESSAGE_BYTES,
+};
 pub use error::{PluginError, PluginStatus};
 pub use ffi::{FfiByteSlice, FfiOwnedBytes, FfiStr, FfiString};
 pub use info::{PluginInfo, PluginSessionConfig};
 pub use output::PluginOutputSender;
+pub use toolchain::{PanicStrategy, Toolchain, ToolchainIncompatibility};
 pub use version::{AbiIncompatibility, AbiVersion};
 
-/// The native plugin ABI version this crate defines — **frozen at 1.0**.
+/// The native plugin ABI version this crate defines: **1.1** (frozen at 1.0,
+/// one append-only minor since).
 ///
 /// This is the **single authoritative** plugin-contract version (PLG-002): a
 /// plugin exports it from `termihub_plugin_abi_version` (as
@@ -150,4 +158,17 @@ pub use version::{AbiIncompatibility, AbiVersion};
 /// change (`2` #2018 host bridge, `3` #2024 bridge filesystem ops, `4` #2030
 /// `PluginStatus::ResourceLimit`). Those values decode as ABI `0.x`, so a
 /// pre-freeze plugin is refused as an unsupported major.
-pub const CURRENT_PLUGIN_ABI_VERSION: AbiVersion = AbiVersion::new(1, 0);
+///
+/// * **1.0** (#3367) — the freeze.
+/// * **1.1** (#3576, PLG-013/PLG-014) — appended the build-toolchain record to
+///   [`PluginInfo`] ([`PluginInfo::rustc`], [`PluginInfo::panic_strategy`]; see
+///   [`toolchain`]) and the host-context pointer to [`PluginSessionConfig`]
+///   ([`PluginSessionConfig::host_context`]; see [`context`]). Both are appends
+///   to host-owned structs, so 1.0 plugins keep loading. See [`ABI_1_1`].
+pub const CURRENT_PLUGIN_ABI_VERSION: AbiVersion = AbiVersion::new(1, 1);
+
+/// The minor that added the toolchain record and the host context. The host
+/// reads [`PluginInfo::rustc`] / [`PluginInfo::panic_strategy`] and builds a
+/// [`PluginHostContext`] only for a plugin whose ABI
+/// [`supports`](AbiVersion::supports) this.
+pub const ABI_1_1: AbiVersion = AbiVersion::new(1, 1);

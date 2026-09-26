@@ -691,6 +691,9 @@ impl PluginManager {
         let _ = self.hook.on_uninstall(id);
 
         std::fs::remove_dir_all(&dir)?;
+        // The plugin's private data directory (ABI 1.1 host context, #3576)
+        // survives updates but not an uninstall.
+        super::host_context::remove_plugin_data_dir(&self.root, id)?;
 
         let mut state = self.read_state_store()?;
         state.plugins.remove(id);
@@ -2306,9 +2309,13 @@ mod tests {
         let mut s = Map::new();
         s.insert("k".into(), Value::from("v"));
         mgr.update_settings("gone", s).unwrap();
+        // The plugin's private data directory (#3576) goes too.
+        let data_dir = crate::plugin::prepare_plugin_data_dir(mgr.root(), "gone").unwrap();
+        std::fs::write(Path::new(&data_dir).join("cache"), b"x").unwrap();
 
         mgr.uninstall("gone").unwrap();
         assert!(!mgr.root().join("gone").exists());
+        assert!(!Path::new(&data_dir).exists());
         assert!(mgr.list().unwrap().is_empty());
         // Settings and state records are dropped.
         assert!(!mgr
