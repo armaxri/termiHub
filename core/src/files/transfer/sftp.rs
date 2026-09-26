@@ -26,26 +26,25 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::backends::ssh::{SftpFileBrowser, SftpTransferChannel};
-use crate::files::copy::{run_chunked_copy, ChunkedCopyOutcome, CopyPhase};
+use crate::files::copy::run_chunked_copy;
 use tracing::{debug, info, warn};
 
-mod resume;
-
-pub use resume::STALL_TIMEOUT;
-use resume::{
-    apply_resume_gate, guard_stall, local_fingerprint, local_size, rehydrate_start_offset,
-    ResumeCursor,
+pub use super::attempt::STALL_TIMEOUT;
+use super::attempt::{
+    apply_resume_gate, drive_transfer, emit, guard_stall, handle_attempt_error, local_fingerprint,
+    local_size, map_copy_outcome, open_local_dest, open_local_read, rehydrate_start_offset,
+    settle_attempt, settle_writer, stop_reason, AttemptOutcome, AttemptsResult, ProgressReporter,
+    ResumeCursor, StopReason,
 };
-
 use super::registry::{TransferHandle, TransferRegistry};
 use super::state::TransferEvent;
-use super::{
-    ProgressSink, ThroughputMeter, TransferDirection, TransferPhase, TransferProgress, CHUNK_SIZE,
-    PROGRESS_THROTTLE,
-};
+use super::{ProgressSink, TransferDirection, TransferPhase, CHUNK_SIZE};
+use crate::files::copy::CopyPhase;
+
+/// Log label for the shared attempt orchestration.
+const BACKEND: &str = "SFTP";
 
 /// Core-internal error type for the SFTP transfer executor (DUP-026 slice 2b).
 ///
@@ -81,181 +80,6 @@ pub enum ResumeMode {
 /// [`ResumeMode`].
 pub const DEFAULT_RESUME_MODE: ResumeMode = ResumeMode::Resume;
 
-/// Why an in-flight attempt stopped short of completion (partial bytes kept).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StopReason {
-    /// The user requested a pause; the transfer can resume from the offset.
-    Pause,
-    /// The user requested cancellation; the caller cleans up the partial file.
-    Cancel,
-}
-
-/// Outcome of running one SFTP transfer attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum AttemptOutcome {
-    /// The file was transferred to EOF. `transferred` is the total byte count.
-    Completed { transferred: u64 },
-    /// The `should_stop` probe asked to stop. `transferred` is the byte count
-    /// reached so far (usable as a resume offset on the next attempt).
-    Stopped {
-        transferred: u64,
-        reason: StopReason,
-    },
-    /// Opening the destination/source at a non-zero offset was rejected by the
-    /// server; the caller restarts this stint from byte zero.
-    ResumeRejected,
-}
-
-/// Result of the retry loop for one Active stint.
-enum AttemptsResult {
-    Completed,
-    Cancelled,
-    Paused,
-    FailedPermanent,
-}
-
-/// Best-effort: settle a writer after an attempt stopped short (pause/cancel)
-/// so the bytes counted as transferred have actually landed — pipelined SFTP
-/// writes are acknowledged asynchronously. A failure is harmless: the next
-/// attempt byte-verifies the destination anyway.
-async fn settle_writer<W: tokio::io::AsyncWrite + Unpin>(
-    writer: &mut W,
-    outcome: &ChunkedCopyOutcome<StopReason>,
-) {
-    use tokio::io::AsyncWriteExt;
-    if matches!(outcome, ChunkedCopyOutcome::Stopped { .. }) {
-        match tokio::time::timeout(STALL_TIMEOUT, writer.shutdown()).await {
-            Ok(Ok(())) => {}
-            Ok(Err(e)) => debug!(error = %e, "could not settle writer after stop (best-effort)"),
-            Err(_) => debug!("settling writer after stop timed out (best-effort)"),
-        }
-    }
-}
-
-/// Map a live handle's control flags to a stop decision for the copy loop.
-fn stop_reason(handle: &TransferHandle) -> Option<StopReason> {
-    if handle.is_cancelled() {
-        Some(StopReason::Cancel)
-    } else if handle.take_pause_request() {
-        Some(StopReason::Pause)
-    } else {
-        None
-    }
-}
-
-/// Emit a `transfer-progress` event for `handle`'s current snapshot.
-fn emit(
-    handle: &TransferHandle,
-    sink: &ProgressSink,
-    phase: TransferPhase,
-    eta_secs: Option<u64>,
-    message: Option<String>,
-) {
-    let snap = handle.snapshot();
-    sink(&TransferProgress::from_snapshot(
-        &snap, phase, eta_secs, message,
-    ));
-}
-
-/// Throttled progress reporter shared across chunks of one attempt.
-struct ProgressReporter {
-    handle: Arc<TransferHandle>,
-    sink: ProgressSink,
-    total: u64,
-    progress: Arc<AtomicU64>,
-    meter: ThroughputMeter,
-    last_emit: Instant,
-    last_sample: Instant,
-    last_bytes: u64,
-}
-
-impl ProgressReporter {
-    fn new(
-        handle: Arc<TransferHandle>,
-        sink: ProgressSink,
-        total: u64,
-        progress: Arc<AtomicU64>,
-        start_bytes: u64,
-    ) -> Self {
-        let now = Instant::now();
-        Self {
-            handle,
-            sink,
-            total,
-            progress,
-            meter: ThroughputMeter::default(),
-            last_emit: now,
-            last_sample: now,
-            last_bytes: start_bytes,
-        }
-    }
-
-    fn report(&mut self, transferred: u64) {
-        self.progress.store(transferred, Ordering::Relaxed);
-        let now = Instant::now();
-        let dt = now.saturating_duration_since(self.last_sample);
-        let delta = transferred.saturating_sub(self.last_bytes);
-        self.meter.record(delta, dt);
-        self.last_sample = now;
-        self.last_bytes = transferred;
-
-        let speed = self.meter.speed_bps();
-        self.handle.set_metrics(transferred, self.total, speed);
-
-        if now.saturating_duration_since(self.last_emit) >= PROGRESS_THROTTLE {
-            let eta = self.meter.eta_secs(self.total.saturating_sub(transferred));
-            emit(
-                &self.handle,
-                &self.sink,
-                TransferPhase::Transferring,
-                eta,
-                None,
-            );
-            self.last_emit = now;
-        }
-    }
-}
-
-/// Wait until a queued transfer is promoted to Active (returns `true`) or is
-/// cancelled while waiting (returns `false`).
-async fn wait_for_active(handle: &Arc<TransferHandle>, registry: &TransferRegistry) -> bool {
-    use super::scheduler::Admission;
-    if registry.request_slot(handle) == Admission::Run {
-        return true;
-    }
-    loop {
-        if handle.is_cancelled() {
-            return false;
-        }
-        if handle.state().is_active() {
-            return true;
-        }
-        handle.wait_for_signal().await;
-    }
-}
-
-/// Wait for a resume/retry request (returns `true`) or a cancel (returns
-/// `false`) on a paused/failed transfer.
-async fn wait_for_resume(handle: &Arc<TransferHandle>) -> bool {
-    loop {
-        if handle.is_cancelled() {
-            return false;
-        }
-        if handle.take_resume_request() {
-            return true;
-        }
-        handle.wait_for_signal().await;
-    }
-}
-
-/// Sleep for `delay`, returning `true` if the transfer was cancelled meanwhile.
-async fn cancellable_backoff(handle: &Arc<TransferHandle>, delay: std::time::Duration) -> bool {
-    tokio::select! {
-        _ = tokio::time::sleep(delay) => handle.is_cancelled(),
-        _ = handle.wait_for_signal() => handle.is_cancelled(),
-    }
-}
-
 /// Map a chunked-copy phase error to a [`SftpTransferError`], preserving the text.
 fn copy_error(phase: CopyPhase, e: std::io::Error) -> SftpTransferError {
     let what = match phase {
@@ -264,30 +88,6 @@ fn copy_error(phase: CopyPhase, e: std::io::Error) -> SftpTransferError {
         CopyPhase::Flush => "flush",
     };
     SftpTransferError::Ssh(format!("transfer {what} failed: {e}"))
-}
-
-/// Open the local destination for a resumed download: the existing partial is
-/// opened for writing and the file pointer is seeked to `offset` so the copy
-/// appends rather than truncates.
-async fn open_local_append(local_path: &str, offset: u64) -> std::io::Result<tokio::fs::File> {
-    use tokio::io::AsyncSeekExt;
-    let mut f = tokio::fs::OpenOptions::new()
-        .write(true)
-        .open(local_path)
-        .await?;
-    f.seek(std::io::SeekFrom::Start(offset)).await?;
-    Ok(f)
-}
-
-/// Open the local source for a resumed upload: the file is opened for reading
-/// and seeked to `offset` so only the not-yet-sent tail is streamed.
-async fn open_local_read(local_path: &str, offset: u64) -> std::io::Result<tokio::fs::File> {
-    use tokio::io::AsyncSeekExt;
-    let mut f = tokio::fs::File::open(local_path).await?;
-    if offset > 0 {
-        f.seek(std::io::SeekFrom::Start(offset)).await?;
-    }
-    Ok(f)
 }
 
 /// Run one download attempt on a fresh dedicated channel, resuming from
@@ -319,15 +119,13 @@ where
     // Local destination: append to the verified partial, or truncate for a
     // fresh transfer. The partial was written by us and byte-verified by the
     // caller, so a local open/seek failure here is a genuine error.
-    let mut local = if offset > 0 {
-        open_local_append(local_path, offset)
-            .await
-            .map_err(|e| SftpTransferError::Ssh(format!("open local file for append: {e}")))?
-    } else {
-        tokio::fs::File::create(local_path)
-            .await
-            .map_err(|e| SftpTransferError::Ssh(format!("create local file: {e}")))?
-    };
+    let mut local = open_local_dest(local_path, offset).await.map_err(|e| {
+        if offset > 0 {
+            SftpTransferError::Ssh(format!("open local file for append: {e}"))
+        } else {
+            SftpTransferError::Ssh(format!("create local file: {e}"))
+        }
+    })?;
 
     let outcome = run_chunked_copy(
         &mut remote,
@@ -394,71 +192,6 @@ where
     Ok(map_copy_outcome(outcome))
 }
 
-/// Translate a [`ChunkedCopyOutcome`] into an [`AttemptOutcome`].
-fn map_copy_outcome(outcome: ChunkedCopyOutcome<StopReason>) -> AttemptOutcome {
-    match outcome {
-        ChunkedCopyOutcome::Completed { transferred } => AttemptOutcome::Completed { transferred },
-        ChunkedCopyOutcome::Stopped {
-            transferred,
-            reason,
-        } => AttemptOutcome::Stopped {
-            transferred,
-            reason,
-        },
-    }
-}
-
-/// Settle one attempt's result into the cursor and the handle's state.
-/// Returns `Some(..)` when the stint ends, or `None` to run another attempt
-/// (a rejected offset-resume, or a transient failure that is being retried).
-async fn settle_attempt(
-    result: Result<AttemptOutcome, SftpTransferError>,
-    cursor: &mut ResumeCursor,
-    attempt: &mut u32,
-    handle: &Arc<TransferHandle>,
-    sink: &ProgressSink,
-) -> Option<AttemptsResult> {
-    match result {
-        Ok(AttemptOutcome::Completed { transferred }) => {
-            cursor.offset = transferred;
-            handle.set_metrics(transferred, cursor.total.max(transferred), 0);
-            handle.transition(TransferEvent::Complete);
-            Some(AttemptsResult::Completed)
-        }
-        Ok(AttemptOutcome::Stopped {
-            transferred,
-            reason: StopReason::Cancel,
-        }) => {
-            cursor.offset = transferred;
-            handle.transition(TransferEvent::Cancel);
-            Some(AttemptsResult::Cancelled)
-        }
-        Ok(AttemptOutcome::Stopped {
-            transferred,
-            reason: StopReason::Pause,
-        }) => {
-            cursor.offset = transferred;
-            handle.transition(TransferEvent::Pause);
-            Some(AttemptsResult::Paused)
-        }
-        Ok(AttemptOutcome::ResumeRejected) => {
-            // The server refused the offset open. Restart this stint from
-            // zero (surfaced above via `warn!`); do not consume a retry.
-            cursor.offset = 0;
-            *attempt -= 1;
-            emit(
-                handle,
-                sink,
-                TransferPhase::Transferring,
-                None,
-                Some("resume not supported by server; restarting from start".to_string()),
-            );
-            None
-        }
-        Err(e) => handle_attempt_error(handle, sink, *attempt, &e).await,
-    }
-}
-
 /// Run attempts (with auto-retry/backoff) for one Active stint. Keeps the slot
 /// across transient retries; returns once the transfer completes, is cancelled,
 /// is paused, or exhausts its retry budget.
@@ -490,7 +223,9 @@ async fn run_attempts(
             Ok(c) => c,
             Err(e) => {
                 let e = SftpTransferError::Ssh(format!("open SFTP transfer channel: {e}"));
-                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
+                if let Some(outcome) =
+                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
+                {
                     return outcome;
                 }
                 continue;
@@ -520,7 +255,7 @@ async fn run_attempts(
                     },
                 ),
             };
-            apply_resume_gate(cursor, handle, sink, current, present);
+            apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
         }
 
         let progress = Arc::new(AtomicU64::new(cursor.offset));
@@ -558,54 +293,28 @@ async fn run_attempts(
                 }
             }
         };
-        let result = guard_stall(attempt_fut, &progress, handle, STALL_TIMEOUT).await;
+        let result = guard_stall(
+            attempt_fut,
+            &progress,
+            handle,
+            STALL_TIMEOUT,
+            SftpTransferError::Ssh,
+        )
+        .await;
         cursor.offset = progress.load(Ordering::Relaxed);
 
-        if let Some(outcome) = settle_attempt(result, cursor, &mut attempt, handle, sink).await {
+        if let Some(outcome) = settle_attempt(
+            result,
+            cursor,
+            &mut attempt,
+            handle,
+            sink,
+            BACKEND,
+            "server",
+        )
+        .await
+        {
             return outcome;
-        }
-    }
-}
-
-/// Apply the retry/backoff policy after a failed attempt. Returns `Some(...)`
-/// when the stint should end (cancelled while backing off, or the retry budget
-/// is exhausted), or `None` to loop and retry from the current offset.
-async fn handle_attempt_error(
-    handle: &Arc<TransferHandle>,
-    sink: &ProgressSink,
-    attempt: u32,
-    e: &SftpTransferError,
-) -> Option<AttemptsResult> {
-    match super::backoff_delay(attempt) {
-        Some(delay) => {
-            handle.transition(TransferEvent::Fail { attempt });
-            warn!(transfer_id = %handle.transfer_id, attempt, error = %e, "SFTP transfer attempt failed; retrying");
-            emit(
-                handle,
-                sink,
-                TransferPhase::Transferring,
-                None,
-                Some(e.to_string()),
-            );
-            if cancellable_backoff(handle, delay).await {
-                handle.transition(TransferEvent::Cancel);
-                return Some(AttemptsResult::Cancelled);
-            }
-            handle.transition(TransferEvent::Retry);
-            handle.transition(TransferEvent::Activate);
-            None
-        }
-        None => {
-            handle.transition(TransferEvent::Fail { attempt });
-            warn!(transfer_id = %handle.transfer_id, attempt, error = %e, "SFTP transfer failed permanently");
-            emit(
-                handle,
-                sink,
-                TransferPhase::Error,
-                None,
-                Some(e.to_string()),
-            );
-            Some(AttemptsResult::FailedPermanent)
         }
     }
 }
@@ -682,75 +391,36 @@ pub async fn run_sftp_transfer(
     handle.set_metrics(offset, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
-    let mut cursor = ResumeCursor {
+    let cursor = ResumeCursor {
         offset,
         total,
         baseline,
     };
-    loop {
-        // Acquire (or re-acquire) a concurrency slot; the handle becomes Active.
-        if !wait_for_active(&handle, &registry).await {
-            handle.transition(TransferEvent::Cancel);
-            cleanup_partial(&browser, direction, &remote_path, &local_path).await;
-            emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-            registry.drop_entry(&handle.transfer_id);
-            return;
-        }
-        emit(&handle, &sink, TransferPhase::Transferring, None, None);
-
-        match run_attempts(
-            &browser,
-            direction,
-            &remote_path,
-            &local_path,
-            &mut cursor,
-            &handle,
-            &sink,
-            resume_mode,
-        )
-        .await
-        {
-            AttemptsResult::Completed => {
-                info!(transfer_id = %handle.transfer_id, transferred = cursor.offset, "SFTP transfer complete");
-                emit(&handle, &sink, TransferPhase::Done, None, None);
-                registry.drop_entry(&handle.transfer_id);
-                return;
-            }
-            AttemptsResult::Cancelled => {
-                info!(transfer_id = %handle.transfer_id, "SFTP transfer cancelled");
-                cleanup_partial(&browser, direction, &remote_path, &local_path).await;
-                emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                registry.drop_entry(&handle.transfer_id);
-                return;
-            }
-            AttemptsResult::Paused => {
-                // Release the slot so a queued peer can run while paused.
-                registry.release_slot(&handle);
-                emit(&handle, &sink, TransferPhase::Transferring, None, None);
-                if !wait_for_resume(&handle).await {
-                    handle.transition(TransferEvent::Cancel);
-                    cleanup_partial(&browser, direction, &remote_path, &local_path).await;
-                    emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                    registry.drop_entry(&handle.transfer_id);
-                    return;
-                }
-                handle.transition(TransferEvent::Resume); // Paused → Queued
-            }
-            AttemptsResult::FailedPermanent => {
-                // Release the slot; keep the handle for a manual retry.
-                registry.release_slot(&handle);
-                if !wait_for_resume(&handle).await {
-                    handle.transition(TransferEvent::Cancel);
-                    cleanup_partial(&browser, direction, &remote_path, &local_path).await;
-                    emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                    registry.drop_entry(&handle.transfer_id);
-                    return;
-                }
-                handle.set_attempt(0);
-                handle.transition(TransferEvent::Retry); // Failed → Queued
-            }
-        }
-    }
+    let (browser, remote_path, local_path, handle, sink) =
+        (&browser, &remote_path, &local_path, &handle, &sink);
+    drive_transfer(
+        handle,
+        &registry,
+        sink,
+        BACKEND,
+        cursor,
+        |mut cursor| async move {
+            let result = run_attempts(
+                browser,
+                direction,
+                remote_path,
+                local_path,
+                &mut cursor,
+                handle,
+                sink,
+                resume_mode,
+            )
+            .await;
+            (result, cursor)
+        },
+        || cleanup_partial(browser, direction, remote_path, local_path),
+    )
+    .await;
 }
 
 /// Best-effort removal of a partial destination on cancel/failure of a
@@ -861,7 +531,9 @@ async fn run_remote_attempts(
             Ok(c) => c,
             Err(e) => {
                 let e = SftpTransferError::Ssh(format!("open source SFTP transfer channel: {e}"));
-                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
+                if let Some(outcome) =
+                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
+                {
                     return outcome;
                 }
                 continue;
@@ -872,7 +544,9 @@ async fn run_remote_attempts(
             Err(e) => {
                 let e =
                     SftpTransferError::Ssh(format!("open destination SFTP transfer channel: {e}"));
-                if let Some(outcome) = handle_attempt_error(handle, sink, attempt, &e).await {
+                if let Some(outcome) =
+                    handle_attempt_error(handle, sink, attempt, &e, BACKEND).await
+                {
                     return outcome;
                 }
                 continue;
@@ -889,7 +563,7 @@ async fn run_remote_attempts(
             } else {
                 None
             };
-            apply_resume_gate(cursor, handle, sink, current, present);
+            apply_resume_gate(cursor, handle, sink, current, present, BACKEND);
         }
 
         let progress = Arc::new(AtomicU64::new(cursor.offset));
@@ -910,10 +584,27 @@ async fn run_remote_attempts(
             |t| reporter.report(t),
             move || stop_reason(&stop_handle),
         );
-        let result = guard_stall(attempt_fut, &progress, handle, STALL_TIMEOUT).await;
+        let result = guard_stall(
+            attempt_fut,
+            &progress,
+            handle,
+            STALL_TIMEOUT,
+            SftpTransferError::Ssh,
+        )
+        .await;
         cursor.offset = progress.load(Ordering::Relaxed);
 
-        if let Some(outcome) = settle_attempt(result, cursor, &mut attempt, handle, sink).await {
+        if let Some(outcome) = settle_attempt(
+            result,
+            cursor,
+            &mut attempt,
+            handle,
+            sink,
+            BACKEND,
+            "server",
+        )
+        .await
+        {
             return outcome;
         }
     }
@@ -957,75 +648,42 @@ pub async fn run_sftp_remote_copy(
     handle.set_metrics(0, total, 0);
     emit(&handle, &sink, TransferPhase::Transferring, None, None);
 
-    let mut cursor = ResumeCursor {
+    let cursor = ResumeCursor {
         offset: 0,
         total,
         baseline,
     };
-    loop {
-        // Acquire (or re-acquire) a concurrency slot; the handle becomes Active.
-        if !wait_for_active(&handle, &registry).await {
-            handle.transition(TransferEvent::Cancel);
-            cleanup_remote_partial(&dst_browser, &dst_path).await;
-            emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-            registry.drop_entry(&handle.transfer_id);
-            return;
-        }
-        emit(&handle, &sink, TransferPhase::Transferring, None, None);
-
-        match run_remote_attempts(
-            &src_browser,
-            &dst_browser,
-            &src_path,
-            &dst_path,
-            &mut cursor,
-            &handle,
-            &sink,
-            resume_mode,
-        )
-        .await
-        {
-            AttemptsResult::Completed => {
-                info!(transfer_id = %handle.transfer_id, transferred = cursor.offset, "SFTP remote-to-remote copy complete");
-                emit(&handle, &sink, TransferPhase::Done, None, None);
-                registry.drop_entry(&handle.transfer_id);
-                return;
-            }
-            AttemptsResult::Cancelled => {
-                info!(transfer_id = %handle.transfer_id, "SFTP remote-to-remote copy cancelled");
-                cleanup_remote_partial(&dst_browser, &dst_path).await;
-                emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                registry.drop_entry(&handle.transfer_id);
-                return;
-            }
-            AttemptsResult::Paused => {
-                // Release the slot so a queued peer can run while paused.
-                registry.release_slot(&handle);
-                emit(&handle, &sink, TransferPhase::Transferring, None, None);
-                if !wait_for_resume(&handle).await {
-                    handle.transition(TransferEvent::Cancel);
-                    cleanup_remote_partial(&dst_browser, &dst_path).await;
-                    emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                    registry.drop_entry(&handle.transfer_id);
-                    return;
-                }
-                handle.transition(TransferEvent::Resume); // Paused → Queued
-            }
-            AttemptsResult::FailedPermanent => {
-                // Release the slot; keep the handle for a manual retry.
-                registry.release_slot(&handle);
-                if !wait_for_resume(&handle).await {
-                    handle.transition(TransferEvent::Cancel);
-                    cleanup_remote_partial(&dst_browser, &dst_path).await;
-                    emit(&handle, &sink, TransferPhase::Cancelled, None, None);
-                    registry.drop_entry(&handle.transfer_id);
-                    return;
-                }
-                handle.set_attempt(0);
-                handle.transition(TransferEvent::Retry); // Failed → Queued
-            }
-        }
-    }
+    let (src_browser, dst_browser, src_path, dst_path, handle, sink) = (
+        &src_browser,
+        &dst_browser,
+        &src_path,
+        &dst_path,
+        &handle,
+        &sink,
+    );
+    drive_transfer(
+        handle,
+        &registry,
+        sink,
+        "SFTP remote-to-remote",
+        cursor,
+        |mut cursor| async move {
+            let result = run_remote_attempts(
+                src_browser,
+                dst_browser,
+                src_path,
+                dst_path,
+                &mut cursor,
+                handle,
+                sink,
+                resume_mode,
+            )
+            .await;
+            (result, cursor)
+        },
+        || cleanup_remote_partial(dst_browser, dst_path),
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -1036,23 +694,5 @@ mod tests {
     fn resume_mode_default_is_resume() {
         assert_eq!(ResumeMode::default(), ResumeMode::Resume);
         assert_eq!(DEFAULT_RESUME_MODE, ResumeMode::Resume);
-    }
-
-    #[test]
-    fn map_copy_outcome_preserves_bytes_and_reason() {
-        assert_eq!(
-            map_copy_outcome(ChunkedCopyOutcome::Completed { transferred: 42 }),
-            AttemptOutcome::Completed { transferred: 42 }
-        );
-        assert_eq!(
-            map_copy_outcome(ChunkedCopyOutcome::Stopped {
-                transferred: 10,
-                reason: StopReason::Pause,
-            }),
-            AttemptOutcome::Stopped {
-                transferred: 10,
-                reason: StopReason::Pause,
-            }
-        );
     }
 }

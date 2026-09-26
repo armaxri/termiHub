@@ -4,10 +4,10 @@
  *
  * Each file leg goes through the existing transfer machinery:
  *
- * - a **queue-capable** session (SFTP / FTP) registers a tracked transfer with
+ * - a **queue-capable** session (SFTP / FTP / Docker) registers a tracked transfer with
  *   `session_upload` / `session_download` and seeds its Transfer Queue row, so
  *   the file shows progress and can be paused, cancelled and retried;
- * - a **byte-based** session (Docker / remote agent) falls back to a blocking
+ * - a **byte-based** session (remote agent) falls back to a blocking
  *   read/write round-trip, as the sidebar browser does.
  *
  * A folder is recreated at the destination (an existing one is merged into)
@@ -34,7 +34,7 @@ export type PaneSide = "local" | "remote";
 /** The remote session the transfer view is attached to. */
 export interface PaneRemote {
   sessionId: string;
-  /** Whether the session drives the transfer queue (SFTP / FTP). */
+  /** Whether the session drives the transfer queue (SFTP / FTP / Docker). */
   queueCapable: boolean;
 }
 
