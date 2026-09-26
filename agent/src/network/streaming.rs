@@ -22,7 +22,6 @@
 //! abandoned after [`CANCEL_GRACE`].
 
 use std::collections::{HashMap, VecDeque};
-use std::future::Future;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -201,6 +200,7 @@ impl ToolRunManager {
     }
 
     /// Number of runs still in flight.
+    #[cfg(test)]
     pub fn active_runs(&self) -> usize {
         self.runs().len()
     }
@@ -363,12 +363,10 @@ impl ToolRunManager {
 }
 
 /// Await the grace timer when armed; pend forever otherwise.
-fn wait_optional(timer: &mut Option<Pin<Box<Sleep>>>) -> impl Future<Output = ()> + '_ {
-    async move {
-        match timer.as_mut() {
-            Some(t) => t.as_mut().await,
-            None => std::future::pending::<()>().await,
-        }
+async fn wait_optional(timer: &mut Option<Pin<Box<Sleep>>>) {
+    match timer.as_mut() {
+        Some(t) => t.as_mut().await,
+        None => std::future::pending::<()>().await,
     }
 }
 
