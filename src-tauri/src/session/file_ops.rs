@@ -289,6 +289,25 @@ impl<'a> FileOps<'a> {
         })
     }
 
+    /// Find a live Docker session streaming into exactly `container_id` and
+    /// return its transfer target (#3585).
+    ///
+    /// A relaunched transfer's original session id does not survive an app
+    /// restart; once the user reconnects the container's session (new id), this
+    /// lets the relaunch reuse it. Matching is by the full container id, never
+    /// by name, so a same-name recreated container is never picked up.
+    pub(super) async fn docker_transfer_target_for_container(
+        &self,
+        container_id: &str,
+    ) -> Option<termihub_core::backends::docker::DockerTransferTarget> {
+        let sessions = self.sessions.lock().await;
+        sessions
+            .values()
+            .filter_map(|entry| entry.connection.file_browser())
+            .filter_map(termihub_core::backends::docker::docker_transfer_target_of)
+            .find(|target| !container_id.is_empty() && target.container_id() == container_id)
+    }
+
     /// Resolve a remote path to its canonical absolute form via SFTP realpath.
     ///
     /// Session-path mirror of the standalone `sftp_realpath` command; errors are
