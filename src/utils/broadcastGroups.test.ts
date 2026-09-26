@@ -72,7 +72,7 @@ describe("resolveBroadcastGroup (PROD-061)", () => {
   });
 
   it("never matches ad-hoc tabs or non-terminal tabs", () => {
-    const tabs = [tab("a"), tab("b", "c1", "sftp")];
+    const tabs = [tab("a"), tab("b", "c1", "editor")];
     expect(resolveBroadcastGroup(tabs, group).tabIds).toEqual([]);
   });
 });
