@@ -10,8 +10,8 @@ evidence:
   - core/src/backends/ssh/mod.rs:303
   - core/src/backends/ftp/mod.rs:365
   - core/src/connection/graphical.rs:316
-status: partial
-resolution: "#3379 — SSH keyboard-interactive (OTP/2FA) via in-app prompt for direct/jump/tunnel/SFTP/test (maintainer decision: no shared auth model); agent-hosted prompt relay #3375"
+status: fixed
+resolution: "#3379,#3386,#3438 — SSH keyboard-interactive (OTP/2FA) via in-app prompt on direct, jump, tunnel, SFTP, test AND agent-hosted paths; wrong OTP keeps saved password"
 ---
 
 ## What
