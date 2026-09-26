@@ -92,7 +92,7 @@ fn manifest_json(id: &str, name: &str, connection_type: &str) -> String {
             "author": "test",
             "description": "echo backend fixture",
             "license": "MIT",
-            "apiVersion": "1.0",
+            "apiVersion": "1.1",
             "platforms": ["windows", "linux", "macos"],
             "permissions": ["terminal"],
             "extensions": {{
@@ -163,7 +163,7 @@ fn manifest_json_with_settings(id: &str, name: &str, connection_type: &str) -> S
             "author": "test",
             "description": "echo backend fixture",
             "license": "MIT",
-            "apiVersion": "1.0",
+            "apiVersion": "1.1",
             "platforms": ["windows", "linux", "macos"],
             "permissions": ["terminal"],
             "extensions": {{

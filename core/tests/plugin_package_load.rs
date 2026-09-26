@@ -39,7 +39,7 @@ const FIXTURE_MANIFEST: &str = r#"{
     "author": "termiHub tests",
     "description": "Native echo fixture packaged for the package-then-load test",
     "license": "MIT",
-    "apiVersion": "1.0",
+    "apiVersion": "1.1",
     "platforms": ["windows", "linux", "macos"],
     "permissions": ["terminal"],
     "extensions": {
@@ -145,6 +145,14 @@ async fn packaged_native_plugin_installs_and_loads_on_this_host() {
     host.load(&installed)
         .expect("the host loads the packaged plugin");
     assert!(host.is_loaded(&id));
+    // ABI 1.1 (#3576): the host verified the plugin's build toolchain (it
+    // loaded) and created its private data directory under the plugins root.
+    assert!(
+        root.join(termihub_core::plugin::PLUGIN_DATA_DIR_NAME)
+            .join(&id)
+            .is_dir(),
+        "the host prepares a data directory for an ABI 1.1 plugin"
+    );
 
     let type_id = plugin_type_id(&id, &backend.connection_type);
     let mut conn = registry

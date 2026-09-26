@@ -17,6 +17,16 @@
 //! * `termihub_plugin_init` is gated behind the `export-init` feature (on by
 //!   default), so a `--no-default-features` build omits it and exercises the
 //!   loader's missing-symbol path.
+//! * `TERMIHUB_TEST_PLUGIN_RUSTC` / `TERMIHUB_TEST_PLUGIN_PANIC` override the
+//!   build toolchain reported in `PluginInfo` (ABI 1.1, PLG-013), to simulate a
+//!   plugin built with another compiler or panic strategy.
+//! * The `abi-1-0` feature builds a faithful **ABI 1.0** plugin: it reports
+//!   ABI 1.0, writes only the frozen 1.0 `PluginInfo` prefix (no toolchain
+//!   record) and never reads the 1.1 host context — the shape of a plugin built
+//!   before #3576.
+//! * The `context` probe (ABI 1.1 builds) reports the host context it received
+//!   and logs through it; writing `?cancelled` to such a session reports the
+//!   cancellation flag (PLG-014).
 
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -25,18 +35,35 @@ use serde::Deserialize;
 #[cfg(feature = "export-init")]
 use termihub_plugin_api::PluginInfo;
 use termihub_plugin_api::{
-    PluginBackend, PluginError, PluginHostBridge, PluginOutputSender, PluginSessionConfig,
-    AbiVersion, PluginStatus, PluginTerminalBackend, PluginWriteMode, CURRENT_PLUGIN_ABI_VERSION,
+    AbiVersion, PluginBackend, PluginError, PluginHostBridge, PluginHostServices,
+    PluginOutputSender, PluginSessionConfig, PluginStatus, PluginTerminalBackend,
+    PluginWriteMode,
 };
+
+/// The ABI this build reports: a faithful 1.0 plugin under `abi-1-0`, else the
+/// SDK's current ABI.
+#[cfg(feature = "abi-1-0")]
+const FIXTURE_ABI: AbiVersion = AbiVersion::new(1, 0);
+#[cfg(not(feature = "abi-1-0"))]
+const FIXTURE_ABI: AbiVersion = termihub_plugin_api::CURRENT_PLUGIN_ABI_VERSION;
 
 /// A backend that echoes written input straight back to the host output sink.
 struct EchoBackend {
     output: PluginOutputSender,
     alive: AtomicBool,
+    /// The ABI 1.1 host services, kept for the `?cancelled` query.
+    services: Option<PluginHostServices>,
 }
 
 impl PluginTerminalBackend for EchoBackend {
     fn write_input(&self, data: &[u8]) -> Result<(), PluginError> {
+        if data == b"?cancelled" {
+            let reply = match &self.services {
+                Some(services) => format!("CANCELLED:{}", services.is_cancelled()),
+                None => "CANCELLED:none".to_owned(),
+            };
+            return self.output.send(reply.as_bytes());
+        }
         self.output.send(data)
     }
 
@@ -66,7 +93,63 @@ fn abi_override(var: &str) -> Option<u32> {
 /// force an incompatible value at load time.
 #[no_mangle]
 pub extern "C" fn termihub_plugin_abi_version() -> u32 {
-    abi_override("TERMIHUB_TEST_PLUGIN_ABI").unwrap_or(CURRENT_PLUGIN_ABI_VERSION.to_packed())
+    abi_override("TERMIHUB_TEST_PLUGIN_ABI").unwrap_or(FIXTURE_ABI.to_packed())
+}
+
+/// `PluginInfo` exactly as ABI 1.0 froze it — what a pre-1.1 plugin writes.
+#[cfg(all(feature = "export-init", feature = "abi-1-0"))]
+#[repr(C)]
+struct PluginInfoV1_0 {
+    id: termihub_plugin_api::FfiString,
+    name: termihub_plugin_api::FfiString,
+    version: termihub_plugin_api::FfiString,
+    api_version: u32,
+}
+
+/// Write the fixture's metadata as a faithful ABI 1.0 plugin: only the 1.0
+/// prefix of the host's (larger) `PluginInfo`.
+///
+/// # Safety
+///
+/// `out_info` must be valid and writable for at least the 1.0 prefix.
+#[cfg(all(feature = "export-init", feature = "abi-1-0"))]
+unsafe fn write_info(out_info: *mut PluginInfo) {
+    let info = PluginInfoV1_0 {
+        id: "test-echo".into(),
+        name: "Test Echo".into(),
+        version: "0.1.0".into(),
+        api_version: abi_override("TERMIHUB_TEST_PLUGIN_INFO_ABI")
+            .unwrap_or(FIXTURE_ABI.to_packed()),
+    };
+    // SAFETY: caller contract.
+    unsafe { out_info.cast::<PluginInfoV1_0>().write(info) };
+}
+
+/// Write the fixture's metadata as a current-ABI plugin, honoring the ABI and
+/// toolchain overrides.
+///
+/// # Safety
+///
+/// `out_info` must be valid and writable.
+#[cfg(all(feature = "export-init", not(feature = "abi-1-0")))]
+unsafe fn write_info(out_info: *mut PluginInfo) {
+    let mut info = PluginInfo::new("test-echo", "Test Echo", "0.1.0");
+    if let Some(packed) = abi_override("TERMIHUB_TEST_PLUGIN_INFO_ABI") {
+        info.api_version = packed;
+    }
+    if let Ok(rustc) = std::env::var("TERMIHUB_TEST_PLUGIN_RUSTC") {
+        info.rustc = rustc.into();
+    }
+    if let Ok(panic) = std::env::var("TERMIHUB_TEST_PLUGIN_PANIC") {
+        info.panic_strategy = match panic.as_str() {
+            "abort" => termihub_plugin_api::PanicStrategy::Abort,
+            "unwind" => termihub_plugin_api::PanicStrategy::Unwind,
+            _ => termihub_plugin_api::PanicStrategy::Unknown,
+        }
+        .to_wire();
+    }
+    // SAFETY: caller contract.
+    unsafe { out_info.write(info) };
 }
 
 /// Fill in the plugin metadata. Omitted from `--no-default-features` builds so
@@ -82,13 +165,7 @@ pub unsafe extern "C" fn termihub_plugin_init(out_info: *mut PluginInfo) -> Plug
         return PluginStatus::Other;
     }
     // SAFETY: caller guarantees `out_info` is valid and writable.
-    unsafe {
-        let mut info = PluginInfo::new("test-echo", "Test Echo", "0.1.0");
-        if let Some(packed) = abi_override("TERMIHUB_TEST_PLUGIN_INFO_ABI") {
-            info.api_version = packed;
-        }
-        out_info.write(info);
-    }
+    unsafe { write_info(out_info) };
     PluginStatus::Ok
 }
 
@@ -248,21 +325,81 @@ pub unsafe extern "C" fn termihub_plugin_create_backend(
         let mut line = b"SETTINGS:".to_vec();
         line.extend_from_slice(settings_json.as_bytes());
         let _ = output.send(&line);
+    } else if cfg.probe == "context" {
+        let line = context_probe_line(config);
+        let _ = output.send(line.as_bytes());
     } else if !cfg.probe.is_empty() {
         run_probe(&cfg, &bridge, &output);
     }
+    let services = session_services(config);
     // The echo backend keeps no network/filesystem state, so the bridge is done.
     drop(bridge);
 
     let backend = PluginBackend::from_boxed(Box::new(EchoBackend {
         output,
         alive: AtomicBool::new(true),
+        services,
     }));
     // SAFETY: caller guarantees `out_backend` is valid and writable.
     unsafe {
         out_backend.write(backend);
     }
     PluginStatus::Ok
+}
+
+/// Report the ABI 1.1 host context as `CTX:<host version>|<data dir>|<data
+/// dir writable>|<cancelled>|<log status>`, logging a line through it. A 1.0
+/// build never reads the context and reports `CTX:none`.
+#[cfg(not(feature = "abi-1-0"))]
+fn context_probe_line(config: *const PluginSessionConfig) -> String {
+    if config.is_null() {
+        return "CTX:none".to_owned();
+    }
+    // SAFETY: an ABI 1.1 plugin on a 1.1+ host, during the create call.
+    let Some(ctx) = (unsafe { (*config).context() }) else {
+        return "CTX:none".to_owned();
+    };
+    let data_dir = ctx
+        .data_dir
+        .as_ref()
+        .map(|d| d.display().to_string())
+        .unwrap_or_else(|| "-".to_owned());
+    let writable = ctx
+        .data_dir
+        .as_ref()
+        .is_some_and(|d| std::fs::write(d.join("probe.txt"), b"ok").is_ok());
+    let log = ctx
+        .services
+        .log(termihub_plugin_api::PluginLogLevel::Info, "context probe")
+        .is_ok();
+    format!(
+        "CTX:{}|{}|{}|{}|{}",
+        ctx.host_version,
+        data_dir,
+        writable,
+        ctx.services.is_cancelled(),
+        log
+    )
+}
+
+#[cfg(feature = "abi-1-0")]
+fn context_probe_line(_config: *const PluginSessionConfig) -> String {
+    "CTX:none".to_owned()
+}
+
+/// Keep the session's host services (ABI 1.1) for the `?cancelled` query.
+#[cfg(not(feature = "abi-1-0"))]
+fn session_services(config: *const PluginSessionConfig) -> Option<PluginHostServices> {
+    if config.is_null() {
+        return None;
+    }
+    // SAFETY: an ABI 1.1 plugin on a 1.1+ host, during the create call.
+    unsafe { (*config).context() }.map(|ctx| ctx.services)
+}
+
+#[cfg(feature = "abi-1-0")]
+fn session_services(_config: *const PluginSessionConfig) -> Option<PluginHostServices> {
+    None
 }
 
 /// Process-wide cleanup before unload. Nothing to do for the echo fixture.
