@@ -56,6 +56,15 @@ impl std::fmt::Display for UnlockFailure {
     }
 }
 
+/// A parsed, validated (but still encrypted) credentials envelope.
+struct SealedFile {
+    version: u32,
+    salt: Vec<u8>,
+    nonce: Vec<u8>,
+    ciphertext: Vec<u8>,
+    cost: Argon2Cost,
+}
+
 /// Credential store that encrypts all credentials into a single file
 /// using Argon2id key derivation and AES-256-GCM authenticated encryption.
 ///
@@ -144,6 +153,58 @@ impl MasterPasswordStore {
     /// [`UnlockFailure::Corrupted`]; only an authenticated-decryption failure
     /// (the AEAD tag mismatch) is [`UnlockFailure::WrongPassword`].
     pub fn unlock_classified(&self, password: &str) -> std::result::Result<(), UnlockFailure> {
+        let sealed = self.read_sealed()?;
+        let key = derive_key_with_cost(password, &sealed.salt, &sealed.cost)
+            .map_err(|e| UnlockFailure::Corrupted(format!("key derivation failed: {e}")))?;
+        self.open_sealed(sealed, key.to_vec())
+    }
+
+    /// Unlock with an already-derived vault key instead of the master password.
+    ///
+    /// Used by biometric unlock (PROD-064): the key was captured from an
+    /// unlocked store when the user opted in and is released from the OS
+    /// credential store only after a successful OS user verification. The key
+    /// is authenticated exactly like a password-derived one — a stale key (the
+    /// master password changed since) fails the AEAD check and is reported as
+    /// [`UnlockFailure::WrongPassword`].
+    pub fn unlock_with_key(&self, key: &[u8]) -> std::result::Result<(), UnlockFailure> {
+        let sealed = self.read_sealed()?;
+        self.open_sealed(sealed, key.to_vec())
+    }
+
+    /// The Argon2 salt stored in the on-disk credentials file.
+    ///
+    /// The salt is regenerated whenever the master password changes, so its
+    /// fingerprint identifies the key a biometric-unlock enrollment was made
+    /// for (PROD-064). Reads only non-secret envelope metadata.
+    pub fn file_salt(&self) -> std::result::Result<Vec<u8>, UnlockFailure> {
+        Ok(self.read_sealed()?.salt)
+    }
+
+    /// A copy of the in-memory vault key and the salt it was derived with, or
+    /// `None` when the store is locked.
+    ///
+    /// Only used to enroll biometric unlock (PROD-064) after the master
+    /// password has been re-verified; the copy is zeroized on drop.
+    pub(crate) fn key_material(&self) -> Option<(zeroize::Zeroizing<Vec<u8>>, Vec<u8>)> {
+        let salt = self
+            .salt
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()?;
+        let key = self
+            .derived_key
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()?;
+        Some((zeroize::Zeroizing::new(key), salt))
+    }
+
+    /// Read, parse and validate the on-disk envelope without decrypting it.
+    ///
+    /// A failure to read, parse, base64-decode, or version-check the envelope is
+    /// [`UnlockFailure::Corrupted`] (or [`UnlockFailure::NewerVersion`]).
+    fn read_sealed(&self) -> std::result::Result<SealedFile, UnlockFailure> {
         let raw = fs::read_to_string(&self.file_path)
             .map_err(|e| UnlockFailure::Corrupted(format!("cannot read file: {e}")))?;
         let envelope: EncryptedEnvelope = serde_json::from_str(&raw)
@@ -170,7 +231,7 @@ impl MasterPasswordStore {
         let salt = BASE64
             .decode(&envelope.kdf.salt)
             .map_err(|e| UnlockFailure::Corrupted(format!("invalid salt encoding: {e}")))?;
-        let nonce_bytes = BASE64
+        let nonce = BASE64
             .decode(&envelope.nonce)
             .map_err(|e| UnlockFailure::Corrupted(format!("invalid nonce encoding: {e}")))?;
         let ciphertext = BASE64
@@ -186,10 +247,10 @@ impl MasterPasswordStore {
                 salt.len()
             )));
         }
-        if nonce_bytes.len() != NONCE_LEN {
+        if nonce.len() != NONCE_LEN {
             return Err(UnlockFailure::Corrupted(format!(
                 "invalid nonce length: expected {NONCE_LEN}, got {}",
-                nonce_bytes.len()
+                nonce.len()
             )));
         }
 
@@ -198,40 +259,76 @@ impl MasterPasswordStore {
         // after the KDF is strengthened. The params are validated first (#2362).
         let cost = Argon2Cost::from_kdf(&envelope.kdf)
             .map_err(|e| UnlockFailure::Corrupted(format!("invalid KDF params: {e}")))?;
-        let key = derive_key_with_cost(password, &salt, &cost)
-            .map_err(|e| UnlockFailure::Corrupted(format!("key derivation failed: {e}")))?;
 
-        let cipher = Aes256Gcm::new_from_slice(&key)
-            .map_err(|e| UnlockFailure::Corrupted(format!("cipher init failed: {e}")))?;
-        let nonce = Nonce::from_slice(&nonce_bytes);
+        Ok(SealedFile {
+            version: envelope.version,
+            salt,
+            nonce,
+            ciphertext,
+            cost,
+        })
+    }
+
+    /// Decrypt a parsed envelope with `key` and, on success, load the
+    /// credentials into memory (unlocking the store). `key` is zeroized on
+    /// failure and moved into the store on success.
+    fn open_sealed(
+        &self,
+        sealed: SealedFile,
+        mut key: Vec<u8>,
+    ) -> std::result::Result<(), UnlockFailure> {
+        let cipher = match Aes256Gcm::new_from_slice(&key) {
+            Ok(cipher) => cipher,
+            Err(e) => {
+                key.zeroize();
+                return Err(UnlockFailure::Corrupted(format!("cipher init failed: {e}")));
+            }
+        };
+        let nonce = Nonce::from_slice(&sealed.nonce);
 
         // Authenticate with the envelope's own version (bound as AAD), not the
         // current one, so a supported-but-older vault authenticates (PER-008).
-        let aad = aad_for_version(envelope.version);
+        let aad = aad_for_version(sealed.version);
         let payload = aes_gcm::aead::Payload {
-            msg: &ciphertext,
+            msg: &sealed.ciphertext,
             aad: &aad,
         };
         // An AEAD failure here is the wrong-password signal.
-        let mut plaintext = cipher
-            .decrypt(nonce, payload)
-            .map_err(|_| UnlockFailure::WrongPassword)?;
+        let mut plaintext = match cipher.decrypt(nonce, payload) {
+            Ok(plaintext) => plaintext,
+            Err(_) => {
+                key.zeroize();
+                return Err(UnlockFailure::WrongPassword);
+            }
+        };
 
-        let credentials: HashMap<String, String> = serde_json::from_slice(&plaintext)
-            .map_err(|e| UnlockFailure::Corrupted(format!("invalid decrypted data: {e}")))?;
+        let parsed: std::result::Result<HashMap<String, String>, _> =
+            serde_json::from_slice(&plaintext);
         plaintext.zeroize();
+        let credentials = match parsed {
+            Ok(credentials) => credentials,
+            Err(e) => {
+                key.zeroize();
+                return Err(UnlockFailure::Corrupted(format!(
+                    "invalid decrypted data: {e}"
+                )));
+            }
+        };
 
         {
             let mut salt_guard = self.salt.write().unwrap_or_else(|e| e.into_inner());
-            *salt_guard = Some(salt);
+            *salt_guard = Some(sealed.salt);
         }
         {
             let mut key_guard = self.derived_key.write().unwrap_or_else(|e| e.into_inner());
-            *key_guard = Some(key.to_vec());
+            if let Some(ref mut old_key) = *key_guard {
+                old_key.zeroize();
+            }
+            *key_guard = Some(key);
         }
         {
             let mut cost_guard = self.kdf_cost.write().unwrap_or_else(|e| e.into_inner());
-            *cost_guard = Some(cost);
+            *cost_guard = Some(sealed.cost);
         }
         {
             let mut creds_guard = self.credentials.write().unwrap_or_else(|e| e.into_inner());
