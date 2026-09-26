@@ -105,6 +105,7 @@ Prefer to build it yourself? See [Development](#development) below.
 
 - **Split views** — Arrange terminals in horizontal and vertical splits with drag-and-drop
 - **Tab management** — Drag-and-drop tabs between panels, per-tab colors, CWD tracking
+- **Inline images** — SIXEL graphics and the iTerm2 inline image protocol render directly in the terminal (`img2sixel`, `chafa -f sixel`, `imgcat`)
 - **Connection management** — Organize connections in folder hierarchies with import/export from external files
 
 ### SSH Features
@@ -223,6 +224,28 @@ Open terminals appear as tabs with type-specific icons and optional colored bord
 - **Right-click** a tab for: Save to File, Copy to Clipboard, Clear Terminal, Horizontal Scrolling, Set Color
 
 Each connection also has terminal options: **horizontal scrolling** and **tab color**, configurable in the editor or via the tab context menu.
+
+### Inline Images
+
+The terminal renders images that programs send inline, using
+[`@xterm/addon-image`](https://github.com/xtermjs/xterm.js/tree/master/addons/addon-image):
+
+- **SIXEL** (DCS sixel) — e.g. `img2sixel`, `chafa -f sixel`, `lsix`, matplotlib's sixel backend
+- **iTerm2 inline image protocol** (`OSC 1337 ; File=…`) — e.g. `imgcat`
+
+Toggle it under **Settings > Terminal > Inline Images** (on by default; applies live). Because
+the shell (or a remote host) controls what is sent, each terminal enforces memory caps:
+
+| Limit                        | Value                  |
+| ---------------------------- | ---------------------- |
+| Pixels per image             | 2048 × 2048 (≈4.2 MP)  |
+| Image memory per terminal    | 32 MB (oldest evicted) |
+| Raw SIXEL sequence size      | 8 MB                   |
+| Raw iTerm2 IIP sequence size | 8 MB                   |
+
+An image over a cap is dropped without affecting the text; an evicted image leaves a
+placeholder. Images are not part of the preserved scrollback — after a reconnect the text is
+replayed but earlier images are gone. The Kitty graphics protocol is not supported.
 
 ### Split Views
 
