@@ -240,7 +240,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   const refreshConnectionTypes = useAppStore((s) => s.refreshConnectionTypes);
   const addConnection = useAppStore((s) => s.addConnection);
   const updateConnection = useAppStore((s) => s.updateConnection);
-  const moveConnectionToFile = useAppStore((s) => s.moveConnectionToFile);
+  const saveConnectionToFile = useAppStore((s) => s.saveConnectionToFile);
   const closeTab = useAppStore((s) => s.closeTab);
   const addTab = useAppStore((s) => s.addTab);
   const requestPassword = useAppStore((s) => s.requestPassword);
@@ -898,7 +898,9 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
   ]);
 
   /** Save the connection (or agent transport) and return the saved entry. */
-  const saveConnection = useCallback((): SavedConnection | RemoteAgentDefinition | null => {
+  const saveConnection = useCallback(async (): Promise<
+    SavedConnection | RemoteAgentDefinition | null
+  > => {
     if (!name.trim()) return null;
     if (nameError) return null;
     if (jumpHostValidation.errors.length > 0) return null;
@@ -941,14 +943,14 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
         icon,
         sourceFile,
       };
-      updateConnection(saved);
-
-      // If storage file changed, move connection to the new file
+      // A changed storage file is saved and moved by one backend command, so the
+      // connection lands in the target exactly once, with the edit (#3590).
       const originalSource = existingConnection.sourceFile ?? null;
       if (originalSource !== sourceFile) {
-        moveConnectionToFile(existingConnection.id, sourceFile);
+        return await saveConnectionToFile(saved, originalSource);
       }
 
+      updateConnection(saved);
       return saved;
     } else {
       const saved: SavedConnection = {
@@ -979,7 +981,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
     folderId,
     addConnection,
     updateConnection,
-    moveConnectionToFile,
+    saveConnectionToFile,
     addRemoteAgent,
     updateRemoteAgent,
   ]);
@@ -1031,7 +1033,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       if (ok) toast.success(`Saved "${name.trim()}"`);
       return ok;
     }
-    const ok = saveConnection() !== null;
+    const ok = (await saveConnection()) !== null;
     if (ok && isAgentTransportMode) {
       toast.success(`Saved "${name.trim()}"`);
     }
@@ -1103,7 +1105,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
       return;
     }
 
-    const saved = saveConnection();
+    const saved = await saveConnection();
     if (!saved || "connectionState" in saved) return;
 
     let config: ConnectionConfig = saved.config;

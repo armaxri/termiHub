@@ -709,6 +709,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::spawn::resolve_shell_spawn,
             commands::spawn::take_pending_spawn,
             commands::connection::move_connection_to_file,
+            commands::connection::save_connection_to_file,
             commands::connection::save_external_file,
             commands::connection::reload_external_connections,
             commands::connection::save_remote_agent,

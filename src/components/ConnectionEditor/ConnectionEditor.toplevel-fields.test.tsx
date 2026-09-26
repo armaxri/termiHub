@@ -387,6 +387,68 @@ describe("ConnectionEditor top-level fields — payload flow", () => {
   });
 });
 
+describe("ConnectionEditor top-level fields — storage-file change (#3590)", () => {
+  it("saves an edit that changes the storage file with one backend write", async () => {
+    seedSettings({ externalConnectionFiles: [{ path: "/tmp/team.json", enabled: true }] });
+    const existing: SavedConnection = {
+      id: "Main Conn",
+      name: "Main Conn",
+      config: { type: "local", config: { shell: "bash" } },
+      folderId: null,
+      sourceFile: null,
+    };
+    seedConnectionsRegion({ connections: [existing] });
+    mockedInvoke.mockImplementation((cmd, args) => {
+      if (cmd === "check_docker_available") return Promise.resolve(false);
+      if (cmd === "check_podman_available") return Promise.resolve(false);
+      if (cmd === "resolve_credential") return Promise.resolve(null);
+      if (cmd === "save_connection_to_file") {
+        const { connection } = args as { connection: SavedConnection };
+        return Promise.resolve({ ...connection, id: connection.name });
+      }
+      return Promise.resolve(undefined);
+    });
+    renderEditor("Main Conn");
+    await flush();
+
+    setInput(nameInput(), "Moved Conn");
+    await flush();
+    const trigger = q("connection-editor-source-file") as HTMLElement;
+    for (let i = 0; i < 3 && document.querySelectorAll(".ui-select__item").length === 0; i++) {
+      act(() => {
+        trigger.focus();
+        trigger.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })
+        );
+      });
+    }
+    const fileOption = Array.from(document.querySelectorAll<HTMLElement>(".ui-select__item")).find(
+      (o) => o.getAttribute("data-value") === "/tmp/team.json"
+    );
+    act(() => fileOption!.click());
+    await flush();
+
+    act(() => (q("connection-editor-save") as HTMLButtonElement).click());
+    await flush();
+    await flush();
+
+    const commands = mockedInvoke.mock.calls.map(([cmd]) => cmd);
+    // A separate save plus move wrote the connection into the target twice.
+    expect(commands).not.toContain("save_connection");
+    expect(commands).not.toContain("move_connection_to_file");
+    const writes = mockedInvoke.mock.calls.filter(([cmd]) => cmd === "save_connection_to_file");
+    expect(writes).toHaveLength(1);
+    const { connection, currentSource } = writes[0][1] as {
+      connection: SavedConnection;
+      currentSource: string | null;
+    };
+    expect(currentSource).toBeNull();
+    expect(connection.id).toBe("Main Conn");
+    expect(connection.name).toBe("Moved Conn");
+    expect(connection.sourceFile).toBe("/tmp/team.json");
+  });
+});
+
 describe("ConnectionEditor top-level fields — type switch", () => {
   it("preserves the typed name when the connection type changes", async () => {
     renderEditor("new");

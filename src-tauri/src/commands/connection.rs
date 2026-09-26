@@ -153,6 +153,30 @@ pub fn move_connection_to_file(
     Ok(moved)
 }
 
+/// Save an edited connection whose storage file changed: the edit is written
+/// to the target file (`connection.sourceFile`) and the connection is removed
+/// from `currentSource` in one step, so it ends up there exactly once (#3590).
+/// Returns the connection as written to the target.
+#[tauri::command]
+pub fn save_connection_to_file(
+    connection: SavedConnection,
+    current_source: Option<String>,
+    app: AppHandle,
+    manager: State<'_, ConnectionManager>,
+) -> Result<SavedConnection, TerminalError> {
+    info!(
+        id = %connection.id,
+        ?current_source,
+        target_source = ?connection.source_file,
+        "Saving connection to file"
+    );
+    let saved = manager
+        .save_connection_to_file(connection, current_source.as_deref())
+        .map_err(config_error)?;
+    crate::connections_projection::projection::fold_connections_from_manager(&app);
+    Ok(saved)
+}
+
 /// Save (add or update) a folder.
 #[tauri::command]
 pub fn save_folder(

@@ -46,6 +46,7 @@ vi.mock("@/services/storage", () => ({
   removeFolder: vi.fn(() => Promise.resolve()),
   reorderConnections: vi.fn(() => Promise.resolve()),
   moveConnectionToFile: vi.fn(() => Promise.resolve()),
+  saveConnectionToFile: vi.fn((c: unknown) => Promise.resolve(c)),
   reloadExternalConnections: vi.fn(() => Promise.resolve([])),
   getSettings: vi.fn(() =>
     Promise.resolve({
@@ -76,11 +77,13 @@ import {
   removeFolder,
   reorderConnections as persistConnectionOrder,
   moveConnectionToFile as apiMoveConnectionToFile,
+  saveConnectionToFile as apiSaveConnectionToFile,
   reloadExternalConnections as apiReloadExternalConnections,
   loadConnections,
 } from "@/services/storage";
 import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connectionsHarness";
 import { frontendLog } from "@/utils/frontendLog";
+import { currentConnectionsView } from "@/store/connectionsBridge";
 import type { ConnectionFolder, SavedConnection } from "@/types/connection";
 import type { TunnelConfig } from "@/types/tunnel";
 
@@ -422,6 +425,38 @@ describe("connectionTree — moveConnectionToFile guards + error branch", () => 
     expect(toastMock.error).toHaveBeenCalledWith(
       expect.stringContaining("Failed to move prod-gateway: denied-str")
     );
+  });
+});
+
+describe("connectionTree — saveConnectionToFile (#3590)", () => {
+  it("persists the edit and move with one command and resolves to the saved entry", async () => {
+    seedConnectionsRegion({ connections: [makeConnection()] });
+    const edited = makeConnection({ name: "renamed", sourceFile: "team.json" });
+
+    const saved = await useAppStore.getState().saveConnectionToFile(edited, null);
+
+    expect(vi.mocked(apiSaveConnectionToFile)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(apiSaveConnectionToFile)).toHaveBeenCalledWith(edited, null);
+    expect(vi.mocked(persistConnection)).not.toHaveBeenCalled();
+    expect(vi.mocked(apiMoveConnectionToFile)).not.toHaveBeenCalled();
+    expect(saved).toEqual(edited);
+    expect(toastMock.success).toHaveBeenCalledWith("Saved renamed");
+  });
+
+  it("toasts, reverts and resolves to null when the command rejects", async () => {
+    const original = makeConnection();
+    seedConnectionsRegion({ connections: [original] });
+    vi.mocked(apiSaveConnectionToFile).mockRejectedValueOnce(new Error("denied"));
+
+    const saved = await useAppStore
+      .getState()
+      .saveConnectionToFile(makeConnection({ name: "renamed", sourceFile: "team.json" }), null);
+
+    expect(saved).toBeNull();
+    expect(toastMock.error).toHaveBeenCalledWith(
+      expect.stringContaining("Failed to save renamed: denied")
+    );
+    expect(currentConnectionsView().connections).toEqual([original]);
   });
 });
 
