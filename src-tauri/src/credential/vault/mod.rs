@@ -60,6 +60,9 @@ pub const MIN_SUPPORTED_VAULT_FORMAT_VERSION: u32 = 1;
 /// Higher than the master-password minimum because an export file is meant to
 /// be copied off the machine, where it is open to unlimited offline guessing.
 pub const MIN_EXPORT_PASSPHRASE_LEN: usize = 12;
+/// Why a vault export is refused in OS-keychain mode (until #3433 lands).
+pub const KEYCHAIN_EXPORT_BLOCKED_MESSAGE: &str = "Export from the OS keychain requires system \
+     authentication — not yet available (tracked in #3433).";
 /// Upper bound on the size of an import file, so a huge or hostile file cannot
 /// exhaust memory before it is even parsed.
 pub const MAX_VAULT_FILE_BYTES: usize = 16 * 1024 * 1024;
@@ -94,6 +97,10 @@ pub enum VaultError {
     /// The master password given for re-authentication was wrong.
     #[error("{message}")]
     WrongMasterPassword { message: String },
+    /// The current store cannot re-authenticate the user, so the export is
+    /// refused (OS keychain mode until #3433 adds OS-level authentication).
+    #[error("{message}")]
+    ReauthUnavailable { message: String },
     /// Any other failure (store read/write error, serialization, …).
     #[error("{message}")]
     Other { message: String },
@@ -239,7 +246,10 @@ pub struct VaultImportResult {
 /// - master password: the store must be **unlocked** and `master_password`
 ///   must verify against it (re-auth), so an unattended unlocked session cannot
 ///   be used to walk off with every secret.
-/// - OS keychain: the operating system governs access to each item.
+/// - OS keychain: **refused**. termiHub can read its own keychain items without
+///   an OS prompt, so there is no re-authentication step that stops someone at
+///   an unattended, unlocked machine from exporting every secret. Export stays
+///   blocked until OS-level user authentication exists (#3433).
 pub fn authorize_export(
     manager: &CredentialManager,
     master_password: Option<&str>,
@@ -249,7 +259,9 @@ pub fn authorize_export(
             message: "Credential storage is turned off — there are no saved credentials to export."
                 .to_string(),
         }),
-        StorageMode::OsKeychain => Ok(()),
+        StorageMode::OsKeychain => Err(VaultError::ReauthUnavailable {
+            message: KEYCHAIN_EXPORT_BLOCKED_MESSAGE.to_string(),
+        }),
         StorageMode::MasterPassword => manager
             .with_master_password_store(|store| {
                 match store.status() {

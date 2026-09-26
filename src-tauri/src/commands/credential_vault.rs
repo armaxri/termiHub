@@ -37,7 +37,8 @@ fn known_owners(connection_manager: &ConnectionManager) -> Result<HashMap<String
 /// Export every saved credential as an encrypted vault file.
 ///
 /// Requires re-authentication: in master-password mode the store must be
-/// unlocked and `master_password` must verify. `export_passphrase` (entered
+/// unlocked and `master_password` must verify. In OS-keychain mode the export
+/// is refused (`reauthUnavailable`) until OS-level authentication lands (#3433). `export_passphrase` (entered
 /// twice in the UI) seals the file and must differ from the master password.
 /// Returns the file's JSON text.
 ///

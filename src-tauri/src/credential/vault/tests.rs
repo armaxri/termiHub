@@ -534,6 +534,43 @@ fn export_and_import_refused_without_a_store() {
 }
 
 #[test]
+fn export_refused_in_os_keychain_mode_until_os_auth_exists() {
+    // No in-app re-auth exists for the OS keychain, so an unattended unlocked
+    // session must not be able to export every secret (#3433).
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf());
+    let result = authorize_export(&mgr, None);
+    assert_eq!(
+        result,
+        Err(VaultError::ReauthUnavailable {
+            message: KEYCHAIN_EXPORT_BLOCKED_MESSAGE.to_string(),
+        })
+    );
+    assert!(KEYCHAIN_EXPORT_BLOCKED_MESSAGE.contains("#3433"));
+    // Supplying some password does not bypass the refusal.
+    assert!(matches!(
+        authorize_export(&mgr, Some("anything")),
+        Err(VaultError::ReauthUnavailable { .. })
+    ));
+}
+
+#[test]
+fn import_allowed_in_os_keychain_mode() {
+    let dir = tempfile::tempdir().unwrap();
+    let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf());
+    assert!(authorize_import(&mgr).is_ok());
+}
+
+#[test]
+fn reauth_unavailable_serializes_with_stable_kind() {
+    let value = serde_json::to_value(VaultError::ReauthUnavailable {
+        message: "m".into(),
+    })
+    .unwrap();
+    assert_eq!(value["kind"], "reauthUnavailable");
+}
+
+#[test]
 fn import_refused_when_store_locked() {
     let dir = tempfile::tempdir().unwrap();
     let mgr = mp_manager(dir.path());
