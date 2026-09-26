@@ -1,0 +1,23 @@
+.kbd-interactive-prompt__target {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.kbd-interactive-prompt__name {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.kbd-interactive-prompt__instructions {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.kbd-interactive-prompt__fields {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
