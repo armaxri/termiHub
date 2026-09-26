@@ -128,21 +128,30 @@ jobs:
       # (The #1324/#1456 regression — an MLSD FileEntry construction missing the
       # new `writable` field, E0063 — fails here.)
       #
-      # Compile-only (--no-run): these tests need Docker fixtures and run in the
-      # integration lane.
-      - name: Core compiles with each opt-in feature in isolation (guards #868, #1499)
+      # #3318: this runs as `clippy --all-targets -D warnings` (not
+      # `test --no-run`) so a lint that only fires in one feature's isolated build
+      # also fails here — e.g. a helper that is dead code when `telnet` alone is on.
+      # `--all-targets` still compiles the (feature-gated) test targets, so the
+      # #868 guard is preserved; those tests need Docker fixtures and run in the
+      # integration lane. Every opt-in core feature is linted on its own, plus the
+      # bare no-feature build. The feature list is read from core/Cargo.toml via
+      # `cargo metadata`, so a newly added feature is linted without editing this.
+      - name: Core clippy with each opt-in feature in isolation (guards #868, #1499, #3318)
         run: |
-          cargo test -p termihub-core --no-run
-          cargo test -p termihub-core --no-run --features ssh
-          cargo test -p termihub-core --no-run --features telnet
-          cargo test -p termihub-core --no-run --features ftp
-
-      # Clippy the opt-in `ftp` feature in isolation. The --all-features clippy
-      # above lints ftp code with every other feature also on; this lints the
-      # ftp-only feature set so a lint (or compile) break specific to that path
-      # can't merge undetected (#1499).
-      - name: Clippy ftp feature in isolation (guards #1499)
-        run: cargo clippy -p termihub-core --features ftp --all-targets -- -D warnings
+          set -euo pipefail
+          FEATURES=$(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "termihub-core")
+                     | .features | keys[] | select(. != "default")')
+          test -n "$FEATURES"
+          echo "::group::clippy termihub-core (no features)"
+          cargo clippy -p termihub-core --no-default-features --all-targets -- -D warnings
+          echo "::endgroup::"
+          for feature in $FEATURES; do
+            echo "::group::clippy termihub-core --features $feature"
+            cargo clippy -p termihub-core --no-default-features --features "$feature" \
+              --all-targets -- -D warnings
+            echo "::endgroup::"
+          done
 
       # ts-rs codegen staleness gate (audit DUP-030). The TypeScript DTOs in
       # src/types/generated/ are generated from their Rust source of truth by the

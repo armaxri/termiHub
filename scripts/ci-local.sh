@@ -100,13 +100,18 @@ skip_gate() {
 gate_tsc() { pnpm exec tsc --noEmit; }
 gate_markdownlint() { pnpm run markdownlint; }
 
-# rust-quality: core compiles with each opt-in feature in isolation + ftp clippy.
+# rust-quality: clippy termihub-core with each opt-in feature in isolation
+# (#3318). Mirrors the CI step, which reads the list from `cargo metadata`; keep
+# this list in sync with core/Cargo.toml [features].
+CORE_FEATURES="tracing embedded-servers plugin http-monitor serial local-shell telnet ssh
+  docker wsl ftp mock-remote-desktop vnc rdp-sidecar"
 gate_core_features() {
-  cargo test -p termihub-core --no-run &&
-    cargo test -p termihub-core --no-run --features ssh &&
-    cargo test -p termihub-core --no-run --features telnet &&
-    cargo test -p termihub-core --no-run --features ftp &&
-    cargo clippy -p termihub-core --features ftp --all-targets -- -D warnings
+  cargo clippy -p termihub-core --no-default-features --all-targets -- -D warnings || return 1
+  local feature
+  for feature in $CORE_FEATURES; do
+    cargo clippy -p termihub-core --no-default-features --features "$feature" \
+      --all-targets -- -D warnings || return 1
+  done
 }
 
 gate_rust_tests() { cargo test --workspace --all-features; }

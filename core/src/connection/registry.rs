@@ -191,7 +191,9 @@ impl Default for ConnectionTypeRegistry {
         feature = "ssh",
         feature = "telnet",
         feature = "docker",
-        feature = "wsl",
+        // WSL registers only on Windows (see below), so a non-Windows `wsl`-only
+        // build leaves `registry` unused too.
+        all(feature = "wsl", windows),
     )),
     allow(unused_variables)
 )]
