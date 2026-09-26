@@ -14,6 +14,7 @@
 use super::*;
 
 pub(crate) mod builder;
+pub(crate) mod connection_id_changes;
 pub(crate) mod logging;
 
 pub(crate) fn init_platform_and_capture(
@@ -1083,8 +1084,9 @@ pub(crate) fn init_secondary_managers(
             });
         }
     }
-    // Bookmarks follow a saved connection's id when it is renamed or moved (#3569).
-    crate::files::bookmarks_manager::follow_connection_renames(app.handle());
+    // Bookmarks and open tabs follow a saved connection's id when it is renamed
+    // or moved (#3569, #3579).
+    connection_id_changes::follow_connection_id_changes(app.handle());
 
     // Initialize the HTTP monitor check-history manager (#3462). On failure the
     // app still starts; monitors run as before, their checks just aren't kept.
