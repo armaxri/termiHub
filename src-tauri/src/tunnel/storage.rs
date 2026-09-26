@@ -182,6 +182,7 @@ mod tests {
                 }),
                 host: Default::default(),
                 auto_start: false,
+                start_with_connection: false,
                 reconnect_on_disconnect: false,
                 companion_of: None,
             }],

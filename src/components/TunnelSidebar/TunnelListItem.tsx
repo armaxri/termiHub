@@ -18,6 +18,7 @@ import type { SidebarStatusTone } from "@/components/SidebarListItem";
 import { TunnelConfig, TunnelState, TunnelStatus } from "@/types/tunnel";
 import { SavedConnection } from "@/types/connection";
 import { formatBytes, formatRate } from "@/utils/formatters";
+import { tunnelPortMapping } from "@/utils/tunnelSummary";
 import { useByteRate } from "@/hooks/useByteRate";
 import { connectionStateLabel } from "@/utils/statusLabel";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
@@ -68,18 +69,6 @@ interface TunnelListItemProps {
   companionRedundant?: boolean;
   /** Remove the linked companion (redundant-hop cleanup, or the degraded fix). */
   onRemoveCompanion?: () => void;
-}
-
-/** Get the port mapping display string for a tunnel. */
-function getPortMapping(tunnel: TunnelConfig): string {
-  switch (tunnel.tunnelType.type) {
-    case "local":
-      return `${tunnel.tunnelType.config.localHost}:${tunnel.tunnelType.config.localPort} → ${tunnel.tunnelType.config.remoteHost}:${tunnel.tunnelType.config.remotePort}`;
-    case "remote":
-      return `${tunnel.tunnelType.config.remoteHost}:${tunnel.tunnelType.config.remotePort} → ${tunnel.tunnelType.config.localHost}:${tunnel.tunnelType.config.localPort}`;
-    case "dynamic":
-      return `${tunnel.tunnelType.config.localHost}:${tunnel.tunnelType.config.localPort}`;
-  }
 }
 
 /** Map a tunnel status onto the shared status-dot tone. */
@@ -324,7 +313,7 @@ export function TunnelListItem({
       }
       details={
         <>
-          <span>{getPortMapping(tunnel)}</span>
+          <span>{tunnelPortMapping(tunnel)}</span>
           <span>via {sshLabel}</span>
           <span
             className="tunnel-item__host"

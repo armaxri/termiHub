@@ -14,15 +14,13 @@ import {
   isCompanionRedundant,
   orderTunnelRows,
 } from "@/utils/tunnelChain";
+import { tunnelDeleteConfirmMessage } from "@/utils/tunnelSummary";
 import { TunnelListItem } from "./TunnelListItem";
 import { newId } from "@/services/transport/ids";
 import "./TunnelSidebar.css";
 import { errorMessage } from "@/utils/errorMessage";
 
 const DISCONNECTED: TunnelStatus = "disconnected";
-
-/** Tunnel statuses that count as "active" — deleting one tears down a live connection. */
-const ACTIVE_STATUSES: readonly TunnelStatus[] = ["connecting", "connected", "reconnecting"];
 
 export function TunnelSidebar() {
   const tunnels = useAppStore((s) => s.tunnels);
@@ -95,35 +93,11 @@ export function TunnelSidebar() {
 
   const handleDelete = useCallback(
     (tunnelId: string) => {
-      const target = tunnels.find((t) => t.id === tunnelId);
-      const name = target?.name ?? "this tunnel";
-      const status = tunnelStates[tunnelId]?.status;
-      const isActive = !!status && ACTIVE_STATUSES.includes(status);
-      const companion = target ? findCompanion(tunnels, tunnelId) : undefined;
-
-      // Deleting a chained companion directly breaks localhost while leaving the
-      // agent port running — warn explicitly (#2597 edge case).
-      if (target?.companionOf) {
-        requestDelete({
-          id: tunnelId,
-          message: `Deleting "${name}" removes the hop on this computer. localhost will stop reaching the port (it still works on the agent). Continue?`,
-        });
-        return;
-      }
-      // Deleting a chained parent cascades to its companion — name both.
-      if (companion) {
-        requestDelete({
-          id: tunnelId,
-          message: `Deleting "${name}" also removes its linked hop "${companion.name}" on this computer. Continue?`,
-        });
-        return;
-      }
-      // Deleting an active tunnel silently tears down a live connection — confirm first.
-      if (isActive) {
-        requestDelete({
-          id: tunnelId,
-          message: `"${name}" is currently active. Deleting it will stop the tunnel. Continue?`,
-        });
+      // A chained companion/parent or an active tunnel needs a confirm first
+      // (#2597, UX-021); the shared helper derives the per-case message.
+      const message = tunnelDeleteConfirmMessage(tunnels, tunnelStates, tunnelId);
+      if (message) {
+        requestDelete({ id: tunnelId, message });
         return;
       }
       void deleteTunnel(tunnelId);

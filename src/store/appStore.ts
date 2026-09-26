@@ -1214,7 +1214,12 @@ export interface AppState
 
   // SSH Tunnels — tunnel data + lifecycle live in TunnelSlice (#2077); the
   // tab-opening action stays here as it belongs to the panel/tab domain.
-  openTunnelEditorTab: (tunnelId: string | null) => void;
+  /**
+   * Open (or focus) the tunnel-editor tab for `tunnelId` (`null` = new tunnel).
+   * `options.sshConnectionId` pre-selects the SSH connection of a NEW tunnel —
+   * used by the connection editor's "Port Forwarding" section (PROD-023).
+   */
+  openTunnelEditorTab: (tunnelId: string | null, options?: { sshConnectionId?: string }) => void;
 
   // Embedded Servers — data + lifecycle live in EmbeddedServersSlice (#2113).
 
@@ -3775,6 +3780,10 @@ export const useAppStore = create<AppState>((set, get, store) => {
               void get().runWorkflow(workflowId, { targetTabId, triggeredBy: "on-connect" });
             },
           });
+          // Per-connection port forwards (PROD-023): bring up the tunnels bound
+          // to this saved connection with "start with connection". The backend
+          // skips any already running, so a second tab or a reconnect is benign.
+          void get().startConnectionTunnels(connectedTab.connectionId);
         }
       }
     },
@@ -6073,14 +6082,20 @@ export const useAppStore = create<AppState>((set, get, store) => {
       }
     },
 
-    openTunnelEditorTab: (tunnelId) =>
+    openTunnelEditorTab: (tunnelId, options) =>
       setAndReseed((state) => {
         const allLeaves = getAllLeaves(state.rootPanel);
+        // A new tunnel pre-bound to a connection (PROD-023) is only the "same"
+        // editor as an open new-tunnel tab pre-bound to that same connection.
+        const prefillConnectionId = tunnelId === null ? options?.sshConnectionId : undefined;
 
         // Look for an existing tunnel-editor tab for this tunnel
         for (const leaf of allLeaves) {
           const existing = leaf.tabs.find(
-            (t) => t.contentType === "tunnel-editor" && t.tunnelEditorMeta?.tunnelId === tunnelId
+            (t) =>
+              t.contentType === "tunnel-editor" &&
+              t.tunnelEditorMeta?.tunnelId === tunnelId &&
+              t.tunnelEditorMeta?.sshConnectionId === prefillConnectionId
           );
           if (existing) {
             const rootPanel = updateLeaf(state.rootPanel, leaf.id, (l) => ({
@@ -6105,7 +6120,9 @@ export const useAppStore = create<AppState>((set, get, store) => {
         }
 
         const dummyConfig: ConnectionConfig = { type: "local", config: { shell: "zsh" } };
-        const meta: TunnelEditorMeta = { tunnelId };
+        const meta: TunnelEditorMeta = prefillConnectionId
+          ? { tunnelId, sshConnectionId: prefillConnectionId }
+          : { tunnelId };
         const newTab = createTab(title, "local", dummyConfig, targetPanelId, "tunnel-editor");
         newTab.tunnelEditorMeta = meta;
 
