@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: src-tauri/src/workspace
 evidence:
   - src-tauri/src/workspace/config.rs:97
-status: open
+status: fixed
+resolution: "#3518 — per-workspace overrides (theme, font, default dir, env vars) global<workspace<connection; live apply; override indicator/reset; persistence of active workspace #3517"
 ---
 
 ## What
