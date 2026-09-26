@@ -87,9 +87,13 @@ export function JumpHostEntry({
 }: JumpHostEntryProps) {
   const tid = (field: string) => `jump-host-${field}-${index}`;
   const mode: "saved" | "inline" = hop.connectionId ? "saved" : "inline";
-  const noSavedAvailable = savedConnections.length === 0;
   // A referenced connection that is no longer in the list (deleted/renamed).
   const refMissing = mode === "saved" && !savedConnections.some((o) => o.id === hop.connectionId);
+  // A referenced id held by more than one connection file cannot be resolved (#3602).
+  const refAmbiguous =
+    mode === "saved" && savedConnections.some((o) => o.id === hop.connectionId && o.ambiguous);
+  const firstPickable = savedConnections.find((o) => !o.ambiguous);
+  const noSavedAvailable = firstPickable === undefined;
 
   // The connect timeout applies to both modes; the SSH-sourced fields are the
   // inline configuration.
@@ -100,7 +104,7 @@ export function JumpHostEntry({
     if (mode === "saved") return;
     // Default to the first available connection (the dropdown's natural value)
     // and clear inline fields so a reference doesn't carry stale config.
-    onChange({ connectionId: savedConnections[0]?.id ?? "", host: "", username: "" });
+    onChange({ connectionId: firstPickable?.id ?? "", host: "", username: "" });
   };
 
   const selectInline = () => {
@@ -164,11 +168,21 @@ export function JumpHostEntry({
               <SelectItem value={hop.connectionId ?? ""}>{hop.connectionId} (not found)</SelectItem>
             )}
             {savedConnections.map((opt) => (
-              <SelectItem key={opt.id} value={opt.id}>
-                {opt.label}
+              <SelectItem key={opt.id} value={opt.id} disabled={opt.ambiguous}>
+                {opt.ambiguous ? `${opt.label} (in several connection files)` : opt.label}
               </SelectItem>
             ))}
           </Select>
+          {refAmbiguous && (
+            <p
+              className="settings-form__hint settings-form__hint--error"
+              role="alert"
+              data-testid={tid("ambiguous")}
+            >
+              A connection with this id exists in more than one connection file, so it cannot be
+              used as a jump host. Rename or move one of them, or configure the hop inline.
+            </p>
+          )}
         </div>
       ) : (
         inlineFields

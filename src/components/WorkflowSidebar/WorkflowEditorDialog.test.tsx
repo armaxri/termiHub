@@ -6,6 +6,8 @@ import { withTooltip } from "@/test/tooltip";
 import type { Workflow } from "@/types/workflow";
 import type { Macro } from "@/types/macro";
 import type { SavedConnection } from "@/types/connection";
+import { flushAsync } from "@/test/flushAsync";
+import { installConnectionIdChangesHarness } from "@/test/connectionIdChangesHarness";
 
 vi.mock("@/themes", () => ({
   applyTheme: vi.fn(),
@@ -354,5 +356,31 @@ describe("WorkflowEditorDialog", () => {
     act(() => (query("workflow-editor-step-delete-0") as HTMLButtonElement).click());
     expect(query("workflow-editor-no-steps")).not.toBeNull();
     expect((query("workflow-editor-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("saves an on-connect trigger with a renamed connection's new id (#3603)", async () => {
+    const events = installConnectionIdChangesHarness();
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render({
+      onSave,
+      workflow: {
+        ...workflow,
+        triggers: [{ kind: "manual" }, { kind: "on-connect", connectionIds: ["conn-1", "x"] }],
+      },
+    });
+    await flushAsync();
+
+    events.emit([
+      { oldId: "conn-1", newId: "Prod/conn-1" },
+      { oldId: "conn-2", newId: "Prod/conn-2" },
+    ]);
+    act(() => (query("workflow-editor-save") as HTMLButtonElement).click());
+    await flush();
+
+    const result = onSave.mock.calls[0][0] as WorkflowEditorResult;
+    expect(result.triggers).toEqual([
+      { kind: "manual" },
+      { kind: "on-connect", connectionIds: ["Prod/conn-1", "x"] },
+    ]);
   });
 });

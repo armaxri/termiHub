@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 
+use crate::connection::id_changes::ConnectionIdRemap;
 use crate::run_location::RunLocation;
 
 // `LocalForwardConfig`, `RemoteForwardConfig`, `DynamicForwardConfig`, and
@@ -192,6 +193,14 @@ pub struct TunnelStore {
 }
 
 impl TunnelStore {
+    /// Re-point every tunnel's SSH connection (`sshConnectionId`) along `remap`
+    /// (#3596). Every tunnel's id is a saved desktop connection's — an
+    /// agent-hosted tunnel's too: the desktop resolves it and hands the agent an
+    /// inline config. Returns whether any tunnel changed.
+    pub fn follow_connection_id_changes(&mut self, remap: &ConnectionIdRemap) -> bool {
+        remap.apply_all(self.tunnels.iter_mut().map(|t| &mut t.ssh_connection_id))
+    }
+
     /// The schema version this build reads and writes. The single source of
     /// truth for the store's version: the default document and the unified
     /// backup (PROD-068) both take it from here, so a bump is picked up
@@ -523,5 +532,41 @@ mod tests {
         let tunnel_type = json.get("tunnelType").unwrap();
         assert_eq!(tunnel_type.get("type").unwrap(), "local");
         assert!(tunnel_type.get("config").is_some());
+    }
+
+    #[test]
+    fn tunnels_follow_connection_id_changes_simultaneously() {
+        let tunnel = |id: &str, conn: &str| TunnelConfig {
+            id: id.to_string(),
+            name: id.to_string(),
+            ssh_connection_id: conn.to_string(),
+            tunnel_type: TunnelType::Dynamic(DynamicForwardConfig {
+                local_host: "127.0.0.1".to_string(),
+                local_port: 1080,
+            }),
+            host: RunLocation::ThisComputer,
+            auto_start: false,
+            start_with_connection: false,
+            reconnect_on_disconnect: false,
+            companion_of: None,
+        };
+        let mut store = TunnelStore {
+            tunnels: vec![tunnel("t1", "Work/a"), tunnel("t2", "b"), tunnel("t3", "x")],
+            ..TunnelStore::default()
+        };
+        let changes = [
+            crate::connection::id_changes::ConnectionIdChange::new("Work/a", "b"),
+            crate::connection::id_changes::ConnectionIdChange::new("b", "c"),
+        ];
+
+        assert!(store.follow_connection_id_changes(&ConnectionIdRemap::new(&changes)));
+
+        let ids: Vec<&str> = store
+            .tunnels
+            .iter()
+            .map(|t| t.ssh_connection_id.as_str())
+            .collect();
+        assert_eq!(ids, ["b", "c", "x"]);
+        assert!(!store.follow_connection_id_changes(&ConnectionIdRemap::new(&[])));
     }
 }

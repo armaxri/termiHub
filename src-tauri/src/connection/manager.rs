@@ -10,8 +10,9 @@ use super::config::{
     SavedRemoteAgent,
 };
 use super::credential_migration::follow_id_changes;
-use super::id_changes::diff_connection_ids;
+use super::id_changes::{diff_connection_ids, ConnectionIdRemap};
 pub use super::id_changes::{ConnectionIdChange, ConnectionIdChangeListener};
+use super::jump_host_resolver::{follow_jump_host_refs_in, JumpHostScope, UnavailableFile};
 use super::placement::{place_connection, PlaceMode};
 use super::plugin_type_ids::migrate_connections;
 use super::recovery::RecoveryWarning;
@@ -202,6 +203,102 @@ impl ConnectionManager {
         }
     }
 
+    /// Make the saved-connection references this manager owns outside the file
+    /// that produced `changes` follow them (#3596): jump-host references in the
+    /// other connection files (the main store and every enabled external file)
+    /// and the broadcast groups and shell-integration entries in the settings.
+    /// The origin file's own jump-host references were already rewritten in the
+    /// write that produced `changes`.
+    ///
+    /// Each file is rewritten (atomically) only when it references a changed id.
+    /// A failure is logged and never fails the operation: the rename itself is
+    /// already persisted, the remaining files still follow, and a reference left
+    /// behind dangles exactly as it did before #3596.
+    fn follow_references(&self, changes: &[ConnectionIdChange], origin: ChangeOrigin<'_>) {
+        let changes = self.changes_owned_by(changes, origin);
+        let remap = ConnectionIdRemap::new(&changes);
+        if remap.is_empty() {
+            return;
+        }
+        if origin != ChangeOrigin::MainStore {
+            let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
+            self.sync_from_disk(&mut store);
+            if follow_jump_host_refs_in(&mut store.connections, &remap) {
+                if let Err(e) = self.storage.save_flat(&store) {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to re-point jump-host references in the main store"
+                    );
+                }
+            }
+        }
+        let settings = self.get_settings();
+        for file in settings
+            .external_connection_files
+            .iter()
+            .filter(|f| f.enabled)
+        {
+            if origin == ChangeOrigin::ExternalFile(&file.path) {
+                continue;
+            }
+            if let Err(e) = follow_jump_host_refs_in_external_file(&file.path, &remap) {
+                tracing::warn!(
+                    file = %file.path,
+                    error = %e,
+                    "Failed to re-point jump-host references in external connection file"
+                );
+            }
+        }
+        let mut updated = settings;
+        if updated.follow_connection_id_changes(&remap) {
+            if let Err(e) = self.save_settings(updated) {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to re-point broadcast groups / shell entries to changed connection ids"
+                );
+            }
+        }
+    }
+
+    /// The `changes` whose old id no connection outside `origin` still holds
+    /// (#3602). Ids are not file-scoped, so the main store and an external file
+    /// can both hold `gw`; references to it were ambiguous (and refused at
+    /// connect). When one holder is renamed, the other files' references must
+    /// not be dragged along to it — they stay on the old id, which now names
+    /// the remaining holder unambiguously. The origin file's own references were
+    /// already rewritten in its write, which is where a same-file reference
+    /// most plausibly meant the renamed connection.
+    ///
+    /// If the unified view cannot be loaded, every change is kept (the
+    /// behaviour before #3602).
+    fn changes_owned_by(
+        &self,
+        changes: &[ConnectionIdChange],
+        origin: ChangeOrigin<'_>,
+    ) -> Vec<ConnectionIdChange> {
+        let view = match self.load_unified_view() {
+            Ok(view) => view,
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to load connections to scope id changes");
+                return changes.to_vec();
+            }
+        };
+        let held_elsewhere = |id: &str| {
+            view.connections.iter().any(|c| {
+                c.id == id
+                    && match (origin, c.source_file.as_deref()) {
+                        (ChangeOrigin::MainStore, source) => source.is_some(),
+                        (ChangeOrigin::ExternalFile(path), source) => source != Some(path),
+                    }
+            })
+        };
+        changes
+            .iter()
+            .filter(|c| !held_elsewhere(&c.old_id))
+            .cloned()
+            .collect()
+    }
+
     /// Carry stored secrets along `changes`, which are already persisted in the
     /// tree `connections` / `folders` (#3578). A failure leaves every secret
     /// under its old key, so it is logged rather than failing the operation.
@@ -257,6 +354,13 @@ impl ConnectionManager {
     /// has no jump-host chain or no references. `root_id` is the connection being
     /// connected, when known, so a hop that references its own connection is
     /// rejected as circular.
+    ///
+    /// References resolve against the [unified view](Self::load_unified_view) —
+    /// the main store plus every enabled external file, the same set the
+    /// editor's jump-host picker offers (#3602). An id held by several files is
+    /// refused as ambiguous; see [`JumpHostScope`] for the rule.
+    ///
+    /// [`JumpHostScope`]: super::jump_host_resolver::JumpHostScope
     pub fn resolve_jump_host_refs(
         &self,
         settings: &mut serde_json::Value,
@@ -267,13 +371,43 @@ impl ConnectionManager {
         if !super::jump_host_resolver::chain_has_reference(settings) {
             return Ok(());
         }
-        let connections = self.get_all()?.connections;
+        let view = self.load_unified_view()?;
+        let mut unavailable: Vec<UnavailableFile> = view
+            .external_errors
+            .into_iter()
+            .map(|(path, error)| UnavailableFile::FailedToLoad { path, error })
+            .collect();
+        unavailable.extend(self.disabled_external_files());
+        let scope = JumpHostScope::new(&view.connections).with_unavailable(unavailable);
         super::jump_host_resolver::resolve_proxy_jump_refs(
             settings,
-            &connections,
+            &scope,
             &*self.credential_store,
             root_id,
         )
+    }
+
+    /// Every configured-but-disabled external file with the connection ids it
+    /// holds, read without migrating or rewriting it. A file that is missing or
+    /// unreadable contributes no ids — it only feeds an error message.
+    fn disabled_external_files(&self) -> Vec<UnavailableFile> {
+        self.get_settings()
+            .external_connection_files
+            .into_iter()
+            .filter(|f| !f.enabled)
+            .map(|f| {
+                let ids = read_external_store(&f.path)
+                    .map(|store| {
+                        flatten_tree(&store.children, None)
+                            .0
+                            .into_iter()
+                            .map(|c| c.id)
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                UnavailableFile::Disabled { path: f.path, ids }
+            })
+            .collect()
     }
 
     /// Reload the in-memory store from disk before a mutation.
@@ -440,6 +574,8 @@ impl ConnectionManager {
             &[],
         );
         let persisted_id = connections[placement.index].id.clone();
+        // Jump-host references in this file follow in the same write (#3596).
+        follow_jump_host_refs_in(connections, &ConnectionIdRemap::new(&placement.changes));
         self.storage
             .save_flat(&store)
             .context("Failed to persist connection")?;
@@ -450,6 +586,7 @@ impl ConnectionManager {
             &HashSet::new(),
         );
         drop(store);
+        self.follow_references(&placement.changes, ChangeOrigin::MainStore);
         self.notify_id_changes(&placement.changes);
         Ok(persisted_id)
     }
@@ -523,6 +660,8 @@ impl ConnectionManager {
         } = &mut *store;
         deduplicate_sibling_names(connections, folders);
         let id_changes = diff_connection_ids(&ids_before, connections, folders);
+        // Jump-host references in this file follow in the same write (#3596).
+        follow_jump_host_refs_in(connections, &ConnectionIdRemap::new(&id_changes));
 
         self.storage
             .save_flat(&store)
@@ -534,6 +673,7 @@ impl ConnectionManager {
             &HashSet::new(),
         );
         drop(store);
+        self.follow_references(&id_changes, ChangeOrigin::MainStore);
         self.notify_id_changes(&id_changes);
         Ok(())
     }
@@ -602,6 +742,8 @@ impl ConnectionManager {
             deduplicate_sibling_names(connections, folders);
         }
         let id_changes = diff_connection_ids(&ids_before, &store.connections, &store.folders);
+        // Jump-host references in this file follow in the same write (#3596).
+        follow_jump_host_refs_in(&mut store.connections, &ConnectionIdRemap::new(&id_changes));
 
         self.storage
             .save_flat(&store)
@@ -613,6 +755,7 @@ impl ConnectionManager {
             &HashSet::new(),
         );
         drop(store);
+        self.follow_references(&id_changes, ChangeOrigin::MainStore);
         self.notify_id_changes(&id_changes);
         Ok(())
     }
@@ -823,6 +966,7 @@ impl ConnectionManager {
                     &written.folders,
                     &self.main_ids(),
                 );
+                self.follow_references(&written.changes, ChangeOrigin::ExternalFile(&file_path));
                 self.notify_id_changes(&written.changes);
                 Ok(conn_id)
             }
@@ -1107,6 +1251,11 @@ impl ConnectionManager {
             &written.folders,
             &in_use,
         );
+        let origin = match &target_source {
+            None => ChangeOrigin::MainStore,
+            Some(file_path) => ChangeOrigin::ExternalFile(file_path),
+        };
+        self.follow_references(&written.changes, origin);
         self.notify_id_changes(&written.changes);
 
         let mut moved = written.connections[written.index].clone();
@@ -1148,6 +1297,7 @@ impl ConnectionManager {
             ..
         } = &mut *store;
         let placement = place_connection(connections, folders, connection, PlaceMode::Append, &[]);
+        follow_jump_host_refs_in(connections, &ConnectionIdRemap::new(&placement.changes));
         self.storage
             .save_flat(&store)
             .context("Failed to persist addition to main store")?;
@@ -1169,6 +1319,31 @@ impl ConnectionManager {
             .context("Failed to persist removal from main store")?;
         Ok(connection_ids(&store.connections))
     }
+}
+
+/// Which connection file an id-change batch was written to (#3596).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ChangeOrigin<'a> {
+    MainStore,
+    ExternalFile(&'a str),
+}
+
+/// Re-point the jump-host references of an external connection file along
+/// `remap`, writing it (atomically) only when a reference changed.
+fn follow_jump_host_refs_in_external_file(
+    file_path: &str,
+    remap: &ConnectionIdRemap,
+) -> Result<()> {
+    if !std::path::Path::new(file_path).exists() {
+        return Ok(());
+    }
+    let mut ext_store = read_external_store(file_path)?;
+    let (mut conns, folders) = flatten_tree(&ext_store.children, None);
+    if follow_jump_host_refs_in(&mut conns, remap) {
+        ext_store.children = build_tree(&conns, &folders);
+        write_external_store(file_path, &ext_store)?;
+    }
+    Ok(())
 }
 
 /// One file's tree after a connection was placed into it and written.
@@ -1400,6 +1575,8 @@ fn place_in_external_file(
     let mut ext_store = read_external_store(file_path)?;
     let (mut conns, mut folders) = flatten_tree(&ext_store.children, None);
     let placement = place_connection(&mut conns, &mut folders, connection, mode, folder_source);
+    // Jump-host references in this file follow in the same write (#3596).
+    follow_jump_host_refs_in(&mut conns, &ConnectionIdRemap::new(&placement.changes));
     ext_store.children = build_tree(&conns, &folders);
     write_external_store(file_path, &ext_store)?;
     Ok(WrittenTree {
@@ -2943,5 +3120,13 @@ mod id_change_tests;
 mod move_credential_tests;
 
 #[cfg(test)]
+#[path = "manager_reference_tests.rs"]
+mod reference_tests;
+
+#[cfg(test)]
 #[path = "manager_edit_move_tests.rs"]
 mod edit_move_tests;
+
+#[cfg(test)]
+#[path = "manager_jump_host_scope_tests.rs"]
+mod jump_host_scope_tests;

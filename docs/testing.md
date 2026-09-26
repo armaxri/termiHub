@@ -1356,7 +1356,7 @@ connection-editor UI, which the integration lane does not drive:
 The RDP backend decodes through the separately-built `termihub-rdp-helper`
 sidecar (workspace-excluded crate; see #1747 / #1725). The wire path is covered by
 unit tests (`termihub-core` `backends::rdp_sidecar` + the sidecar crate) and, since
-#3609, by the **automated live suite** `core/tests/rdp.rs` against the `rdp-server`
+issue #3609, by the **automated live suite** `core/tests/rdp.rs` against the `rdp-server`
 fixture (xrdp + a FreeRDP NLA server; see [Test Suites](#test-suites)), which runs
 on the nightly Docker-fixture lane. It now covers what the steps below used to check
 by hand: logon and the first painted frame through the real sidecar, fixed
@@ -3670,6 +3670,26 @@ changed since a checkpoint). Prepare a file above the 8 MiB threshold, e.g.
    "Pasted …" toast.
 5. **WSL (Windows only):** open a WSL tab, and repeat 1–3 copying between a
    Windows folder and the distribution's home folder in the sidebar.
+
+### Queued local folder copies (#3605)
+
+Verifies that a large local folder copy queues its big files one row each.
+Automated coverage: `core/src/files/transfer/local_folder_tests.rs` (tree walk,
+limits, symlinks, merge layout, group cancel, end-to-end temp tree) and
+`src-tauri/src/files/local_copy.rs`. Prepare a folder:
+`mkdir -p /tmp/tree/sub && dd if=/dev/urandom of=/tmp/tree/a.bin bs=1m count=256 && dd if=/dev/urandom of=/tmp/tree/sub/b.bin bs=1m count=256 && echo hi > /tmp/tree/sub/small.txt && ln -s sub /tmp/tree/link`.
+
+1. **Rows per large file:** copy `tree` in the local file browser and paste it
+   into another folder. Two Transfer Queue rows (`a.bin`, `b.bin`) appear with
+   progress; `sub/small.txt` and the `link` symlink are already in place.
+2. **Pause / resume / retry** work per row as for a single queued file.
+3. **Cancel the folder:** paste again into a fresh folder and cancel one row —
+   the other row is cancelled too, and no `a.bin` / `b.bin` (nor any
+   `.termihub-part` file) is left at the destination.
+4. **Merge:** paste `tree` into a folder that already has a `tree/` with an
+   unrelated file — the unrelated file stays, same-named files are replaced.
+5. **Into itself:** paste `tree` into `tree/sub` — an error toast says a folder
+   cannot be copied into itself and nothing is written.
 
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 

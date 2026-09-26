@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::settings::WorkspaceSettings;
+use crate::connection::id_changes::ConnectionIdRemap;
 
 /// Reference to a remote agent connection definition.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -47,6 +48,35 @@ pub enum WorkspaceLayoutNode {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sizes: Option<Vec<f64>>,
     },
+}
+
+impl WorkspaceLayoutNode {
+    /// Re-point every tab's saved-connection reference (`connectionRef`) along
+    /// `remap` (#3596). Returns whether any reference changed.
+    pub fn follow_connection_id_changes(&mut self, remap: &ConnectionIdRemap) -> bool {
+        match self {
+            WorkspaceLayoutNode::Leaf { tabs } => remap.apply_all(
+                tabs.iter_mut()
+                    .filter_map(|tab| tab.connection_ref.as_mut()),
+            ),
+            WorkspaceLayoutNode::Split { children, .. } => {
+                children.iter_mut().fold(false, |changed, child| {
+                    child.follow_connection_id_changes(remap) | changed
+                })
+            }
+        }
+    }
+}
+
+/// [`WorkspaceLayoutNode::follow_connection_id_changes`] over every tab group's
+/// layout; returns whether any reference changed.
+pub fn follow_connection_id_changes_in_groups(
+    groups: &mut [WorkspaceTabGroupDef],
+    remap: &ConnectionIdRemap,
+) -> bool {
+    groups.iter_mut().fold(false, |changed, group| {
+        group.layout.follow_connection_id_changes(remap) | changed
+    })
 }
 
 /// Split direction for layout containers.

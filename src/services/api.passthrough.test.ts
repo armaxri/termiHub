@@ -743,7 +743,7 @@ describe("api pass-through wrappers (#2975)", () => {
   // ── Local filesystem ──────────────────────────────────────────────────────
   describe("local filesystem", () => {
     it("localCopyStart forwards src/dest and reports a direct copy as untracked", async () => {
-      mockedInvoke.mockResolvedValue(null);
+      mockedInvoke.mockResolvedValue({ queued: [], skipped: [] });
 
       await expect(localCopyStart("/a", "/b")).resolves.toBe(false);
 

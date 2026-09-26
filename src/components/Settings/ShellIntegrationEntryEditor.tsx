@@ -3,6 +3,8 @@ import type { SavedConnection, ShellEntry, ShellEntryVisibility } from "@/types/
 import { Button, Field, Input, Modal, Select, Toggle } from "@/components/ui";
 import type { SelectOption } from "@/components/ui";
 import { getPlatform } from "@/utils/platform";
+import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import type { ConnectionIdRemap } from "@/utils/connectionIdChanges";
 
 /** Sentinel Select value for the "show the session picker" (no fixed connection) choice. */
 const PICKER_VALUE = "__picker__";
@@ -20,6 +22,13 @@ const DEFAULT_MOUNT_TARGET = "/workspace";
 function emptyToUndefined(value: string): string | undefined {
   const trimmed = value.trim();
   return trimmed.length === 0 ? undefined : trimmed;
+}
+
+/** Re-point the entry's connection along a batch of id changes (#3603). */
+function remapShellEntryConnection(entry: ShellEntry, remap: ConnectionIdRemap): ShellEntry {
+  if (!entry.connectionId) return entry;
+  const connectionId = remap(entry.connectionId);
+  return connectionId === entry.connectionId ? entry : { ...entry, connectionId };
 }
 
 interface ShellIntegrationEntryEditorProps {
@@ -56,6 +65,10 @@ export function ShellIntegrationEntryEditor({
   useEffect(() => {
     if (open) setDraft(entry);
   }, [open, entry]);
+
+  // The entry's connection renamed while the dialog is open: re-point the draft,
+  // or saving would write the old id back over the backend's follow (#3603).
+  useFollowConnectionIdChanges(setDraft, remapShellEntryConnection, open);
 
   const connectionOptions = useMemo<SelectOption[]>(
     () => [

@@ -3,6 +3,7 @@ pub mod bookmarks_manager;
 pub mod bookmarks_storage;
 pub mod drag_out;
 pub mod local;
+pub mod local_copy;
 pub mod sftp;
 pub mod transfer;
 pub mod watcher;

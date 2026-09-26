@@ -195,6 +195,31 @@ describe("sshJumpHostOptions", () => {
     );
     expect(opts.map((o) => o.id)).toEqual(["gw"]);
   });
+
+  it("offers external-file connections like main-store ones (#3602)", () => {
+    const ext = { ...sshConn("ext-gw", "ext-gw", null), sourceFile: "/shared.json" };
+    const opts = sshJumpHostOptions([sshConn("gw", "gw", null), ext], []);
+    expect(opts).toEqual([
+      { id: "ext-gw", label: "ext-gw" },
+      { id: "gw", label: "gw" },
+    ]);
+  });
+
+  it("collapses an id held by several files into one ambiguous option (#3602)", () => {
+    const opts = sshJumpHostOptions(
+      [
+        sshConn("gw", "gw", null),
+        { ...sshConn("gw", "gw", null), sourceFile: "/a.json" },
+        { ...sshConn("gw", "gw", null), sourceFile: "/b.json" },
+        sshConn("other", "other", null),
+      ],
+      []
+    );
+    expect(opts).toEqual([
+      { id: "gw", label: "gw", ambiguous: true },
+      { id: "other", label: "other" },
+    ]);
+  });
 });
 
 describe("findJumpHostDependents (#941)", () => {
