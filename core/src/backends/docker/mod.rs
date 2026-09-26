@@ -5,6 +5,7 @@
 //! Docker API access instead of shelling out to the Docker CLI.
 
 mod file_browser;
+mod list;
 mod monitoring;
 mod process;
 mod runtime;
@@ -34,6 +35,8 @@ use crate::monitoring::{
     ExecMonitoringProvider, ExecProcessManager, MonitoringProvider, ProcessManager,
 };
 use crate::session::docker::validate_docker_config;
+
+pub use self::list::{list_containers, summarize_containers, ContainerInfo};
 
 use self::file_browser::DockerFileBrowser;
 use self::monitoring::docker_monitoring_provider;
@@ -655,11 +658,13 @@ impl ConnectionType for Docker {
                             label: "Existing Container".to_string(),
                             description: Some(
                                 "Name or ID of the already-running container to open a \
-                                 shell in"
+                                 shell in — pick one of the listed containers or type it"
                                     .to_string(),
                             ),
                             help_text: None,
-                            field_type: FieldType::Text,
+                            // Picker populated from the runtime's container list
+                            // (PROD-017); the value stays a plain name/ID string.
+                            field_type: FieldType::DockerContainer,
                             required: true,
                             default: None,
                             placeholder: Some("my-running-container".to_string()),
@@ -1483,7 +1488,8 @@ mod tests {
             .iter()
             .find(|f| f.key == "existingContainer")
             .expect("existingContainer field present");
-        assert!(matches!(field.field_type, FieldType::Text));
+        // A container picker (PROD-017), still stored as a plain string.
+        assert!(matches!(field.field_type, FieldType::DockerContainer));
         assert!(field.required);
         let cond = field
             .visible_when

@@ -60,6 +60,7 @@ function fieldToZod(field: SettingsField): z.ZodTypeAny {
     case "password":
     case "filePath":
     case "serialPort":
+    case "dockerContainer":
       return field.required
         ? z.string().min(1, `${field.label} is required`)
         : z.string().nullish();

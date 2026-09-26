@@ -86,7 +86,10 @@ fn validate_field_type(
     errors: &mut Vec<ValidationError>,
 ) {
     match field_type {
-        FieldType::Text | FieldType::Password | FieldType::SerialPort => {
+        FieldType::Text
+        | FieldType::Password
+        | FieldType::SerialPort
+        | FieldType::DockerContainer => {
             if !value.is_string() {
                 errors.push(ValidationError {
                     field: key.to_string(),

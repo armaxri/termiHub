@@ -1,9 +1,10 @@
 import { useEffect, useId, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { HelpCircle, Info, Plus, TriangleAlert, X } from "lucide-react";
+import { HelpCircle, Info, Plus, RefreshCw, TriangleAlert, X } from "lucide-react";
 import type { SettingsField, FieldType } from "@/types/schema";
 import { KeyPathInput } from "@/components/Settings/KeyPathInput";
-import { listSerialPorts } from "@/services/api";
+import { listDockerContainers, listSerialPorts } from "@/services/api";
+import type { DockerContainerInfo } from "@/services/api";
 import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Input, Modal, NumberInput, Select, Toggle } from "@/components/ui";
 import { fieldPlatformLimitation } from "@/utils/platformFieldSupport";
@@ -29,6 +30,14 @@ interface DynamicFieldProps {
    */
   availablePorts?: string[];
   /**
+   * Context for `dockerContainer` fields (PROD-017): the connection's selected
+   * container runtime (`auto` / `docker` / `podman`) the picker lists from,
+   * and whether local listing is possible at all. Listing is disabled for
+   * agent-hosted connections — the local runtime is not the agent's — so the
+   * field falls back to a typed name/ID. Defaults to enabled with `auto`.
+   */
+  containerContext?: ContainerContext;
+  /**
    * Overrides the base `data-testid` for this field's control and its derived
    * ids (error, browse, list items, …). Defaults to `field-<key>`, so the same
    * schema field renders with a stable, unique test id even when the field is
@@ -53,6 +62,7 @@ export function DynamicField({
   error,
   credentialSaved,
   availablePorts,
+  containerContext,
   testId,
 }: DynamicFieldProps) {
   const reactId = useId();
@@ -99,7 +109,8 @@ export function DynamicField({
         testIdBase,
         availablePorts,
         onBlur,
-        platformNote != null
+        platformNote != null,
+        containerContext
       )}
       {error && (
         <p
@@ -148,7 +159,8 @@ function renderFieldInput(
   onBlur?: () => void,
   /** Force-disable the control because its feature is unavailable on this
    * platform (audit PROD-019). Currently only honoured by boolean toggles. */
-  platformDisabled = false
+  platformDisabled = false,
+  containerContext?: ContainerContext
 ): React.ReactNode {
   switch (fieldType.type) {
     case "text":
@@ -222,6 +234,17 @@ function renderFieldInput(
           value={value}
           onChange={onChange}
           availablePorts={availablePorts}
+          a11y={a11y}
+          testIdBase={testIdBase}
+        />
+      );
+    case "dockerContainer":
+      return (
+        <DockerContainerField
+          field={field}
+          value={value}
+          onChange={onChange}
+          context={containerContext}
           a11y={a11y}
           testIdBase={testIdBase}
         />
@@ -602,6 +625,181 @@ function SerialPortField({
         <p className="settings-form__hint" data-testid={`${testIdBase}-disconnected`}>
           {currentValue} (not connected)
         </p>
+      )}
+    </>
+  );
+}
+
+/** See {@link DynamicFieldProps.containerContext}. */
+export interface ContainerContext {
+  /** Selected container runtime setting (`auto` / `docker` / `podman`). */
+  runtime?: string;
+  /** False when the containers cannot be listed locally (agent-hosted). */
+  listingEnabled: boolean;
+}
+
+type ContainerListState =
+  | { status: "loading" }
+  | { status: "loaded"; containers: DockerContainerInfo[] }
+  | { status: "error"; message: string };
+
+/** Case-insensitive match of the typed text against a container's name, image or ID prefix. */
+function containerMatches(c: DockerContainerInfo, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q === "") return true;
+  return (
+    c.name.toLowerCase().includes(q) ||
+    c.image.toLowerCase().includes(q) ||
+    c.id.toLowerCase().startsWith(q)
+  );
+}
+
+/**
+ * Container picker for the Docker connection editor (PROD-017).
+ *
+ * The text input stays the source of truth — the user can always type a
+ * container name or ID — and doubles as the search box for the list of the
+ * runtime's containers below it (running first, stopped ones marked). A
+ * refresh button re-queries; an unreachable runtime shows its error and leaves
+ * the typed fallback working.
+ */
+function DockerContainerField({
+  field,
+  value,
+  onChange,
+  context,
+  a11y,
+  testIdBase,
+}: FieldProps & { context?: ContainerContext; a11y: FieldA11y; testIdBase: string }) {
+  const listingEnabled = context?.listingEnabled ?? true;
+  const runtime = context?.runtime;
+  const currentValue = (value as string) ?? "";
+  const [list, setList] = useState<ContainerListState>({ status: "loading" });
+  const [refreshToken, setRefreshToken] = useState(0);
+
+  useEffect(() => {
+    if (!listingEnabled) return;
+    let cancelled = false;
+    setList({ status: "loading" });
+    listDockerContainers(runtime)
+      .then((containers) => {
+        if (!cancelled) setList({ status: "loaded", containers });
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setList({ status: "error", message: String(err) });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [listingEnabled, runtime, refreshToken]);
+
+  const input = (
+    <Input
+      id={a11y.id}
+      type="text"
+      value={currentValue}
+      onChange={(e) => onChange(e.target.value || undefined)}
+      placeholder={field.placeholder}
+      autoComplete="off"
+      spellCheck={false}
+      aria-required={field.required || undefined}
+      aria-describedby={a11y.describedBy}
+      error={a11y.invalid}
+      data-testid={testIdBase}
+    />
+  );
+
+  if (!listingEnabled) {
+    return (
+      <>
+        <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
+        {input}
+        <p className="settings-form__hint" data-testid={`${testIdBase}-listing-unavailable`}>
+          Container listing is not available for agent connections — type the container name or ID.
+        </p>
+      </>
+    );
+  }
+
+  const containers = list.status === "loaded" ? list.containers : [];
+  // An exact match means the user already picked one: show the full list so
+  // they can switch, rather than filtering it down to the single match.
+  const exact = containers.some((c) => c.name === currentValue || c.id === currentValue);
+  const shown = exact ? containers : containers.filter((c) => containerMatches(c, currentValue));
+
+  return (
+    <>
+      <FieldLabel field={field} htmlFor={a11y.id} testIdBase={testIdBase} />
+      <div className="settings-form__file-row">
+        {input}
+        <Button
+          variant="secondary"
+          size="sm"
+          onClick={() => setRefreshToken((n) => n + 1)}
+          disabled={list.status === "loading"}
+          title="Refresh container list"
+          aria-label="Refresh container list"
+          data-testid={`${testIdBase}-refresh`}
+        >
+          <RefreshCw size={14} aria-hidden="true" />
+        </Button>
+      </div>
+      {list.status === "loading" && (
+        <p className="settings-form__hint" role="status" data-testid={`${testIdBase}-loading`}>
+          Loading containers…
+        </p>
+      )}
+      {list.status === "error" && (
+        <p
+          className="settings-form__hint settings-form__hint--warning"
+          data-testid={`${testIdBase}-list-error`}
+        >
+          Could not list containers: {list.message}. You can still type a container name or ID.
+        </p>
+      )}
+      {list.status === "loaded" && containers.length === 0 && (
+        <p className="settings-form__hint" data-testid={`${testIdBase}-empty`}>
+          No containers found.
+        </p>
+      )}
+      {list.status === "loaded" && containers.length > 0 && shown.length === 0 && (
+        <p className="settings-form__hint" data-testid={`${testIdBase}-no-match`}>
+          No listed container matches — it will be used as typed.
+        </p>
+      )}
+      {shown.length > 0 && (
+        <ul
+          className="settings-form__container-list"
+          aria-label="Containers"
+          data-testid={`${testIdBase}-list`}
+        >
+          {shown.map((c) => {
+            const selected = c.name === currentValue || c.id === currentValue;
+            return (
+              <li key={c.id}>
+                <button
+                  type="button"
+                  className={
+                    "settings-form__container-option" +
+                    (selected ? " settings-form__container-option--selected" : "") +
+                    (c.running ? "" : " settings-form__container-option--stopped")
+                  }
+                  aria-pressed={selected}
+                  onClick={() => onChange(c.name)}
+                  title={c.id}
+                  data-testid={`${testIdBase}-option-${c.name}`}
+                >
+                  <span className="settings-form__container-name">{c.name}</span>
+                  <span className="settings-form__container-meta">
+                    {c.image}
+                    {c.image && " · "}
+                    {c.running ? c.status || "running" : `not running (${c.status || c.state})`}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </>
   );

@@ -1470,6 +1470,7 @@ export function ConnectionEditor({ tabId, meta, isVisible }: ConnectionEditorPro
               ? (existingAgent?.capabilities?.availableSerialPorts ?? [])
               : undefined
           }
+          localContainerListing={!isAgentDefinitionMode}
         />
       )}
 

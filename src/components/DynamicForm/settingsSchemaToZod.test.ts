@@ -218,9 +218,30 @@ describe("settingsSchemaToZod", () => {
   // fields (e.g. SSH Advanced `shell` / `connectTimeoutSecs`) failed validation
   // as "Invalid input", leaving Save & Connect permanently disabled for SSH.
   // Optional fields must therefore also accept `null`.
+  it("a required dockerContainer field rejects an empty value (PROD-017)", () => {
+    const zod = settingsSchemaToZod(
+      makeSchema([
+        {
+          key: "existingContainer",
+          label: "Existing Container",
+          fieldType: { type: "dockerContainer" },
+          required: true,
+        },
+      ])
+    );
+    expect(zod.safeParse({ existingContainer: "" }).success).toBe(false);
+    expect(zod.safeParse({ existingContainer: "web" }).success).toBe(true);
+  });
+
   describe("optional fields accept null (type-switch clears to null, #2467)", () => {
-    it("optional text/password/filePath/serialPort accept null", () => {
-      const types: FieldType["type"][] = ["text", "password", "filePath", "serialPort"];
+    it("optional text/password/filePath/serialPort/dockerContainer accept null", () => {
+      const types: FieldType["type"][] = [
+        "text",
+        "password",
+        "filePath",
+        "serialPort",
+        "dockerContainer",
+      ];
       for (const type of types) {
         const zod = settingsSchemaToZod(
           makeSchema([{ key: "f", label: "F", fieldType: { type } as FieldType, required: false }])

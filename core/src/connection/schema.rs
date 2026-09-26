@@ -119,6 +119,13 @@ pub enum FieldType {
     /// The value is stored as a plain string so that a previously configured port
     /// that is currently unplugged can still be preserved in settings.
     SerialPort,
+    /// Container picker — renders a searchable list populated from the
+    /// container runtime's `list_containers` (PROD-017), while still accepting
+    /// a typed container name or ID.
+    ///
+    /// The value is stored as a plain string (name or ID) so a container that
+    /// is currently stopped or removed is preserved in settings.
+    DockerContainer,
     /// File or directory path picker.
     FilePath {
         /// Whether to accept files, directories, or both.
@@ -355,6 +362,15 @@ mod tests {
         let ft = FieldType::SerialPort;
         let json = serde_json::to_value(&ft).unwrap();
         assert_eq!(json, serde_json::json!({"type": "serialPort"}));
+    }
+
+    #[test]
+    fn field_type_docker_container_serialization() {
+        let ft = FieldType::DockerContainer;
+        let json = serde_json::to_value(&ft).unwrap();
+        assert_eq!(json, serde_json::json!({"type": "dockerContainer"}));
+        let back: FieldType = serde_json::from_value(json).unwrap();
+        assert!(matches!(back, FieldType::DockerContainer));
     }
 
     #[test]

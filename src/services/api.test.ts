@@ -69,6 +69,7 @@ import {
   validateSshKey,
   checkDockerAvailable,
   listDockerImages,
+  listDockerContainers,
   checkPodmanAvailable,
   listPodmanImages,
   detectAgentArch,
@@ -830,6 +831,26 @@ describe("api service", () => {
 
       expect(mockedInvoke).toHaveBeenCalledWith("list_docker_images");
       expect(result).toEqual(images);
+    });
+
+    it("listDockerContainers passes the runtime to the command (PROD-017)", async () => {
+      const containers = [
+        { id: "abc", name: "web", image: "nginx", state: "running", status: "Up", running: true },
+      ];
+      mockedInvoke.mockResolvedValue(containers);
+
+      const result = await listDockerContainers("podman");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_docker_containers", { runtime: "podman" });
+      expect(result).toEqual(containers);
+    });
+
+    it("listDockerContainers sends a null runtime when unset", async () => {
+      mockedInvoke.mockResolvedValue([]);
+
+      await listDockerContainers();
+
+      expect(mockedInvoke).toHaveBeenCalledWith("list_docker_containers", { runtime: null });
     });
 
     it("listDockerImages returns empty array when none available", async () => {
