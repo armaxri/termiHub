@@ -50,9 +50,12 @@ use super::package::{
     MAX_DECOMPRESSED_TOTAL_BYTES, MAX_PACKAGE_ENTRIES,
 };
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
+use super::settings_migration::migrate_settings;
 use super::signature::{self, VerifiedArchive};
 use super::trust_store::{TrustStore, TrustStoreError, TrustedPublisher};
-use super::version_change::{classify_version_change, InstalledSnapshot, VersionChange};
+use super::version_change::{
+    classify_version_change, InstalledSnapshot, VersionChange, VersionChangeKind,
+};
 
 /// File holding per-plugin enabled/disabled state and install timestamps.
 const STATE_FILE_NAME: &str = "plugin-state.json";
@@ -551,6 +554,18 @@ impl PluginManager {
         }
         std::fs::rename(&staging, &dest)?;
 
+        // Settings migration (PROD-051): replacing an installed copy with a
+        // different version reconciles the stored settings against the new
+        // manifest's declared schema — values that still fit carry over, the rest
+        // are dropped so the new defaults apply. A fresh install has nothing
+        // stored and a byte-identical reinstall changes no schema.
+        if !matches!(
+            change.kind,
+            VersionChangeKind::Fresh | VersionChangeKind::Reinstall
+        ) {
+            self.migrate_stored_settings(&manifest)?;
+        }
+
         // Record enabled state with the install timestamp.
         let mut state = self.read_state_store()?;
         state.plugins.insert(
@@ -746,6 +761,29 @@ impl PluginManager {
             }
         }
         Ok(plugin)
+    }
+
+    /// Reconcile `manifest.id`'s stored settings against `manifest`'s declared
+    /// schema ([`migrate_settings`]), persisting only when something was dropped.
+    fn migrate_stored_settings(&self, manifest: &PluginManifest) -> Result<(), PluginManagerError> {
+        let mut store = self.read_settings_store()?;
+        let Some(stored) = store.plugins.remove(&manifest.id) else {
+            return Ok(());
+        };
+        let migration = migrate_settings(stored, manifest.settings.as_ref());
+        if migration.dropped.is_empty() {
+            return Ok(());
+        }
+        tracing::info!(
+            plugin_id = %manifest.id,
+            version = %manifest.version,
+            dropped = ?migration.dropped,
+            "dropped plugin settings that no longer fit the updated manifest schema"
+        );
+        if !migration.kept.is_empty() {
+            store.plugins.insert(manifest.id.clone(), migration.kept);
+        }
+        self.write_settings_store(&store)
     }
 
     /// Return a plugin's stored settings (the raw persisted object, empty if the
@@ -1462,6 +1500,46 @@ mod tests {
         trust_publisher: false,
         confirm_version_change: true,
     };
+
+    #[test]
+    fn version_change_migrates_stored_settings_to_the_new_schema() {
+        let (mgr, tmp) = manager();
+        let v1 = make_package(tmp.path(), &manifest_with_settings("mig"), &[]);
+        mgr.install(&v1, true, false).unwrap();
+        let mut stored = Map::new();
+        stored.insert("defaultNamespace".into(), Value::String("prod".into()));
+        stored.insert("legacy".into(), Value::String("x".into()));
+        mgr.update_settings("mig", stored).unwrap();
+
+        // Upgrade keeping the declared schema: the still-declared value carries
+        // over, the undeclared one is dropped.
+        let tmp2 = TempDir::new().unwrap();
+        let v2 = make_package(
+            tmp2.path(),
+            &manifest_with_settings("mig").replace("\"1.0.0\"", "\"1.1.0\""),
+            &[],
+        );
+        mgr.install(&v2, true, false).unwrap();
+        let settings = mgr.get_settings("mig").unwrap();
+        assert_eq!(settings.len(), 1);
+        assert_eq!(settings["defaultNamespace"], Value::String("prod".into()));
+
+        // An upgrade whose schema no longer declares it drops it too.
+        install_version(&mgr, "mig", "2.0.0", UNCONFIRMED).unwrap();
+        assert!(mgr.get_settings("mig").unwrap().is_empty());
+    }
+
+    #[test]
+    fn identical_reinstall_leaves_stored_settings_alone() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_with_settings("keep"), &[]);
+        mgr.install(&pkg, true, false).unwrap();
+        let mut stored = Map::new();
+        stored.insert("legacy".into(), Value::String("x".into()));
+        mgr.update_settings("keep", stored.clone()).unwrap();
+        mgr.install(&pkg, true, false).unwrap();
+        assert_eq!(mgr.get_settings("keep").unwrap(), stored);
+    }
 
     #[test]
     fn downgrade_requires_confirmation_and_leaves_install_untouched() {
