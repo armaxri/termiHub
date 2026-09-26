@@ -20,13 +20,24 @@
 //!
 //! Everything crossing the boundary is `#[repr(C)]` or an opaque handle — see the
 //! `termihub-plugin-api` crate docs for why Rust's own types must not.
+//!
+//! # ABI 1.1: toolchain record and host context
+//!
+//! Built against ABI 1.1, [`PluginInfo::new`] also reports the compiler and
+//! panic strategy this library was built with; the host refuses the plugin
+//! unless both match its own exactly (build with the host's toolchain — see
+//! `docs/plugin-authoring.md`). In return every session receives the
+//! [`HostContext`]: the app version, a private data directory, a log callback
+//! that lands in termiHub's Log Viewer, and a cancellation flag. This example
+//! logs each new session and stops echoing once the host cancels it.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::Deserialize;
 use termihub_plugin_api::{
-    PluginBackend, PluginError, PluginHostBridge, PluginInfo, PluginOutputSender,
-    PluginSessionConfig, PluginStatus, PluginTerminalBackend, CURRENT_PLUGIN_ABI_VERSION,
+    HostContext, PluginBackend, PluginError, PluginHostBridge, PluginHostServices, PluginInfo,
+    PluginOutputSender, PluginSessionConfig, PluginStatus, PluginTerminalBackend,
+    CURRENT_PLUGIN_ABI_VERSION,
 };
 
 /// Session configuration this backend accepts, matching the `configSchema`
@@ -55,11 +66,19 @@ struct EchoBackend {
     output: PluginOutputSender,
     prefix: Vec<u8>,
     alive: AtomicBool,
+    /// Host logging + cancellation (ABI 1.1). `None` only in unit tests that
+    /// drive the backend without a host.
+    services: Option<PluginHostServices>,
 }
 
 impl PluginTerminalBackend for EchoBackend {
     fn write_input(&self, data: &[u8]) -> Result<(), PluginError> {
-        if !self.alive.load(Ordering::SeqCst) {
+        // Once the host cancels the session (disconnect, disable, unload), stop.
+        let cancelled = self
+            .services
+            .as_ref()
+            .is_some_and(PluginHostServices::is_cancelled);
+        if cancelled || !self.alive.load(Ordering::SeqCst) {
             return Err(PluginError::NotAlive);
         }
         if self.prefix.is_empty() {
@@ -94,18 +113,30 @@ impl PluginTerminalBackend for EchoBackend {
 fn build_backend(
     config: &EchoConfig,
     output: PluginOutputSender,
+    context: Option<HostContext>,
 ) -> Box<dyn PluginTerminalBackend> {
+    let services = context.map(|ctx| {
+        ctx.services.info(&format!(
+            "echo session started (termiHub {}, data dir {})",
+            ctx.host_version,
+            ctx.data_dir
+                .as_ref()
+                .map_or_else(|| "none".to_owned(), |d| d.display().to_string())
+        ));
+        ctx.services
+    });
     Box::new(EchoBackend {
         output,
         prefix: config.echo_prefix.clone().into_bytes(),
         alive: AtomicBool::new(true),
+        services,
     })
 }
 
 /// ABI version this plugin was compiled against, packed as `major << 16 | minor`.
 /// The host checks it against its own ABI before calling anything else: same
 /// major, and a minor no newer than the host's. `manifest.json`'s `apiVersion`
-/// must mirror it (`"1.0"`).
+/// must mirror it (`"1.1"`).
 #[no_mangle]
 pub extern "C" fn termihub_plugin_abi_version() -> u32 {
     CURRENT_PLUGIN_ABI_VERSION.to_packed()
@@ -190,7 +221,16 @@ pub unsafe extern "C" fn termihub_plugin_create_backend(
         }
     }
 
-    let backend = PluginBackend::from_boxed(build_backend(&parsed, output));
+    // ABI 1.1 host context: version, data dir, logging, cancellation. This
+    // plugin is built for 1.1, so the host always provides it.
+    let context = if config.is_null() {
+        None
+    } else {
+        // SAFETY: built for ABI 1.1, called by a 1.1+ host during create.
+        unsafe { (*config).context() }
+    };
+
+    let backend = PluginBackend::from_boxed(build_backend(&parsed, output, context));
     // SAFETY: caller guarantees `out_backend` is valid and writable.
     unsafe {
         out_backend.write(backend);
@@ -216,7 +256,7 @@ mod tests {
         let cfg = EchoConfig {
             echo_prefix: prefix.to_string(),
         };
-        let backend = PluginBackend::from_boxed(build_backend(&cfg, output));
+        let backend = PluginBackend::from_boxed(build_backend(&cfg, output, None));
         // SAFETY: `backend` was just produced by `from_boxed`.
         (unsafe { LoadedBackend::from_raw(backend) }, rx)
     }
@@ -272,5 +312,7 @@ mod tests {
         assert_eq!(status, PluginStatus::Ok);
         assert_eq!(info.id.as_str(), "echo-backend");
         assert_eq!(info.abi_version(), CURRENT_PLUGIN_ABI_VERSION);
+        // ABI 1.1: the build toolchain is recorded automatically.
+        assert!(info.toolchain().is_known());
     }
 }

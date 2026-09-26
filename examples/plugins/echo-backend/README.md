@@ -39,8 +39,10 @@ That produces `dist/echo-backend-1.0.0.termihub-plugin` containing
 
 > **ABI caveat.** Rust has **no stable ABI**, so a native plugin must be built
 > against the **same major ABI version** of `termihub-plugin-api` that the target
-> host ships, with a compatible toolchain — the host refuses to load a mismatch
-> (`termihub_plugin_abi_version`). Cross-platform dynamic-library building is the
+> host ships (and a minor no newer than the host's), with **exactly the host's
+> Rust toolchain** — same rustc release and commit, same panic strategy. The
+> plugin reports both automatically (ABI 1.1); the host refuses any mismatch
+> with a message naming both toolchains. Cross-platform dynamic-library building is the
 > author's responsibility; a package built on one OS only carries that OS's
 > library. Because of this, native-plugin **packaging** is not built for every
 > platform in CI — but the crate itself compiles on all platforms via the
