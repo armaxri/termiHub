@@ -1712,6 +1712,25 @@ correctly in both themes. See PR #1504.
    have no close button; confirm the toast they resolve into (success/error)
    does.
 
+### Credential vault export / import (PROD-063, #3432)
+
+Verifies the encrypted credential-vault backup round trip in the real app (the
+backend and dialogs are unit-tested; this checks the native save/open dialogs).
+
+1. Master Password mode with at least one saved connection password. Settings →
+   Security → **Export vault…** → enter the master password and a 12+ character
+   passphrase twice → **Export…** → save the file. Expect a success toast; open
+   the file in a text editor: no password or connection id is readable.
+2. Repeat with a wrong master password → inline "master password is incorrect",
+   no save dialog.
+3. Change one saved password, then **Import vault…** → choose the file → enter
+   a wrong passphrase → **Preview** → inline wrong-passphrase error.
+4. Enter the right passphrase → **Preview** shows 1 conflict; choose **Replace
+   them with the imported ones** → **Import** → success toast; connecting uses the
+   exported password again.
+5. Switch to OS Keychain mode and import the same file → credentials land in
+   the OS keychain.
+
 ### Zoomed tab repaints terminal content immediately (#1823)
 
 Verifies that zooming a terminal tab repaints its content at the new size right
