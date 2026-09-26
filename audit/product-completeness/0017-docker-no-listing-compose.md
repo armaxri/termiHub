@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/docker
 evidence:
   - core/src/backends/docker/mod.rs:365
-status: open
+status: partial
+resolution: "#3426 — docker container picker (list_containers, same daemon resolution as sessions); agent-hosted picker #3424, compose awareness #3425"
 ---
 
 ## What
