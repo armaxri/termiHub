@@ -10,7 +10,8 @@ evidence:
   - agent/src/update/download.rs:1
   - agent/src/update/download.rs:47
   - agent/src/update/download.rs:75
-status: open
+status: partial
+resolution: "#3331 — signature check done; matched-downgrade + update-RPC token auth decided 2026-09-26, tracked #3213 part 2"
 ---
 
 ## What

@@ -11,7 +11,8 @@ evidence:
   - vendor/vnc-rs/README.md:28
   - rdp-sidecar/Cargo.toml:205
   - rdp-sidecar/vendor/ironrdp-rdpsnd/README.md
-status: open
+status: fixed
+resolution: "#3503 — vendor/vendored-forks.json + weekly OSV/crates.io/upstream drift job with idempotent tracking issue + consistency check; first drift #3499"
 ---
 
 ## What

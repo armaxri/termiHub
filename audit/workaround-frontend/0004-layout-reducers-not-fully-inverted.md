@@ -11,7 +11,8 @@ evidence:
   - src/store/appStore.ts:2772
   - src/store/appStore.ts:4023
   - src/test/layoutRegionTestHarness.ts:14
-status: open
+status: fixed
+resolution: "#3317,#3337 — non-intent reseed path transactional + compose-null reconcile; remaining reducer removal is #2562 extended-testing gate"
 ---
 
 ## What

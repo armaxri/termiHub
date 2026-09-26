@@ -8,7 +8,8 @@ is_workaround: true
 subsystem: src/store/slices/pluginsSlice
 evidence:
   - src/store/slices/pluginsSlice.ts:171
-status: open
+status: fixed
+resolution: "maintainer decision 2026-09-26 — JS extension points stay default-off experimental for 0.1; documented in plugin-authoring (PLG-009 #3338) + samples #3490"
 ---
 
 ## What

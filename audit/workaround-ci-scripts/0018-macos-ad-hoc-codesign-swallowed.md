@@ -11,7 +11,8 @@ evidence:
   - .github/workflows/release.yml:242
   - .github/workflows/release.yml:252
   - .github/workflows/dev-build.yml:191
-status: open
+status: fixed
+resolution: "#3341 + decision — unsigned-beta by maintainer decision; ad-hoc codesign now fatal + codesign --verify --deep --strict; notarization pre-v1.0"
 ---
 
 ## What
