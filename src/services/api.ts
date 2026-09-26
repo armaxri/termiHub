@@ -687,6 +687,16 @@ export async function remoteDesktopSendInput(
   await invoke("remote_desktop_send_input", { sessionId, event });
 }
 
+/**
+ * Release every key / mouse button held on the remote (#3402).
+ *
+ * The backend tracks what is held and synthesises the key-ups / button-up;
+ * sent when the canvas or window loses focus. Ownership-gated in the backend.
+ */
+export async function remoteDesktopReleaseInput(sessionId: SessionId): Promise<void> {
+  await invoke("remote_desktop_release_input", { sessionId });
+}
+
 /** Push local clipboard text to the remote. */
 export async function remoteDesktopSendClipboard(
   sessionId: SessionId,

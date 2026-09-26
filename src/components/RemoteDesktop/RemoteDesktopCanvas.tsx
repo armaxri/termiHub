@@ -22,6 +22,12 @@ interface RemoteDesktopCanvasProps {
    * "reconnecting view…" placeholder after a cross-window tab move (#1904).
    */
   onFirstFrame?: () => void;
+  /**
+   * Ask the backend to release every key / mouse button it holds on the remote
+   * (#3402). Called on canvas blur, window blur and when the document is
+   * hidden. Without it, the canvas falls back to sending its own key-ups.
+   */
+  onReleaseAll?: () => void;
 }
 
 /** Draw geometry mapping framebuffer pixels ↔ on-screen pixels. */
@@ -54,6 +60,7 @@ export function RemoteDesktopCanvas({
   onResize,
   onDimensions,
   onFirstFrame,
+  onReleaseAll,
 }: RemoteDesktopCanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -263,15 +270,47 @@ export function RemoteDesktopCanvas({
   );
 
   const releaseHeldKeys = useCallback(() => {
-    if (viewOnly) {
-      heldKeysRef.current.clear();
+    const held = heldKeysRef.current;
+    heldKeysRef.current = new Set();
+    buttonsRef.current = 0;
+    // View-only / evicted: this window cannot send; on a takeover the backend
+    // releases what this window held (#3402).
+    if (viewOnly) return;
+    if (onReleaseAll) {
+      // The backend is authoritative for what is held (keys *and* buttons,
+      // including any key-up this canvas never saw) (#3402).
+      onReleaseAll();
       return;
     }
-    for (const code of heldKeysRef.current) {
+    for (const code of held) {
       onInput({ kind: "key", code, pressed: false });
     }
-    heldKeysRef.current.clear();
-  }, [viewOnly, onInput]);
+  }, [viewOnly, onInput, onReleaseAll]);
+
+  // Window blur / document hidden (#3402): the canvas may not see the key-up or
+  // button-up of a gesture that ends outside the window, so release on the
+  // remote while this window still controls the session. Only a canvas that is
+  // focused or holds something releases, so idle tabs send nothing.
+  const releaseHeldKeysRef = useRef(releaseHeldKeys);
+  releaseHeldKeysRef.current = releaseHeldKeys;
+  useEffect(() => {
+    const releaseIfEngaged = () => {
+      const engaged =
+        document.activeElement === canvasRef.current ||
+        heldKeysRef.current.size > 0 ||
+        buttonsRef.current !== 0;
+      if (engaged) releaseHeldKeysRef.current();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") releaseIfEngaged();
+    };
+    window.addEventListener("blur", releaseIfEngaged);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", releaseIfEngaged);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
 
   const handleKey = useCallback(
     (e: React.KeyboardEvent, pressed: boolean) => {

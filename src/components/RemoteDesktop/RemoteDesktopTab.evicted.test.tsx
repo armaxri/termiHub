@@ -17,7 +17,7 @@ import { RemoteDesktopTab } from "./RemoteDesktopTab";
 
 const hoisted = vi.hoisted(() => ({
   session: null as unknown as RemoteDesktopSession,
-  canvasProps: [] as Array<{ viewOnly: boolean }>,
+  canvasProps: [] as Array<{ viewOnly: boolean; onReleaseAll?: () => void }>,
 }));
 
 vi.mock("@/hooks/useRemoteDesktopSession", () => ({
@@ -25,8 +25,8 @@ vi.mock("@/hooks/useRemoteDesktopSession", () => ({
 }));
 
 vi.mock("./RemoteDesktopCanvas", () => ({
-  RemoteDesktopCanvas: (props: { viewOnly: boolean }) => {
-    hoisted.canvasProps.push({ viewOnly: props.viewOnly });
+  RemoteDesktopCanvas: (props: { viewOnly: boolean; onReleaseAll?: () => void }) => {
+    hoisted.canvasProps.push({ viewOnly: props.viewOnly, onReleaseAll: props.onReleaseAll });
     return <div data-testid="remote-desktop-canvas" data-view-only={String(props.viewOnly)} />;
   },
 }));
@@ -56,6 +56,7 @@ function fakeSession(state: GraphicalSessionState): RemoteDesktopSession {
     viewOnly: false,
     scaleMode: "fit",
     sendInput: vi.fn(),
+    releaseInput: vi.fn(),
     resize: vi.fn(),
     sendClipboard: vi.fn(),
     remoteClipboardFiles: vi.fn(async () => []),
@@ -162,6 +163,12 @@ describe("RemoteDesktopTab — window takeover (#3388)", () => {
     });
     expect(reclaimWindowSession).toHaveBeenCalledTimes(1);
     expect(reclaimWindowSession).toHaveBeenCalledWith(SID);
+  });
+
+  it("wires the canvas's focus-loss release to the session's release-all (#3402)", () => {
+    act(() => useAppStore.setState({ sessionOwners: { [SID]: "main" } }));
+    render("active");
+    expect(hoisted.canvasProps.at(-1)?.onReleaseAll).toBe(hoisted.session.releaseInput);
   });
 
   it("a session mid-move to another window is not shown as taken over", () => {
