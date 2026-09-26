@@ -4,7 +4,7 @@
  * session, seeded with the folder shown in the sidebar.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import React, { act } from "react";
+import { act } from "react";
 import { flushAsync } from "@/test/flushAsync";
 import { createRoot, Root } from "react-dom/client";
 import { invoke } from "@tauri-apps/api/core";
