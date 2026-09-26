@@ -13,7 +13,8 @@ import {
   readPluginFile,
 } from "@/services/api";
 import { currentSettingsView } from "@/store/settingsBridge";
-import { applyTheme, loadPluginThemes, setRegisteredPluginThemes } from "@/themes";
+import { loadPluginThemes, setRegisteredPluginThemes } from "@/themes";
+import { applyEffectiveTheme } from "@/services/workspaceSettings";
 import type { ThemeDefinition } from "@/themes";
 import type {
   InstalledPlugin,
@@ -203,8 +204,7 @@ export const createPluginsSlice: StateCreator<AppState, [], [], PluginsSlice> = 
       // Re-apply the active theme: a just-registered plugin theme now takes
       // effect, and a theme whose plugin was disabled/uninstalled falls back
       // to the default (concept edge case).
-      const { theme, customThemes } = currentSettingsView();
-      applyTheme(theme, customThemes);
+      applyEffectiveTheme(currentSettingsView());
     } catch (err) {
       // Read-only refresh: log rather than toast, matching loadMacros.
       frontendLog("app_store", `Failed to load plugins: ${errorMessage(err)}`);

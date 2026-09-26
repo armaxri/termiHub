@@ -62,6 +62,24 @@ pub struct WorkspaceSettings {
     pub extra: serde_json::Map<String, Value>,
 }
 
+/// The active workspace as broadcast to every window (`active-workspace-changed`)
+/// and returned by `get_active_workspace`, so each window applies the same
+/// overrides live.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveWorkspaceInfo {
+    /// Workspace id.
+    pub id: String,
+    /// Workspace display name (for the "Overridden in workspace X" indicator).
+    pub name: String,
+    /// The workspace's overrides (`None` → it inherits every global setting).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settings: Option<WorkspaceSettings>,
+}
+
+/// Tauri event emitted whenever the active workspace or its overrides change.
+pub const ACTIVE_WORKSPACE_CHANGED_EVENT: &str = "active-workspace-changed";
+
 /// Whether `name` is a valid environment variable name.
 pub fn is_valid_env_name(name: &str) -> bool {
     let mut chars = name.chars();

@@ -9,7 +9,7 @@ use super::config::{
     WorkspaceImportPreview, WorkspaceImportResult, WorkspaceLayoutNode, WorkspaceStore,
     WorkspaceSummary, WorkspaceTabDef, WorkspaceTabGroupDef,
 };
-use super::settings::WorkspaceSettings;
+use super::settings::{ActiveWorkspaceInfo, WorkspaceSettings};
 use super::storage::WorkspaceStorage;
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::errors::TerminalError;
@@ -76,17 +76,34 @@ impl WorkspaceManager {
         Ok(())
     }
 
-    /// The settings overrides of the active workspace, if one is active and it
-    /// carries any. Read at session-creation time so an edit to the active
-    /// workspace applies to the next new session without a relaunch.
-    pub fn active_settings(&self) -> Option<WorkspaceSettings> {
+    /// The active workspace (id, name, overrides), if one is active.
+    pub fn active_workspace_info(&self) -> Option<ActiveWorkspaceInfo> {
         let active = self.active_id.lock().ok()?.clone()?;
         let store = self.store.lock().ok()?;
         store
             .workspaces
             .iter()
             .find(|ws| ws.id == active)
-            .and_then(|ws| ws.settings.clone())
+            .map(|ws| ActiveWorkspaceInfo {
+                id: ws.id.clone(),
+                name: ws.name.clone(),
+                settings: ws.settings.clone(),
+            })
+    }
+
+    /// Whether `id` is the active workspace.
+    pub fn is_active(&self, id: &str) -> bool {
+        self.active_id
+            .lock()
+            .map(|a| a.as_deref() == Some(id))
+            .unwrap_or(false)
+    }
+
+    /// The settings overrides of the active workspace, if one is active and it
+    /// carries any. Read at session-creation time so an edit to the active
+    /// workspace applies to the next new session without a relaunch.
+    pub fn active_settings(&self) -> Option<WorkspaceSettings> {
+        self.active_workspace_info()?.settings
     }
 
     /// Take ownership of any recovery warnings (only the first call returns them).
@@ -585,6 +602,10 @@ mod tests {
         // Switching to a workspace without overrides yields none.
         mgr.set_active_workspace(Some("ws-2".into())).unwrap();
         assert!(mgr.active_settings().is_none());
+
+        let info = mgr.active_workspace_info().unwrap();
+        assert_eq!((info.id.as_str(), info.name.as_str()), ("ws-2", "B"));
+        assert!(mgr.is_active("ws-2") && !mgr.is_active("ws-1"));
 
         assert!(mgr.set_active_workspace(Some("missing".into())).is_err());
         mgr.set_active_workspace(None).unwrap();

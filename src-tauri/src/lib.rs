@@ -799,6 +799,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::workspace::delete_workspace,
             commands::workspace::duplicate_workspace,
             commands::workspace::set_active_workspace,
+            commands::workspace::get_active_workspace,
             commands::workspace::get_cli_workspace,
             commands::workspace::export_workspaces,
             commands::workspace::import_workspaces,
