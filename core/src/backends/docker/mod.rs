@@ -9,6 +9,7 @@ mod list;
 mod monitoring;
 mod process;
 mod runtime;
+mod transfer;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -37,6 +38,9 @@ use crate::monitoring::{
 use crate::session::docker::validate_docker_config;
 
 pub use self::list::{list_containers, summarize_containers, ContainerInfo};
+pub use self::transfer::{
+    docker_transfer_target_of, ContainerCaps, DockerTransferTarget, ExecReader, ExecWriter,
+};
 
 use self::file_browser::DockerFileBrowser;
 use self::monitoring::docker_monitoring_provider;
