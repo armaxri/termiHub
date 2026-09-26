@@ -1891,7 +1891,12 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   resume, and auto-retry (≤3, exponential backoff). It surfaces as a panel docked above the status
   bar with a minimized status-bar indicator, driven by `transfer-progress` events and generic
   `transfer_*` IPC commands, so SFTP can adopt the same model later. See
-  [ADR-12](#adr-12-connection-type-agnostic-transfer-queue).
+  [ADR-12](#adr-12-connection-type-agnostic-transfer-queue). SFTP, Docker and
+  **local-disk copies** now use it too (PARITY-004, #3567): a local file copy
+  above 8 MiB (`local_copy_start`, including local ↔ WSL copies over the
+  `\\wsl$` UNC share) runs under the reserved `local` session through
+  `core/src/files/transfer/local.rs`, writing a hidden temp file that is
+  renamed over the destination only on completion.
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
   `src-tauri/src/session/registry.rs::build_desktop_registry()`); the remote agent has no FTP
   backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP
