@@ -189,13 +189,13 @@ pub async fn apply_backup_restore(
         "Restoring backup"
     );
     let opened = restore::open(&json, passphrase.as_deref().map(String::as_str))?;
-    let store: Option<&dyn CredentialStore> = if request.credentials.is_some() {
+    if request.credentials.is_some() {
         vault::authorize_import(&manager)?;
-        Some(&**manager)
-    } else {
-        None
-    };
-    restore::apply(&opened, &config_dir(&app)?, &request, store)
+    }
+    // Always handed over: a section from an older backup may carry plaintext
+    // passwords (embedded servers before #3514) that must go into the store.
+    let store: &dyn CredentialStore = &**manager;
+    restore::apply(&opened, &config_dir(&app)?, &request, Some(store))
 }
 
 /// Restart termiHub so a staged restore is applied before any store loads.

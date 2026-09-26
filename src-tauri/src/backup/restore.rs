@@ -16,11 +16,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+use serde_json::Value;
 use zeroize::Zeroizing;
 
 pub use super::commit::{apply, PendingManifest, MANIFEST_FILE, PENDING_DIR, STAGING_DIR};
 use super::plugins::{self, StagedDir};
-use super::sections::{self, CurrentDoc, NormalizeError, SectionSpec};
+use super::sections::{self, CurrentDoc, LegacySecret, NormalizeError, SectionSpec};
 use super::{
     BackupContents, BackupCredentialsPreview, BackupFile, BackupHeader, BackupRestorePreview,
     BackupRestoreRequest, BackupSection, BackupSectionPreview, RestoreMode, SectionRestoreOutcome,
@@ -32,7 +33,10 @@ use crate::connection::tree::flatten_tree;
 use crate::credential::crypto::{
     classify_envelope_version, decrypt_with_password, DecryptError, VersionSupport,
 };
+use crate::credential::types::CredentialKey;
 use crate::credential::vault::{self, OpenedVault, VaultError};
+use crate::embedded_servers::config::EmbeddedServerStore;
+use crate::embedded_servers::secrets::vault_owners;
 
 fn invalid(message: impl Into<String>) -> VaultError {
     VaultError::InvalidFile {
@@ -216,10 +220,28 @@ pub fn open(json: &str, passphrase: Option<&str>) -> Result<OpenedBackup, VaultE
     })
 }
 
-/// Map the connection and agent ids in the backup's connections section to
-/// their names, so the credential preview can label credentials whose
-/// connection is being restored alongside them.
+/// Map the connection, agent and embedded-server credential owners in the
+/// backup's sections to their names, so the credential preview can label
+/// credentials whose owner is being restored alongside them.
 pub fn backup_owner_names(opened: &OpenedBackup) -> HashMap<String, String> {
+    let mut owners = connection_owner_names(opened);
+    if let Some(store) = opened
+        .sections
+        .iter()
+        .find(|s| s.id == "embeddedServers")
+        .and_then(|section| {
+            let doc = sections::spec("embeddedServers")?
+                .normalize(section.data.clone())
+                .ok()?;
+            serde_json::from_value::<EmbeddedServerStore>(doc).ok()
+        })
+    {
+        owners.extend(vault_owners(&store.servers));
+    }
+    owners
+}
+
+fn connection_owner_names(opened: &OpenedBackup) -> HashMap<String, String> {
     let mut owners = HashMap::new();
     let Some(section) = opened.sections.iter().find(|s| s.id == "connections") else {
         return owners;
@@ -302,6 +324,14 @@ fn preview_section(
         preview.message = Some(plugins::needs_encrypted_backup_message(spec.label));
         return preview;
     }
+    let legacy = LegacySecret::read(spec, &section.data).len();
+    if legacy > 0 {
+        preview.notes.push(format!(
+            "This backup was made by an older termiHub and keeps {legacy} password(s) in plain \
+             text. Restoring moves them into your credential store (unlock it first); with \
+             credential storage turned off they are not restored."
+        ));
+    }
     let backup_doc = match spec.normalize_section(section) {
         Ok(doc) => doc,
         Err(e) => {
@@ -382,14 +412,84 @@ pub fn plan(
     }
 }
 
+/// A plaintext password from an older store schema (see [`LegacySecret`])
+/// that a restore moves into the credential store instead of the file.
+pub struct PendingSecret {
+    pub key: CredentialKey,
+    pub value: Zeroizing<String>,
+    /// Replace a value the credential store already holds. `false` for a
+    /// backup password merged with "keep current" — the store's password for
+    /// that item stays.
+    pub overwrite: bool,
+}
+
 /// The computed content of every chosen store, ready to be staged.
 pub struct PreparedRestore {
     /// `(path relative to the config dir, file content)`; content zeroized on
     /// drop.
     pub files: Vec<(String, Zeroizing<String>)>,
+    /// Legacy plaintext passwords of the restored items, to be moved into the
+    /// credential store (never written to a file).
+    pub secrets: Vec<PendingSecret>,
     /// Plugin directories to write or remove.
     pub dirs: Vec<StagedDir>,
     pub outcomes: Vec<SectionRestoreOutcome>,
+}
+
+/// The final content of one chosen section.
+struct PreparedSection {
+    text: Zeroizing<String>,
+    resulting_count: u32,
+    secrets: Vec<PendingSecret>,
+}
+
+/// The legacy plaintext passwords that belong to the items the restored
+/// document actually keeps.
+///
+/// Each password — from the backup or still in the current file — follows its
+/// item: it is kept only when the final document's item is the one it came
+/// with (an item a merge kept as-is keeps its current password, one it took
+/// from the backup gets the backup's). The current file's passwords are
+/// migrated alongside, because the restored file is written without any.
+fn pending_secrets(
+    spec: &SectionSpec,
+    final_doc: &Value,
+    sources: [(&Value, Vec<LegacySecret>, bool); 2],
+) -> Vec<PendingSecret> {
+    let items = |doc: &Value| -> HashMap<String, Value> {
+        sections::keyed_items(spec, doc)
+            .map(|items| items.into_iter().collect())
+            .unwrap_or_default()
+    };
+    let final_items = items(final_doc);
+    let mut by_key: Vec<PendingSecret> = Vec::new();
+    for (doc, secrets, overwrite) in sources {
+        let source_items = items(doc);
+        for secret in secrets {
+            let kept = matches!(
+                (final_items.get(&secret.item_id), source_items.get(&secret.item_id)),
+                (Some(a), Some(b)) if a == b
+            );
+            if !kept {
+                continue;
+            }
+            // A later source (the backup) wins over an earlier one (the current
+            // file) only when it may overwrite.
+            match by_key.iter_mut().find(|p| p.key == secret.key) {
+                Some(existing) if overwrite => {
+                    existing.value = secret.value;
+                    existing.overwrite = true;
+                }
+                Some(_) => {}
+                None => by_key.push(PendingSecret {
+                    key: secret.key,
+                    value: secret.value,
+                    overwrite,
+                }),
+            }
+        }
+    }
+    by_key
 }
 
 /// Compute the final content of one chosen section.
@@ -399,7 +499,7 @@ fn prepare_section(
     choice: (RestoreMode, vault::ConflictStrategy),
     config_dir: &Path,
     encrypted: bool,
-) -> Result<(Zeroizing<String>, u32), VaultError> {
+) -> Result<PreparedSection, VaultError> {
     let (mode, strategy) = choice;
     if spec.integrity_sensitive && !encrypted {
         return Err(other(plugins::needs_encrypted_backup_message(spec.label)));
@@ -416,6 +516,8 @@ fn prepare_section(
         },
         NormalizeError::Invalid(_) => invalid(e.message(spec.label)),
     })?;
+    let backup_secrets = LegacySecret::read(spec, &section.data);
+    let current_secrets = sections::read_current_legacy_secrets(spec, config_dir);
     let current = sections::read_current(spec, config_dir);
     if let CurrentDoc::Newer { found, supported } = current {
         return Err(VaultError::UnsupportedVersion {
@@ -423,9 +525,13 @@ fn prepare_section(
         });
     }
 
+    let current_doc_for_secrets = match &current {
+        CurrentDoc::Present(doc) => doc.clone(),
+        _ => Value::Null,
+    };
     let final_doc = match mode {
         RestoreMode::Replace => {
-            let mut doc = backup_doc;
+            let mut doc = backup_doc.clone();
             if spec.shape == sections::Shape::Settings {
                 let current_doc = match &current {
                     CurrentDoc::Present(doc) => Some(doc),
@@ -475,7 +581,23 @@ fn prepare_section(
         .map_err(|e| other(format!("The restored {} would be invalid: {e}", spec.label)))?;
     let text = serde_json::to_string_pretty(&final_doc)
         .map_err(|e| other(format!("Failed to serialize {}: {e}", spec.label)))?;
-    Ok((Zeroizing::new(text), resulting))
+    // The current file's passwords never overwrite a stored one ahead of the
+    // backup's; the backup's overwrite unless a merge keeps current items.
+    let backup_overwrites =
+        mode == RestoreMode::Replace || strategy == vault::ConflictStrategy::Overwrite;
+    let secrets = pending_secrets(
+        spec,
+        &final_doc,
+        [
+            (&current_doc_for_secrets, current_secrets, true),
+            (&backup_doc, backup_secrets, backup_overwrites),
+        ],
+    );
+    Ok(PreparedSection {
+        text: Zeroizing::new(text),
+        resulting_count: resulting,
+        secrets,
+    })
 }
 
 /// Compute every chosen store's final content. Nothing is written.
@@ -487,6 +609,7 @@ pub fn prepare(
     let mut seen = HashSet::new();
     let mut prepared = PreparedRestore {
         files: Vec::new(),
+        secrets: Vec::new(),
         dirs: Vec::new(),
         outcomes: Vec::new(),
     };
@@ -531,7 +654,11 @@ pub fn prepare(
             .iter()
             .find(|s| s.id == choice.id)
             .ok_or_else(|| other(format!("The backup does not contain {}.", spec.label)))?;
-        let (text, resulting_count) = prepare_section(
+        let PreparedSection {
+            text,
+            resulting_count,
+            secrets,
+        } = prepare_section(
             spec,
             section,
             (choice.mode, choice.conflicts),
@@ -539,6 +666,7 @@ pub fn prepare(
             opened.encrypted,
         )?;
         prepared.files.push((spec.file_name.to_string(), text));
+        prepared.secrets.extend(secrets);
         prepared.outcomes.push(SectionRestoreOutcome {
             id: spec.id.to_string(),
             label: spec.label.to_string(),
