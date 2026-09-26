@@ -15,6 +15,9 @@ import { getAllLeaves } from "@/utils/panelTree";
 import { CommandPalette } from "./CommandPalette";
 import type { SavedConnection } from "@/types/connection";
 import { layoutState } from "@/test/layoutState";
+import { installBroadcastHarness } from "@/test/broadcastHarness";
+import { ensureBroadcastSubscribed } from "@/store/broadcastBridge";
+import type { Workflow } from "@/types/workflow";
 
 const { connectSpy } = vi.hoisted(() => ({
   connectSpy: vi.fn((_connection: unknown) => Promise.resolve()),
@@ -220,5 +223,124 @@ describe("CommandPalette", () => {
 
     expect(toggleSpy).toHaveBeenCalledTimes(1);
     expect(useAppStore.getState().commandPaletteOpen).toBe(false);
+  });
+
+  describe("Run Workflow on Broadcast Group (#3430)", () => {
+    let harness: ReturnType<typeof installBroadcastHarness> | null = null;
+
+    function wf(id: string, name: string): Workflow {
+      return {
+        id,
+        name,
+        tags: [],
+        steps: [{ kind: "send-command", command: "echo hi" }],
+        triggers: [{ kind: "manual" }],
+        createdAt: "2026-09-26T00:00:00Z",
+        updatedAt: "2026-09-26T00:00:00Z",
+      };
+    }
+
+    /** Seed the broadcast region + connected targets, then remount the palette. */
+    async function setup(opts: {
+      active: boolean;
+      connected: string[];
+      workflows?: Workflow[];
+    }): Promise<ReturnType<typeof vi.fn>> {
+      harness = installBroadcastHarness({
+        active: opts.active,
+        sourceTabId: opts.active ? "t1" : null,
+        targetTabIds: opts.active ? ["t1", "t2", "t3"] : [],
+      });
+      await act(async () => {
+        await ensureBroadcastSubscribed();
+      });
+      const runWorkflow = vi.fn(() => Promise.resolve());
+      useAppStore.setState({
+        runWorkflow,
+        getBroadcastTargetTabIds: () => [...opts.connected],
+        workflows: opts.workflows ?? [wf("wf-1", "Deploy"), wf("wf-2", "Health Check")],
+      });
+      act(() => {
+        root.unmount();
+      });
+      root = createRoot(container);
+      render();
+      return runWorkflow;
+    }
+
+    function broadcastItem(): HTMLElement | null {
+      return document.querySelector('[data-testid="command-palette-item-broadcast-workflow"]');
+    }
+
+    afterEach(() => {
+      harness?.teardown();
+      harness = null;
+    });
+
+    it("is hidden while broadcasting is off", async () => {
+      await setup({ active: false, connected: [] });
+      expect(broadcastItem()).toBeNull();
+    });
+
+    it("is listed and enabled while broadcasting with a connected terminal", async () => {
+      await setup({ active: true, connected: ["t1", "t2"] });
+      const item = broadcastItem();
+      expect(item).not.toBeNull();
+      expect(item?.getAttribute("aria-disabled")).toBeNull();
+      expect(item?.textContent).toContain("Run Workflow on Broadcast Group");
+      expect(item?.textContent).toContain("2 terminals");
+    });
+
+    it("is disabled and inert when the group has no connected terminals", async () => {
+      const runWorkflow = await setup({ active: true, connected: [] });
+      typeInto("run workflow on broadcast group");
+      expect(activeLabel()).toContain("Run Workflow on Broadcast Group");
+      expect(broadcastItem()?.getAttribute("aria-disabled")).toBe("true");
+      keydown("Enter");
+      // Still on the root list, palette open, nothing run.
+      expect(document.querySelector('[data-testid="command-palette-picker"]')).toBeNull();
+      expect(useAppStore.getState().commandPaletteOpen).toBe(true);
+      expect(runWorkflow).not.toHaveBeenCalled();
+    });
+
+    it("is disabled when there are no workflows to run", async () => {
+      await setup({ active: true, connected: ["t1"], workflows: [] });
+      expect(broadcastItem()?.getAttribute("aria-disabled")).toBe("true");
+    });
+
+    it("opens a workflow picker listing every workflow", async () => {
+      await setup({ active: true, connected: ["t1", "t2"] });
+      typeInto("run workflow on broadcast group");
+      keydown("Enter");
+      expect(useAppStore.getState().commandPaletteOpen).toBe(true);
+      expect(document.querySelector('[data-testid="command-palette-picker"]')).not.toBeNull();
+      expect(getInput().value).toBe("");
+      const labels = [...document.querySelectorAll(".command-palette__label")].map(
+        (el) => el.textContent
+      );
+      expect(labels).toEqual(["Deploy", "Health Check"]);
+    });
+
+    it("runs the picked workflow on the group's connected terminals and closes", async () => {
+      const runWorkflow = await setup({ active: true, connected: ["t1", "t3"] });
+      typeInto("run workflow on broadcast group");
+      keydown("Enter");
+      typeInto("health");
+      expect(activeLabel()).toBe("Health Check");
+      keydown("Enter");
+      expect(runWorkflow).toHaveBeenCalledWith("wf-2", { targetTabIds: ["t1", "t3"] });
+      expect(useAppStore.getState().commandPaletteOpen).toBe(false);
+    });
+
+    it("Backspace on an empty picker query returns to the command list", async () => {
+      const runWorkflow = await setup({ active: true, connected: ["t1"] });
+      typeInto("run workflow on broadcast group");
+      keydown("Enter");
+      expect(document.querySelector('[data-testid="command-palette-picker"]')).not.toBeNull();
+      keydown("Backspace");
+      expect(document.querySelector('[data-testid="command-palette-picker"]')).toBeNull();
+      expect(broadcastItem()).not.toBeNull();
+      expect(runWorkflow).not.toHaveBeenCalled();
+    });
   });
 });

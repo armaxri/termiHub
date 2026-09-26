@@ -1,9 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { matchSorter } from "match-sorter";
-import { TerminalSquare, Play, Workflow as WorkflowIcon, LayoutGrid } from "lucide-react";
+import {
+  TerminalSquare,
+  Play,
+  Workflow as WorkflowIcon,
+  LayoutGrid,
+  Radio,
+  ChevronLeft,
+} from "lucide-react";
 import { useAppStore } from "@/store/appStore";
 import { useActivePanelId, useLayoutRenderTree } from "@/store/layoutSelectors";
 import { useProjectedConnections } from "@/store/useProjectedConnections";
+import { useProjectedBroadcast } from "@/store/useProjectedBroadcast";
 import { buildCommands } from "@/services/commands";
 import { useConnectSavedConnection } from "@/hooks/useConnectSavedConnection";
 import { ConnectionIcon } from "@/utils/connectionIcons";
@@ -54,12 +62,39 @@ type PaletteEntry =
       workflowId: string;
     }
   | {
+      kind: "broadcast-workflow";
+      key: string;
+      label: string;
+      /**
+       * Whether the broadcast group has at least one connected terminal and
+       * there is a workflow to pick. Disabled and non-activatable when false.
+       */
+      available: boolean;
+      /** Tooltip explaining why the entry is disabled. */
+      unavailableReason: string;
+    }
+  | {
+      kind: "broadcast-workflow-pick";
+      key: string;
+      label: string;
+      /** The workflow to run on the broadcast group's connected terminals. */
+      workflowId: string;
+    }
+  | {
       kind: "workspace";
       key: string;
       label: string;
       /** The saved workspace to launch, replacing the current layout. */
       workspaceId: string;
     };
+
+/** The palette's sub-picker, or null for the root command list. */
+type PaletteMode = "root" | "broadcast-workflow";
+
+/** Whether an entry is shown but inert in the current context. */
+function isDisabled(entry: PaletteEntry): boolean {
+  return (entry.kind === "command" || entry.kind === "broadcast-workflow") && !entry.available;
+}
 
 /**
  * Command palette (Cmd/Ctrl+P): a keyboard-first modal that fuzzy-matches both
@@ -70,6 +105,12 @@ type PaletteEntry =
  * Composed from the shared {@link Modal} + {@link Input} primitives; matching is
  * delegated to `match-sorter`. Connecting reuses {@link useConnectSavedConnection}
  * so the palette shares the sidebar's exact credential flow.
+ *
+ * While broadcasting, a "Run Workflow on Broadcast Group" entry (#3430) opens a
+ * workflow sub-picker; the chosen workflow runs concurrently on the group's
+ * connected terminals via `runWorkflow(id, { targetTabIds })`, which owns the
+ * progress toast and per-target run history. Backspace on an empty picker
+ * query returns to the root list.
  */
 export function CommandPalette(): React.ReactElement {
   const open = useAppStore((s) => s.commandPaletteOpen);
@@ -81,6 +122,9 @@ export function CommandPalette(): React.ReactElement {
   const playMacro = useAppStore((s) => s.playMacro);
   const runWorkflow = useAppStore((s) => s.runWorkflow);
   const launchWorkspace = useAppStore((s) => s.launchWorkspace);
+  const getBroadcastTargetTabIds = useAppStore((s) => s.getBroadcastTargetTabIds);
+  // Subscribed so the broadcast entry appears/disappears as broadcasting toggles.
+  const broadcast = useProjectedBroadcast();
   // Context-bound command availability depends on live panel/terminal state;
   // subscribe so the entry list (and its disabled affordances) recompute when
   // the focused panel, its tabs, or the active panel change.
@@ -89,12 +133,21 @@ export function CommandPalette(): React.ReactElement {
   const { connect } = useConnectSavedConnection();
 
   const [query, setQuery] = useState("");
+  const [mode, setMode] = useState<PaletteMode>("root");
   const [activeIndex, setActiveIndex] = useState(0);
   const listRef = useRef<HTMLUListElement>(null);
 
   // All entries (commands first, then connections) in declaration order — the
   // order shown when the query is empty.
   const entries = useMemo<PaletteEntry[]>(() => {
+    if (mode === "broadcast-workflow") {
+      return workflows.map((w) => ({
+        kind: "broadcast-workflow-pick",
+        key: `broadcast-workflow-pick:${w.id}`,
+        label: w.name,
+        workflowId: w.id,
+      }));
+    }
     const commandEntries: PaletteEntry[] = buildCommands().map((cmd) => ({
       kind: "command",
       key: `command:${cmd.id}`,
@@ -122,6 +175,23 @@ export function CommandPalette(): React.ReactElement {
       label: `Run Workflow: ${w.name}`,
       workflowId: w.id,
     }));
+    // Only offered while broadcasting (#3430); disabled when the group has no
+    // connected terminal or there is no workflow to pick.
+    const broadcastEntries: PaletteEntry[] = [];
+    if (broadcast.active) {
+      const connectedCount = getBroadcastTargetTabIds().length;
+      const noun = connectedCount === 1 ? "terminal" : "terminals";
+      broadcastEntries.push({
+        kind: "broadcast-workflow",
+        key: "broadcast-workflow",
+        label: `Run Workflow on Broadcast Group (${connectedCount} ${noun})…`,
+        available: connectedCount > 0 && workflows.length > 0,
+        unavailableReason:
+          connectedCount === 0
+            ? "No connected terminals in the broadcast group"
+            : "No workflows to run",
+      });
+    }
     const workspaceEntries: PaletteEntry[] = workspaces.map((ws) => ({
       kind: "workspace",
       key: `workspace:${ws.id}`,
@@ -131,6 +201,7 @@ export function CommandPalette(): React.ReactElement {
     return [
       ...commandEntries,
       ...macroEntries,
+      ...broadcastEntries,
       ...workflowEntries,
       ...workspaceEntries,
       ...connectionEntries,
@@ -140,7 +211,18 @@ export function CommandPalette(): React.ReactElement {
     // so the entries (and their disabled affordances) recompute when focus moves,
     // even though they are not referenced directly in this closure.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connections, macros, workflows, workspaces, rootPanel, activePanelId]);
+  }, [
+    mode,
+    open,
+    broadcast,
+    getBroadcastTargetTabIds,
+    connections,
+    macros,
+    workflows,
+    workspaces,
+    rootPanel,
+    activePanelId,
+  ]);
 
   // Ranked results. An empty query returns every entry in declaration order.
   const results = useMemo<PaletteEntry[]>(() => {
@@ -154,6 +236,7 @@ export function CommandPalette(): React.ReactElement {
   useEffect(() => {
     if (open) {
       setQuery("");
+      setMode("root");
       setActiveIndex(0);
     }
   }, [open]);
@@ -177,7 +260,14 @@ export function CommandPalette(): React.ReactElement {
       // A context-bound command with no applicable target is inert: leave the
       // palette open so the user sees it did nothing (and why, via the disabled
       // affordance) rather than silently dismissing.
-      if (entry.kind === "command" && !entry.available) return;
+      if (isDisabled(entry)) return;
+      // Entering a sub-picker keeps the palette open with a fresh query.
+      if (entry.kind === "broadcast-workflow") {
+        setMode("broadcast-workflow");
+        setQuery("");
+        setActiveIndex(0);
+        return;
+      }
       // Close first so the palette never stacks over a follow-on dialog (e.g.
       // the password prompt a connect may trigger).
       setOpen(false);
@@ -187,13 +277,16 @@ export function CommandPalette(): React.ReactElement {
         void playMacro(entry.macroId, { timingMode: "real-time" });
       } else if (entry.kind === "workflow") {
         void runWorkflow(entry.workflowId);
+      } else if (entry.kind === "broadcast-workflow-pick") {
+        // Resolve the group at run time so it reflects the latest connections.
+        void runWorkflow(entry.workflowId, { targetTabIds: getBroadcastTargetTabIds() });
       } else if (entry.kind === "workspace") {
         void launchWorkspace(entry.workspaceId);
       } else {
         void connect(entry.connection);
       }
     },
-    [connect, playMacro, runWorkflow, launchWorkspace, setOpen]
+    [connect, playMacro, runWorkflow, launchWorkspace, getBroadcastTargetTabIds, setOpen]
   );
 
   const handleKeyDown = useCallback(
@@ -215,9 +308,13 @@ export function CommandPalette(): React.ReactElement {
       } else if (event.key === "Enter") {
         event.preventDefault();
         activate(results[activeIndex]);
+      } else if (event.key === "Backspace" && mode !== "root" && query === "") {
+        event.preventDefault();
+        setMode("root");
+        setActiveIndex(0);
       }
     },
-    [results, activeIndex, activate]
+    [results, activeIndex, activate, mode, query]
   );
 
   return (
@@ -231,12 +328,32 @@ export function CommandPalette(): React.ReactElement {
       data-testid="command-palette"
     >
       <div className="command-palette">
+        {mode === "broadcast-workflow" && (
+          <button
+            type="button"
+            className="command-palette__picker"
+            onClick={() => {
+              setMode("root");
+              setQuery("");
+              setActiveIndex(0);
+            }}
+            title="Back to commands (Backspace)"
+            data-testid="command-palette-picker"
+          >
+            <ChevronLeft size={14} aria-hidden="true" />
+            Run Workflow on Broadcast Group
+          </button>
+        )}
         <Input
           autoFocus
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Type a command or connection…"
+          placeholder={
+            mode === "broadcast-workflow"
+              ? "Pick a workflow to run on the broadcast group…"
+              : "Type a command or connection…"
+          }
           aria-label="Command or connection search"
           role="combobox"
           aria-expanded
@@ -245,7 +362,9 @@ export function CommandPalette(): React.ReactElement {
         />
         {results.length === 0 ? (
           <p className="command-palette__empty" role="status">
-            No matching commands or connections.
+            {mode === "broadcast-workflow"
+              ? "No matching workflows."
+              : "No matching commands or connections."}
           </p>
         ) : (
           <ul
@@ -256,7 +375,7 @@ export function CommandPalette(): React.ReactElement {
             ref={listRef}
           >
             {results.map((entry, index) => {
-              const disabled = entry.kind === "command" && !entry.available;
+              const disabled = isDisabled(entry);
               return (
                 <li
                   key={entry.key}
@@ -267,7 +386,13 @@ export function CommandPalette(): React.ReactElement {
                   className={`command-palette__item${
                     index === activeIndex ? " command-palette__item--active" : ""
                   }${disabled ? " command-palette__item--disabled" : ""}`}
-                  title={disabled ? "Unavailable in the current context" : undefined}
+                  title={
+                    disabled
+                      ? entry.kind === "broadcast-workflow"
+                        ? entry.unavailableReason
+                        : "Unavailable in the current context"
+                      : undefined
+                  }
                   onMouseMove={() => setActiveIndex(index)}
                   onClick={() => activate(entry)}
                   data-testid={`command-palette-item-${entry.key}`}
@@ -277,7 +402,9 @@ export function CommandPalette(): React.ReactElement {
                       <TerminalSquare size={16} />
                     ) : entry.kind === "macro" ? (
                       <Play size={16} />
-                    ) : entry.kind === "workflow" ? (
+                    ) : entry.kind === "broadcast-workflow" ? (
+                      <Radio size={16} />
+                    ) : entry.kind === "workflow" || entry.kind === "broadcast-workflow-pick" ? (
                       <WorkflowIcon size={16} />
                     ) : entry.kind === "workspace" ? (
                       <LayoutGrid size={16} />
@@ -296,8 +423,10 @@ export function CommandPalette(): React.ReactElement {
                     ) : null
                   ) : entry.kind === "macro" ? (
                     <span className="command-palette__type">macro</span>
-                  ) : entry.kind === "workflow" ? (
+                  ) : entry.kind === "workflow" || entry.kind === "broadcast-workflow" ? (
                     <span className="command-palette__type">workflow</span>
+                  ) : entry.kind === "broadcast-workflow-pick" ? (
+                    <span className="command-palette__type">broadcast</span>
                   ) : entry.kind === "workspace" ? (
                     <span className="command-palette__type">workspace</span>
                   ) : (
