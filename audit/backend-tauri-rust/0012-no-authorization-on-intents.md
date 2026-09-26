@@ -10,7 +10,8 @@ evidence:
   - src-tauri/src/projection/frame.rs:35
   - src-tauri/src/commands/projection.rs:71
   - src-tauri/src/projection/mod.rs:360
-status: open
+status: fixed
+resolution: "#3445 — client_id bound to invoking WebviewWindow; intents/subscribe/resync/unsubscribe enforce ownership; scoped regions private; release on window close"
 ---
 
 ## What
