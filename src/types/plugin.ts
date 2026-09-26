@@ -179,6 +179,46 @@ export interface InstalledPlugin {
 }
 
 /**
+ * How an incoming plugin package relates to the installed copy of the same id
+ * (PLG-012). Mirrors Rust `VersionChangeKind`.
+ *
+ * - `fresh` / `upgrade` / `reinstall` — install proceeds silently.
+ * - `downgrade` — the incoming version is older than the installed one.
+ * - `sameVersionChanged` — same version, but a different package build.
+ * - `unverifiable` — a version is not valid semver, so the direction is unknown.
+ */
+export type PluginVersionChangeKind =
+  | "fresh"
+  | "upgrade"
+  | "reinstall"
+  | "sameVersionChanged"
+  | "downgrade"
+  | "unverifiable";
+
+/** A version change that needs the user's confirmation. Mirrors Rust `VersionChange`. */
+export interface PluginVersionChange {
+  /** The plugin id being installed. */
+  pluginId: string;
+  /** Display name from the incoming manifest. */
+  pluginName: string;
+  /** The installed version, or `null` when it could not be read. */
+  installedVersion: string | null;
+  /** The incoming package's version. */
+  incomingVersion: string;
+  /** How the incoming package relates to the installed one. */
+  kind: PluginVersionChangeKind;
+}
+
+/**
+ * Result of the `install_plugin` command: either installed, or refused pending
+ * confirmation of a downgrade / same-version rebuild (PLG-012) — nothing was
+ * changed and the install must be re-issued with `confirmVersionChange`.
+ */
+export type InstallPluginResult =
+  | { status: "installed"; plugin: InstalledPlugin }
+  | { status: "confirmationRequired"; change: PluginVersionChange };
+
+/**
  * A terminal-backend connection type contributed by an active plugin, projected
  * from installed plugins' `terminalBackend` extensions for the connection-type
  * selector. Mirrors the store shape in concept §10.

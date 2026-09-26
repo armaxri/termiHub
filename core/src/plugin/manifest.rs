@@ -218,7 +218,10 @@ pub struct PluginManifest {
     pub id: String,
     /// Human-readable display name.
     pub name: String,
-    /// Plugin version string (informational; the host does not interpret it).
+    /// Plugin version string. Should be a [semantic version](https://semver.org)
+    /// (`"1.4.0"`): the install path compares it against the installed copy
+    /// and requires confirmation for a downgrade or an uncomparable version
+    /// (PLG-012). It is not otherwise interpreted.
     pub version: String,
     /// Plugin author.
     pub author: String,

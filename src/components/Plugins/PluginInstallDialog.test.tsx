@@ -9,7 +9,8 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import React from "react";
 import { useAppStore } from "@/store/appStore";
-import type { PluginManifest, PluginTrustInfo } from "@/types/plugin";
+import type { PluginManifest, PluginTrustInfo, PluginVersionChange } from "@/types/plugin";
+import type { AppState } from "@/store/appStore";
 import { withTooltip } from "@/test/tooltip";
 import { PluginInstallDialog } from "./PluginInstallDialog";
 
@@ -141,7 +142,7 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
   });
 
   it("installs (accepting risk) then enables on confirm, selects the plugin, and closes", async () => {
-    const installPlugin = vi.fn(() => Promise.resolve());
+    const installPlugin = vi.fn(() => Promise.resolve(null));
     const enablePlugin = vi.fn(() => Promise.resolve());
     const selectPlugin = vi.fn();
     useAppStore.setState({ installPlugin, enablePlugin, selectPlugin });
@@ -150,14 +151,19 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
     await clickConfirm();
 
     // Unsigned → acceptUntrusted true, trustPublisher false.
-    expect(installPlugin).toHaveBeenCalledWith("/tmp/k8s-exec-1.2.0.termihub-plugin", true, false);
+    expect(installPlugin).toHaveBeenCalledWith(
+      "/tmp/k8s-exec-1.2.0.termihub-plugin",
+      true,
+      false,
+      false
+    );
     expect(enablePlugin).toHaveBeenCalledWith("k8s");
     expect(selectPlugin).toHaveBeenCalledWith("k8s");
     expect(onClose).toHaveBeenCalled();
   });
 
   it("verified publisher installs with no risk gate", async () => {
-    const installPlugin = vi.fn(() => Promise.resolve());
+    const installPlugin = vi.fn(() => Promise.resolve(null));
     useAppStore.setState({ installPlugin, enablePlugin: vi.fn(() => Promise.resolve()) });
     render(
       manifest(),
@@ -176,11 +182,16 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
 
     await clickConfirm();
     // Verified → neither accept nor trust flag.
-    expect(installPlugin).toHaveBeenCalledWith("/tmp/k8s-exec-1.2.0.termihub-plugin", false, false);
+    expect(installPlugin).toHaveBeenCalledWith(
+      "/tmp/k8s-exec-1.2.0.termihub-plugin",
+      false,
+      false,
+      false
+    );
   });
 
   it("signed-unknown key pins the publisher when the box is ticked", async () => {
-    const installPlugin = vi.fn(() => Promise.resolve());
+    const installPlugin = vi.fn(() => Promise.resolve(null));
     useAppStore.setState({ installPlugin, enablePlugin: vi.fn(() => Promise.resolve()) });
     render(
       manifest(),
@@ -204,11 +215,16 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
     await clickConfirm();
 
     // Signed + ticked → acceptUntrusted false, trustPublisher true.
-    expect(installPlugin).toHaveBeenCalledWith("/tmp/k8s-exec-1.2.0.termihub-plugin", false, true);
+    expect(installPlugin).toHaveBeenCalledWith(
+      "/tmp/k8s-exec-1.2.0.termihub-plugin",
+      false,
+      true,
+      false
+    );
   });
 
   it("tampered package is blocked with no install action", () => {
-    const installPlugin = vi.fn(() => Promise.resolve());
+    const installPlugin = vi.fn(() => Promise.resolve(null));
     useAppStore.setState({ installPlugin });
     render(
       manifest(),
@@ -230,7 +246,7 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
   });
 
   it("closes without installing on Cancel", () => {
-    const installPlugin = vi.fn(() => Promise.resolve());
+    const installPlugin = vi.fn(() => Promise.resolve(null));
     useAppStore.setState({ installPlugin });
     render(manifest());
 
@@ -241,5 +257,86 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
     );
     expect(installPlugin).not.toHaveBeenCalled();
     expect(onClose).toHaveBeenCalled();
+  });
+
+  describe("version-change confirmation (PLG-012)", () => {
+    const downgrade: PluginVersionChange = {
+      pluginId: "k8s",
+      pluginName: "Kubernetes Exec",
+      installedVersion: "1.4.0",
+      incomingVersion: "1.2.0",
+      kind: "downgrade",
+    };
+
+    async function flush() {
+      await act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+    }
+
+    function click(testId: string) {
+      return act(async () => {
+        document
+          .querySelector(`[data-testid="${testId}"]`)!
+          .dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+    }
+
+    it("asks before replacing with an older version, then installs confirmed", async () => {
+      const installPlugin = vi
+        .fn<AppState["installPlugin"]>()
+        .mockResolvedValueOnce(downgrade)
+        .mockResolvedValueOnce(null);
+      const enablePlugin = vi.fn(() => Promise.resolve());
+      const selectPlugin = vi.fn();
+      useAppStore.setState({ installPlugin, enablePlugin, selectPlugin });
+      render(manifest());
+
+      await clickConfirm();
+      await flush();
+
+      // Refused without confirmation: nothing enabled, confirm prompt shown.
+      expect(installPlugin).toHaveBeenCalledTimes(1);
+      expect(installPlugin).toHaveBeenLastCalledWith(
+        "/tmp/k8s-exec-1.2.0.termihub-plugin",
+        true,
+        false,
+        false
+      );
+      expect(enablePlugin).not.toHaveBeenCalled();
+      const prompt = document.querySelector('[data-testid="plugin-version-change-dialog"]');
+      expect(prompt).not.toBeNull();
+      expect(prompt!.textContent).toContain("Replace Kubernetes Exec 1.4.0 with older 1.2.0?");
+
+      await click("plugin-version-change-confirm");
+      await flush();
+
+      expect(installPlugin).toHaveBeenCalledTimes(2);
+      expect(installPlugin).toHaveBeenLastCalledWith(
+        "/tmp/k8s-exec-1.2.0.termihub-plugin",
+        true,
+        false,
+        true
+      );
+      expect(enablePlugin).toHaveBeenCalledWith("k8s");
+      expect(selectPlugin).toHaveBeenCalledWith("k8s");
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it("cancelling the prompt closes without installing", async () => {
+      const installPlugin = vi.fn<AppState["installPlugin"]>().mockResolvedValueOnce(downgrade);
+      const enablePlugin = vi.fn(() => Promise.resolve());
+      useAppStore.setState({ installPlugin, enablePlugin });
+      render(manifest());
+
+      await clickConfirm();
+      await flush();
+      await click("plugin-version-change-cancel");
+
+      expect(installPlugin).toHaveBeenCalledTimes(1);
+      expect(enablePlugin).not.toHaveBeenCalled();
+      expect(onClose).toHaveBeenCalled();
+    });
   });
 });
