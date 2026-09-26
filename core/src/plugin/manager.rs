@@ -52,6 +52,7 @@ use super::package::{
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
 use super::signature::{self, VerifiedArchive};
 use super::trust_store::{TrustStore, TrustStoreError, TrustedPublisher};
+use super::version_change::{classify_version_change, InstalledSnapshot, VersionChange};
 
 /// File holding per-plugin enabled/disabled state and install timestamps.
 const STATE_FILE_NAME: &str = "plugin-state.json";
@@ -200,6 +201,39 @@ pub enum PluginManagerError {
     /// The publisher trust store could not be read or written.
     #[error("plugin trust store error: {0}")]
     TrustStore(#[from] TrustStoreError),
+
+    /// Installing the package would replace the installed plugin with an older
+    /// version, a different build under the same version, or a version that
+    /// cannot be compared — and the caller did not confirm it (PLG-012).
+    /// Nothing was changed; re-issue the install with
+    /// [`InstallOptions::confirm_version_change`] set once the user has agreed.
+    /// Carries both versions for the confirmation prompt.
+    #[error(
+        "installing {} {} over installed {} requires confirmation ({:?})",
+        .0.plugin_id,
+        .0.incoming_version,
+        .0.installed_version.as_deref().unwrap_or("unknown version"),
+        .0.kind
+    )]
+    VersionChangeUnconfirmed(Box<VersionChange>),
+}
+
+/// The caller's consent flags for [`PluginManager::install_with`].
+///
+/// Every flag defaults to `false` — the most conservative install: an unsigned
+/// package, an unpinned key, and any downgrade / same-version rebuild are all
+/// refused until the user explicitly agrees.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct InstallOptions {
+    /// The user acknowledged the risk of an unsigned (untrusted) package.
+    pub accept_untrusted: bool,
+    /// Pin a signed-but-unknown publisher key (trust-on-first-use).
+    pub trust_publisher: bool,
+    /// The user confirmed replacing the installed plugin with an older version,
+    /// a different build of the same version, or an uncomparable version
+    /// (PLG-012). Without it such an install is refused with
+    /// [`PluginManagerError::VersionChangeUnconfirmed`].
+    pub confirm_version_change: bool,
 }
 
 /// Per-plugin record persisted in `plugin-state.json`.
@@ -210,6 +244,11 @@ struct PluginStateRecord {
     enabled: bool,
     /// Install time in milliseconds since the Unix epoch.
     installed_at: u64,
+    /// The `sha256:`-prefixed digest of the package this plugin was installed
+    /// from (PLG-012), so a same-version reinstall can tell an identical package
+    /// from a different build. Absent for installs that predate it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    package_sha256: Option<String>,
 }
 
 /// The whole `plugin-state.json` document.
@@ -377,12 +416,47 @@ impl PluginManager {
     /// * **Verified** (valid, trusted key) → installed with no risk gate.
     ///
     /// All gates are checked **before** anything is extracted.
+    ///
+    /// Equivalent to [`install_with`](Self::install_with) with
+    /// `confirm_version_change = false`: a downgrade or same-version rebuild is
+    /// refused with [`PluginManagerError::VersionChangeUnconfirmed`].
     pub fn install(
         &self,
         package_path: &Path,
         accept_untrusted: bool,
         trust_publisher: bool,
     ) -> Result<InstalledPlugin, PluginManagerError> {
+        self.install_with(
+            package_path,
+            InstallOptions {
+                accept_untrusted,
+                trust_publisher,
+                confirm_version_change: false,
+            },
+        )
+    }
+
+    /// Install a plugin from a `.termihub-plugin` package with explicit consent
+    /// flags — see [`install`](Self::install) for the trust gate.
+    ///
+    /// In addition to the trust gate, an install that would **replace** an
+    /// installed plugin is version-gated (PLG-012): a downgrade, a different
+    /// build under the same version, or a version that cannot be compared is
+    /// refused with [`PluginManagerError::VersionChangeUnconfirmed`] (carrying
+    /// both versions) unless [`InstallOptions::confirm_version_change`] is set.
+    /// Fresh installs, upgrades, and byte-identical reinstalls proceed. The
+    /// version gate runs under the install lock, before anything is pinned or
+    /// extracted.
+    pub fn install_with(
+        &self,
+        package_path: &Path,
+        options: InstallOptions,
+    ) -> Result<InstalledPlugin, PluginManagerError> {
+        let InstallOptions {
+            accept_untrusted,
+            trust_publisher,
+            confirm_version_change,
+        } = options;
         // Reject an oversize (compressed) package up front, before trust
         // assessment opens and reads the archive. The compressed-size gate used to
         // live only inside `validate_package`, which runs *after* the trust gate —
@@ -406,6 +480,31 @@ impl PluginManager {
         let manifest = validate_package(package_path)?;
         let id = manifest.id.clone();
         let dest = self.plugin_dir(&id);
+
+        // Version gate (PLG-012): replacing an installed plugin with an older or
+        // different same-version build needs explicit confirmation. Checked under
+        // the lock so the installed copy cannot change between compare and swap.
+        let package_sha256 = signature::sha256_file(package_path)?;
+        let change = self.classify_against_installed(&manifest, &package_sha256)?;
+        if change.requires_confirmation() {
+            if !confirm_version_change {
+                tracing::info!(
+                    plugin_id = %change.plugin_id,
+                    installed_version = change.installed_version.as_deref().unwrap_or("unknown"),
+                    incoming_version = %change.incoming_version,
+                    kind = ?change.kind,
+                    "plugin install refused pending version-change confirmation"
+                );
+                return Err(PluginManagerError::VersionChangeUnconfirmed(Box::new(change)));
+            }
+            tracing::warn!(
+                plugin_id = %change.plugin_id,
+                installed_version = change.installed_version.as_deref().unwrap_or("unknown"),
+                incoming_version = %change.incoming_version,
+                kind = ?change.kind,
+                "replacing installed plugin with a confirmed downgrade / different build"
+            );
+        }
 
         // Trust-on-first-use: pin the signing key when the user opted in on a
         // signed-but-unknown package, labelling it with the manifest's author
@@ -457,6 +556,7 @@ impl PluginManager {
             PluginStateRecord {
                 enabled: true,
                 installed_at: now_millis(),
+                package_sha256: Some(package_sha256),
             },
         );
         self.write_state_store(&state)?;
@@ -619,6 +719,7 @@ impl PluginManager {
             .or_insert_with(|| PluginStateRecord {
                 enabled,
                 installed_at: now_millis(),
+                package_sha256: None,
             });
         record.enabled = enabled;
         self.write_state_store(&state)?;
@@ -697,6 +798,41 @@ impl PluginManager {
     }
 
     // --- internal helpers -------------------------------------------------
+
+    /// Classify installing `manifest` (whose package digest is `package_sha256`)
+    /// against the currently installed plugin of the same id. The caller holds
+    /// the install lock.
+    fn classify_against_installed(
+        &self,
+        manifest: &PluginManifest,
+        package_sha256: &str,
+    ) -> Result<VersionChange, PluginManagerError> {
+        let dir = self.plugin_dir(&manifest.id);
+        let installed_manifest = read_manifest(&dir);
+        let state = self.read_state_store()?;
+        let recorded_hash = state
+            .plugins
+            .get(&manifest.id)
+            .and_then(|r| r.package_sha256.as_deref());
+        let snapshot = match &installed_manifest {
+            Some(m) => InstalledSnapshot::Present {
+                version: &m.version,
+                package_sha256: recorded_hash,
+            },
+            // A directory with no readable manifest is an installed-but-unknown
+            // plugin: fail closed to "confirm" rather than treat it as fresh.
+            None if dir.exists() => InstalledSnapshot::Unreadable,
+            None => InstalledSnapshot::Absent,
+        };
+        let kind = classify_version_change(snapshot, &manifest.version, package_sha256);
+        Ok(VersionChange {
+            plugin_id: manifest.id.clone(),
+            plugin_name: manifest.name.clone(),
+            installed_version: installed_manifest.map(|m| m.version),
+            incoming_version: manifest.version.clone(),
+            kind,
+        })
+    }
 
     /// Absolute directory for a plugin id. The id is validated at manifest time
     /// to a filesystem-safe slug, so it cannot contain separators.
@@ -1094,17 +1230,23 @@ fn write_json_atomic<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugin::VersionChangeKind;
     use std::io::{Read, Write};
     use tempfile::TempDir;
     use zip::write::SimpleFileOptions;
     use zip::ZipWriter;
 
     fn manifest_json(id: &str, api_version: &str) -> String {
+        manifest_json_v(id, api_version, "1.0.0")
+    }
+
+    /// [`manifest_json`] with an explicit plugin `version` (PLG-012 tests).
+    fn manifest_json_v(id: &str, api_version: &str, version: &str) -> String {
         format!(
             r#"{{
                 "id": "{id}",
                 "name": "Test Plugin",
-                "version": "1.0.0",
+                "version": "{version}",
                 "author": "tester",
                 "description": "A plugin for tests",
                 "license": "MIT",
@@ -1278,17 +1420,177 @@ mod tests {
         mgr.install(&pkg1, true, false).unwrap();
         assert!(mgr.root().join("dup/old.txt").exists());
 
-        // Reinstall with different contents; the old file must be gone.
+        // Upgrade with different contents; the old file must be gone.
         let tmp2 = TempDir::new().unwrap();
         let pkg2 = make_package(
             tmp2.path(),
-            &manifest_json("dup", "1.0"),
+            &manifest_json_v("dup", "1.0", "1.1.0"),
             &[("new.txt", b"new")],
         );
         mgr.install(&pkg2, true, false).unwrap();
         assert!(mgr.root().join("dup/new.txt").exists());
         assert!(!mgr.root().join("dup/old.txt").exists());
         assert_eq!(mgr.list().unwrap().len(), 1);
+    }
+
+    /// Install `version` of plugin `id` from a fresh temp dir with a marker file
+    /// named after the version, returning the temp dir (keeps the package alive).
+    fn install_version(
+        mgr: &PluginManager,
+        id: &str,
+        version: &str,
+        options: InstallOptions,
+    ) -> Result<InstalledPlugin, PluginManagerError> {
+        let tmp = TempDir::new().unwrap();
+        let pkg = make_package(
+            tmp.path(),
+            &manifest_json_v(id, "1.0", version),
+            &[(&format!("v-{version}.txt"), version.as_bytes())],
+        );
+        mgr.install_with(&pkg, options)
+    }
+
+    const UNCONFIRMED: InstallOptions = InstallOptions {
+        accept_untrusted: true,
+        trust_publisher: false,
+        confirm_version_change: false,
+    };
+    const CONFIRMED: InstallOptions = InstallOptions {
+        accept_untrusted: true,
+        trust_publisher: false,
+        confirm_version_change: true,
+    };
+
+    #[test]
+    fn downgrade_requires_confirmation_and_leaves_install_untouched() {
+        let (mgr, _tmp) = manager();
+        install_version(&mgr, "vc", "1.4.0", UNCONFIRMED).unwrap();
+
+        let err = install_version(&mgr, "vc", "1.2.0", UNCONFIRMED).unwrap_err();
+        let PluginManagerError::VersionChangeUnconfirmed(change) = err else {
+            panic!("expected VersionChangeUnconfirmed, got {err:?}");
+        };
+        assert_eq!(change.kind, VersionChangeKind::Downgrade);
+        assert_eq!(change.installed_version.as_deref(), Some("1.4.0"));
+        assert_eq!(change.incoming_version, "1.2.0");
+        assert_eq!(change.plugin_id, "vc");
+
+        // Nothing changed on disk: the newer install is still in place.
+        assert_eq!(mgr.get("vc").unwrap().manifest.version, "1.4.0");
+        assert!(mgr.root().join("vc/v-1.4.0.txt").exists());
+        assert!(!mgr.root().join("vc/v-1.2.0.txt").exists());
+    }
+
+    #[test]
+    fn confirmed_downgrade_proceeds() {
+        let (mgr, _tmp) = manager();
+        install_version(&mgr, "vc", "1.4.0", UNCONFIRMED).unwrap();
+        let installed = install_version(&mgr, "vc", "1.2.0", CONFIRMED).unwrap();
+        assert_eq!(installed.manifest.version, "1.2.0");
+        assert!(mgr.root().join("vc/v-1.2.0.txt").exists());
+        assert!(!mgr.root().join("vc/v-1.4.0.txt").exists());
+    }
+
+    #[test]
+    fn upgrade_and_fresh_install_need_no_confirmation() {
+        let (mgr, _tmp) = manager();
+        install_version(&mgr, "vc", "1.2.0", UNCONFIRMED).unwrap();
+        let up = install_version(&mgr, "vc", "1.4.0", UNCONFIRMED).unwrap();
+        assert_eq!(up.manifest.version, "1.4.0");
+    }
+
+    #[test]
+    fn identical_reinstall_needs_no_confirmation() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("same", "1.0"), &[]);
+        mgr.install(&pkg, true, false).unwrap();
+        // The exact same package again — a harmless reinstall.
+        mgr.install(&pkg, true, false).unwrap();
+    }
+
+    #[test]
+    fn same_version_different_build_requires_confirmation() {
+        let (mgr, tmp) = manager();
+        let pkg1 = make_package(tmp.path(), &manifest_json("same", "1.0"), &[("a", b"1")]);
+        mgr.install(&pkg1, true, false).unwrap();
+
+        let tmp2 = TempDir::new().unwrap();
+        let pkg2 = make_package(tmp2.path(), &manifest_json("same", "1.0"), &[("a", b"2")]);
+        let err = mgr.install(&pkg2, true, false).unwrap_err();
+        assert!(
+            matches!(&err, PluginManagerError::VersionChangeUnconfirmed(c)
+                if c.kind == VersionChangeKind::SameVersionChanged),
+            "{err:?}"
+        );
+        let options = InstallOptions {
+            confirm_version_change: true,
+            ..UNCONFIRMED
+        };
+        mgr.install_with(&pkg2, options).unwrap();
+        assert_eq!(std::fs::read(mgr.root().join("same/a")).unwrap(), b"2");
+    }
+
+    #[test]
+    fn prerelease_of_installed_release_is_a_downgrade() {
+        let (mgr, _tmp) = manager();
+        install_version(&mgr, "vc", "1.2.0", UNCONFIRMED).unwrap();
+        let err = install_version(&mgr, "vc", "1.2.0-rc.1", UNCONFIRMED).unwrap_err();
+        assert!(
+            matches!(&err, PluginManagerError::VersionChangeUnconfirmed(c)
+                if c.kind == VersionChangeKind::Downgrade),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn unparseable_version_requires_confirmation() {
+        let (mgr, _tmp) = manager();
+        install_version(&mgr, "vc", "nightly", UNCONFIRMED).unwrap();
+        let err = install_version(&mgr, "vc", "1.0.0", UNCONFIRMED).unwrap_err();
+        assert!(
+            matches!(&err, PluginManagerError::VersionChangeUnconfirmed(c)
+                if c.kind == VersionChangeKind::Unverifiable),
+            "{err:?}"
+        );
+        install_version(&mgr, "vc", "1.0.0", CONFIRMED).unwrap();
+    }
+
+    #[test]
+    fn install_over_a_dir_without_manifest_requires_confirmation() {
+        let (mgr, _tmp) = manager();
+        std::fs::create_dir_all(mgr.root().join("vc")).unwrap();
+        let err = install_version(&mgr, "vc", "1.0.0", UNCONFIRMED).unwrap_err();
+        let PluginManagerError::VersionChangeUnconfirmed(change) = err else {
+            panic!("expected VersionChangeUnconfirmed, got {err:?}");
+        };
+        assert_eq!(change.kind, VersionChangeKind::Unverifiable);
+        assert_eq!(change.installed_version, None);
+    }
+
+    #[test]
+    fn legacy_install_without_recorded_hash_requires_confirmation_on_same_version() {
+        let (mgr, tmp) = manager();
+        let pkg = make_package(tmp.path(), &manifest_json("legacy", "1.0"), &[]);
+        mgr.install(&pkg, true, false).unwrap();
+        // Simulate a pre-PLG-012 state file (no packageSha256).
+        let mut state = mgr.read_state_store().unwrap();
+        state.plugins.get_mut("legacy").unwrap().package_sha256 = None;
+        mgr.write_state_store(&state).unwrap();
+
+        let err = mgr.install(&pkg, true, false).unwrap_err();
+        assert!(
+            matches!(&err, PluginManagerError::VersionChangeUnconfirmed(c)
+                if c.kind == VersionChangeKind::SameVersionChanged),
+            "{err:?}"
+        );
+    }
+
+    #[test]
+    fn uninstall_then_install_older_is_a_fresh_install() {
+        let (mgr, _tmp) = manager();
+        install_version(&mgr, "vc", "1.4.0", UNCONFIRMED).unwrap();
+        mgr.uninstall("vc").unwrap();
+        install_version(&mgr, "vc", "1.2.0", UNCONFIRMED).unwrap();
     }
 
     #[test]

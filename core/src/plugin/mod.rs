@@ -70,6 +70,7 @@ mod package;
 mod security;
 mod signature;
 mod trust_store;
+mod version_change;
 
 pub use capabilities::{
     build_host_bridge, build_host_bridge_with_policy, ConnectionPolicy, DEFAULT_CONNECT_TIMEOUT,
@@ -83,7 +84,7 @@ pub use host::{
 pub use manager::{
     installed_backend_types, read_stored_settings, resolve_plugin_settings,
     resolve_plugin_settings_json, InstalledPlugin, NoopLifecycleHook, PluginLifecycleHook,
-    PluginManager, PluginManagerError, PluginState,
+    InstallOptions, PluginManager, PluginManagerError, PluginState,
 };
 pub use manifest::{
     check_api_compatibility, parse_manifest, ApiCompatibility, ConnectionPolicyManifest,
@@ -113,3 +114,6 @@ pub use signature::{
 /// The one authoritative plugin version: the native plugin ABI (PLG-002).
 pub use termihub_plugin_api::{AbiIncompatibility, AbiVersion, CURRENT_PLUGIN_ABI_VERSION};
 pub use trust_store::{TrustSource, TrustStore, TrustStoreError, TrustedPublisher};
+pub use version_change::{
+    classify_version_change, InstalledSnapshot, VersionChange, VersionChangeKind,
+};

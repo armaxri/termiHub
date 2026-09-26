@@ -45,6 +45,9 @@ portable-pty = { version = "0.8", optional = true }
 # used before the collector moved into core.
 sysinfo = { version = "0.38", optional = true }
 tracing = { version = "0.1", optional = true }
+# Plugin install/update version comparison (PLG-012): detect downgrades by
+# semantic-version precedence. Already in the workspace lockfile via src-tauri.
+semver = { version = "1", optional = true }
 russh = { workspace = true, optional = true }
 russh-sftp = { workspace = true, optional = true }
 # Privilege-elevated SFTP writes (sftp_ops): POSIX-quote the untrusted remote
@@ -292,6 +295,10 @@ plugin = [
     "dep:base64",
     "dep:sha2",
     "dep:hex",
+    # Install/update downgrade detection (PLG-012): semver precedence compare of
+    # incoming vs installed version, and a log line for each confirmed downgrade.
+    "dep:semver",
+    "dep:tracing",
 ]
 # Periodic HTTP monitor service (#2592), hostable on the desktop or a remote
 # agent. Pulls `reqwest` for the checks, `uuid` for monitor ids, `tracing` for
