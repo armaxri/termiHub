@@ -1283,14 +1283,23 @@ export async function previewImport(json: string): Promise<ImportPreview> {
   return await invoke<ImportPreview>("preview_import", { json });
 }
 
-/** Export connections with optional encrypted credentials. */
+/**
+ * Export connections with optional encrypted credentials.
+ *
+ * With an `exportPassword` (credentials included) the backend re-authenticates
+ * exactly like the credential-vault export: in master-password mode
+ * `masterPassword` must verify against the store (#3598); in OS-keychain mode
+ * the OS verifies the user and `masterPassword` is ignored.
+ */
 export async function exportConnectionsEncrypted(
   exportPassword: string | null,
-  connectionIds: string[] | null
+  connectionIds: string[] | null,
+  masterPassword: string | null = null
 ): Promise<string> {
   return await invoke<string>("export_connections_encrypted", {
     exportPassword,
     connectionIds,
+    masterPassword,
   });
 }
 

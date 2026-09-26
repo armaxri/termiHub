@@ -457,8 +457,21 @@ describe("api response-validation (TFE-004)", () => {
       expect(mockedInvoke).toHaveBeenCalledWith("export_connections_encrypted", {
         exportPassword: null,
         connectionIds: null,
+        masterPassword: null,
       });
       expect(result).toBe('{"encrypted":true}');
+    });
+
+    it("exportConnectionsEncrypted forwards the master password for re-auth", async () => {
+      mockedInvoke.mockResolvedValue("{}");
+
+      await exportConnectionsEncrypted("export-pass", null, "master-pw");
+
+      expect(mockedInvoke).toHaveBeenCalledWith("export_connections_encrypted", {
+        exportPassword: "export-pass",
+        connectionIds: null,
+        masterPassword: "master-pw",
+      });
     });
 
     it("resolveContainerSpawn defaults runtime to null and returns the spawn", async () => {
