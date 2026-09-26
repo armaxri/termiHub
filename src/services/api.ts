@@ -1213,6 +1213,21 @@ export async function moveConnectionToFile(
   });
 }
 
+/**
+ * Save an edited connection whose storage file changed (#3590): the backend
+ * writes the edit to `connection.sourceFile` and removes it from
+ * `currentSource` in one step. Returns the connection as written to the target.
+ */
+export async function saveConnectionToFile(
+  connection: SavedConnection,
+  currentSource: string | null
+): Promise<SavedConnection> {
+  return await invoke<SavedConnection>("save_connection_to_file", {
+    connection,
+    currentSource,
+  });
+}
+
 /** Save (add or update) a folder */
 export async function saveFolder(folder: ConnectionFolder): Promise<void> {
   await invoke("save_folder", { folder });

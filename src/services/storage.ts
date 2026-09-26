@@ -8,6 +8,7 @@ import {
   saveConnection,
   deleteConnectionFromBackend,
   moveConnectionToFile,
+  saveConnectionToFile,
   saveFolder,
   deleteFolderFromBackend,
   exportConnections,
@@ -56,6 +57,9 @@ export async function removeConnection(id: string, sourceFile?: string | null): 
 
 /** Move a connection between storage files */
 export { moveConnectionToFile };
+
+/** Save an edited connection into a different storage file in one step (#3590) */
+export { saveConnectionToFile };
 
 /** Persist a folder (add or update) */
 export async function persistFolder(folder: ConnectionFolder): Promise<void> {
