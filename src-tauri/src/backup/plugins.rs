@@ -185,10 +185,10 @@ struct FoundFile {
     size: u64,
 }
 
-/// List a plugin directory's regular files (symlinks and other special files
-/// are not followed). Stops once `limit_bytes` or [`MAX_PLUGIN_FILES`] is
-/// exceeded, returning what it found so far with `over = true`.
-fn list_files(dir: &Path, limit_bytes: u64) -> std::io::Result<(Vec<FoundFile>, u64, bool)> {
+/// List a plugin directory's regular files and their total size (symlinks and
+/// other special files are not followed). Only metadata is read. Stops once
+/// more than [`MAX_PLUGIN_FILES`] files were found.
+fn list_files(dir: &Path) -> std::io::Result<(Vec<FoundFile>, u64)> {
     let mut out = Vec::new();
     let mut total = 0u64;
     let mut stack = vec![(dir.to_path_buf(), String::new())];
@@ -214,18 +214,18 @@ fn list_files(dir: &Path, limit_bytes: u64) -> std::io::Result<(Vec<FoundFile>, 
                     path: entry.path(),
                     size: meta.len(),
                 });
-                if total > limit_bytes || out.len() > MAX_PLUGIN_FILES {
-                    return Ok((out, total, true));
+                if out.len() > MAX_PLUGIN_FILES {
+                    return Ok((out, total));
                 }
             }
         }
     }
-    Ok((out, total, false))
+    Ok((out, total))
 }
 
 /// Digest of an installed plugin directory (see [`files_digest`]).
 pub fn dir_digest(dir: &Path) -> std::io::Result<String> {
-    let (files, _, _) = list_files(dir, u64::MAX)?;
+    let (files, _) = list_files(dir)?;
     let mut loaded = Vec::with_capacity(files.len());
     for f in files {
         let mut bytes = Vec::new();
@@ -310,22 +310,22 @@ pub fn export_section(config_dir: &Path) -> Result<Option<(BackupSection, Vec<St
     let mut total = 0u64;
     for id in installed_ids(&root) {
         let dir = root.join(&id);
-        let remaining = MAX_PLUGINS_BACKUP_TOTAL_BYTES.saturating_sub(total);
-        let limit = MAX_PLUGIN_BACKUP_BYTES.min(remaining);
-        let (files, size, over) =
-            list_files(&dir, limit).map_err(|e| format!("could not read plugin {id}: {e}"))?;
-        if over {
-            let reason = if size > MAX_PLUGIN_BACKUP_BYTES || files.len() > MAX_PLUGIN_FILES {
-                format!(
-                    "it is larger than the {} a backup holds per plugin",
-                    mib(MAX_PLUGIN_BACKUP_BYTES)
-                )
-            } else {
-                format!(
-                    "the backup already holds the maximum of {} of plugins",
-                    mib(MAX_PLUGINS_BACKUP_TOTAL_BYTES)
-                )
-            };
+        let (files, size) =
+            list_files(&dir).map_err(|e| format!("could not read plugin {id}: {e}"))?;
+        let reason = if size > MAX_PLUGIN_BACKUP_BYTES || files.len() > MAX_PLUGIN_FILES {
+            Some(format!(
+                "it is larger than the {} a backup holds per plugin",
+                mib(MAX_PLUGIN_BACKUP_BYTES)
+            ))
+        } else if total.saturating_add(size) > MAX_PLUGINS_BACKUP_TOTAL_BYTES {
+            Some(format!(
+                "the backup already holds the maximum of {} of plugins",
+                mib(MAX_PLUGINS_BACKUP_TOTAL_BYTES)
+            ))
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
             warnings.push(format!(
                 "Plugin \"{id}\" was not included because {reason}. Reinstall it from its \
                  package after restoring."
