@@ -5,7 +5,9 @@ use tauri::{AppHandle, Manager, State};
 use tracing::{debug, info};
 use zeroize::Zeroizing;
 
-use crate::connection::config::{ConnectionFolder, ImportPreview, SavedConnection, SavedRemoteAgent};
+use crate::connection::config::{
+    ConnectionFolder, ImportPreview, SavedConnection, SavedRemoteAgent,
+};
 use crate::connection::manager::{self, ConnectionManager};
 use crate::connection::recovery::RecoveryWarning;
 use crate::connection::settings::AppSettings;
@@ -554,9 +556,17 @@ mod tests {
     fn preview_flags_sealed_shared_credential_secrets() {
         let json = r#"{"version":"2","children":[],"agents":[],
             "$namedCredentialSecrets":{"version":1}}"#;
-        assert!(preview_import(json.to_string()).unwrap().has_encrypted_credentials);
+        assert!(
+            preview_import(json.to_string())
+                .unwrap()
+                .has_encrypted_credentials
+        );
         let plain = r#"{"version":"2","children":[],"agents":[]}"#;
-        assert!(!preview_import(plain.to_string()).unwrap().has_encrypted_credentials);
+        assert!(
+            !preview_import(plain.to_string())
+                .unwrap()
+                .has_encrypted_credentials
+        );
     }
 
     #[test]

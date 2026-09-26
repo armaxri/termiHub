@@ -337,21 +337,7 @@ pub fn prepare_import(
             ..PreparedImport::default()
         });
     }
-
-    let sealed = match (export.get(SECRETS_KEY).filter(|v| !v.is_null()), password) {
-        (Some(envelope), Some(password)) => {
-            let envelope: EncryptedEnvelope = serde_json::from_value(envelope.clone())
-                .context("Invalid shared credential data format")?;
-            let plaintext = Zeroizing::new(
-                decrypt_with_password(password, &envelope)
-                    .map_err(anyhow::Error::from)
-                    .context("Failed to decrypt shared credentials — wrong password?")?,
-            );
-            serde_json::from_slice::<SealedSecrets>(&plaintext)
-                .context("Invalid shared credential data format")?
-        }
-        _ => SealedSecrets::default(),
-    };
+    let sealed = open_sealed(&export, password)?;
 
     // Pass 1: decide, without changing anything.
     let referenced = referenced_ids(&export);
@@ -360,21 +346,13 @@ pub fn prepare_import(
         .filter(|entry| referenced.contains(&entry.id))
         .map(|entry| plan_for(entry, &sealed.secrets, registry, store))
         .collect();
-
-    let needs_write = plans
-        .iter()
-        .any(|p| matches!(p, Plan::Create(_) | Plan::Fill(_)));
+    let needs_write = plans.iter().any(|p| match p {
+        Plan::Create(_) => true,
+        Plan::Fill(id) => sealed.secrets.contains_key(id),
+        Plan::Reuse { .. } => false,
+    });
     let writable = if needs_write {
-        match ensure_writable(store, mode) {
-            Ok(()) => Ok(()),
-            Err(NamedCredentialError::StoreLocked { .. }) => {
-                anyhow::bail!(
-                    "Unlock the credential store before importing connections that use shared \
-                     credentials."
-                )
-            }
-            Err(e) => Err(e),
-        }
+        check_writable(store, mode)?
     } else {
         Ok(())
     };
@@ -382,76 +360,16 @@ pub fn prepare_import(
     // Pass 2: apply.
     let mut prepared = PreparedImport::default();
     let mut mapping: HashMap<String, Option<String>> = HashMap::new();
+    let apply = Apply {
+        registry,
+        store,
+        mode,
+        secrets: &sealed.secrets,
+        writable: writable.as_ref().err(),
+    };
     for plan in plans {
-        match plan {
-            Plan::Reuse { file_id, local_id } => {
-                mapping.insert(file_id, Some(local_id));
-            }
-            Plan::Fill(id) => {
-                if writable.is_ok() {
-                    if let Some(secret) = sealed.secrets.get(&id) {
-                        match registry.fill_missing_secret(store, mode, &id, secret) {
-                            Ok(true) => prepared.imported_count += 1,
-                            Ok(false) => {}
-                            Err(e) => {
-                                warn!(id = %id, error = %e, "could not fill a shared credential secret")
-                            }
-                        }
-                    }
-                }
-                mapping.insert(id.clone(), Some(id));
-            }
-            Plan::Create(entry) => {
-                let file_id = entry.id.clone();
-                if let Err(e) = &writable {
-                    prepared.warnings.push(format!(
-                        "Shared credential \"{}\" was not imported: {e} Connections that used \
-                         it will ask for their secret.",
-                        entry.name
-                    ));
-                    mapping.insert(file_id, None);
-                    continue;
-                }
-                let secret = sealed.secrets.get(&file_id).map(String::as_str);
-                match registry.import_credential(
-                    store,
-                    mode,
-                    &entry.id,
-                    &entry.name,
-                    entry.kind,
-                    secret,
-                ) {
-                    Ok(created) => {
-                        if created.name != entry.name.trim() {
-                            prepared.warnings.push(format!(
-                                "Shared credential \"{}\" was imported as \"{}\" because a \
-                                 different credential already uses that name.",
-                                entry.name, created.name
-                            ));
-                        }
-                        if secret.is_none() {
-                            prepared.warnings.push(format!(
-                                "Shared credential \"{}\" was imported without its secret. Set \
-                                 it under Settings → Security → Shared credentials; until then, \
-                                 connections using it will ask for it.",
-                                created.name
-                            ));
-                        }
-                        mapping.insert(file_id, Some(created.id.clone()));
-                        prepared.imported_count += 1;
-                        prepared.created.push(created);
-                    }
-                    Err(e) => {
-                        prepared.warnings.push(format!(
-                            "Shared credential \"{}\" was not imported: {e} Connections that \
-                             used it will ask for their secret.",
-                            entry.name
-                        ));
-                        mapping.insert(file_id, None);
-                    }
-                }
-            }
-        }
+        let (file_id, target) = apply.run(plan, &mut prepared);
+        mapping.insert(file_id, target);
     }
 
     rewrite_refs(&mut export, &mapping);
@@ -463,6 +381,134 @@ pub fn prepare_import(
         "shared credentials prepared for a connection import"
     );
     Ok(prepared)
+}
+
+/// Decrypt the sealed secrets, if the file has them and a password is given.
+fn open_sealed(export: &Value, password: Option<&str>) -> Result<SealedSecrets> {
+    let (Some(envelope), Some(password)) =
+        (export.get(SECRETS_KEY).filter(|v| !v.is_null()), password)
+    else {
+        return Ok(SealedSecrets::default());
+    };
+    let envelope: EncryptedEnvelope = serde_json::from_value(envelope.clone())
+        .context("Invalid shared credential data format")?;
+    let plaintext = Zeroizing::new(
+        decrypt_with_password(password, &envelope)
+            .map_err(anyhow::Error::from)
+            .context("Failed to decrypt shared credentials — wrong password?")?,
+    );
+    serde_json::from_slice::<SealedSecrets>(&plaintext)
+        .context("Invalid shared credential data format")
+}
+
+/// Whether credentials can be written now. A locked store fails the import
+/// (the user can unlock and retry); storage that is off or not set up is
+/// returned as the inner error, so the references are dropped instead.
+fn check_writable(
+    store: &dyn CredentialStore,
+    mode: &StorageMode,
+) -> Result<Result<(), NamedCredentialError>> {
+    match ensure_writable(store, mode) {
+        Err(NamedCredentialError::StoreLocked { .. }) => anyhow::bail!(
+            "Unlock the credential store before importing connections that use shared \
+             credentials."
+        ),
+        other => Ok(other),
+    }
+}
+
+/// Executes the [`Plan`]s of one import.
+struct Apply<'a> {
+    registry: &'a NamedCredentialRegistry,
+    store: &'a dyn CredentialStore,
+    mode: &'a StorageMode,
+    secrets: &'a BTreeMap<String, String>,
+    /// Why nothing can be written, if so.
+    writable: Option<&'a NamedCredentialError>,
+}
+
+impl Apply<'_> {
+    /// Apply `plan`; returns the file's credential id and what its references
+    /// become (`None` = dropped).
+    fn run(&self, plan: Plan, prepared: &mut PreparedImport) -> (String, Option<String>) {
+        match plan {
+            Plan::Reuse { file_id, local_id } => (file_id, Some(local_id)),
+            Plan::Fill(id) => {
+                self.fill(&id, prepared);
+                (id.clone(), Some(id))
+            }
+            Plan::Create(entry) => {
+                let target = self.create(&entry, prepared);
+                (entry.id, target)
+            }
+        }
+    }
+
+    fn fill(&self, id: &str, prepared: &mut PreparedImport) {
+        let Some(secret) = self.secrets.get(id).filter(|_| self.writable.is_none()) else {
+            return;
+        };
+        match self
+            .registry
+            .fill_missing_secret(self.store, self.mode, id, secret)
+        {
+            Ok(true) => prepared.imported_count += 1,
+            Ok(false) => {}
+            Err(e) => warn!(id = %id, error = %e, "could not fill a shared credential secret"),
+        }
+    }
+
+    fn create(
+        &self,
+        entry: &ExportedNamedCredential,
+        prepared: &mut PreparedImport,
+    ) -> Option<String> {
+        let not_imported = |e: &dyn std::fmt::Display| {
+            format!(
+                "Shared credential \"{}\" was not imported: {e} Connections that used it will \
+                 ask for their secret.",
+                entry.name
+            )
+        };
+        if let Some(e) = self.writable {
+            prepared.warnings.push(not_imported(e));
+            return None;
+        }
+        let secret = self.secrets.get(&entry.id).map(String::as_str);
+        let created = match self.registry.import_credential(
+            self.store,
+            self.mode,
+            &entry.id,
+            &entry.name,
+            entry.kind,
+            secret,
+        ) {
+            Ok(created) => created,
+            Err(e) => {
+                prepared.warnings.push(not_imported(&e));
+                return None;
+            }
+        };
+        if created.name != entry.name.trim() {
+            prepared.warnings.push(format!(
+                "Shared credential \"{}\" was imported as \"{}\" because a different credential \
+                 already uses that name.",
+                entry.name, created.name
+            ));
+        }
+        if secret.is_none() {
+            prepared.warnings.push(format!(
+                "Shared credential \"{}\" was imported without its secret. Set it under Settings \
+                 → Security → Shared credentials; until then, connections using it will ask for \
+                 it.",
+                created.name
+            ));
+        }
+        prepared.imported_count += 1;
+        let id = created.id.clone();
+        prepared.created.push(created);
+        Some(id)
+    }
 }
 
 /// Remove the credentials a failed import created, so it leaves nothing
