@@ -117,8 +117,8 @@ fn take_pending_returns_and_clears_the_partial_line() {
 #[test]
 fn character_mode_passes_input_through_unechoed() {
     let mut ed = LineEditor::new();
-    let out = prepare_input(&mut ed, false, b"ls\r");
-    assert_eq!(out.send, b"ls\r".to_vec());
+    let out = prepare_input(&mut ed, false, b"ls");
+    assert_eq!(out.send, b"ls".to_vec());
     assert!(out.echo.is_empty());
 }
 
@@ -143,4 +143,71 @@ fn switching_to_server_echo_flushes_the_partial_line_first() {
     // The server enabled ECHO mid-line: pending text goes out before new input.
     let out = prepare_input(&mut ed, false, b"in");
     assert_eq!(out.send, b"admin".to_vec());
+}
+
+// --- character mode: NVT line endings (RFC 854) --------------------------
+
+fn pass_through(ed: &mut LineEditor, data: &[u8]) -> Vec<u8> {
+    prepare_input(ed, false, data).send
+}
+
+#[test]
+fn character_mode_enter_is_sent_as_cr_nul() {
+    let mut ed = LineEditor::new();
+    assert_eq!(pass_through(&mut ed, b"ls\r"), b"ls\r\0".to_vec());
+    assert_eq!(pass_through(&mut ed, b"\r"), b"\r\0".to_vec());
+}
+
+#[test]
+fn character_mode_cr_lf_stays_cr_lf() {
+    let mut ed = LineEditor::new();
+    assert_eq!(pass_through(&mut ed, b"a\r\nb"), b"a\r\nb".to_vec());
+}
+
+#[test]
+fn character_mode_translates_every_bare_cr_in_a_write() {
+    let mut ed = LineEditor::new();
+    assert_eq!(
+        pass_through(&mut ed, b"\r\ra\r\n\rb\r"),
+        b"\r\0\r\0a\r\n\r\0b\r\0".to_vec()
+    );
+}
+
+#[test]
+fn character_mode_lone_lf_and_nul_pass_through_unchanged() {
+    let mut ed = LineEditor::new();
+    assert_eq!(pass_through(&mut ed, b"a\nb\0c"), b"a\nb\0c".to_vec());
+}
+
+#[test]
+fn character_mode_cr_ending_a_write_is_not_held_back() {
+    // A CR at the end of a write goes out as CR NUL immediately; the LF of a
+    // following write is sent unchanged (it may be a deliberate Ctrl-J).
+    let mut ed = LineEditor::new();
+    assert_eq!(pass_through(&mut ed, b"a\r"), b"a\r\0".to_vec());
+    assert_eq!(pass_through(&mut ed, b"\nb"), b"\nb".to_vec());
+}
+
+#[test]
+fn character_mode_cr_nul_combines_with_iac_doubling() {
+    let mut ed = LineEditor::new();
+    assert_eq!(
+        pass_through(&mut ed, &[IAC, b'\r', IAC, b'\r', b'\n']),
+        vec![IAC, IAC, b'\r', 0, IAC, IAC, b'\r', b'\n']
+    );
+}
+
+#[test]
+fn flushed_partial_line_is_followed_by_cr_nul() {
+    let mut ed = LineEditor::new();
+    prepare_input(&mut ed, true, b"adm");
+    // Server took over echo mid-line (e.g. password prompt): Enter goes out
+    // NVT-encoded after the flushed text.
+    assert_eq!(pass_through(&mut ed, b"in\r"), b"admin\r\0".to_vec());
+}
+
+#[test]
+fn line_mode_enter_still_sends_cr_lf_without_nul() {
+    let mut ed = LineEditor::new();
+    assert_eq!(prepare_input(&mut ed, true, b"x\r").send, b"x\r\n".to_vec());
 }
