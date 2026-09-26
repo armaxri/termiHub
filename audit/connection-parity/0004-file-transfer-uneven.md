@@ -11,7 +11,8 @@ evidence:
   - src-tauri/src/files/transfer/ftp.rs:8
   - core/src/backends/docker/file_browser.rs:204
   - core/src/backends/ftp/transfer.rs:99
-status: open
+status: fixed
+resolution: "#3573, #3583, #3606 — SFTP resume correctness (stall watchdog, per-attempt offset, fingerprint); Docker chunked streaming transfers on the queue; local/WSL queued copies with temp+atomic rename; same controls everywhere"
 ---
 
 ## What
