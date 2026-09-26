@@ -186,7 +186,7 @@ import {
   connectTimeoutMs,
   type ConnectTimeoutKind,
 } from "@/utils/connectTimeout";
-import { onPersistentSessionStateChanged } from "@/services/events";
+import { onConnectionIdsChanged, onPersistentSessionStateChanged } from "@/services/events";
 import { onThemeChange } from "@/themes";
 import {
   activateWorkspace,
@@ -5084,6 +5084,15 @@ export const useAppStore = create<AppState>((set, get, store) => {
       } catch (err) {
         frontendLog("app_store", `Failed to load recovery warnings: ${errorMessage(err)}`);
       }
+      // Open tabs follow a saved connection's id when it is renamed or moved (#3579).
+      onConnectionIdsChanged((changes) => get().followConnectionIdChanges(changes)).catch(
+        (err: unknown) => {
+          frontendLog(
+            "app_store",
+            `Failed to subscribe to connection id changes: ${errorMessage(err)}`
+          );
+        }
+      );
       // Subscribe to persistent session state changes from the backend
       onPersistentSessionStateChanged((change) => {
         const { connectionId, sessionId, state: rawState, attachedTabCount, errorMessage } = change;
