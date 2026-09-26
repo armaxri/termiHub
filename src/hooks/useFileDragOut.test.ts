@@ -1,8 +1,9 @@
 /**
  * Drag-out of file-browser rows to the OS file manager (#3457): the native drag
  * command is mocked, so these cover the decision + staging logic — local paths
- * go straight to the native drag, remote files are staged through the transfer
- * queue first, the staged copies are reused, and failures are cleaned up.
+ * go straight to the native drag, SFTP/FTP files and folders are staged through
+ * the transfer queue first, Docker/agent rows are staged by the backend (#3491),
+ * the staged copies are reused, and failures are cleaned up.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, createElement } from "react";
@@ -18,7 +19,9 @@ const api = vi.hoisted(() => ({
   dragOutCreateStaging: vi.fn(),
   dragOutDiscardStaging: vi.fn(),
   dragOutStart: vi.fn(),
+  dragOutStageSession: vi.fn(),
   sessionDownload: vi.fn(),
+  sessionListFiles: vi.fn(),
 }));
 
 vi.mock("@/services/api", async () => {
@@ -93,10 +96,15 @@ beforeEach(() => {
   stagedDragOutCache.takeAll();
   api.dragOutStart.mockResolvedValue("dropped");
   api.dragOutDiscardStaging.mockResolvedValue(undefined);
-  api.dragOutCreateStaging.mockImplementation(async (names: string[]) => ({
+  api.dragOutCreateStaging.mockImplementation(async (entries: { segments: string[] }[]) => ({
     dir: "/cache/drag-out/1",
-    paths: names.map((n) => `/cache/drag-out/1/${n}`),
+    paths: entries.map((e) => `/cache/drag-out/1/${e.segments.join("/")}`),
   }));
+  api.dragOutStageSession.mockImplementation(async (_s: string, rows: { name: string }[]) => ({
+    dir: "/cache/drag-out/2",
+    paths: rows.map((r) => `/cache/drag-out/2/${r.name}`),
+  }));
+  api.sessionListFiles.mockResolvedValue([]);
   api.sessionDownload.mockImplementation(
     async (_s: string, _r: string, _l: string, onRegistered?: (id: string) => void) => {
       onRegistered?.("t-1");
@@ -141,7 +149,10 @@ describe("useFileDragOut — remote (SFTP / FTP) pane", () => {
     dragOut([entry("/srv/a.txt"), entry("/srv/b.txt")], ctl);
     await flushAsync();
 
-    expect(api.dragOutCreateStaging).toHaveBeenCalledWith(["a.txt", "b.txt"]);
+    expect(api.dragOutCreateStaging).toHaveBeenCalledWith([
+      { segments: ["a.txt"], isDirectory: false },
+      { segments: ["b.txt"], isDirectory: false },
+    ]);
     expect(api.sessionDownload).toHaveBeenCalledWith(
       "sess-1",
       "/srv/a.txt",
@@ -210,15 +221,94 @@ describe("useFileDragOut — remote (SFTP / FTP) pane", () => {
     expect(stagedDragOutCache.size).toBe(0);
   });
 
-  it("refuses remote folders and byte-based sessions without touching the backend", async () => {
-    const folder = mountDragOut(SFTP);
-    folder([entry("/srv/logs", { isDirectory: true })], control());
-    const docker = mountDragOut({ ...SFTP, transferQueueCapable: false });
-    docker([entry("/srv/a.txt")], control());
+  it("stages a remote folder recursively through the queue and drags the staged folder", async () => {
+    api.sessionListFiles.mockImplementation(async (_s: string, path: string) =>
+      path === "/srv/logs"
+        ? [entry("/srv/logs/a.log"), entry("/srv/logs/sub", { isDirectory: true })]
+        : [entry("/srv/logs/sub/b.log")]
+    );
+    const dragOut = mountDragOut(SFTP);
+    dragOut([entry("/srv/logs", { isDirectory: true })], control(true));
     await flushAsync();
 
-    expect(toasts.info).toHaveBeenCalledTimes(2);
+    expect(api.dragOutCreateStaging).toHaveBeenCalledWith([
+      { segments: ["logs"], isDirectory: true },
+      { segments: ["logs", "a.log"], isDirectory: false },
+      { segments: ["logs", "sub"], isDirectory: true },
+      { segments: ["logs", "sub", "b.log"], isDirectory: false },
+    ]);
+    expect(api.sessionDownload).toHaveBeenCalledTimes(2);
+    expect(api.sessionDownload).toHaveBeenCalledWith(
+      "sess-1",
+      "/srv/logs/sub/b.log",
+      "/cache/drag-out/1/logs/sub/b.log",
+      expect.any(Function)
+    );
+    expect(seed).toHaveBeenCalledWith(
+      expect.objectContaining({ remotePath: "/srv/logs/a.log", direction: "download" })
+    );
+    expect(api.dragOutStart).toHaveBeenCalledWith(["/cache/drag-out/1/logs"]);
+  });
+
+  it("refuses a folder beyond the staging limits before downloading anything", async () => {
+    api.sessionListFiles.mockResolvedValue([
+      entry("/srv/big/huge.iso", { size: 5 * 1024 * 1024 * 1024 }),
+    ]);
+    const dragOut = mountDragOut(SFTP);
+    dragOut([entry("/srv/big", { isDirectory: true })], control(true));
+    await flushAsync();
+
+    expect(toasts.info).toHaveBeenCalledWith(expect.stringMatching(/Download/), expect.anything());
     expect(api.dragOutCreateStaging).not.toHaveBeenCalled();
+    expect(api.sessionDownload).not.toHaveBeenCalled();
     expect(api.dragOutStart).not.toHaveBeenCalled();
+  });
+});
+
+describe("useFileDragOut — byte-based (Docker / agent) pane", () => {
+  const DOCKER = { ...SFTP, transferQueueCapable: false } as const;
+
+  it("has the backend stage the rows (files and folders) and drags the staged copies", async () => {
+    const dragOut = mountDragOut(DOCKER);
+    const rows = [entry("/app/a.txt"), entry("/app/conf", { isDirectory: true })];
+    dragOut(rows, control(true));
+    await flushAsync();
+
+    expect(api.dragOutStageSession).toHaveBeenCalledWith("sess-1", [
+      { path: "/app/a.txt", name: "a.txt", isDirectory: false },
+      { path: "/app/conf", name: "conf", isDirectory: true },
+    ]);
+    // Only remote paths/names cross IPC — the webview never picks a local path.
+    expect(api.dragOutCreateStaging).not.toHaveBeenCalled();
+    expect(api.sessionDownload).not.toHaveBeenCalled();
+    expect(api.dragOutStart).toHaveBeenCalledWith([
+      "/cache/drag-out/2/a.txt",
+      "/cache/drag-out/2/conf",
+    ]);
+  });
+
+  it("reuses a fresh backend staging on the next drag-out", async () => {
+    const dragOut = mountDragOut(DOCKER);
+    const file = entry("/app/a.txt");
+    dragOut([file], control(false));
+    await flushAsync();
+    expect(toasts.success).toHaveBeenCalledWith(expect.stringMatching(/ready/i));
+    dragOut([file], control(true));
+    await flushAsync();
+    expect(api.dragOutStageSession).toHaveBeenCalledTimes(1);
+    expect(api.dragOutStart).toHaveBeenCalledWith(["/cache/drag-out/2/a.txt"]);
+  });
+
+  it("reports a backend staging failure", async () => {
+    api.dragOutStageSession.mockRejectedValue(new Error("selection is larger than 1024 MiB"));
+    const dragOut = mountDragOut(DOCKER);
+    dragOut([entry("/app/huge")], control(true));
+    await flushAsync();
+    expect(toasts.error).toHaveBeenCalledWith(
+      expect.stringContaining("1024 MiB"),
+      expect.anything()
+    );
+    expect(api.dragOutStart).not.toHaveBeenCalled();
+    expect(stagedDragOutCache.size).toBe(0);
   });
 });

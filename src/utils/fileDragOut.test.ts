@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import type { FileEntry } from "@/types/connection";
 import {
+  DragOutLimitError,
   SELF_DROP_GRACE_MS,
   STAGED_DRAG_OUT_TTL_MS,
   StagedDragOutCache,
@@ -8,8 +9,10 @@ import {
   endDragOut,
   isOutsideViewport,
   isOwnDragOut,
+  buildStagingTree,
   planDragOut,
   resetDragOutTracking,
+  runBounded,
   stagedEntryKey,
 } from "./fileDragOut";
 
@@ -41,24 +44,117 @@ describe("planDragOut", () => {
     expect(planDragOut(files, sftp)).toEqual({ kind: "remote", sessionId: "s1", entries: files });
   });
 
-  it("refuses remote folders with a Download hint", () => {
-    const plan = planDragOut(
-      [entry("/srv/a.txt"), entry("/srv/logs", { isDirectory: true })],
-      sftp
-    );
-    expect(plan.kind).toBe("refuse");
-    expect(plan.kind === "refuse" && plan.message).toMatch(/"logs".*download|download.*"logs"/i);
+  it("stages remote folders on a queue-capable session too", () => {
+    const rows = [entry("/srv/a.txt"), entry("/srv/logs", { isDirectory: true })];
+    expect(planDragOut(rows, sftp)).toEqual({ kind: "remote", sessionId: "s1", entries: rows });
   });
 
-  it("refuses byte-based sessions (no transfer queue to stage through)", () => {
-    const plan = planDragOut([entry("/a")], { ...sftp, transferQueueCapable: false });
-    expect(plan).toMatchObject({ kind: "refuse", message: expect.stringMatching(/Download/) });
+  it("hands byte-based sessions (Docker / agent) to backend staging, folders included", () => {
+    const rows = [entry("/a"), entry("/d", { isDirectory: true })];
+    expect(planDragOut(rows, { ...sftp, transferQueueCapable: false })).toEqual({
+      kind: "sessionBytes",
+      sessionId: "s1",
+      entries: rows,
+    });
   });
 
   it("refuses an empty drag, no pane, and a session without an id", () => {
     expect(planDragOut([], { mode: "local" }).kind).toBe("refuse");
     expect(planDragOut([entry("/a")], { mode: "none" }).kind).toBe("refuse");
     expect(planDragOut([entry("/a")], { ...sftp, sessionId: null }).kind).toBe("refuse");
+  });
+});
+
+describe("buildStagingTree", () => {
+  const dir = (path: string) => entry(path, { isDirectory: true, size: 0 });
+  const listing: Record<string, FileEntry[]> = {
+    "/srv/logs": [
+      entry("/srv/logs/.", { name: ".", isDirectory: true }),
+      entry("/srv/logs/a.log", { size: 5 }),
+      dir("/srv/logs/sub"),
+      entry("/srv/logs/loop", { isDirectory: true, isSymlink: true }),
+    ],
+    "/srv/logs/sub": [entry("/srv/logs/sub/b.log", { size: 7 })],
+    "/srv/empty": [],
+  };
+  const list = async (path: string) => listing[path] ?? [];
+
+  it("lays out dragged files and folders recursively, parents first", async () => {
+    const tree = await buildStagingTree(
+      [entry("/srv/top.txt"), dir("/srv/logs"), dir("/srv/empty")],
+      list
+    );
+    expect(tree.staging).toEqual([
+      { segments: ["top.txt"], isDirectory: false },
+      { segments: ["logs"], isDirectory: true },
+      { segments: ["logs", "a.log"], isDirectory: false },
+      { segments: ["logs", "sub"], isDirectory: true },
+      { segments: ["logs", "sub", "b.log"], isDirectory: false },
+      { segments: ["empty"], isDirectory: true },
+    ]);
+    expect(tree.roots).toEqual([0, 1, 5]);
+    expect(tree.downloads).toEqual([
+      { index: 0, remotePath: "/srv/top.txt" },
+      { index: 2, remotePath: "/srv/logs/a.log" },
+      { index: 4, remotePath: "/srv/logs/sub/b.log" },
+    ]);
+  });
+
+  it("never lists a plain file", async () => {
+    const lister = vi.fn(list);
+    await buildStagingTree([entry("/srv/a.txt")], lister);
+    expect(lister).not.toHaveBeenCalled();
+  });
+
+  it("refuses a selection beyond the entry, depth or byte limits", async () => {
+    const limits = { maxEntries: 100, maxDepth: 5, maxBytes: 1000 };
+    await expect(
+      buildStagingTree([dir("/srv/logs")], list, { ...limits, maxEntries: 3 })
+    ).rejects.toBeInstanceOf(DragOutLimitError);
+    await expect(
+      buildStagingTree([dir("/srv/logs")], list, { ...limits, maxDepth: 1 })
+    ).rejects.toThrow(/deeper/);
+    await expect(
+      buildStagingTree([dir("/srv/logs")], list, { ...limits, maxBytes: 10 })
+    ).rejects.toThrow(/Download/);
+    await expect(buildStagingTree([dir("/srv/logs")], list, limits)).resolves.toBeDefined();
+  });
+});
+
+describe("runBounded", () => {
+  it("never exceeds the concurrency limit and runs every item", async () => {
+    let active = 0;
+    let peak = 0;
+    const done: number[] = [];
+    await runBounded([1, 2, 3, 4, 5, 6, 7], 3, async (n) => {
+      active++;
+      peak = Math.max(peak, active);
+      await new Promise((r) => setTimeout(r, 1));
+      active--;
+      done.push(n);
+    });
+    expect(peak).toBe(3);
+    expect(done.sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("stops starting new items after a failure and rethrows it once started ones settle", async () => {
+    const started: number[] = [];
+    let settled = 0;
+    const run = runBounded([1, 2, 3, 4, 5], 2, async (n) => {
+      started.push(n);
+      await new Promise((r) => setTimeout(r, n === 1 ? 1 : 5));
+      settled++;
+      if (n === 1) throw new Error("boom");
+    });
+    await expect(run).rejects.toThrow("boom");
+    expect(started).toEqual([1, 2]);
+    expect(settled).toBe(2);
+  });
+
+  it("is a no-op for no items", async () => {
+    const task = vi.fn();
+    await runBounded([], 4, task);
+    expect(task).not.toHaveBeenCalled();
   });
 });
 

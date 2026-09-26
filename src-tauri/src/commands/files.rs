@@ -284,19 +284,93 @@ fn drag_out_root(app: &tauri::AppHandle) -> Result<std::path::PathBuf, TerminalE
 }
 
 /// Create a private staging directory for a remote drag-out and return the local
-/// target path for each entry name (sanitized: a hostile remote name can never
-/// escape the directory). The caller downloads each entry to its path, then
-/// starts the drag with [`drag_out_start`].
+/// target path for each entry (sanitized per segment: a hostile remote name can
+/// never escape the directory). `entries` may describe a nested remote folder
+/// tree (#3491); folders are created up front. The caller downloads each file
+/// entry to its path, then starts the drag with [`drag_out_start`].
 #[tauri::command]
 pub fn drag_out_create_staging(
-    names: Vec<String>,
+    entries: Vec<crate::files::drag_out::StagingEntry>,
     app: tauri::AppHandle,
     staging: State<'_, crate::files::drag_out::DragOutStaging>,
 ) -> Result<crate::files::drag_out::StagingDir, TerminalError> {
     let root = drag_out_root(&app)?;
     staging
-        .create(&root, &names)
-        .map_err(TerminalError::InternalError)
+        .create_tree(&root, &entries)
+        .map_err(TerminalError::InvalidParams)
+}
+
+/// A live session's file browser as the remote side of a backend staging.
+struct SessionStageSource<'a> {
+    manager: &'a crate::session::manager::SessionManager,
+    session_id: &'a str,
+}
+
+#[async_trait::async_trait]
+impl crate::files::drag_out::StageSource for SessionStageSource<'_> {
+    async fn list(&self, path: &str) -> Result<Vec<FileEntry>, String> {
+        self.manager
+            .list_files(self.session_id, path)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    async fn read(&self, path: &str) -> Result<Vec<u8>, String> {
+        self.manager
+            .read_file(self.session_id, path)
+            .await
+            .map_err(|e| e.to_string())
+    }
+}
+
+/// Stage the dragged rows of a byte-based session (Docker / remote agent — no
+/// transfer queue) for a drag-out (#3491): the backend reads each file (and,
+/// within bounds, each folder recursively) through the session and writes it
+/// into a fresh staging directory it owns. The webview supplies only remote
+/// paths and names — never a local destination. Returns the staging dir and
+/// the local path of each dragged row; on failure the dir is discarded.
+#[tauri::command]
+pub async fn drag_out_stage_session(
+    session_id: String,
+    entries: Vec<crate::files::drag_out::SessionStageEntry>,
+    app: tauri::AppHandle,
+    manager: State<'_, crate::session::manager::SessionManager>,
+    staging: State<'_, crate::files::drag_out::DragOutStaging>,
+) -> Result<crate::files::drag_out::StagingDir, TerminalError> {
+    debug!(
+        session_id,
+        count = entries.len(),
+        "Staging session drag-out"
+    );
+    let root = drag_out_root(&app)?;
+    let dir = staging
+        .create_dir(&root)
+        .map_err(TerminalError::InternalError)?;
+    let source = SessionStageSource {
+        manager: &manager,
+        session_id: &session_id,
+    };
+    match crate::files::drag_out::stage_from_source(
+        &source,
+        &dir,
+        &entries,
+        crate::files::drag_out::StageLimits::default(),
+    )
+    .await
+    {
+        Ok(paths) => Ok(crate::files::drag_out::StagingDir {
+            dir: dir.to_string_lossy().into_owned(),
+            paths: paths
+                .into_iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect(),
+        }),
+        Err(e) => {
+            if let Err(discard) = staging.discard(&dir) {
+                debug!("Could not discard failed session staging: {discard}");
+            }
+            Err(TerminalError::InternalError(e))
+        }
+    }
 }
 
 /// Delete a staging directory created by [`drag_out_create_staging`]. Paths this

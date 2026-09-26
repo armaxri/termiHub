@@ -1,20 +1,39 @@
 import type { FileEntry } from "@/types/connection";
+import type { DragOutStagingEntry } from "@/services/api";
 
 /**
  * Pure planning helpers for dragging file-browser rows out of the window onto
- * the OS file manager (#3457). No I/O lives here: {@link useFileDragOut} stages
- * remote entries through the transfer queue and starts the native drag.
+ * the OS file manager (#3457, #3491). No I/O lives here (the remote lister is
+ * injected): {@link useFileDragOut} stages remote entries and starts the native
+ * drag.
  *
  * - A **local** row already has a real path, so the native drag starts at once.
- * - A **session** row (SFTP / FTP) is first downloaded into a private staging
- *   directory; when that finishes while the pointer is still held outside the
- *   window the native drag starts, otherwise the staged copy is kept for
- *   {@link STAGED_DRAG_OUT_TTL_MS} so the next drag-out of the same (unchanged)
- *   entries is instant.
+ * - A **transfer-queue** session row (SFTP / FTP) — file or folder — is first
+ *   downloaded into a private staging directory through the transfer queue
+ *   (folders are walked recursively, within {@link DRAG_OUT_LIMITS});
+ * - a **byte-based** session row (Docker / remote agent) is staged by the
+ *   backend, which reads it through the session into a directory it owns.
+ *
+ * When staging finishes while the pointer is still held outside the window the
+ * native drag starts, otherwise the staged copy is kept for
+ * {@link STAGED_DRAG_OUT_TTL_MS} so the next drag-out of the same (unchanged)
+ * entries is instant.
  */
 
 /** How long a staged remote copy stays reusable before it is discarded. */
 export const STAGED_DRAG_OUT_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Bounds for staging a remote folder through the transfer queue. Entry count
+ * and depth mirror the backend's `MAX_STAGED_ENTRIES` / `MAX_STAGED_DEPTH`;
+ * the byte cap keeps a drag-out from silently filling the disk — anything
+ * bigger belongs in Download.
+ */
+export const DRAG_OUT_LIMITS = {
+  maxEntries: 10_000,
+  maxDepth: 32,
+  maxBytes: 4 * 1024 * 1024 * 1024,
+} as const;
 
 /** The file-browser pane a drag-out starts from. */
 export type DragOutSource =
@@ -26,13 +45,13 @@ export type DragOutSource =
 export type DragOutPlan =
   | { kind: "local"; paths: string[] }
   | { kind: "remote"; sessionId: string; entries: FileEntry[] }
+  | { kind: "sessionBytes"; sessionId: string; entries: FileEntry[] }
   | { kind: "refuse"; message: string };
 
 /**
  * Decide how `entries` can leave the window: local paths go straight to the OS
- * drag; session files must be staged first. Remote folders (no recursive
- * staging yet) and byte-based sessions (Docker / agent — no transfer queue to
- * stage through) are refused with a hint to use Download instead.
+ * drag; transfer-queue session rows (files and folders) are staged through the
+ * queue; byte-based session rows (Docker / agent) are staged by the backend.
  */
 export function planDragOut(entries: FileEntry[], source: DragOutSource): DragOutPlan {
   if (entries.length === 0) return { kind: "refuse", message: "Nothing to drag" };
@@ -41,19 +60,107 @@ export function planDragOut(entries: FileEntry[], source: DragOutSource): DragOu
     return { kind: "refuse", message: "No file browser is connected" };
   }
   if (!source.transferQueueCapable) {
-    return {
-      kind: "refuse",
-      message: "Dragging out needs an SFTP or FTP session — use Download instead",
-    };
-  }
-  const folder = entries.find((e) => e.isDirectory);
-  if (folder) {
-    return {
-      kind: "refuse",
-      message: `Folders can't be dragged out of a remote session yet — download "${folder.name}" instead`,
-    };
+    return { kind: "sessionBytes", sessionId: source.sessionId, entries };
   }
   return { kind: "remote", sessionId: source.sessionId, entries };
+}
+
+/** A remote selection too large to stage for a drag-out. */
+export class DragOutLimitError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DragOutLimitError";
+  }
+}
+
+/** A remote selection laid out for staging through the transfer queue. */
+export interface DragOutStagingTree {
+  /** Every entry to lay out, parents before children (for `dragOutCreateStaging`). */
+  staging: DragOutStagingEntry[];
+  /** The files to download: the remote path and its index in {@link staging}. */
+  downloads: { index: number; remotePath: string }[];
+  /** Index in {@link staging} of each dragged row, in selection order. */
+  roots: number[];
+}
+
+/**
+ * Walk a remote selection into a staging tree: dragged files become top-level
+ * entries, dragged folders are listed recursively with `list`. Symlinked folders
+ * are not followed and `.` / `..` listing rows are skipped. Throws a
+ * {@link DragOutLimitError} once the selection exceeds `limits` (entries, depth
+ * or total file bytes), before anything is downloaded.
+ */
+export async function buildStagingTree(
+  entries: FileEntry[],
+  list: (path: string) => Promise<FileEntry[]>,
+  limits: { maxEntries: number; maxDepth: number; maxBytes: number } = DRAG_OUT_LIMITS
+): Promise<DragOutStagingTree> {
+  const tree: DragOutStagingTree = { staging: [], downloads: [], roots: [] };
+  let bytes = 0;
+  const add = (entry: FileEntry, segments: string[]): void => {
+    if (tree.staging.length >= limits.maxEntries) {
+      throw new DragOutLimitError(
+        `The selection has more than ${limits.maxEntries} entries — use Download instead`
+      );
+    }
+    if (segments.length - 1 > limits.maxDepth) {
+      throw new DragOutLimitError(
+        `The selection is nested deeper than ${limits.maxDepth} levels — use Download instead`
+      );
+    }
+    tree.staging.push({ segments, isDirectory: entry.isDirectory });
+    if (entry.isDirectory) return;
+    bytes += entry.size;
+    if (bytes > limits.maxBytes) {
+      throw new DragOutLimitError(
+        `The selection is larger than ${Math.round(limits.maxBytes / (1024 * 1024))} MiB — use Download instead`
+      );
+    }
+    tree.downloads.push({ index: tree.staging.length - 1, remotePath: entry.path });
+  };
+  const walk = async (entry: FileEntry, segments: string[]): Promise<void> => {
+    add(entry, segments);
+    if (!entry.isDirectory) return;
+    for (const child of await list(entry.path)) {
+      if (child.name === "." || child.name === "..") continue;
+      if (child.isDirectory && child.isSymlink) continue;
+      await walk(child, [...segments, child.name]);
+    }
+  };
+  for (const entry of entries) {
+    tree.roots.push(tree.staging.length);
+    await walk(entry, [entry.name]);
+  }
+  return tree;
+}
+
+/**
+ * Run `task` over `items` with at most `limit` in flight. After the first
+ * failure no new task starts; every started task is still allowed to settle
+ * (so a failed staging dir is never discarded under a sibling still writing
+ * into it), then the first failure is rethrown.
+ */
+export async function runBounded<T>(
+  items: readonly T[],
+  limit: number,
+  task: (item: T) => Promise<unknown>
+): Promise<void> {
+  let next = 0;
+  // Declared via `as` so TS does not narrow it to `null` (workers assign it).
+  let failure = null as { error: unknown } | null;
+  const worker = async (): Promise<void> => {
+    while (!failure && next < items.length) {
+      const item = items[next++];
+      try {
+        await task(item);
+      } catch (error) {
+        failure ??= { error };
+      }
+    }
+  };
+  const workers = Math.max(1, Math.min(limit, items.length));
+  await Promise.all(Array.from({ length: workers }, worker));
+  if (failure) throw failure.error;
 }
 
 /**
