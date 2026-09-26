@@ -58,7 +58,7 @@ fn fixture_docs() -> Vec<(&'static str, Value)> {
         ),
         (
             "workspaces.json",
-            json!({"version": "1", "workspaces": [{"id": "w1", "name": "Dev", "tabGroups": []}]}),
+            json!({"version": "2", "workspaces": [{"id": "w1", "name": "Dev", "tabGroups": []}]}),
         ),
         (
             "macros.json",
