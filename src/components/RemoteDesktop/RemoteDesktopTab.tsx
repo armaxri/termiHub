@@ -180,7 +180,7 @@ export function RemoteDesktopTab({ tabId, isVisible }: RemoteDesktopTabProps) {
         host={host}
         reconnectAttempt={session.reconnectAttempt}
         message={session.message}
-        onCancel={session.reconnect}
+        onCancel={session.cancelReconnect}
         onReconnect={session.reconnect}
       />
 

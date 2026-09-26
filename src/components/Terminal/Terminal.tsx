@@ -1063,6 +1063,9 @@ export function Terminal({
           // SM-003 (single-attach): another desktop/window controls this session
           // — never send it input until the user explicitly reclaims it.
           if (isTabEvicted(tabId)) return;
+          // #3368: another *window* took this session over — same rule, window-
+          // local. The backend drops it too; this keeps the evicted view inert.
+          if (useAppStore.getState().isSessionWindowEvicted(sessionIdRef.current)) return;
           lastInputTimeRef.current = Date.now();
           const store = useAppStore.getState();
           // Broadcast fan-out (#1955): when this terminal is the active
@@ -1123,6 +1126,33 @@ export function Terminal({
           wasEvicted = status === "evicted";
         });
 
+        // #3368: while another window controls the session, its output is
+        // emitted only to that window (PERF-004), so this view goes stale. When
+        // this window controls the session again (explicit Reclaim, or the other
+        // window closed and released it), repaint from the backend ring buffer and
+        // re-assert this terminal's size (the other window sized the PTY).
+        let wasWindowEvicted = useAppStore.getState().isSessionWindowEvicted(sessionIdRef.current);
+        const offWindowReclaim = useAppStore.subscribe((state) => {
+          const sid = sessionIdRef.current;
+          const nowEvicted = state.isSessionWindowEvicted(sid);
+          const regained = wasWindowEvicted && !nowEvicted;
+          wasWindowEvicted = nowEvicted;
+          if (!regained || !sid) return;
+          frontendLog("multi_window", `window regained session ${sid}; repainting tab=${tabId}`);
+          lastSentCols = xterm.cols;
+          lastSentRows = xterm.rows;
+          resizeTerminal(sid, xterm.cols, xterm.rows);
+          replaySessionScrollback(sid)
+            .then((buffer) => {
+              if (isCanceled() || sessionIdRef.current !== sid || buffer.length === 0) return;
+              xterm.reset();
+              xterm.write(buffer);
+            })
+            .catch((err) =>
+              frontendLog("multi_window", `Failed to repaint reclaimed session ${sid}: ${err}`)
+            );
+        });
+
         // Initial resize after connection.  The ResizeObserver may have
         // already fitted xterm to the correct dimensions while the async
         // createTerminal() was in-flight — but at that point sessionIdRef
@@ -1178,6 +1208,7 @@ export function Terminal({
           onDataDisposable.dispose();
           onResizeDisposable.dispose();
           offReclaimResize();
+          offWindowReclaim();
           if (sessionIdRef.current) {
             // Session torn down while still live (tab closed/reconnecting) —
             // the exit handler never fired, so notify parsers here (#1998).

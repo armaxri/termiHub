@@ -104,10 +104,12 @@ pub fn claim_session(
     if let Err(e) = app.emit("session-ownership-changed", ()) {
         tracing::warn!("Failed to emit session-ownership-changed on claim: {e}");
     }
-    // SM-026: if this claim superseded a *different* window, tell that window it
-    // lost the session so its now-denied `resize` (`may_resize` → false) is
-    // explained to the user, instead of a terminal that silently won't resize.
-    // Single-owner semantics are unchanged — this only makes the loss observable.
+    // SM-026 / #3368: if this claim superseded a *different* window, tell that
+    // window it lost the session. It is now *evicted* for that session — its
+    // `resize` and `send_input` are denied (`may_resize` / `may_send_input` →
+    // false) and it shows "Taken over by another window" with a Reclaim button.
+    // Reclaim is simply this same command issued from the evicted window; nothing
+    // claims automatically, so control never ping-pongs between windows.
     if let Some((target, payload)) =
         superseded_notification(previous.clone(), window.label(), &session_id)
     {

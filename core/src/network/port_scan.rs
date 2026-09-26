@@ -282,6 +282,26 @@ pub fn parse_target_spec(spec: &str) -> Result<Vec<String>, NetworkError> {
     Ok(targets)
 }
 
+/// Resolve a port scan's concrete target list from a `targets` list and/or a
+/// `host` spec (the list wins when non-empty).
+///
+/// Both the `targets` list and the `host` spec run through the one core parser,
+/// [`parse_target_spec`], so an agent expands a CIDR, a comma list
+/// or a single host into exactly the host set a local scan would, with the same
+/// validation errors and the same [`MAX_EXPANDED_TARGETS`] cap.
+pub fn resolve_targets(
+    host: Option<&str>,
+    targets: Option<&[String]>,
+) -> Result<Vec<String>, NetworkError> {
+    match (targets, host) {
+        (Some(list), _) if !list.is_empty() => parse_target_spec(&list.join(",")),
+        (_, Some(spec)) => parse_target_spec(spec),
+        _ => Err(NetworkError::InvalidParameter(
+            "port scan needs a `host` spec or a `targets` list".into(),
+        )),
+    }
+}
+
 /// Parse a human-readable port specification into a list of port numbers.
 ///
 /// Accepted formats:
@@ -513,6 +533,50 @@ mod tests {
         // Leading/trailing/extra commas should be tolerated.
         let result = parse_target_spec(",192.168.1.1,,10.0.0.1,").unwrap();
         assert_eq!(result, vec!["192.168.1.1", "10.0.0.1"]);
+    }
+
+    // ── resolve_targets (#3385) ──────────────────────────────────────────────
+
+    #[test]
+    fn resolve_targets_expands_a_host_spec_like_parse_target_spec() {
+        for spec in [
+            "192.168.1.10",
+            "example.com",
+            "192.168.1.0/30",
+            "192.168.1.1, 10.0.0.0/30, example.com",
+        ] {
+            assert_eq!(
+                resolve_targets(Some(spec), None).unwrap(),
+                parse_target_spec(spec).unwrap(),
+                "spec {spec}"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_targets_prefers_a_non_empty_list_and_is_idempotent() {
+        let spec = "10.0.0.0/30,example.com";
+        let expanded = parse_target_spec(spec).unwrap();
+        // An already-expanded list resolves to itself, ignoring `host`.
+        assert_eq!(
+            resolve_targets(Some("ignored.example"), Some(&expanded)).unwrap(),
+            expanded
+        );
+        // An empty list falls back to the spec.
+        assert_eq!(resolve_targets(Some(spec), Some(&[])).unwrap(), expanded);
+    }
+
+    #[test]
+    fn resolve_targets_applies_the_same_limits() {
+        assert!(resolve_targets(Some("10.0.0.0/8"), None)
+            .unwrap_err()
+            .to_string()
+            .contains("more than"));
+        let wide = vec!["10.0.0.0/8".to_string()];
+        assert!(resolve_targets(None, Some(&wide)).is_err());
+        assert!(resolve_targets(Some("  "), None).is_err());
+        assert!(resolve_targets(Some("10.0.0.0/33"), None).is_err());
+        assert!(resolve_targets(None, None).is_err());
     }
 
     #[tokio::test]

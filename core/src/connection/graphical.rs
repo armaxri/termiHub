@@ -565,7 +565,11 @@ pub enum GraphicalState {
     Active,
     /// A resize was requested; awaiting the new resolution.
     Resizing,
-    /// The connection dropped unexpectedly; an auto-retry is pending.
+    /// The connection dropped unexpectedly and no automatic retry is running:
+    /// auto-reconnect is off, its attempt budget is exhausted, or the drop was
+    /// non-retryable (a hostile frame stream). The frontend shows the manual
+    /// reconnect prompt. A drop that *will* be retried goes straight to
+    /// [`Reconnecting`](Self::Reconnecting).
     Disconnected,
     /// Actively retrying after an unexpected drop.
     Reconnecting,
@@ -703,6 +707,18 @@ impl SessionStateMachine {
         {
             self.reconnect_attempts += 1;
             self.state = GraphicalState::Reconnecting;
+        }
+        self.state
+    }
+
+    /// An auto-reconnect attempt failed (the re-dial errored, or the new
+    /// connection dropped before painting a frame); `Reconnecting` →
+    /// `Disconnected`, so the next [`begin_reconnect`](Self::begin_reconnect)
+    /// can consume another attempt — or, once the budget is spent, the session
+    /// rests in `Disconnected` for the manual reconnect prompt.
+    pub fn reconnect_attempt_failed(&mut self) -> GraphicalState {
+        if self.state == GraphicalState::Reconnecting {
+            self.state = GraphicalState::Disconnected;
         }
         self.state
     }
@@ -944,6 +960,28 @@ mod tests {
         assert_eq!(sm.connection_dropped(), GraphicalState::Disconnected);
         assert_eq!(sm.begin_reconnect(), GraphicalState::Disconnected);
         assert!(!sm.can_reconnect());
+    }
+
+    #[test]
+    fn failed_attempt_returns_to_disconnected_until_budget_spent() {
+        let mut sm = SessionStateMachine::new();
+        sm.transport_up();
+        sm.activated();
+        sm.connection_dropped();
+        for expected in 1..=MAX_RECONNECT_ATTEMPTS {
+            assert_eq!(sm.begin_reconnect(), GraphicalState::Reconnecting);
+            assert_eq!(sm.reconnect_attempts(), expected);
+            assert_eq!(sm.reconnect_attempt_failed(), GraphicalState::Disconnected);
+        }
+        // Budget spent: the next begin is refused and the session rests in
+        // Disconnected (manual prompt).
+        assert!(!sm.can_reconnect());
+        assert_eq!(sm.begin_reconnect(), GraphicalState::Disconnected);
+        // Only meaningful from Reconnecting.
+        let mut live = SessionStateMachine::new();
+        live.transport_up();
+        live.activated();
+        assert_eq!(live.reconnect_attempt_failed(), GraphicalState::Active);
     }
 
     #[test]

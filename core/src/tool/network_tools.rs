@@ -82,7 +82,14 @@ impl Tool for PingTool {
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PortScanParams {
-    host: String,
+    /// A target spec — one host, an IP, a CIDR range, or a comma list of those.
+    /// Expanded with [`port_scan::parse_target_spec`], exactly like a local scan.
+    #[serde(default)]
+    host: Option<String>,
+    /// An already-expanded target list (the desktop sends this). Takes
+    /// precedence over `host`; entries go through the same parser and limits.
+    #[serde(default)]
+    targets: Option<Vec<String>>,
     ports: String,
     #[serde(default = "default_scan_timeout")]
     timeout_ms: u64,
@@ -97,7 +104,8 @@ fn default_scan_concurrency() -> usize {
     defaults::PORT_SCAN_CONCURRENCY
 }
 
-/// TCP connect port scanner, streaming one `result` event per probed port.
+/// TCP connect port scanner across one or more targets, streaming one `result`
+/// event per probed `(host, port)`.
 pub struct PortScanTool;
 
 #[async_trait]
@@ -120,9 +128,16 @@ impl Tool for PortScanTool {
                 tool: "port_scan".to_string(),
                 reason: e.to_string(),
             })?;
+        let targets =
+            port_scan::resolve_targets(p.host.as_deref(), p.targets.as_deref()).map_err(|e| {
+                ToolError::InvalidParams {
+                    tool: "port_scan".to_string(),
+                    reason: e.to_string(),
+                }
+            })?;
         let sink = host.clone();
-        let summary = port_scan::scan_ports(
-            &p.host,
+        let summary = port_scan::scan_targets(
+            &targets,
             &port_list,
             p.timeout_ms,
             p.concurrency,
@@ -431,6 +446,80 @@ mod tests {
         assert!(result["ports"].is_array());
         // One-shot tools stream nothing.
         assert!(host.take().is_empty());
+    }
+
+    /// Run the port-scan tool and return the set of hosts its results name.
+    async fn scanned_hosts(params: Value) -> Result<std::collections::BTreeSet<String>, ToolError> {
+        let host = CollectingHost::new();
+        let summary = PortScanTool
+            .run(params, host.clone(), CancellationToken::new())
+            .await?;
+        let events = host.take();
+        assert_eq!(summary["total"], events.len(), "one result per probe");
+        Ok(events
+            .into_iter()
+            .map(|e| e.payload["host"].as_str().unwrap_or_default().to_string())
+            .collect())
+    }
+
+    fn set(hosts: &[&str]) -> std::collections::BTreeSet<String> {
+        hosts.iter().map(|h| h.to_string()).collect()
+    }
+
+    /// #3385: a multi-target `host` spec is expanded, not probed as one name —
+    /// every expanded host gets its own attributed result.
+    #[tokio::test]
+    async fn port_scan_expands_a_multi_target_host_spec() {
+        let base = json!({ "ports": "9", "timeoutMs": 200, "concurrency": 8 });
+        let with = |host: &str| {
+            let mut p = base.clone();
+            p["host"] = json!(host);
+            p
+        };
+        // Single host.
+        assert_eq!(
+            scanned_hosts(with("127.0.0.1")).await.unwrap(),
+            set(&["127.0.0.1"])
+        );
+        // CIDR: network/broadcast excluded, like the local scan.
+        assert_eq!(
+            scanned_hosts(with("127.0.0.0/30")).await.unwrap(),
+            set(&["127.0.0.1", "127.0.0.2"])
+        );
+        // Comma list mixing CIDR and single hosts.
+        assert_eq!(
+            scanned_hosts(with("127.0.0.3, 127.0.0.0/30"))
+                .await
+                .unwrap(),
+            set(&["127.0.0.1", "127.0.0.2", "127.0.0.3"])
+        );
+    }
+
+    #[tokio::test]
+    async fn port_scan_accepts_an_expanded_targets_list() {
+        let params = json!({
+            "host": "raw spec kept for older agents",
+            "targets": ["127.0.0.1", "127.0.0.2"],
+            "ports": "9",
+            "timeoutMs": 200,
+        });
+        assert_eq!(
+            scanned_hosts(params).await.unwrap(),
+            set(&["127.0.0.1", "127.0.0.2"])
+        );
+    }
+
+    #[tokio::test]
+    async fn port_scan_rejects_an_over_limit_or_invalid_spec() {
+        for host in ["10.0.0.0/8", "10.0.0.0/33", " , "] {
+            let err = scanned_hosts(json!({ "host": host, "ports": "9" }))
+                .await
+                .expect_err("must be rejected before probing");
+            assert!(
+                matches!(err, ToolError::InvalidParams { ref tool, .. } if tool == "port_scan"),
+                "{host}: {err:?}"
+            );
+        }
     }
 
     #[test]

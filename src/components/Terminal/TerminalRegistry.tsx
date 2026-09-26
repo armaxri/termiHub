@@ -434,6 +434,9 @@ export function TerminalPortalProvider({ children }: { children: ReactNode }) {
     async (tabId: string) => {
       const sessionId = sessionRegistryRef.current.get(tabId);
       if (!sessionId) return;
+      // #3368: a window another window took this session over from sends it no
+      // input — paste included (the backend `send_input` guard drops it too).
+      if (useAppStore.getState().isSessionWindowEvicted(sessionId)) return;
 
       // Drop a bounced/duplicated paste trigger: on Windows a single right-click
       // can deliver the paste signal twice a few ms apart, pasting the clipboard

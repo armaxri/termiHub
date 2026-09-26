@@ -61,7 +61,11 @@ import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
-import { TerminalEvictedOverlay } from "@/components/Terminal/TerminalEvictedOverlay";
+import {
+  TerminalEvictedOverlay,
+  TerminalWindowEvictedOverlay,
+} from "@/components/Terminal/TerminalEvictedOverlay";
+import { useWindowEviction } from "@/hooks/useWindowEviction";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
 import { toast, Spinner } from "@/components/ui";
@@ -1176,7 +1180,12 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
   const isExited = lifecycle.exited;
   // SM-003: another desktop/window took this session over — show the sticky
   // "Taken over" overlay with Reclaim (it supersedes every disconnect variant).
-  const isEvicted = lifecycle.evicted;
+  const isDesktopEvicted = lifecycle.evicted;
+  // #3368: another *window* of this app took the session over — the same sticky
+  // "Taken over" treatment, window-local (the region is per desktop).
+  const windowEviction = useWindowEviction(tabId);
+  const windowEvictedSessionId = useAppStore((s) => s.tabContent[tabId]?.sessionId ?? null);
+  const isEvicted = isDesktopEvicted || windowEviction !== null;
   const isReconnectPromptVisible = useAppStore((s) => s.terminalReconnectPrompt[tabId] ?? false);
   // Agentless resilient reconnect (#1962): the backoff countdown overlay must
   // show even after the first attempt cleared the exited flag mid-loop.
@@ -1241,8 +1250,17 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
       style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
     >
-      {isEvicted && (
+      {isDesktopEvicted && (
         <TerminalEvictedOverlay tabId={tabId} onBeforeReclaim={() => clearTerminal(tabId)} />
+      )}
+      {!isDesktopEvicted && windowEviction && windowEvictedSessionId && (
+        // No pre-reclaim clear: the terminal replays the session's scrollback
+        // itself once this window controls the session again (it missed the
+        // output emitted to the other window meanwhile).
+        <TerminalWindowEvictedOverlay
+          sessionId={windowEvictedSessionId}
+          controllingWindowName={windowEviction.name}
+        />
       )}
       {!isEvicted && (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode)) && (
         <TerminalDisconnectOverlay tabId={tabId} />

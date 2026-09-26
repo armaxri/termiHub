@@ -263,9 +263,9 @@ async fn build_vencrypt_config(cfg: &VncConfig) -> Result<VencryptConfig, Sessio
 /// the message is actionable.
 fn map_vnc_err(e: VncError) -> SessionError {
     match e {
-        VncError::WrongPassword => {
-            SessionError::SpawnFailed("VNC authentication failed: wrong password".to_string())
-        }
+        // Typed, so the graphical manager never auto-reconnects into a
+        // credential rejection (#3364).
+        VncError::WrongPassword => SessionError::AuthFailed,
         VncError::NoPassword => SessionError::InvalidConfig(
             "VNC server requires a password but none was provided".to_string(),
         ),

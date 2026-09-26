@@ -76,6 +76,7 @@ where
 pub async fn handle_port_scan(params: NetworkPortScanParams) -> Result<NetworkPortScanResponse> {
     let tool_params = json!({
         "host": params.host,
+        "targets": params.targets,
         "ports": params.ports,
         "timeoutMs": params.timeout_ms.unwrap_or(defaults::PORT_SCAN_TIMEOUT_MS),
         "concurrency": params.concurrency.unwrap_or(defaults::PORT_SCAN_CONCURRENCY),
@@ -195,6 +196,7 @@ mod tests {
     async fn handle_port_scan_collects_all_results() {
         let params = NetworkPortScanParams {
             host: "127.0.0.1".to_string(),
+            targets: None,
             ports: "9,13".to_string(),
             timeout_ms: Some(200),
             concurrency: Some(4),
@@ -217,6 +219,7 @@ mod adapter_tests {
     async fn port_scan_adapter_wire_shape() {
         let params = NetworkPortScanParams {
             host: "127.0.0.1".to_string(),
+            targets: None,
             ports: "9,13".to_string(),
             timeout_ms: Some(200),
             concurrency: Some(4),
@@ -240,6 +243,63 @@ mod adapter_tests {
         for key in ["total", "open", "closed", "filtered", "elapsedMs"] {
             assert!(summary.contains_key(key), "summary missing {key}");
         }
+    }
+
+    fn scan_params(host: &str, targets: Option<Vec<String>>) -> NetworkPortScanParams {
+        NetworkPortScanParams {
+            host: host.to_string(),
+            targets,
+            ports: "9".to_string(),
+            timeout_ms: Some(200),
+            concurrency: Some(8),
+        }
+    }
+
+    fn hosts_of(resp: &NetworkPortScanResponse) -> std::collections::BTreeSet<String> {
+        resp.results.iter().map(|r| r.host.clone()).collect()
+    }
+
+    /// #3385: the collect-and-return `network.port_scan` expands a
+    /// single / CIDR / comma-list spec into exactly the local scan's host set,
+    /// with every result attributed to its host.
+    #[tokio::test]
+    async fn port_scan_expands_host_specs_like_the_local_scan() {
+        for spec in [
+            "127.0.0.1",
+            "127.0.0.0/30",
+            "127.0.0.3,127.0.0.0/30",
+            "127.0.0.1, localhost",
+        ] {
+            let resp = handle_port_scan(scan_params(spec, None))
+                .await
+                .expect("scan should succeed");
+            let local: std::collections::BTreeSet<String> =
+                termihub_core::network::parse_target_spec(spec)
+                    .expect("valid spec")
+                    .into_iter()
+                    .collect();
+            assert_eq!(hosts_of(&resp), local, "spec {spec}");
+            assert_eq!(resp.results.len(), local.len(), "one result per host");
+            assert_eq!(resp.summary.total as usize, local.len());
+        }
+    }
+
+    /// A desktop-expanded `targets` list wins over the raw `host` spec.
+    #[tokio::test]
+    async fn port_scan_uses_the_desktop_expanded_targets() {
+        let targets = vec!["127.0.0.1".to_string(), "127.0.0.2".to_string()];
+        let resp = handle_port_scan(scan_params("10.0.0.0/30", Some(targets.clone())))
+            .await
+            .expect("scan should succeed");
+        assert_eq!(hosts_of(&resp), targets.into_iter().collect());
+    }
+
+    #[tokio::test]
+    async fn port_scan_rejects_an_over_limit_spec() {
+        let err = handle_port_scan(scan_params("10.0.0.0/8", None))
+            .await
+            .expect_err("over-limit spec must be rejected");
+        assert!(err.to_string().contains("more than"), "{err}");
     }
 
     /// A one-shot tool routed through the adapter reproduces the existing
