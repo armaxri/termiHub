@@ -155,7 +155,8 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
     }
 }
 
-/// Return a shell command that enables CWD tracking for the given shell.
+/// Return a shell command that enables CWD tracking and OSC 133 command marks
+/// for the given shell.
 ///
 /// POSIX-compatible shells use **OSC 7** (`file://` URI), which is the
 /// cross-platform standard emitted natively by zsh and injected via
@@ -180,7 +181,16 @@ pub fn build_shell_command(config: &ShellConfig) -> ShellCommand {
 ///   `-NoExit -Command` startup args (not stdin) to avoid echo.
 /// - `"cmd"` — OSC 9;9: sets the `PROMPT` variable via `/K` startup arg
 ///   (not stdin) to avoid echo.
+/// - `"fish"` — OSC 133 only (fish emits OSC 7 natively): registers
+///   `fish_prompt` / `fish_preexec` / `fish_postexec` event handlers;
+///   injected visibly via stdin.
 /// - Anything else (`"sh"`, etc.) — `None`.
+///
+/// Every variant (except cmd, which can only mark prompts) also emits
+/// **OSC 133** semantic-prompt marks (`A` prompt start, `B` input start,
+/// `C` output start, `D;<exit>` command finished) that drive prompt
+/// navigation, command-output selection and the exit-status gutter in the
+/// terminal (issue #3415, PROD-059).
 pub fn osc7_setup_command(shell_type: &str) -> Option<&'static str> {
     if shell_type.starts_with("wsl:") {
         Some(wsl_osc7_command())
@@ -190,6 +200,8 @@ pub fn osc7_setup_command(shell_type: &str) -> Option<&'static str> {
         Some(powershell_osc7_command())
     } else if shell_type == "cmd" {
         Some(cmd_osc9_command())
+    } else if shell_type == "fish" {
+        Some(fish_shell_integration_command())
     } else {
         None
     }
@@ -307,13 +319,39 @@ pub fn initial_command_strategy(
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Shared bash/zsh fragment: define `__termihub_osc7` and register it as a
-/// prompt hook. Spliced verbatim into both [`wsl_osc7_command`] and
+/// Shared bash/zsh fragment: define the termiHub prompt hooks and register
+/// them. Spliced verbatim into both [`wsl_osc7_command`] and
 /// [`bash_osc7_command`]. It is a `macro_rules!` rather than a `fn`/`const`
 /// because both callers embed it in a `concat!`, which accepts only literals.
 ///
+/// # What the hooks emit
+///
+/// - `__termihub_osc7` runs before every prompt. It first captures `$?` (the
+///   exit status of the command that just finished), then emits
+///   **OSC 133 `D;<exit>`** (command finished), **OSC 7** (CWD, used by the
+///   file browser) and **OSC 133 `A`** (prompt start), and finally returns the
+///   captured status so later prompt hooks and `$?`-aware prompts still see the
+///   real value (issue #3415, PROD-059).
+/// - **OSC 133 `C`** (command output starts) is emitted from bash's `PS0`
+///   (printed after a command line is read, before it runs) and from a zsh
+///   `preexec` hook.
+/// - **OSC 133 `B`** (end of prompt / start of user input) is appended to
+///   `PS1` once. It is best effort: a prompt framework that rebuilds `PS1`
+///   on every prompt simply drops it, and the frontend treats `B` as optional.
+///
+/// The frontend tolerates duplicate or missing marks (a `D` with no command
+/// in flight — the first prompt, an empty Enter — is ignored), so emitting `D`
+/// unconditionally before each prompt is safe.
+///
+/// # Ordering and idempotency
+///
+/// The hook must run **first** so it sees the finished command's `$?`, so it is
+/// *prepended* to `PROMPT_COMMAND` / `precmd_functions` rather than appended.
+/// Registration is guarded by the shell-local `__termihub_si` flag so running
+/// the snippet twice never installs duplicate hooks or `PS0`/`PS1` marks.
+///
 /// The `if/else/fi` (not `&&…||`) isolates the zsh and bash paths: a non-zero
-/// `precmd_functions+=` must not fall through to set `PROMPT_COMMAND`, and in
+/// `precmd_functions=` must not fall through to set `PROMPT_COMMAND`, and in
 /// zsh `${PROMPT_COMMAND:+…}` inside double quotes could otherwise produce
 /// unbalanced quotes and strand the shell at the `>` secondary prompt.
 ///
@@ -325,22 +363,34 @@ pub fn initial_command_strategy(
 /// [1]=<systemd OSC context>)` and provides no `vte.sh` OSC 7 emitter at all.
 /// A bare scalar assignment (`PROMPT_COMMAND="…"`) targets element `[0]` of
 /// such an array, silently rewriting an existing hook instead of adding ours,
-/// so we probe the type via `declare -p` and append with
-/// `PROMPT_COMMAND+=(__termihub_osc7)` for arrays. bash normalizes `declare -p`
-/// so array flags always begin `declare -a…` (even `declare -xa` prints as
-/// `declare -ax`), making the `"declare -a"*` prefix match exact — it never
-/// matches a scalar, including one whose value contains the letter `a`.
+/// so we probe the type via `declare -p` and prepend with
+/// `PROMPT_COMMAND=(__termihub_osc7 "${PROMPT_COMMAND[@]}")` for arrays. bash
+/// normalizes `declare -p` so array flags always begin `declare -a…` (even
+/// `declare -xa` prints as `declare -ax`), making the `"declare -a"*` prefix
+/// match exact — it never matches a scalar, including one whose value contains
+/// the letter `a`.
 macro_rules! osc7_bash_prompt_hook {
     () => {
         concat!(
-            r#"__termihub_osc7(){ printf '\e]7;file://%s\a' "$PWD"; }; "#,
+            r#"__termihub_osc7(){ local __th_s=$?; "#,
+            r#"printf '\e]133;D;%s\a' "$__th_s"; "#,
+            r#"printf '\e]7;file://%s\a' "$PWD"; "#,
+            r#"printf '\e]133;A\a'; "#,
+            r#"return $__th_s; }; "#,
+            r#"__termihub_osc133_c(){ printf '\e]133;C\a'; }; "#,
+            r#"if [ -z "$__termihub_si" ]; then __termihub_si=1; "#,
             r#"if [ -n "$ZSH_VERSION" ]; then "#,
-            r#"precmd_functions+=(__termihub_osc7); "#,
+            r#"precmd_functions=(__termihub_osc7 $precmd_functions); "#,
+            r#"preexec_functions+=(__termihub_osc133_c); "#,
+            r#"PS1="$PS1"$'%{\e]133;B\a%}'; "#,
             r#"else "#,
             r#"case "$(declare -p PROMPT_COMMAND 2>/dev/null)" in "#,
-            r#""declare -a"*) PROMPT_COMMAND+=(__termihub_osc7);; "#,
+            r#""declare -a"*) PROMPT_COMMAND=(__termihub_osc7 "${PROMPT_COMMAND[@]}");; "#,
             r#"*) PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}";; "#,
             r#"esac; "#,
+            r#"PS0="$PS0"'\e]133;C\a'; "#,
+            r#"PS1="$PS1"'\[\e]133;B\a\]'; "#,
+            r#"fi; "#,
             r#"fi"#,
         )
     };
@@ -373,7 +423,8 @@ fn bash_osc7_command() -> &'static str {
     )
 }
 
-/// OSC 7 setup command for PowerShell (both `powershell.exe` and `pwsh`).
+/// Shell-integration setup command for PowerShell (both `powershell.exe` and
+/// `pwsh`).
 ///
 /// Overrides the built-in `prompt` function to emit an **OSC 7** CWD sequence
 /// (`ESC ]7;file://<host>/<path> BEL`) before each prompt. OSC 7 is the
@@ -388,20 +439,63 @@ fn bash_osc7_command() -> &'static str {
 /// authority. Works identically for Windows PowerShell 5 (`powershell.exe`)
 /// and PowerShell 7 (`pwsh`).
 ///
+/// It also emits **OSC 133** command marks (issue #3415, PROD-059): `D;<exit>`
+/// (derived from `$?` / `$LASTEXITCODE`, captured as the prompt's first
+/// statement) and `A` before the prompt text, `B` appended after it, and `C`
+/// from a `PSConsoleHostReadLine` wrapper (PSReadLine) once a command line has
+/// been read. `$LASTEXITCODE` is restored so the user's prompt still sees it.
+///
 /// The user's existing `prompt` (from their profile, loaded before `-Command`
 /// runs) is captured in `$__th_op` and invoked so the original prompt text is
 /// preserved; a default `PS <path}> ` prompt is used only when none exists.
+/// The whole setup is guarded by `$global:__th_si`, so running it twice cannot
+/// capture termiHub's own `prompt` as the "original" and recurse.
 /// Ends with `Clear-Host` to clear the screen. Injected via `-NoExit -Command`
 /// startup args so the command never echoes.
 fn powershell_osc7_command() -> &'static str {
     concat!(
+        r#"if(-not $global:__th_si){$global:__th_si=1;"#,
         r#"$__th_op=$function:prompt;"#,
         r#"function prompt{"#,
+        r#"$__th_ok=$?;$__th_ec=$global:LASTEXITCODE;"#,
+        r#"$e=[char]27;$b=[char]7;"#,
+        r#"$c=if($__th_ok){0}elseif($__th_ec){$__th_ec}else{1};"#,
         r#"$p=$PWD.Path;"#,
         r#"$u=[uri]::EscapeUriString(($p -replace '\\','/'));"#,
-        r#"[Console]::Write([char]27+']7;file://'+$env:COMPUTERNAME+'/'+$u+[char]7);"#,
-        r#"if($__th_op){& $__th_op}else{'PS '+$p+'> '}"#,
+        r#"[Console]::Write($e+']133;D;'+$c+$b+$e+']7;file://'+$env:COMPUTERNAME+'/'+$u+$b+$e+']133;A'+$b);"#,
+        r#"$t=if($__th_op){& $__th_op}else{'PS '+$p+'> '};"#,
+        r#"$global:LASTEXITCODE=$__th_ec;"#,
+        r#""$t"+$e+']133;B'+$b"#,
+        r#"};"#,
+        r#"if(Get-Command PSConsoleHostReadLine -ErrorAction SilentlyContinue){"#,
+        r#"$__th_rl=$function:PSConsoleHostReadLine;"#,
+        r#"function PSConsoleHostReadLine{$l=& $__th_rl;[Console]::Write([char]27+']133;C'+[char]7);$l}"#,
+        r#"}"#,
         r#"};Clear-Host"#,
+    )
+}
+
+/// Shell-integration setup command for fish.
+///
+/// fish emits OSC 7 natively, so this only adds **OSC 133** command marks
+/// (issue #3415, PROD-059) via fish's event system: `A` on `fish_prompt`,
+/// `C` on `fish_preexec` and `D;<exit>` on `fish_postexec`. Nothing touches
+/// the user's `fish_prompt` function. fish 4.0+ emits OSC 133 natively
+/// (`A;click_events=1`, `B`, `C;cmdline_url=…`, `D;<exit>`), so the handlers
+/// are only registered on fish 3.x (`$version` matching `^[0-3]\.`) —
+/// duplicate marks would be harmless (the frontend collapses a repeated `A`
+/// on the same line and ignores a `C`/`D` with no command in flight) but are
+/// pointless. Guarded by the global `__termihub_si` so a second run cannot
+/// register the handlers twice. Injected visibly via stdin.
+fn fish_shell_integration_command() -> &'static str {
+    concat!(
+        r#"if not set -q __termihub_si; and string match -qr '^[0-3]\.' -- $version; "#,
+        r#"set -g __termihub_si 1; "#,
+        r#"echo '# [termiHub] Shell integration: setting up command marks'; "#,
+        r#"function __termihub_osc133_a --on-event fish_prompt; printf '\e]133;A\a'; end; "#,
+        r#"function __termihub_osc133_c --on-event fish_preexec; printf '\e]133;C\a'; end; "#,
+        r#"function __termihub_osc133_d --on-event fish_postexec; printf '\e]133;D;%s\a' $status; end; "#,
+        r#"end"#,
     )
 }
 
@@ -411,10 +505,13 @@ fn powershell_osc7_command() -> &'static str {
 /// prompt. In cmd's PROMPT syntax: `$E` expands to ESC (0x1B), `$P` to the
 /// current drive and path (e.g. `C:\Users\foo`), `$G` to `>`, and `$E\`
 /// forms the OSC String Terminator (`ESC \`). OSC 9;9 carries the raw Windows
-/// path — no URL encoding or slash conversion needed. Ends with `cls` to clear
-/// the screen. Injected via `/K` startup arg so the command never echoes.
+/// path — no URL encoding or slash conversion needed. The prompt is also
+/// bracketed by **OSC 133** `A` (prompt start) and `B` (input start) marks so
+/// prompt navigation works (#3415); cmd has no pre/post-exec hook, so there is
+/// no `C`/`D` and no exit-status decoration. Ends with `cls` to clear the
+/// screen. Injected via `/K` startup arg so the command never echoes.
 fn cmd_osc9_command() -> &'static str {
-    r"PROMPT=$E]9;9;$P$E\$P$G & cls"
+    r"PROMPT=$E]133;A$E\$E]9;9;$P$E\$P$G$E]133;B$E\ & cls"
 }
 
 /// Resolve the path and arguments to launch a WSL distribution.
@@ -1060,7 +1157,7 @@ mod tests {
     /// no `vte.sh`). The old scalar assignment only mutated element `[0]` of
     /// such an array — fragile shell integration. The bash branch must detect
     /// the array case via `declare -p` and append the hook with
-    /// `PROMPT_COMMAND+=(...)`. (ssh/gitbash/zsh share this command via the
+    /// `PROMPT_COMMAND=(hook "${PROMPT_COMMAND[@]}")`. (ssh/gitbash/zsh share this command via the
     /// dispatch in [`osc7_setup_command`], covered by the *_contains_* tests.)
     #[test]
     fn osc7_bash_handles_array_prompt_command() {
@@ -1070,8 +1167,8 @@ mod tests {
             "must probe PROMPT_COMMAND type via declare -p, got: {setup}"
         );
         assert!(
-            setup.contains("PROMPT_COMMAND+=(__termihub_osc7)"),
-            "must array-append the hook when PROMPT_COMMAND is an array, got: {setup}"
+            setup.contains(r#"PROMPT_COMMAND=(__termihub_osc7 "${PROMPT_COMMAND[@]}")"#),
+            "must array-prepend the hook when PROMPT_COMMAND is an array, got: {setup}"
         );
         // The scalar fallback (non-array) must still be present.
         assert!(
@@ -1091,8 +1188,8 @@ mod tests {
             "WSL: must probe PROMPT_COMMAND type via declare -p, got: {setup}"
         );
         assert!(
-            setup.contains("PROMPT_COMMAND+=(__termihub_osc7)"),
-            "WSL: must array-append the hook when PROMPT_COMMAND is an array, got: {setup}"
+            setup.contains(r#"PROMPT_COMMAND=(__termihub_osc7 "${PROMPT_COMMAND[@]}")"#),
+            "WSL: must array-prepend the hook when PROMPT_COMMAND is an array, got: {setup}"
         );
     }
 
@@ -1200,6 +1297,206 @@ mod tests {
     // -----------------------------------------------------------------------
     // initial_command_strategy
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // OSC 133 command marks (#3415, PROD-059)
+    // -----------------------------------------------------------------------
+
+    /// Every POSIX variant (bash, zsh, gitbash, ssh, WSL) shares the same hook.
+    const POSIX_SHELLS: &[&str] = &["bash", "zsh", "gitbash", "ssh", "wsl:Ubuntu"];
+
+    #[test]
+    fn osc133_posix_hook_emits_d_osc7_a_in_order_and_preserves_status() {
+        for shell in POSIX_SHELLS {
+            let setup = osc7_setup_command(shell).expect("expected Some");
+            let status = setup
+                .find("local __th_s=$?")
+                .expect("must capture $? first");
+            let d = setup.find(r"\e]133;D;%s\a").expect("must emit OSC 133 D");
+            let osc7 = setup.find(r"\e]7;file://").expect("must emit OSC 7");
+            let a = setup.find(r"\e]133;A\a").expect("must emit OSC 133 A");
+            assert!(
+                status < d && d < osc7 && osc7 < a,
+                "{shell}: expected $? capture, then D, OSC 7, A: {setup}"
+            );
+            assert!(
+                setup.contains(r#""$__th_s""#) && setup.contains("return $__th_s;"),
+                "{shell}: D must carry the captured status and the hook must restore it: {setup}"
+            );
+        }
+    }
+
+    #[test]
+    fn osc133_posix_hook_is_prepended_so_it_sees_the_real_exit_status() {
+        for shell in POSIX_SHELLS {
+            let setup = osc7_setup_command(shell).expect("expected Some");
+            assert!(
+                setup.contains("precmd_functions=(__termihub_osc7 $precmd_functions)"),
+                "{shell}: zsh hook must be prepended: {setup}"
+            );
+            assert!(
+                setup.contains(
+                    r#"PROMPT_COMMAND="__termihub_osc7${PROMPT_COMMAND:+;$PROMPT_COMMAND}""#
+                ),
+                "{shell}: scalar PROMPT_COMMAND hook must be prepended: {setup}"
+            );
+        }
+    }
+
+    #[test]
+    fn osc133_posix_emits_c_and_b_marks() {
+        for shell in POSIX_SHELLS {
+            let setup = osc7_setup_command(shell).expect("expected Some");
+            // bash: C via PS0, B appended to PS1 inside \[ \] (zero-width).
+            assert!(
+                setup.contains(r#"PS0="$PS0"'\e]133;C\a'"#),
+                "{shell}: bash must emit C via PS0: {setup}"
+            );
+            assert!(
+                setup.contains(r#"PS1="$PS1"'\[\e]133;B\a\]'"#),
+                "{shell}: bash must append a zero-width B mark to PS1: {setup}"
+            );
+            // zsh: C via preexec, B appended to PS1 inside %{ %} (zero-width).
+            assert!(
+                setup.contains("__termihub_osc133_c(){ printf '\\e]133;C\\a'; }")
+                    && setup.contains("preexec_functions+=(__termihub_osc133_c)"),
+                "{shell}: zsh must emit C from a preexec hook: {setup}"
+            );
+            assert!(
+                setup.contains(r#"PS1="$PS1"$'%{\e]133;B\a%}'"#),
+                "{shell}: zsh must append a zero-width B mark to PS1: {setup}"
+            );
+        }
+    }
+
+    /// Running the snippet twice must not register duplicate hooks or append
+    /// the `PS0`/`PS1` marks twice: all registration sits behind one guard.
+    #[test]
+    fn osc133_posix_registration_is_idempotent() {
+        for shell in POSIX_SHELLS {
+            let setup = osc7_setup_command(shell).expect("expected Some");
+            let guard = setup
+                .find(r#"if [ -z "$__termihub_si" ]; then __termihub_si=1;"#)
+                .expect("registration must be guarded");
+            for registration in [
+                "precmd_functions=",
+                "preexec_functions+=",
+                "PROMPT_COMMAND=",
+                "PS0=",
+                "PS1=",
+            ] {
+                let pos = setup
+                    .find(registration)
+                    .unwrap_or_else(|| panic!("{registration} missing"));
+                assert!(
+                    pos > guard,
+                    "{shell}: {registration} must be inside the idempotency guard: {setup}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn osc133_powershell_emits_all_marks_and_keeps_user_prompt() {
+        let setup = osc7_setup_command("powershell").expect("expected Some for powershell");
+        // $? must be captured as the prompt's very first statement.
+        assert!(
+            setup.contains("function prompt{$__th_ok=$?;$__th_ec=$global:LASTEXITCODE;"),
+            "exit status must be captured first: {setup}"
+        );
+        assert!(
+            setup.contains("$c=if($__th_ok){0}elseif($__th_ec){$__th_ec}else{1};"),
+            "exit code must derive from $? / $LASTEXITCODE: {setup}"
+        );
+        assert!(
+            setup.contains("']133;D;'+$c+$b"),
+            "must emit D;<exit>: {setup}"
+        );
+        assert!(setup.contains("']133;A'+$b"), "must emit A: {setup}");
+        assert!(
+            setup.contains(r#""$t"+$e+']133;B'+$b"#),
+            "must append B after the (user's) prompt text: {setup}"
+        );
+        assert!(
+            setup.contains("& $__th_op") && setup.contains("$global:LASTEXITCODE=$__th_ec;"),
+            "must run the original prompt and restore $LASTEXITCODE: {setup}"
+        );
+        assert!(
+            setup.contains("function PSConsoleHostReadLine{") && setup.contains("']133;C'"),
+            "must emit C from a PSConsoleHostReadLine wrapper: {setup}"
+        );
+        // Order within the pre-prompt write: D, then OSC 7, then A.
+        let d = setup.find("]133;D;").unwrap();
+        let osc7 = setup.find("]7;file://").unwrap();
+        let a = setup.find("]133;A").unwrap();
+        assert!(d < osc7 && osc7 < a, "expected D, OSC 7, A order: {setup}");
+    }
+
+    /// A second run must not capture termiHub's own `prompt` as the original
+    /// (which would recurse forever): the whole setup sits behind a guard.
+    #[test]
+    fn osc133_powershell_setup_is_idempotent() {
+        let setup = osc7_setup_command("powershell").expect("expected Some for powershell");
+        assert!(
+            setup.starts_with("if(-not $global:__th_si){$global:__th_si=1;"),
+            "setup must be guarded: {setup}"
+        );
+        assert!(
+            setup.ends_with("};Clear-Host"),
+            "guard must close before Clear-Host: {setup}"
+        );
+    }
+
+    #[test]
+    fn osc133_cmd_marks_prompt_start_and_input_start() {
+        let setup = osc7_setup_command("cmd").expect("expected Some for cmd");
+        let a = setup.find(r"$E]133;A$E\").expect("must emit A");
+        let cwd = setup.find("$E]9;9;").expect("must keep OSC 9;9");
+        let b = setup.find(r"$E]133;B$E\").expect("must emit B");
+        let prompt_text = setup.find("$P$G").expect("must keep the visible prompt");
+        assert!(
+            a < cwd && cwd < prompt_text && prompt_text < b,
+            "expected A, OSC 9;9, prompt text, B: {setup}"
+        );
+    }
+
+    #[test]
+    fn osc133_fish_uses_events_and_is_idempotent() {
+        let setup = osc7_setup_command("fish").expect("expected Some for fish");
+        assert!(
+            setup.contains("--on-event fish_prompt; printf '\\e]133;A\\a'; end"),
+            "must emit A on fish_prompt: {setup}"
+        );
+        assert!(
+            setup.contains("--on-event fish_preexec; printf '\\e]133;C\\a'; end"),
+            "must emit C on fish_preexec: {setup}"
+        );
+        assert!(
+            setup.contains("--on-event fish_postexec; printf '\\e]133;D;%s\\a' $status; end"),
+            "must emit D;$status on fish_postexec: {setup}"
+        );
+        assert!(
+            setup.starts_with("if not set -q __termihub_si; ")
+                && setup.contains("set -g __termihub_si 1; ")
+                && setup.ends_with("end"),
+            "fish setup must be guarded: {setup}"
+        );
+        // fish 4.0+ emits OSC 133 natively — only register on fish 3.x.
+        assert!(
+            setup.contains(r"string match -qr '^[0-3]\.' -- $version"),
+            "fish handlers must be limited to fish < 4: {setup}"
+        );
+        // fish syntax only — never POSIX / PowerShell hooks.
+        assert!(
+            !setup.contains("PROMPT_COMMAND") && !setup.contains("function prompt{"),
+            "fish must not get bash/PowerShell syntax: {setup}"
+        );
+        // fish owns its prompt function; termiHub must not replace it.
+        assert!(
+            !setup.contains("function fish_prompt"),
+            "must not override the user's fish_prompt: {setup}"
+        );
+    }
 
     #[test]
     fn initial_command_none() {
