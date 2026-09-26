@@ -36,18 +36,18 @@ use crate::protocol::methods::{
     FilesCreateSymlinkParams, FilesDeleteParams, FilesListParams, FilesListResult,
     FilesMkdirParams, FilesReadParams, FilesReadResult, FilesRenameParams, FilesSetOwnerParams,
     FilesSetPermissionsParams, FilesStatParams, FilesWriteParams, FolderCreateParams,
-    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, InitializeParams, InitializeResult,
-    MonitoringSubscribeParams, MonitoringUnsubscribeParams, NetworkDnsLookupParams,
-    NetworkPingParams, NetworkPortScanParams, NetworkTracerouteParams, NetworkWolParams,
-    ProcessKillParams, ProcessesListParams, ProcessesListResult, ServicePauseParams,
-    ServicePauseResult, ServiceResumeParams, ServiceResumeResult, ServiceStartParams,
-    ServiceStartResult, ServiceStatusParams, ServiceStatusResult, ServiceStopParams,
-    ServiceStopResult, SessionAttachParams, SessionCloseParams, SessionCreateParams,
-    SessionCreateResult, SessionDetachParams, SessionGetBufferParams, SessionGetBufferResult,
-    SessionInputParams, SessionListEntry, SessionListResult, SessionResizeParams,
-    TunnelForwardSpec, TunnelStartParams, TunnelStartResult, TunnelStatusParams,
-    TunnelStatusResult, TunnelStopParams, TunnelStopResult, UpdatePendingNotification,
-    AGENT_UPDATE_PENDING,
+    FolderDeleteParams, FolderUpdateParams, HealthCheckResult, HostSessionEntry,
+    HostSessionListResult, InitializeParams, InitializeResult, MonitoringSubscribeParams,
+    MonitoringUnsubscribeParams, NetworkDnsLookupParams, NetworkPingParams, NetworkPortScanParams,
+    NetworkTracerouteParams, NetworkWolParams, ProcessKillParams, ProcessesListParams,
+    ProcessesListResult, ServicePauseParams, ServicePauseResult, ServiceResumeParams,
+    ServiceResumeResult, ServiceStartParams, ServiceStartResult, ServiceStatusParams,
+    ServiceStatusResult, ServiceStopParams, ServiceStopResult, SessionAttachParams,
+    SessionCloseParams, SessionCreateParams, SessionCreateResult, SessionDetachParams,
+    SessionGetBufferParams, SessionGetBufferResult, SessionInputParams, SessionListEntry,
+    SessionListResult, SessionResizeParams, TunnelForwardSpec, TunnelStartParams,
+    TunnelStartResult, TunnelStatusParams, TunnelStatusResult, TunnelStopParams, TunnelStopResult,
+    UpdatePendingNotification, AGENT_UPDATE_PENDING,
 };
 // Shared method-name constants (DUP-002); referenced as `pm::CONNECTION_CREATE`
 // in the `register_async_method` calls so agent and desktop cannot drift.
@@ -486,6 +486,7 @@ fn register_all(module: &mut RpcModule<Mutex<HandlerState>>) -> anyhow::Result<(
     register_initialize(module)?;
     register_connection_create(module)?;
     register_connection_list(module)?;
+    register_connection_list_host_sessions(module)?;
     register_connection_close(module)?;
     register_connection_attach(module)?;
     register_connection_detach(module)?;
@@ -747,6 +748,40 @@ fn register_connection_list(module: &mut RpcModule<Mutex<HandlerState>>) -> anyh
 
         to_result_value(&SessionListResult { sessions: entries })
     })?;
+    Ok(())
+}
+
+/// `connection.list_host_sessions` (#3369): every session running on this host
+/// for this user, including ones held by another desktop or by nobody, each with
+/// its `holder` — so a desktop can open an unattached session or explicitly take
+/// over one another desktop holds (`connection.attach { takeover: true }`).
+fn register_connection_list_host_sessions(
+    module: &mut RpcModule<Mutex<HandlerState>>,
+) -> anyhow::Result<()> {
+    module.register_async_method(
+        pm::CONNECTION_LIST_HOST_SESSIONS,
+        |_params, ctx, _ext| async move {
+            let session_manager = get_session_manager(&ctx).await?;
+
+            let entries: Vec<HostSessionEntry> = session_manager
+                .list_host()
+                .await
+                .into_iter()
+                .map(|h| HostSessionEntry {
+                    session_id: h.snapshot.id,
+                    title: h.snapshot.title,
+                    session_type: h.snapshot.type_id,
+                    status: h.snapshot.status.as_str().to_string(),
+                    created_at: h.snapshot.created_at.to_rfc3339(),
+                    last_activity: h.snapshot.last_activity.to_rfc3339(),
+                    holder: h.holder.as_str().to_string(),
+                    definition_id: h.snapshot.definition_id,
+                })
+                .collect();
+
+            to_result_value(&HostSessionListResult { sessions: entries })
+        },
+    )?;
     Ok(())
 }
 
@@ -3082,6 +3117,28 @@ mod tests {
         let sessions = result["result"]["sessions"].as_array().unwrap();
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0]["title"], "test");
+    }
+
+    /// #3369: `connection.list_host_sessions` lists sessions with their holder.
+    #[tokio::test]
+    async fn list_host_sessions_reports_holder() {
+        let (handler, mgr) = make_handler_with_manager();
+        init_handler(&handler).await;
+
+        let snapshot = mgr
+            .create_stub_session("local", "mine".to_string(), json!({}))
+            .await
+            .unwrap();
+        mgr.attach(&snapshot.id).await.unwrap();
+
+        let result = dispatch(&handler, "connection.list_host_sessions", json!({}), 3).await;
+        let sessions = result["result"]["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0]["session_id"], snapshot.id.as_str());
+        assert_eq!(sessions[0]["title"], "mine");
+        assert_eq!(sessions[0]["holder"], "self");
+        assert!(sessions[0]["created_at"].is_string());
+        assert!(sessions[0]["last_activity"].is_string());
     }
 
     // ── Session close tests ────────────────────────────────────────
