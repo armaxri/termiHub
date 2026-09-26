@@ -2810,6 +2810,14 @@ export async function getAppInfo(): Promise<AppInfo> {
   return await invoke<AppInfo>("get_app_info");
 }
 
+/**
+ * Return the bundled third-party license notices (THIRD_PARTY_NOTICES.txt), or
+ * `null` when this build does not bundle them (dev builds — PKG-009).
+ */
+export async function getThirdPartyNotices(): Promise<string | null> {
+  return await invoke<string | null>("get_third_party_notices");
+}
+
 // ─── Update checker ────────────────────────────────────────────────────────
 
 /** Check GitHub for a newer termiHub release. Pass `force: true` to bypass the 1-hour rate limit. */
