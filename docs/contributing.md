@@ -216,13 +216,29 @@ the macOS leg of plugin package-then-load (PLG-011).
 **Post-merge lane.** Every push to `develop` or `main` runs **every** job above
 on **every** platform — Code Quality with the full three-OS test matrix, Security
 Audit (also daily on both branches), Coverage, Bundle Size, the full Agent
-matrix, the Windows serial grade and Dev Build. A superseded run on the same
-branch is cancelled, so the newest commit's run is the one to read (it covers
-all earlier merges). **Watch `develop`'s own runs after merging**: a failure there
-is a real regression (or a new advisory) and needs a follow-up fix, since the PR
+matrix, the Windows serial grade and Dev Build. The newest commit's run is the
+one to read (it covers all earlier merges). **Watch `develop`'s own runs after
+merging**: a failure there is a real regression (or a new advisory) and needs a follow-up fix, since the PR
 that caused it was not gated on it. The nightly system-integration and Docker
 fixture lanes are unchanged. The weekly **Vendored Forks** upstream-drift job keeps one
 `supply-chain` tracking issue current (see [Vendored forks](supply-chain.md#vendored-forks)).
+
+**Concurrency rule (#3588).** Every workflow sets a per-ref `concurrency` group,
+but whether a newer run cancels an in-progress one depends on what the run is for:
+
+- **Correctness gates** — Code Quality, Security Audit, Agent, Plugin Packaging,
+  Vendored Forks — use `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
+  A superseded **PR** run is cancelled, but a push to `develop`/`main` always
+  runs to completion. The post-merge lane is the only place these checks run on
+  every platform, so cancelling on push would leave `develop` ungated: under
+  frequent merges, no Code Quality run ever finished. GitHub still keeps only
+  the newest _queued_ run per group, so merges that land mid-run are covered by
+  the next completed run.
+- **Advisory, heavy or publish-only workflows** — Coverage, Dev Build, the
+  Windows serial grade, Build (PR-only), and the scheduled/manual lanes — keep
+  `cancel-in-progress: true`. Only the newest commit's result matters for them.
+
+A new workflow that gates correctness post-merge must use the PR-only form.
 
 ### Rust toolchain version
 

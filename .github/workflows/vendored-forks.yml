@@ -42,9 +42,15 @@ on:
     - cron: '23 5 * * 1'
   workflow_dispatch:
 
+# Cancel an in-flight run when a newer commit lands on the same PR.
+# Only PR runs cancel in-progress (#3588): a push to develop/main is a post-merge
+# correctness gate the slim PR lane (#3326) relies on. Cancelling on push left
+# develop's gate dark under frequent merges (no run ever finished). A push run now
+# always completes; GitHub still keeps only the newest *queued* run per group, so
+# merges landing mid-run are covered by the next completed run.
 concurrency:
   group: vendored-forks-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Least-privilege default (CI-010); only the drift job may write issues.
 permissions:
