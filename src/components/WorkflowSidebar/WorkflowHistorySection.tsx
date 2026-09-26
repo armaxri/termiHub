@@ -118,6 +118,13 @@ export function WorkflowHistorySection() {
                     </time>
                     {duration ? <span> · {duration}</span> : null}
                     <span> · {run.triggeredBy}</span>
+                    {run.continuedFailures ? (
+                      <span data-testid={`workflow-run-tolerated-${run.id}`}>
+                        {" "}
+                        · {run.continuedFailures} tolerated failure
+                        {run.continuedFailures === 1 ? "" : "s"}
+                      </span>
+                    ) : null}
                   </span>
                 }
               />

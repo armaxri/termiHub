@@ -89,6 +89,12 @@ describe("WorkflowHistorySection (PROD-0046)", () => {
     expect(query("workflow-run-r-ok")?.textContent).toContain("manual");
   });
 
+  it("notes tolerated continue-on-error failures on a run (PROD-045)", () => {
+    render([run({ id: "r-soft", continuedFailures: 2 }), run({ id: "r-clean" })]);
+    expect(query("workflow-run-tolerated-r-soft")?.textContent).toContain("2 tolerated failures");
+    expect(query("workflow-run-tolerated-r-clean")).toBeNull();
+  });
+
   it("clears the history via the Clear action", () => {
     render([run()]);
     const clear = query("workflow-history-clear") as HTMLButtonElement;
