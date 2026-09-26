@@ -13,24 +13,35 @@ type ExportMode = "plain" | "encrypted";
 export function ExportDialog() {
   const open = useAppStore((s) => s.exportDialogOpen);
   const setOpen = useAppStore((s) => s.setExportDialogOpen);
+  const storeMode = useAppStore((s) => s.credentialStoreStatus?.mode ?? "none");
 
   const [mode, setMode] = useState<ExportMode>("plain");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [masterPassword, setMasterPassword] = useState("");
   const [error, setError] = useState("");
   const [exporting, setExporting] = useState(false);
 
+  // Reset the form and clear every secret whenever the dialog opens or closes.
   useEffect(() => {
-    if (open) {
-      setMode("plain");
-      setPassword("");
-      setConfirmPassword("");
-      setError("");
-      setExporting(false);
-    }
+    setMode("plain");
+    setPassword("");
+    setConfirmPassword("");
+    setMasterPassword("");
+    setError("");
+    setExporting(false);
   }, [open]);
 
-  const passwordValid = mode === "plain" || (password.length >= 8 && password === confirmPassword);
+  // Exporting credentials from a master-password store re-authenticates, the
+  // same as the credential-vault export (#3598). OS-keychain mode is verified
+  // by the OS in the backend instead.
+  const needsMasterPassword = mode === "encrypted" && storeMode === "master_password";
+
+  const passwordValid =
+    mode === "plain" ||
+    (password.length >= 8 &&
+      password === confirmPassword &&
+      (!needsMasterPassword || masterPassword.length > 0));
 
   const passwordError = (() => {
     if (mode === "plain") return "";
@@ -46,7 +57,11 @@ export function ExportDialog() {
 
     try {
       const exportPassword = mode === "encrypted" ? password : null;
-      const json = await exportConnectionsEncrypted(exportPassword, null);
+      const json = await exportConnectionsEncrypted(
+        exportPassword,
+        null,
+        needsMasterPassword ? masterPassword : null
+      );
 
       const filePath = await save({
         defaultPath: "termihub-connections.json",
@@ -62,9 +77,11 @@ export function ExportDialog() {
     } catch (err) {
       setError(errorMessage(err));
     } finally {
+      // The master password is single-use: never keep it past an attempt.
+      setMasterPassword("");
       setExporting(false);
     }
-  }, [mode, password, passwordValid, setOpen]);
+  }, [mode, password, masterPassword, needsMasterPassword, passwordValid, setOpen]);
 
   return (
     <Modal
@@ -119,12 +136,24 @@ export function ExportDialog() {
             Credentials, including the shared credentials these connections use, will be encrypted
             with AES-256-GCM. You will need this password to import them on another machine.
           </p>
+          {needsMasterPassword && (
+            <PasswordInput
+              className="ui-input"
+              value={masterPassword}
+              onChange={(e) => setMasterPassword(e.target.value)}
+              placeholder="Current master password"
+              aria-label="Current master password"
+              autoFocus
+              data-testid="export-master-password"
+            />
+          )}
           <PasswordInput
             className="ui-input"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Encryption password (min 8 characters)"
-            autoFocus
+            aria-label="Encryption password"
+            autoFocus={!needsMasterPassword}
             data-testid="export-password"
           />
           <PasswordInput
@@ -142,7 +171,11 @@ export function ExportDialog() {
         </div>
       )}
 
-      {error && <p className="export-dialog__error">{error}</p>}
+      {error && (
+        <p className="export-dialog__error" role="alert" data-testid="export-error">
+          {error}
+        </p>
+      )}
     </Modal>
   );
 }

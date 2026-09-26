@@ -288,6 +288,9 @@ class TestNativeDialogs(
         self.wait(
             lambda: self.driver.exists("export-password"), what="the export password fields"
         )
+        # A master-password store re-authenticates before exporting credentials
+        # (#3598), the same as the credential-vault export.
+        self.driver.type("export-master-password", _MASTER_PASSWORD)
         self.driver.type("export-password", _EXPORT_PASSWORD)
         self.driver.type("export-confirm-password", _EXPORT_PASSWORD)
         self.driver.click("export-submit")
