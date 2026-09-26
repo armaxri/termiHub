@@ -17,7 +17,8 @@
 //! | --- | --- |
 //! | macOS | LocalAuthentication `LAContext` — `deviceOwnerAuthentication` (Touch ID **or** the login password) for export re-authentication, `deviceOwnerAuthenticationWithBiometrics` (Touch ID only) for biometric unlock |
 //! | Windows | Windows Hello `UserConsentVerifier` (face / fingerprint / PIN), parented to the termiHub window |
-//! | Linux / other | **Unavailable** — there is no standard per-user re-authentication API (polkit authenticates *administrative* actions and needs a system-installed policy file); verification always fails closed |
+//! | Linux | polkit — the `com.termihub.app.reauthenticate` action (`auth_self`, never retained) shipped in the `.deb` / `.rpm` packages; the session's polkit agent asks for the user's own password. Unavailable (fails closed) when the action is not installed (AppImage / portable) or no agent runs. No biometric unlock |
+//! | Other | **Unavailable** — verification always fails closed |
 //!
 //! The contract is **fail closed**: an implementation must never report
 //! success unless the OS confirmed the user. Cancellation, failure, timeout
@@ -36,13 +37,15 @@ use serde::Serialize;
 mod macos;
 #[cfg(test)]
 pub mod mock;
-#[cfg(any(test, not(any(target_os = "macos", windows))))]
+#[cfg(any(test, target_os = "linux"))]
+mod polkit;
+#[cfg(any(test, not(any(target_os = "macos", windows, target_os = "linux"))))]
 mod unsupported;
 #[cfg(windows)]
 #[cfg_attr(test, allow(dead_code))]
 mod windows_hello;
 
-#[cfg(any(test, not(any(target_os = "macos", windows))))]
+#[cfg(any(test, not(any(target_os = "macos", windows, target_os = "linux"))))]
 pub use unsupported::UnsupportedVerifier;
 
 /// Why termiHub is asking the OS to verify the user. Selects the OS policy
@@ -58,9 +61,9 @@ pub enum OsAuthPurpose {
     BiometricUnlock,
 }
 
-// Only the macOS verifier (and the test mock) picks a policy per purpose;
-// Windows Hello has a single consent prompt and Linux has no verifier.
-#[cfg(any(test, target_os = "macos"))]
+// The macOS verifier picks a policy per purpose and the Linux (polkit)
+// verifier refuses biometric purposes; Windows Hello has a single prompt.
+#[cfg(any(test, target_os = "macos", target_os = "linux"))]
 impl OsAuthPurpose {
     /// `true` for the purposes that must use a biometric-bound policy, so the
     /// enrollment fingerprint is meaningful and comparable between calls.
@@ -90,10 +93,10 @@ pub struct OsAuthCapability {
 impl OsAuthCapability {
     /// A capability that is available through `method_label`.
     #[cfg_attr(
-        not(any(test, target_os = "macos", windows)),
+        not(any(test, target_os = "macos", windows, target_os = "linux")),
         expect(
             dead_code,
-            reason = "only real OS verifiers report availability; Linux has none"
+            reason = "only real OS verifiers report availability; this platform has none"
         )
     )]
     pub fn available(method_label: impl Into<String>) -> Self {
@@ -130,20 +133,20 @@ pub struct OsAuthSuccess {
 pub enum OsAuthError {
     /// The user dismissed the prompt (or chose the fallback button).
     #[cfg_attr(
-        not(any(test, target_os = "macos", windows)),
+        not(any(test, target_os = "macos", windows, target_os = "linux")),
         expect(
             dead_code,
-            reason = "only produced by a real OS verifier; Linux has none"
+            reason = "only produced by a real OS verifier; this platform has none"
         )
     )]
     #[error("System authentication was cancelled.")]
     Cancelled,
     /// The OS rejected the user (wrong finger, too many attempts, lockout, …).
     #[cfg_attr(
-        not(any(test, target_os = "macos", windows)),
+        not(any(test, target_os = "macos", windows, target_os = "linux")),
         expect(
             dead_code,
-            reason = "only produced by a real OS verifier; Linux has none"
+            reason = "only produced by a real OS verifier; this platform has none"
         )
     )]
     #[error("System authentication failed: {0}")]
@@ -153,10 +156,10 @@ pub enum OsAuthError {
     Unavailable(String),
     /// Any other error from the OS API.
     #[cfg_attr(
-        not(any(test, target_os = "macos", windows)),
+        not(any(test, target_os = "macos", windows, target_os = "linux")),
         expect(
             dead_code,
-            reason = "only produced by a real OS verifier; Linux has none"
+            reason = "only produced by a real OS verifier; this platform has none"
         )
     )]
     #[error("System authentication error: {0}")]
@@ -202,7 +205,7 @@ impl<T: OsUserVerifier + ?Sized> OsUserVerifier for std::sync::Arc<T> {
 /// The verifier for the platform this build runs on.
 ///
 /// Unit tests always get the unavailable verifier so a test can never pop a
-/// real Touch ID / Windows Hello prompt; they inject a mock instead.
+/// real Touch ID / Windows Hello / polkit prompt; they inject a mock instead.
 pub fn platform_verifier() -> Box<dyn OsUserVerifier> {
     #[cfg(test)]
     {
@@ -218,11 +221,21 @@ pub fn platform_verifier() -> Box<dyn OsUserVerifier> {
     {
         Box::new(windows_hello::WindowsHelloVerifier)
     }
-    #[cfg(all(not(test), not(target_os = "macos"), not(windows)))]
+    #[cfg(all(not(test), target_os = "linux"))]
+    {
+        Box::new(polkit::PolkitVerifier::new(polkit::dbus::DbusAuthority))
+    }
+    #[cfg(all(
+        not(test),
+        not(target_os = "macos"),
+        not(windows),
+        not(target_os = "linux")
+    ))]
     {
         Box::new(UnsupportedVerifier::new(
             "This operating system has no supported way for termiHub to re-authenticate you \
-             (Touch ID / Windows Hello). Use Master Password storage to export credentials.",
+             (Touch ID / Windows Hello / polkit). Use Master Password storage to export \
+             credentials.",
         ))
     }
 }
