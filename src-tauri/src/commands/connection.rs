@@ -347,19 +347,28 @@ pub fn reorder_connections(
     Ok(())
 }
 
-/// Gate a connection export that carries credentials: in OS-keychain mode the
-/// OS must verify the user first (fail closed, #3433). termiHub reads its own
-/// keychain items without an OS prompt, so without this gate an unattended,
-/// unlocked session could export every saved secret. An export without a
-/// password carries no secret and is never gated.
+/// Gate a connection export that carries credentials with the same
+/// re-authentication rule as the credential-vault export and the backup's
+/// credentials section ([`vault::authorize_export`]):
+///
+/// - master password: the store must be unlocked and `master_password` must
+///   verify against it (#3598), so an unattended unlocked session cannot walk
+///   off with every secret;
+/// - OS keychain: the OS must verify the user first (fail closed, #3433) —
+///   `master_password` is ignored;
+/// - `none`: there is no credential store to read secrets from, so the export
+///   is not gated.
+///
+/// An export without an export password carries no secret and is never gated.
 fn authorize_credential_export(
     credentials: &CredentialManager,
     export_password: Option<&str>,
+    master_password: Option<&str>,
 ) -> Result<(), vault::VaultError> {
-    if export_password.is_some() && credentials.get_mode() == StorageMode::OsKeychain {
-        vault::authorize_export(credentials, None)?;
+    if export_password.is_none() || credentials.get_mode() == StorageMode::None {
+        return Ok(());
     }
-    Ok(())
+    vault::authorize_export(credentials, master_password)
 }
 
 /// Export connections with optional encrypted credentials.
@@ -370,9 +379,11 @@ fn authorize_credential_export(
 ///
 /// Shared named credentials the exported connections / agents reference are
 /// carried too (#3564): their name and kind always, their secrets only with
-/// an export password (sealed like the per-connection ones). In OS-keychain
-/// mode an export with credentials first requires OS user verification — the
-/// same fail-closed gate as the credential-vault export (#3433).
+/// an export password (sealed like the per-connection ones). An export with
+/// credentials first re-authenticates exactly like the credential-vault
+/// export: `master_password` must verify in master-password mode (#3598), the
+/// OS must verify the user in OS-keychain mode (#3433). A refused
+/// re-authentication returns an error and exports nothing.
 ///
 /// This is async because Argon2id key derivation is CPU-intensive and OS
 /// verification waits for the user.
@@ -380,14 +391,21 @@ fn authorize_credential_export(
 pub async fn export_connections_encrypted(
     export_password: Option<String>,
     connection_ids: Option<Vec<String>>,
+    master_password: Option<String>,
     manager: State<'_, ConnectionManager>,
     credentials: State<'_, Arc<CredentialManager>>,
     registry: State<'_, Arc<NamedCredentialRegistry>>,
 ) -> Result<String, TerminalError> {
     let export_password = export_password.map(Zeroizing::new);
+    let master_password = master_password.map(Zeroizing::new);
     let password = export_password.as_deref().map(String::as_str);
     info!("Exporting connections (encrypted={})", password.is_some());
-    authorize_credential_export(&credentials, password).map_err(config_error)?;
+    authorize_credential_export(
+        &credentials,
+        password,
+        master_password.as_deref().map(String::as_str),
+    )
+    .map_err(config_error)?;
     let json = manager
         .export_encrypted_json(password, connection_ids.as_deref())
         .map_err(config_error)?;
@@ -540,14 +558,14 @@ mod tests {
             .with_os_auth(Box::new(verifier.clone()));
 
         // Without a password nothing secret is exported: no prompt.
-        assert!(authorize_credential_export(&mgr, None).is_ok());
+        assert!(authorize_credential_export(&mgr, None, None).is_ok());
         assert!(verifier.calls().is_empty());
         // Cancelled → refused; verified → allowed.
         assert!(matches!(
-            authorize_credential_export(&mgr, Some("export-pass")),
+            authorize_credential_export(&mgr, Some("export-pass"), None),
             Err(vault::VaultError::ReauthFailed { .. })
         ));
-        assert!(authorize_credential_export(&mgr, Some("export-pass")).is_ok());
+        assert!(authorize_credential_export(&mgr, Some("export-pass"), None).is_ok());
         assert_eq!(verifier.calls().len(), 2);
     }
 
@@ -559,9 +577,55 @@ mod tests {
         let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf())
             .with_os_auth(Box::new(MockVerifier::unavailable()));
         assert!(matches!(
-            authorize_credential_export(&mgr, Some("export-pass")),
+            authorize_credential_export(&mgr, Some("export-pass"), None),
             Err(vault::VaultError::ReauthUnavailable { .. })
         ));
+    }
+
+    fn mp_manager(dir: &std::path::Path) -> CredentialManager {
+        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.to_path_buf());
+        mgr.with_master_password_store(|s| s.setup("master-pw"))
+            .unwrap()
+            .unwrap();
+        mgr
+    }
+
+    #[test]
+    fn master_password_export_with_credentials_requires_reauth() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = mp_manager(dir.path());
+        // Missing / empty / wrong master password → refused.
+        for master in [None, Some(""), Some("nope")] {
+            assert!(
+                matches!(
+                    authorize_credential_export(&mgr, Some("export-pass"), master),
+                    Err(vault::VaultError::WrongMasterPassword { .. })
+                ),
+                "master password {master:?} must be refused"
+            );
+        }
+        // The correct master password → allowed.
+        assert!(authorize_credential_export(&mgr, Some("export-pass"), Some("master-pw")).is_ok());
+    }
+
+    #[test]
+    fn master_password_export_is_refused_while_locked() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = mp_manager(dir.path());
+        mgr.with_master_password_store(|s| s.lock()).unwrap();
+        assert!(matches!(
+            authorize_credential_export(&mgr, Some("export-pass"), Some("master-pw")),
+            Err(vault::VaultError::StoreLocked { .. })
+        ));
+    }
+
+    #[test]
+    fn master_password_export_without_credentials_is_not_gated() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = mp_manager(dir.path());
+        assert!(authorize_credential_export(&mgr, None, None).is_ok());
+        mgr.with_master_password_store(|s| s.lock()).unwrap();
+        assert!(authorize_credential_export(&mgr, None, None).is_ok());
     }
 
     #[test]
@@ -570,10 +634,36 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let verifier = Arc::new(MockVerifier::new([]));
-        let mgr = CredentialManager::new(StorageMode::MasterPassword, dir.path().to_path_buf())
-            .with_os_auth(Box::new(verifier.clone()));
-        assert!(authorize_credential_export(&mgr, Some("export-pass")).is_ok());
+        let mgr = mp_manager(dir.path()).with_os_auth(Box::new(verifier.clone()));
+        assert!(authorize_credential_export(&mgr, Some("export-pass"), Some("master-pw")).is_ok());
         assert!(verifier.calls().is_empty());
+    }
+
+    #[test]
+    fn keychain_export_ignores_a_supplied_master_password() {
+        use crate::credential::os_auth::mock::{MockOutcome, MockVerifier};
+        use crate::credential::os_auth::OsAuthError;
+
+        let dir = tempfile::tempdir().unwrap();
+        let verifier = Arc::new(MockVerifier::new([MockOutcome::Error(
+            OsAuthError::Cancelled,
+        )]));
+        let mgr = CredentialManager::new(StorageMode::OsKeychain, dir.path().to_path_buf())
+            .with_os_auth(Box::new(verifier.clone()));
+        // A master password is no substitute for OS verification.
+        assert!(matches!(
+            authorize_credential_export(&mgr, Some("export-pass"), Some("anything")),
+            Err(vault::VaultError::ReauthFailed { .. })
+        ));
+        assert_eq!(verifier.calls().len(), 1);
+    }
+
+    #[test]
+    fn storage_mode_none_export_is_not_gated() {
+        let dir = tempfile::tempdir().unwrap();
+        let mgr = CredentialManager::new(StorageMode::None, dir.path().to_path_buf());
+        assert!(authorize_credential_export(&mgr, None, None).is_ok());
+        assert!(authorize_credential_export(&mgr, Some("export-pass"), None).is_ok());
     }
 
     #[test]

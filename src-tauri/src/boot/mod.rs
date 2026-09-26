@@ -190,6 +190,12 @@ pub(crate) fn resolve_and_manage_config_dir(
         recovery_warnings.push(w);
     }
 
+    // "Agent crashed since last connect" notices (#3593). Loads its small
+    // seen-report store lazily, on the first agent check.
+    app.manage(std::sync::Arc::new(
+        crate::utils::agent_crash_notice::AgentCrashNoticeService::new(&config_dir),
+    ));
+
     config_dir
 }
 

@@ -1095,6 +1095,11 @@ impl<R: Runtime> AgentConnectionManager<R> {
                 client_id,
             },
         );
+        drop(agents);
+
+        // Best-effort "agent crashed since last connect" check (#3593): spawned
+        // off the connect path, never delays or fails this connect.
+        crate::utils::agent_crash_notice::spawn_check(&self.app_handle, agent_id);
 
         Ok(result)
     }
@@ -3176,6 +3181,9 @@ async fn agent_io_task<R: Runtime>(
 
                 emit_agent_state(&app_handle, &agent_id, "connected");
                 log_agent_reconnected(&agent_id);
+                // #3593: a reconnect may follow an agent crash — check its crash
+                // reports once, off this loop (spawned, bounded, best-effort).
+                crate::utils::agent_crash_notice::spawn_check(&app_handle, &agent_id);
                 // Notify all pending requests that the connection was lost
                 for (_, tx) in pending_responses.drain() {
                     let _ = tx.send(Err("Connection lost during request".to_string().into()));

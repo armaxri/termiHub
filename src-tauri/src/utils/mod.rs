@@ -1,3 +1,4 @@
+pub mod agent_crash_notice;
 pub mod agent_crash_reports;
 pub mod config_paths;
 pub mod diagnostics_bundle;

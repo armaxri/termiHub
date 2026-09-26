@@ -1035,8 +1035,11 @@ the agent panic hook — see ADR-16 in `docs/architecture.md`). Added append-onl
 protocol bump: an older agent answers `-32601` Method not found, which the desktop treats as
 "this agent cannot share crash reports" and skips with a note in the export preview.
 
-The desktop calls this only on agents that are **already connected**, only when the user opens
-the Export Diagnostics dialog, and never opens a connection for it.
+The desktop calls this only on agents that are **already connected** and never opens a
+connection for it: when the user opens the Export Diagnostics dialog, and once after each
+(re)connect to decide whether to show an "agent crashed since it was last connected" notice
+(#3593). The notice needs no agent-side state — the desktop remembers the newest report name it
+has seen per agent.
 
 **Request:**
 

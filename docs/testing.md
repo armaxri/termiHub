@@ -3650,6 +3650,28 @@ verify manually until it lands. See PR #1509.
 5. **Upload:** repeat 1–4 for uploads into `/uploads` as `ftpuser`, confirming
    byte-exact results and that concurrent uploads use separate connections.
 
+### Queued local and WSL copies (#3567, PARITY-004)
+
+Verifies that large local copies run through the Transfer Queue. Automated
+coverage: `core/src/files/transfer/local.rs` unit tests (chunked copy,
+pause/resume from the temp file, cancel cleanup, rename-on-complete, source
+changed since a checkpoint). Prepare a file above the 8 MiB threshold, e.g.
+`dd if=/dev/urandom of=/tmp/big.bin bs=1m count=512`.
+
+1. **Queued paste:** copy `big.bin` in the local file browser and paste it into
+   another folder. A Transfer Queue row appears with progress and speed; while
+   it runs, the destination folder shows only a hidden
+   `.big.bin.<id>.termihub-part` file, never a partial `big.bin`.
+2. **Pause / resume:** pause the row, confirm the bytes stop, resume, and
+   confirm it continues (not from zero) and the result is byte-identical
+   (`cmp`).
+3. **Cancel:** paste over an existing `big.bin`, cancel mid-copy. The old
+   `big.bin` is unchanged and no `.termihub-part` file is left.
+4. **Small files stay direct:** paste a small file — no queue row, one
+   "Pasted …" toast.
+5. **WSL (Windows only):** open a WSL tab, and repeat 1–3 copying between a
+   Windows folder and the distribution's home folder in the sidebar.
+
 ### Transfer Queue panel: rows, controls, minimized state (#1337)
 
 Verifies the connection-type-agnostic Transfer Queue panel UI docked above the
@@ -4014,6 +4036,28 @@ real app. No step needs network access — run them offline to prove it.
    `system-info.txt`, the `logs/termihub*.log` files and the crash reports —
    nothing from `logs/sessions/`. Click **Save…**, pick a folder, and open the
    zip: `hunter2`, `10.1.2.3`, your username and your hostname appear nowhere.
+
+### Agent crashed since last connect notice (#3593, OBS-010)
+
+The new/seen/first-connect decision, the seen-store, the old-agent skip and the
+redacted read are unit-tested (`src-tauri/src/utils/agent_crash_notice_tests.rs`,
+`src-tauri/src/utils/agent_crash_reports_tests.rs`); the notice and viewer are
+component-tested (`src/components/Diagnostics/AgentCrashReportNotice.test.tsx`,
+`CrashReportViewer.test.tsx`). These steps check the real app.
+
+1. Launch via `./scripts/dev.sh` and connect the dev agent. Expected: no agent
+   crash notice (the first check only records a baseline, even if the agent
+   already has old reports).
+2. On the agent host, create `<agent config dir>/logs/crash-reports/crash-20990101T000000Z-1.txt`
+   with any text (e.g. `message: test password=hunter2`). Disconnect and
+   reconnect the agent. Expected: one notice "Agent “…” crashed since it was
+   last connected" at the bottom; the connect itself is not delayed.
+3. Click **View Report**. Expected: the report opens in the crash-report
+   dialog with `hunter2` redacted. Reconnect the agent: no notice again.
+4. Add `crash-20990102T000000Z-2.txt`, reconnect, click **Export Diagnostics…**:
+   the export dialog opens and the notice is gone for good.
+5. Turn off **Settings → General → Diagnostics → Crash Report Notice**, add a
+   third report and reconnect: no notice.
 
 ### Scheduled workflows and macros (#3523, PROD-043)
 

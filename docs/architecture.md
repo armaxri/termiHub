@@ -1319,8 +1319,10 @@ a downgrade loses no secret.
 list (id, name, kind — no secret) of only the credentials the exported connections and agents
 reference, and — with an export password — their secrets in a separate `$namedCredentialSecrets`
 envelope sealed like the per-connection `$encrypted` one. Without a password only the references
-travel. In OS-keychain mode an export with credentials requires OS user verification first (the
-same fail-closed gate as the vault export). Before the connections are imported, each referenced
+travel. An export with credentials re-authenticates through the same
+`credential::vault::authorize_export` rule as the vault export and the backup's credentials
+section: the master password is re-entered (and verified server-side) in master-password mode
+(#3598), and OS user verification is required in OS-keychain mode (fail closed, #3433). Before the connections are imported, each referenced
 credential is mapped: the **same id** already present is kept untouched (only a missing local
 secret is filled in); a local credential with the **same name, kind and identical secret** is
 reused and the references re-pointed; otherwise it is **created** under its id with an
@@ -1905,7 +1907,12 @@ features it must not be confused with: the **SFTP file browser** (an SSH subsyst
   resume, and auto-retry (≤3, exponential backoff). It surfaces as a panel docked above the status
   bar with a minimized status-bar indicator, driven by `transfer-progress` events and generic
   `transfer_*` IPC commands, so SFTP can adopt the same model later. See
-  [ADR-12](#adr-12-connection-type-agnostic-transfer-queue).
+  [ADR-12](#adr-12-connection-type-agnostic-transfer-queue). SFTP, Docker and
+  **local-disk copies** now use it too (PARITY-004, #3567): a local file copy
+  above 8 MiB (`local_copy_start`, including local ↔ WSL copies over the
+  `\\wsl$` UNC share) runs under the reserved `local` session through
+  `core/src/files/transfer/local.rs`, writing a hidden temp file that is
+  renamed over the destination only on completion.
 - **Desktop-only for v1** — the `ftp` cargo feature is desktop-only (registered in
   `src-tauri/src/session/registry.rs::build_desktop_registry()`); the remote agent has no FTP
   backend. Wiring the connection-type-agnostic `file_browser()` dispatch into the sidebar (so FTP
@@ -2446,8 +2453,17 @@ terminal sessions for people who expect nothing to leave their machine.
   (`agents/<agent id>/crash-reports/<name>`), re-applies the per-report cap plus a 1 MiB total
   cap, and **redacts every report again** with its own redactor before writing it. An agent that
   predates the RPC answers "method not found" and is skipped with a note in the preview; reports
-  that were selected but could not be fetched are listed in `agents/skipped.txt`. A notice for
-  "an agent crashed since it was last connected" is tracked in #3593.
+  that were selected but could not be fetched are listed in `agents/skipped.txt`.
+- **"Agent crashed since it was last connected" notice** (#3593). After an agent connects or
+  reconnects, the desktop calls `agent.crash_reports.list` **once** over that same connection,
+  spawned off the connect path (never delays or fails it), bounded by a 10 s timeout, and skipped
+  when the user opted out (`showCrashReportNotice`) or the agent predates the RPC. The newest seen
+  report name per agent id lives in `agent-crash-reports-seen.json` in the config dir (versioned,
+  deliberately **not** a backup section: it is a per-machine "already shown" cursor, and losing it
+  only re-baselines). The **first** check of an agent records its existing reports as seen without
+  a notice, so old reports never spam; later ones raise one dismissible notice per agent until the
+  user acts on it. **View Report** reads it via `agent.crash_reports.read`, capped and redacted
+  again locally (`src-tauri/src/utils/agent_crash_notice.rs`).
 
 **Consequences:**
 

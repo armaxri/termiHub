@@ -743,7 +743,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::files::drag_out_discard_staging,
             commands::files::drag_out_stage_session,
             commands::files::drag_out_start,
-            commands::files::local_copy,
+            commands::files::local_copy_start,
             commands::files::local_mkdir,
             commands::files::local_delete,
             commands::files::local_rename,
@@ -804,6 +804,9 @@ pub fn run() -> anyhow::Result<()> {
             commands::diagnostics::preview_diagnostics_bundle,
             commands::diagnostics::export_diagnostics_bundle,
             commands::diagnostics::list_agent_crash_reports,
+            commands::diagnostics::get_agent_crash_notices,
+            commands::diagnostics::acknowledge_agent_crash_notice,
+            commands::diagnostics::read_agent_crash_report,
             // Tunnels
             commands::tunnel::get_tunnels,
             commands::tunnel::save_tunnel,

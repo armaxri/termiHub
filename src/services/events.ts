@@ -14,6 +14,7 @@ import type {
   SshKeyboardInteractivePromptPayload,
 } from "@/types/sshKeyboardInteractive";
 import type { TransferProgress } from "@/services/api";
+import type { AgentCrashNotice } from "@/types/diagnostics";
 import type {
   RemoteDesktopFramePayload,
   RemoteDesktopCursorPayload,
@@ -175,6 +176,18 @@ export async function onSshKeyboardInteractivePromptClosed(
       callback(event.payload);
     }
   );
+}
+
+/**
+ * Subscribe to changes of the pending "agent crashed since last connect"
+ * notices (#3593). The payload is the full current list.
+ */
+export async function onAgentCrashNoticesChanged(
+  callback: (notices: AgentCrashNotice[]) => void
+): Promise<UnlistenFn> {
+  return await listen<AgentCrashNotice[]>("agent-crash-notices-changed", (event) => {
+    callback(event.payload);
+  });
 }
 
 /** Subscribe to terminal exit events */
