@@ -170,6 +170,15 @@ window, on the fresh connection after an auto-reconnect re-dial, and on the
 owner-gated `remote_desktop_release_input`, which the canvas sends on canvas
 blur, window blur and when the document is hidden. Releases are idempotent.
 
+**Closing an evicted tab (#3401).** An evicted window or desktop owns nothing, so
+closing its tab only drops its view — the session the controller uses stays
+alive. The backend enforces it: `close_terminal` (a tab close, not an intentional
+kill) and `remote_desktop_disconnect` are no-ops from a window that may not
+control the session (`WindowManager::may_close`), and a tab close of an agent
+session in `Evicted` releases only this desktop's local view
+(`release_evicted_session`) — no `connection.close` (or `connection.detach`)
+reaches the agent. The owner's close is unchanged.
+
 `Failed`, `AuthFailed`, `SessionLost`, and idle `Disconnected` are the resting
 states. From any of them a fresh `session.connect` (a new connect / manual
 retry / "start new shell") restarts the machine at `Connecting`; `session.remove`

@@ -277,14 +277,41 @@ pub async fn resize_terminal(
 /// terminal's end as *killed* rather than *dropped*, and fold the graceful
 /// `session.disconnect` transition server-side (see below). Defaults to `false`
 /// when the frontend omits it (a normal, non-kill close).
+///
+/// **Only the controlling window tears a session down (#3401).** A tab close
+/// (non-intentional) from a window that does not own the session — it was taken
+/// over by another window and shows "Taken over by another window" — only drops
+/// that window's view: the session the owning window is using stays alive. Of an
+/// agent session another *desktop* took over (the tab is `Evicted`), a tab close
+/// releases this desktop's local view without sending `connection.close`. See
+/// [`tab_close_disposition`]; the owner's close is unchanged.
 #[tauri::command]
 pub async fn close_terminal(
     session_id: String,
     intentional: Option<bool>,
+    window: tauri::WebviewWindow,
     app_handle: tauri::AppHandle,
     manager: State<'_, SessionManager>,
+    window_manager: State<'_, WindowManager>,
 ) -> Result<(), TerminalError> {
     let intentional = intentional.unwrap_or(false);
+    let agent_evicted = manager
+        .tab_id_for(&session_id)
+        .is_some_and(|tab_id| crate::terminal::agent_manager::is_evicted_tab(&app_handle, &tab_id));
+    let disposition = tab_close_disposition(
+        intentional,
+        window_manager.may_close(&session_id, window.label()),
+        agent_evicted,
+    );
+    if disposition != TabCloseDisposition::Close {
+        info!(
+            session_id,
+            window = window.label(),
+            ?disposition,
+            "Tab closed in a window that does not control the session; keeping it (#3401)"
+        );
+        return close_session_with_disposition(&manager, &session_id, disposition).await;
+    }
     info!(session_id, intentional, "Closing session");
 
     // Server-authority fold (#2439, part of #2205): a user-initiated kill is the
@@ -308,6 +335,57 @@ pub async fn close_terminal(
         fold_session_transition(&app_handle, |store| store.disconnect(tab_id));
     }
     result
+}
+
+/// What closing a terminal tab does to its backend session (#3401).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TabCloseDisposition {
+    /// Close/kill the session — the caller controls it (today's semantics).
+    Close,
+    /// Another window of this app owns the session: drop only the caller's
+    /// view. The window owns nothing, so nothing on the backend is released.
+    KeepForOwningWindow,
+    /// Another desktop took the agent session over (`Evicted`): release this
+    /// desktop's local view without sending `connection.close`.
+    ReleaseEvictedView,
+}
+
+/// Decide what a `close_terminal` does to the session (#3401).
+///
+/// An **intentional** close is a user kill (Open Connections panel) and always
+/// closes. A tab close from a window that may not control the session
+/// ([`WindowManager::may_close`]) keeps it for the owning window; a tab close of
+/// an agent session another desktop evicted this one from releases only the
+/// local view. Otherwise the caller owns the session and closes it as before.
+pub(crate) fn tab_close_disposition(
+    intentional: bool,
+    window_may_close: bool,
+    agent_evicted: bool,
+) -> TabCloseDisposition {
+    if intentional {
+        TabCloseDisposition::Close
+    } else if !window_may_close {
+        TabCloseDisposition::KeepForOwningWindow
+    } else if agent_evicted {
+        TabCloseDisposition::ReleaseEvictedView
+    } else {
+        TabCloseDisposition::Close
+    }
+}
+
+/// Apply a [`TabCloseDisposition`] to a session (#3401).
+pub(crate) async fn close_session_with_disposition(
+    manager: &SessionManager,
+    session_id: &str,
+    disposition: TabCloseDisposition,
+) -> Result<(), TerminalError> {
+    match disposition {
+        TabCloseDisposition::Close => manager.close_session(session_id).await,
+        TabCloseDisposition::KeepForOwningWindow => Ok(()),
+        TabCloseDisposition::ReleaseEvictedView => {
+            manager.release_evicted_session(session_id).await
+        }
+    }
 }
 
 /// Explicit **Reclaim** of a tab whose agent session another desktop took over

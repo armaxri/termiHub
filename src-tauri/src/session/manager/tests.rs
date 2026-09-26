@@ -3680,3 +3680,6 @@ async fn test_connection_is_cancellable_when_the_connect_hangs() {
     // The RAII guard cleared the entry, so a second cancel finds nothing.
     assert!(!manager.cancel_connecting("test-c:0"));
 }
+
+/// Tab close vs. session ownership (#3401).
+mod close_ownership;

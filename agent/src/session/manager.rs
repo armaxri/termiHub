@@ -1196,16 +1196,58 @@ impl SessionManager {
 
     /// Attach a client to an existing session.
     ///
-    /// A session this worker does not hold yet — an orphan left running
-    /// unattached by start-up recovery, or one another desktop detached from —
-    /// is adopted from the shared `state.json` (#3369). The adoption never
-    /// evicts another desktop: if one holds the session the attach fails with
+    /// **A plain attach never evicts another desktop** (SM-003, single-attach —
+    /// taking over is always an explicit, user-confirmed action):
+    ///
+    /// - A session this worker does not hold yet — an orphan left running
+    ///   unattached by start-up recovery, or one another desktop detached from —
+    ///   is adopted from the shared `state.json` (#3369) with a recovery-intent
+    ///   connect.
+    /// - A session still in this worker's map (e.g. detached when its tab closed,
+    ///   or evicted by another desktop's takeover) is re-attached with a
+    ///   recovery-intent reconnect too (#3395). Previously this reconnected with
+    ///   takeover intent and silently evicted a desktop that had opened the
+    ///   session in the meantime.
+    ///
+    /// Either way, if another desktop holds the session the attach fails with
     /// [`SESSION_HELD_BY_OTHER`] and the desktop is told via `connection.evicted`
-    /// (`heldByPeer`) so a tab bound to it folds `Evicted` (with Take over).
+    /// (`heldByPeer`) so a tab bound to it folds `Evicted` (with Reclaim / Take
+    /// over); the holder is left undisturbed.
     pub async fn attach(&self, session_id: &str) -> Result<(), String> {
         if !self.sessions.lock().await.contains_key(session_id) {
             return self.adopt_persisted(session_id, false).await;
         }
+        self.reattach_held(session_id, false).await
+    }
+
+    /// Explicit **Reclaim** (SM-003, single-attach): take control of a session
+    /// back from whichever worker (another desktop) currently holds it.
+    ///
+    /// - Held by this worker (e.g. it was evicted by a takeover and is still in the
+    ///   map): the daemon client reconnects with **takeover** intent, evicting the
+    ///   other worker, which receives `connection.evicted` in turn.
+    /// - Not held by this worker (its start-up recovery was refused because a
+    ///   live peer owned it, AGT-015): adopt it from the shared per-user
+    ///   `state.json` with a **takeover** connect and register it here.
+    ///
+    /// Never called automatically — only on an explicit user Reclaim / Take over
+    /// (`connection.attach { takeover: true }`), so control cannot ping-pong
+    /// between two desktops.
+    pub async fn reclaim(&self, session_id: &str) -> Result<(), String> {
+        if self.sessions.lock().await.contains_key(session_id) {
+            return self.reattach_held(session_id, true).await;
+        }
+        self.adopt_persisted(session_id, true).await
+    }
+
+    /// Re-attach a session already in this worker's map.
+    ///
+    /// `takeover == false` (plain attach): a recovery-intent reconnect, refused
+    /// while another desktop holds the session — reported as
+    /// [`SESSION_HELD_BY_OTHER`] plus a `heldByPeer` eviction notice, leaving the
+    /// holder undisturbed (#3395). `takeover == true` (explicit Reclaim only): a
+    /// takeover reconnect that evicts the holder.
+    async fn reattach_held(&self, session_id: &str, takeover: bool) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
         let info = sessions
             .get_mut(session_id)
@@ -1215,32 +1257,29 @@ impl SessionManager {
             return Err("Session not running".to_string());
         }
 
-        info.attached = true;
         info.last_activity = Utc::now();
-
-        attach_backend(&mut info.backend)
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    /// Explicit **Reclaim** (SM-003, single-attach): take control of a session
-    /// back from whichever worker (another desktop) currently holds it.
-    ///
-    /// - Held by this worker (e.g. it was evicted by a takeover and is still in the
-    ///   map): a plain [`attach`](Self::attach) — the daemon client reconnects with
-    ///   takeover intent, evicting the other worker, which receives
-    ///   `connection.evicted` in turn.
-    /// - Not held by this worker (its start-up recovery was refused because a
-    ///   live peer owned it, AGT-015): adopt it from the shared per-user
-    ///   `state.json` with a **takeover** connect and register it here.
-    ///
-    /// Never called automatically — only on an explicit user Reclaim, so control
-    /// cannot ping-pong between two desktops.
-    pub async fn reclaim(&self, session_id: &str) -> Result<(), String> {
-        if self.sessions.lock().await.contains_key(session_id) {
-            return self.attach(session_id).await;
+        match attach_backend(&mut info.backend, takeover).await {
+            Ok(()) => {
+                info.attached = true;
+                Ok(())
+            }
+            Err(e) if e.downcast_ref::<OwnedByLivePeer>().is_some() => {
+                info.attached = false;
+                drop(sessions);
+                info!(
+                    "Plain attach of session {session_id} refused: another desktop holds it \
+                     (explicit takeover required, #3395)"
+                );
+                // SM-003: a tab bound to this session folds `Evicted` (with
+                // Reclaim) instead of an unexplained failure.
+                let _ = self.notification_tx.send(evicted_notification(
+                    session_id,
+                    EVICTED_REASON_HELD_BY_PEER,
+                ));
+                Err(SESSION_HELD_BY_OTHER.to_string())
+            }
+            Err(e) => Err(e.to_string()),
         }
-        self.adopt_persisted(session_id, true).await
     }
 
     /// Adopt a daemon session this worker does not hold from the shared
@@ -1751,10 +1790,17 @@ async fn shutdown_backend(backend: &mut SessionBackend) {
     }
 }
 
-async fn attach_backend(backend: &mut SessionBackend) -> Result<(), anyhow::Error> {
+/// Re-attach `backend`. A daemon session reconnects with takeover intent only
+/// when `takeover` is set (explicit Reclaim); otherwise it is a plain,
+/// never-evicting re-attach (#3395).
+async fn attach_backend(backend: &mut SessionBackend, takeover: bool) -> Result<(), anyhow::Error> {
     match backend {
         SessionBackend::Daemon(ref mut client) => {
-            client.attach().await?;
+            if takeover {
+                client.take_over().await?;
+            } else {
+                client.attach().await?;
+            }
         }
         SessionBackend::InProcess { .. } => {
             // In-process connections always forward output; no-op.
@@ -2035,6 +2081,84 @@ impl SessionManagerApi for SessionManager {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// The production (non-test) part of a Rust source file.
+    fn production_source(src: &str) -> &str {
+        src.split("#[cfg(test)]\nmod tests {").next().unwrap_or(src)
+    }
+
+    /// Name of the function enclosing byte offset `at` in `src`.
+    fn enclosing_fn(src: &str, at: usize) -> String {
+        let head = &src[..at];
+        let start = head.rfind("fn ").expect("occurrence inside a function") + 3;
+        head[start..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '_')
+            .collect()
+    }
+
+    /// Enclosing function names of every occurrence of `needle` in `src`.
+    fn call_sites(src: &str, needle: &str) -> Vec<String> {
+        src.match_indices(needle)
+            .map(|(at, _)| enclosing_fn(src, at))
+            .collect()
+    }
+
+    /// #3395 audit (SM-003 single-attach, maintainer decision 2026-09-26): taking
+    /// over another desktop's session must always be explicit. Every path that
+    /// connects to a daemon with **takeover** intent must originate from the
+    /// explicit `reclaim` (`connection.attach { takeover: true }`) — or from
+    /// spawning a brand-new daemon nobody else can hold yet.
+    #[test]
+    fn takeover_intent_originates_only_from_explicit_reclaim() {
+        let manager = production_source(include_str!("manager.rs"));
+        // A takeover re-attach of an in-map session: only via `attach_backend`
+        // with `takeover`, which only `reclaim` requests.
+        assert_eq!(call_sites(manager, ".take_over()"), vec!["attach_backend"]);
+        assert_eq!(
+            call_sites(manager, "reattach_held(session_id, true)"),
+            vec!["reclaim"]
+        );
+        assert_eq!(
+            call_sites(manager, "reattach_held(session_id, false)"),
+            vec!["attach"]
+        );
+        // A takeover adoption of a session this worker does not hold: only
+        // `reclaim` asks `adopt_persisted` for one.
+        assert_eq!(
+            call_sites(manager, "adopt_persisted(session_id, true)"),
+            vec!["reclaim"]
+        );
+        // `DaemonClient::connect` declares takeover intent: used only to connect
+        // to a daemon just spawned (`launch`) and by `adopt_persisted`'s explicit
+        // takeover branch.
+        assert_eq!(
+            call_sites(manager, "DaemonClient::connect("),
+            vec!["launch", "adopt_persisted"]
+        );
+
+        // The daemon client: a plain `attach` never declares takeover intent.
+        let client = production_source(include_str!("../daemon/client.rs"));
+        let plain = client
+            .split("pub async fn attach(&mut self)")
+            .nth(1)
+            .and_then(|rest| rest.split("pub async fn take_over").next())
+            .expect("DaemonClient::attach present");
+        assert!(plain.contains("self.reconnect(false)"));
+        assert_eq!(
+            call_sites(client, "self.reconnect(true)"),
+            vec!["take_over"]
+        );
+
+        // The RPC: only `takeover: true` routes to `reclaim`.
+        let dispatch = production_source(include_str!("../handler/dispatch.rs"));
+        assert_eq!(
+            call_sites(dispatch, "session_manager.reclaim("),
+            vec!["register_connection_attach"]
+        );
+        assert!(dispatch
+            .contains("if p.takeover {\n            session_manager.reclaim(&p.session_id).await"));
+    }
 
     /// AGT-021: the spawned daemon command must never carry the connection
     /// settings — and thus its plaintext secrets — in an environment variable
@@ -2395,6 +2519,182 @@ mod tests {
             let (mgr2, _rx2) = manager_with_session(tmp2.path(), &id2, &endpoint2);
             assert!(mgr2.close(&id2).await, "an orphan can be stopped");
             assert!(!mgr2.fresh_persisted_sessions().await.contains_key(&id2));
+        }
+
+        // ── #3395: a plain re-attach never silently evicts another desktop ──
+
+        /// Assert no `connection.evicted` notification is (or becomes) pending on
+        /// `rx` within a short window — i.e. this worker was not evicted.
+        async fn assert_no_takeover_notice(rx: &mut Rx) {
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(300);
+            while let Ok(Some(n)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+                assert!(
+                    !(n.method == CONNECTION_EVICTED && n.params["reason"] == "takeover"),
+                    "the holder must not be evicted: {:?}",
+                    n.params
+                );
+            }
+        }
+
+        /// The #3395 bug: a session this worker detached from (tab closed) but
+        /// still tracks is opened by another desktop meanwhile. Re-opening it here
+        /// (a plain attach) must be refused with `heldByPeer` — the other desktop
+        /// keeps it undisturbed — and only an explicit Reclaim takes it over.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn plain_reattach_of_detached_session_held_by_peer_is_refused() {
+            let id = unique("reopen-held");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, mut rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            mgr.attach(&id)
+                .await
+                .expect("this desktop opens the session");
+            mgr.detach(&id).await.expect("tab closed: detach");
+            assert!(
+                mgr.sessions.lock().await.contains_key(&id),
+                "the detached session is still tracked by this worker"
+            );
+
+            // Another desktop opens it (its own plain, recovery-intent adoption).
+            // Retried like the real adoption: the daemon processes this worker's
+            // detach asynchronously.
+            let (peer_tx, mut peer_rx) = tokio::sync::mpsc::unbounded_channel();
+            let mut peer = None;
+            for _ in 0..40 {
+                match DaemonClient::connect_for_recovery(
+                    id.clone(),
+                    endpoint.clone(),
+                    peer_tx.clone(),
+                )
+                .await
+                {
+                    Ok(client) => {
+                        peer = Some(client);
+                        break;
+                    }
+                    Err(_) => tokio::time::sleep(std::time::Duration::from_millis(25)).await,
+                }
+            }
+            let peer = peer.expect("the other desktop opens the unheld session");
+
+            // Re-opening it here is refused rather than a silent takeover.
+            let err = mgr
+                .attach(&id)
+                .await
+                .expect_err("a plain re-attach must not take a held session");
+            assert_eq!(err, SESSION_HELD_BY_OTHER);
+            let params = next_evicted(&mut rx).await;
+            assert_eq!(params["session_id"], id.as_str());
+            assert_eq!(params["reason"], "heldByPeer");
+
+            // The peer is undisturbed and still controls the session.
+            assert_no_takeover_notice(&mut peer_rx).await;
+            assert!(!peer.is_evicted(), "the other desktop must not be evicted");
+            peer.query_buffer()
+                .await
+                .expect("the other desktop still controls the session");
+            assert_eq!(
+                holder_of(&mgr.list_host().await, &id),
+                Some(SessionHolder::Other)
+            );
+            assert_eq!(
+                SessionManagerApi::write_input(&mgr, &id, b"x")
+                    .await
+                    .expect_err("this desktop must not write to a held session"),
+                SESSION_TAKEN_OVER
+            );
+
+            // Only the explicit Reclaim takes it over.
+            mgr.reclaim(&id).await.expect("explicit Reclaim takes over");
+            assert!(
+                eventually(|| peer.is_evicted()).await,
+                "the explicit Reclaim evicts the other desktop"
+            );
+            SessionManagerApi::write_input(&mgr, &id, b"echo\n")
+                .await
+                .expect("control restored after the explicit Reclaim");
+        }
+
+        /// A detached session nobody else opened re-attaches normally.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn plain_reattach_of_detached_unheld_session_attaches() {
+            let id = unique("reopen-free");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, _rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            mgr.attach(&id).await.expect("open");
+            mgr.detach(&id).await.expect("detach");
+            assert_eq!(
+                DaemonClient::probe_holder(&id, &endpoint).await.unwrap(),
+                ProbeOutcome::Free,
+                "a detached session is held by nobody"
+            );
+
+            mgr.attach(&id).await.expect("re-open re-attaches");
+            assert_eq!(
+                holder_of(&mgr.list_host().await, &id),
+                Some(SessionHolder::Me)
+            );
+            SessionManagerApi::write_input(&mgr, &id, b"echo\n")
+                .await
+                .expect("the re-attached worker controls the session");
+        }
+
+        /// A plain attach of a session this worker already holds live (e.g. a
+        /// returning tab re-attaching for a fresh replay) keeps control: releasing
+        /// its own connection first means the recovery-intent reconnect is not
+        /// refused on account of itself.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn plain_reattach_while_holding_keeps_control() {
+            let id = unique("reopen-self");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, _rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            mgr.attach(&id).await.expect("open");
+            mgr.attach(&id).await.expect("re-attach while holding");
+            assert_eq!(
+                holder_of(&mgr.list_host().await, &id),
+                Some(SessionHolder::Me)
+            );
+            SessionManagerApi::write_input(&mgr, &id, b"echo\n")
+                .await
+                .expect("still in control");
+        }
+
+        /// After another desktop took the session over, a plain attach here does
+        /// not take it back (no ping-pong); only an explicit Reclaim does.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn plain_attach_of_evicted_session_does_not_take_it_back() {
+            let id = unique("evicted-plain");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, mut rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            mgr.attach(&id).await.expect("open");
+            let (other_tx, mut other_rx) = tokio::sync::mpsc::unbounded_channel();
+            let other = DaemonClient::connect(id.clone(), endpoint.clone(), other_tx)
+                .await
+                .expect("another desktop takes over (explicitly)");
+            assert_eq!(next_evicted(&mut rx).await["reason"], "takeover");
+
+            let err = mgr
+                .attach(&id)
+                .await
+                .expect_err("a plain attach must not take the session back");
+            assert_eq!(err, SESSION_HELD_BY_OTHER);
+            assert_eq!(next_evicted(&mut rx).await["reason"], "heldByPeer");
+            assert_no_takeover_notice(&mut other_rx).await;
+            assert!(!other.is_evicted());
+
+            mgr.reclaim(&id).await.expect("explicit Reclaim");
+            assert!(eventually(|| other.is_evicted()).await);
         }
     }
 
