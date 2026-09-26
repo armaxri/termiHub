@@ -461,6 +461,12 @@ where
             ServerMsg::ServerCutText(text) => {
                 output_func(VncEvent::Text(text)).await?;
             }
+            ServerMsg::ServerCutTextDropped(len) => {
+                warn!(
+                    len,
+                    "discarded an oversize ServerCutText (termiHub PROD-021 cap)"
+                );
+            }
         }
     }
     Ok(())
