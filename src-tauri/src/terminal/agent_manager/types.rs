@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use termihub_core::protocol::methods::{
-    ConnectionDefinition, FolderDefinition, SessionCreateResult, SessionListEntry,
+    ConnectionDefinition, FolderDefinition, HostSessionEntry, SessionCreateResult, SessionListEntry,
 };
 
 /// Capabilities returned by the agent after initialization.
@@ -169,5 +169,88 @@ impl From<SessionListEntry> for AgentSessionInfo {
             attached: e.attached,
             definition_id: e.definition_id,
         }
+    }
+}
+
+/// A session running on the agent host with who controls it (#3369) — one
+/// `connection.list_host_sessions` entry, re-serialised to camelCase for the
+/// frontend.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentHostSessionInfo {
+    pub session_id: String,
+    pub title: String,
+    #[serde(rename = "type")]
+    pub session_type: String,
+    pub status: String,
+    pub created_at: String,
+    pub last_activity: String,
+    /// `"self"` (this desktop), `"none"` (running unattached) or `"other"`
+    /// (another desktop holds it; opening it is a takeover).
+    pub holder: String,
+    pub definition_id: Option<String>,
+}
+
+impl From<HostSessionEntry> for AgentHostSessionInfo {
+    fn from(e: HostSessionEntry) -> Self {
+        AgentHostSessionInfo {
+            session_id: e.session_id,
+            title: e.title,
+            session_type: e.session_type,
+            status: e.status,
+            created_at: e.created_at,
+            last_activity: e.last_activity,
+            holder: e.holder,
+            definition_id: e.definition_id,
+        }
+    }
+}
+
+/// Result of listing an agent host's running sessions (#3369).
+///
+/// `supported == false` means the agent predates `connection.list_host_sessions`
+/// (it answered "method not found"); the UI then disables the entry point with
+/// a reason instead of showing an empty list.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentHostSessionsResult {
+    pub supported: bool,
+    pub sessions: Vec<AgentHostSessionInfo>,
+}
+
+/// Decode a `connection.list_host_sessions` reply (#3369). An older agent's
+/// "method not found" error maps to `supported: false`; any other error is
+/// returned as-is. Malformed entries are dropped, not fatal to the whole list.
+pub fn parse_host_sessions_reply(
+    reply: Result<Value, crate::utils::errors::TerminalError>,
+) -> Result<AgentHostSessionsResult, crate::utils::errors::TerminalError> {
+    match reply {
+        Ok(result) => {
+            let sessions = result["sessions"]
+                .as_array()
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| {
+                            serde_json::from_value::<HostSessionEntry>(v.clone())
+                                .ok()
+                                .map(AgentHostSessionInfo::from)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            Ok(AgentHostSessionsResult {
+                supported: true,
+                sessions,
+            })
+        }
+        Err(crate::utils::errors::TerminalError::RemoteError(msg))
+            if msg.to_ascii_lowercase().contains("method not found") =>
+        {
+            Ok(AgentHostSessionsResult {
+                supported: false,
+                sessions: Vec::new(),
+            })
+        }
+        Err(e) => Err(e),
     }
 }

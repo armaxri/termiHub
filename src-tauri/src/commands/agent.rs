@@ -16,7 +16,7 @@ use crate::terminal::agent_cancel::AgentDeployCancellation;
 use crate::terminal::agent_deploy::{AgentDeployConfig, AgentDeployResult, AgentProbeResult};
 use crate::terminal::agent_manager::{
     AgentCapabilities, AgentConnectResult, AgentConnectionsData, AgentDefinitionInfo,
-    AgentFolderInfo, AgentRpcClient, AgentSessionInfo,
+    AgentFolderInfo, AgentHostSessionsResult, AgentRpcClient, AgentSessionInfo,
 };
 use crate::terminal::agent_setup::{AgentSetupConfig, AgentSetupResult, RemoteArchInfo};
 use crate::terminal::backend::{RemoteAgentConfig, UpdateStrategy};
@@ -504,6 +504,43 @@ pub async fn list_agent_sessions(
         fold_agent_transition(&app_handle, |store| store.set_sessions(&agent_id, stored));
     }
     result
+}
+
+/// List every session running on a remote agent's host with who controls it —
+/// this desktop, nobody (running unattached) or another desktop (#3369).
+///
+/// Returns `supported: false` for an agent that predates the listing.
+#[tauri::command]
+pub async fn list_agent_host_sessions(
+    agent_id: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<AgentHostSessionsResult, TerminalError> {
+    debug!(agent_id, "Listing agent host sessions");
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.list_host_sessions(&agent_id))
+        .await
+        .unwrap_or_else(|e| Err(blocking_join_error(e)))
+}
+
+/// Explicitly **take over** an agent session another desktop holds (#3369,
+/// SM-003 single-attach): a takeover `connection.attach` that evicts the other
+/// desktop (which is shown "Taken over by another desktop" with Reclaim). Only
+/// ever sent from the user's confirmed Take over action; the frontend then opens
+/// a tab bound to the session.
+#[tauri::command]
+pub async fn take_over_agent_session(
+    agent_id: String,
+    session_id: String,
+    agent_manager: State<'_, Arc<dyn AgentRpcClient>>,
+) -> Result<(), TerminalError> {
+    info!(
+        agent_id,
+        session_id, "Taking over agent session from another desktop"
+    );
+    let manager = agent_manager.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || manager.reclaim_session(&agent_id, &session_id))
+        .await
+        .unwrap_or_else(|e| Err(blocking_join_error(e)))
 }
 
 /// List saved session definitions on a remote agent.

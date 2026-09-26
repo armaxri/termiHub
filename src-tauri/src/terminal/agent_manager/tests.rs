@@ -43,6 +43,48 @@ fn agent_reconnect_logs_carry_structured_fields() {
     assert_eq!(failed.field("error"), Some("handshake timeout"));
 }
 
+/// #3369: a `connection.list_host_sessions` reply decodes into camelCase DTOs
+/// carrying each session's holder.
+#[test]
+fn parse_host_sessions_reply_decodes_holders() {
+    let reply = json!({"sessions": [
+        {"session_id": "a", "title": "Build", "type": "shell", "status": "running",
+         "created_at": "2026-09-26T10:00:00Z", "last_activity": "2026-09-26T10:05:00Z",
+         "holder": "other", "definition_id": "def-1"},
+        {"session_id": "b", "title": "Logs", "type": "shell", "status": "running",
+         "created_at": "2026-09-26T09:00:00Z", "last_activity": "2026-09-26T09:00:00Z",
+         "holder": "none"},
+        {"garbage": true}
+    ]});
+    let parsed = parse_host_sessions_reply(Ok(reply)).expect("decodes");
+    assert!(parsed.supported);
+    assert_eq!(parsed.sessions.len(), 2, "malformed entries are dropped");
+    assert_eq!(parsed.sessions[0].holder, "other");
+    assert_eq!(parsed.sessions[0].definition_id.as_deref(), Some("def-1"));
+    assert_eq!(parsed.sessions[1].holder, "none");
+    let wire = serde_json::to_value(&parsed).unwrap();
+    assert_eq!(wire["sessions"][0]["sessionId"], "a");
+    assert_eq!(wire["sessions"][0]["lastActivity"], "2026-09-26T10:05:00Z");
+    assert_eq!(wire["sessions"][0]["type"], "shell");
+}
+
+/// #3369: an older agent without the method is "unsupported", not an error;
+/// any other failure still surfaces.
+#[test]
+fn parse_host_sessions_reply_maps_method_not_found_to_unsupported() {
+    let old = parse_host_sessions_reply(Err(TerminalError::RemoteError(
+        "Method not found".to_string(),
+    )))
+    .expect("an older agent is not an error");
+    assert!(!old.supported);
+    assert!(old.sessions.is_empty());
+
+    let other = parse_host_sessions_reply(Err(TerminalError::RemoteError(
+        "Agent connection lost".to_string(),
+    )));
+    assert!(other.is_err());
+}
+
 /// Verify the desktop deserializes the agent's `connection.list` entry
 /// (snake_case, with optional `definition_id`). Without correct serde
 /// settings the entry would parse as empty and the Active Sessions list
