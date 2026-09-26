@@ -35,3 +35,37 @@ export function resolveControllingWindow(params: {
   if (!owner || owner === windowLabel) return null;
   return { label: owner, name: windowDisplayName(owner) };
 }
+
+/**
+ * Resolve whether this window is **evicted** from a session it renders (#3368,
+ * SM-003 single-attach for windows): another window has taken the session over.
+ *
+ * Only one window controls a session. When a different window claims it (an
+ * explicit take-over), this window keeps rendering the tab but shows the
+ * "Taken over by another window" overlay with a Reclaim button; its input and
+ * resize are dropped (here and, authoritatively, in the backend `may_send_input`
+ * / `may_resize` guards). Returns the controlling window, or `null` when this
+ * window controls the session. `null` also when:
+ *
+ *  - the tab carries no session id,
+ *  - the session is unclaimed (absent from the ownership map — any window may
+ *    drive it, e.g. after the controlling window closed), or
+ *  - the session is mid-move to another window (the source tab is on its way
+ *    out; the move is not a take-over).
+ *
+ * Unlike {@link resolveControllingWindow} this does not gate on the window
+ * count: a session owned by a different window is evicted here regardless of
+ * how fresh this window's view of the window set is.
+ */
+export function resolveWindowEviction(params: {
+  sessionId: string | null | undefined;
+  sessionOwners: Record<string, string>;
+  windowLabel: string;
+  moving?: boolean;
+}): ControllingWindow | null {
+  const { sessionId, sessionOwners, windowLabel, moving } = params;
+  if (!sessionId || moving) return null;
+  const owner = sessionOwners[sessionId];
+  if (!owner || owner === windowLabel) return null;
+  return { label: owner, name: windowDisplayName(owner) };
+}

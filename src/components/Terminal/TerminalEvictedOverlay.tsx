@@ -37,21 +37,85 @@ export function TerminalEvictedOverlay({ tabId, onBeforeReclaim }: TerminalEvict
   if (!lifecycle.evicted) return null;
 
   return (
+    <EvictedOverlayView
+      evictedBy="desktop"
+      heading="Taken over by another desktop"
+      subheading="This session is still running, but another desktop or window is now controlling it. Input is paused here until you reclaim it."
+      onReclaim={handleReclaim}
+    />
+  );
+}
+
+interface TerminalWindowEvictedOverlayProps {
+  /** The tab's session, taken over by another window of this app. */
+  sessionId: string;
+  /** The window that now controls the session (name shown in the copy). */
+  controllingWindowName: string;
+  /** Called right before the claim is sent (see {@link TerminalEvictedOverlayProps}). */
+  onBeforeReclaim?: () => void;
+}
+
+/**
+ * "Taken over by another window" overlay (#3368) — the same-machine,
+ * multi-window counterpart of {@link TerminalEvictedOverlay}. Only one window
+ * controls a session; when another window takes it over, this window keeps
+ * rendering the tab but its input and resize are dropped (in the backend too)
+ * until the user explicitly presses **Reclaim**, which claims the session for
+ * this window and evicts the other one in turn. Nothing reclaims automatically.
+ */
+export function TerminalWindowEvictedOverlay({
+  sessionId,
+  controllingWindowName,
+  onBeforeReclaim,
+}: TerminalWindowEvictedOverlayProps) {
+  const reclaimWindowSession = useAppStore((s) => s.reclaimWindowSession);
+  const handleReclaim = useCallback(async () => {
+    onBeforeReclaim?.();
+    await reclaimWindowSession(sessionId);
+  }, [sessionId, reclaimWindowSession, onBeforeReclaim]);
+
+  return (
+    <EvictedOverlayView
+      evictedBy="window"
+      heading="Taken over by another window"
+      subheading={`This session is still running, but ${controllingWindowName} is now controlling it. Input and resize are paused here until you reclaim it.`}
+      onReclaim={handleReclaim}
+    />
+  );
+}
+
+/** Shared presentation of both eviction variants (one consistent signal). */
+function EvictedOverlayView({
+  evictedBy,
+  heading,
+  subheading,
+  onReclaim,
+}: {
+  evictedBy: "desktop" | "window";
+  heading: string;
+  subheading: string;
+  onReclaim: () => Promise<void>;
+}) {
+  // An async handler opts the Button into its pending lifecycle (disabled +
+  // spinner while the reclaim is in flight), so a double click can never fire
+  // two reclaims. The store actions already toast a failure.
+  return (
     <div
       className="terminal-disconnect-overlay terminal-disconnect-overlay--evicted"
       data-testid="terminal-evicted-overlay"
+      data-evicted-by={evictedBy}
     >
       <ContentOverlay
         className="terminal-disconnect-overlay__body"
         icon={<MonitorX size={32} className="terminal-disconnect-overlay__icon" />}
-        heading="Taken over by another desktop"
-        subheading="This session is still running, but another desktop or window is now controlling it. Input is paused here until you reclaim it."
+        heading={heading}
+        subheading={subheading}
         actions={
           <Button
             variant="primary"
             size="sm"
             icon={<RefreshCw size={14} />}
-            onClick={handleReclaim}
+            onClick={onReclaim}
             data-testid="terminal-evicted-reclaim-btn"
           >
             Reclaim

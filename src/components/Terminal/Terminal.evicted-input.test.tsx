@@ -68,6 +68,7 @@ vi.mock("@/themes", () => ({
 const mockCreateTerminal = vi.fn().mockResolvedValue("fresh-session");
 const mockSendInput = vi.fn().mockResolvedValue(undefined);
 const mockResizeTerminal = vi.fn().mockResolvedValue(undefined);
+const mockReplayScrollback = vi.fn().mockResolvedValue(new Uint8Array());
 
 vi.mock("@/services/api", () => ({
   createTerminal: (...args: unknown[]) => mockCreateTerminal(...args),
@@ -76,6 +77,7 @@ vi.mock("@/services/api", () => ({
   closeTerminal: vi.fn().mockResolvedValue(undefined),
   detachPersistentTab: vi.fn().mockResolvedValue(0),
   getAgentSessionBuffer: vi.fn().mockResolvedValue(new Uint8Array()),
+  replaySessionScrollback: (...args: unknown[]) => mockReplayScrollback(...args),
 }));
 
 vi.mock("@/services/events", () => ({
@@ -206,5 +208,43 @@ describe("Terminal — no input while evicted (SM-003)", () => {
       capturedOnData!("pwd\r");
     });
     expect(mockSendInput).toHaveBeenCalledWith("session-1", "pwd\r");
+  });
+});
+
+describe("Terminal — no input while another window controls the session (#3368)", () => {
+  it("drops input after a window takeover and repaints + resumes after Reclaim", async () => {
+    await ensureSessionSubscribed();
+    harness.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
+    useAppStore.setState({ windowLabel: "main" });
+    await mountTerminal();
+    act(() => useAppStore.getState().setSessionOwners({ "session-1": "main" }));
+    mockSendInput.mockClear();
+    mockResizeTerminal.mockClear();
+    mockReplayScrollback.mockClear();
+
+    // Window 2 takes the session over.
+    act(() => useAppStore.getState().setSessionOwners({ "session-1": "win-1" }));
+    act(() => {
+      capturedOnData!("rm -rf build\r");
+    });
+    expect(mockSendInput).not.toHaveBeenCalled();
+
+    // This window reclaims: ownership returns → re-assert size and repaint the
+    // output it missed from the backend ring buffer.
+    act(() => useAppStore.getState().setSessionOwners({ "session-1": "main" }));
+    await settle();
+    expect(mockResizeTerminal).toHaveBeenCalledWith(
+      "session-1",
+      expect.any(Number),
+      expect.any(Number)
+    );
+    expect(mockReplayScrollback).toHaveBeenCalledWith("session-1");
+
+    act(() => {
+      capturedOnData!("ls\r");
+    });
+    expect(mockSendInput).toHaveBeenCalledTimes(1);
+    expect(mockSendInput).toHaveBeenCalledWith("session-1", "ls\r");
   });
 });

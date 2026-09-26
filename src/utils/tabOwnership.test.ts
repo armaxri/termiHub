@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { resolveControllingWindow } from "./tabOwnership";
+import { resolveControllingWindow, resolveWindowEviction } from "./tabOwnership";
 
 describe("resolveControllingWindow (#2872)", () => {
   const base = {
@@ -38,5 +38,27 @@ describe("resolveControllingWindow (#2872)", () => {
         windowLabel: "win-3",
       })
     ).toEqual({ label: "main", name: "Main Window" });
+  });
+});
+
+describe("resolveWindowEviction (#3368)", () => {
+  const base = {
+    sessionId: "sess-1",
+    sessionOwners: { "sess-1": "win-2" },
+    windowLabel: "main",
+  };
+
+  it("names the window that took the session over", () => {
+    expect(resolveWindowEviction(base)).toEqual({ label: "win-2", name: "Window 2" });
+  });
+
+  it("is null when this window controls the session", () => {
+    expect(resolveWindowEviction({ ...base, sessionOwners: { "sess-1": "main" } })).toBeNull();
+  });
+
+  it("is null for an unclaimed session, a missing session id, or a mid-move session", () => {
+    expect(resolveWindowEviction({ ...base, sessionOwners: {} })).toBeNull();
+    expect(resolveWindowEviction({ ...base, sessionId: null })).toBeNull();
+    expect(resolveWindowEviction({ ...base, moving: true })).toBeNull();
   });
 });

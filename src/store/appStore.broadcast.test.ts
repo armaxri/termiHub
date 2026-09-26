@@ -194,6 +194,15 @@ describe("appStore — broadcast input actions (#1955, region-authoritative #220
       expect(useAppStore.getState().getBroadcastTargetTabIds().sort()).toEqual(["src", "t2"]);
     });
 
+    it("never fans input out to a tab another window took over (#3368)", () => {
+      seedTabs([makeTab({ id: "src" }), makeTab({ id: "t2" }), makeTab({ id: "t3" })]);
+      useAppStore.setState({ windowLabel: "main" });
+      useAppStore.getState().setSessionOwners({ "sess-t2": "main", "sess-t3": "win-1" });
+      useAppStore.getState().startBroadcast("all", "src", ["t2", "t3"]);
+
+      expect(useAppStore.getState().getBroadcastTargetTabIds().sort()).toEqual(["src", "t2"]);
+    });
+
     it("drops a target whose tab no longer exists", () => {
       seedTabs([makeTab({ id: "src" }), makeTab({ id: "t2" })]);
       useAppStore.getState().startBroadcast("all", "src", ["t2", "ghost"]);

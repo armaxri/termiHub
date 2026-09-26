@@ -196,12 +196,29 @@ pub fn get_connection_types(manager: State<'_, SessionManager>) -> Vec<Connectio
 }
 
 /// Send input data to a session.
+///
+/// Multi-window single-attach (#3368, SM-003): only the window that controls a
+/// session may type into it. Input from a window another window has taken the
+/// session over from (it shows "Taken over by another window" + Reclaim) is
+/// dropped here, so the backend — not just the UI — enforces that an evicted
+/// window never writes to the session. An unclaimed session accepts input from
+/// any window, exactly like [`resize_terminal`].
 #[tauri::command]
 pub async fn send_input(
     session_id: String,
     data: String,
+    window: tauri::WebviewWindow,
     manager: State<'_, SessionManager>,
+    window_manager: State<'_, WindowManager>,
 ) -> Result<(), TerminalError> {
+    if !window_manager.may_send_input(&session_id, window.label()) {
+        debug!(
+            session_id,
+            window = window.label(),
+            "Dropping input from non-owning (evicted) window (#3368)"
+        );
+        return Ok(());
+    }
     debug!(session_id, "Sending input");
     manager.send_input(&session_id, data.as_bytes()).await
 }
