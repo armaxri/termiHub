@@ -22,6 +22,7 @@ use crate::session::line_ending::LineEnding;
 use crate::session::manager::{
     PersistentSessionSummary, SessionInfo, SessionLogStatus, SessionManager,
 };
+use crate::session::ssh_keyboard_interactive::SshKeyboardInteractivePrompter;
 use crate::session_projection::projection::fold_session_transition;
 use crate::system_monitor_projection::projection::fold_monitor_transition;
 use crate::utils::errors::TerminalError;
@@ -180,13 +181,28 @@ pub async fn test_connection(
 /// tab-close while a session is connecting aborts the handshake promptly instead
 /// of waiting out the connect timeout (#952). No-op if the connect already
 /// finished. Returns whether a connecting session was found.
+///
+/// Any SSH keyboard-interactive (OTP) prompt the connect is waiting on — direct
+/// or relayed by an agent — is cancelled too (#3437): its dialog closes, the
+/// auth resolves as cancelled (an agent is answered `responses: null`), and the
+/// connect aborts at once instead of waiting out the prompt timeout. Prompts of
+/// other connects are untouched.
 #[tauri::command]
 pub fn cancel_connecting(
     connect_id: String,
     manager: State<'_, SessionManager>,
+    prompter: State<'_, std::sync::Arc<SshKeyboardInteractivePrompter>>,
 ) -> Result<bool, TerminalError> {
     info!(connect_id, "Cancelling connecting session");
-    Ok(manager.cancel_connecting(&connect_id))
+    let found = manager.cancel_connecting(&connect_id);
+    let prompts = prompter.cancel_owned_by(&connect_id);
+    if prompts > 0 {
+        info!(
+            connect_id,
+            prompts, "Cancelled SSH keyboard-interactive prompts"
+        );
+    }
+    Ok(found)
 }
 
 /// Get the list of available connection types with their schemas.

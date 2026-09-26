@@ -347,6 +347,29 @@ pub trait AgentRpcClient: Send + Sync + 'static {
         definition_id: Option<&str>,
     ) -> Result<AgentSessionInfo, TerminalError>;
 
+    /// [`create_session`](Self::create_session) on behalf of the desktop
+    /// connect `owner` (its `connect_id`, #3437): an SSH keyboard-interactive
+    /// round the agent relays while this create runs is attributed to `owner`,
+    /// so closing / cancelling that connect cancels it. Defaults to a plain
+    /// create so test doubles need not implement it.
+    fn create_session_owned(
+        &self,
+        agent_id: &str,
+        session_type: &str,
+        config: Value,
+        title: Option<&str>,
+        definition_id: Option<&str>,
+        _owner: Option<&str>,
+    ) -> Result<AgentSessionInfo, TerminalError> {
+        self.create_session(agent_id, session_type, config, title, definition_id)
+    }
+
+    /// The desktop connect `owner` was cancelled (its tab closed, #3437): mark
+    /// its in-flight owned creates cancelled on every agent, so a prompt round
+    /// they raise from now on is answered `null` instead of shown. Rounds
+    /// already open are cancelled through the desktop prompter. Default no-op.
+    fn cancel_owned_creates(&self, _owner: &str) {}
+
     /// Attach to a session on the agent.
     fn attach_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError>;
 
@@ -1406,6 +1429,51 @@ impl<R: Runtime> AgentConnectionManager<R> {
         }
     }
 
+    /// [`create_session`](Self::create_session) with its relayed prompt rounds
+    /// attributed to the desktop connect `owner` (#3437) for as long as the
+    /// create is in flight.
+    pub fn create_session_owned(
+        &self,
+        agent_id: &str,
+        session_type: &str,
+        config: Value,
+        title: Option<&str>,
+        definition_id: Option<&str>,
+        owner: Option<&str>,
+    ) -> Result<AgentSessionInfo, TerminalError> {
+        let _owned = match owner {
+            Some(owner) => self
+                .ki_activity(agent_id)?
+                .map(|a| a.begin_owned_create(owner)),
+            None => None,
+        };
+        self.create_session(agent_id, session_type, config, title, definition_id)
+    }
+
+    /// Mark the in-flight creates owned by the desktop connect `owner` cancelled
+    /// on every connected agent (#3437).
+    pub fn cancel_owned_creates(&self, owner: &str) {
+        let activities: Vec<Arc<AgentPromptActivity>> = match self.agents.lock() {
+            Ok(agents) => agents.values().map(|c| c.ki_activity.clone()).collect(),
+            Err(_) => return,
+        };
+        for activity in activities {
+            activity.cancel_owner(owner);
+        }
+    }
+
+    /// The prompt-activity tracker of a connected agent, if it is connected.
+    fn ki_activity(
+        &self,
+        agent_id: &str,
+    ) -> Result<Option<Arc<AgentPromptActivity>>, TerminalError> {
+        let agents = self
+            .agents
+            .lock()
+            .map_err(|e| TerminalError::RemoteError(format!("Lock failed: {}", e)))?;
+        Ok(agents.get(agent_id).map(|conn| conn.ki_activity.clone()))
+    }
+
     /// Create a session on the agent.
     pub fn create_session(
         &self,
@@ -2041,6 +2109,30 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
             config,
             title,
             definition_id,
+        )
+    }
+
+    fn cancel_owned_creates(&self, owner: &str) {
+        AgentConnectionManager::cancel_owned_creates(self, owner);
+    }
+
+    fn create_session_owned(
+        &self,
+        agent_id: &str,
+        session_type: &str,
+        config: Value,
+        title: Option<&str>,
+        definition_id: Option<&str>,
+        owner: Option<&str>,
+    ) -> Result<AgentSessionInfo, TerminalError> {
+        AgentConnectionManager::create_session_owned(
+            self,
+            agent_id,
+            session_type,
+            config,
+            title,
+            definition_id,
+            owner,
         )
     }
 

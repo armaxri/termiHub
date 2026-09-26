@@ -13,6 +13,14 @@
 //!    prompt timeout) the pending entry is removed and
 //!    `ssh-keyboard-interactive-prompt-closed` tells the dialog to close.
 //!
+//! Every prompt records the **owner** of the connect that raised it — the
+//! `connect_id` scoped around that connect with [`with_prompt_owner`] (#3437).
+//! Closing / cancelling a connecting tab ([`cancel_connecting`](crate::commands::session::cancel_connecting))
+//! cancels exactly that owner's prompts via
+//! [`SshKeyboardInteractivePrompter::cancel_owned_by`]; other tabs' prompts are
+//! untouched. The owner is also carried on the event (`owner`) so the dialog
+//! can tell which tab a prompt belongs to.
+//!
 //! Responses are secrets: they are never logged and are held as
 //! [`Zeroizing`] strings until handed to the SSH layer.
 
@@ -26,6 +34,26 @@ use termihub_core::backends::ssh::keyboard_interactive::{
 };
 use tokio::sync::oneshot;
 use zeroize::Zeroizing;
+
+tokio::task_local! {
+    /// The `connect_id` of the connect running in this task (#3437).
+    static PROMPT_OWNER: String;
+}
+
+/// Run `fut` with `owner` recorded as the owner of any keyboard-interactive
+/// prompt it raises (#3437). `None` runs `fut` unscoped (an inherited owner,
+/// if any, stays in effect).
+pub async fn with_prompt_owner<F: std::future::Future>(owner: Option<&str>, fut: F) -> F::Output {
+    match owner {
+        Some(owner) => PROMPT_OWNER.scope(owner.to_string(), fut).await,
+        None => fut.await,
+    }
+}
+
+/// The owner scoped around the current task by [`with_prompt_owner`], if any.
+pub fn current_prompt_owner() -> Option<String> {
+    PROMPT_OWNER.try_with(Clone::clone).ok()
+}
 
 /// One prompt in an `ssh-keyboard-interactive-prompt` event.
 #[derive(Debug, Clone, Serialize)]
@@ -63,6 +91,10 @@ pub struct SshKeyboardInteractivePromptEvent {
     /// is authenticated by an agent rather than the desktop (#3375). `null`
     /// for a direct connection. Shown as "via …" in the dialog.
     pub via: Option<String>,
+    /// The `connect_id` of the connect that raised this prompt (for a terminal
+    /// tab `${tabId}:${retryCount}`), when known (#3437). Closing that tab
+    /// cancels the prompt. `null` for a prompt with no owning connect.
+    pub owner: Option<String>,
 }
 
 /// `ssh-keyboard-interactive-prompt-closed` payload: the prompt with this id is
@@ -97,7 +129,13 @@ impl<R: tauri::Runtime> SshKeyboardInteractiveEventSink for tauri::AppHandle<R> 
 
 /// `None` = cancelled.
 type Reply = Option<Vec<Zeroizing<String>>>;
-type PendingMap = Mutex<HashMap<String, oneshot::Sender<Reply>>>;
+/// A prompt awaiting its reply, and the connect that owns it.
+struct Pending {
+    tx: oneshot::Sender<Reply>,
+    owner: Option<String>,
+}
+
+type PendingMap = Mutex<HashMap<String, Pending>>;
 
 /// Desktop keyboard-interactive prompter backed by a frontend dialog.
 pub struct SshKeyboardInteractivePrompter {
@@ -147,9 +185,33 @@ impl SshKeyboardInteractivePrompter {
             .unwrap_or_else(|e| e.into_inner())
             .remove(prompt_id);
         match sender {
-            Some(tx) => tx.send(reply).is_ok(),
+            Some(pending) => pending.tx.send(reply).is_ok(),
             None => false,
         }
+    }
+
+    /// Cancel every prompt owned by the connect `owner` (#3437): the tab that
+    /// connects was closed, or its connect was cancelled. Each waiting exchange
+    /// resolves as [`KbdInteractiveAnswer::Cancelled`] (→ `AuthCancelled`, so
+    /// the connect aborts at once instead of waiting out the prompt timeout)
+    /// and its dialog closes. Prompts of other connects are untouched.
+    ///
+    /// Returns the number of prompts cancelled.
+    pub fn cancel_owned_by(&self, owner: &str) -> usize {
+        let senders: Vec<Pending> = {
+            let mut map = self.pending.lock().unwrap_or_else(|e| e.into_inner());
+            let ids: Vec<String> = map
+                .iter()
+                .filter(|(_, p)| p.owner.as_deref() == Some(owner))
+                .map(|(id, _)| id.clone())
+                .collect();
+            ids.iter().filter_map(|id| map.remove(id)).collect()
+        };
+        let count = senders.len();
+        for pending in senders {
+            let _ = pending.tx.send(None);
+        }
+        count
     }
 
     /// Number of prompts currently awaiting a reply.
@@ -163,11 +225,18 @@ impl SshKeyboardInteractivePrompter {
 impl KeyboardInteractivePrompter for SshKeyboardInteractivePrompter {
     async fn prompt(&self, request: &KbdInteractiveRequest) -> KbdInteractiveAnswer {
         let prompt_id = uuid::Uuid::new_v4().to_string();
+        let owner = current_prompt_owner();
         let (tx, rx) = oneshot::channel();
         self.pending
             .lock()
             .unwrap_or_else(|e| e.into_inner())
-            .insert(prompt_id.clone(), tx);
+            .insert(
+                prompt_id.clone(),
+                Pending {
+                    tx,
+                    owner: owner.clone(),
+                },
+            );
         let _guard = PendingGuard {
             pending: &self.pending,
             sink: &self.sink,
@@ -197,6 +266,7 @@ impl KeyboardInteractivePrompter for SshKeyboardInteractivePrompter {
                 .collect(),
             round: request.round,
             via: request.via.clone(),
+            owner,
         });
 
         match rx.await {
@@ -334,5 +404,78 @@ mod tests {
         assert_eq!(prompter.pending_count(), 0);
         assert_eq!(*sink.closed.lock().unwrap(), vec![id.clone()]);
         assert!(!prompter.resolve(&id, Some(vec![])), "late reply is stale");
+    }
+
+    /// A prompt raised inside `with_prompt_owner` carries that owner; an
+    /// unscoped one carries none (#3437).
+    #[tokio::test]
+    async fn prompt_carries_its_owning_connect() {
+        let (prompter, sink) = setup();
+        let p = prompter.clone();
+        let owned =
+            tokio::spawn(
+                async move { with_prompt_owner(Some("tab-a:0"), p.prompt(&request())).await },
+            );
+        let id = latest_prompt_id(&sink).await;
+        assert_eq!(
+            sink.prompts.lock().unwrap()[0].owner.as_deref(),
+            Some("tab-a:0")
+        );
+        assert!(prompter.resolve(&id, None));
+        owned.await.unwrap();
+
+        let p = prompter.clone();
+        let unowned = tokio::spawn(async move { p.prompt(&request()).await });
+        while sink.prompts.lock().unwrap().len() < 2 {
+            tokio::task::yield_now().await;
+        }
+        let event = sink.prompts.lock().unwrap()[1].clone();
+        assert_eq!(event.owner, None);
+        assert_eq!(
+            prompter.cancel_owned_by("tab-a:0"),
+            0,
+            "unowned is untouched"
+        );
+        assert!(prompter.resolve(&event.prompt_id, None));
+        unowned.await.unwrap();
+    }
+
+    /// Cancelling an owner resolves exactly its prompts as cancelled and closes
+    /// their dialogs; other owners' prompts keep waiting (#3437).
+    #[tokio::test]
+    async fn cancel_owned_by_cancels_only_that_owners_prompts() {
+        let (prompter, sink) = setup();
+        let spawn_owned = |owner: &'static str| {
+            let p = prompter.clone();
+            tokio::spawn(async move { with_prompt_owner(Some(owner), p.prompt(&request())).await })
+        };
+        let a1 = spawn_owned("tab-a:0");
+        let a2 = spawn_owned("tab-a:0");
+        let b = spawn_owned("tab-b:0");
+        while sink.prompts.lock().unwrap().len() < 3 {
+            tokio::task::yield_now().await;
+        }
+
+        assert_eq!(prompter.cancel_owned_by("tab-a:0"), 2);
+        assert!(matches!(a1.await.unwrap(), KbdInteractiveAnswer::Cancelled));
+        assert!(matches!(a2.await.unwrap(), KbdInteractiveAnswer::Cancelled));
+        assert_eq!(sink.closed.lock().unwrap().len(), 2);
+        assert_eq!(prompter.pending_count(), 1);
+        assert!(!b.is_finished());
+        assert_eq!(prompter.cancel_owned_by("tab-a:0"), 0, "idempotent");
+
+        let b_id = sink
+            .prompts
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|p| p.owner.as_deref() == Some("tab-b:0"))
+            .map(|p| p.prompt_id.clone())
+            .unwrap();
+        assert!(prompter.resolve(&b_id, Some(vec!["x".into(), "y".into()])));
+        assert!(matches!(
+            b.await.unwrap(),
+            KbdInteractiveAnswer::Responses(_)
+        ));
     }
 }
