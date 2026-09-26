@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/ssh, src-tauri/src/tunnel
 evidence:
   - core/src/backends/ssh/mod.rs:249
-status: open
+status: fixed
+resolution: "#3451 — Port Forwarding section in SSH connection editor on shared tunnel store + startWithConnection auto-start"
 ---
 
 ## What
