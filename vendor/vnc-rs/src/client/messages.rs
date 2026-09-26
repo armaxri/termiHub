@@ -123,6 +123,10 @@ impl ClientMsg {
 #[derive(Debug)]
 pub(super) enum ServerMsg {
     FramebufferUpdate(u16),
+    /// A colour-map update (termiHub fork, #3473), parsed and discarded: the
+    /// client always runs a true-colour pixel format, so there is no colour map
+    /// to apply. Carries `(first-color, number-of-colors)` for tracing.
+    SetColorMapEntries(u16, u16),
     // SetColorMapEntries,
     Bell,
     ServerCutText(String),
@@ -159,7 +163,22 @@ impl ServerMsg {
                 // | 2            | U16          | first-color      |
                 // | 2            | U16          | number-of-colors |
                 // +--------------+--------------+------------------+
-                unimplemented!()
+                // followed by number-of-colors x (U16 red, U16 green, U16 blue).
+                //
+                // termiHub fork (#3473): upstream hit `unimplemented!()` here, so
+                // any server sending a colour map panicked the decoding task.
+                // Consume the entries (at most 65535 x 6 bytes = 384 KiB, read in
+                // a fixed buffer, never allocated) to keep the stream in sync.
+                let _padding = reader.read_u8().await?;
+                let first_color = reader.read_u16().await?;
+                let colors = reader.read_u16().await?;
+                let len = u64::from(colors) * 6;
+                let skipped =
+                    tokio::io::copy(&mut (&mut *reader).take(len), &mut tokio::io::sink()).await?;
+                if skipped < len {
+                    return Err(std::io::Error::from(std::io::ErrorKind::UnexpectedEof).into());
+                }
+                Ok(ServerMsg::SetColorMapEntries(first_color, colors))
             }
             2 => {
                 // Bell

@@ -4,7 +4,7 @@ use std::io::Read;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::error;
 
-use super::{uninit_vec, zlib::ZlibReader};
+use super::{shl_or_zero, zeroed_vec, zlib::ZlibReader};
 
 const MAX_PALETTE: usize = 256;
 
@@ -42,22 +42,19 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
-        let pixel_mask = ((format.red_max as u32) << format.red_shift)
-            | ((format.green_max as u32) << format.green_shift)
-            | ((format.blue_max as u32) << format.blue_shift);
-
-        self.alpha_shift = match pixel_mask {
-            0xff_ff_ff_00 => 0,
-            0xff_ff_00_ff => 8,
-            0xff_00_ff_ff => 16,
-            0x00_ff_ff_ff => 24,
-            _ => unreachable!(),
-        };
+        // termiHub fork (#3473): Tight emits 32-bpp RGBA; any other pixel format
+        // is a typed error (upstream: `unreachable!()`), and the rectangle size
+        // is bounded before anything is allocated.
+        self.alpha_shift = super::alpha_shift(format)?;
+        super::rect_pixels(rect)?;
 
         let ctrl = input.read_u8().await?;
-        for i in 0..4 {
+        for (i, zlib) in self.zlibs.iter_mut().enumerate() {
             if (ctrl >> i) & 1 == 1 {
-                self.zlibs[i].as_mut().unwrap().reset(true);
+                // A reset starts a fresh zlib stream, which is exactly a new
+                // decompressor — and never unwraps a slot a failed decode left
+                // empty.
+                *zlib = Some(flate2::Decompress::new(true));
             }
         }
 
@@ -108,7 +105,7 @@ impl Decoder {
             }
             len
         };
-        let mut data = uninit_vec(len);
+        let mut data = zeroed_vec(len);
         input.read_exact(&mut data).await?;
         Ok(data)
     }
@@ -251,10 +248,13 @@ impl Decoder {
         let num_colors = input.read_u8().await? as usize + 1;
         let palette_size = num_colors * 3;
 
-        self.palette = uninit_vec(palette_size);
+        self.palette = zeroed_vec(palette_size);
         input.read_exact(&mut self.palette).await?;
 
-        let bpp = if num_colors <= 2 { 1 } else { 8 };
+        // Only a two-colour palette is bit-packed; one colour uses a byte per
+        // pixel like any other palette (upstream packed it and then indexed the
+        // packed data per pixel — out of bounds).
+        let bpp = if num_colors == 2 { 1 } else { 8 };
         let row_size = (rect.width as usize * bpp).div_ceil(8);
         let uncompressed_size = rect.height as usize * row_size;
 
@@ -287,23 +287,24 @@ impl Decoder {
         Fut: Future<Output = Result<(), VncError>>,
     {
         // Convert indexed (palette based) image data to RGB
-        let total = rect.width as usize * rect.height as usize;
-        let mut image = uninit_vec(total * 4);
+        let width = rect.width as usize;
+        let total = width * rect.height as usize;
+        let mut image = Vec::with_capacity(total * 4);
         let mut offset = 8_usize;
-        let mut index = -1_isize;
-        let mut dp = 0;
+        let mut index = 0_usize;
         for i in 0..total {
-            if offset == 0 || i % rect.width as usize == 0 {
+            if i != 0 && (offset == 0 || i % width == 0) {
                 offset = 8;
                 index += 1;
             }
             offset -= 1;
-            let sp = ((data[index as usize] >> offset) & 0x01) as usize * 3;
-            let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
-            unsafe {
-                std::ptr::copy_nonoverlapping(true_color.as_ptr(), image.as_mut_ptr().add(dp), 4)
-            }
-            dp += 4;
+            let byte = *data.get(index).ok_or(VncError::InvalidImageData)?;
+            let sp = ((byte >> offset) & 0x01) as usize * 3;
+            let entry = self
+                .palette
+                .get(sp..sp + 3)
+                .ok_or(VncError::InvalidImageData)?;
+            image.extend_from_slice(&self.to_true_color(format, entry));
         }
         output_func(VncEvent::RawImage(*rect, image)).await?;
         Ok(())
@@ -322,17 +323,16 @@ impl Decoder {
     {
         // Convert indexed (palette based) image data to RGB
         let total = rect.width as usize * rect.height as usize;
-        let mut image = uninit_vec(total * 4);
-        let mut i = 0;
-        let mut dp = 0;
-        while i < total {
-            let sp = data[i] as usize * 3;
-            let true_color = self.to_true_color(format, &self.palette[sp..sp + 3]);
-            unsafe {
-                std::ptr::copy_nonoverlapping(true_color.as_ptr(), image.as_mut_ptr().add(dp), 4)
-            }
-            dp += 4;
-            i += 1;
+        let mut image = Vec::with_capacity(total * 4);
+        for &index in data.iter().take(total) {
+            // termiHub fork (#3473): a palette index past the palette the server
+            // sent is malformed data, not a panic.
+            let sp = index as usize * 3;
+            let entry = self
+                .palette
+                .get(sp..sp + 3)
+                .ok_or(VncError::InvalidImageData)?;
+            image.extend_from_slice(&self.to_true_color(format, entry));
         }
         output_func(VncEvent::RawImage(*rect, image)).await?;
         Ok(())
@@ -358,7 +358,7 @@ impl Decoder {
         let data = self
             .read_tight_data(stream, input, uncompressed_size)
             .await?;
-        let mut image = uninit_vec(rect.width as usize * rect.height as usize * 4);
+        let mut image = Vec::with_capacity(rect.width as usize * rect.height as usize * 4);
 
         let row_len = rect.width as usize * 3 + 3;
         let mut row_0 = vec![0_u16; row_len];
@@ -366,17 +366,16 @@ impl Decoder {
         let max = [format.red_max, format.green_max, format.blue_max];
         let shift = [format.red_shift, format.green_shift, format.blue_shift];
         let mut sp = 0;
-        let mut dp = 0;
 
         for y in 0..rect.height as usize {
-            let (this_row, prev_row) = match y & 1 {
-                0 => (&mut row_0, &mut row_1),
-                1 => (&mut row_1, &mut row_0),
-                _ => unreachable!(),
+            let (this_row, prev_row) = if y & 1 == 0 {
+                (&mut row_0, &mut row_1)
+            } else {
+                (&mut row_1, &mut row_0)
             };
             let mut x = 3;
             while x < row_len {
-                let rgb = &data[sp..sp + 3];
+                let rgb = data.get(sp..sp + 3).ok_or(VncError::InvalidImageData)?;
                 let mut color = 0;
                 for index in 0..3 {
                     let d = prev_row[index + x] as i32 + this_row[index + x - 3] as i32
@@ -388,17 +387,11 @@ impl Decoder {
                     } else {
                         d as u16
                     };
-                    this_row[index + x] = (converted + rgb[index] as u16) & max[index];
-                    color |= (this_row[x + index] as u32 & max[index] as u32) << shift[index];
+                    this_row[index + x] = converted.wrapping_add(rgb[index] as u16) & max[index];
+                    color |=
+                        shl_or_zero(this_row[x + index] as u32 & max[index] as u32, shift[index]);
                 }
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        color.to_le_bytes().as_ptr(),
-                        image.as_mut_ptr().add(dp),
-                        4,
-                    )
-                }
-                dp += 4;
+                image.extend_from_slice(&color.to_le_bytes());
                 sp += 3;
                 x += 3;
             }
@@ -419,12 +412,19 @@ impl Decoder {
     {
         let mut data;
         if uncompressed_size < 12 {
-            data = uninit_vec(uncompressed_size);
+            data = zeroed_vec(uncompressed_size);
             input.read_exact(&mut data).await?;
         } else {
             let d = self.read_data(input).await?;
-            let mut reader = ZlibReader::new(self.zlibs[stream as usize].take().unwrap(), &d);
-            data = uninit_vec(uncompressed_size);
+            // termiHub fork (#3473): a slot left empty by an earlier failed
+            // decode is an error, not an `unwrap()` panic.
+            let zlib = self
+                .zlibs
+                .get_mut(stream as usize)
+                .and_then(Option::take)
+                .ok_or(VncError::InvalidImageData)?;
+            let mut reader = ZlibReader::new(zlib, &d);
+            data = zeroed_vec(uncompressed_size);
             reader.read_exact(&mut data)?;
             self.zlibs[stream as usize] = Some(reader.into_inner()?);
         };
@@ -434,9 +434,12 @@ impl Decoder {
     fn to_true_color(&self, format: &PixelFormat, color: &[u8]) -> [u8; 4] {
         let alpha = 255;
         // always rgb
-        (((color[0] as u32 & format.red_max as u32) << format.red_shift)
-            | ((color[1] as u32 & format.green_max as u32) << format.green_shift)
-            | ((color[2] as u32 & format.blue_max as u32) << format.blue_shift)
+        (shl_or_zero(color[0] as u32 & format.red_max as u32, format.red_shift)
+            | shl_or_zero(
+                color[1] as u32 & format.green_max as u32,
+                format.green_shift,
+            )
+            | shl_or_zero(color[2] as u32 & format.blue_max as u32, format.blue_shift)
             | ((alpha as u32) << self.alpha_shift))
             .to_le_bytes()
     }

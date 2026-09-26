@@ -3,7 +3,7 @@ use std::future::Future;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tracing::error;
 
-use super::uninit_vec;
+use super::zeroed_vec;
 
 async fn read_run_length<S>(reader: &mut S) -> Result<usize, VncError>
 where
@@ -14,6 +14,11 @@ where
     loop {
         run_length_part = reader.read_u8().await?;
         run_length += run_length_part as usize;
+        // termiHub fork (#3473): no legal run exceeds one 64x64 tile; stop a
+        // server from spinning us through an endless run of 255 bytes.
+        if run_length > 64 * 64 {
+            return Err(VncError::InvalidImageData);
+        }
         if 255 != run_length_part {
             break;
         }
@@ -39,9 +44,30 @@ where
     Ok(())
 }
 
-fn copy_indexed(palette: &[u8], pixels: &mut Vec<u8>, bpp: usize, index: u8) {
+/// Append palette entry `index`. termiHub fork (#3473): an index past the palette
+/// the server sent is malformed data, not an out-of-bounds panic.
+fn copy_indexed(
+    palette: &[u8],
+    pixels: &mut Vec<u8>,
+    bpp: usize,
+    index: u8,
+) -> Result<(), VncError> {
     let start = index as usize * bpp;
-    pixels.extend_from_slice(&palette[start..start + bpp])
+    let entry = palette
+        .get(start..start + bpp)
+        .ok_or(VncError::InvalidImageData)?;
+    pixels.extend_from_slice(entry);
+    Ok(())
+}
+
+/// Account for a run of `run_length` pixels in a tile of `pixel_count`.
+/// termiHub fork (#3473): a run overshooting the tile is malformed data —
+/// upstream kept appending, producing an image larger than its rectangle.
+fn advance_run(count: usize, run_length: usize, pixel_count: usize) -> Result<usize, VncError> {
+    match count.checked_add(run_length) {
+        Some(next) if next <= pixel_count => Ok(next),
+        _ => Err(VncError::InvalidImageData),
+    }
 }
 
 pub struct Decoder {}
@@ -63,14 +89,14 @@ impl Decoder {
         F: Fn(VncEvent) -> Fut,
         Fut: Future<Output = Result<(), VncError>>,
     {
-        let data_len = input.read_u32().await? as usize;
-        let mut zlib_data = uninit_vec(data_len);
+        // termiHub fork (#3473): bound the server-chosen rectangle and length.
+        super::rect_pixels(rect)?;
+        let data_len = super::encoded_len(input.read_u32().await?)?;
+        let mut zlib_data = zeroed_vec(data_len);
         input.read_exact(&mut zlib_data).await?;
 
         let bpp = format.bits_per_pixel as usize / 8;
-        let pixel_mask = ((format.red_max as u32) << format.red_shift)
-            | ((format.green_max as u32) << format.green_shift)
-            | ((format.blue_max as u32) << format.blue_shift);
+        let pixel_mask = super::pixel_mask(format);
 
         let (compressed_bpp, alpha_at_first) =
             if format.bits_per_pixel == 32 && format.true_color_flag > 0 && format.depth <= 24 {
@@ -96,14 +122,16 @@ impl Decoder {
 
         let mut y = 0;
         while y < rect.height {
-            let height = if y + 64 > rect.height {
+            // `rect.height - y < 64` rather than upstream's `y + 64 > height`,
+            // which overflows `u16` for a rectangle near 65535 rows.
+            let height = if rect.height - y < 64 {
                 rect.height - y
             } else {
                 64
             };
             let mut x = 0;
             while x < rect.width {
-                let width = if x + 64 > rect.width {
+                let width = if rect.width - x < 64 {
                     rect.width - x
                 } else {
                     64
@@ -132,16 +160,17 @@ impl Decoder {
                     (false, 1) => {
                         // Color fill
                         for _ in 0..pixel_count {
-                            copy_indexed(&palette, &mut pixels, bpp, 0)
+                            copy_indexed(&palette, &mut pixels, bpp, 0)?;
                         }
                     }
                     (false, 2..=16) => {
                         // Indexed pixels
-                        let bits_per_index = match palette_size {
-                            2 => 1,
-                            3..=4 => 2,
-                            5..=16 => 4,
-                            _ => unreachable!(),
+                        let bits_per_index = if palette_size == 2 {
+                            1
+                        } else if palette_size <= 4 {
+                            2
+                        } else {
+                            4
                         };
                         let mut encoded = input.read_u8().await?;
                         let mask = (1 << bits_per_index) - 1;
@@ -155,7 +184,7 @@ impl Decoder {
                                 }
                                 let idx = (encoded >> shift) & mask;
 
-                                copy_indexed(&palette, &mut pixels, bpp, idx);
+                                copy_indexed(&palette, &mut pixels, bpp, idx)?;
                                 shift -= bits_per_index;
                             }
                             if shift < 8 - bits_per_index && y < height - 1 {
@@ -172,10 +201,10 @@ impl Decoder {
                             copy_true_color(input, &mut pixel, alpha_at_first, compressed_bpp, bpp)
                                 .await?;
                             let run_length = read_run_length(input).await?;
+                            count = advance_run(count, run_length, pixel_count)?;
                             for _ in 0..run_length {
                                 pixels.extend(&pixel)
                             }
-                            count += run_length;
                         }
                     }
                     (true, 2..=127) => {
@@ -190,10 +219,10 @@ impl Decoder {
                             } else {
                                 1
                             };
+                            count = advance_run(count, run_length, pixel_count)?;
                             for _ in 0..run_length {
-                                copy_indexed(&palette, &mut pixels, bpp, index);
+                                copy_indexed(&palette, &mut pixels, bpp, index)?;
                             }
-                            count += run_length;
                         }
                     }
                     (x, y) => {
@@ -203,8 +232,8 @@ impl Decoder {
                 }
                 output_func(VncEvent::RawImage(
                     Rect {
-                        x: rect.x + x,
-                        y: rect.y + y,
+                        x: rect.x.checked_add(x).ok_or(VncError::InvalidImageData)?,
+                        y: rect.y.checked_add(y).ok_or(VncError::InvalidImageData)?,
                         width,
                         height,
                     },

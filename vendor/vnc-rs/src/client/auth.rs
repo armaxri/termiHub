@@ -32,6 +32,28 @@ impl TryFrom<u8> for SecurityType {
     }
 }
 
+/// Largest failure-reason string accepted from the server (termiHub fork,
+/// #3473). Longer reasons are truncated to this many bytes.
+pub(super) const MAX_REASON_BYTES: u32 = 64 * 1024;
+
+/// Read an RFB failure reason (`U32 length` + bytes) with a bounded buffer.
+///
+/// termiHub fork (#3473): upstream discarded the length and `read_to_string`'d
+/// to EOF — unbounded memory for a server that keeps streaming, and an error
+/// instead of a message for a non-UTF-8 reason.
+pub(super) async fn read_reason<S>(reader: &mut S) -> Result<String, VncError>
+where
+    S: AsyncRead + Unpin,
+{
+    let len = reader.read_u32().await?;
+    let mut buf = Vec::new();
+    (&mut *reader)
+        .take(u64::from(len.min(MAX_REASON_BYTES)))
+        .read_to_end(&mut buf)
+        .await?;
+    Ok(String::from_utf8_lossy(&buf).into_owned())
+}
+
 impl From<SecurityType> for u8 {
     fn from(e: SecurityType) -> Self {
         e as u8
@@ -48,10 +70,7 @@ impl SecurityType {
                 let security_type = reader.read_u32().await?;
                 let security_type = (security_type as u8).try_into()?;
                 if let SecurityType::Invalid = security_type {
-                    let _ = reader.read_u32().await?;
-                    let mut err_msg = String::new();
-                    reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::General(err_msg));
+                    return Err(VncError::General(read_reason(reader).await?));
                 }
                 Ok(vec![security_type])
             }
@@ -66,10 +85,7 @@ impl SecurityType {
                 let num = reader.read_u8().await?;
 
                 if num == 0 {
-                    let _ = reader.read_u32().await?;
-                    let mut err_msg = String::new();
-                    reader.read_to_string(&mut err_msg).await?;
-                    return Err(VncError::General(err_msg));
+                    return Err(VncError::General(read_reason(reader).await?));
                 }
                 let mut sec_types = vec![];
                 for _ in 0..num {
