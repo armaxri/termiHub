@@ -9,7 +9,12 @@ import { act } from "react";
 import { createRoot, Root } from "react-dom/client";
 import React from "react";
 import { useAppStore } from "@/store/appStore";
-import type { PluginManifest, PluginTrustInfo, PluginVersionChange } from "@/types/plugin";
+import type {
+  PluginManifest,
+  PluginSignerChange,
+  PluginTrustInfo,
+  PluginVersionChange,
+} from "@/types/plugin";
 import type { AppState } from "@/store/appStore";
 import { withTooltip } from "@/test/tooltip";
 import { PluginInstallDialog } from "./PluginInstallDialog";
@@ -155,7 +160,7 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
       "/tmp/k8s-exec-1.2.0.termihub-plugin",
       true,
       false,
-      false
+      {}
     );
     expect(enablePlugin).toHaveBeenCalledWith("k8s");
     expect(selectPlugin).toHaveBeenCalledWith("k8s");
@@ -186,7 +191,7 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
       "/tmp/k8s-exec-1.2.0.termihub-plugin",
       false,
       false,
-      false
+      {}
     );
   });
 
@@ -219,7 +224,7 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
       "/tmp/k8s-exec-1.2.0.termihub-plugin",
       false,
       true,
-      false
+      {}
     );
   });
 
@@ -286,7 +291,7 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
     it("asks before replacing with an older version, then installs confirmed", async () => {
       const installPlugin = vi
         .fn<AppState["installPlugin"]>()
-        .mockResolvedValueOnce(downgrade)
+        .mockResolvedValueOnce({ version: downgrade, signer: null })
         .mockResolvedValueOnce(null);
       const enablePlugin = vi.fn(() => Promise.resolve());
       const selectPlugin = vi.fn();
@@ -302,7 +307,7 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
         "/tmp/k8s-exec-1.2.0.termihub-plugin",
         true,
         false,
-        false
+        {}
       );
       expect(enablePlugin).not.toHaveBeenCalled();
       const prompt = document.querySelector('[data-testid="plugin-version-change-dialog"]');
@@ -317,7 +322,7 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
         "/tmp/k8s-exec-1.2.0.termihub-plugin",
         true,
         false,
-        true
+        { confirmVersionChange: true }
       );
       expect(enablePlugin).toHaveBeenCalledWith("k8s");
       expect(selectPlugin).toHaveBeenCalledWith("k8s");
@@ -325,7 +330,9 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
     });
 
     it("cancelling the prompt closes without installing", async () => {
-      const installPlugin = vi.fn<AppState["installPlugin"]>().mockResolvedValueOnce(downgrade);
+      const installPlugin = vi
+        .fn<AppState["installPlugin"]>()
+        .mockResolvedValueOnce({ version: downgrade, signer: null });
       const enablePlugin = vi.fn(() => Promise.resolve());
       useAppStore.setState({ installPlugin, enablePlugin });
       render(manifest());
@@ -333,6 +340,168 @@ describe("PluginInstallDialog (#1997/#2036)", () => {
       await clickConfirm();
       await flush();
       await click("plugin-version-change-cancel");
+
+      expect(installPlugin).toHaveBeenCalledTimes(1);
+      expect(enablePlugin).not.toHaveBeenCalled();
+      expect(onClose).toHaveBeenCalled();
+    });
+  });
+
+  describe("publisher-key change confirmation (#3489)", () => {
+    const keyChanged: PluginSignerChange = {
+      pluginId: "k8s",
+      pluginName: "Kubernetes Exec",
+      installedKeyId: "sha256:aaaa1111",
+      incomingKeyId: "sha256:bbbb2222",
+      kind: "keyChanged",
+    };
+    const downgrade: PluginVersionChange = {
+      pluginId: "k8s",
+      pluginName: "Kubernetes Exec",
+      installedVersion: "1.4.0",
+      incomingVersion: "1.2.0",
+      kind: "downgrade",
+    };
+
+    async function flush() {
+      await act(async () => {
+        for (let i = 0; i < 5; i++) await Promise.resolve();
+      });
+    }
+
+    function el(testId: string): HTMLElement | null {
+      return document.querySelector(`[data-testid="${testId}"]`);
+    }
+
+    function click(testId: string) {
+      return act(async () => {
+        el(testId)!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+        await Promise.resolve();
+      });
+    }
+
+    it("shows both fingerprints in a danger dialog and needs ack + click to confirm", async () => {
+      const installPlugin = vi
+        .fn<AppState["installPlugin"]>()
+        .mockResolvedValueOnce({ version: null, signer: keyChanged })
+        .mockResolvedValueOnce(null);
+      const enablePlugin = vi.fn(() => Promise.resolve());
+      useAppStore.setState({ installPlugin, enablePlugin, selectPlugin: vi.fn() });
+      render(manifest(), trust({ level: "signed", keyId: "sha256:bbbb2222" }));
+
+      await clickConfirm();
+      await flush();
+
+      expect(installPlugin).toHaveBeenCalledTimes(1);
+      expect(enablePlugin).not.toHaveBeenCalled();
+      const dialog = el("plugin-signer-change-dialog");
+      expect(dialog).not.toBeNull();
+      expect(dialog!.textContent).toContain("The publisher key of Kubernetes Exec changed");
+      expect(el("plugin-signer-change-installed-key")!.textContent).toBe("sha256:aaaa1111");
+      expect(el("plugin-signer-change-incoming-key")!.textContent).toBe("sha256:bbbb2222");
+      // Danger styling: danger title icon and a danger confirm button.
+      expect(el("plugin-signer-change-title-icon")!.className).toContain("--danger");
+      // No version section when only the signer changed.
+      expect(el("plugin-signer-change-version")).toBeNull();
+
+      // Confirm is disabled until the acknowledgement is ticked…
+      const confirm = el("plugin-signer-change-confirm") as HTMLButtonElement;
+      expect(confirm.disabled).toBe(true);
+      // …and Enter never confirms.
+      act(() => {
+        el("plugin-signer-change-ack")!.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+        );
+      });
+      await flush();
+      expect(installPlugin).toHaveBeenCalledTimes(1);
+
+      await click("plugin-signer-change-ack");
+      expect((el("plugin-signer-change-confirm") as HTMLButtonElement).disabled).toBe(false);
+      act(() => {
+        el("plugin-signer-change-ack")!.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", bubbles: true })
+        );
+      });
+      await flush();
+      expect(installPlugin).toHaveBeenCalledTimes(1);
+
+      await click("plugin-signer-change-confirm");
+      await flush();
+      expect(installPlugin).toHaveBeenCalledTimes(2);
+      expect(installPlugin).toHaveBeenLastCalledWith(
+        "/tmp/k8s-exec-1.2.0.termihub-plugin",
+        false,
+        false,
+        { confirmSignerChange: true, confirmVersionChange: false }
+      );
+      expect(enablePlugin).toHaveBeenCalledWith("k8s");
+      expect(onClose).toHaveBeenCalled();
+    });
+
+    it("combines a key change with a downgrade in one dialog and confirms both", async () => {
+      const installPlugin = vi
+        .fn<AppState["installPlugin"]>()
+        .mockResolvedValueOnce({ version: downgrade, signer: keyChanged })
+        .mockResolvedValueOnce(null);
+      useAppStore.setState({
+        installPlugin,
+        enablePlugin: vi.fn(() => Promise.resolve()),
+        selectPlugin: vi.fn(),
+      });
+      render(manifest(), trust({ level: "signed", keyId: "sha256:bbbb2222" }));
+
+      await clickConfirm();
+      await flush();
+
+      // One dialog, not the plain version prompt.
+      expect(el("plugin-version-change-dialog")).toBeNull();
+      expect(el("plugin-signer-change-version")!.textContent).toContain(
+        "Replace Kubernetes Exec 1.4.0 with older 1.2.0?"
+      );
+
+      await click("plugin-signer-change-ack");
+      await click("plugin-signer-change-confirm");
+      await flush();
+      expect(installPlugin).toHaveBeenLastCalledWith(
+        "/tmp/k8s-exec-1.2.0.termihub-plugin",
+        false,
+        false,
+        { confirmSignerChange: true, confirmVersionChange: true }
+      );
+    });
+
+    it("words a removed signature strongly and shows the package as unsigned", async () => {
+      const installPlugin = vi.fn<AppState["installPlugin"]>().mockResolvedValueOnce({
+        version: null,
+        signer: { ...keyChanged, incomingKeyId: null, kind: "signatureRemoved" },
+      });
+      useAppStore.setState({ installPlugin, enablePlugin: vi.fn(() => Promise.resolve()) });
+      render(manifest());
+
+      await clickConfirm();
+      await flush();
+
+      expect(el("plugin-signer-change-dialog")!.textContent).toContain(
+        "Kubernetes Exec is no longer signed"
+      );
+      expect(el("plugin-signer-change-message")!.textContent).toContain(
+        "strong sign that this package did not come from the original publisher"
+      );
+      expect(el("plugin-signer-change-incoming-key")!.textContent).toContain("unsigned");
+    });
+
+    it("cancelling closes without re-issuing the install", async () => {
+      const installPlugin = vi
+        .fn<AppState["installPlugin"]>()
+        .mockResolvedValueOnce({ version: null, signer: keyChanged });
+      const enablePlugin = vi.fn(() => Promise.resolve());
+      useAppStore.setState({ installPlugin, enablePlugin });
+      render(manifest());
+
+      await clickConfirm();
+      await flush();
+      await click("plugin-signer-change-cancel");
 
       expect(installPlugin).toHaveBeenCalledTimes(1);
       expect(enablePlugin).not.toHaveBeenCalled();

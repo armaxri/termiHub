@@ -210,13 +210,74 @@ export interface PluginVersionChange {
 }
 
 /**
- * Result of the `install_plugin` command: either installed, or refused pending
- * confirmation of a downgrade / same-version rebuild (PLG-012) — nothing was
- * changed and the install must be re-issued with `confirmVersionChange`.
+ * How the incoming package's signer relates to the signer of the installed copy
+ * of the same id (#3489). Mirrors Rust `SignerChangeKind`.
+ *
+ * - `fresh` / `sameKey` / `newlySigned` / `stillUnsigned` — install proceeds.
+ * - `keyChanged` — the installed copy was signed by a different key.
+ * - `signatureRemoved` — the installed copy was signed; this package is not.
+ * - `unverifiable` — the installed copy's signer could not be determined.
+ */
+export type PluginSignerChangeKind =
+  | "fresh"
+  | "sameKey"
+  | "newlySigned"
+  | "stillUnsigned"
+  | "keyChanged"
+  | "signatureRemoved"
+  | "unverifiable";
+
+/** A publisher-key change that needs the user's confirmation. Mirrors Rust `SignerChange`. */
+export interface PluginSignerChange {
+  /** The plugin id being installed. */
+  pluginId: string;
+  /** Display name from the incoming manifest. */
+  pluginName: string;
+  /** `sha256:` fingerprint of the key that signed the installed copy, or `null`. */
+  installedKeyId: string | null;
+  /** `sha256:` fingerprint of the key that signed the incoming package, or `null` if unsigned. */
+  incomingKeyId: string | null;
+  /** How the signers relate. */
+  kind: PluginSignerChangeKind;
+}
+
+/**
+ * Result of the `install_plugin` command: installed, or refused pending an
+ * explicit confirmation — nothing was changed in either refusal case.
+ *
+ * - `confirmationRequired` — a downgrade / same-version rebuild / uncomparable
+ *   version (PLG-012); re-issue with `confirmVersionChange`.
+ * - `signerConfirmationRequired` — the publisher key changed or the signature
+ *   was removed (#3489); re-issue with `confirmSignerChange`, and also with
+ *   `confirmVersionChange` when `version` is present.
  */
 export type InstallPluginResult =
   | { status: "installed"; plugin: InstalledPlugin }
-  | { status: "confirmationRequired"; change: PluginVersionChange };
+  | { status: "confirmationRequired"; change: PluginVersionChange }
+  | {
+      status: "signerConfirmationRequired";
+      signer: PluginSignerChange;
+      version: PluginVersionChange | null;
+    };
+
+/**
+ * What an install is waiting on the user to confirm before it can proceed.
+ * `signer` and `version` may both be present — the dialog asks for both at once.
+ */
+export interface PluginInstallPendingConfirmation {
+  /** A pending version change (PLG-012), or `null`. */
+  version: PluginVersionChange | null;
+  /** A pending publisher-key change (#3489), or `null`. */
+  signer: PluginSignerChange | null;
+}
+
+/** The explicit confirmations to send with an install. */
+export interface PluginInstallConfirmations {
+  /** The user confirmed a downgrade / same-version rebuild / uncomparable version. */
+  confirmVersionChange?: boolean;
+  /** The user confirmed a publisher-key change or a removed signature. */
+  confirmSignerChange?: boolean;
+}
 
 /**
  * A terminal-backend connection type contributed by an active plugin, projected
