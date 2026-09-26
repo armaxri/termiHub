@@ -35,6 +35,21 @@ vi.mock("@/services/events", () => ({
 }));
 
 const mockedResolveCredential = vi.mocked(resolveCredential);
+
+const toastError = vi.fn();
+vi.mock("@/components/ui", async () => {
+  const actual = await vi.importActual<typeof import("@/components/ui")>("@/components/ui");
+  return {
+    ...actual,
+    toast: {
+      error: (...args: unknown[]) => toastError(...args),
+      success: vi.fn(),
+      info: vi.fn(),
+      loading: vi.fn(() => "t"),
+      dismiss: vi.fn(),
+    },
+  };
+});
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
 
 const baseSettings = {
@@ -82,8 +97,8 @@ describe("ConnectionList — jump-host context menu", () => {
     container.remove();
   });
 
-  function openMenu(connection: SavedConnection) {
-    seedConnectionsRegion({ connections: [connection] });
+  function openMenu(connection: SavedConnection, others: SavedConnection[] = []) {
+    seedConnectionsRegion({ connections: [connection, ...others] });
     act(() =>
       root.render(
         React.createElement(TooltipProvider, {
@@ -155,5 +170,61 @@ describe("ConnectionList — jump-host context menu", () => {
     expect(dialog!.textContent).toContain("edge");
     expect(dialog!.textContent).toContain("bastion");
     expect(dialog!.textContent).toContain("db-server");
+  });
+  // #3620: an innermost hop that references a saved connection stores no inline
+  // host, so the gateway must be the referenced connection itself.
+  describe("innermost hop referencing a saved connection", () => {
+    const refHop: JumpHostConfig = {
+      connectionId: "bastion",
+      host: "",
+      port: 22,
+      username: "",
+      authMethod: "key",
+    };
+    const bastion: SavedConnection = {
+      id: "bastion",
+      name: "bastion",
+      folderId: null,
+      config: {
+        type: "ssh",
+        config: { host: "bastion.example.com", username: "ops", authMethod: "key" },
+      },
+    };
+
+    async function clickOpenJumpHost() {
+      const item = document.querySelector(
+        '[data-testid="context-connection-open-jump-host"]'
+      ) as HTMLElement | null;
+      expect(item).not.toBeNull();
+      await act(async () => {
+        item!.click();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+    }
+
+    it("opens a terminal on the referenced connection's host", async () => {
+      const addTab = vi.fn();
+      useAppStore.setState({ addTab });
+      openMenu(sshConnection("app-server", { proxyJump: [refHop] }), [bastion]);
+      await clickOpenJumpHost();
+
+      expect(toastError).not.toHaveBeenCalled();
+      expect(addTab).toHaveBeenCalledTimes(1);
+      const [, , config] = addTab.mock.calls[0];
+      expect(config.config.host).toBe("bastion.example.com");
+      expect(config.config.username).toBe("ops");
+    });
+
+    it("shows an error instead of opening an empty-host connection when ambiguous", async () => {
+      const addTab = vi.fn();
+      useAppStore.setState({ addTab });
+      const external = { ...bastion, sourceFile: "/team/shared.json" };
+      openMenu(sshConnection("app-server", { proxyJump: [refHop] }), [bastion, external]);
+      await clickOpenJumpHost();
+
+      expect(addTab).not.toHaveBeenCalled();
+      expect(toastError).toHaveBeenCalledWith(expect.stringContaining("ambiguous"));
+    });
   });
 });
