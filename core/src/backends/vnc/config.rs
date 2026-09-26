@@ -17,6 +17,17 @@ use crate::connection::{shared_field_base, SettingsSchema};
 /// Default RFB display 0 → port 5900.
 pub const VNC_BASE_PORT: u16 = 5900;
 
+/// The default [`VncConfig::quality`]: lossless Tight, no JPEG.
+pub const QUALITY_LOSSLESS: &str = "lossless";
+
+/// Tight quality presets: `(value, label, jpeg_quality_level, compress_level)`.
+/// Levels are the RFB pseudo-encoding levels `0..=9` (#3464).
+const QUALITY_PRESETS: [(&str, &str, u8, u8); 3] = [
+    ("high", "High (JPEG, light compression)", 8, 1),
+    ("medium", "Medium (JPEG, balanced)", 5, 5),
+    ("low", "Low (JPEG, maximum compression)", 2, 9),
+];
+
 /// Deserialized VNC connection settings.
 ///
 /// A superset of the shared field base plus the VNC-specific rows. Unknown keys
@@ -49,6 +60,16 @@ pub struct VncConfig {
     pub show_remote_cursor: bool,
     /// Preferred framebuffer encoding: `"zrle"` (compressed) or `"raw"`.
     pub preferred_encoding: String,
+    /// Pixel format requested from the server: `"32"` (true color, the default)
+    /// or `"16"` (RGB565 high color, half the bandwidth). Anything else —
+    /// including a stale `"24"` / `"8"` from the former shared select (#3460) —
+    /// means 32-bit (#3464).
+    pub color_depth: String,
+    /// Tight image quality: `"lossless"` (the default — no JPEG, the behavior
+    /// before #3464), or `"high"` / `"medium"` / `"low"`, which allow lossy JPEG
+    /// sub-rects at a decreasing quality and increasing zlib compression.
+    /// Unknown values mean lossless.
+    pub quality: String,
     /// Connect through an SSH tunnel when `true` (reuses the SSH backend).
     pub use_ssh_tunnel: bool,
     /// SSH gateway host for the tunnel.
@@ -82,6 +103,8 @@ impl Default for VncConfig {
             view_only: false,
             show_remote_cursor: true,
             preferred_encoding: "zrle".to_string(),
+            color_depth: "32".to_string(),
+            quality: QUALITY_LOSSLESS.to_string(),
             use_ssh_tunnel: false,
             ssh_host: String::new(),
             ssh_port: 22,
@@ -109,6 +132,35 @@ impl VncConfig {
     /// Whether the raw (uncompressed) encoding was requested in preference to ZRLE.
     pub fn prefers_raw(&self) -> bool {
         self.preferred_encoding.eq_ignore_ascii_case("raw")
+    }
+
+    /// The bits per pixel to negotiate: 16 when the user picked 16-bit high
+    /// color, otherwise 32 (the default for every other or missing value).
+    pub fn color_depth_bpp(&self) -> u8 {
+        if self.color_depth.trim() == "16" {
+            16
+        } else {
+            32
+        }
+    }
+
+    /// The RFB pixel format to request with `SetPixelFormat`.
+    pub fn pixel_format(&self) -> vnc::PixelFormat {
+        match self.color_depth_bpp() {
+            16 => vnc::PixelFormat::rgb565(),
+            _ => vnc::PixelFormat::rgba(),
+        }
+    }
+
+    /// The Tight `(jpeg_quality_level, compress_level)` pseudo-encoding levels
+    /// for the chosen quality, or `None` for lossless (no quality hints sent,
+    /// so the server never switches to JPEG).
+    pub fn tight_levels(&self) -> Option<(u8, u8)> {
+        let quality = self.quality.trim();
+        QUALITY_PRESETS
+            .iter()
+            .find(|(value, ..)| value.eq_ignore_ascii_case(quality))
+            .map(|&(_, _, jpeg, compress)| (jpeg, compress))
     }
 
     /// The effective VeNCrypt TLS verification mode, normalized and defaulted to
@@ -200,10 +252,64 @@ fn when_ssh_auth_is(method: &str) -> Option<Condition> {
     })
 }
 
-/// The VNC connection editor schema: the shared field base plus the VNC-specific
-/// **VNC Options** and **SSH Tunnel** groups.
+fn opt(value: &str, label: &str) -> SelectOption {
+    SelectOption {
+        value: value.to_string(),
+        label: label.to_string(),
+    }
+}
+
+/// The VNC color-depth select: exactly the pixel formats the client negotiates
+/// and renders (see [`VncConfig::pixel_format`]).
+fn color_depth_field() -> SettingsField {
+    SettingsField {
+        default: Some(serde_json::json!("32")),
+        description: Some(
+            "Pixel format requested from the server. 16-bit halves the bandwidth \
+             at the cost of color banding."
+                .to_string(),
+        ),
+        ..field(
+            "colorDepth",
+            "Color Depth",
+            FieldType::Select {
+                options: vec![
+                    opt("32", "32-bit (true color)"),
+                    opt("16", "16-bit (high color)"),
+                ],
+            },
+        )
+    }
+}
+
+/// The Tight image-quality select (see [`VncConfig::tight_levels`]).
+fn quality_field() -> SettingsField {
+    let mut options = vec![opt(QUALITY_LOSSLESS, "Lossless (no JPEG)")];
+    options.extend(
+        QUALITY_PRESETS
+            .iter()
+            .map(|(value, label, ..)| opt(value, label)),
+    );
+    SettingsField {
+        default: Some(serde_json::json!(QUALITY_LOSSLESS)),
+        description: Some(
+            "Image quality for Tight-capable servers. The JPEG levels trade image \
+             quality for bandwidth on photo-like content. Has no effect with the \
+             Raw encoding."
+                .to_string(),
+        ),
+        ..field("quality", "Quality", FieldType::Select { options })
+    }
+}
+
+/// The VNC connection editor schema: the shared field base (with a VNC color
+/// depth in its Display group) plus the VNC-specific **VNC Options** and
+/// **SSH Tunnel** groups.
 pub fn vnc_settings_schema() -> SettingsSchema {
     let mut groups = shared_field_base(VNC_BASE_PORT);
+    if let Some(display) = groups.iter_mut().find(|g| g.key == "display") {
+        display.fields.push(color_depth_field());
+    }
 
     groups.push(SettingsGroup {
         collapsed: false,
@@ -244,6 +350,7 @@ pub fn vnc_settings_schema() -> SettingsSchema {
                     },
                 )
             },
+            quality_field(),
             SettingsField {
                 default: Some(serde_json::json!(true)),
                 description: Some(
@@ -474,7 +581,7 @@ mod tests {
     #[test]
     fn unknown_frontend_only_keys_are_ignored() {
         let cfg: VncConfig = serde_json::from_value(serde_json::json!({
-            "host": "h", "scaleMode": "fit", "autoReconnect": true, "colorDepth": "16"
+            "host": "h", "scaleMode": "fit", "autoReconnect": true
         }))
         .unwrap();
         assert_eq!(cfg.host, "h");
@@ -574,12 +681,10 @@ mod tests {
 
     #[test]
     fn schema_exposes_no_display_options_vnc_cannot_honor() {
-        // PROD-026: vnc-rs negotiates only 32-bit true-color (its cursor decoder
-        // cannot handle other pixel formats) and has no client-initiated
-        // SetDesktopSize, so a color-depth or fixed-resolution row would be a
-        // control with no effect.
+        // PROD-026: vnc-rs has no client-initiated SetDesktopSize, so a
+        // fixed-resolution row would be a control with no effect.
         let schema = vnc_settings_schema();
-        for key in ["colorDepth", "resolutionMode", "width", "height"] {
+        for key in ["resolutionMode", "width", "height"] {
             assert!(
                 !schema
                     .groups
@@ -588,6 +693,97 @@ mod tests {
                     .any(|f| f.key == key),
                 "VNC must not expose {key}"
             );
+        }
+    }
+
+    #[test]
+    fn schema_display_group_offers_only_negotiable_color_depths() {
+        let schema = vnc_settings_schema();
+        let display = schema
+            .groups
+            .iter()
+            .find(|g| g.key == "display")
+            .expect("display group");
+        let keys: Vec<&str> = display.fields.iter().map(|f| f.key.as_str()).collect();
+        assert_eq!(keys, vec!["scaleMode", "colorDepth"]);
+        let depth = &display.fields[1];
+        assert_eq!(depth.default, Some(serde_json::json!("32")));
+        let FieldType::Select { options } = &depth.field_type else {
+            panic!("colorDepth must be a select");
+        };
+        let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(values, vec!["32", "16"]);
+        // Every offered value negotiates exactly that depth.
+        for opt in options {
+            let cfg = VncConfig {
+                color_depth: opt.value.clone(),
+                ..Default::default()
+            };
+            assert_eq!(cfg.color_depth_bpp().to_string(), opt.value);
+            assert_eq!(cfg.pixel_format().bits_per_pixel.to_string(), opt.value);
+        }
+    }
+
+    #[test]
+    fn color_depth_defaults_to_32_bit_and_tolerates_legacy_values() {
+        assert_eq!(VncConfig::default().color_depth_bpp(), 32);
+        // A config saved before #3464 has no colorDepth at all.
+        let legacy: VncConfig = serde_json::from_value(serde_json::json!({"host": "h"})).unwrap();
+        assert_eq!(legacy.color_depth_bpp(), 32);
+        let pf = legacy.pixel_format();
+        assert_eq!(pf.bits_per_pixel, 32);
+        assert_eq!((pf.red_shift, pf.green_shift, pf.blue_shift), (0, 8, 16));
+        // Values from the former shared select (#3460) fall back to 32-bit.
+        for stale in ["24", "8", "", "bogus"] {
+            let cfg: VncConfig =
+                serde_json::from_value(serde_json::json!({"host": "h", "colorDepth": stale}))
+                    .unwrap();
+            assert_eq!(cfg.color_depth_bpp(), 32, "{stale:?}");
+        }
+        let high: VncConfig =
+            serde_json::from_value(serde_json::json!({"host": "h", "colorDepth": "16"})).unwrap();
+        let pf = high.pixel_format();
+        assert_eq!(pf.bits_per_pixel, 16);
+        assert_eq!((pf.red_max, pf.green_max, pf.blue_max), (31, 63, 31));
+    }
+
+    #[test]
+    fn quality_defaults_to_lossless_and_maps_presets_to_tight_levels() {
+        assert_eq!(VncConfig::default().tight_levels(), None);
+        let legacy: VncConfig = serde_json::from_value(serde_json::json!({"host": "h"})).unwrap();
+        assert_eq!(legacy.quality, QUALITY_LOSSLESS);
+        assert_eq!(legacy.tight_levels(), None);
+        let mk = |q: &str| VncConfig {
+            quality: q.to_string(),
+            ..Default::default()
+        };
+        assert_eq!(mk("high").tight_levels(), Some((8, 1)));
+        assert_eq!(mk("medium").tight_levels(), Some((5, 5)));
+        assert_eq!(mk("low").tight_levels(), Some((2, 9)));
+        assert_eq!(mk("bogus").tight_levels(), None);
+        assert_eq!(mk("").tight_levels(), None);
+    }
+
+    #[test]
+    fn schema_exposes_quality_select_in_vnc_options() {
+        let schema = vnc_settings_schema();
+        let group = schema.groups.iter().find(|g| g.key == "vnc").unwrap();
+        let keys: Vec<&str> = group.fields.iter().map(|f| f.key.as_str()).collect();
+        let enc = keys.iter().position(|k| *k == "preferredEncoding").unwrap();
+        assert_eq!(keys.get(enc + 1), Some(&"quality"));
+        let quality = group.fields.iter().find(|f| f.key == "quality").unwrap();
+        assert_eq!(quality.default, Some(serde_json::json!("lossless")));
+        let FieldType::Select { options } = &quality.field_type else {
+            panic!("quality must be a select");
+        };
+        let values: Vec<&str> = options.iter().map(|o| o.value.as_str()).collect();
+        assert_eq!(values, vec!["lossless", "high", "medium", "low"]);
+        for opt in options {
+            let cfg = VncConfig {
+                quality: opt.value.clone(),
+                ..Default::default()
+            };
+            assert_eq!(cfg.tight_levels().is_none(), opt.value == "lossless");
         }
     }
 
