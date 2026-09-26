@@ -7,10 +7,39 @@ import { formatBytes } from "@/utils/formatters";
 import { errorMessage } from "@/utils/errorMessage";
 import type { AccessLogEntry, DetailedServerStats, TopEntry } from "@/types/embeddedServer";
 
+/** The agent a server is hosted on, when it runs on one (#3453). */
+export interface ActivityHostAgent {
+  /** Display name of the agent. */
+  name: string;
+  /** Whether the agent serves the access log (`embeddedServerActivity`). */
+  supportsActivity: boolean;
+}
+
 interface Props {
   serverId: string;
   /** Whether the server is running (the log is polled live only then). */
   live: boolean;
+  /** Set when the server runs on a remote agent rather than this computer. */
+  hostAgent?: ActivityHostAgent;
+}
+
+/** Empty-state copy when the backend has no log for the server. */
+export function unavailableMessage(hostAgent?: ActivityHostAgent): {
+  title: string;
+  description: string;
+} {
+  if (hostAgent && !hostAgent.supportsActivity) {
+    return {
+      title: "Access log not supported by this agent version",
+      description: `Update ${hostAgent.name} to see this server's access log and detailed stats.`,
+    };
+  }
+  return {
+    title: "No access log yet",
+    description: hostAgent
+      ? `The log appears once the server has run on ${hostAgent.name}.`
+      : "The log appears once the server has run on this computer.",
+  };
 }
 
 /** Case-insensitive match of `query` against an entry's visible fields. */
@@ -86,7 +115,7 @@ function TopList({ title, items }: { title: string; items: TopEntry[] }) {
  * Expandable per-server activity panel: detailed stats, current transfers, top
  * paths/clients and a filterable, clearable access log (PROD-034, PROD-036).
  */
-export function EmbeddedServerActivityPanel({ serverId, live }: Props) {
+export function EmbeddedServerActivityPanel({ serverId, live, hostAgent }: Props) {
   const { view, available, error, clear } = useEmbeddedServerActivity(serverId, live);
   const [filter, setFilter] = useState("");
 
@@ -119,12 +148,10 @@ export function EmbeddedServerActivityPanel({ serverId, live }: Props) {
   };
 
   if (!available) {
+    const message = unavailableMessage(hostAgent);
     return (
       <div className="server-activity" data-testid={`server-activity-${serverId}`}>
-        <EmptyState
-          title="No access log yet"
-          description="The log appears once the server has run on this computer."
-        />
+        <EmptyState title={message.title} description={message.description} />
       </div>
     );
   }

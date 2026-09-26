@@ -3,7 +3,9 @@ use termihub_core::service::ServiceInfo;
 
 use crate::embedded_servers::activity::ActivitySnapshot;
 use crate::embedded_servers::config::{EmbeddedServerConfig, ServerState};
-use crate::embedded_servers::server_manager::EmbeddedServerManager;
+use crate::embedded_servers::server_manager::{
+    clear_agent_activity, fetch_agent_activity, ActivityRoute, EmbeddedServerManager,
+};
 use crate::run_location::RunLocation;
 use crate::utils::errors::TerminalError;
 
@@ -99,24 +101,54 @@ pub fn get_embedded_server_states(
 /// Read a server's access log and detailed statistics (PROD-034, PROD-036).
 ///
 /// Returns only entries newer than `since_seq` (all retained entries when
-/// omitted), so the UI can poll incrementally. `null` when the server has no
-/// desktop-hosted log (never started here, or hosted on an agent).
+/// omitted), so the UI can poll incrementally. An agent-hosted server's log is
+/// read from the agent over `embedded_server.activity` (#3453). `null` when
+/// there is no log: never started, or hosted on an agent that predates the RPC
+/// (the UI tells those apart by the agent's `embeddedServerActivity` flag).
+///
+/// `async` + `spawn_blocking`: the agent path is a blocking RPC, which must not
+/// run on the main thread a synchronous command uses.
 #[tauri::command]
-pub fn get_embedded_server_activity(
+pub async fn get_embedded_server_activity(
     server_id: String,
     since_seq: Option<u64>,
     manager: State<'_, EmbeddedServerManager>,
 ) -> Result<Option<ActivitySnapshot>, TerminalError> {
-    manager.get_activity(&server_id, since_seq)
+    match manager.activity_route(&server_id)? {
+        ActivityRoute::Desktop => manager.get_activity(&server_id, since_seq),
+        ActivityRoute::Agent(agent_id) => {
+            let Some(client) = manager.agent_client() else {
+                return Ok(None);
+            };
+            tokio::task::spawn_blocking(move || {
+                fetch_agent_activity(client.as_ref(), &agent_id, &server_id, since_seq)
+            })
+            .await
+            .map_err(|e| TerminalError::EmbeddedServerError(format!("Task join error: {e}")))?
+        }
+    }
 }
 
-/// Clear a server's access log and its request/error/top counters.
+/// Clear a server's access log and its request/error/top counters — on the
+/// hosting agent for an agent-hosted server (#3453).
 #[tauri::command]
-pub fn clear_embedded_server_activity(
+pub async fn clear_embedded_server_activity(
     server_id: String,
     manager: State<'_, EmbeddedServerManager>,
 ) -> Result<(), TerminalError> {
-    manager.clear_activity(&server_id)
+    match manager.activity_route(&server_id)? {
+        ActivityRoute::Desktop => manager.clear_activity(&server_id),
+        ActivityRoute::Agent(agent_id) => {
+            let Some(client) = manager.agent_client() else {
+                return Ok(());
+            };
+            tokio::task::spawn_blocking(move || {
+                clear_agent_activity(client.as_ref(), &agent_id, &server_id)
+            })
+            .await
+            .map_err(|e| TerminalError::EmbeddedServerError(format!("Task join error: {e}")))?
+        }
+    }
 }
 
 /// Set (or clear) which machine hosts a server — "This computer" or a named

@@ -38,6 +38,11 @@ pub struct AgentCapabilities {
     /// which only offer the collect-and-return `tool.run`.
     #[serde(default)]
     pub tool_streaming: bool,
+    /// Whether the agent serves an agent-hosted embedded server's access log
+    /// and detailed stats (`embedded_server.activity`, #3453). `false` for older
+    /// agents, whose hosted servers show "not supported by this agent version".
+    #[serde(default)]
+    pub embedded_server_activity: bool,
     /// Agent binary version string, e.g. "1.4.2".
     #[serde(default)]
     pub agent_version: String,

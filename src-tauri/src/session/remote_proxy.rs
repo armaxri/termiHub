@@ -1621,6 +1621,7 @@ mod tests {
                     available_docker_images: vec![],
                     monitoring_supported: false,
                     tool_streaming: false,
+                    embedded_server_activity: false,
                     agent_version: "mock".to_string(),
                 },
                 agent_version: "mock".to_string(),

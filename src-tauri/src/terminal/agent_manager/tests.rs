@@ -316,6 +316,7 @@ fn capabilities_round_trip_serialization() {
         max_sessions: 5,
         monitoring_supported: false,
         tool_streaming: false,
+        embedded_server_activity: false,
         agent_version: String::new(),
         available_shells: vec!["/bin/sh".to_string()],
         available_serial_ports: vec!["/dev/ttyS0".to_string()],
@@ -853,6 +854,7 @@ fn make_agent_connection_with_tx(command_tx: UnboundedSender<AgentIoCommand>) ->
             available_docker_images: vec![],
             monitoring_supported: false,
             tool_streaming: false,
+            embedded_server_activity: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
@@ -989,6 +991,7 @@ fn make_wedged_agent_connection() -> (AgentConnection, tokio::task::JoinHandle<(
             available_docker_images: vec![],
             monitoring_supported: false,
             tool_streaming: false,
+            embedded_server_activity: false,
             agent_version: String::new(),
         },
         ki_activity: crate::terminal::agent_ki_prompt::AgentPromptActivity::new(),
@@ -1471,6 +1474,30 @@ fn capabilities_without_tool_streaming_default_to_false() {
     }))
     .unwrap();
     assert!(caps.tool_streaming);
+}
+
+#[test]
+fn capabilities_without_embedded_server_activity_default_to_false() {
+    // An older agent's `initialize` lacks `embeddedServerActivity` (#3453) →
+    // the desktop never calls `embedded_server.activity` on it.
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+    }))
+    .unwrap();
+    assert!(!caps.embedded_server_activity);
+    let caps: AgentCapabilities = serde_json::from_value(json!({
+        "connectionTypes": [],
+        "maxSessions": 5,
+        "embeddedServerActivity": true,
+    }))
+    .unwrap();
+    assert!(caps.embedded_server_activity);
+    // Re-serialized camelCase for the frontend.
+    assert_eq!(
+        serde_json::to_value(&caps).unwrap()["embeddedServerActivity"],
+        true
+    );
 }
 
 /// The production (non-test) part of a Rust source file.

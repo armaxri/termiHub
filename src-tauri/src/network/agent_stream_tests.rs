@@ -104,6 +104,7 @@ impl AgentRpcClient for FakeAgent {
             available_docker_images: vec![],
             monitoring_supported: false,
             tool_streaming: self.streaming,
+            embedded_server_activity: false,
             agent_version: "test".to_string(),
         })
     }

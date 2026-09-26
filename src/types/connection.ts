@@ -220,6 +220,11 @@ export interface AgentCapabilities {
   monitoringSupported?: boolean;
   /** Whether the agent streams network-tool runs live (`tool.start`, #3353). */
   toolStreaming?: boolean;
+  /**
+   * Whether the agent serves an agent-hosted embedded server's access log and
+   * detailed stats (`embedded_server.activity`, #3453). Absent on older agents.
+   */
+  embeddedServerActivity?: boolean;
   /** Agent binary version string, e.g. "1.4.2". */
   agentVersion?: string;
 }
