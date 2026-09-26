@@ -435,7 +435,7 @@ fn require_non_empty(field: &'static str, value: &str) -> Result<(), ManifestVal
 /// renderer over IPC, for instance — must gate on this before joining it into a
 /// path, since a slug can never contain path separators, `..`, or other
 /// characters that would let it escape `plugins/<id>/`.
-pub(crate) fn is_valid_plugin_id(id: &str) -> bool {
+pub fn is_valid_plugin_id(id: &str) -> bool {
     validate_plugin_id(id).is_ok()
 }
 

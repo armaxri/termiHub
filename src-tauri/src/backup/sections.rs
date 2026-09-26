@@ -39,6 +39,13 @@ pub enum Shape {
     /// `settings.json`: one object; replace only. The machine's own
     /// credential-storage keys are always preserved (see [`LOCAL_SETTINGS_KEYS`]).
     Settings,
+    /// A host-key trust store (`ssh_known_hosts.json`, `rdp_known_hosts.json`):
+    /// one object mapping `host:port` to the list of trusted fingerprints,
+    /// merged by host. A host that is already trusted here **always keeps its
+    /// current fingerprints** on a merge — a backup can never add or swap a key
+    /// for a known host (that would be exactly a man-in-the-middle injection);
+    /// only Replace adopts the backup's keys wholesale.
+    TrustMap,
 }
 
 /// Why a section's data cannot be used.
@@ -81,6 +88,11 @@ pub struct SectionSpec {
     /// The store holds secrets in its own file (e.g. embedded-server
     /// passwords), so it is only exported inside an encrypted backup.
     pub contains_secrets: bool,
+    /// The store holds **trust decisions** (trusted host keys) whose integrity
+    /// matters: an injected entry could enable a man-in-the-middle. It is only
+    /// exported inside an encrypted backup and only restored from one (the
+    /// AES-GCM envelope authenticates the whole contents).
+    pub integrity_sensitive: bool,
     /// Validate + migrate a document to the current schema.
     normalize: fn(Value) -> Result<Value, NormalizeError>,
     /// The store's empty default document.
@@ -102,6 +114,36 @@ impl SectionSpec {
     /// Whether [`RestoreMode::Merge`](super::RestoreMode::Merge) is available.
     pub fn supports_merge(&self) -> bool {
         !matches!(self.shape, Shape::Settings)
+    }
+
+    /// Whether the section may only be exported in (and restored from) an
+    /// encrypted backup.
+    pub fn requires_encryption(&self) -> bool {
+        self.contains_secrets || self.integrity_sensitive
+    }
+
+    /// Whether a merge conflict always keeps the current item, ignoring the
+    /// chosen conflict strategy (trust stores — see [`Shape::TrustMap`]).
+    pub fn conflicts_keep_existing(&self) -> bool {
+        self.shape == Shape::TrustMap
+    }
+
+    /// Validate and migrate one backup section. On top of the store's own
+    /// version gate ([`Self::normalize`]), the section's recorded
+    /// `schema_version` must not be newer than this build — this is the only
+    /// version a store without an in-file `version` field (the trust stores)
+    /// carries.
+    pub fn normalize_section(
+        &self,
+        section: &super::BackupSection,
+    ) -> Result<Value, NormalizeError> {
+        if section.schema_version > self.current_version {
+            return Err(NormalizeError::Newer {
+                found: section.schema_version,
+                supported: self.current_version,
+            });
+        }
+        self.normalize(section.data.clone())
     }
 }
 
@@ -201,6 +243,113 @@ pub fn strip_connection_passwords(doc: &mut Value) {
     }
 }
 
+/// Schema version of the host-key trust stores' backup section.
+///
+/// The trust-store files carry no `version` field: their on-disk format (a flat
+/// `host → [fingerprint]` object) is deliberately left unchanged, because
+/// adding a `version` key inside that object would make every older termiHub
+/// read the file as corrupt and start with an empty store — the very downgrade
+/// data loss the migration layer exists to prevent (#2745). The format is
+/// versioned where it leaves the machine instead: the backup section records
+/// schema version 1, and a section with a newer version is refused
+/// ([`SectionSpec::normalize_section`]).
+pub const TRUST_STORE_SCHEMA_VERSION: u32 = 1;
+
+/// Upper bound on hosts in a restored trust store, so a hostile backup cannot
+/// balloon the store.
+const MAX_TRUST_HOSTS: usize = 100_000;
+/// Upper bound on fingerprints remembered for one host.
+const MAX_TRUST_FINGERPRINTS_PER_HOST: usize = 64;
+/// Upper bound on the length of a host key or a fingerprint.
+const MAX_TRUST_FIELD_LEN: usize = 1024;
+
+/// Validate a trust-store document: an object mapping a non-empty host to a
+/// list of non-empty fingerprint strings. Duplicate fingerprints are dropped;
+/// hosts with no fingerprints are removed (the stores never write those).
+fn normalize_trust_map(data: Value) -> Result<Value, NormalizeError> {
+    let Value::Object(map) = data else {
+        return Err(NormalizeError::Invalid(
+            "expected a JSON object".to_string(),
+        ));
+    };
+    if map.len() > MAX_TRUST_HOSTS {
+        return Err(NormalizeError::Invalid(format!(
+            "more than {MAX_TRUST_HOSTS} hosts"
+        )));
+    }
+    let mut out = serde_json::Map::new();
+    for (host, fps) in map {
+        if host.trim().is_empty() || host.len() > MAX_TRUST_FIELD_LEN {
+            return Err(NormalizeError::Invalid(format!("invalid host \"{host}\"")));
+        }
+        let Value::Array(fps) = fps else {
+            return Err(NormalizeError::Invalid(format!(
+                "the keys of \"{host}\" are not a list"
+            )));
+        };
+        if fps.len() > MAX_TRUST_FINGERPRINTS_PER_HOST {
+            return Err(NormalizeError::Invalid(format!(
+                "too many keys for \"{host}\""
+            )));
+        }
+        let mut clean: Vec<Value> = Vec::new();
+        for fp in fps {
+            match fp.as_str() {
+                Some(s) if !s.trim().is_empty() && s.len() <= MAX_TRUST_FIELD_LEN => {
+                    if !clean.iter().any(|c| c.as_str() == Some(s)) {
+                        clean.push(Value::String(s.to_string()));
+                    }
+                }
+                _ => {
+                    return Err(NormalizeError::Invalid(format!(
+                        "invalid key for \"{host}\""
+                    )))
+                }
+            }
+        }
+        if !clean.is_empty() {
+            out.insert(host, Value::Array(clean));
+        }
+    }
+    Ok(Value::Object(out))
+}
+
+/// Whether every fingerprint the backup has for a host is already trusted
+/// here (the backup adds nothing for it).
+fn fingerprints_covered(backup: &Value, current: &Value) -> bool {
+    let current: Vec<&str> = current
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    backup
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .all(|fp| current.contains(&fp))
+        })
+        .unwrap_or(true)
+}
+
+/// Hosts that are trusted here with keys the backup does not match — the
+/// conflicts a trust-store merge keeps as they are (sorted).
+pub fn trust_conflicts(backup: &Value, current: &Value) -> Vec<String> {
+    let (Some(backup), Some(current)) = (backup.as_object(), current.as_object()) else {
+        return Vec::new();
+    };
+    let mut hosts: Vec<String> = backup
+        .iter()
+        .filter(|(host, fps)| {
+            current
+                .get(*host)
+                .is_some_and(|existing| !fingerprints_covered(fps, existing))
+        })
+        .map(|(host, _)| host.clone())
+        .collect();
+    hosts.sort();
+    hosts
+}
+
 fn normalize_connections(data: Value) -> Result<Value, NormalizeError> {
     let mut doc = normalize_versioned::<ConnectionStore>(data)?;
     strip_connection_passwords(&mut doc);
@@ -217,6 +366,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <ConnectionStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::Connections,
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_connections,
         default_doc: || to_doc(&ConnectionStore::default()),
     },
@@ -228,6 +378,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <AppSettings as VersionedStore>::CURRENT_VERSION,
         shape: Shape::Settings,
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<AppSettings>,
         default_doc: || to_doc(&AppSettings::default()),
     },
@@ -241,6 +392,7 @@ pub static SECTIONS: &[SectionSpec] = &[
             field: "workspaces",
         },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<WorkspaceStore>,
         default_doc: || to_doc(&WorkspaceStore::default()),
     },
@@ -252,6 +404,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: 1,
         shape: Shape::List { field: "macros" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_plain::<MacroStore>,
         default_doc: || to_doc(&MacroStore::default()),
     },
@@ -263,6 +416,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <WorkflowStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "workflows" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<WorkflowStore>,
         default_doc: || to_doc(&WorkflowStore::default()),
     },
@@ -274,6 +428,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: 1,
         shape: Shape::List { field: "tunnels" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_plain::<TunnelStore>,
         default_doc: || to_doc(&TunnelStore::default()),
     },
@@ -285,6 +440,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: 1,
         shape: Shape::List { field: "servers" },
         contains_secrets: true,
+        integrity_sensitive: false,
         normalize: normalize_plain::<EmbeddedServerStore>,
         default_doc: || to_doc(&EmbeddedServerStore::default()),
     },
@@ -296,6 +452,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: 1,
         shape: Shape::List { field: "devices" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_plain::<WolDevicesFile>,
         default_doc: || to_doc(&WolDevicesFile::default()),
     },
@@ -307,6 +464,7 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: 1,
         shape: Shape::List { field: "monitors" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_plain::<HttpMonitorsFile>,
         default_doc: || to_doc(&HttpMonitorsFile::default()),
     },
@@ -318,8 +476,33 @@ pub static SECTIONS: &[SectionSpec] = &[
         current_version: <NetworkToolHistoryStore as VersionedStore>::CURRENT_VERSION,
         shape: Shape::List { field: "runs" },
         contains_secrets: false,
+        integrity_sensitive: false,
         normalize: normalize_versioned::<NetworkToolHistoryStore>,
         default_doc: || to_doc(&NetworkToolHistoryStore::default()),
+    },
+    SectionSpec {
+        id: "sshKnownHosts",
+        label: "Trusted SSH host keys",
+        description: "SSH host keys you chose to trust (only in an encrypted backup).",
+        file_name: "ssh_known_hosts.json",
+        current_version: TRUST_STORE_SCHEMA_VERSION,
+        shape: Shape::TrustMap,
+        contains_secrets: false,
+        integrity_sensitive: true,
+        normalize: normalize_trust_map,
+        default_doc: || Value::Object(serde_json::Map::new()),
+    },
+    SectionSpec {
+        id: "rdpKnownHosts",
+        label: "Trusted RDP certificates",
+        description: "RDP server certificates you chose to trust (only in an encrypted backup).",
+        file_name: "rdp_known_hosts.json",
+        current_version: TRUST_STORE_SCHEMA_VERSION,
+        shape: Shape::TrustMap,
+        contains_secrets: false,
+        integrity_sensitive: true,
+        normalize: normalize_trust_map,
+        default_doc: || Value::Object(serde_json::Map::new()),
     },
 ];
 
@@ -339,6 +522,10 @@ pub fn spec_for_file(file_name: &str) -> Option<&'static SectionSpec> {
 pub fn keyed_items(spec: &SectionSpec, doc: &Value) -> Result<Vec<(String, Value)>, String> {
     match spec.shape {
         Shape::Settings => Ok(Vec::new()),
+        Shape::TrustMap => match doc {
+            Value::Object(map) => Ok(map.iter().map(|(k, v)| (k.clone(), v.clone())).collect()),
+            _ => Err("expected a JSON object".to_string()),
+        },
         Shape::List { field } => {
             let items = match doc.get(field) {
                 Some(Value::Array(items)) => items,
@@ -400,6 +587,12 @@ pub fn compare(spec: &SectionSpec, backup: &Value, current: &Value) -> Result<Co
         match current_items.get(id) {
             None => cmp.new_count += 1,
             Some(existing) if existing == item => cmp.unchanged_count += 1,
+            // A trust-store host whose backup keys are all trusted here already.
+            Some(existing)
+                if spec.shape == Shape::TrustMap && fingerprints_covered(item, existing) =>
+            {
+                cmp.unchanged_count += 1
+            }
             Some(_) => cmp.conflict_count += 1,
         }
     }
@@ -435,6 +628,20 @@ pub fn merge(
 ) -> Result<Value, String> {
     match spec.shape {
         Shape::Settings => Err(format!("{} can only be replaced, not merged", spec.label)),
+        Shape::TrustMap => {
+            // Union by host; a host trusted here keeps exactly its current keys
+            // whatever the strategy (see `Shape::TrustMap`).
+            let Value::Object(mut merged) = current else {
+                return Err("expected a JSON object".to_string());
+            };
+            let Value::Object(backup) = backup else {
+                return Err("expected a JSON object".to_string());
+            };
+            for (host, fps) in backup {
+                merged.entry(host.clone()).or_insert_with(|| fps.clone());
+            }
+            Ok(Value::Object(merged))
+        }
         Shape::List { field } => {
             let mut doc = current;
             let current_list = match doc.get(field) {

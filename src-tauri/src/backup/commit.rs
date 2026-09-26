@@ -24,13 +24,25 @@ pub const PENDING_DIR: &str = ".backup-restore-pending";
 /// Manifest listing the staged store files. Written last during staging.
 pub const MANIFEST_FILE: &str = "manifest.json";
 
+/// Manifest format with only top-level store files.
+pub const MANIFEST_FORMAT_FILES_ONLY: u32 = 1;
+/// Manifest format that may also name plugin-root files and plugin
+/// directories (#3515). An older build refuses it (and discards the restore
+/// with a warning) instead of half-applying it.
+pub const MANIFEST_FORMAT_WITH_PLUGINS: u32 = 2;
+
 /// The staged-restore manifest.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingManifest {
     pub format_version: u32,
-    /// Store file names (each a known section's `file_name`).
+    /// Files relative to the config dir: a known section's `file_name`, or a
+    /// restorable plugin-root file (`plugins/plugin-state.json`, …).
     pub files: Vec<String>,
+    /// Plugin directories relative to the config dir (`plugins/<id>`): swapped
+    /// in from the staged copy, or removed when no staged copy exists.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirs: Vec<String>,
 }
 
 fn other(message: impl Into<String>) -> VaultError {
@@ -90,12 +102,39 @@ fn stage(config_dir: &Path, prepared: &PreparedRestore) -> Result<Staged, VaultE
     };
     let write_all = || -> Result<(), VaultError> {
         for (file_name, text) in &prepared.files {
-            write_atomic(&staging.join(file_name), text)
+            let target = staging.join(file_name);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| other(format!("Could not stage {file_name}: {e}")))?;
+            }
+            write_atomic(&target, text)
                 .map_err(|e| other(format!("Could not stage {file_name}: {e:#}")))?;
         }
+        for dir in &prepared.dirs {
+            let Some(files) = &dir.files else { continue };
+            let base = staging.join(&dir.rel);
+            std::fs::create_dir_all(&base)
+                .map_err(|e| other(format!("Could not stage {}: {e}", dir.rel)))?;
+            for (rel, bytes) in files {
+                let target = base.join(rel);
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| other(format!("Could not stage {}/{rel}: {e}", dir.rel)))?;
+                }
+                std::fs::write(&target, bytes)
+                    .map_err(|e| other(format!("Could not stage {}/{rel}: {e}", dir.rel)))?;
+            }
+        }
+        let nested =
+            !prepared.dirs.is_empty() || prepared.files.iter().any(|(f, _)| f.contains('/'));
         let manifest = PendingManifest {
-            format_version: 1,
-            files: prepared.files.iter().map(|(f, _)| f.to_string()).collect(),
+            format_version: if nested {
+                MANIFEST_FORMAT_WITH_PLUGINS
+            } else {
+                MANIFEST_FORMAT_FILES_ONLY
+            },
+            files: prepared.files.iter().map(|(f, _)| f.clone()).collect(),
+            dirs: prepared.dirs.iter().map(|d| d.rel.clone()).collect(),
         };
         let manifest_text = serde_json::to_string_pretty(&manifest)
             .map_err(|e| other(format!("Could not write the restore manifest: {e}")))?;
@@ -157,7 +196,7 @@ pub fn apply(
     store: Option<&dyn CredentialStore>,
 ) -> Result<BackupRestoreResult, VaultError> {
     let prepared = prepare(opened, config_dir, request)?;
-    let staged = if prepared.files.is_empty() {
+    let staged = if prepared.files.is_empty() && prepared.dirs.is_empty() {
         None
     } else {
         Some(stage(config_dir, &prepared)?)

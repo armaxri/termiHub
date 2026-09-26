@@ -130,7 +130,7 @@ fn build(dir: &Path, opts: &BackupExportOptions, creds: Option<vault::VaultExpor
         "0.0.0-test".into(),
     )
     .unwrap()
-    .0
+    .json
 }
 
 fn choice(id: &str, mode: RestoreMode, conflicts: ConflictStrategy) -> SectionRestoreChoice {
@@ -274,7 +274,11 @@ fn unencrypted_backup_refuses_secret_sections_and_needs_no_passphrase() {
     .unwrap_err();
     assert!(matches!(err, VaultError::WeakPassphrase { .. }));
 
-    let (json, written) = export::build(
+    let export::BuiltBackup {
+        json,
+        sections: written,
+        ..
+    } = export::build(
         src.path(),
         &options(&["macros", "connections"], false, false),
         None,
@@ -293,7 +297,7 @@ fn unencrypted_backup_refuses_secret_sections_and_needs_no_passphrase() {
 fn missing_store_files_are_skipped_on_export() {
     let src = tempfile::tempdir().unwrap();
     write_doc(src.path(), "macros.json", &macros_doc(&[("m1", "A")]));
-    let (_, written) = export::build(
+    let written = export::build(
         src.path(),
         &options(&["macros", "tunnels"], true, false),
         Some(PASSPHRASE),
@@ -301,7 +305,8 @@ fn missing_store_files_are_skipped_on_export() {
         "t".into(),
         "v".into(),
     )
-    .unwrap();
+    .unwrap()
+    .sections;
     assert_eq!(written, vec!["macros"]);
     let infos = export::section_infos(src.path());
     let macros = infos.iter().find(|i| i.id == "macros").unwrap();
@@ -316,7 +321,7 @@ fn connection_passwords_are_never_backed_up() {
     doc["children"][1]["config"]["config"]["password"] = json!("leaked-pw");
     doc["agents"][0]["config"]["password"] = json!("leaked-agent-pw");
     write_doc(src.path(), "connections.json", &doc);
-    let (json, _) = export::build(
+    let json = export::build(
         src.path(),
         &options(&["connections"], false, false),
         None,
@@ -324,7 +329,8 @@ fn connection_passwords_are_never_backed_up() {
         "t".into(),
         "v".into(),
     )
-    .unwrap();
+    .unwrap()
+    .json;
     assert!(!json.contains("leaked-pw") && !json.contains("leaked-agent-pw"));
 }
 
