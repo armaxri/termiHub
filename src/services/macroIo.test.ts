@@ -62,7 +62,12 @@ describe("macroIo — serialize/parse envelope", () => {
     const original = makeMacro({ steps: authored });
     const [restored] = parseMacroEnvelope(serializeMacros([original]));
     expect(restored.steps).toEqual(authored);
-    expect(restored.steps.map((s) => s.data)).toEqual(["cd /srv\r", "\x1b[A\r", "\x03", "C:\\tmp\t"]);
+    expect(restored.steps.map((s) => s.data)).toEqual([
+      "cd /srv\r",
+      "\x1b[A\r",
+      "\x03",
+      "C:\\tmp\t",
+    ]);
   });
 
   it("round-trips the whole library", () => {

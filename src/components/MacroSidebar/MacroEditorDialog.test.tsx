@@ -181,7 +181,13 @@ describe("MacroEditorDialog", () => {
 
   it("shows recorded control characters in the editable escape notation", () => {
     render({
-      macro: { ...macro, steps: [{ data: "ls\r", delayMs: 0 }, { data: "\x03\x1b[A", delayMs: 5 }] },
+      macro: {
+        ...macro,
+        steps: [
+          { data: "ls\r", delayMs: 0 },
+          { data: "\x03\x1b[A", delayMs: 5 },
+        ],
+      },
     });
     expect((query("macro-editor-step-data-0") as HTMLInputElement).value).toBe("ls\\r");
     expect((query("macro-editor-step-data-1") as HTMLInputElement).value).toBe("\\x03\\e[A");
