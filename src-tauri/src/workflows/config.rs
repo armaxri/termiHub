@@ -20,6 +20,9 @@ pub enum WorkflowStep {
     /// trailing newline). The everyday building block — "run `git status`".
     #[serde(rename_all = "camelCase")]
     SendCommand {
+        /// Per-step error handling (PROD-045): retry / continue-on-error.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
         /// The command line to send (a trailing newline is added on execution).
         command: String,
     },
@@ -28,6 +31,9 @@ pub enum WorkflowStep {
     /// with an optional per-line delay. Executed by #1853.
     #[serde(rename_all = "camelCase")]
     RunScript {
+        /// Per-step error handling (PROD-045): retry / continue-on-error.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
         /// The script body (one command per line).
         script: String,
         /// Optional delay (ms) inserted between each streamed line.
@@ -42,6 +48,9 @@ pub enum WorkflowStep {
     /// mode. Executed by #1853 (dispatches back into macro playback).
     #[serde(rename_all = "camelCase")]
     RunMacro {
+        /// Per-step error handling (PROD-045): retry / continue-on-error.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
         /// The id of the stored macro to replay.
         macro_id: String,
     },
@@ -50,6 +59,9 @@ pub enum WorkflowStep {
     /// by #1853.
     #[serde(rename_all = "camelCase")]
     Wait {
+        /// Per-step error handling (PROD-045): retry / continue-on-error.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
         /// How long to pause, in milliseconds.
         delay_ms: u64,
     },
@@ -59,6 +71,9 @@ pub enum WorkflowStep {
     /// Executed by #1857 — kept in the model now so no later child edits it.
     #[serde(rename_all = "camelCase")]
     RunLocalProcess {
+        /// Per-step error handling (PROD-045): retry / continue-on-error.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
         /// The local program to spawn.
         program: String,
         /// Arguments passed to the program.
@@ -75,6 +90,9 @@ pub enum WorkflowStep {
     /// JSON when empty so an existing workflows.json round-trips byte-identically.
     #[serde(rename_all = "camelCase")]
     Conditional {
+        /// Per-step error handling (PROD-045): retry / continue-on-error.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
         /// The structured comparison that selects the branch.
         condition: WorkflowCondition,
         /// Steps run when the condition holds.
@@ -94,6 +112,9 @@ pub enum WorkflowStep {
     /// `${iteration}` variable to the body and the while-condition.
     #[serde(rename_all = "camelCase")]
     Loop {
+        /// Per-step error handling (PROD-045): retry / continue-on-error.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
         /// How the loop is bounded: a fixed count, or a while-condition.
         #[serde(rename = "loop")]
         mode: WorkflowLoopMode,
@@ -111,6 +132,9 @@ pub enum WorkflowStep {
     /// existing terminal-output event seam).
     #[serde(rename_all = "camelCase")]
     WaitForOutput {
+        /// Per-step error handling (PROD-045): retry / continue-on-error.
+        #[serde(flatten)]
+        error_handling: WorkflowStepErrorHandling,
         /// The pattern matched against the session's terminal output.
         pattern: String,
         /// When `true`, `pattern` is a regular expression; otherwise a literal
@@ -123,6 +147,48 @@ pub enum WorkflowStep {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         timeout_ms: Option<u64>,
     },
+}
+
+/// How the delay between retries of a failing step grows (PROD-045). Mirrors
+/// the TypeScript `WorkflowRetryBackoff` (lowercase strings over the wire).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum WorkflowRetryBackoff {
+    /// Wait the same `delayMs` before every retry.
+    Fixed,
+    /// Double the wait after each retry, capped by the runner.
+    Exponential,
+}
+
+/// A bounded retry policy for one step (PROD-045). Purely persisted here; the
+/// frontend runner clamps `count` and the delay to its named safety caps.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStepRetry {
+    /// Extra attempts after the first failure.
+    pub count: u32,
+    /// Delay (ms) before the first retry; omitted → retry immediately.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delay_ms: Option<u64>,
+    /// How the delay grows between attempts; omitted → fixed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff: Option<WorkflowRetryBackoff>,
+}
+
+/// Optional per-step error handling shared by every [`WorkflowStep`] kind
+/// (PROD-045), flattened into the step's JSON object next to its `kind`. Both
+/// fields are omitted when absent, so a step authored before this feature
+/// round-trips byte-identically and keeps today's behaviour (no retry, the
+/// first failure stops the run).
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkflowStepErrorHandling {
+    /// When `true`, a failure of this step is tolerated and the run continues.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continue_on_error: Option<bool>,
+    /// Retry this step when it fails.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry: Option<WorkflowStepRetry>,
 }
 
 /// How a [`WorkflowStep::Loop`] is bounded (PROD-044). Either a fixed iteration
@@ -337,6 +403,56 @@ mod tests {
     use super::*;
 
     #[test]
+    fn step_error_handling_round_trips_flattened_next_to_kind() {
+        let json = r#"{"kind":"send-command","command":"ls","continueOnError":true,"retry":{"count":3,"delayMs":500,"backoff":"exponential"}}"#;
+        let parsed: WorkflowStep = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            parsed,
+            WorkflowStep::SendCommand {
+                error_handling: WorkflowStepErrorHandling {
+                    continue_on_error: Some(true),
+                    retry: Some(WorkflowStepRetry {
+                        count: 3,
+                        delay_ms: Some(500),
+                        backoff: Some(WorkflowRetryBackoff::Exponential),
+                    }),
+                },
+                command: "ls".to_string(),
+            }
+        );
+        let reparsed: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&parsed).unwrap()).unwrap();
+        let original: serde_json::Value = serde_json::from_str(json).unwrap();
+        assert_eq!(reparsed, original);
+    }
+
+    #[test]
+    fn step_without_error_handling_round_trips_byte_identically() {
+        // A step authored before PROD-045 carries neither key and must not gain
+        // one on save.
+        for json in [
+            r#"{"kind":"wait","delayMs":250}"#,
+            r#"{"kind":"loop","loop":{"kind":"count","count":2},"body":[{"kind":"send-command","command":"x"}]}"#,
+            r#"{"kind":"wait-for-output","pattern":"$ "}"#,
+        ] {
+            let parsed: WorkflowStep = serde_json::from_str(json).unwrap();
+            assert_eq!(serde_json::to_string(&parsed).unwrap(), json);
+        }
+    }
+
+    #[test]
+    fn nested_step_error_handling_survives_round_trip() {
+        let json = r#"{"kind":"conditional","condition":{"left":"a","op":"eq","right":"a"},"then":[{"kind":"run-macro","macroId":"m","retry":{"count":1}}],"continueOnError":true}"#;
+        let parsed: WorkflowStep = serde_json::from_str(json).unwrap();
+        let reparsed: serde_json::Value =
+            serde_json::from_str(&serde_json::to_string(&parsed).unwrap()).unwrap();
+        assert_eq!(
+            reparsed,
+            serde_json::from_str::<serde_json::Value>(json).unwrap()
+        );
+    }
+
+    #[test]
     fn workflow_store_default_is_empty() {
         let store = WorkflowStore::default();
         assert_eq!(store.version, "1");
@@ -346,6 +462,7 @@ mod tests {
     #[test]
     fn send_command_step_serializes_with_kind_tag() {
         let step = WorkflowStep::SendCommand {
+            error_handling: Default::default(),
             command: "git status".to_string(),
         };
         let json = serde_json::to_string(&step).unwrap();
@@ -358,6 +475,7 @@ mod tests {
     #[test]
     fn run_script_step_uses_camel_case_optional_fields() {
         let step = WorkflowStep::RunScript {
+            error_handling: Default::default(),
             script: "echo one\necho two".to_string(),
             per_line_delay_ms: Some(50),
             source_path: Some("/tmp/health.sh".to_string()),
@@ -373,6 +491,7 @@ mod tests {
     #[test]
     fn run_script_step_omits_absent_optional_fields() {
         let step = WorkflowStep::RunScript {
+            error_handling: Default::default(),
             script: "echo hi".to_string(),
             per_line_delay_ms: None,
             source_path: None,
@@ -390,18 +509,25 @@ mod tests {
     fn all_step_kinds_round_trip() {
         let steps = vec![
             WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "sudo -v".to_string(),
             },
             WorkflowStep::RunScript {
+                error_handling: Default::default(),
                 script: "a\nb".to_string(),
                 per_line_delay_ms: Some(10),
                 source_path: None,
             },
             WorkflowStep::RunMacro {
+                error_handling: Default::default(),
                 macro_id: "macro-1".to_string(),
             },
-            WorkflowStep::Wait { delay_ms: 500 },
+            WorkflowStep::Wait {
+                error_handling: Default::default(),
+                delay_ms: 500,
+            },
             WorkflowStep::RunLocalProcess {
+                error_handling: Default::default(),
                 program: "notify-send".to_string(),
                 args: vec!["done".to_string()],
             },
@@ -444,6 +570,7 @@ mod tests {
             description: Some("Login and health check".to_string()),
             tags: vec!["ops".to_string()],
             steps: vec![WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "sudo -v".to_string(),
             }],
             triggers: vec![WorkflowTrigger::Manual],
@@ -522,6 +649,7 @@ mod tests {
             description: None,
             tags: vec![],
             steps: vec![WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "ssh ${host}".to_string(),
             }],
             triggers: vec![],
@@ -542,15 +670,18 @@ mod tests {
     #[test]
     fn conditional_step_round_trips_with_kind_and_camel_case() {
         let step = WorkflowStep::Conditional {
+            error_handling: Default::default(),
             condition: WorkflowCondition {
                 left: "${env}".to_string(),
                 op: WorkflowComparisonOp::Eq,
                 right: "prod".to_string(),
             },
             then: vec![WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "deploy".to_string(),
             }],
             otherwise: vec![WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "skip".to_string(),
             }],
         };
@@ -568,6 +699,7 @@ mod tests {
         // An empty else is skipped so a conditional authored without one
         // round-trips byte-identically (a false condition is a no-op).
         let step = WorkflowStep::Conditional {
+            error_handling: Default::default(),
             condition: WorkflowCondition {
                 left: "a".to_string(),
                 op: WorkflowComparisonOp::Ne,
@@ -591,15 +723,20 @@ mod tests {
         // then/else are ordinary step lists, so a conditional can contain a
         // conditional — the recursive variant must round-trip.
         let inner = WorkflowStep::Conditional {
+            error_handling: Default::default(),
             condition: WorkflowCondition {
                 left: "1".to_string(),
                 op: WorkflowComparisonOp::Lt,
                 right: "2".to_string(),
             },
-            then: vec![WorkflowStep::Wait { delay_ms: 100 }],
+            then: vec![WorkflowStep::Wait {
+                error_handling: Default::default(),
+                delay_ms: 100,
+            }],
             otherwise: vec![],
         };
         let outer = WorkflowStep::Conditional {
+            error_handling: Default::default(),
             condition: WorkflowCondition {
                 left: "x".to_string(),
                 op: WorkflowComparisonOp::Contains,
@@ -646,8 +783,10 @@ mod tests {
     #[test]
     fn loop_count_step_round_trips_with_kind_and_camel_case() {
         let step = WorkflowStep::Loop {
+            error_handling: Default::default(),
             mode: WorkflowLoopMode::Count { count: 3 },
             body: vec![WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "echo ${iteration}".to_string(),
             }],
         };
@@ -663,6 +802,7 @@ mod tests {
     #[test]
     fn loop_while_step_round_trips() {
         let step = WorkflowStep::Loop {
+            error_handling: Default::default(),
             mode: WorkflowLoopMode::While {
                 condition: WorkflowCondition {
                     left: "${iteration}".to_string(),
@@ -670,7 +810,10 @@ mod tests {
                     right: "5".to_string(),
                 },
             },
-            body: vec![WorkflowStep::Wait { delay_ms: 100 }],
+            body: vec![WorkflowStep::Wait {
+                error_handling: Default::default(),
+                delay_ms: 100,
+            }],
         };
         let json = serde_json::to_string(&step).unwrap();
         assert!(json.contains("\"loop\":{\"kind\":\"while\""));
@@ -687,6 +830,7 @@ mod tests {
         assert_eq!(
             parsed,
             WorkflowStep::Loop {
+                error_handling: Default::default(),
                 mode: WorkflowLoopMode::Count { count: 2 },
                 body: vec![],
             }
@@ -697,12 +841,15 @@ mod tests {
     fn loop_step_nests_recursively() {
         // A loop's body is an ordinary step list, so a loop can contain a loop.
         let inner = WorkflowStep::Loop {
+            error_handling: Default::default(),
             mode: WorkflowLoopMode::Count { count: 2 },
             body: vec![WorkflowStep::SendCommand {
+                error_handling: Default::default(),
                 command: "inner".to_string(),
             }],
         };
         let outer = WorkflowStep::Loop {
+            error_handling: Default::default(),
             mode: WorkflowLoopMode::While {
                 condition: WorkflowCondition {
                     left: "a".to_string(),
@@ -720,6 +867,7 @@ mod tests {
     #[test]
     fn wait_for_output_step_round_trips_with_kind_and_camel_case() {
         let step = WorkflowStep::WaitForOutput {
+            error_handling: Default::default(),
             pattern: "login:".to_string(),
             is_regex: Some(true),
             timeout_ms: Some(30_000),
@@ -738,6 +886,7 @@ mod tests {
         // The default (substring, default timeout) omits the optional keys so a
         // step authored without them round-trips byte-identically.
         let step = WorkflowStep::WaitForOutput {
+            error_handling: Default::default(),
             pattern: "$ ".to_string(),
             is_regex: None,
             timeout_ms: None,
