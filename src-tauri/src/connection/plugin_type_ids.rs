@@ -12,7 +12,11 @@
 //!   version bump v2 → v3 marks files carrying namespaced ids, so an older build
 //!   refuses to overwrite them — the existing downgrade-safety gate),
 //! * `session-history.json` — each entry's `connectionType` and `config.type`,
-//! * `workspaces.json` / `last-session.json` — each tab's `inlineConfig.type`.
+//! * `workspaces.json` / `last-session.json` — each tab's `inlineConfig.type`,
+//! * external connection files — each connection's `config.type`, persisted
+//!   back to the file when rewritten (#3343),
+//! * connection imports (plain and encrypted) and workspace imports — resolved
+//!   before the imported records are merged into the store (#3343).
 //!
 //! Resolution needs the installed plugins (read from their manifests under
 //! `<config-dir>/plugins/`, no library is loaded), so it runs as a post-load
@@ -58,6 +62,17 @@ pub fn legacy_resolver(config_dir: &Path) -> LegacyTypeIdResolver {
         termihub_core::plugin::installed_backend_types(&config_dir.join("plugins")),
         KNOWN_BUILTIN_TYPE_IDS.iter().copied(),
     )
+}
+
+/// Build the legacy-id resolver for the config directory holding the store file
+/// `store_file` (its parent directory). `None` when the path has no parent.
+///
+/// Used by every entry point that reads connection configs from outside the
+/// four PLG-007 stores — external connection files, connection imports and
+/// workspace imports (#3343) — so they resolve against the same installed
+/// plugins as `connections.json`.
+pub fn legacy_resolver_beside(store_file: &Path) -> Option<LegacyTypeIdResolver> {
+    store_file.parent().map(legacy_resolver)
 }
 
 /// Resolve one persisted type id in place. Returns `true` when it was rewritten.

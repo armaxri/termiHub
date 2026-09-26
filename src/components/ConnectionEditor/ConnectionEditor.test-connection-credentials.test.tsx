@@ -19,6 +19,7 @@ import { setupConnectionsRegion, seedConnectionsRegion } from "@/test/connection
 import { setupAgentsRegion } from "@/test/agentsRegionTestHarness";
 import { resetRuntimeCache } from "@/hooks/useAvailableRuntimes";
 import { ConnectionEditor } from "./ConnectionEditor";
+import { PasswordPrompt } from "@/components/PasswordPrompt/PasswordPrompt";
 import { TooltipProvider } from "@/components/ui";
 import type { ConnectionTypeInfo, SavedConnection } from "@/types/connection";
 
@@ -151,7 +152,7 @@ type AppState = ReturnType<typeof useAppStore.getState>;
 let requestPassword: ReturnType<typeof vi.fn<AppState["requestPassword"]>>;
 let addTab: ReturnType<typeof vi.fn<AppState["addTab"]>>;
 
-function render(connectionId: string) {
+function render(connectionId: string, { withPrompt = false } = {}) {
   act(() => {
     root.render(
       <TooltipProvider delayDuration={0}>
@@ -160,6 +161,7 @@ function render(connectionId: string) {
           meta={{ connectionId, folderId: null }}
           isVisible={true}
         />
+        {withPrompt && <PasswordPrompt />}
       </TooltipProvider>
     );
   });
@@ -198,12 +200,16 @@ async function flush() {
   }
 }
 
-async function clickTest() {
-  const btn = container.querySelector<HTMLButtonElement>('[data-testid="connection-editor-test"]')!;
+async function clickButton(testId: string) {
+  const btn = container.querySelector<HTMLButtonElement>(`[data-testid="${testId}"]`)!;
   act(() => {
     btn.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
   });
   await flush();
+}
+
+async function clickTest() {
+  await clickButton("connection-editor-test");
 }
 
 function commandCalls(cmd: string) {
@@ -299,7 +305,9 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
 
     await clickTest();
 
-    expect(requestPassword).toHaveBeenCalledWith("10.0.0.2", "admin", "", "key_passphrase");
+    expect(requestPassword).toHaveBeenCalledWith("10.0.0.2", "admin", "", "key_passphrase", {
+      allowSave: false,
+    });
     expect(testedSettings().password).toBe("key-pass");
     expect(toastSuccess).toHaveBeenCalledTimes(1);
     expectNothingPersisted();
@@ -322,7 +330,9 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
     await clickTest();
 
     expect(commandCalls("resolve_credential")).toHaveLength(0);
-    expect(requestPassword).toHaveBeenCalledWith("10.0.0.9", "root", "", "password");
+    expect(requestPassword).toHaveBeenCalledWith("10.0.0.9", "root", "", "password", {
+      allowSave: false,
+    });
     expect(testedSettings().password).toBe("entered");
     expectNothingPersisted();
     expect(currentConnectionsView().connections).toHaveLength(3);
@@ -373,5 +383,68 @@ describe("ConnectionEditor — Test Connection credential resolution (#3284)", (
     expect(requestPassword).not.toHaveBeenCalled();
     expect(testedSettings().password).toBe("typed");
     expectNothingPersisted();
+  });
+});
+
+/**
+ * #3316: Test never persists a prompt-entered secret, so the real prompt it
+ * opens must offer no Save control — while Save & Connect's prompt still does.
+ * Uses the real store `requestPassword` and the real `PasswordPrompt`.
+ */
+describe("ConnectionEditor — password prompt Save control (#3316)", () => {
+  const saveBox = () => document.querySelector('[data-testid="password-prompt-save-checkbox"]');
+  const promptInput = () => document.querySelector('[data-testid="password-prompt-input"]');
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    resetRuntimeCache();
+    addTab = vi.fn<AppState["addTab"]>();
+    useAppStore.setState({
+      ...useAppStore.getInitialState(),
+      connectionTypes: [SSH_TYPE],
+      credentialStoreStatus: { mode: "master_password", status: "unlocked" },
+      addTab,
+    });
+    seedConnectionsRegion({ connections: [CONN_STORED_PW, CONN_KEY, CONN_TYPED_PW] });
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    act(() => useAppStore.getState().dismissPasswordPrompt());
+    act(() => root.unmount());
+    container.remove();
+    vi.clearAllMocks();
+  });
+
+  it("the prompt opened by Test shows no Save control and stores nothing", async () => {
+    mockBackend({ keyEncrypted: true });
+    render(CONN_KEY.id, { withPrompt: true });
+    await flush();
+
+    await clickTest();
+
+    expect(promptInput()).not.toBeNull();
+    expect(saveBox()).toBeNull();
+
+    // Even a submit that claims "save" cannot report one from this prompt.
+    act(() => useAppStore.getState().submitPassword("key-pass", true));
+    await flush();
+
+    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+    expect(testedSettings().password).toBe("key-pass");
+    expectNothingPersisted();
+  });
+
+  it("the prompt opened by Save & Connect still shows the Save control", async () => {
+    mockBackend({ keyEncrypted: true });
+    render(CONN_KEY.id, { withPrompt: true });
+    await flush();
+
+    await clickButton("connection-editor-save-connect");
+
+    expect(promptInput()).not.toBeNull();
+    expect(saveBox()).not.toBeNull();
   });
 });

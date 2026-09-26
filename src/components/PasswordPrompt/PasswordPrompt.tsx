@@ -9,7 +9,9 @@ import "./PasswordPrompt.css";
  *
  * When a credential store is configured (any mode other than "none"), a
  * "Save password" checkbox is shown so the user can persist the credential
- * for future connections without having to re-enter it.
+ * for future connections without having to re-enter it. A caller that never
+ * persists the secret (Test Connection, #3316) opts out via
+ * `requestPassword(..., { allowSave: false })`, which hides the checkbox.
  */
 export function PasswordPrompt() {
   const open = useAppStore((s) => s.passwordPromptOpen);
@@ -21,7 +23,10 @@ export function PasswordPrompt() {
   const dismissPasswordPrompt = useAppStore((s) => s.dismissPasswordPrompt);
   const credentialStoreStatus = useAppStore((s) => s.credentialStoreStatus);
 
+  const allowSave = useAppStore((s) => s.passwordPromptAllowSave);
+
   const storeActive = credentialStoreStatus != null && credentialStoreStatus.mode !== "none";
+  const showSave = storeActive && allowSave;
 
   // A key passphrase unlocks a private key file — it is not the remote account
   // password, so label the prompt accordingly (UX-010).
@@ -41,13 +46,13 @@ export function PasswordPrompt() {
   useEffect(() => {
     if (open) {
       setPassword("");
-      setSavePassword(storeActive);
+      setSavePassword(showSave);
     }
-  }, [open, storeActive]);
+  }, [open, showSave]);
 
   const handleSubmit = useCallback(() => {
-    submitPassword(password, savePassword);
-  }, [password, savePassword, submitPassword]);
+    submitPassword(password, showSave && savePassword);
+  }, [password, showSave, savePassword, submitPassword]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -96,7 +101,7 @@ export function PasswordPrompt() {
         autoFocus
         data-testid="password-prompt-input"
       />
-      {storeActive && (
+      {showSave && (
         <label className="password-prompt__save-label" data-testid="password-prompt-save-label">
           <Checkbox
             checked={savePassword}

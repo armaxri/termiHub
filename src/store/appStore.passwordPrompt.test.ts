@@ -110,4 +110,25 @@ describe("appStore password prompt", () => {
     expect(() => useAppStore.getState().dismissPasswordPrompt()).not.toThrow();
     expect(useAppStore.getState().passwordPromptOpen).toBe(false);
   });
+
+  it("allows the Save control by default and carries an opt-out (#3316)", () => {
+    useAppStore.getState().requestPassword("example.com", "alice");
+    expect(useAppStore.getState().passwordPromptAllowSave).toBe(true);
+
+    useAppStore.getState().requestPassword("example.com", "alice", "", "password", {
+      allowSave: false,
+    });
+    expect(useAppStore.getState().passwordPromptAllowSave).toBe(false);
+  });
+
+  it("never reports shouldSave from a prompt that disallowed saving (#3316)", async () => {
+    const p = useAppStore
+      .getState()
+      .requestPassword("example.com", "alice", "", "password", { allowSave: false });
+    useAppStore.getState().submitPassword("secret", true);
+    await expect(p).resolves.toBe("secret");
+    expect(useAppStore.getState().passwordPromptShouldSave).toBe(false);
+    // The opt-out does not leak into the next prompt.
+    expect(useAppStore.getState().passwordPromptAllowSave).toBe(true);
+  });
 });

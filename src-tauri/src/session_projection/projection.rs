@@ -9,10 +9,13 @@
 //!
 //! # The `session-lifecycle` region
 //!
-//! **Shared** (Open Design Decision #4: infrastructure domains are shared). The
-//! real sessions live backend-side; their connection/lifecycle status is a
-//! property of the session, not of a viewing client, so two clients see the same
-//! status and a transition projects to both. The view model:
+//! **Shared** (Open Design Decision #4: infrastructure domains are shared) across
+//! the windows of **this desktop**: a transition projects to every subscribed
+//! window. It is keyed by the per-desktop tab id, so it is deliberately *not* a
+//! cross-desktop view of a daemon session — across desktops the contract is
+//! **single-attach** (SM-003): the desktop that loses control folds the explicit
+//! `evicted` state ([`fold_agent_session_evicted`]) instead of converging on the
+//! other desktop's status. The view model:
 //!
 //! ```json
 //! { "sessions": { "<sessionId>": SessionLifecycle, ... } }
@@ -34,6 +37,12 @@
 //! | `session.reconnectTrigger`  | `{ sessionId, error? }`     | record/clear the reconnect-trigger cause       |
 //! | `session.exited`            | `{ sessionId, reason, code? }` | record the exit cause; a *clean* exit also folds status → disconnected (#2637) |
 //! | `session.remove`            | `{ sessionId }`             | session/tab gone; drop it from the region      |
+//!
+//! The SM-003 `evicted` fold ([`fold_agent_session_evicted`]) and its explicit
+//! Reclaim resolve ([`fold_agent_session_reclaimed`]) are likewise folded at the
+//! backend source, not client intents: the eviction arrives as the agent's
+//! `connection.evicted` notification and the Reclaim runs the takeover attach in
+//! the `reclaim_session` command.
 //!
 //! The transient agent-transport-break reconnecting fold is **not** a client
 //! intent: `agent_io_task` folds it at the backend source via
@@ -376,6 +385,29 @@ pub fn fold_agent_reconnect_failed<R: tauri::Runtime>(
     fold_session_transition(app_handle, |store| {
         store.connect_failed(tab_id, error.map(str::to_string));
     });
+    sync_timer_generic(app_handle, tab_id);
+}
+
+/// Human-readable "why" note carried on an evicted tab's region entry (SM-003).
+pub const EVICTED_BY_OTHER_DESKTOP: &str = "This session was taken over by another desktop.";
+
+/// Fold a hosted agent session's region entry to the explicit
+/// [`SessionStatus::Evicted`](crate::session_projection::store::SessionStatus::Evicted)
+/// state at the **backend source** when the agent reports `connection.evicted`
+/// (SM-003, single-attach): another desktop took the session over. Loop-idle, so
+/// the timer reconcile is a *cancel* — nothing auto-reconnects (which would re-take
+/// control and ping-pong ownership); the tab waits for an explicit Reclaim.
+pub fn fold_agent_session_evicted<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) {
+    fold_session_transition(app_handle, |store| {
+        store.evicted(tab_id, Some(EVICTED_BY_OTHER_DESKTOP.to_string()));
+    });
+    sync_timer_generic(app_handle, tab_id);
+}
+
+/// Resolve an evicted tab back to `Connected` after the user's explicit Reclaim
+/// takeover attach succeeded (SM-003). A no-op unless the tab is still `Evicted`.
+pub fn fold_agent_session_reclaimed<R: tauri::Runtime>(app_handle: &AppHandle<R>, tab_id: &str) {
+    fold_session_transition(app_handle, |store| store.reclaimed(tab_id));
     sync_timer_generic(app_handle, tab_id);
 }
 

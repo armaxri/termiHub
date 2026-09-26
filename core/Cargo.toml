@@ -52,6 +52,9 @@ russh-sftp = { workspace = true, optional = true }
 # generate the tool-owned `/tmp/termihub-<uuid>` temp upload path.
 shlex = { version = "1", optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
+# Wipe SSH keyboard-interactive prompt responses (OTP / password answers) from
+# memory once they have been sent (#3371). Already in the tree via russh.
+zeroize = { version = "1", optional = true }
 # Loading legacy PKCS#5-encrypted PEM EC keys that russh 0.61 can't parse
 # (see backends/ssh/legacy_pem.rs). Versions mirror russh's own crypto stack.
 aes = { version = "0.9", optional = true }
@@ -303,6 +306,7 @@ local-shell = ["dep:portable-pty", "dep:tracing", "dep:sysinfo"]
 telnet = ["dep:tracing"]
 ssh = [
     "dep:russh",
+    "dep:zeroize",
     "dep:russh-sftp",
     "dep:shlex",
     "dep:uuid",

@@ -138,6 +138,15 @@ pub const TOOL_DONE: &str = "tool.done";
 // Notification methods (agent → desktop; no id, no response).
 pub const CONNECTION_OUTPUT: &str = "connection.output";
 pub const CONNECTION_EXIT: &str = "connection.exit";
+/// A session this worker was attached to was **taken over** by another desktop
+/// (SM-003, single-attach): the daemon evicted this worker's connection because a
+/// different worker attached with takeover intent, or — at worker start-up — the
+/// session was found held by another live worker. Params:
+/// `{ "session_id": String, "reason": "takeover" | "heldByPeer" }`. The session is
+/// still alive; the desktop folds an explicit `Evicted` state (never an automatic
+/// reconnect) and offers **Reclaim** (`connection.attach` with `takeover: true`).
+/// Append-only: an older desktop ignores the unknown notification.
+pub const CONNECTION_EVICTED: &str = "connection.evicted";
 pub const CONNECTION_MONITORING_DATA: &str = "connection.monitoring.data";
 /// A monitored host's collect-loop status changed (#3321). Optional: older
 /// agents never send it, older desktops ignore it.
@@ -329,6 +338,17 @@ pub struct SessionCloseParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionAttachParams {
     pub session_id: String,
+    /// Explicit **Reclaim** (SM-003, single-attach): take control of the session
+    /// even when this worker does not hold it — adopting it from the shared
+    /// per-user session state and evicting whichever worker (another desktop)
+    /// currently holds it. The evicted side receives `connection.evicted`.
+    ///
+    /// Append-only and backward compatible: omitted from the wire when `false`,
+    /// so a plain attach is byte-identical to the legacy shape, and an older
+    /// agent that does not know the field ignores it (the request then behaves as
+    /// a plain attach — "Session not found" for a session it does not hold).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub takeover: bool,
 }
 
 // ── session.detach ─────────────────────────────────────────────────
@@ -2096,6 +2116,30 @@ mod tests {
         let json = json!({"session_id": "abc-123"});
         let params: SessionAttachParams = serde_json::from_value(json).unwrap();
         assert_eq!(params.session_id, "abc-123");
+        // SM-003: a legacy attach (no `takeover`) defaults to a plain attach.
+        assert!(!params.takeover);
+    }
+
+    #[test]
+    fn session_attach_params_takeover_is_append_only() {
+        // SM-003: an explicit Reclaim carries `takeover: true` on the wire...
+        let reclaim = SessionAttachParams {
+            session_id: "abc-123".to_string(),
+            takeover: true,
+        };
+        let value = serde_json::to_value(&reclaim).unwrap();
+        assert_eq!(value, json!({"session_id": "abc-123", "takeover": true}));
+        let back: SessionAttachParams = serde_json::from_value(value).unwrap();
+        assert!(back.takeover);
+        // ...while a plain attach omits it, byte-identical to the legacy shape.
+        let plain = SessionAttachParams {
+            session_id: "abc-123".to_string(),
+            takeover: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&plain).unwrap(),
+            json!({"session_id": "abc-123"})
+        );
     }
 
     #[test]
@@ -2832,6 +2876,7 @@ mod tests {
         assert_eq!(TOOL_DONE, "tool.done");
         assert_eq!(CONNECTION_OUTPUT, "connection.output");
         assert_eq!(CONNECTION_EXIT, "connection.exit");
+        assert_eq!(CONNECTION_EVICTED, "connection.evicted");
         assert_eq!(CONNECTION_MONITORING_DATA, "connection.monitoring.data");
         assert_eq!(CONNECTION_MONITORING_STATUS, "connection.monitoring.status");
         assert_eq!(AGENT_UPDATE_PENDING, "agent.update_pending");
@@ -2927,7 +2972,8 @@ mod tests {
         let legacy = json!({ "session_id": "s-1" });
         assert_eq!(
             serde_json::to_value(SessionAttachParams {
-                session_id: "s-1".to_string()
+                session_id: "s-1".to_string(),
+                takeover: false,
             })
             .unwrap(),
             legacy,

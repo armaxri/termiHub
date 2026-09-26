@@ -9,6 +9,7 @@ use super::config::{
     ExternalConnectionStore, FlatConnectionStore, ImportPreview, ImportResult, SavedConnection,
     SavedRemoteAgent,
 };
+use super::plugin_type_ids::migrate_connections;
 use super::recovery::RecoveryWarning;
 use super::settings::{default_serial_port_scan_prefixes, AppSettings, SettingsStorage};
 use super::storage::ConnectionStorage;
@@ -19,6 +20,7 @@ use super::tree::{
 use crate::credential::crypto::{decrypt_with_password, encrypt_with_password};
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 use crate::utils::fs::write_atomic;
+use termihub_core::connection::LegacyTypeIdResolver;
 
 /// Route credentials to the active store (if `savePassword` is set),
 /// then strip the password field so it is never written to disk.
@@ -606,8 +608,9 @@ impl ConnectionManager {
         let imported: ConnectionStore =
             serde_json::from_str(json).context("Failed to parse import data")?;
 
-        let (imported_conns, imported_folders) = flatten_tree(&imported.children, None);
+        let (mut imported_conns, imported_folders) = flatten_tree(&imported.children, None);
         let count = imported_conns.len();
+        self.migrate_imported_type_ids(&mut imported_conns);
 
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
         self.sync_from_disk(&mut store);
@@ -642,6 +645,17 @@ impl ConnectionManager {
             .save_flat(&store)
             .context("Failed to persist after import")?;
         Ok(count)
+    }
+
+    /// Rewrite legacy plugin connection-type ids in freshly imported connections
+    /// to their stable `plugin:<plugin-id>:<type>` form (PLG-007, #3343), so an
+    /// export written before the namespacing binds to the installed plugin. Same
+    /// rules as the `connections.json` load pass: an id whose plugin is not
+    /// installed is kept unchanged.
+    fn migrate_imported_type_ids(&self, connections: &mut [SavedConnection]) {
+        if let Some(resolver) = self.storage.legacy_type_resolver() {
+            migrate_connections(connections, &resolver);
+        }
     }
 
     /// Get the current application settings.
@@ -693,6 +707,15 @@ impl ConnectionManager {
 
         let mut sources = Vec::new();
 
+        // Resolve legacy plugin type ids in external files too (#3343). Built
+        // only when some file is enabled — it scans the installed plugins.
+        let resolver = settings
+            .external_connection_files
+            .iter()
+            .any(|f| f.enabled)
+            .then(|| self.storage.legacy_type_resolver())
+            .flatten();
+
         for file_cfg in &settings.external_connection_files {
             if !file_cfg.enabled {
                 continue;
@@ -702,6 +725,7 @@ impl ConnectionManager {
                 &file_cfg.path,
                 &ids_ref,
                 &*self.credential_store,
+                resolver.as_ref(),
             ));
         }
 
@@ -885,8 +909,9 @@ impl ConnectionManager {
         }
 
         // Flatten the imported tree
-        let (imported_conns, imported_folders) = flatten_tree(&imported.children, None);
+        let (mut imported_conns, imported_folders) = flatten_tree(&imported.children, None);
         let connections_imported = imported_conns.len();
+        self.migrate_imported_type_ids(&mut imported_conns);
 
         // Merge connections, folders, and agents
         let mut store = self.store.lock().unwrap_or_else(|e| e.into_inner());
@@ -1066,8 +1091,9 @@ fn load_single_external_file(
     file_path: &str,
     main_folder_ids: &HashSet<&str>,
     store: &dyn CredentialStore,
+    resolver: Option<&LegacyTypeIdResolver>,
 ) -> ExternalSource {
-    match try_load_external_file(file_path, main_folder_ids, store) {
+    match try_load_external_file(file_path, main_folder_ids, store, resolver) {
         Ok(source) => source,
         Err(err) => ExternalSource {
             file_path: file_path.to_string(),
@@ -1079,10 +1105,16 @@ fn load_single_external_file(
 
 /// Try to load and parse an external connection file.
 /// Connections get `source_file` set and `folder_id` validated against the main folder tree.
+///
+/// With a `resolver`, legacy plugin connection-type ids are rewritten to their
+/// stable `plugin:<plugin-id>:<type>` form (PLG-007, #3343) and the file is
+/// rewritten (best-effort) so the resolution sticks. An id whose plugin is not
+/// installed is kept unchanged, exactly as in `connections.json`.
 pub(crate) fn try_load_external_file(
     file_path: &str,
     main_folder_ids: &HashSet<&str>,
     store: &dyn CredentialStore,
+    resolver: Option<&LegacyTypeIdResolver>,
 ) -> Result<ExternalSource> {
     let data = std::fs::read_to_string(file_path)
         .with_context(|| format!("Failed to read external file: {}", file_path))?;
@@ -1091,7 +1123,9 @@ pub(crate) fn try_load_external_file(
         .with_context(|| format!("Failed to parse external file: {}", file_path))?;
 
     // Flatten the nested tree
-    let (mut connections, _folders) = flatten_tree(&ext_store.children, None);
+    let (mut connections, folders) = flatten_tree(&ext_store.children, None);
+
+    let type_ids_migrated = resolver.is_some_and(|r| migrate_connections(&mut connections, r));
 
     // Migrate: strip plaintext passwords and route to credential store
     let has_plaintext_passwords = connections.iter().any(|conn| {
@@ -1107,9 +1141,13 @@ pub(crate) fn try_load_external_file(
             .into_iter()
             .map(|c| prepare_for_storage(c, store))
             .collect::<Result<Vec<_>>>()?;
+    }
 
-        // Rewrite the external file with passwords stripped
-        let cleaned_tree = build_tree(&connections, &[]);
+    if has_plaintext_passwords || type_ids_migrated {
+        // Rewrite the external file with passwords stripped / type ids migrated.
+        // The file's own folders are kept so foldered connections survive the
+        // rewrite.
+        let cleaned_tree = build_tree(&connections, &folders);
         let cleaned_store = ExternalConnectionStore {
             name: ext_store.name,
             version: "2".to_string(),
@@ -1117,8 +1155,16 @@ pub(crate) fn try_load_external_file(
         };
         let cleaned_data = serde_json::to_string_pretty(&cleaned_store)
             .context("Failed to serialize external file during migration")?;
-        write_atomic(std::path::Path::new(file_path), &cleaned_data)
-            .with_context(|| format!("Failed to rewrite external file: {}", file_path))?;
+        let written = write_atomic(std::path::Path::new(file_path), &cleaned_data)
+            .with_context(|| format!("Failed to rewrite external file: {}", file_path));
+        match written {
+            // Plaintext passwords must not stay on disk: a failed strip is an error.
+            Err(e) if has_plaintext_passwords => return Err(e),
+            // A type-id-only rewrite is best-effort (e.g. a read-only shared
+            // file): the in-memory ids are already resolved for this session.
+            Err(e) => tracing::warn!("Failed to persist migrated plugin connection types: {e:#}"),
+            Ok(()) => {}
+        }
     }
 
     // Validate folder_id: if not in main folders, put at root
@@ -1562,7 +1608,7 @@ mod tests {
 
         // Load with "My Folder" in the main folder set so it's recognized
         let main_folders: HashSet<&str> = vec!["My Folder"].into_iter().collect();
-        let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
+        let source = try_load_external_file(path_str, &main_folders, &store, None).unwrap();
         assert!(source.error.is_none());
 
         assert_eq!(source.connections.len(), 1);
@@ -1592,7 +1638,7 @@ mod tests {
         // The file was created and parses back into one connection.
         assert!(file_path.exists());
         let main_folders: HashSet<&str> = HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
+        let source = try_load_external_file(path_str, &main_folders, &store, None).unwrap();
         assert!(source.error.is_none());
         assert_eq!(source.connections.len(), 1);
     }
@@ -1656,7 +1702,7 @@ mod tests {
         save_or_update_in_external_file(path_str, conn).unwrap();
 
         let main_folders: HashSet<&str> = HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
+        let source = try_load_external_file(path_str, &main_folders, &store, None).unwrap();
         assert!(source.error.is_none());
         assert_eq!(source.connections.len(), 1);
     }
@@ -1700,7 +1746,7 @@ mod tests {
 
         // Load with empty main folders — folder_id should fall to None
         let main_folders: HashSet<&str> = HashSet::new();
-        let source = try_load_external_file(path_str, &main_folders, &store).unwrap();
+        let source = try_load_external_file(path_str, &main_folders, &store, None).unwrap();
         assert_eq!(source.connections[0].folder_id, None);
     }
 
@@ -2372,7 +2418,8 @@ mod tests {
         // Verify the connection was removed from the external file.
         let main_folders = std::collections::HashSet::new();
         let source =
-            try_load_external_file(ext_path, &main_folders, &crate::credential::NullStore).unwrap();
+            try_load_external_file(ext_path, &main_folders, &crate::credential::NullStore, None)
+                .unwrap();
         assert!(
             source.connections.is_empty(),
             "connection must be gone from external file; got: {:?}",
@@ -2504,5 +2551,238 @@ mod tests {
             all.agents[0].name, "Recreated",
             "the recreated agent must be the new one"
         );
+    }
+
+    // ── PLG-007 legacy plugin type ids in external files + imports (#3343) ──
+
+    /// A connection of `type_id` named `name` (id = name), optionally foldered.
+    fn typed_conn(name: &str, type_id: &str, folder: Option<&str>) -> SavedConnection {
+        SavedConnection {
+            icon: None,
+            id: match folder {
+                Some(f) => format!("{f}/{name}"),
+                None => name.to_string(),
+            },
+            name: name.to_string(),
+            config: ConnectionConfig {
+                type_id: type_id.to_string(),
+                settings: serde_json::json!({}),
+            },
+            folder_id: folder.map(str::to_string),
+            terminal_options: None,
+            source_file: None,
+        }
+    }
+
+    fn type_of<'a>(conns: &'a [SavedConnection], name: &str) -> &'a str {
+        conns
+            .iter()
+            .find(|c| c.name == name)
+            .map(|c| c.config.type_id.as_str())
+            .unwrap_or_else(|| panic!("connection {name} missing"))
+    }
+
+    #[test]
+    fn external_file_legacy_plugin_type_ids_resolve_and_persist() {
+        use crate::connection::plugin_type_ids::{legacy_resolver, write_backend_plugin_manifest};
+        let dir = tempfile::tempdir().unwrap();
+        write_backend_plugin_manifest(dir.path(), "beta", "k8s");
+        let ext = dir.path().join("team.json");
+        let ext_str = ext.to_str().unwrap();
+        let folders = vec![ConnectionFolder {
+            id: "Ops".to_string(),
+            name: "Ops".to_string(),
+            parent_id: None,
+            is_expanded: true,
+        }];
+        save_external_file(
+            ext_str,
+            "Team",
+            folders,
+            vec![
+                typed_conn("Legacy", "k8s", None),
+                typed_conn("Suffixed", "k8s-beta", Some("Ops")),
+                typed_conn("Gone", "mqtt", None),
+                typed_conn("Builtin", "local", None),
+            ],
+            &crate::credential::NullStore,
+        )
+        .unwrap();
+
+        let resolver = legacy_resolver(dir.path());
+        let main_folders: HashSet<&str> = ["Ops"].into_iter().collect();
+        let source = try_load_external_file(
+            ext_str,
+            &main_folders,
+            &crate::credential::NullStore,
+            Some(&resolver),
+        )
+        .unwrap();
+        assert_eq!(type_of(&source.connections, "Legacy"), "plugin:beta:k8s");
+        assert_eq!(type_of(&source.connections, "Suffixed"), "plugin:beta:k8s");
+        // Missing plugin: kept unchanged, never dropped.
+        assert_eq!(type_of(&source.connections, "Gone"), "mqtt");
+        assert_eq!(type_of(&source.connections, "Builtin"), "local");
+
+        // Persisted: a plain re-read (no resolver) sees the namespaced ids, and
+        // the foldered connection survived the rewrite.
+        let reread =
+            try_load_external_file(ext_str, &main_folders, &crate::credential::NullStore, None)
+                .unwrap();
+        assert_eq!(reread.connections.len(), 4);
+        assert_eq!(type_of(&reread.connections, "Legacy"), "plugin:beta:k8s");
+        assert_eq!(type_of(&reread.connections, "Suffixed"), "plugin:beta:k8s");
+        let suffixed = reread
+            .connections
+            .iter()
+            .find(|c| c.name == "Suffixed")
+            .unwrap();
+        assert_eq!(suffixed.folder_id.as_deref(), Some("Ops"));
+    }
+
+    #[test]
+    fn external_file_without_legacy_ids_is_not_rewritten() {
+        use crate::connection::plugin_type_ids::{legacy_resolver, write_backend_plugin_manifest};
+        let dir = tempfile::tempdir().unwrap();
+        write_backend_plugin_manifest(dir.path(), "beta", "k8s");
+        let ext = dir.path().join("clean.json");
+        let ext_str = ext.to_str().unwrap();
+        save_external_file(
+            ext_str,
+            "Clean",
+            vec![],
+            vec![typed_conn("Current", "plugin:beta:k8s", None)],
+            &crate::credential::NullStore,
+        )
+        .unwrap();
+        let before = std::fs::read_to_string(&ext).unwrap();
+        let resolver = legacy_resolver(dir.path());
+        let source = try_load_external_file(
+            ext_str,
+            &HashSet::new(),
+            &crate::credential::NullStore,
+            Some(&resolver),
+        )
+        .unwrap();
+        assert_eq!(type_of(&source.connections, "Current"), "plugin:beta:k8s");
+        assert_eq!(std::fs::read_to_string(&ext).unwrap(), before);
+    }
+
+    #[test]
+    fn external_password_strip_keeps_foldered_connections() {
+        // The plaintext-password rewrite used to rebuild the tree without the
+        // file's folders, silently dropping every foldered connection.
+        let dir = tempfile::tempdir().unwrap();
+        let ext = dir.path().join("pw.json");
+        let ext_str = ext.to_str().unwrap();
+        let data = serde_json::json!({
+            "version": "2",
+            "children": [
+                {"type": "folder", "name": "Ops", "isExpanded": true, "children": [
+                    {"type": "connection", "name": "Box",
+                     "config": {"type": "ssh", "config": {
+                        "host": "h", "username": "u", "authMethod": "password",
+                        "password": "secret"}}}
+                ]}
+            ]
+        });
+        std::fs::write(&ext, data.to_string()).unwrap();
+        try_load_external_file(
+            ext_str,
+            &HashSet::new(),
+            &crate::credential::NullStore,
+            None,
+        )
+        .unwrap();
+        let on_disk = std::fs::read_to_string(&ext).unwrap();
+        assert!(!on_disk.contains("secret"), "password must be stripped");
+        let reread = try_load_external_file(
+            ext_str,
+            &HashSet::new(),
+            &crate::credential::NullStore,
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            reread.connections.len(),
+            1,
+            "foldered connection must survive"
+        );
+    }
+
+    #[test]
+    fn load_external_sources_resolves_legacy_plugin_type_ids() {
+        use crate::connection::plugin_type_ids::write_backend_plugin_manifest;
+        let dir = tempfile::tempdir().unwrap();
+        write_backend_plugin_manifest(dir.path(), "beta", "k8s");
+        let ext = dir.path().join("team.json");
+        let ext_str = ext.to_str().unwrap().to_string();
+        save_external_file(
+            &ext_str,
+            "Team",
+            vec![],
+            vec![typed_conn("Legacy", "k8s", None)],
+            &crate::credential::NullStore,
+        )
+        .unwrap();
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(crate::credential::NullStore))
+                .unwrap();
+        let mut settings = manager.get_settings();
+        settings.external_connection_files = vec![super::super::settings::ExternalFileConfig {
+            path: ext_str,
+            enabled: true,
+        }];
+        manager.save_settings(settings).unwrap();
+
+        let sources = manager.load_external_sources();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(
+            type_of(&sources[0].connections, "Legacy"),
+            "plugin:beta:k8s"
+        );
+    }
+
+    const LEGACY_IMPORT: &str = r#"{
+        "version": "2",
+        "children": [
+            {"type": "connection", "name": "Legacy",
+             "config": {"type": "k8s", "config": {}}},
+            {"type": "connection", "name": "Gone",
+             "config": {"type": "mqtt", "config": {}}},
+            {"type": "connection", "name": "Builtin",
+             "config": {"type": "local", "config": {"shell": "bash"}}}
+        ],
+        "agents": []
+    }"#;
+
+    #[test]
+    fn import_json_resolves_legacy_plugin_type_ids() {
+        use crate::connection::plugin_type_ids::write_backend_plugin_manifest;
+        let dir = tempfile::tempdir().unwrap();
+        write_backend_plugin_manifest(dir.path(), "beta", "k8s");
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(crate::credential::NullStore))
+                .unwrap();
+        assert_eq!(manager.import_json(LEGACY_IMPORT).unwrap(), 3);
+        let all = manager.get_all().unwrap();
+        assert_eq!(type_of(&all.connections, "Legacy"), "plugin:beta:k8s");
+        assert_eq!(type_of(&all.connections, "Gone"), "mqtt");
+        assert_eq!(type_of(&all.connections, "Builtin"), "local");
+    }
+
+    #[test]
+    fn import_encrypted_json_resolves_legacy_plugin_type_ids() {
+        use crate::connection::plugin_type_ids::write_backend_plugin_manifest;
+        let dir = tempfile::tempdir().unwrap();
+        write_backend_plugin_manifest(dir.path(), "beta", "k8s");
+        let manager =
+            ConnectionManager::new_for_test(dir.path(), Arc::new(crate::credential::NullStore))
+                .unwrap();
+        let result = manager.import_encrypted_json(LEGACY_IMPORT, None).unwrap();
+        assert_eq!(result.connections_imported, 3);
+        let all = manager.get_all().unwrap();
+        assert_eq!(type_of(&all.connections, "Legacy"), "plugin:beta:k8s");
+        assert_eq!(type_of(&all.connections, "Gone"), "mqtt");
     }
 }

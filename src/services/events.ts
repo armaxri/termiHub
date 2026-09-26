@@ -8,6 +8,10 @@ import { CredentialStoreStatusInfo } from "@/types/credential";
 import { ServerState } from "@/types/embeddedServer";
 import { XServerConsentRequest, XServerProgress } from "@/types/xserver";
 import { SshHostKeyPromptPayload } from "@/types/sshHostKey";
+import type {
+  SshKeyboardInteractivePromptClosedPayload,
+  SshKeyboardInteractivePromptPayload,
+} from "@/types/sshKeyboardInteractive";
 import type { TransferProgress } from "@/services/api";
 import type {
   RemoteDesktopFramePayload,
@@ -140,6 +144,38 @@ export async function onSshHostKeyPrompt(
   });
 }
 
+/**
+ * Subscribe to SSH keyboard-interactive (OTP / 2FA / PAM) prompts (#3371). The
+ * global `SshKeyboardInteractivePrompt` dialog collects the answers and replies
+ * via `sshKeyboardInteractiveRespond`.
+ */
+export async function onSshKeyboardInteractivePrompt(
+  callback: (payload: SshKeyboardInteractivePromptPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SshKeyboardInteractivePromptPayload>(
+    "ssh-keyboard-interactive-prompt",
+    (event) => {
+      callback(event.payload);
+    }
+  );
+}
+
+/**
+ * Subscribe to "prompt no longer awaited" notices for keyboard-interactive
+ * prompts (#3371) — the connect was cancelled or timed out, so the dialog for
+ * that `prompt_id` must close.
+ */
+export async function onSshKeyboardInteractivePromptClosed(
+  callback: (payload: SshKeyboardInteractivePromptClosedPayload) => void
+): Promise<UnlistenFn> {
+  return await listen<SshKeyboardInteractivePromptClosedPayload>(
+    "ssh-keyboard-interactive-prompt-closed",
+    (event) => {
+      callback(event.payload);
+    }
+  );
+}
+
 /** Subscribe to terminal exit events */
 export async function onTerminalExit(
   callback: (sessionId: string, exitCode: number | null) => void
@@ -159,6 +195,17 @@ export async function onTerminalExit(
  */
 export async function onSessionOwnershipChanged(callback: () => void): Promise<UnlistenFn> {
   return await listen("session-ownership-changed", () => callback());
+}
+
+/**
+ * Listen for backend `plugin-changed` events: the installed-plugin set or a
+ * plugin's state changed (install / uninstall / enable / disable, or a native
+ * plugin trust change — #3296). Fires with no payload; the listener re-fetches
+ * the plugin list so derived UI (e.g. the sidebar's missing-plugin marker,
+ * #3344) updates live.
+ */
+export async function onPluginsChanged(callback: () => void): Promise<UnlistenFn> {
+  return await listen("plugin-changed", () => callback());
 }
 
 /** Payload for {@link onSessionOwnershipSuperseded} (SM-026). */

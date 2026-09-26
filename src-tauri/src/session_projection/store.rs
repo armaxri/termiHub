@@ -12,13 +12,26 @@
 //! # Shared region — Open Design Decision #4
 //!
 //! The real sessions already live backend-side and are shared infrastructure
-//! (like SSH tunnels, [`crate::tunnel::projection`]): a session's
-//! connection/lifecycle status is a property of the session itself, not of a
-//! viewing client, so two clients observing the same session see the same
-//! status. The region is therefore a single **shared** `session-lifecycle`
-//! region, mirroring the tunnels pilot. Per-client presentation affordances (a
-//! dismissed disconnect overlay, browsing scrollback in "view mode") are *not*
-//! lifecycle and stay a frontend concern under partial projection.
+//! (like SSH tunnels, [`crate::tunnel::projection`]). The region is a single
+//! **shared** `session-lifecycle` region, mirroring the tunnels pilot, so every
+//! window of **this desktop** observing a tab sees the same status. Per-client
+//! presentation affordances (a dismissed disconnect overlay, browsing scrollback
+//! in "view mode") are *not* lifecycle and stay a frontend concern under partial
+//! projection.
+//!
+//! # Keyed per tab, single-attach across desktops (SM-003)
+//!
+//! The region is keyed by the frontend **tab id**, which is per desktop — it is
+//! *not* a cross-desktop view of a daemon session. Two desktops attached to the
+//! same persistent agent session each hold their own entry, and they are **not**
+//! meant to converge on one status: the maintainer decision (2026-09-26) is
+//! **single-attach** — only one desktop controls a daemon session at a time. When
+//! another desktop takes it over, this desktop's entry folds the explicit
+//! [`SessionStatus::Evicted`] state ("taken over by another desktop") via
+//! [`SessionLifecycleStore::evicted`], which no automatic transition leaves (an
+//! auto-reconnect would re-take control and ping-pong ownership); only an
+//! explicit Reclaim ([`SessionLifecycleStore::reclaimed`]), a fresh user connect,
+//! a user disconnect or closing the tab does.
 //!
 //! # Authoritative — drives the live UI
 //!
@@ -275,6 +288,12 @@ impl SessionLifecycleStore {
     /// engine a `Success` so the attempt counter resets.
     pub fn connected(&self, session_id: &str) {
         let mut inner = self.lock();
+        // SM-003: an evicted tab is resolved only by an explicit Reclaim
+        // ([`reclaimed`](Self::reclaimed)); a stray `connected` (e.g. an agent
+        // recovery resolve) must not silently re-claim it.
+        if is_evicted(&inner, session_id) {
+            return;
+        }
         inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
         // Only the engine's Connecting sub-phase accepts Success; from a plain
@@ -303,6 +322,11 @@ impl SessionLifecycleStore {
     /// with the message; the user may retry.
     pub fn connect_failed(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        // SM-003: an automatic failure fold (e.g. the agent transport giving up)
+        // never overwrites Evicted — control belongs to the other desktop.
+        if is_evicted(&inner, session_id) {
+            return;
+        }
         inner.dirty.insert(session_id.to_string());
         // No-op for an unknown/removed session (SM-006): the initial connect always
         // folds `connect` first (`commands::session`), so a late `connectFailed`
@@ -405,6 +429,11 @@ impl SessionLifecycleStore {
     /// disconnect overlay and the resilient-reconnect loop are distinct).
     pub fn dropped(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        // SM-003: a drop of an evicted tab is not a reason to reconnect — a
+        // follow-up `reconnect` would re-take control from the other desktop.
+        if is_evicted(&inner, session_id) {
+            return;
+        }
         inner.dirty.insert(session_id.to_string());
         // No-op for an unknown/removed session (SM-006): a drop only fires for a
         // tab that already folded `connect`, so a late `dropped` arriving after the
@@ -427,6 +456,12 @@ impl SessionLifecycleStore {
     /// no-op in the engine (the loop is already running).
     pub fn reconnect(&self, session_id: &str) {
         let mut inner = self.lock();
+        // SM-003: Evicted is terminal until user action. Arming the reconnect
+        // loop would re-attach (a takeover) and ping-pong control between two
+        // desktops, so the loop never starts from Evicted.
+        if is_evicted(&inner, session_id) {
+            return;
+        }
         inner.dirty.insert(session_id.to_string());
         let current = reconnect_of(&inner, session_id);
         let reconnect = inner.reconnect_event(current, ReconnectEvent::Drop);
@@ -478,6 +513,11 @@ impl SessionLifecycleStore {
     /// left stuck reconnecting. Creates the entry lazily (mirrors the other folds).
     pub fn agent_transport_reconnecting(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        // SM-003: an evicted tab stays Evicted across a transport break — the
+        // session is controlled by another desktop, not reconnecting here.
+        if is_evicted(&inner, session_id) {
+            return;
+        }
         inner.dirty.insert(session_id.to_string());
         let entry = inner
             .sessions
@@ -677,6 +717,11 @@ impl SessionLifecycleStore {
     /// never needs to create the entry and must not resurrect a removed one.
     pub fn session_lost(&self, session_id: &str, error: Option<String>) {
         let mut inner = self.lock();
+        // SM-003: an evicted session is alive (held by another desktop), so a
+        // "not recovered here" resolve must not relabel it as lost.
+        if is_evicted(&inner, session_id) {
+            return;
+        }
         inner.dirty.insert(session_id.to_string());
         // No-op for an unknown/removed session (SM-006): session-lost only resolves
         // a tab the store is already tracking (its callers guard on the live
@@ -691,6 +736,51 @@ impl SessionLifecycleStore {
             // The live agent session could not be recovered; there is no backend
             // session to re-attach to (#2512).
             entry.backend_session_id = None;
+        }
+    }
+
+    /// Another desktop (or window) **took over** this tab's session (SM-003,
+    /// single-attach). Folds the explicit [`SessionStatus::Evicted`] state with
+    /// `error` as the human-readable "taken over by …" note. The session is alive
+    /// elsewhere, so the re-attach id is **kept** (a Reclaim re-takes the same
+    /// session) and the reconnect engine is reset to idle — the backend timer arms
+    /// only on `Waiting`, so no redrive can start. `Evicted` is then sticky against
+    /// every automatic fold (`connected` / `dropped` / `reconnect` /
+    /// `agentTransportReconnecting` / `sessionLost` / `connectFailed`); only
+    /// [`reclaimed`](Self::reclaimed), a fresh [`connect`](Self::connect), a user
+    /// [`disconnect`](Self::disconnect) / [`cancel_reconnect`](Self::cancel_reconnect)
+    /// or [`remove`](Self::remove) leave it. A no-op for an unknown/removed session
+    /// (SM-006): an eviction only resolves a tab the store already tracks.
+    pub fn evicted(&self, session_id: &str, error: Option<String>) {
+        let mut inner = self.lock();
+        inner.dirty.insert(session_id.to_string());
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::Evicted;
+            entry.reconnect = INITIAL_RECONNECT_STATE;
+            entry.end_reason = None;
+            entry.error = error;
+            entry.reconnect_error = None;
+        }
+    }
+
+    /// The user **reclaimed** an evicted session (SM-003): the explicit takeover
+    /// attach succeeded, so this tab controls the session again (and the other
+    /// desktop is evicted in turn). Settles `Connected`. Only leaves the `Evicted`
+    /// state — a no-op for any other status (a stale reclaim result for a tab the
+    /// user meanwhile closed, disconnected or reconnected fresh must not resurrect
+    /// it) and for an unknown session (SM-006).
+    pub fn reclaimed(&self, session_id: &str) {
+        let mut inner = self.lock();
+        if !is_evicted(&inner, session_id) {
+            return;
+        }
+        inner.dirty.insert(session_id.to_string());
+        if let Some(entry) = inner.sessions.get_mut(session_id) {
+            entry.status = SessionStatus::Connected;
+            entry.reconnect = INITIAL_RECONNECT_STATE;
+            entry.end_reason = None;
+            entry.error = None;
+            entry.reconnect_error = None;
         }
     }
 
@@ -766,6 +856,14 @@ impl SessionLifecycleStore {
         // panicked mid-mutation (a bug) — recover rather than cascade.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
     }
+}
+
+/// Whether a session is in the sticky [`SessionStatus::Evicted`] state (SM-003).
+fn is_evicted(inner: &Inner, session_id: &str) -> bool {
+    inner
+        .sessions
+        .get(session_id)
+        .is_some_and(|s| s.status == SessionStatus::Evicted)
 }
 
 /// The current reconnect-engine state for a session, or `Idle` when unknown.

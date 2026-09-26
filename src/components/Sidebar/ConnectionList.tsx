@@ -29,6 +29,7 @@ import {
   FileSpreadsheet,
   Link,
   Square,
+  Puzzle,
 } from "lucide-react";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "@/store/appStore";
@@ -49,6 +50,7 @@ import { useTreeSelection } from "@/hooks/useTreeSelection";
 import { useRovingListNav } from "@/hooks/useRovingListNav";
 import { computeVisibleTreeNodes, type VisibleTreeNode } from "@/utils/computeVisibleTreeNodes";
 import { experimentalTypeIds } from "@/utils/experimentalTypes";
+import { pluginConnectionIssue } from "@/utils/pluginConnectionTypes";
 import { filterConnectionTree, type ConnectionTreeFilter } from "@/utils/connectionSearch";
 import { readConfigString } from "@/utils/connectionConfigFields";
 import { agentNameMatchesQuery, agentDefinitionMatchesQuery } from "@/utils/agentTreeSearch";
@@ -382,6 +384,26 @@ function ConnectionItem({
     void stopPersistentSession(connection.id);
   }, [stopPersistentSession, connection.id]);
 
+  // Missing/unavailable plugin marker (#3344). Derived from the backend plugin
+  // manager's list, which the store re-fetches on every plugin change, so the
+  // marker clears live once the plugin is installed, enabled or trusted. Hidden
+  // until the list has loaded once (an empty list then means "unknown").
+  const plugins = useAppStore((s) => s.plugins);
+  const pluginsLoaded = useAppStore((s) => s.pluginsLoaded);
+  const selectPlugin = useAppStore((s) => s.selectPlugin);
+  const setSidebarView = useAppStore((s) => s.setSidebarView);
+  const pluginIssue = useMemo(
+    () => (pluginsLoaded ? pluginConnectionIssue(connection.config.type, plugins) : null),
+    [pluginsLoaded, plugins, connection.config.type]
+  );
+  // Shortcut to fix it: an installed plugin opens its detail tab (enable /
+  // trust); a missing one opens the Plugins sidebar to install it.
+  const handleManagePlugin = useCallback(() => {
+    if (!pluginIssue) return;
+    if (pluginIssue.installed) selectPlugin(pluginIssue.pluginId);
+    else setSidebarView("plugins");
+  }, [pluginIssue, selectPlugin, setSidebarView]);
+
   const jumpHosts = getJumpHosts(connection.config);
   const [showConnectionPath, setShowConnectionPath] = useState(false);
 
@@ -407,7 +429,12 @@ function ConnectionItem({
               selected={isSelected}
               persistent={persistentCapable}
               reorderOver={isConnectionReorderOver}
-              title={`Double-click to connect: ${connection.name}`}
+              unavailable={pluginIssue !== null}
+              title={
+                pluginIssue
+                  ? `${connection.name}: ${pluginIssue.message}`
+                  : `Double-click to connect: ${connection.name}`
+              }
               testId={`connection-item-${connection.id}`}
               dragAttributes={attributes}
               dragListeners={listeners}
@@ -418,6 +445,19 @@ function ConnectionItem({
             >
               <ConnectionIcon config={connection.config} customIcon={connection.icon} size={16} />
               <span className="connection-tree__label">{connection.name}</span>
+              {pluginIssue && (
+                <Tooltip content={pluginIssue.message} side="top">
+                  <span
+                    className="connection-tree__plugin-missing"
+                    role="img"
+                    aria-label={pluginIssue.message}
+                    data-testid={`connection-plugin-missing-${connection.id}`}
+                    data-reason={pluginIssue.reason}
+                  >
+                    <Puzzle size={12} aria-hidden="true" />
+                  </span>
+                </Tooltip>
+              )}
               {jumpHosts.length > 0 && (
                 <span
                   className="connection-tree__jump-badge"
@@ -547,6 +587,18 @@ function ConnectionItem({
             >
               <Play size={14} /> Connect
             </ContextMenu.Item>
+            {pluginIssue && (
+              <ContextMenu.Item
+                className="context-menu__item"
+                onSelect={handleManagePlugin}
+                data-testid="context-connection-manage-plugin"
+              >
+                <Puzzle size={14} />{" "}
+                {pluginIssue.installed
+                  ? `Manage Plugin '${pluginIssue.pluginName}'`
+                  : `Install Plugin '${pluginIssue.pluginId}'…`}
+              </ContextMenu.Item>
+            )}
             {!!readConfigString(connection.config, "host") && (
               <ContextMenu.Item
                 className="context-menu__item"

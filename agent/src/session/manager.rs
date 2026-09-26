@@ -27,7 +27,8 @@ use termihub_core::session::pump::{run_output_pump, PumpEnd, PumpOptions};
 use termihub_core::session::traits::OutputSink;
 
 use crate::daemon::client::{
-    DaemonClient, DaemonWriterHandle, ExitHook, ExitHookFuture, OwnedByLivePeer,
+    evicted_notification, DaemonClient, DaemonWriterHandle, ExitHook, ExitHookFuture,
+    OwnedByLivePeer, EVICTED_REASON_HELD_BY_PEER,
 };
 use crate::daemon::transport::{endpoint_alive, remove_session_files, session_endpoint};
 use crate::state::persistence::{AgentState, PendingUpdate, PersistedSession};
@@ -99,6 +100,14 @@ pub trait SessionManagerApi: Send + Sync + 'static {
 
     /// Attach a client to an existing session.
     async fn attach(&self, session_id: &str) -> Result<(), String>;
+
+    /// Explicit **Reclaim** (SM-003, single-attach): take control of a session
+    /// even when this worker does not currently hold it, evicting whichever
+    /// worker (another desktop) does. Defaults to a plain [`attach`](Self::attach)
+    /// so test doubles need not implement it.
+    async fn reclaim(&self, session_id: &str) -> Result<(), String> {
+        self.attach(session_id).await
+    }
 
     /// Detach the client from a session.
     async fn detach(&self, session_id: &str) -> Result<(), String>;
@@ -430,6 +439,10 @@ where
 /// Default persistent session ring-buffer size (1 MiB); derived from the shared
 /// core [`DEFAULT_BUFFER_CAPACITY`] so there is one source of truth (DUP-006).
 const DEFAULT_PERSISTENT_BUFFER_SIZE: usize = DEFAULT_BUFFER_CAPACITY;
+
+/// Error returned for input/resize on a session another desktop took over
+/// (SM-003, single-attach) until the user explicitly reclaims it.
+pub const SESSION_TAKEN_OVER: &str = "Session was taken over by another desktop";
 
 /// In-memory session manager.
 ///
@@ -992,6 +1005,74 @@ impl SessionManager {
             .map_err(|e| e.to_string())
     }
 
+    /// Explicit **Reclaim** (SM-003, single-attach): take control of a session
+    /// back from whichever worker (another desktop) currently holds it.
+    ///
+    /// - Held by this worker (e.g. it was evicted by a takeover and is still in the
+    ///   map): a plain [`attach`](Self::attach) — the daemon client reconnects with
+    ///   takeover intent, evicting the other worker, which receives
+    ///   `connection.evicted` in turn.
+    /// - Not held by this worker (its start-up recovery was refused because a
+    ///   live peer owned it, AGT-015): adopt it from the shared per-user
+    ///   `state.json` with a **takeover** connect and register it here.
+    ///
+    /// Never called automatically — only on an explicit user Reclaim, so control
+    /// cannot ping-pong between two desktops.
+    pub async fn reclaim(&self, session_id: &str) -> Result<(), String> {
+        if self.sessions.lock().await.contains_key(session_id) {
+            return self.attach(session_id).await;
+        }
+
+        let persisted = {
+            let state = self.state.lock().await;
+            state.sessions.get(session_id).cloned()
+        }
+        .ok_or_else(|| "Session not found".to_string())?;
+        let endpoint = persisted
+            .daemon_socket
+            .clone()
+            .ok_or_else(|| "Session not found".to_string())?;
+        if !endpoint_alive(&endpoint) {
+            return Err("Session not found".to_string());
+        }
+
+        // A takeover connect (not the recovery intent): the daemon evicts the
+        // worker that currently holds the session.
+        let client = DaemonClient::connect(
+            session_id.to_string(),
+            endpoint,
+            self.notification_tx.clone(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        if let Some(hook) = self.deferred_update_exit_hook() {
+            client.set_exit_hook(hook);
+        }
+
+        let created_at = chrono::DateTime::parse_from_rfc3339(&persisted.created_at)
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap_or_else(|_| Utc::now());
+        let info = SessionInfo {
+            id: session_id.to_string(),
+            title: persisted.title.clone(),
+            type_id: persisted.type_id.clone(),
+            status: SessionStatus::Running,
+            settings: persisted.settings.clone(),
+            created_at,
+            last_activity: Utc::now(),
+            attached: true,
+            backend: SessionBackend::Daemon(client),
+            definition_id: persisted.definition_id.clone(),
+        };
+        let mut sessions = self.sessions.lock().await;
+        // A concurrent reclaim of the same id may have registered it meanwhile.
+        // This connect is the later takeover (current on the daemon), so it
+        // replaces that entry; dropping the loser only closes its own connection.
+        sessions.insert(session_id.to_string(), info);
+        info!("Reclaimed session {session_id} from another connection (SM-003)");
+        Ok(())
+    }
+
     /// Detach the client from a session.
     pub async fn detach(&self, session_id: &str) -> Result<(), String> {
         let mut sessions = self.sessions.lock().await;
@@ -1095,6 +1176,14 @@ impl SessionManager {
                         "Session {id} is held by a live connection on this host; \
                          leaving it for its owner (AGT-015)"
                     );
+                    // SM-003: tell the desktop the session is controlled elsewhere
+                    // so a tab that was attached to it folds an explicit `Evicted`
+                    // state (with Reclaim) rather than "session lost" — the process
+                    // is alive, just owned by another desktop. A desktop with no tab
+                    // for this session ignores it.
+                    let _ = self
+                        .notification_tx
+                        .send(evicted_notification(id, EVICTED_REASON_HELD_BY_PEER));
                     continue;
                 }
                 Err(e) => {
@@ -1537,6 +1626,10 @@ impl SessionManagerApi for SessionManager {
         SessionManager::attach(self, session_id).await
     }
 
+    async fn reclaim(&self, session_id: &str) -> Result<(), String> {
+        SessionManager::reclaim(self, session_id).await
+    }
+
     async fn detach(&self, session_id: &str) -> Result<(), String> {
         SessionManager::detach(self, session_id).await
     }
@@ -1554,6 +1647,11 @@ impl SessionManagerApi for SessionManager {
                 .ok_or_else(|| "Session not found".to_string())?;
             info.last_activity = Utc::now();
             match &info.backend {
+                // SM-003: never write to a session another desktop took over — its
+                // control belongs to the other side until an explicit Reclaim.
+                SessionBackend::Daemon(client) if client.is_evicted() => {
+                    return Err(SESSION_TAKEN_OVER.to_string());
+                }
                 SessionBackend::Daemon(client) => {
                     daemon_handle = Some(client.writer_handle());
                     sync_result = None;
@@ -1592,6 +1690,11 @@ impl SessionManagerApi for SessionManager {
                 .ok_or_else(|| "Session not found".to_string())?;
             info.last_activity = Utc::now();
             match &info.backend {
+                // SM-003: never write to a session another desktop took over — its
+                // control belongs to the other side until an explicit Reclaim.
+                SessionBackend::Daemon(client) if client.is_evicted() => {
+                    return Err(SESSION_TAKEN_OVER.to_string());
+                }
                 SessionBackend::Daemon(client) => {
                     daemon_handle = Some(client.writer_handle());
                     sync_result = None;
@@ -1687,6 +1790,170 @@ mod tests {
 
     fn test_registry() -> Arc<ConnectionTypeRegistry> {
         Arc::new(crate::registry::build_registry())
+    }
+
+    /// SM-003 (single-attach): eviction + explicit Reclaim through the manager,
+    /// against a real session-daemon loop.
+    mod single_attach {
+        use super::*;
+        use crate::daemon::process::tests::recovery_guard::spawn_daemon;
+        use crate::protocol::methods::CONNECTION_EVICTED;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct NoopApplier;
+        impl UpdateApplier for NoopApplier {
+            fn apply(&self, _pending: &PendingUpdate) -> anyhow::Result<()> {
+                Ok(())
+            }
+        }
+
+        type Rx =
+            tokio::sync::mpsc::UnboundedReceiver<crate::protocol::messages::JsonRpcNotification>;
+
+        fn unique(tag: &str) -> String {
+            static COUNTER: AtomicU32 = AtomicU32::new(0);
+            format!(
+                "sm003-{tag}-{}-{}",
+                std::process::id(),
+                COUNTER.fetch_add(1, Ordering::Relaxed)
+            )
+        }
+
+        /// A manager whose shared `state.json` lists `id` at `endpoint`, plus the
+        /// receiver for its desktop-bound notifications.
+        fn manager_with_session(
+            dir: &std::path::Path,
+            id: &str,
+            endpoint: &str,
+        ) -> (SessionManager, Rx) {
+            let state_path = dir.join("state.json");
+            let mut seeded = AgentState::default();
+            seeded.sessions.insert(
+                id.to_string(),
+                PersistedSession {
+                    type_id: "local".to_string(),
+                    title: "t".to_string(),
+                    created_at: Utc::now().to_rfc3339(),
+                    daemon_socket: Some(endpoint.to_string()),
+                    settings: serde_json::json!({}),
+                    definition_id: None,
+                },
+            );
+            seeded.save_to(&state_path);
+            let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+            let mgr = SessionManager::with_test_deps(
+                tx,
+                test_registry(),
+                Arc::new(SystemDaemonLauncher),
+                state_path,
+                Arc::new(NoopApplier),
+            );
+            (mgr, rx)
+        }
+
+        async fn next_evicted(rx: &mut Rx) -> serde_json::Value {
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                loop {
+                    let n = rx.recv().await.expect("notification channel open");
+                    if n.method == CONNECTION_EVICTED {
+                        return n.params;
+                    }
+                }
+            })
+            .await
+            .expect("connection.evicted must be reported")
+        }
+
+        async fn eventually(mut pred: impl FnMut() -> bool) -> bool {
+            for _ in 0..200 {
+                if pred() {
+                    return true;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            pred()
+        }
+
+        /// A worker whose start-up recovery finds the session held by a live peer
+        /// reports `connection.evicted` (`heldByPeer`) rather than silently dropping
+        /// it, and an explicit Reclaim adopts it — evicting the peer.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn held_by_peer_is_reported_and_reclaim_adopts_it() {
+            let id = unique("held");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            // Another desktop's worker holds the session.
+            let peer = DaemonClient::connect(id.clone(), endpoint.clone(), test_notification_tx())
+                .await
+                .expect("peer attaches");
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, mut rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            let recovered = mgr.recover_sessions().await;
+            assert!(
+                !recovered.contains(&id),
+                "a peer-held session is not recovered"
+            );
+            let params = next_evicted(&mut rx).await;
+            assert_eq!(params["session_id"], id.as_str());
+            assert_eq!(params["reason"], "heldByPeer");
+
+            // A plain attach cannot take it (this worker does not hold it)...
+            assert!(mgr.attach(&id).await.is_err());
+            // ...but an explicit Reclaim does, evicting the peer.
+            mgr.reclaim(&id).await.expect("reclaim adopts the session");
+            assert!(mgr.list().await.iter().any(|s| s.id == id));
+            assert!(
+                eventually(|| peer.is_evicted()).await,
+                "the peer is evicted by the reclaim"
+            );
+            SessionManagerApi::write_input(&mgr, &id, b"echo\n")
+                .await
+                .expect("the reclaiming worker controls the session");
+        }
+
+        /// While evicted, the worker refuses input (it never writes to a session
+        /// another desktop controls) and keeps the session registered; Reclaim
+        /// restores control.
+        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+        async fn evicted_worker_refuses_input_until_reclaim() {
+            let id = unique("evict");
+            let endpoint = crate::daemon::transport::session_endpoint(&id);
+            let _daemon = spawn_daemon(&endpoint).await;
+
+            let tmp = tempfile::tempdir().unwrap();
+            let (mgr, mut rx) = manager_with_session(tmp.path(), &id, &endpoint);
+            mgr.reclaim(&id).await.expect("worker A takes the session");
+
+            // Another desktop takes over.
+            let other = DaemonClient::connect(id.clone(), endpoint.clone(), test_notification_tx())
+                .await
+                .expect("worker B takes over");
+            let params = next_evicted(&mut rx).await;
+            assert_eq!(params["reason"], "takeover");
+
+            let err = SessionManagerApi::write_input(&mgr, &id, b"x")
+                .await
+                .expect_err("an evicted worker must refuse input");
+            assert_eq!(err, SESSION_TAKEN_OVER);
+            let listed = mgr.list().await;
+            let entry = listed
+                .iter()
+                .find(|s| s.id == id)
+                .expect("still registered");
+            assert_eq!(
+                entry.status,
+                SessionStatus::Running,
+                "an eviction is not an exit"
+            );
+
+            mgr.reclaim(&id).await.expect("Reclaim");
+            assert!(eventually(|| other.is_evicted()).await);
+            SessionManagerApi::write_input(&mgr, &id, b"x")
+                .await
+                .expect("control restored after Reclaim");
+        }
     }
 
     // ── AGT-019: dead-session socket/log reclaim during recovery ─────────

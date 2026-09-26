@@ -84,7 +84,13 @@ export type ProjectedSessionStatus =
    * an explicit "session lost" notice + a manual "start new shell" action rather
    * than silently minting a replacement shell (#2512). Twin of Rust
    * `SessionStatus::SessionLost`. */
-  | "sessionLost";
+  | "sessionLost"
+  /** The session is **alive**, but another desktop (or window) took control of it
+   * (SM-003, maintainer decision: single-attach — only one desktop controls a
+   * session at a time). Terminal until user action: nothing auto-reconnects out of
+   * it (that would ping-pong control); the overlay offers an explicit **Reclaim**
+   * and no input is sent while evicted. Twin of Rust `SessionStatus::Evicted`. */
+  | "evicted";
 
 /** Why a session left `connected` (twin of Rust `EndReason`). `"normal"` is a clean
  * process exit (graceful logout / `exit 0`), folded server-side by the backend
@@ -817,6 +823,9 @@ export type BackendAgentReconnectOutcome =
    * recovered (#2512): the tab folds to the explicit session-lost notice with a
    * manual "start new shell" action — never a silent replacement shell. */
   | { kind: "sessionLost"; error?: string }
+  /** Another desktop took the session over mid-reconnect (SM-003): the tab rests
+   * in the explicit `evicted` state awaiting a user Reclaim — drive nothing. */
+  | { kind: "evicted" }
   /** The effect was torn down (`isCanceled`) — abandon the wait, drive nothing. */
   | { kind: "canceled" };
 
@@ -866,6 +875,8 @@ export function waitForBackendAgentReconnectOutcome(
     // (#2512): a distinct terminal outcome from a plain give-up — the frontend
     // renders the explicit session-lost notice, never a silent new shell.
     if (life.status === "sessionLost") return { kind: "sessionLost", error: life.error };
+    // Taken over by another desktop (SM-003): terminal until the user reclaims.
+    if (life.status === "evicted") return { kind: "evicted" };
     if (
       life.reconnect.phase === "gaveup" ||
       life.status === "failed" ||
@@ -921,6 +932,34 @@ export function waitForBackendAgentReconnectOutcome(
     signal.addEventListener("abort", onAbort);
     cleanups.push(() => signal.removeEventListener("abort", onAbort));
   });
+}
+
+/**
+ * Whether the tab's session was **taken over** by another desktop/window (SM-003,
+ * single-attach): the projected status is the sticky `evicted` state. Drives the
+ * "Taken over" overlay + Reclaim and gates terminal input off.
+ */
+export function effectiveEvicted(projected: ProjectedSessionLifecycle | undefined): boolean {
+  return projected?.status === "evicted";
+}
+
+/** Effective `tabId → true` map of evicted tabs (SM-003), for the list consumers. */
+export function effectiveEvictedMap(
+  view: Record<string, ProjectedSessionLifecycle>
+): Record<string, boolean> {
+  const out: Record<string, boolean> = {};
+  for (const [id, life] of Object.entries(view)) {
+    if (effectiveEvicted(life)) out[id] = true;
+  }
+  return out;
+}
+
+/**
+ * Whether terminal input for `tabId` must be dropped because another desktop
+ * controls the session (SM-003). Reads the live projected region.
+ */
+export function isTabEvicted(tabId: string): boolean {
+  return effectiveEvicted(currentSessionView()[tabId]);
 }
 
 /**

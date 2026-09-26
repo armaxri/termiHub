@@ -79,6 +79,15 @@ pub enum SessionError {
     #[error("Authentication failed")]
     AuthFailed,
 
+    /// The user dismissed an interactive authentication prompt (SSH
+    /// keyboard-interactive / OTP, #3371).
+    ///
+    /// Distinct from [`AuthFailed`](Self::AuthFailed): nothing was rejected, so
+    /// consumers must **not** treat it as a credential failure (no stored
+    /// credential discard, no "authentication failed" error state).
+    #[error("Authentication cancelled")]
+    AuthCancelled,
+
     /// The session configuration is invalid.
     #[error("Invalid config: {0}")]
     InvalidConfig(String),
@@ -157,6 +166,15 @@ mod tests {
             SessionError::SpawnFailed("Password auth failed: timeout".into()),
             SessionError::AuthFailed
         ));
+    }
+
+    /// A dismissed interactive prompt is its own discriminant, never an auth
+    /// failure (#3371).
+    #[test]
+    fn auth_cancelled_is_distinct_from_auth_failed() {
+        let err = SessionError::AuthCancelled;
+        assert_eq!(err.to_string(), "Authentication cancelled");
+        assert!(!matches!(err, SessionError::AuthFailed));
     }
 
     /// The typed connection-failure variant renders a stable human message and

@@ -572,6 +572,8 @@ pub fn run() -> anyhow::Result<()> {
             commands::ssh_host_key::ssh_host_key_decision,
             commands::ssh_host_key::ssh_trust_list,
             commands::ssh_host_key::ssh_trust_forget,
+            // SSH keyboard-interactive / OTP prompts (#3371)
+            commands::ssh_host_key::ssh_keyboard_interactive_respond,
             // Stateless-UI projection substrate (#2149)
             commands::projection::intent_dispatch,
             commands::projection::projection_subscribe,
@@ -610,6 +612,7 @@ pub fn run() -> anyhow::Result<()> {
             commands::session::set_session_line_ending,
             commands::session::resize_terminal,
             commands::session::close_terminal,
+            commands::session::reclaim_session,
             commands::session::list_local_sessions,
             commands::session::list_available_shells,
             commands::session::get_default_shell,

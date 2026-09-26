@@ -596,6 +596,40 @@ Attach to a session to receive its output stream. The agent begins sending `conn
 
 After a successful attach, the agent immediately begins streaming output via `connection.output` notifications.
 
+| Param        | Type       | Description                                                                                    |
+| ------------ | ---------- | ---------------------------------------------------------------------------------------------- |
+| `session_id` | `string`   | Session UUID                                                                                   |
+| `takeover`   | `boolean?` | Explicit **Reclaim** (SM-003). Default `false`; omitted from the wire when `false`. See below. |
+
+#### Single-attach and Reclaim (SM-003)
+
+A persistent (daemon-backed) session is **single-attach**: only one desktop controls it at a time
+(maintainer decision, 2026-09-26). Every attach connects to the session daemon with _takeover_
+intent, so a second desktop attaching **evicts** the first. The evicted desktop's agent worker
+receives a daemon `MSG_EVICTED` frame, stops writing to the session (input/resize now fail with
+"Session was taken over by another desktop") and sends the desktop a
+[`connection.evicted`](#connectionevicted) notification. The session stays alive and listed.
+
+`takeover: true` is the desktop's explicit **Reclaim**: it takes control back even when this worker
+does not currently hold the session (for example, its start-up recovery found the session owned by
+another live worker), adopting it from the shared per-user `state.json` and evicting whichever
+worker holds it. The desktop sends it **only** on a user action — never automatically, so control
+cannot ping-pong between desktops.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.attach",
+  "params": { "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d", "takeover": true },
+  "id": 5
+}
+```
+
+**Compatibility:** the field is append-only. An agent that predates it ignores it, so a Reclaim
+of a session that agent does not hold fails with `-32001` (the desktop keeps the tab in its
+evicted state and reports the error). A pre-SM-003 daemon never sends `MSG_EVICTED`; the worker
+then sees the historical EOF.
+
 **Errors:**
 
 - `-32001` Session not found
@@ -2340,6 +2374,37 @@ A session's process has exited.
 | `session_id` | `string`   | Exited session UUID                                               |
 | `exit_code`  | `integer?` | Exit code if available (`null` for signals or serial disconnects) |
 
+### `connection.evicted`
+
+Another desktop took control of a session this client was attached to (SM-003, single-attach).
+The session is **alive** — it is not an exit and not a disconnect. The desktop shows the tab as
+"Taken over by another desktop" with a **Reclaim** action ([`connection.attach`](#connectionattach)
+with `takeover: true`) and must not auto-reconnect it.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "connection.evicted",
+  "params": {
+    "session_id": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "reason": "takeover"
+  }
+}
+```
+
+| Param        | Type     | Description                                                                                                                                                                         |
+| ------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session_id` | `string` | Affected session UUID                                                                                                                                                               |
+| `reason`     | `string` | `takeover` — another worker attached and the daemon evicted this one; `heldByPeer` — at worker start-up, recovery found the session owned by another live worker (it is not listed) |
+
+Append-only: an older desktop ignores the unknown notification. `heldByPeer` notifications are
+emitted during start-up recovery, before `initialize` is answered; a desktop with no tab for the
+session ignores them.
+
+**Session-daemon frame:** the daemon signals the eviction to the incumbent worker with
+`MSG_EVICTED` (`0x86`, daemon → agent, empty payload), written immediately before it drops that
+connection. A pre-SM-003 worker logs the unknown frame type and then sees the same EOF as before.
+
 ### `connection.error`
 
 A session-level error that does not necessarily terminate the session.
@@ -2786,6 +2851,18 @@ that could reach the port had full agent access — which this handshake closes.
 - Serial port access requires appropriate group membership (e.g., `dialout` on Linux)
 - The SQLite database should be readable only by the agent user (`chmod 600`)
 - The agent MUST validate all input parameters (session IDs, config values, PTY sizes) before acting on them
+
+### Interactive SSH Authentication on the Agent
+
+When the **agent** authenticates an SSH connection itself (agent-hosted SSH
+sessions, `tunnel.start`'s `sshConfig`, remote monitoring), `authMethod` may be
+`"keyboard-interactive"` and the core SSH backend also falls back to
+keyboard-interactive after a refused password or a partial-success first factor
+(#3371). The agent has **no prompt round-trip to the desktop yet**, so it can
+only answer a round that consists of a single echo-off password prompt, using
+the configured `password`. Any other prompt (OTP / verification code) fails the
+connect with a clear "no prompt is available here" error rather than hanging.
+The prompt notification + response method is tracked in #3375.
 
 ### Threat Model
 

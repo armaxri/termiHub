@@ -61,6 +61,7 @@ import { RenameDialog } from "@/components/Terminal/RenameDialog";
 import { TerminalSearchBar } from "@/components/Terminal/TerminalSearchBar";
 import { TerminalConnectionOverlay } from "@/components/Terminal/TerminalConnectionOverlay";
 import { TerminalDisconnectOverlay } from "@/components/Terminal/TerminalDisconnectOverlay";
+import { TerminalEvictedOverlay } from "@/components/Terminal/TerminalEvictedOverlay";
 import { TerminalViewModeBanner } from "@/components/Terminal/TerminalViewModeBanner";
 import { TerminalReconnectPrompt } from "@/components/Terminal/TerminalReconnectPrompt";
 import { toast, Spinner } from "@/components/ui";
@@ -1162,7 +1163,8 @@ function LeafPanelView({ panel, setActivePanel, activeDragTab }: LeafPanelViewPr
  */
 export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: boolean }) {
   const slotRef = useRef<HTMLDivElement>(null);
-  const { getElement, focusTerminal, fitTerminal, parkingRef } = useTerminalRegistry();
+  const { getElement, focusTerminal, fitTerminal, parkingRef, clearTerminal } =
+    useTerminalRegistry();
   const tabColor = useAppStore((s) => s.tabColors[tabId]);
   const isViewMode = useAppStore((s) => s.terminalViewMode[tabId] ?? false);
   // Render cut (#2205 PR-A / #2204 / #2625): the reconnect flag and the exited
@@ -1172,6 +1174,9 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
   // #2625: the overlay/view-mode mount gate, derived purely from the region's
   // terminal statuses / `exit` metadata (the per-client slice was deleted).
   const isExited = lifecycle.exited;
+  // SM-003: another desktop/window took this session over — show the sticky
+  // "Taken over" overlay with Reclaim (it supersedes every disconnect variant).
+  const isEvicted = lifecycle.evicted;
   const isReconnectPromptVisible = useAppStore((s) => s.terminalReconnectPrompt[tabId] ?? false);
   // Agentless resilient reconnect (#1962): the backoff countdown overlay must
   // show even after the first attempt cleared the exited flag mid-loop.
@@ -1236,7 +1241,10 @@ export function TerminalSlot({ tabId, isVisible }: { tabId: string; isVisible: b
       className={`terminal-container ${isVisible ? "" : "terminal-container--hidden"}`}
       style={tabColor ? { border: `2px solid ${tabColor}` } : undefined}
     >
-      {(isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode)) && (
+      {isEvicted && (
+        <TerminalEvictedOverlay tabId={tabId} onBeforeReclaim={() => clearTerminal(tabId)} />
+      )}
+      {!isEvicted && (isReconnecting || isAutoReconnectWaiting || (isExited && !isViewMode)) && (
         <TerminalDisconnectOverlay tabId={tabId} />
       )}
       {isExited && isViewMode && (

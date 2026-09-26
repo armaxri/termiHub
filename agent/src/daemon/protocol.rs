@@ -67,6 +67,16 @@ pub const MSG_EXITED: u8 = 0x83;
 pub const MSG_ERROR: u8 = 0x84;
 /// Daemon → Agent: daemon is ready to receive input.
 pub const MSG_READY: u8 = 0x85;
+/// Daemon → Agent: this connection has been **evicted** — another worker (another
+/// desktop) attached with [`INTENT_TAKEOVER`] and now owns the session (SM-003,
+/// single-attach). Empty payload. Sent to the incumbent writer immediately before
+/// the daemon drops its connection, so the evicted worker can report an explicit
+/// "taken over" state to its desktop instead of an ambiguous EOF.
+///
+/// Append-only and backward compatible: a pre-SM-003 worker logs the unknown frame
+/// type and then observes the EOF exactly as before; a pre-SM-003 daemon never
+/// sends it, so a current worker falls back to the historical EOF handling.
+pub const MSG_EVICTED: u8 = 0x86;
 
 /// Maximum allowed frame payload size (16 MiB).
 const MAX_PAYLOAD_SIZE: u32 = 16 * 1024 * 1024;

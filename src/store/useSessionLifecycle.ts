@@ -36,6 +36,8 @@ import {
   effectiveDisconnectError,
   effectiveDisconnectErrorMap,
   effectiveExited,
+  effectiveEvicted,
+  effectiveEvictedMap,
   effectiveExitedMap,
   effectiveExitInfo,
   effectiveReconnecting,
@@ -135,6 +137,13 @@ export interface ProjectedSessionLifecycleSlice {
   /** The backend-supplied "why the session could not be recovered" message shown
    * in the session-lost notice, if any (#2512). `undefined` unless `sessionLost`. */
   sessionLostError: string | undefined;
+  /** True when another desktop/window took this session over (SM-003,
+   * single-attach): the overlay shows "Taken over" with a Reclaim action and
+   * terminal input is dropped. Sourced from the region's sticky `evicted` state. */
+  evicted: boolean;
+  /** The backend-supplied "taken over by …" note, if any. `undefined` unless
+   * `evicted`. */
+  evictedMessage: string | undefined;
   /** How the session ended (#2615): the exit cause + code the disconnect overlay
    * derives its heading / subheading wording from. Sourced purely from the
    * projected region's `exit` metadata (#2625). `undefined` when no exit recorded. */
@@ -202,6 +211,8 @@ export function useProjectedSessionLifecycle(tabId: string): ProjectedSessionLif
       reconnectTriggerError: effectiveReconnectTriggerError(p),
       sessionLost: lost,
       sessionLostError: lost ? p?.error : undefined,
+      evicted: effectiveEvicted(p),
+      evictedMessage: effectiveEvicted(p) ? p?.error : undefined,
       exitInfo: effectiveExitInfo(p),
       exited: effectiveExited(p),
     };
@@ -225,6 +236,8 @@ export interface ProjectedSessionLifecycleMaps {
    * from a stale-green "connected" when the session could not be recovered (#2524).
    */
   terminalSessionLost: Record<string, boolean>;
+  /** Tabs whose session another desktop/window took over (SM-003). */
+  terminalEvicted: Record<string, boolean>;
   /** Tabs whose session has **exited** (#2621): the overlay/view-mode mount gate,
    * derived purely from the region ({@link effectiveExitedMap}, #2625). Drives the
    * tab-strip status dot and the close-confirmation live count. */
@@ -284,6 +297,7 @@ export function useProjectedSessionLifecycleMaps(): ProjectedSessionLifecycleMap
       terminalReconnectingTabs: effectiveReconnectingMap(view),
       terminalDisconnectErrors: effectiveDisconnectErrorMap(view),
       terminalSessionLost: sessionLostMap(view),
+      terminalEvicted: effectiveEvictedMap(view),
       terminalExitedTabs: effectiveExitedMap(view),
     }),
     [view]

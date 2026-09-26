@@ -212,6 +212,20 @@
   opacity: 1;
 }
 
+/* Missing / unavailable plugin (#3344): muted row + warning badge. The row stays
+   interactive so the connection can still be edited. */
+.connection-tree__item--unavailable .connection-tree__label,
+.connection-tree__item--unavailable > svg {
+  opacity: 0.5;
+}
+
+.connection-tree__plugin-missing {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  color: var(--color-warning);
+}
+
 /* Jump-host (ProxyJump) hop badge */
 .connection-tree__jump-badge {
   display: inline-flex;

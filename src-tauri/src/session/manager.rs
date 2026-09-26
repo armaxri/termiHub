@@ -937,9 +937,12 @@ impl SessionManager {
                     // give-up is not yet source-foldable); and **agent** connects (this is
                     // the non-agent branch — an agent connect silently auto-retries
                     // client-side without an intent). Additive, shadow-only.
+                    // A dismissed keyboard-interactive prompt (#3371) is a user
+                    // cancel too, not a connect failure.
                     let cancelled = cancel_token
                         .as_ref()
-                        .is_some_and(CancellationToken::is_cancelled);
+                        .is_some_and(CancellationToken::is_cancelled)
+                        || matches!(e, termihub_core::errors::SessionError::AuthCancelled);
                     if !cancelled {
                         if let Some(tab_id) = initial_connect_failed_tab_id(connect_id) {
                             // Classify the auth rejection from the typed core error
@@ -1253,6 +1256,47 @@ impl SessionManager {
                 })
             })
             .collect()
+    }
+
+    /// The agent-hosted session bound to a frontend tab, if any (SM-003): its
+    /// agent id and remote (agent) session id, resolved through the tab-id
+    /// identity bridge (#2431).
+    pub async fn agent_session_for_tab(&self, tab_id: &str) -> Option<(String, String)> {
+        let session_id = {
+            let tab_ids = self
+                .session_tab_ids
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            tab_ids
+                .iter()
+                .find(|(_, binding)| binding.tab_id == tab_id)
+                .map(|(sid, _)| sid.clone())?
+        };
+        let sessions = self.sessions.lock().await;
+        let entry = sessions.get(&session_id)?;
+        Some((
+            entry.info.agent_id.clone()?,
+            entry.remote_session_id.clone()?,
+        ))
+    }
+
+    /// Explicit **Reclaim** of an evicted agent tab (SM-003, single-attach): send
+    /// a takeover `connection.attach` for the tab's remote session, so this desktop
+    /// controls it again and the desktop that took it over is evicted in turn.
+    ///
+    /// The tab keeps its desktop session entry and output channel while evicted
+    /// (nothing tears it down), so output resumes on the same channel — preceded
+    /// by the daemon's buffer replay. Never called automatically; only from the
+    /// user's Reclaim action, so control cannot ping-pong between desktops.
+    pub async fn reclaim_session(&self, tab_id: &str) -> Result<(), TerminalError> {
+        let (agent_id, remote_session_id) = self
+            .agent_session_for_tab(tab_id)
+            .await
+            .ok_or_else(|| TerminalError::SessionNotFound(tab_id.to_string()))?;
+        let client = self.agent_manager.clone();
+        tokio::task::spawn_blocking(move || client.reclaim_session(&agent_id, &remote_session_id))
+            .await
+            .map_err(|e| TerminalError::SpawnFailed(format!("spawn_blocking join: {e}")))?
     }
 
     /// Close a session.

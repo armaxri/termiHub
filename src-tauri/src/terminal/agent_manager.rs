@@ -39,8 +39,9 @@ use crate::agents_projection::store::AgentConnectionState;
 use crate::connection::config::AgentSettings;
 use crate::session::manager::{AgentHostedSession, SessionManager};
 use crate::session_projection::projection::{
-    fold_agent_reconnect_failed, fold_agent_session_lost, fold_agent_session_recovered,
-    fold_agent_session_unconfirmed, fold_agent_transport_reconnecting,
+    fold_agent_reconnect_failed, fold_agent_session_evicted, fold_agent_session_lost,
+    fold_agent_session_recovered, fold_agent_session_unconfirmed,
+    fold_agent_transport_reconnecting,
 };
 use crate::session_projection::store::{SessionLifecycleStore, SessionStatus};
 use crate::terminal::agent_config_store::{decide_reattach, AgentConfigStore, ReattachDecision};
@@ -282,6 +283,18 @@ pub trait AgentRpcClient: Send + Sync + 'static {
 
     /// Attach to a session on the agent.
     fn attach_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError>;
+
+    /// Explicit **Reclaim** (SM-003, single-attach): `connection.attach` with
+    /// `takeover: true`, taking control of the session back from whichever
+    /// desktop holds it (which is evicted in turn). Defaults to a plain attach so
+    /// test doubles need not implement it.
+    fn reclaim_session(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) -> Result<(), TerminalError> {
+        self.attach_session(agent_id, remote_session_id)
+    }
 
     /// Close a session on the agent.
     fn close_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError>;
@@ -1301,8 +1314,27 @@ impl<R: Runtime> AgentConnectionManager<R> {
         agent_id: &str,
         remote_session_id: &str,
     ) -> Result<(), TerminalError> {
+        self.send_attach(agent_id, remote_session_id, false)
+    }
+
+    /// Explicit Reclaim (SM-003): `connection.attach` with `takeover: true`.
+    pub fn reclaim_session(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) -> Result<(), TerminalError> {
+        self.send_attach(agent_id, remote_session_id, true)
+    }
+
+    fn send_attach(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+        takeover: bool,
+    ) -> Result<(), TerminalError> {
         let params = serde_json::to_value(SessionAttachParams {
             session_id: remote_session_id.to_string(),
+            takeover,
         })
         .map_err(|e| {
             TerminalError::RemoteError(format!("Failed to build connection.attach params: {e}"))
@@ -1869,6 +1901,14 @@ impl<R: Runtime> AgentRpcClient for AgentConnectionManager<R> {
 
     fn attach_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError> {
         AgentConnectionManager::attach_session(self, agent_id, remote_session_id)
+    }
+
+    fn reclaim_session(
+        &self,
+        agent_id: &str,
+        remote_session_id: &str,
+    ) -> Result<(), TerminalError> {
+        AgentConnectionManager::reclaim_session(self, agent_id, remote_session_id)
     }
 
     fn close_session(&self, agent_id: &str, remote_session_id: &str) -> Result<(), TerminalError> {
@@ -2706,6 +2746,14 @@ async fn agent_io_task<R: Runtime>(
                 // Fetch it once when there is either a sender to reconcile or a hosted
                 // tab to resolve; skip the extra round-trip when neither applies.
                 let hosted = hosted_sessions_for_agent(&app_handle, &agent_id).await;
+                // SM-003: sessions the fresh worker found held by another desktop
+                // (`connection.evicted`, reason `heldByPeer`, emitted during its
+                // start-up recovery) fold the explicit `Evicted` state *before* the
+                // resolve below, so a peer-held — alive — session is never
+                // relabelled "session lost". The dispatch above also spawns this
+                // fold; doing it inline here orders it ahead of the resolve.
+                let held_elsewhere = evicted_session_ids(&reconnect_notifications);
+                fold_evicted_hosted_sessions(&app_handle, &hosted, &held_elsewhere);
                 if !session_outputs.is_empty()
                     || !monitoring_outputs.is_empty()
                     || !hosted.is_empty()
@@ -2726,10 +2774,15 @@ async fn agent_io_task<R: Runtime>(
                     )
                     .await;
                     if let Some(ref live_ids) = live_ids {
+                        // SM-003: keep the output sender of every evicted hosted
+                        // session too — it is alive on another desktop, and an
+                        // explicit Reclaim re-attaches it through the same channel.
+                        let mut keep = live_ids.clone();
+                        keep.extend(evicted_remote_ids(&app_handle, &hosted));
                         reconcile_output_senders(
                             &mut session_outputs,
                             &mut monitoring_outputs,
-                            live_ids,
+                            &keep,
                         );
                     }
                     // Always resolve: `Some` → recovered/lost per the listed ids;
@@ -2893,6 +2946,11 @@ pub(crate) async fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
             // (`redrive.rs` `still_connecting`), so nothing outlives the cancelled tab.
             if still_reconnecting(app_handle, &h.tab_id) {
                 fold_agent_session_recovered(app_handle, &h.tab_id);
+            } else if is_evicted_tab(app_handle, &h.tab_id) {
+                // SM-003: an evicted tab's session is controlled by (or was just
+                // released by) another desktop. Never tear it down — that would
+                // kill the other desktop's live process — and never silently
+                // re-claim it: the tab waits for an explicit Reclaim.
             } else if let Some(manager) = app_handle.try_state::<SessionManager>() {
                 let _ = manager.close_session(&h.session_id).await;
             }
@@ -2900,6 +2958,75 @@ pub(crate) async fn resolve_agent_hosted_sessions<R: tauri::Runtime>(
             fold_agent_session_lost(app_handle, &h.tab_id);
         }
     }
+}
+
+/// Whether the tab is in the sticky SM-003 `Evicted` state.
+fn is_evicted_tab<R: Runtime>(app: &AppHandle<R>, tab_id: &str) -> bool {
+    app.try_state::<Arc<SessionLifecycleStore>>()
+        .and_then(|store| store.status(tab_id))
+        == Some(SessionStatus::Evicted)
+}
+
+/// The remote session ids of every hosted session whose tab is `Evicted` (SM-003).
+fn evicted_remote_ids<R: Runtime>(
+    app: &AppHandle<R>,
+    hosted: &[AgentHostedSession],
+) -> Vec<String> {
+    hosted
+        .iter()
+        .filter(|h| is_evicted_tab(app, &h.tab_id))
+        .map(|h| h.remote_session_id.clone())
+        .collect()
+}
+
+/// The session ids named by `connection.evicted` notifications (SM-003).
+pub(crate) fn evicted_session_ids(
+    notifications: &[(String, Value)],
+) -> std::collections::HashSet<String> {
+    notifications
+        .iter()
+        .filter(|(method, _)| method == termihub_core::protocol::methods::CONNECTION_EVICTED)
+        .filter_map(|(_, params)| params["session_id"].as_str().map(str::to_string))
+        .collect()
+}
+
+/// Fold every hosted tab whose remote session is in `evicted` to the explicit
+/// `Evicted` state (SM-003, single-attach): another desktop controls it now.
+pub(crate) fn fold_evicted_hosted_sessions<R: Runtime>(
+    app: &AppHandle<R>,
+    hosted: &[AgentHostedSession],
+    evicted: &std::collections::HashSet<String>,
+) {
+    for h in hosted {
+        if evicted.contains(&h.remote_session_id) {
+            fold_agent_session_evicted(app, &h.tab_id);
+        }
+    }
+}
+
+/// Route a live `connection.evicted` notification (SM-003): fold the hosted tab
+/// attached to that remote session to `Evicted`. Resolving the tab needs the
+/// (async) session manager, so the fold runs on a spawned task.
+fn handle_session_evicted_notification<R: Runtime>(
+    app_handle: &AppHandle<R>,
+    agent_id: &str,
+    params: &Value,
+) {
+    let Some(remote_sid) = params["session_id"].as_str() else {
+        return;
+    };
+    info!(
+        agent_id = %agent_id,
+        remote_session_id = %remote_sid,
+        "agent session taken over by another desktop (SM-003)"
+    );
+    let app = app_handle.clone();
+    let agent_id = agent_id.to_string();
+    let evicted: std::collections::HashSet<String> = [remote_sid.to_string()].into();
+    tauri::async_runtime::spawn(async move {
+        let hosted = hosted_sessions_for_agent(&app, &agent_id).await;
+        fold_evicted_hosted_sessions(&app, &hosted, &evicted);
+    });
 }
 
 /// Whether the tab is still in the `Reconnecting` status — the guard the agent-task
@@ -3093,6 +3220,9 @@ fn dispatch_agent_notification<R: Runtime>(
     }
     if method == termihub_core::protocol::methods::AGENT_UPDATE_PENDING {
         emit_remote_agent_update_pending(app_handle, agent_id, params);
+    }
+    if method == termihub_core::protocol::methods::CONNECTION_EVICTED {
+        handle_session_evicted_notification(app_handle, agent_id, params);
     }
     handle_notification(method, params, session_outputs, monitoring_outputs, b64);
 }

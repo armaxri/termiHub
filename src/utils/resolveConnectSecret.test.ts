@@ -189,4 +189,30 @@ describe("resolveConnectSecret", () => {
     });
     expect(r).toEqual({ status: "canceled" });
   });
+
+  it("asks the prompt to hide its Save control when allowSave is false (#3316)", async () => {
+    requestPassword.mockResolvedValue("pw");
+    const r = await resolveConnectSecret({
+      schema: SCHEMA,
+      settings: PASSWORD_SETTINGS,
+      connectionId: null,
+      requestPassword,
+      allowSave: false,
+    });
+    expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "password", {
+      allowSave: false,
+    });
+    expect(r).toMatchObject({ status: "resolved", source: "prompt", secret: "pw" });
+  });
+
+  it("leaves the prompt's Save control available by default (#3316)", async () => {
+    requestPassword.mockResolvedValue("pw");
+    await resolveConnectSecret({
+      schema: SCHEMA,
+      settings: PASSWORD_SETTINGS,
+      connectionId: null,
+      requestPassword,
+    });
+    expect(requestPassword).toHaveBeenCalledWith("h.example", "alice", "", "password");
+  });
 });

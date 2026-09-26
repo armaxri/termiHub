@@ -52,7 +52,7 @@ use serde_json::{json, Value};
 /// `agentStateTone`) are unchanged.
 ///
 /// The agent never emits the canonical terminal error states (`failed` /
-/// `authFailed` / `sessionLost`); those fold into the session region
+/// `authFailed` / `sessionLost`) or the per-session `evicted` state (SM-003); those fold into the session region
 /// ([`crate::session_projection`] via `fold_agent_session_lost`), so only the
 /// four states above ever reach this field.
 pub type AgentConnectionState = termihub_core::connection::lifecycle::SessionStatus;
@@ -462,7 +462,10 @@ impl AgentsStore {
                 // for a sensible, non-clobbering fallback should one ever arrive.
                 AgentConnectionState::Failed
                 | AgentConnectionState::AuthFailed
-                | AgentConnectionState::SessionLost => error.or_else(|| agent.last_error.clone()),
+                | AgentConnectionState::SessionLost
+                // SM-003: `evicted` is a per-session state (session region), never
+                // an agent connection state; same non-clobbering fallback.
+                | AgentConnectionState::Evicted => error.or_else(|| agent.last_error.clone()),
             };
             agent.connection_state = state;
             agent.last_error = next_error;

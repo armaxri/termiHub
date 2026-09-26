@@ -635,6 +635,15 @@ export async function closeTerminal(sessionId: SessionId, intentional = false): 
   await invoke("close_terminal", { sessionId, intentional });
 }
 
+/**
+ * Explicitly **reclaim** a tab whose agent session another desktop took over
+ * (SM-003, single-attach): a takeover attach that evicts the other desktop. The
+ * backend folds the tab's region entry `evicted → connected` on success.
+ */
+export async function reclaimSession(tabId: string): Promise<void> {
+  await invoke("reclaim_session", { tabId });
+}
+
 // --- Remote-desktop (graphical) commands (#1680) ---
 
 /**
@@ -748,6 +757,20 @@ export async function sshHostKeyDecision(
   remember: boolean
 ): Promise<boolean> {
   return await invoke<boolean>("ssh_host_key_decision", { promptId, accept, remember });
+}
+
+/**
+ * Answer a pending SSH keyboard-interactive (OTP / 2FA) prompt (#3371).
+ *
+ * `responses` holds one answer per prompt, in order; `null` cancels the
+ * authentication. Returns whether a prompt with `promptId` was actually waiting
+ * (a stale reply returns `false`).
+ */
+export async function sshKeyboardInteractiveRespond(
+  promptId: string,
+  responses: string[] | null
+): Promise<boolean> {
+  return await invoke<boolean>("ssh_keyboard_interactive_respond", { promptId, responses });
 }
 
 /** Disconnect a graphical remote-desktop session. */

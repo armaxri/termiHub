@@ -20,6 +20,7 @@ import {
   transferRetry,
   transferList,
   sshHostKeyDecision,
+  sshKeyboardInteractiveRespond,
   cancelConnectAgent,
   pruneDeadAgents,
   rdpTrustList,
@@ -278,6 +279,23 @@ describe("api response-validation (TFE-004)", () => {
       const result = await sshHostKeyDecision("stale", false, false);
 
       expect(result).toBe(false);
+    });
+
+    it("sshKeyboardInteractiveRespond forwards answers and null for cancel", async () => {
+      mockedInvoke.mockResolvedValue(true);
+
+      await expect(sshKeyboardInteractiveRespond("ki-1", ["123456"])).resolves.toBe(true);
+      expect(mockedInvoke).toHaveBeenCalledWith("ssh_keyboard_interactive_respond", {
+        promptId: "ki-1",
+        responses: ["123456"],
+      });
+
+      mockedInvoke.mockResolvedValue(false);
+      await expect(sshKeyboardInteractiveRespond("stale", null)).resolves.toBe(false);
+      expect(mockedInvoke).toHaveBeenLastCalledWith("ssh_keyboard_interactive_respond", {
+        promptId: "stale",
+        responses: null,
+      });
     });
 
     it("cancelConnectAgent reports whether a connecting agent was found", async () => {
