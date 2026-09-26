@@ -11,8 +11,8 @@ evidence:
   - vendor/vnc-rs/README.md:28
   - rdp-sidecar/Cargo.toml:205
   - rdp-sidecar/vendor/ironrdp-rdpsnd/README.md
-status: in-progress
-resolution: "#3503 (pending merge) — vendored drift job"
+status: fixed
+resolution: "#3503,#3512 — vendored fork register + weekly OSV/crates.io/upstream drift job + consistency check; first review done (#3512)"
 ---
 
 ## What
