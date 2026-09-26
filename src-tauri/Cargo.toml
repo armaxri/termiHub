@@ -159,6 +159,9 @@ objc2-foundation = { version = "0.3", features = [
     # Hold an NSProcessInfo activity assertion under the test bridge so macOS
     # App Nap never throttles the headless E2E app (see utils::macos_unthrottle).
     "NSProcessInfo",
+    # LocalAuthentication reply errors and the biometric domain state (#3433).
+    "NSError",
+    "NSData",
 ] }
 # Native Cocoa Services provider for the app-level "Open in termiHub"
 # Services-menu entry (#1409): register on NSApp.servicesProvider and read the
@@ -171,11 +174,29 @@ objc2-app-kit = { version = "0.3", features = [
 ] }
 # macOS Keychain backend for the `keyring` crate.
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
+# OS user verification (Touch ID / login password) via LocalAuthentication for
+# keychain-export re-authentication and biometric unlock (#3433, PROD-064).
+# Same objc2 family (and maintainer) as the objc2 crates above; Zlib OR
+# Apache-2.0 OR MIT. `block2` provides the evaluatePolicy reply block.
+objc2-local-authentication = { version = "0.3", default-features = false, features = [
+    "std",
+    "block2",
+    "LAContext",
+    "LAError",
+    "LABiometryType",
+] }
+block2 = "0.6"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
     "Win32_System_Console",
     "Win32_Foundation",
+    # Windows Hello user verification (`UserConsentVerifier` + the Win32
+    # window-parenting interop) for keychain-export re-authentication and
+    # biometric unlock (#3433, PROD-064).
+    "Foundation",
+    "Security_Credentials_UI",
+    "Win32_System_WinRT",
 ] }
 # Low-level Win32 for the remote-clipboard delayed-render binding (#1814): a
 # message-only owner window that offers CF_HDROP with a NULL handle and renders

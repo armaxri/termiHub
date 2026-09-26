@@ -37,6 +37,7 @@ use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
 use super::crypto::EncryptedEnvelope;
+use super::os_auth::{OsAuthError, OsAuthPurpose};
 use super::types::{CredentialKey, CredentialStoreStatus, StorageMode};
 use super::{CredentialManager, CredentialStore};
 
@@ -60,9 +61,14 @@ pub const MIN_SUPPORTED_VAULT_FORMAT_VERSION: u32 = 1;
 /// Higher than the master-password minimum because an export file is meant to
 /// be copied off the machine, where it is open to unlimited offline guessing.
 pub const MIN_EXPORT_PASSPHRASE_LEN: usize = 12;
-/// Why a vault export is refused in OS-keychain mode (until #3433 lands).
-pub const KEYCHAIN_EXPORT_BLOCKED_MESSAGE: &str = "Export from the OS keychain requires system \
-     authentication — not yet available (tracked in #3433).";
+/// Prefix of the refusal when an OS-keychain export cannot be re-authenticated
+/// because OS user verification is unavailable here (#3433). The OS-specific
+/// reason follows it.
+pub const KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE: &str = "Exporting from the OS keychain requires \
+     system authentication (Touch ID / Windows Hello), which is not available on this computer.";
+/// The prompt reason for export re-authentication; completes the OS sentence
+/// "termiHub is trying to …".
+pub const EXPORT_REAUTH_REASON: &str = "export your saved credentials";
 /// Upper bound on the size of an import file, so a huge or hostile file cannot
 /// exhaust memory before it is even parsed.
 pub const MAX_VAULT_FILE_BYTES: usize = 16 * 1024 * 1024;
@@ -98,9 +104,13 @@ pub enum VaultError {
     #[error("{message}")]
     WrongMasterPassword { message: String },
     /// The current store cannot re-authenticate the user, so the export is
-    /// refused (OS keychain mode until #3433 adds OS-level authentication).
+    /// refused (OS keychain mode where OS user verification is unavailable).
     #[error("{message}")]
     ReauthUnavailable { message: String },
+    /// OS user verification was cancelled or failed, so the export is refused
+    /// (OS keychain mode, #3433).
+    #[error("{message}")]
+    ReauthFailed { message: String },
     /// Any other failure (store read/write error, serialization, …).
     #[error("{message}")]
     Other { message: String },
@@ -246,10 +256,12 @@ pub struct VaultImportResult {
 /// - master password: the store must be **unlocked** and `master_password`
 ///   must verify against it (re-auth), so an unattended unlocked session cannot
 ///   be used to walk off with every secret.
-/// - OS keychain: **refused**. termiHub can read its own keychain items without
-///   an OS prompt, so there is no re-authentication step that stops someone at
-///   an unattended, unlocked machine from exporting every secret. Export stays
-///   blocked until OS-level user authentication exists (#3433).
+/// - OS keychain: termiHub can read its own keychain items without an OS
+///   prompt, so the OS must verify the user (Touch ID / login password on
+///   macOS, Windows Hello on Windows) **for every export** — nothing is cached
+///   (#3433). Cancelled or failed verification refuses the export
+///   (`reauthFailed`); where OS verification is unavailable (Linux) the
+///   export stays refused (`reauthUnavailable`). Fails closed.
 pub fn authorize_export(
     manager: &CredentialManager,
     master_password: Option<&str>,
@@ -259,9 +271,7 @@ pub fn authorize_export(
             message: "Credential storage is turned off — there are no saved credentials to export."
                 .to_string(),
         }),
-        StorageMode::OsKeychain => Err(VaultError::ReauthUnavailable {
-            message: KEYCHAIN_EXPORT_BLOCKED_MESSAGE.to_string(),
-        }),
+        StorageMode::OsKeychain => authorize_keychain_export(manager),
         StorageMode::MasterPassword => manager
             .with_master_password_store(|store| {
                 match store.status() {
@@ -295,6 +305,32 @@ pub fn authorize_export(
                 }
             })
             .unwrap_or_else(|| Err(VaultError::other("Credential store mode changed"))),
+    }
+}
+
+/// OS-keychain branch of [`authorize_export`]: require a fresh OS user
+/// verification.
+fn authorize_keychain_export(manager: &CredentialManager) -> Result<(), VaultError> {
+    let capability = manager.os_auth_capability(OsAuthPurpose::ReauthExport);
+    if !capability.available {
+        let reason = capability.reason.unwrap_or_default();
+        return Err(VaultError::ReauthUnavailable {
+            message: format!("{KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE} {reason}")
+                .trim_end()
+                .to_string(),
+        });
+    }
+    match manager.verify_user(OsAuthPurpose::ReauthExport, EXPORT_REAUTH_REASON) {
+        Ok(_) => Ok(()),
+        Err(OsAuthError::Unavailable(reason)) => Err(VaultError::ReauthUnavailable {
+            message: format!("{KEYCHAIN_EXPORT_UNAVAILABLE_MESSAGE} {reason}"),
+        }),
+        Err(OsAuthError::Cancelled) => Err(VaultError::ReauthFailed {
+            message: "System authentication was cancelled — nothing was exported.".to_string(),
+        }),
+        Err(e) => Err(VaultError::ReauthFailed {
+            message: format!("{e} Nothing was exported."),
+        }),
     }
 }
 

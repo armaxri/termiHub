@@ -1,8 +1,10 @@
 pub mod auto_lock;
+pub mod biometric_unlock;
 pub mod crypto;
 pub mod manager;
 pub mod master_password;
 pub mod null;
+pub mod os_auth;
 pub mod os_keychain;
 pub mod types;
 pub mod vault;

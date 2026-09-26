@@ -5,4 +5,4 @@
  * `{ "kind": "<variant>", "message": "…" }` so the UI can branch on a stable,
  * locale-invariant `kind` rather than on the English message.
  */
-export type VaultError = { "kind": "wrongPassphrase", message: string, } | { "kind": "invalidFile", message: string, } | { "kind": "unsupportedVersion", message: string, } | { "kind": "weakPassphrase", message: string, } | { "kind": "storeUnavailable", message: string, } | { "kind": "storeLocked", message: string, } | { "kind": "wrongMasterPassword", message: string, } | { "kind": "reauthUnavailable", message: string, } | { "kind": "other", message: string, };
+export type VaultError = { "kind": "wrongPassphrase", message: string, } | { "kind": "invalidFile", message: string, } | { "kind": "unsupportedVersion", message: string, } | { "kind": "weakPassphrase", message: string, } | { "kind": "storeUnavailable", message: string, } | { "kind": "storeLocked", message: string, } | { "kind": "wrongMasterPassword", message: string, } | { "kind": "reauthUnavailable", message: string, } | { "kind": "reauthFailed", message: string, } | { "kind": "other", message: string, };

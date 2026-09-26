@@ -280,9 +280,9 @@ pub fn build(
 /// section, sealed with the backup `passphrase`.
 ///
 /// Applies the same gate as a standalone vault export (PROD-063): the store
-/// must re-authenticate (`master_password` in master-password mode), and the
-/// OS keychain is refused until system authentication exists (#3433) — the
-/// caller can still back up everything else. Returns the sealed vault and the
+/// must re-authenticate (`master_password` in master-password mode; a fresh
+/// OS user verification in OS-keychain mode, refused where unavailable —
+/// #3433) — the caller can still back up everything else. Returns the sealed vault and the
 /// number of credentials in it.
 pub fn seal_credentials(
     manager: &CredentialManager,

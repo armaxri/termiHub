@@ -14,7 +14,7 @@ use crate::credential::{
 /// Event emitted when the credential store is locked.
 const EVENT_STORE_LOCKED: &str = "credential-store-locked";
 /// Event emitted when the credential store is unlocked.
-const EVENT_STORE_UNLOCKED: &str = "credential-store-unlocked";
+pub(crate) const EVENT_STORE_UNLOCKED: &str = "credential-store-unlocked";
 /// Event emitted when the credential store status changes (mode switch, setup, etc.).
 const EVENT_STORE_STATUS_CHANGED: &str = "credential-store-status-changed";
 
@@ -183,7 +183,7 @@ fn migrate_credentials(
     }
 }
 
-fn emit_status_changed(app_handle: &AppHandle, manager: &CredentialManager) {
+pub(crate) fn emit_status_changed(app_handle: &AppHandle, manager: &CredentialManager) {
     let info = build_status_info(manager);
     if let Err(e) = app_handle.emit(EVENT_STORE_STATUS_CHANGED, &info) {
         warn!("Failed to emit {}: {}", EVENT_STORE_STATUS_CHANGED, e);
@@ -242,11 +242,6 @@ fn unlock_store_classified(store: &MasterPasswordStore, password: &str) -> Resul
     store.unlock_classified(password).map_err(UnlockError::from)
 }
 
-/// Delete the credentials file so a corrupt store can be set up fresh (G8).
-fn reset_store_file(store: &MasterPasswordStore) -> Result<(), String> {
-    store.reset().map_err(|e| e.to_string())
-}
-
 /// User-facing message shown when the master-password store cannot be unlocked
 /// because the auto-lock timer is unavailable (WA-RS-004).
 const AUTO_LOCK_UNAVAILABLE_MSG: &str =
@@ -258,7 +253,7 @@ const AUTO_LOCK_UNAVAILABLE_MSG: &str =
 /// the store after inactivity, leaving credentials unlocked indefinitely — the
 /// opposite of fail-safe. Returns `Err` to refuse the unlock (keeping the store
 /// locked) when `timer_installed` is `false`.
-fn auto_lock_permits_unlock(timer_installed: bool) -> Result<(), &'static str> {
+pub(crate) fn auto_lock_permits_unlock(timer_installed: bool) -> Result<(), &'static str> {
     if timer_installed {
         Ok(())
     } else {
@@ -318,11 +313,10 @@ pub async fn reset_credential_store(
 ) -> Result<(), String> {
     info!("Resetting credential store");
 
-    let result = manager
-        .with_master_password_store(reset_store_file)
-        .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
-
-    result?;
+    // Also drops a biometric-unlock enrollment bound to the deleted store.
+    manager
+        .reset_master_password_store()
+        .map_err(|e| e.to_string())?;
 
     manager.notify_auto_lock_locked();
     emit_status_changed(&app_handle, &manager);
@@ -403,15 +397,10 @@ pub async fn change_master_password(
 ) -> Result<(), String> {
     info!("Changing master password");
 
-    let result = manager
-        .with_master_password_store(|store| {
-            store
-                .change_password(&current_password, &new_password)
-                .map_err(|e| e.to_string())
-        })
-        .ok_or_else(|| "Credential store is not in master password mode".to_string())?;
-
-    result?;
+    // Also drops a biometric-unlock enrollment bound to the old key (PROD-064).
+    manager
+        .change_master_password(&current_password, &new_password)
+        .map_err(|e| e.to_string())?;
 
     emit_status_changed(&app_handle, &manager);
     Ok(())
@@ -982,7 +971,7 @@ mod tests {
         let store = MasterPasswordStore::new(path.clone());
         assert!(path.exists());
 
-        reset_store_file(&store).unwrap();
+        store.reset().unwrap();
         assert!(!path.exists(), "reset must delete the credentials file");
     }
 
@@ -991,7 +980,7 @@ mod tests {
     fn reset_store_file_no_file_is_ok() {
         let dir = tempfile::tempdir().unwrap();
         let store = MasterPasswordStore::new(dir.path().join("credentials.enc"));
-        assert!(reset_store_file(&store).is_ok());
+        assert!(store.reset().is_ok());
     }
 
     // --- #2839: structured migration status. ---
