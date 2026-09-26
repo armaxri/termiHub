@@ -33,6 +33,7 @@ use termihub_core::connection::{
 use termihub_core::errors::SessionError;
 
 use crate::session::frame_guard::{FrameGuard, FrameVerdict};
+use crate::session::graphical_held_input::{deliver_releases, lock_held, SharedHeldInput};
 use crate::session::graphical_supervisor::{Generation, LastSize, PumpEnd, Supervisor};
 use crate::session::rdp_trust_store::{RdpTrustStore, TrustLookup};
 use crate::utils::errors::TerminalError;
@@ -199,6 +200,9 @@ struct GraphicalSession {
     type_id: String,
     /// The certificate prompt currently awaiting a user decision, if any (#1767).
     pending_cert: PendingCert,
+    /// Keys / pointer buttons currently held on the remote (#3402), released
+    /// on takeover, reconnect, and explicit release-all.
+    held: SharedHeldInput,
 }
 
 /// Manages live graphical remote-desktop sessions.
@@ -324,6 +328,7 @@ impl GraphicalSessionManager {
         let connection = Arc::new(Mutex::new(connection));
         let pending_cert: PendingCert = Arc::new(Mutex::new(None));
         let last_size: LastSize = Arc::default();
+        let held: SharedHeldInput = Arc::default();
 
         // The supervisor runs the frame + cursor (+ RDP cert-prompt) pumps and,
         // after an unexpected drop, the auto-reconnect loop (#3364).
@@ -338,6 +343,7 @@ impl GraphicalSessionManager {
             last_size: last_size.clone(),
             trust_store: self.trust_store.clone(),
             pending_cert: pending_cert.clone(),
+            held: held.clone(),
             sink,
         };
         let tasks = vec![tokio::spawn(supervisor.run(generation))];
@@ -349,6 +355,7 @@ impl GraphicalSessionManager {
             last_size,
             type_id: type_id.to_string(),
             pending_cert,
+            held,
         };
         self.sessions
             .lock()
@@ -397,21 +404,82 @@ impl GraphicalSessionManager {
             .map_err(|e| TerminalError::InternalError(e.to_string()))
     }
 
-    /// Forward a protocol-agnostic input event to a session's backend.
+    /// Forward an input event from no particular window (test convenience;
+    /// the command layer uses [`Self::send_input_from`]).
+    #[cfg(test)]
     pub async fn send_input(
         &self,
         session_id: &str,
         event: InputEvent,
     ) -> Result<(), TerminalError> {
-        let conn = self.connection_of(session_id).await?;
+        self.send_input_from(session_id, None, event).await
+    }
+
+    /// Forward an input event produced by `window` (when known), tracking what
+    /// it leaves held on the remote (#3402).
+    ///
+    /// If the session's held input came from a *different* window (control
+    /// moved without the takeover release having run yet), that input is
+    /// released first, so the new controller never inherits a stuck key.
+    pub async fn send_input_from(
+        &self,
+        session_id: &str,
+        window: Option<&str>,
+        event: InputEvent,
+    ) -> Result<(), TerminalError> {
+        let (conn, held) = self.input_handles(session_id).await?;
         let guard = conn.lock().await;
         let backend = guard
             .graphical()
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))?;
+        if let Some(window) = window {
+            let stale = {
+                let mut h = lock_held(&held);
+                if h.held_by_other_than(window) {
+                    h.take_release_events()
+                } else {
+                    Vec::new()
+                }
+            };
+            deliver_releases(backend, session_id, stale).await;
+        }
         backend
-            .send_input(event)
+            .send_input(event.clone())
             .await
-            .map_err(|e| TerminalError::InternalError(e.to_string()))
+            .map_err(|e| TerminalError::InternalError(e.to_string()))?;
+        lock_held(&held).observe(window, &event);
+        Ok(())
+    }
+
+    /// Release every key / pointer button held on a session's remote by
+    /// synthesising the matching key-ups / button-up, then clear the record
+    /// (#3402). With `keep_if_held_by`, input held by that window is left
+    /// alone — a takeover releases only the *previous* controller's input.
+    ///
+    /// Returns the number of synthetic events delivered (0 when nothing was
+    /// held). Idempotent.
+    pub async fn release_held_input(
+        &self,
+        session_id: &str,
+        keep_if_held_by: Option<&str>,
+    ) -> Result<usize, TerminalError> {
+        let (conn, held) = self.input_handles(session_id).await?;
+        let guard = conn.lock().await;
+        let events = {
+            let mut h = lock_held(&held);
+            match keep_if_held_by {
+                Some(window) if !h.held_by_other_than(window) => Vec::new(),
+                _ => h.take_release_events(),
+            }
+        };
+        if events.is_empty() {
+            return Ok(0);
+        }
+        let Some(backend) = guard.graphical() else {
+            // Not connected: nothing to deliver to, and the record is cleared.
+            return Ok(0);
+        };
+        Ok(deliver_releases(backend, session_id, events).await)
     }
 
     /// Ask a session's backend to re-emit a full framebuffer frame.
@@ -600,6 +668,19 @@ impl GraphicalSessionManager {
             .await
             .get(session_id)
             .map(|s| s.connection.clone())
+            .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))
+    }
+
+    /// Look up a session's connection + held-input handles.
+    async fn input_handles(
+        &self,
+        session_id: &str,
+    ) -> Result<(Arc<Mutex<Box<dyn ConnectionType>>>, SharedHeldInput), TerminalError> {
+        self.sessions
+            .lock()
+            .await
+            .get(session_id)
+            .map(|s| (s.connection.clone(), s.held.clone()))
             .ok_or_else(|| TerminalError::SessionNotFound(session_id.to_string()))
     }
 
