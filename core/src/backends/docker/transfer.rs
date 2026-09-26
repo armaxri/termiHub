@@ -645,6 +645,15 @@ mod tests {
             .expect("client")
     }
 
+    #[test]
+    fn transfer_target_is_recovered_only_from_a_docker_browser() {
+        let docker = DockerFileBrowser::new(offline_client(), "c0ffee".into());
+        let target = docker_transfer_target_of(&docker).expect("docker browser");
+        assert_eq!(target.container_id(), "c0ffee");
+        let local = crate::files::local::LocalFileBrowser;
+        assert!(docker_transfer_target_of(&local).is_none());
+    }
+
     #[tokio::test]
     async fn exec_writer_fails_fast_with_stderr_once_the_command_exited() {
         let frames: Vec<Result<LogOutput, bollard::errors::Error>> = vec![Ok(LogOutput::StdErr {

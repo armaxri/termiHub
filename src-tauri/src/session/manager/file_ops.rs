@@ -202,6 +202,17 @@ impl SessionManager {
         self.file_ops().sftp_browser(session_id).await
     }
 
+    /// Resolve the streaming Docker transfer target behind a Docker session so a
+    /// background transfer can run its own `docker exec`, mirroring
+    /// [`sftp_transfer_browser`](Self::sftp_transfer_browser) (PARITY-004, #3567).
+    /// See [`FileOps::docker_transfer_target`](crate::session::file_ops).
+    pub async fn docker_transfer_target(
+        &self,
+        session_id: &str,
+    ) -> Result<termihub_core::backends::docker::DockerTransferTarget, TerminalError> {
+        self.file_ops().docker_transfer_target(session_id).await
+    }
+
     /// Resolve the [`FtpConfig`](termihub_core::config::FtpConfig) backing an
     /// FTP session so a background transfer can run on its own connection,
     /// mirroring [`sftp_transfer_browser`](Self::sftp_transfer_browser).
