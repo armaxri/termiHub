@@ -79,13 +79,17 @@ fn build_client(timeout: Duration) -> Result<reqwest::Client, String> {
         .https_only(true)
         .connect_timeout(CONNECT_TIMEOUT)
         .timeout(timeout)
-        .user_agent(concat!("termiHub/", env!("CARGO_PKG_VERSION"), " plugin-update"))
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            match redirect_allowed(attempt.url(), attempt.previous().len()) {
+        .user_agent(concat!(
+            "termiHub/",
+            env!("CARGO_PKG_VERSION"),
+            " plugin-update"
+        ))
+        .redirect(reqwest::redirect::Policy::custom(
+            |attempt| match redirect_allowed(attempt.url(), attempt.previous().len()) {
                 Ok(()) => attempt.follow(),
                 Err(reason) => attempt.error(reason),
-            }
-        }))
+            },
+        ))
         .build()
         .map_err(|e| format!("could not build HTTP client: {e}"))
 }
@@ -154,10 +158,7 @@ pub async fn check_plugin_updates(
         None => manager.list().map_err(|e| e.to_string())?,
     };
     let mut results = Vec::new();
-    for plugin in plugins
-        .iter()
-        .filter(|p| p.manifest.update_url.is_some())
-    {
+    for plugin in plugins.iter().filter(|p| p.manifest.update_url.is_some()) {
         let id = plugin.manifest.id.clone();
         let result = check_one(plugin).await;
         if let Err(error) = &result {
@@ -192,10 +193,9 @@ fn package_path(cache_dir: &Path, outcome: &UpdateCheckOutcome) -> PathBuf {
             }
         })
         .collect();
-    cache_dir.join(UPDATE_CACHE_DIR).join(format!(
-        "{}-{version}.termihub-plugin",
-        outcome.plugin_id
-    ))
+    cache_dir
+        .join(UPDATE_CACHE_DIR)
+        .join(format!("{}-{version}.termihub-plugin", outcome.plugin_id))
 }
 
 /// Download the update offered for `plugin_id`, verify it, and return the path
@@ -321,7 +321,11 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_refuses_non_https_urls_before_any_request() {
-        for bad in ["http://127.0.0.1:9/update.json", "file:///etc/passwd", "ftp://x/y"] {
+        for bad in [
+            "http://127.0.0.1:9/update.json",
+            "file:///etc/passwd",
+            "ftp://x/y",
+        ] {
             let err = fetch_capped(bad, 1024, Duration::from_secs(1))
                 .await
                 .unwrap_err();
@@ -379,11 +383,15 @@ mod tests {
             changelog_url: None,
         };
         assert!(check_downloaded_package(&manager, &pkg, &outcome("upd", "1.1.0")).is_ok());
-        assert!(check_downloaded_package(&manager, &pkg, &outcome("other", "1.1.0"))
-            .unwrap_err()
-            .contains("expected `other`"));
-        assert!(check_downloaded_package(&manager, &pkg, &outcome("upd", "1.2.0"))
-            .unwrap_err()
-            .contains("advertised 1.2.0"));
+        assert!(
+            check_downloaded_package(&manager, &pkg, &outcome("other", "1.1.0"))
+                .unwrap_err()
+                .contains("expected `other`")
+        );
+        assert!(
+            check_downloaded_package(&manager, &pkg, &outcome("upd", "1.2.0"))
+                .unwrap_err()
+                .contains("advertised 1.2.0")
+        );
     }
 }
