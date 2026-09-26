@@ -69,6 +69,8 @@ struct Control {
     cursor_tx: StdMutex<Option<(u32, mpsc::Sender<CursorUpdate>)>>,
     /// `(dial number, width, height)` of every pixel resize a backend received.
     resizes: StdMutex<Vec<(u32, u16, u16)>>,
+    /// `(dial number, event)` of every input event a backend received (#3402).
+    inputs: StdMutex<Vec<(u32, InputEvent)>>,
 }
 
 impl Control {
@@ -229,7 +231,8 @@ impl GraphicalBackend for FakeDesktop {
             .take()
             .unwrap_or_else(|| mpsc::channel(1).1)
     }
-    async fn send_input(&self, _event: InputEvent) -> Result<(), SessionError> {
+    async fn send_input(&self, event: InputEvent) -> Result<(), SessionError> {
+        self.ctl.inputs.lock().unwrap().push((self.dial, event));
         Ok(())
     }
     async fn resize(&self, width_px: u16, height_px: u16) -> Result<(), SessionError> {
@@ -758,3 +761,7 @@ async fn initial_connect_auth_rejection_emits_auth_failed() {
     );
     assert_eq!(last_state(&sink), Some(GraphicalState::ConnectFailed));
 }
+
+/// Held-input release tests (#3402), sharing this file's fake backend.
+#[path = "graphical_held_input_session_tests.rs"]
+mod held_input;

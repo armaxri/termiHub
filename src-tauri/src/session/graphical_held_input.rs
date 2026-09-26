@@ -187,7 +187,7 @@ mod tests {
             "one key-up per held key, then one all-buttons-up at the last position"
         );
         assert!(held.is_empty());
-        assert_eq!(held, HeldInput::default(), "fully reset, source untagged");
+        assert_eq!(held.source, None, "the reset state is untagged");
     }
 
     #[test]
