@@ -149,6 +149,18 @@ by every window of the desktop. The backend `session → window` ownership map
 another window" with Reclaim; Reclaim is `claim_session` from that window.
 Re-binding the same session id never claims it back automatically.
 
+**Graphical tabs (#3388).** VNC/RDP sessions follow the same ownership map. The
+`remote_desktop_send_input` / `_resize` / `_send_clipboard` commands are gated in
+the command layer, and so are the remote-clipboard reads (`_get_clipboard`,
+`_remote_clipboard_files`, `_bind_clipboard_files`) — a non-owning window can
+neither drive the desktop nor read its clipboard. Frame, cursor, clipboard and
+cert-prompt events go only to the owning window (broadcast while unclaimed);
+lifecycle `remote-desktop-state` stays broadcast. The evicted window keeps its
+canvas frozen on the last frame, dimmed under the shared "Taken over by another
+window" overlay, which supersedes the reconnect overlay, cert prompt and toolbar
+(their actions would drive a session this window does not control). On regaining
+control the tab re-sends its last requested size and requests a full frame.
+
 `Failed`, `AuthFailed`, `SessionLost`, and idle `Disconnected` are the resting
 states. From any of them a fresh `session.connect` (a new connect / manual
 retry / "start new shell") restarts the machine at `Connecting`; `session.remove`

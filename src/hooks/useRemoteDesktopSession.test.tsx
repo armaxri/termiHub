@@ -476,3 +476,78 @@ describe("useRemoteDesktopSession", () => {
     expect(mockedDisconnect).not.toHaveBeenCalledWith(owned);
   });
 });
+
+describe("useRemoteDesktopSession — window takeover (#3388)", () => {
+  /** Hand `rd-1` to another window of this app (this window is `main`). */
+  function takeOverFromOtherWindow() {
+    act(() => useAppStore.setState({ windowLabel: "main", sessionOwners: { "rd-1": "win-2" } }));
+  }
+
+  it("drops input, resize and clipboard while another window controls the session", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    takeOverFromOtherWindow();
+
+    act(() => h.get().sendInput({ kind: "key", code: "KeyA", pressed: true }));
+    act(() => h.get().resize(800, 600));
+    act(() => h.get().sendClipboard("secret"));
+    let files: RemoteClipboardFile[] = [
+      { name: "x", relativePath: null, size: 1, isDir: false, index: 0 },
+    ];
+    let bound = -1;
+    await act(async () => {
+      files = await h.get().remoteClipboardFiles();
+      bound = await h.get().bindClipboardFiles();
+    });
+
+    expect(mockedSendInput).not.toHaveBeenCalled();
+    expect(mockedResize).not.toHaveBeenCalled();
+    expect(mockedSendClipboard).not.toHaveBeenCalled();
+    expect(mockedRemoteClipboardFiles).not.toHaveBeenCalled();
+    expect(mockedBindClipboardFiles).not.toHaveBeenCalled();
+    expect(files).toEqual([]);
+    expect(bound).toBe(0);
+  });
+
+  it("never reclaims on its own while evicted", async () => {
+    const tabId = addTab();
+    renderSession(tabId);
+    await flush();
+    takeOverFromOtherWindow();
+    await flush();
+    // Still owned by the other window; nothing repainted or re-sized here.
+    expect(useAppStore.getState().sessionOwners["rd-1"]).toBe("win-2");
+    expect(mockedRequestFullFrame).not.toHaveBeenCalled();
+    expect(mockedResize).not.toHaveBeenCalled();
+  });
+
+  it("on regaining control re-sends the latest size and requests a full frame", async () => {
+    const tabId = addTab();
+    const h = renderSession(tabId);
+    await flush();
+    act(() => h.get().resize(640, 480));
+    takeOverFromOtherWindow();
+    // A resize while evicted is recorded but not sent.
+    act(() => h.get().resize(1024, 768));
+    expect(mockedResize).toHaveBeenCalledTimes(1);
+
+    // Explicit Reclaim lands: this window owns the session again.
+    act(() => useAppStore.setState({ sessionOwners: { "rd-1": "main" } }));
+
+    expect(mockedResize).toHaveBeenLastCalledWith("rd-1", 1024, 768);
+    expect(mockedRequestFullFrame).toHaveBeenCalledWith("rd-1");
+    act(() => h.get().sendInput({ kind: "key", code: "KeyB", pressed: true }));
+    expect(mockedSendInput).toHaveBeenCalledOnce();
+  });
+
+  it("requests a full frame but no resize on regain when no size was ever requested", async () => {
+    const tabId = addTab();
+    renderSession(tabId);
+    await flush();
+    takeOverFromOtherWindow();
+    act(() => useAppStore.setState({ sessionOwners: {} }));
+    expect(mockedRequestFullFrame).toHaveBeenCalledWith("rd-1");
+    expect(mockedResize).not.toHaveBeenCalled();
+  });
+});
