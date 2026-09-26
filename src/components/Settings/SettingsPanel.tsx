@@ -15,6 +15,7 @@ import {
   FileJson,
   FileCode2,
   HardDrive,
+  DatabaseBackup,
   Puzzle,
   Check,
 } from "lucide-react";
@@ -43,6 +44,7 @@ import { SshTrustSettings } from "./SshTrustSettings";
 import { SerialPortSettings } from "./SerialPortSettings";
 import { ShellIntegrationSettings } from "./ShellIntegrationSettings";
 import { PortableModeSettings } from "./PortableModeSettings";
+import { BackupRestoreSettings } from "./BackupRestoreSettings";
 import { PluginSettingsSection } from "./PluginSettingsSection";
 import { FrontendPluginGateSettings } from "./FrontendPluginGateSettings";
 import { PluginUpdateCheckSettings } from "./PluginUpdateCheckSettings";
@@ -77,6 +79,7 @@ const SETTINGS_ICONS: Record<SettingsCategory, LucideIcon> = {
   "external-files": FileJson,
   editor: FileCode2,
   plugins: Puzzle,
+  backup: DatabaseBackup,
   portable: HardDrive,
 };
 
@@ -411,6 +414,9 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
         sections.push(<PluginUpdateCheckSettings key="plugin-update-check" />);
         sections.push(<TrustedPublishersSettings key="trusted-publishers" />);
       }
+      if (highlightedCategories?.has("backup")) {
+        sections.push(<BackupRestoreSettings key="backup" />);
+      }
       if (highlightedCategories?.has("portable")) {
         sections.push(<PortableModeSettings key="portable" />);
       }
@@ -467,6 +473,8 @@ export function SettingsPanel({ tabId, isVisible }: SettingsPanelProps) {
             <TrustedPublishersSettings />
           </>
         );
+      case "backup":
+        return <BackupRestoreSettings />;
       case "portable":
         return <PortableModeSettings />;
     }

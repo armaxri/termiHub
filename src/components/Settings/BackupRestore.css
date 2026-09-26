@@ -1,0 +1,61 @@
+/* Unified backup and restore (PROD-068). */
+
+.backup-restore__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin: 0;
+  padding: var(--spacing-sm);
+  list-style: none;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-sm);
+}
+
+.backup-restore__row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm);
+}
+
+.backup-restore__body {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+  min-width: 0;
+}
+
+.backup-restore__label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.backup-restore__name {
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
+
+.backup-restore__detail {
+  font-size: var(--font-size-xs);
+  color: var(--text-secondary);
+}
+
+.backup-restore__controls {
+  display: flex;
+  gap: var(--spacing-xs);
+}
+
+.backup-restore__toggle-row {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  color: var(--text-primary);
+}
