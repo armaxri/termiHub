@@ -127,6 +127,8 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
       if (cfg.authMethod && cfg.host) {
         const authMethod = readConfigString(connection.config, "authMethod") ?? "";
         const savePassword = readConfigBoolean(connection.config, "savePassword");
+        // A shared named credential (#3557) replaces the per-connection secret.
+        const credentialRef = readConfigString(connection.config, "credentialRef");
 
         // For key auth, decide whether a passphrase is needed from the key's
         // actual encryption rather than the savePassword flag (#885): a
@@ -173,7 +175,11 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         // is locked. If it is, we can't read the stored credential and SSH would fall
         // back to interactive password prompts. Prompt for unlock first and wait —
         // on success the code continues and the credential resolves automatically.
-        const proceed = await ensureCredentialStoreUnlocked({ authMethod, savePassword });
+        const proceed = await ensureCredentialStoreUnlocked({
+          authMethod,
+          savePassword,
+          credentialRef,
+        });
         if (!proceed) {
           dismissConnecting();
           return;
@@ -183,8 +189,13 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
         const resolution = await resolveConnectionCredential(
           connection.id,
           authMethod,
-          savePassword
+          savePassword,
+          credentialRef
         );
+        // A shared credential is never deleted on rejection (other connections
+        // use it) and a prompted secret is never saved per-connection in its
+        // place (it would never be read) — #3557.
+        const sharedCredential = resolution.namedCredentialId !== undefined;
 
         // UX-013: when a stored credential is rejected by the server we clear it
         // and fall through to re-prompt. Carry the reason INTO that re-prompt
@@ -220,7 +231,12 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
             });
             return;
           } catch (err) {
-            if (isAuthFailure(err)) {
+            if (isAuthFailure(err) && sharedCredential) {
+              // The shared credential was rejected: keep it, and ask for this
+              // connect's secret without offering to save it here.
+              rejectedCredentialNotice =
+                "The shared credential was rejected — enter it for this connect, or rotate it in Settings → Security.";
+            } else if (isAuthFailure(err)) {
               // Genuine auth rejection (typed, locale-independent signal —
               // I18N-001): the stored credential is stale. Remove it and fall
               // through to prompt. Gating on the typed code, never on English
@@ -272,7 +288,11 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           // The prompt modal is now the feedback surface — clear the pre-connect
           // indicator before it appears (UX-011).
           dismissConnecting();
-          const password = await requestPassword(host, username, rejectedCredentialNotice);
+          const password = sharedCredential
+            ? await requestPassword(host, username, rejectedCredentialNotice, "password", {
+                allowSave: false,
+              })
+            : await requestPassword(host, username, rejectedCredentialNotice);
           if (password === null) {
             // Acknowledge the cancel so the click isn't silently dropped (UX-012),
             // matching the editor path's toast.info on connect-cancel.
@@ -281,7 +301,7 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           }
           config = { ...config, config: { ...cfg, password } } as typeof config;
           // Persist the entered password if the user opted in via the prompt checkbox
-          if (useAppStore.getState().passwordPromptShouldSave) {
+          if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
             await storeCredential(connection.id, "password", password).catch((err) => {
               frontendLog("connection_list", `Failed to store credential: ${err}`);
             });
@@ -296,19 +316,18 @@ export function useConnectSavedConnection(): UseConnectSavedConnection {
           // The prompt modal is now the feedback surface — clear the pre-connect
           // indicator before it appears (UX-011).
           dismissConnecting();
-          const passphrase = await requestPassword(
-            host,
-            username,
-            rejectedCredentialNotice,
-            "key_passphrase"
-          );
+          const passphrase = sharedCredential
+            ? await requestPassword(host, username, rejectedCredentialNotice, "key_passphrase", {
+                allowSave: false,
+              })
+            : await requestPassword(host, username, rejectedCredentialNotice, "key_passphrase");
           if (passphrase === null) {
             // Acknowledge the cancel (UX-012), matching the editor path.
             toast.info("Connect canceled");
             return;
           }
           config = { ...config, config: { ...cfg, password: passphrase } } as typeof config;
-          if (useAppStore.getState().passwordPromptShouldSave) {
+          if (!sharedCredential && useAppStore.getState().passwordPromptShouldSave) {
             await storeCredential(connection.id, "key_passphrase", passphrase).catch((err) => {
               frontendLog("connection_list", `Failed to store key passphrase: ${err}`);
             });

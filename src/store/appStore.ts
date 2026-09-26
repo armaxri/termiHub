@@ -6434,7 +6434,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           if (agent.connectionState === "connected") return false;
           return (
             agent.config.authMethod === "password" ||
-            (agent.config.authMethod === "key" && agent.config.savePassword)
+            (agent.config.authMethod === "key" &&
+              (agent.config.savePassword || Boolean(agent.config.credentialRef)))
           );
         });
 
@@ -6453,7 +6454,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
               if (!saved) return false;
               const authMethod = readConfigString(saved.config, "authMethod");
               const savePassword = readConfigBoolean(saved.config, "savePassword");
-              return authMethod === "password" || (authMethod === "key" && savePassword);
+              const credentialRef = readConfigString(saved.config, "credentialRef");
+              return (
+                authMethod === "password" ||
+                (authMethod === "key" && (savePassword || Boolean(credentialRef)))
+              );
             }) || disconnectedAgentsNeedingCreds.length > 0;
           if (needsStoredCredential) {
             const unlocked = await get().requestUnlock();
@@ -6478,7 +6483,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
                 const resolution = await resolveConnectionCredential(
                   agent.id,
                   agent.config.authMethod,
-                  agent.config.savePassword
+                  agent.config.savePassword,
+                  agent.config.credentialRef
                 );
                 const password =
                   resolution.usedStoredCredential && resolution.password
@@ -6511,7 +6517,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
             const authMethod = readConfigString(conn.config, "authMethod");
             const savePassword = readConfigBoolean(conn.config, "savePassword");
             if (!authMethod) return conn;
-            const resolution = await resolveConnectionCredential(conn.id, authMethod, savePassword);
+            const resolution = await resolveConnectionCredential(
+              conn.id,
+              authMethod,
+              savePassword,
+              readConfigString(conn.config, "credentialRef")
+            );
             if (!resolution.usedStoredCredential || !resolution.password) return conn;
             return {
               ...conn,
