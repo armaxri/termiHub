@@ -192,6 +192,7 @@ each job runs only if the PR can affect it:
 | Shell Script Quality                         | a shell/cmd script changed                                |
 | System-Test Harness / Test-ID Drift Guard    | `tests/system/` changed (drift guard: also frontend)      |
 | Security Audit                               | a dependency manifest/lockfile changed                    |
+| Vendored Forks Consistency                   | `vendor/**`, a lockfile or `docs/supply-chain.md` changed |
 | Agent — Linux musl cross-builds              | `agent/`, `core/` or `Cargo.toml` changed                 |
 | Lint Commit Messages                         | always                                                    |
 
@@ -218,7 +219,8 @@ branch is cancelled, so the newest commit's run is the one to read (it covers
 all earlier merges). **Watch `develop`'s own runs after merging**: a failure there
 is a real regression (or a new advisory) and needs a follow-up fix, since the PR
 that caused it was not gated on it. The nightly system-integration and Docker
-fixture lanes are unchanged.
+fixture lanes are unchanged. The weekly **Vendored Forks** upstream-drift job keeps one
+`supply-chain` tracking issue current (see [Vendored forks](supply-chain.md#vendored-forks)).
 
 ### Rust toolchain version
 
@@ -1056,6 +1058,12 @@ Before creating a release, run the quality scripts and verify:
 - [ ] The [agent update signing key](#agent-update-signing-key) is configured (the release workflow refuses to run otherwise)
 - [ ] All `docs/changes/*.md` fragments have been consolidated into `CHANGELOG.md` and deleted (see [Finalize Changelog](#finalize-changelog))
 - [ ] No known release-blocking issues remain
+- [ ] Every crate on the [untrusted-input parser watchlist](supply-chain.md#untrusted-input-parser-watchlist)
+      is on its latest compatible release, and its advisories and changelog since the last
+      release were reviewed (a watchlist advisory outranks any general dependency bump)
+- [ ] No open `supply-chain` issue from the [vendored-fork drift job](supply-chain.md#vendored-forks):
+      upstream fixes and advisories for `vnc-rs` and `ironrdp-rdpsnd` were ported or acknowledged
+      (run the **Vendored Forks** workflow manually first for a fresh result)
 
 ### Version Bump
 
