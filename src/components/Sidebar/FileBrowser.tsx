@@ -1173,9 +1173,13 @@ export function FileBrowser() {
         frontendLog("file_browser", `VS Code edit failed for ${remotePath}: ${err}`);
         toast.error(`Failed to save "${name}" from VS Code: ${err}`);
       }
-    }).then((fn) => {
-      cleanup = fn;
-    });
+    })
+      .then((fn) => {
+        cleanup = fn;
+      })
+      .catch((err: unknown) => {
+        frontendLog("file_browser", `VS Code edit listener failed to register: ${err}`);
+      });
     return () => {
       if (cleanup) cleanup();
     };
