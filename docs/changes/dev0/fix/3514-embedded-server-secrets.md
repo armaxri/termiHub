@@ -12,3 +12,8 @@
   until termiHub restarts and must be re-entered afterwards (a startup notice
   says so when existing passwords are removed from the file). Deleting a server
   also deletes its saved password.
+- Backups: embedded servers can now be included in an unencrypted backup. The
+  section never carries a password; the passwords travel in the (always
+  sealed) credentials section. Restoring a backup made by an older termiHub
+  that still holds plaintext server passwords moves them into the credential
+  store (unlock it first) instead of writing them back to the file (#3520).
