@@ -70,7 +70,7 @@ describe("WorkflowRunTargetsDialog", () => {
     const { onRun, onOpenChange } = render();
     expect(query("workflow-run-target-t1")?.getAttribute("aria-checked")).toBe("true");
     act(() => runButton().click());
-    expect(onRun).toHaveBeenCalledWith(["t1"]);
+    expect(onRun).toHaveBeenCalledWith(["t1"], { parallel: true });
     expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
@@ -79,7 +79,7 @@ describe("WorkflowRunTargetsDialog", () => {
     act(() => query("workflow-run-targets-all")?.click());
     expect(runButton().textContent).toBe("Run on 3 terminals");
     act(() => runButton().click());
-    expect(onRun).toHaveBeenCalledWith(["t1", "t2", "t3"]);
+    expect(onRun).toHaveBeenCalledWith(["t1", "t2", "t3"], { parallel: true });
   });
 
   it("offers the broadcast group only when it has connected members", () => {
@@ -91,7 +91,17 @@ describe("WorkflowRunTargetsDialog", () => {
     const { onRun } = render({ broadcastTabIds: ["t2", "t3", "gone"] });
     act(() => query("workflow-run-targets-broadcast")?.click());
     act(() => runButton().click());
-    expect(onRun).toHaveBeenCalledWith(["t2", "t3"]);
+    expect(onRun).toHaveBeenCalledWith(["t2", "t3"], { parallel: true });
+  });
+
+  it("runs in parallel by default and sequentially when the toggle is off (#3418)", () => {
+    const { onRun } = render();
+    const toggle = query("workflow-run-targets-parallel");
+    expect(toggle?.getAttribute("aria-checked")).toBe("true");
+    act(() => toggle?.click());
+    expect(toggle?.getAttribute("aria-checked")).toBe("false");
+    act(() => runButton().click());
+    expect(onRun).toHaveBeenCalledWith(["t1"], { parallel: false });
   });
 
   it("toggles a terminal off and disables Run when nothing is selected", () => {

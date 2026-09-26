@@ -11,6 +11,8 @@ import { createRoot, Root } from "react-dom/client";
 import { Terminal } from "./Terminal";
 import { TerminalPortalProvider } from "./TerminalRegistry";
 import { useAppStore } from "@/store/appStore";
+import { getCommandMarkTracker } from "@/services/commandMarks";
+import { mockXtermInstances } from "@/test/mockXterm";
 import { ensureSessionSubscribed } from "@/store/sessionBridge";
 import {
   connected,
@@ -246,5 +248,30 @@ describe("Terminal — no input while another window controls the session (#3368
     });
     expect(mockSendInput).toHaveBeenCalledTimes(1);
     expect(mockSendInput).toHaveBeenCalledWith("session-1", "ls\r");
+  });
+
+  it("resets the command-mark tracker with the terminal before the reclaim repaint (#3420)", async () => {
+    await ensureSessionSubscribed();
+    harness.transport.setSession("tab-1", connected());
+    await flushSessionRegion();
+    useAppStore.setState({ windowLabel: "main" });
+    await mountTerminal();
+    act(() => useAppStore.getState().setSessionOwners({ "session-1": "main" }));
+    const xterm = mockXtermInstances[mockXtermInstances.length - 1];
+    const trackerReset = vi.spyOn(getCommandMarkTracker("tab-1")!, "reset");
+    // The ring buffer (raw bytes, OSC 133 included) the repaint writes.
+    mockReplayScrollback.mockResolvedValueOnce(new Uint8Array([0x24, 0x20]));
+
+    act(() => useAppStore.getState().setSessionOwners({ "session-1": "win-1" }));
+    act(() => useAppStore.getState().setSessionOwners({ "session-1": "main" }));
+    await settle();
+
+    // The tracker is cleared together with the buffer, so the replayed OSC 133
+    // marks rebuild the commands instead of duplicating stale ones.
+    expect(xterm.reset).toHaveBeenCalled();
+    expect(trackerReset).toHaveBeenCalled();
+    expect(trackerReset.mock.invocationCallOrder[0]).toBeLessThan(
+      xterm.reset.mock.invocationCallOrder[0]
+    );
   });
 });

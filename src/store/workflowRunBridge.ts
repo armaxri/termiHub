@@ -65,12 +65,17 @@ const WORKFLOW_RUN_OUTPUT_MAX_LINES = 1000;
 
 // ── Projected view model (twin of the Rust store snapshot) ─────────────────────
 
-/** The in-flight run's step-progress, projected by the region — a one-to-one twin
- * of the frontend run-progress shape. */
+/** One in-flight run's step-progress, projected by the region — a one-to-one twin
+ * of the frontend run-progress shape. Keyed by `runId` (#3418): several runs may
+ * be in flight at once (a concurrent "Run on…" fan-out has one per target). */
 export interface ProjectedWorkflowRun {
+  /** The run's id (`"legacy"` for a run started without one). */
+  runId: string;
   workflowId: string;
   workflowName: string;
   tabId: string;
+  /** A human-readable name for the target (the terminal's title), when given. */
+  label?: string | null;
   total: number;
   completed: number;
 }
@@ -79,6 +84,8 @@ export interface ProjectedWorkflowRun {
  * streamed `lines` / `exitCode` / `timedOut` stay frontend (see the module docs),
  * so the projection carries only the panel's identity + status. */
 export interface ProjectedWorkflowRunOutput {
+  /** The run whose local process opened the panel (`null` for a legacy open). */
+  runId?: string | null;
   workflowId: string;
   workflowName: string;
   program: string;
@@ -88,15 +95,23 @@ export interface ProjectedWorkflowRunOutput {
   error?: string | null;
 }
 
-/** The `workflow-run@<clientId>` region view model: `{ run, output }` (twin of the
- * Rust `ClientState::to_view`). */
+/** The `workflow-run@<clientId>` region view model: `{ run, runs, output }` (twin
+ * of the Rust `ClientState::to_view`). `runs` lists every in-flight run in start
+ * order (#3418); `run` is the most recently started one, kept for back-compat. */
 export interface WorkflowRunView {
   run: ProjectedWorkflowRun | null;
+  runs: ProjectedWorkflowRun[];
   output: ProjectedWorkflowRunOutput | null;
 }
 
+/** A view as a test (or a pre-#3418 backend) may supply it: `runs` optional —
+ * {@link normalizeView} lifts a lone `run` into a one-entry list. */
+export type WorkflowRunViewInput = Omit<WorkflowRunView, "runs"> & {
+  runs?: ProjectedWorkflowRun[];
+};
+
 /** The empty view a fresh region reports (twin of the empty store snapshot). */
-const EMPTY_VIEW: WorkflowRunView = { run: null, output: null };
+const EMPTY_VIEW: WorkflowRunView = { run: null, runs: [], output: null };
 
 // ── Transport + client-scoped region client (lazy, mirrors the layout slice) ───
 
@@ -165,11 +180,14 @@ function fanView(): void {
   }
 }
 
-/** Coerce a raw region view to the {@link WorkflowRunView} shape (nulls for absent
- * halves), so a partial/empty snapshot never leaks `undefined` into the hook. */
+/** Coerce a raw region view to the {@link WorkflowRunView} shape (nulls / empty list
+ * for absent halves), so a partial/empty snapshot never leaks `undefined` into the
+ * hook. A pre-#3418 view carrying only `run` is lifted into a one-entry `runs`. */
 function normalizeView(raw: unknown): WorkflowRunView {
   const view = (raw ?? EMPTY_VIEW) as Partial<WorkflowRunView>;
-  return { run: view.run ?? null, output: view.output ?? null };
+  const runs = Array.isArray(view.runs) ? view.runs : view.run ? [view.run] : [];
+  const run = view.run ?? runs[runs.length - 1] ?? null;
+  return { run, runs, output: view.output ?? null };
 }
 
 /**
@@ -232,6 +250,8 @@ export function stopWorkflowSubscription(): void {
  */
 export interface WorkflowRunOutputContent {
   workflowId: string;
+  /** The run whose local process owns the buffer (#3418); absent for a legacy open. */
+  runId?: string;
   lines: WorkflowRunOutputLine[];
   exitCode: number | null;
   timedOut: boolean;
@@ -264,16 +284,26 @@ function fanContent(): void {
 }
 
 /** Open a fresh streamed-content buffer for a `run-local-process` spawn — a clean
- * line buffer keyed to `workflowId`, so a second spawn shows its own process. */
-export function openWorkflowOutputContent(workflowId: string): void {
-  outputContent = { workflowId, lines: [], exitCode: null, timedOut: false };
+ * line buffer keyed to `workflowId` (and the owning `runId`), so a second spawn
+ * shows its own process. */
+export function openWorkflowOutputContent(workflowId: string, runId?: string): void {
+  outputContent = { workflowId, runId, lines: [], exitCode: null, timedOut: false };
   fanContent();
 }
 
-/** Append a streamed line to the open content buffer (a no-op when none is open),
- * trimming to the most recent {@link WORKFLOW_RUN_OUTPUT_MAX_LINES}. */
-export function appendWorkflowOutputLine(line: WorkflowRunOutputLine): void {
-  if (!outputContent) return;
+/** True when a write tagged `runId` targets the open buffer: untagged writes (and
+ * writes to an untagged buffer) always do; a tagged write to another run's buffer
+ * is dropped, so a concurrent sibling's process never bleeds into it (#3418). */
+function ownsContent(runId: string | undefined): boolean {
+  if (!outputContent) return false;
+  return runId === undefined || outputContent.runId === undefined || outputContent.runId === runId;
+}
+
+/** Append a streamed line to the open content buffer (a no-op when none is open or
+ * it belongs to another run), trimming to the most recent
+ * {@link WORKFLOW_RUN_OUTPUT_MAX_LINES}. */
+export function appendWorkflowOutputLine(line: WorkflowRunOutputLine, runId?: string): void {
+  if (!outputContent || !ownsContent(runId)) return;
   const lines = [...outputContent.lines, line];
   const trimmed =
     lines.length > WORKFLOW_RUN_OUTPUT_MAX_LINES
@@ -284,8 +314,12 @@ export function appendWorkflowOutputLine(line: WorkflowRunOutputLine): void {
 }
 
 /** Record the process's raw exit outcome on the open content buffer. */
-export function setWorkflowOutputProcessResult(exitCode: number | null, timedOut: boolean): void {
-  if (!outputContent) return;
+export function setWorkflowOutputProcessResult(
+  exitCode: number | null,
+  timedOut: boolean,
+  runId?: string
+): void {
+  if (!outputContent || !ownsContent(runId)) return;
   outputContent = { ...outputContent, exitCode, timedOut };
   fanContent();
 }
@@ -350,42 +384,56 @@ async function dispatchWorkflow(
   }
 }
 
-/** Dispatch `workflow.runStarted` (begin a run at `completed == 0`; clears panel). */
+/** Dispatch `workflow.runStarted` (begin run `runId` at `completed == 0`). The
+ * panel is cleared unless `preserveOutput` is set — a target of a concurrent
+ * fan-out keeps a sibling's panel (#3418). */
 export function dispatchWorkflowRunStarted(payload: {
+  runId: string;
   workflowId: string;
   workflowName: string;
   tabId: string;
   total: number;
+  label?: string;
+  preserveOutput?: boolean;
 }): Promise<void> {
   return dispatchWorkflow("workflow.runStarted", {
+    runId: payload.runId,
     workflowId: payload.workflowId,
     workflowName: payload.workflowName,
     tabId: payload.tabId,
     total: payload.total,
+    ...(payload.label !== undefined ? { label: payload.label } : {}),
+    ...(payload.preserveOutput ? { preserveOutput: true } : {}),
   });
 }
 
-/** Dispatch `workflow.stepAdvanced` (update progress when the ids still match). */
+/** Dispatch `workflow.stepAdvanced` (update run `runId`'s progress while it is in
+ * flight). */
 export function dispatchWorkflowStepAdvanced(payload: {
+  runId: string;
   workflowId: string;
   tabId: string;
   completed: number;
 }): Promise<void> {
   return dispatchWorkflow("workflow.stepAdvanced", {
+    runId: payload.runId,
     workflowId: payload.workflowId,
     tabId: payload.tabId,
     completed: payload.completed,
   });
 }
 
-/** Dispatch `workflow.outputOpened` (open the run-output panel in `running`). */
+/** Dispatch `workflow.outputOpened` (open the run-output panel in `running`, owned
+ * by run `runId`). */
 export function dispatchWorkflowOutputOpened(payload: {
+  runId: string;
   workflowId: string;
   workflowName: string;
   program: string;
   args: string[];
 }): Promise<void> {
   return dispatchWorkflow("workflow.outputOpened", {
+    runId: payload.runId,
     workflowId: payload.workflowId,
     workflowName: payload.workflowName,
     program: payload.program,
@@ -393,19 +441,23 @@ export function dispatchWorkflowOutputOpened(payload: {
   });
 }
 
-/** Dispatch a run's terminal outcome (`completed` / `cancelled` / `failed`). */
+/** Dispatch run `runId`'s terminal outcome (`completed` / `cancelled` / `failed`). */
 export function dispatchWorkflowRunSettled(
+  runId: string,
   status: WorkflowRunOutputStatus,
   error?: string
 ): Promise<void> {
   if (status === "completed") {
-    return dispatchWorkflow("workflow.runCompleted", {});
+    return dispatchWorkflow("workflow.runCompleted", { runId });
   }
   if (status === "cancelled") {
-    return dispatchWorkflow("workflow.runCancelled", {});
+    return dispatchWorkflow("workflow.runCancelled", { runId });
   }
   if (status === "failed") {
-    return dispatchWorkflow("workflow.runFailed", error !== undefined ? { error } : {});
+    return dispatchWorkflow(
+      "workflow.runFailed",
+      error !== undefined ? { runId, error } : { runId }
+    );
   }
   return Promise.resolve();
 }
@@ -425,7 +477,7 @@ export function logWorkflowBridgeFallback(kind: string, err: unknown): void {
 
 /** Push a projected view straight to the render hook (component tests that do not
  * stand up a transport double). */
-export function setWorkflowRunViewForTest(view: WorkflowRunView): void {
+export function setWorkflowRunViewForTest(view: WorkflowRunViewInput): void {
   lastView = normalizeView(view);
   fanView();
 }
@@ -433,7 +485,7 @@ export function setWorkflowRunViewForTest(view: WorkflowRunView): void {
 /** Commit a projected view at an explicit region `version` through the same guarded
  * path a real diff takes, so a test can drive the stale-drop / apply behaviour
  * (FES-006) without a transport double. Never call from production code. */
-export function __emitWorkflowRunViewForTest(view: WorkflowRunView, version: number): void {
+export function __emitWorkflowRunViewForTest(view: WorkflowRunViewInput, version: number): void {
   commitWorkflowRunView(normalizeView(view), version);
 }
 
