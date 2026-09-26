@@ -230,6 +230,7 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
     expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
       "/source/photo.jpg",
       "/destination/dir/photo.jpg",
+      expect.any(Function),
       expect.any(Function)
     );
   });
@@ -276,6 +277,7 @@ describe("useLocalFileSystem — uploadFileFromPath API call", () => {
     expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
       "C:\\Users\\Alice\\report.docx",
       "/uploads/report.docx",
+      expect.any(Function),
       expect.any(Function)
     );
   });
@@ -410,6 +412,7 @@ describe("useLocalFileSystem — action wiring", () => {
     expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
       "/home/user/docs",
       "/dest/copy",
+      expect.any(Function),
       expect.any(Function)
     );
   });
@@ -490,6 +493,7 @@ describe("useLocalFileSystem — action wiring", () => {
     expect(vi.mocked(localCopyStart)).toHaveBeenCalledWith(
       "/src/a.txt",
       "/dest/a.txt",
+      expect.any(Function),
       expect.any(Function)
     );
   });
