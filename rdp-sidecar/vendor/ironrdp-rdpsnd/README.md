@@ -11,6 +11,13 @@ This is a vendored fork of `ironrdp-rdpsnd` **0.9.0** for termiHub's RDP sidecar
 patched into the workspace-excluded `rdp-sidecar` crate via `[patch.crates-io]`,
 mirroring how `vendor/vnc-rs` is patched into the main app.
 
+**Fork base:** upstream tag `ironrdp-rdpsnd-v0.9.0`, commit
+[`11a0810cfbbabd8b8023875a05e3041216d4b01b`](https://github.com/Devolutions/IronRDP/commit/11a0810cfbbabd8b8023875a05e3041216d4b01b)
+of [IronRDP](https://github.com/Devolutions/IronRDP). The fork is registered in
+[`vendor/vendored-forks.json`](../../../vendor/vendored-forks.json), and a weekly CI
+job reports upstream releases, commits and advisories that the fork does not have
+yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing.
+
 There are **two functional changes**, both in `src/client.rs`.
 
 ### 1. `wave` receives the concrete `AudioFormat` ([#1773])

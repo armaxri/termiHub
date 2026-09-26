@@ -3,6 +3,13 @@
 Vendored fork of [`vnc-rs`](https://github.com/HsuJv/vnc-rs) `0.5.3`, an async
 client-side implementation of the VNC/RFB protocol.
 
+**Fork base:** upstream `0.5.3`, commit
+[`f8ac0ee4915e8e1e1adb8880a0716761b91281f6`](https://github.com/HsuJv/vnc-rs/commit/f8ac0ee4915e8e1e1adb8880a0716761b91281f6)
+(the version-bump commit; upstream publishes no tags). The fork is registered in
+[`vendor/vendored-forks.json`](../vendored-forks.json), and a weekly CI job
+reports upstream releases, commits and advisories that the fork does not have
+yet — see `docs/supply-chain.md` → "Vendored forks". Update both when re-basing.
+
 ## Why this is vendored
 
 Upstream `0.5.3` (and its `main`) cannot negotiate **VeNCrypt** (RFB security
