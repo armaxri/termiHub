@@ -63,11 +63,7 @@ impl crate::utils::migrate::VersionedStore for FileBookmarkStore {
     /// Per-entry salvage (PER-004): drop only the individually-corrupt
     /// bookmarks instead of resetting the whole store.
     fn salvage(raw: &str, file_name: &str) -> crate::utils::migrate::Salvage<Self> {
-        crate::utils::migrate::salvage_list_store::<Self, FileBookmark>(
-            raw,
-            file_name,
-            "bookmarks",
-        )
+        crate::utils::migrate::salvage_list_store::<Self, FileBookmark>(raw, file_name, "bookmarks")
     }
 }
 

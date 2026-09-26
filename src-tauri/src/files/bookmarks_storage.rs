@@ -46,8 +46,7 @@ impl FileBookmarkStorage {
             FileBookmarkStore::STORE_NAME,
             FileBookmarkStore::CURRENT_VERSION,
         )?;
-        let data =
-            serde_json::to_string_pretty(store).context("Failed to serialize bookmarks")?;
+        let data = serde_json::to_string_pretty(store).context("Failed to serialize bookmarks")?;
         write_atomic(&self.file_path, &data).context("Failed to write bookmarks file")?;
         Ok(())
     }

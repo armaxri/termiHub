@@ -274,7 +274,9 @@ mod tests {
         let m = manager(&dir);
         assert!(m.add("", "/tmp", None).is_err());
         assert!(m.add("local", "  ", None).is_err());
-        assert!(m.add("local", &"a".repeat(MAX_PATH_CHARS + 1), None).is_err());
+        assert!(m
+            .add("local", &"a".repeat(MAX_PATH_CHARS + 1), None)
+            .is_err());
         assert!(m.add(&"s".repeat(MAX_SCOPE_CHARS + 1), "/", None).is_err());
         let b = m.add("local", "/tmp", None).unwrap();
         assert!(m.rename(&b.id, "   ").is_err());
