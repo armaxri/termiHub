@@ -84,15 +84,12 @@ export function BroadcastScopeDialog({
   const groups = useBroadcastGroups();
   // `all` / `panel` / `custom`, or `group:<id>` for a saved named group.
   const [scopeValue, setScopeValue] = useState<string>(lastBroadcastScope);
-  const selectedGroup = scopeValue.startsWith(GROUP_PREFIX)
+  const isGroupScope = scopeValue.startsWith(GROUP_PREFIX);
+  const selectedGroup = isGroupScope
     ? (groups.find((g) => `${GROUP_PREFIX}${g.id}` === scopeValue) ?? null)
     : null;
   // A named group broadcasts as a frozen custom selection (no auto-joining).
-  const scope: BroadcastScope = selectedGroup
-    ? "custom"
-    : scopeValue.startsWith(GROUP_PREFIX)
-      ? "all"
-      : (scopeValue as BroadcastScope);
+  const scope: BroadcastScope = isGroupScope ? "custom" : (scopeValue as BroadcastScope);
   const [customSelected, setCustomSelected] = useState<Set<string>>(new Set());
 
   // Terminal tabs in the active group — the only broadcast-eligible tabs and the
@@ -146,13 +143,23 @@ export function BroadcastScopeDialog({
   // The concrete target set the chosen scope resolves to.
   const resolvedTargets = useMemo<string[]>(() => {
     if (!sourceTabId) return [];
-    if (groupResolution) return groupResolution.tabIds;
+    // A group that vanished (deleted in another window) resolves to nothing —
+    // never silently to a broader scope.
+    if (isGroupScope) return groupResolution?.tabIds ?? [];
     if (scope === "custom") {
       const terminalIds = new Set(terminalTabs.map((t) => t.id));
       return [...customSelected].filter((id) => terminalIds.has(id));
     }
     return resolveBroadcastTargetTabIds(resolveState, scope, sourceTabId);
-  }, [scope, sourceTabId, resolveState, customSelected, terminalTabs, groupResolution]);
+  }, [
+    scope,
+    sourceTabId,
+    resolveState,
+    customSelected,
+    terminalTabs,
+    groupResolution,
+    isGroupScope,
+  ]);
 
   const groupable = useMemo(
     () => groupableConnectionIds(terminalTabs, customSelected),
@@ -267,7 +274,7 @@ export function BroadcastScopeDialog({
         </div>
       )}
 
-      {scope === "custom" && !selectedGroup && (
+      {scope === "custom" && !isGroupScope && (
         <div className="broadcast-scope-dialog__custom">
           <div className="broadcast-scope-dialog__custom-actions">
             <Button

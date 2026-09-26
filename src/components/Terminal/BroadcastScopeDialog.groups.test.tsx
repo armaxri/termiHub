@@ -224,4 +224,17 @@ describe("BroadcastScopeDialog — named groups (PROD-061)", () => {
     });
     expect(currentSettingsView().broadcastGroups).toEqual([]);
   });
+
+  it("never falls back to a broader scope when the selected group disappears", () => {
+    seed([term("src", "c1"), term("a", "c2")]);
+    seedSettings({ broadcastGroups: [{ id: "g1", name: "web", connectionIds: ["c2"] }] });
+    render();
+    pickScope('Group "web"');
+    // Another window deletes the group while this dialog is open.
+    act(() => seedSettings({ broadcastGroups: [] }));
+    const start = q('[data-testid="broadcast-scope-confirm"]') as HTMLButtonElement;
+    expect(start.disabled).toBe(true);
+    click(start);
+    expect(currentBroadcastView().active).toBe(false);
+  });
 });
