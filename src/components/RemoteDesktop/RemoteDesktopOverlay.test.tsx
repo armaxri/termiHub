@@ -126,6 +126,19 @@ describe("RemoteDesktopOverlay", () => {
     expect(onReconnect).toHaveBeenCalledOnce();
   });
 
+  it("shows a server protocol-error reason with a manual Reconnect (#3479)", () => {
+    // A protocol error is terminal (no auto-retry), so it arrives as
+    // `disconnected` carrying the backend's reason verbatim.
+    const reason = "The VNC server sent data termiHub can't handle: unsupported encoding 7";
+    const { onReconnect } = render("disconnected", { message: reason });
+    expect(query("remote-desktop-overlay-reconnecting")).toBeNull();
+    const el = query("remote-desktop-overlay-error");
+    expect(el?.textContent).toContain("Connection lost");
+    expect(container.querySelector(".rd-overlay__error")?.textContent).toBe(reason);
+    act(() => query("remote-desktop-reconnect")?.click());
+    expect(onReconnect).toHaveBeenCalledOnce();
+  });
+
   it("omits the error message block when none is given", () => {
     render("connectFailed", { message: null });
     expect(container.querySelector(".rd-overlay__error")).toBeNull();

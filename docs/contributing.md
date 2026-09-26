@@ -180,21 +180,21 @@ a macOS-only break — surface on `develop` after merge instead of on the PR.
 ([`scripts/internal/ci-changes.mjs`](../scripts/internal/ci-changes.mjs)) and
 each job runs only if the PR can affect it:
 
-| Check                                        | Runs on a PR when…                                        |
-| -------------------------------------------- | --------------------------------------------------------- |
-| Rust Code Quality (fmt, clippy, feature iso) | Rust or `rdp-sidecar/` changed                            |
-| Rust Code Quality (Windows) (clippy)         | Rust changed                                              |
-| Frontend Code Quality (lint, tsc, prettier)  | frontend changed, or docs/Markdown changed                |
-| Run Tests (ubuntu-latest)                    | Rust and/or frontend changed — runs only the changed half |
-| Run Tests (windows-latest)                   | Rust changed — Rust tests only (no vitest)                |
-| Build on ubuntu-latest (release compile)     | Rust or frontend changed                                  |
-| RDP Sidecar Quality                          | `rdp-sidecar/` changed                                    |
-| Shell Script Quality                         | a shell/cmd script changed                                |
-| System-Test Harness / Test-ID Drift Guard    | `tests/system/` changed (drift guard: also frontend)      |
-| Security Audit                               | a dependency manifest/lockfile changed                    |
-| Agent — Linux musl cross-builds              | `agent/`, `core/` or `Cargo.toml` changed                 |
-| Plugin Packaging (ubuntu + windows, merge)   | the plugin surface changed (API, host, packer, examples)  |
-| Lint Commit Messages                         | always                                                    |
+| Check                                                     | Runs on a PR when…                                        |
+| --------------------------------------------------------- | --------------------------------------------------------- |
+| Rust Code Quality (fmt, clippy, feature iso)              | Rust or `rdp-sidecar/` changed                            |
+| Rust Code Quality (Windows) (clippy)                      | Rust changed                                              |
+| Frontend Code Quality (lint, tsc, prettier, IPC contract) | frontend, Rust, or docs/Markdown changed                  |
+| Run Tests (ubuntu-latest)                                 | Rust and/or frontend changed — runs only the changed half |
+| Run Tests (windows-latest)                                | Rust changed — Rust tests only (no vitest)                |
+| Build on ubuntu-latest (release compile)                  | Rust or frontend changed                                  |
+| RDP Sidecar Quality                                       | `rdp-sidecar/` changed                                    |
+| Shell Script Quality                                      | a shell/cmd script changed                                |
+| System-Test Harness / Test-ID Drift Guard                 | `tests/system/` changed (drift guard: also frontend)      |
+| Security Audit                                            | a dependency manifest/lockfile changed                    |
+| Agent — Linux musl cross-builds                           | `agent/`, `core/` or `Cargo.toml` changed                 |
+| Plugin Packaging (ubuntu + windows, merge)                | the plugin surface changed (API, host, packer, examples)  |
+| Lint Commit Messages                                      | always                                                    |
 
 A skipped check reports as **skipped**, which is a pass. The classifier is
 **fail-open**: an unrecognised path, any `.github/` change, or a failure of the
@@ -727,12 +727,22 @@ scripts\build-agents.cmd          # Windows
 - All targets use `cross-rs` (Docker/Podman-based) which builds inside containers with the correct musl toolchain and libudev-dev
 - Docker Desktop or Podman Desktop must be running before building
 
-### Build Options (Unix)
+### Build Options
+
+`build-agents.sh` and `build-agents.cmd` accept the same flags (`--targets`, `--sequential`,
+`--native`, `--dev`, `--features`, `--sign-key`; run either with `--help`), and both write a
+`<binary>.sha256` checksum sidecar next to every built binary, failing the build if they cannot.
+The script-parity CI gate (`scripts/internal/check-script-parity.sh`) fails when the flags the two
+halves of a `.sh`/`.cmd` pair accept drift apart.
 
 ```bash
 # Build specific target only
 ./scripts/build-agents.sh --targets aarch64-unknown-linux-musl
+scripts\build-agents.cmd --targets aarch64-unknown-linux-musl
 ```
+
+On Windows, `--sign-key` runs the same `scripts/internal/agent-update-signing.sh` pipeline as
+release CI, so it needs Git Bash with OpenSSL 3 (both ship with Git for Windows).
 
 ### Output
 

@@ -50,6 +50,15 @@
 //!   failure, the session rests in `ConnectFailed` — the same outcome a
 //!   synchronous `connect()` error gets. (On a *re-dial* such a failure is an
 //!   ordinary failed attempt, so an unreachable host is still retried.)
+//! - **Server protocol error** (#3479): the backend reports
+//!   [`SessionError::ProtocolError`] on `fatal_error` when the server sent data
+//!   the client cannot handle (a malformed message, an unsupported encoding or
+//!   pixel format, undecodable image data) or its protocol driver panicked. The
+//!   session rests in `Disconnected` **with that reason as the message** and no
+//!   retry — on the first connect, mid-session and on a re-dial alike. A
+//!   re-dial would meet the same server behaviour, so even one automatic retry
+//!   only delays the explanation; the user can still reconnect manually.
+//!   Transport drops (no typed reason) keep the normal retry budget.
 //! - **Hostile frame stream** (MOCK-011): when the [`FrameGuard`] aborts the
 //!   pump after persistently invalid frames, the session is treated as
 //!   **terminal** — `Disconnected` with [`REJECTED_FRAMES_MESSAGE`] and no
@@ -227,6 +236,8 @@ impl<S: GraphicalEventSink> Supervisor<S> {
     /// to the ordinary drop / reconnect handling.
     ///
     /// - [`SessionError::AuthFailed`] always rests in `AuthFailed`.
+    /// - [`SessionError::ProtocolError`] always rests in `Disconnected` with its
+    ///   reason (#3479): the server would replay the same data on a re-dial.
     /// - Any other typed failure rests in `ConnectFailed` only for the first
     ///   generation that never painted — the asynchronous twin of a failed
     ///   initial `connect()`.
@@ -237,6 +248,7 @@ impl<S: GraphicalEventSink> Supervisor<S> {
         }?;
         match fatal {
             SessionError::AuthFailed => Some((GraphicalState::AuthFailed, fatal.to_string())),
+            SessionError::ProtocolError(reason) => Some((GraphicalState::Disconnected, reason)),
             other if !retrying && !end.painted && !end.aborted => {
                 Some((GraphicalState::ConnectFailed, other.to_string()))
             }

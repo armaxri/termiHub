@@ -81,6 +81,15 @@ else
 fi
 
 echo ""
+echo "=== IPC invoke argument contract ==="
+# invoke() arg keys vs #[tauri::command] param names (#3488).
+if node scripts/internal/check-invoke-contract.mjs; then
+    echo "PASS"
+else
+    FAILED=1
+fi
+
+echo ""
 echo "=== uv version pin consistency ==="
 # .github/uv-version is the only uv pin; no direct astral-sh/setup-uv (WA-CI-017).
 if node scripts/internal/check-uv-version.mjs; then
