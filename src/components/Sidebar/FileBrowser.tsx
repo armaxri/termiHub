@@ -40,8 +40,10 @@ import {
   EyeOff,
   FolderInput,
   CopyPlus,
+  Columns2,
 } from "lucide-react";
 import { useAppStore, getActiveTab } from "@/store/appStore";
+import { getAllTabsAcrossGroupTrees } from "@/store/layoutSelectors";
 import { useProjectedAgents } from "@/store/useProjectedAgents";
 import { useProjectedSettings } from "@/store/useProjectedSettings";
 import { useProjectedFileBrowsers } from "@/store/useProjectedFileBrowsers";
@@ -1235,6 +1237,24 @@ export function FileBrowser() {
 
   const sessionFileBrowserId = useAppStore((s) => s.sessionFileBrowserId);
   const activeTabConnectionType = useAppStore((s) => getActiveTab(s)?.connectionType ?? null);
+  const openTransferViewTab = useAppStore((s) => s.openTransferViewTab);
+
+  // Open the dual-pane transfer view (PROD-007) for the browsed remote session —
+  // attached to the terminal tab that owns it, so a reconnect keeps it — seeded
+  // with the folder shown here.
+  const handleOpenTransferView = useCallback(() => {
+    const owner =
+      mode === "session" && sessionFileBrowserId
+        ? getAllTabsAcrossGroupTrees().find(
+            (t) => t.sessionId === sessionFileBrowserId && !t.editorMeta
+          )
+        : undefined;
+    openTransferViewTab({
+      remoteTabId: owner?.id ?? null,
+      localPath: mode === "local" && currentPath ? currentPath : undefined,
+      remotePath: mode === "session" && currentPath ? currentPath : undefined,
+    });
+  }, [mode, sessionFileBrowserId, currentPath, openTransferViewTab]);
 
   // Drag-to-move / Move to… engine (PROD-006): guards, conflict prompt, and the
   // shared paste plumbing with a one-shot clipboard.
@@ -1745,6 +1765,16 @@ export function FileBrowser() {
                 onClick={refresh}
                 aria-label="Refresh file list"
                 data-testid="file-browser-refresh"
+              />
+            </Tooltip>
+            <Tooltip content="Open Dual-Pane Transfer View" side="top">
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<Columns2 size={14} />}
+                onClick={handleOpenTransferView}
+                aria-label="Open dual-pane transfer view"
+                data-testid="file-browser-open-transfer-view"
               />
             </Tooltip>
             <Tooltip
