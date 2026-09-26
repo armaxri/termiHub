@@ -214,3 +214,35 @@ describe("open tabs follow a saved connection's id change (#3579)", () => {
     expect(useAppStore.getState().tabContent).toBe(before);
   });
 });
+
+describe("saved records follow a connection's id change (#3596)", () => {
+  it("re-reads the workflow list, whose on-connect triggers the backend re-pointed", async () => {
+    const renamed = [
+      {
+        id: "wf",
+        name: "Deploy",
+        tags: [],
+        steps: [],
+        triggers: [{ kind: "on-connect", connectionIds: ["Job/x"] }],
+        parameters: [],
+        createdAt: "",
+        updatedAt: "",
+      },
+    ];
+    vi.mocked(invoke).mockImplementation(async (cmd) =>
+      cmd === "list_workflows" ? renamed : undefined
+    );
+
+    emitBackendEvent("connection-ids-changed", [{ oldId: "Work/x", newId: "Job/x" }]);
+
+    await vi.waitFor(() => expect(useAppStore.getState().workflows).toEqual(renamed));
+  });
+
+  it("does not re-read workflows for an empty batch", () => {
+    vi.mocked(invoke).mockClear();
+
+    useAppStore.getState().followConnectionIdChanges([]);
+
+    expect(vi.mocked(invoke).mock.calls.some(([cmd]) => cmd === "list_workflows")).toBe(false);
+  });
+});

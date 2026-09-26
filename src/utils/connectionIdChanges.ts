@@ -16,9 +16,13 @@
  * - **`persistentSessions`** — keyed by the id the *backend* persistent-session
  *   registry uses. Re-keying only the frontend map would desync it from the
  *   backend, so it is left as is until the registry follows too (#3595).
- * - **Saved workspaces, broadcast groups, schedules, workflow triggers, tunnels,
- *   jump-host references** — persisted, backend-owned records; not remapped here
- *   (#3596).
+ * - **Saved workspaces (and the stored last session), broadcast groups,
+ *   shell-integration entries, schedules, workflow triggers, tunnels, jump-host
+ *   references** — persisted, backend-owned records; the backend re-points them
+ *   before it sends the event (#3596, `src-tauri/src/boot/connection_id_changes.rs`).
+ *   The UI caches refresh from their own sources: the `settings`, `tunnels` and
+ *   `connections` regions, `schedules-changed`, and a workflow-list reload in
+ *   `followConnectionIdChanges`.
  * - **Session history** — a historical record of what was opened; not remapped.
  */
 

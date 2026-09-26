@@ -75,8 +75,10 @@ export interface ConnectionTreeSlice {
   moveConnectionToFile: (connectionId: string, targetSource: string | null) => Promise<void>;
   /**
    * Re-point open tabs at their connections' new ids after a rename or move
-   * (#3579) — the frontend side of the backend `connection-ids-changed` event.
-   * See `src/utils/connectionIdChanges.ts` for which references follow.
+   * (#3579) — the frontend side of the backend `connection-ids-changed` event —
+   * and re-read the workflow list, whose on-connect triggers the backend
+   * re-pointed (#3596). See `src/utils/connectionIdChanges.ts` for which
+   * references follow.
    */
   followConnectionIdChanges: (changes: readonly ConnectionIdChange[]) => void;
 }
@@ -207,6 +209,11 @@ export const createConnectionTreeSlice: StateCreator<AppState, [], [], Connectio
         const next = remapTabContentConnectionIds(state.tabContent, changes);
         return next ? { tabContent: next } : {};
       });
+      // The backend re-pointed the saved records before announcing the change
+      // (#3596). Workflows have no change event of their own, so re-read them
+      // for the on-connect triggers; schedules, tunnels and settings update
+      // through their own event / regions.
+      if (changes.length > 0) void get().loadWorkflows();
     },
 
     reloadExternalConnections: async () => {

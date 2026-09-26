@@ -18,6 +18,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 
 use super::config::SavedConnection;
+use super::id_changes::ConnectionIdRemap;
 use crate::credential::named;
 use crate::credential::{CredentialKey, CredentialStore, CredentialType};
 
@@ -131,6 +132,34 @@ fn resolve_hops(
         }
     }
     Ok(resolved)
+}
+
+/// Re-point every saved-connection jump-host reference in `settings` (the
+/// `proxyJump` array or its legacy `jumpHosts` alias) along `remap` (#3596).
+/// Returns whether any reference changed.
+pub(crate) fn follow_jump_host_refs(settings: &mut Value, remap: &ConnectionIdRemap) -> bool {
+    let mut changed = false;
+    for key in ["proxyJump", "jumpHosts"] {
+        if let Some(Value::Array(hops)) = settings.get_mut(key) {
+            for hop in hops {
+                if let Some(Value::String(id)) = hop.get_mut("connectionId") {
+                    changed |= remap.apply(id);
+                }
+            }
+        }
+    }
+    changed
+}
+
+/// [`follow_jump_host_refs`] over every connection's settings; returns whether
+/// any reference changed.
+pub(crate) fn follow_jump_host_refs_in(
+    connections: &mut [SavedConnection],
+    remap: &ConnectionIdRemap,
+) -> bool {
+    connections.iter_mut().fold(false, |changed, conn| {
+        follow_jump_host_refs(&mut conn.config.settings, remap) | changed
+    })
 }
 
 /// The non-empty `connectionId` of a hop, if it references a saved connection.
@@ -596,5 +625,78 @@ mod tests {
             settings_with_hops(json!([{ "connectionId": "gw", "connectTimeoutSecs": 45 }]));
         resolve_proxy_jump_refs(&mut settings, &[gw], &MemStore::default(), None).unwrap();
         assert_eq!(hops(&settings)[0]["connectTimeoutSecs"], 45);
+    }
+
+    fn remap(changes: &[(&str, &str)]) -> ConnectionIdRemap {
+        let changes: Vec<crate::connection::id_changes::ConnectionIdChange> = changes
+            .iter()
+            .map(|(o, n)| crate::connection::id_changes::ConnectionIdChange::new(*o, *n))
+            .collect();
+        ConnectionIdRemap::new(&changes)
+    }
+
+    #[test]
+    fn follow_jump_host_refs_rewrites_references_and_keeps_inline_hops() {
+        let mut settings = settings_with_hops(json!([
+            { "connectionId": "Work/bastion" },
+            { "host": "inline", "username": "u" },
+            { "connectionId": "other" }
+        ]));
+        assert!(follow_jump_host_refs(
+            &mut settings,
+            &remap(&[("Work/bastion", "Job/bastion")])
+        ));
+        let chain = hops(&settings);
+        assert_eq!(chain[0]["connectionId"], "Job/bastion");
+        assert_eq!(chain[1], json!({ "host": "inline", "username": "u" }));
+        assert_eq!(chain[2]["connectionId"], "other");
+    }
+
+    #[test]
+    fn follow_jump_host_refs_covers_the_legacy_alias_and_swaps() {
+        let mut settings = json!({
+            "host": "t",
+            "jumpHosts": [{ "connectionId": "a" }, { "connectionId": "b" }]
+        });
+        assert!(follow_jump_host_refs(
+            &mut settings,
+            &remap(&[("a", "b"), ("b", "a")])
+        ));
+        assert_eq!(settings["jumpHosts"][0]["connectionId"], "b");
+        assert_eq!(settings["jumpHosts"][1]["connectionId"], "a");
+    }
+
+    #[test]
+    fn follow_jump_host_refs_without_a_matching_reference_changes_nothing() {
+        let mut settings = settings_with_hops(json!([{ "connectionId": "x" }]));
+        let before = settings.clone();
+        assert!(!follow_jump_host_refs(&mut settings, &remap(&[("a", "b")])));
+        assert_eq!(settings, before);
+        let mut no_chain = json!({ "host": "t" });
+        assert!(!follow_jump_host_refs(&mut no_chain, &remap(&[("a", "b")])));
+    }
+
+    #[test]
+    fn follow_jump_host_refs_in_reports_whether_any_connection_changed() {
+        let mut conns = vec![
+            ssh_conn("gw", "gw", json!({ "host": "gw" })),
+            ssh_conn(
+                "t",
+                "t",
+                json!({ "host": "t", "proxyJump": [{ "connectionId": "gw" }] }),
+            ),
+        ];
+        assert!(follow_jump_host_refs_in(
+            &mut conns,
+            &remap(&[("gw", "Net/gw")])
+        ));
+        assert_eq!(
+            conns[1].config.settings["proxyJump"][0]["connectionId"],
+            "Net/gw"
+        );
+        assert!(!follow_jump_host_refs_in(
+            &mut conns,
+            &remap(&[("zz", "yy")])
+        ));
     }
 }

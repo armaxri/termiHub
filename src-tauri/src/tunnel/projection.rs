@@ -90,7 +90,7 @@ pub fn build_tunnel_view(manager: &TunnelManager) -> Value {
 /// [`build_tunnel_view`] re-locks the manager's mutexes, and every caller (the
 /// status-emit choke point, the stats emitter, the intent handlers) invokes this
 /// outside any held manager lock.
-pub fn publish_tunnels(app_handle: &AppHandle) {
+pub fn publish_tunnels<R: tauri::Runtime>(app_handle: &AppHandle<R>) {
     let (Some(projection), Some(manager)) = (
         app_handle.try_state::<ProjectionState>(),
         app_handle.try_state::<Arc<TunnelManager>>(),

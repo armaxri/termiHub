@@ -651,3 +651,64 @@ fn weekly_schedule_in_a_dst_zone_reports_local_next_run() {
         1
     );
 }
+
+fn id_remap(changes: &[(&str, &str)]) -> crate::connection::id_changes::ConnectionIdRemap {
+    let changes: Vec<crate::connection::id_changes::ConnectionIdChange> = changes
+        .iter()
+        .map(|(o, n)| crate::connection::id_changes::ConnectionIdChange::new(*o, *n))
+        .collect();
+    crate::connection::id_changes::ConnectionIdRemap::new(&changes)
+}
+
+/// #3596: a rename keeps the same host, so the targets follow it without
+/// disabling the schedule or dropping its confirmation.
+#[test]
+fn targets_follow_connection_id_changes_and_stay_enabled_and_confirmed() {
+    let dir = TempDir::new().unwrap();
+    let m = enabled_manager(&dir, MissedRunPolicy::Skip);
+    let before = m.state(t(10, 1), &Utc).unwrap().schedules[0]
+        .schedule
+        .clone();
+
+    assert!(m
+        .follow_connection_id_changes(&id_remap(&[("conn-a", "conn-b"), ("conn-b", "conn-a")]))
+        .unwrap());
+
+    // Persisted: a fresh manager over the same file sees the swapped targets.
+    let reloaded = ScheduleManager::new_test(dir.path());
+    let s = reloaded.state(t(10, 1), &Utc).unwrap().schedules[0]
+        .schedule
+        .clone();
+    assert_eq!(
+        s.targets,
+        ScheduleTargets::Connections {
+            connection_ids: vec!["conn-b".to_string(), "conn-a".to_string()],
+        }
+    );
+    assert!(s.enabled);
+    assert_eq!(s.confirmed_at, before.confirmed_at);
+    assert_eq!(s.updated_at, before.updated_at);
+}
+
+#[test]
+fn broadcast_group_targets_and_unrelated_ids_are_left_alone() {
+    let dir = TempDir::new().unwrap();
+    let m = ScheduleManager::new_test(dir.path());
+    let mut i = input("s1", every(10));
+    i.targets = ScheduleTargets::BroadcastGroup {
+        group_id: "conn-a".to_string(),
+    };
+    m.save(i, t(10, 0), &Utc).unwrap();
+
+    assert!(!m
+        .follow_connection_id_changes(&id_remap(&[("conn-a", "x")]))
+        .unwrap());
+    assert_eq!(
+        m.state(t(10, 1), &Utc).unwrap().schedules[0]
+            .schedule
+            .targets,
+        ScheduleTargets::BroadcastGroup {
+            group_id: "conn-a".to_string()
+        }
+    );
+}
