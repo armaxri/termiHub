@@ -8,6 +8,7 @@ mod file_browser;
 mod list;
 mod monitoring;
 mod process;
+mod reattach;
 mod runtime;
 mod transfer;
 
@@ -38,6 +39,9 @@ use crate::monitoring::{
 use crate::session::docker::validate_docker_config;
 
 pub use self::list::{list_containers, summarize_containers, ContainerInfo};
+pub use self::reattach::{
+    check_reattach_identity, reattach_transfer_target, short_container_id, ReattachError,
+};
 pub use self::transfer::{
     docker_transfer_target_of, ContainerCaps, DockerTransferTarget, ExecReader, ExecWriter,
 };

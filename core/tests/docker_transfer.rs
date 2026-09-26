@@ -22,7 +22,9 @@ use bollard::container::{Config, CreateContainerOptions, RemoveContainerOptions}
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use bollard::image::CreateImageOptions;
 use futures_util::StreamExt;
-use termihub_core::backends::docker::DockerTransferTarget;
+use termihub_core::backends::docker::{
+    reattach_transfer_target, DockerTransferTarget, ReattachError,
+};
 use termihub_core::files::transfer::docker::run_docker_transfer;
 use termihub_core::files::transfer::{
     ProgressSink, TransferDirection, TransferPhase, TransferProgress, TransferRegistry,
@@ -531,6 +533,154 @@ async fn container_without_tail_refuses_resume_and_restarts_byte_exact() {
             messages(&events)
         );
         assert_eq!(local_sha(&local), fx.remote_sha("/tmp/src.bin").await);
+    })
+    .await;
+}
+
+/// An app restart kills the executor mid-transfer; the relaunch (#3585)
+/// re-attaches to the persisted container **id** and resumes from the
+/// persisted checkpoint through the normal resume gate, byte-exact.
+#[tokio::test]
+async fn relaunch_reattaches_by_container_id_and_resumes_from_the_checkpoint() {
+    with_container("relaunch", |fx| async move {
+        make_remote(&fx, "/tmp/src.bin", 96).await;
+        let local = fx.local("dl.bin");
+        let run = Run::start(&fx, TransferDirection::Download, "/tmp/src.bin", &local);
+        run.pause_mid_flight().await;
+        let checkpoint = run.handle.snapshot().transferred;
+        let total = run.handle.snapshot().total;
+        assert!(checkpoint > 0 && checkpoint < total, "{checkpoint}/{total}");
+        // The app quits: the executor dies, the local partial stays behind.
+        run.task.abort();
+        let _ = run.task.await;
+
+        // Next launch: no session, only the persisted container id.
+        let target = reattach_transfer_target(&fx.id)
+            .await
+            .expect("the same running container re-attaches");
+        let registry = TransferRegistry::new();
+        let handle = registry.enqueue(
+            "t",
+            "gone-session",
+            TransferDirection::Download,
+            "f",
+            "/tmp/src.bin",
+            total,
+        );
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let recorder = events.clone();
+        let sink: ProgressSink = Arc::new(move |p: &TransferProgress| {
+            recorder.lock().expect("lock").push(Event {
+                transferred: p.transferred,
+                phase: p.phase,
+                message: p.message.clone(),
+            });
+        });
+        let task = tokio::spawn(run_docker_transfer(
+            target,
+            TransferDirection::Download,
+            "/tmp/src.bin".to_string(),
+            local.clone(),
+            handle,
+            registry,
+            sink,
+            checkpoint,
+        ));
+        tokio::time::timeout(TRANSFER_TIMEOUT, task)
+            .await
+            .expect("relaunch finished in time")
+            .expect("executor task");
+        let events = events.lock().expect("lock").clone();
+
+        assert_eq!(last_phase(&events), TransferPhase::Done, "{events:?}");
+        assert_eq!(local_sha(&local), fx.remote_sha("/tmp/src.bin").await);
+        assert!(
+            events.iter().all(|e| e.transferred >= checkpoint),
+            "the relaunch resumed from the checkpoint, never from zero: {events:?}"
+        );
+    })
+    .await;
+}
+
+/// A container stopped while the app was closed is reported as such (the
+/// user can start it and retry); one recreated under the **same name** is a
+/// different filesystem and must never be resumed into (#3585).
+#[tokio::test]
+async fn relaunch_refuses_a_stopped_or_recreated_container() {
+    with_container("reattach-id", |fx| async move {
+        let info = fx
+            .client
+            .inspect_container(&fx.id, None)
+            .await
+            .expect("inspect");
+        let name = info
+            .name
+            .expect("container name")
+            .trim_start_matches('/')
+            .to_string();
+
+        fx.client
+            .kill_container::<String>(&fx.id, None)
+            .await
+            .expect("kill");
+        assert!(
+            matches!(
+                reattach_transfer_target(&fx.id).await,
+                Err(ReattachError::NotRunning(_))
+            ),
+            "a stopped container is not running"
+        );
+
+        // Recreate a container under the same name: same name, new id.
+        fx.client
+            .remove_container(
+                &fx.id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await
+            .expect("remove original");
+        let recreated = fx
+            .client
+            .create_container(
+                Some(CreateContainerOptions {
+                    name: name.as_str(),
+                    platform: None,
+                }),
+                Config {
+                    image: Some(IMAGE),
+                    cmd: Some(vec!["sleep", "600"]),
+                    ..Default::default()
+                },
+            )
+            .await
+            .expect("recreate");
+        let started = fx
+            .client
+            .start_container::<String>(&recreated.id, None)
+            .await;
+        let old = reattach_transfer_target(&fx.id).await;
+        let new = reattach_transfer_target(&recreated.id).await;
+        let _ = fx
+            .client
+            .remove_container(
+                &recreated.id,
+                Some(RemoveContainerOptions {
+                    force: true,
+                    ..Default::default()
+                }),
+            )
+            .await;
+
+        started.expect("start recreated");
+        assert_ne!(recreated.id, fx.id);
+        assert!(
+            matches!(old, Err(ReattachError::Gone(_))),
+            "the old id must not resolve to the same-name container: {old:?}"
+        );
+        assert!(new.is_ok(), "the recreated container itself re-attaches");
     })
     .await;
 }
