@@ -3,6 +3,7 @@ import {
   AUTH_FAILED_CODE,
   parseBackendError,
   isAuthFailure,
+  isSecondFactorFailure,
   backendErrorMessage,
 } from "./backendErrorCode";
 
@@ -17,6 +18,21 @@ describe("backendErrorCode", () => {
     const parsed = parseBackendError(new Error("[thub-code:auth_failed] boom"));
     expect(parsed.code).toBe(AUTH_FAILED_CODE);
     expect(parsed.message).toBe("boom");
+  });
+
+  it("tells a rejected one-time code apart from a credential rejection (#3376)", () => {
+    const secondFactor = {
+      code: "second_factor_failed",
+      message: "Verification code rejected — try again",
+      details: null,
+    };
+    // A mistyped OTP is never an auth failure — that is what keeps the
+    // stored-credential discard from firing.
+    expect(isSecondFactorFailure(secondFactor)).toBe(true);
+    expect(isAuthFailure(secondFactor)).toBe(false);
+    const authFailed = { code: "auth_failed", message: "Authentication failed", details: null };
+    expect(isSecondFactorFailure(authFailed)).toBe(false);
+    expect(isAuthFailure(authFailed)).toBe(true);
   });
 
   it("returns no code and the raw message when unmarked", () => {

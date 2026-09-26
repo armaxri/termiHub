@@ -312,6 +312,33 @@ describe("useConnectSavedConnection", () => {
     expect(addTabSpy).toHaveBeenCalledOnce();
   });
 
+  it("keeps the saved password when only the typed one-time code is rejected (#3376)", async () => {
+    mockedResolveCredential.mockResolvedValue("good-secret");
+    const errorToastSpy = vi.spyOn(toast, "error").mockReturnValue("error-toast");
+    mockedCreateTerminal.mockRejectedValue({
+      code: "second_factor_failed",
+      message: "Verification code rejected — try again",
+      details: null,
+    });
+    const { connect } = await renderHook();
+    await act(async () => {
+      await connect(makeSshConn("pw-otp", "password"));
+    });
+    // The saved password was accepted — never discarded, never re-prompted.
+    expect(mockedRemoveCredential).not.toHaveBeenCalled();
+    expect(useAppStore.getState().passwordPromptOpen).toBe(false);
+    expect(errorToastSpy).toHaveBeenCalledWith("Verification code rejected — try again.");
+    // The tab retries WITH the saved password, so only a fresh code is asked.
+    expect(addTabSpy).toHaveBeenCalledWith(
+      "SSH pw-otp",
+      "ssh",
+      expect.objectContaining({
+        config: expect.objectContaining({ password: "good-secret" }),
+      }),
+      expect.anything()
+    );
+  });
+
   it("opens a terminal-less type (FTP) into a browser-only file-browser tab (#1335)", async () => {
     useAppStore.setState({ connectionTypes: [connType("ftp", false), connType("ssh")] });
     const { connect } = await renderHook();

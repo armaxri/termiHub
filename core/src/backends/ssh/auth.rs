@@ -692,9 +692,20 @@ mod tests {
         assert_eq!(seen[0].prompts[0].prompt, "Verification code: ");
     }
 
-    /// A wrong second factor surfaces as the typed `AuthFailed`.
+    /// `AuthenticationMethods password,keyboard-interactive` with a mistyped OTP.
+    ///
+    /// With a real sshd the accepted password is a partial success, so the
+    /// exchange runs in [`KiMode::SecondFactor`] and the wrong code is the typed
+    /// `SecondFactorFailed` (covered at the exchange level by
+    /// `wrong_answer_in_second_factor_mode_is_second_factor_failed`, and the
+    /// partial-success → second-factor routing by
+    /// `continuation_decisions`). The
+    /// in-process russh 0.61 server, however, always clears `partial_success`
+    /// on a password rejection, so here the client only sees "password refused,
+    /// keyboard-interactive offered" and nothing proves the saved password was
+    /// accepted: the typed OTP rejection conservatively stays `AuthFailed`.
     #[tokio::test]
-    async fn wrong_second_factor_is_auth_failed() {
+    async fn wrong_otp_without_accepted_password_evidence_stays_auth_failed() {
         let (mut session, _observed) = ki_connect(Script {
             rounds: vec![Round::new(
                 vec![("Verification code: ", false)],
@@ -713,6 +724,59 @@ mod tests {
         .await
         .expect_err("rejected");
         assert!(matches!(err, SessionError::AuthFailed), "got {err:?}");
+    }
+
+    /// PAM password fallback: the saved password is auto-answered and accepted,
+    /// then the user mistypes the OTP → `SecondFactorFailed`, so the saved
+    /// password survives (#3376).
+    #[tokio::test]
+    async fn password_fallback_wrong_otp_is_second_factor_failed() {
+        let (mut session, _observed) = ki_connect(Script {
+            rounds: vec![
+                Round::new(vec![("Password: ", false)], vec!["hunter2"]),
+                Round::new(vec![("Verification code: ", false)], vec!["314159"]),
+            ],
+            password: PasswordPolicy::Disabled,
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![Some(vec!["000000"])]);
+
+        let err = authenticate_with_prompter(
+            &mut session,
+            &ki_config("password", Some("hunter2")),
+            Some(&prompter),
+        )
+        .await
+        .expect_err("rejected");
+        assert!(
+            matches!(err, SessionError::SecondFactorFailed),
+            "got {err:?}"
+        );
+    }
+
+    /// PAM password fallback with a stale saved password: the auto-answered
+    /// password round is rejected → the typed `AuthFailed` (discard allowed).
+    #[tokio::test]
+    async fn password_fallback_wrong_saved_password_is_auth_failed() {
+        let (mut session, _observed) = ki_connect(Script {
+            rounds: vec![
+                Round::new(vec![("Password: ", false)], vec!["hunter2"]),
+                Round::new(vec![("Verification code: ", false)], vec!["314159"]),
+            ],
+            password: PasswordPolicy::Disabled,
+        })
+        .await;
+        let prompter = ScriptedPrompter::new(vec![]);
+
+        let err = authenticate_with_prompter(
+            &mut session,
+            &ki_config("password", Some("stale")),
+            Some(&prompter),
+        )
+        .await
+        .expect_err("rejected");
+        assert!(matches!(err, SessionError::AuthFailed), "got {err:?}");
+        assert!(prompter.seen().is_empty());
     }
 
     /// The explicit `keyboard-interactive` method skips the password method

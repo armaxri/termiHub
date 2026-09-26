@@ -31,6 +31,12 @@ describe("classifyAgentError", () => {
         localized: "認証に失敗しました",
       },
       {
+        code: "second_factor_failed",
+        category: "second-factor-failure",
+        title: "Verification Failed",
+        localized: "Bestätigungscode abgelehnt",
+      },
+      {
         code: "agent_missing",
         category: "agent-missing",
         title: "Agent Not Installed",

@@ -3,12 +3,18 @@
  */
 
 import type { IpcErrorCode } from "@/types/generated/IpcErrorCode";
-import { AUTH_FAILED_CODE, parseBackendError } from "@/utils/backendErrorCode";
+import {
+  AUTH_FAILED_CODE,
+  SECOND_FACTOR_FAILED_CODE,
+  SECOND_FACTOR_FAILED_MESSAGE,
+  parseBackendError,
+} from "@/utils/backendErrorCode";
 
 /** The specific error categories plus a generic fallback. */
 export type AgentErrorCategory =
   | "unreachable"
   | "auth-failure"
+  | "second-factor-failure"
   | "agent-missing"
   | "agent-outdated"
   | "already-connected"
@@ -33,6 +39,7 @@ export interface ClassifiedAgentError {
  */
 const CODE_TO_CATEGORY: Partial<Record<IpcErrorCode, Exclude<AgentErrorCategory, "unknown">>> = {
   [AUTH_FAILED_CODE]: "auth-failure",
+  [SECOND_FACTOR_FAILED_CODE]: "second-factor-failure",
   unreachable: "unreachable",
   agent_missing: "agent-missing",
   agent_outdated: "agent-outdated",
@@ -53,6 +60,10 @@ const CATEGORY_PRESENTATION: Record<
     title: "Authentication Failed",
     message:
       "SSH authentication was rejected. Check your username, password, or SSH key configuration.",
+  },
+  "second-factor-failure": {
+    title: "Verification Failed",
+    message: `${SECOND_FACTOR_FAILED_MESSAGE} Your saved password was kept.`,
   },
   "agent-missing": {
     title: "Agent Not Installed",
