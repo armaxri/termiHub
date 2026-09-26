@@ -16,6 +16,7 @@ mod io;
 mod ki_prompt;
 mod monitoring;
 mod network;
+mod panic_hook;
 mod protocol;
 mod registry;
 mod registry_daemon;
@@ -262,6 +263,9 @@ fn init_tracing() {
             );
         }
     }
+
+    // Local, redacted crash reports next to the log (OBS-010).
+    panic_hook::install(panic_hook::crash_dir());
 }
 
 /// Set up signal handlers for graceful shutdown.
