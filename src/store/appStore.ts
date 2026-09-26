@@ -261,6 +261,8 @@ import {
   type ProjectedSettlement,
 } from "@/store/restoreCohortBridge";
 import { errorMessage } from "@/utils/errorMessage";
+import { agentBookmarkScopePrefix } from "@/utils/fileBookmarkScope";
+import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
 import { resolveWindowEviction } from "@/utils/tabOwnership";
 
 export type SidebarView =
@@ -5820,10 +5822,17 @@ export const useAppStore = create<AppState>((set, get, store) => {
       // (the store's `remove` clears sessions/definitions/folders too, #2409);
       // the persisted-list fold reconciles server-side (#2403).
       mirrorAgentIntent("agent.remove", { id: agentId });
-      removeAgent(agentId).catch((err) => {
-        frontendLog("app_store", `Failed to persist agent deletion: ${errorMessage(err)}`);
-        toast.error(`Failed to delete agent ${agent?.name ?? ""}: ${errorMessage(err)}`);
-      });
+      removeAgent(agentId)
+        .then(() => {
+          // The backend pruned the agent's file-browser bookmarks (#3562);
+          // drop them from the UI cache too.
+          const prefix = agentBookmarkScopePrefix(agentId);
+          useFileBookmarksStore.getState().forgetScopes((scope) => scope.startsWith(prefix));
+        })
+        .catch((err) => {
+          frontendLog("app_store", `Failed to persist agent deletion: ${errorMessage(err)}`);
+          toast.error(`Failed to delete agent ${agent?.name ?? ""}: ${errorMessage(err)}`);
+        });
     },
 
     toggleRemoteAgent: (agentId) => {
@@ -6478,7 +6487,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
           if (agent.connectionState === "connected") return false;
           return (
             agent.config.authMethod === "password" ||
-            (agent.config.authMethod === "key" && agent.config.savePassword)
+            (agent.config.authMethod === "key" &&
+              (agent.config.savePassword || Boolean(agent.config.credentialRef)))
           );
         });
 
@@ -6497,7 +6507,11 @@ export const useAppStore = create<AppState>((set, get, store) => {
               if (!saved) return false;
               const authMethod = readConfigString(saved.config, "authMethod");
               const savePassword = readConfigBoolean(saved.config, "savePassword");
-              return authMethod === "password" || (authMethod === "key" && savePassword);
+              const credentialRef = readConfigString(saved.config, "credentialRef");
+              return (
+                authMethod === "password" ||
+                (authMethod === "key" && (savePassword || Boolean(credentialRef)))
+              );
             }) || disconnectedAgentsNeedingCreds.length > 0;
           if (needsStoredCredential) {
             const unlocked = await get().requestUnlock();
@@ -6522,7 +6536,8 @@ export const useAppStore = create<AppState>((set, get, store) => {
                 const resolution = await resolveConnectionCredential(
                   agent.id,
                   agent.config.authMethod,
-                  agent.config.savePassword
+                  agent.config.savePassword,
+                  agent.config.credentialRef
                 );
                 const password =
                   resolution.usedStoredCredential && resolution.password
@@ -6555,7 +6570,12 @@ export const useAppStore = create<AppState>((set, get, store) => {
             const authMethod = readConfigString(conn.config, "authMethod");
             const savePassword = readConfigBoolean(conn.config, "savePassword");
             if (!authMethod) return conn;
-            const resolution = await resolveConnectionCredential(conn.id, authMethod, savePassword);
+            const resolution = await resolveConnectionCredential(
+              conn.id,
+              authMethod,
+              savePassword,
+              readConfigString(conn.config, "credentialRef")
+            );
             if (!resolution.usedStoredCredential || !resolution.password) return conn;
             return {
               ...conn,

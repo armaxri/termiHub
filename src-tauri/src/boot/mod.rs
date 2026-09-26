@@ -315,6 +315,13 @@ pub(crate) fn init_credentials_and_connections(
         "Initializing credential store"
     );
 
+    // Shared named credentials (#3557): metadata only — the secrets live in
+    // the credential store managed below.
+    let (named_credentials, named_warnings) =
+        crate::credential::named::NamedCredentialRegistry::load(&config_dir);
+    recovery_warnings.extend(named_warnings);
+    app.manage(Arc::new(named_credentials));
+
     let credential_manager = CredentialManager::new(storage_mode.clone(), config_dir);
 
     // If master password mode with an existing credentials file,

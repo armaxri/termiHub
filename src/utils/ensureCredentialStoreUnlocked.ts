@@ -21,6 +21,11 @@ export interface UnlockGateOptions {
   authMethod: string;
   /** Whether the connection persists its secret (only meaningful for key auth). */
   savePassword?: boolean;
+  /**
+   * A shared named credential the connection references (#3557). Key auth
+   * with a reference always reads the stored passphrase.
+   */
+  credentialRef?: string;
 }
 
 /**
@@ -28,10 +33,18 @@ export interface UnlockGateOptions {
  *
  * - `password` auth always reads a stored password.
  * - `key` auth only reads a stored passphrase when `savePassword` is set.
+ * - `key` auth with a shared named credential reference always reads it.
  * - Everything else (agent auth, key without savePassword) needs no stored secret.
  */
-function needsStoredCredential({ authMethod, savePassword }: UnlockGateOptions): boolean {
-  return authMethod === "password" || (authMethod === "key" && Boolean(savePassword));
+function needsStoredCredential({
+  authMethod,
+  savePassword,
+  credentialRef,
+}: UnlockGateOptions): boolean {
+  return (
+    authMethod === "password" ||
+    (authMethod === "key" && (Boolean(savePassword) || Boolean(credentialRef?.trim())))
+  );
 }
 
 /**

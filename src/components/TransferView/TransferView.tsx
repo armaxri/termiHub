@@ -19,6 +19,7 @@ import { useProjectedTransfers } from "@/store/useProjectedTransfers";
 import type { FileEntry } from "@/types/connection";
 import type { TransferViewMeta } from "@/types/terminal";
 import { describeEntries, findNameConflicts } from "@/utils/fileDragMove";
+import { fileBookmarkScope, LOCAL_BOOKMARK_SCOPE } from "@/utils/fileBookmarkScope";
 import { frontendLog } from "@/utils/frontendLog";
 import { transferRemoteOptions } from "@/utils/transferViewRemotes";
 import { TransferPane, type PaneDragData, type PaneDropData } from "./TransferPane";
@@ -80,6 +81,10 @@ export function TransferView({ meta, isVisible }: TransferViewProps) {
   const [remoteTabId, setRemoteTabId] = useState<string | null>(meta.remoteTabId);
   const remote = options.find((o) => o.tabId === remoteTabId) ?? null;
   const sessionId = remote?.sessionId ?? null;
+  // The remote pane's bookmarks are the remote tab's list — the same scope the
+  // sidebar file browser uses for that tab (#3562).
+  const remoteTab = remote ? tabContent[remote.tabId] : null;
+  const remoteBookmarkScope = useMemo(() => fileBookmarkScope("session", remoteTab), [remoteTab]);
   const queueCapable = useQueueCapable(sessionId);
 
   const local = usePaneListing("local", null, meta.localPath);
@@ -182,6 +187,7 @@ export function TransferView({ meta, isVisible }: TransferViewProps) {
             onSelectedChange={setLocalSelected}
             onCopy={(entries) => requestCopy("local", entries)}
             canCopy={connected}
+            bookmarkScope={LOCAL_BOOKMARK_SCOPE}
           />
           <div className="transfer-view__actions" role="group" aria-label="Copy between panes">
             <Tooltip content="Copy selection to the remote pane (F5)" side="top">
@@ -218,6 +224,7 @@ export function TransferView({ meta, isVisible }: TransferViewProps) {
             onCopy={(entries) => requestCopy("remote", entries)}
             canCopy={connected}
             headerControls={remotePicker}
+            bookmarkScope={remoteBookmarkScope}
             placeholder={
               connected ? undefined : (
                 <span data-testid="transfer-view-no-remote">

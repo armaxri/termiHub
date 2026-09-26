@@ -105,6 +105,7 @@ describe("remoteAgentConfig conversions (#3162)", () => {
       authMethod: "key",
       keyPath: "~/.ssh/id_ed25519",
       savePassword: false,
+      credentialRef: "nc-shared",
       agentPath: "~/bin/termihub-agent",
       externalConnectionFiles: [
         { path: "/etc/agent.json", enabled: true },

@@ -1,6 +1,10 @@
 /** Bookmark scope derivation (PROD-007, #3558). */
 import { describe, it, expect } from "vitest";
-import { fileBookmarkScope } from "./fileBookmarkScope";
+import {
+  agentBookmarkScopePrefix,
+  connectionBookmarkScope,
+  fileBookmarkScope,
+} from "./fileBookmarkScope";
 import type { TerminalTab } from "@/types/terminal";
 
 function tab(partial: Partial<TerminalTab>): TerminalTab {
@@ -47,5 +51,19 @@ describe("fileBookmarkScope", () => {
   it("has no scope when nothing identifies the remote end", () => {
     expect(fileBookmarkScope("session", tab({}))).toBeNull();
     expect(fileBookmarkScope("session", null)).toBeNull();
+  });
+
+  it("builds the prune keys the backend uses for deleted connections and agents", () => {
+    expect(connectionBookmarkScope("c1")).toBe("connection:c1");
+    expect(fileBookmarkScope("session", tab({ connectionId: "c1" }))).toBe(
+      connectionBookmarkScope("c1")
+    );
+    const agentTab = tab({
+      connectionType: "remote-session",
+      config: { type: "remote-session", config: { agentId: "ag1", sessionType: "docker" } },
+    });
+    expect(
+      fileBookmarkScope("session", agentTab)?.startsWith(agentBookmarkScopePrefix("ag1"))
+    ).toBe(true);
   });
 });

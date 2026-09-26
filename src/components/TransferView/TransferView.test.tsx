@@ -40,6 +40,13 @@ const controls = vi.hoisted(() => ({
 }));
 vi.mock("@/hooks/useTransferControls", () => ({ useTransferControls: () => controls }));
 vi.mock("@/utils/frontendLog", () => ({ frontendLog: vi.fn() }));
+const bookmarksApi = vi.hoisted(() => ({
+  listFileBookmarks: vi.fn(),
+  addFileBookmark: vi.fn(),
+  renameFileBookmark: vi.fn(),
+  removeFileBookmark: vi.fn(),
+}));
+vi.mock("@/services/fileBookmarksApi", () => bookmarksApi);
 
 let dndProps: ComponentProps<typeof DndCore.DndContext> | null = null;
 vi.mock("@dnd-kit/core", async () => {
@@ -55,6 +62,8 @@ vi.mock("@dnd-kit/core", async () => {
 
 import { TooltipProvider } from "@/components/ui";
 import { useAppStore } from "@/store/appStore";
+import { useFileBookmarksStore } from "@/store/fileBookmarksStore";
+import type { FileBookmark } from "@/types/fileBookmark";
 import type { TabContent, TransferViewMeta } from "@/types/terminal";
 import { TransferView } from "./TransferView";
 
@@ -142,6 +151,8 @@ beforeEach(() => {
   api.sessionListFiles.mockImplementation(async (_s: string, p: string) => REMOTE[p] ?? []);
   api.sessionSupportsTransferQueue.mockResolvedValue(true);
   engine.copyBetweenPanes.mockResolvedValue(true);
+  bookmarksApi.listFileBookmarks.mockResolvedValue([]);
+  useFileBookmarksStore.setState({ bookmarks: [], loaded: true });
   useAppStore.setState({
     tabContent: { [sshTab.id]: sshTab },
     connectionTypes: [
@@ -288,5 +299,86 @@ describe("TransferView", () => {
       cancel.click();
     });
     expect(controls.handleCancel).toHaveBeenCalledWith("t1");
+  });
+
+  describe("bookmarks (#3562)", () => {
+    const mark = (id: string, scope: string, path: string): FileBookmark => ({
+      id,
+      scope,
+      path,
+      name: id,
+      createdAt: "2026-09-26T00:00:00Z",
+    });
+
+    async function openBookmarks(side: "local" | "remote") {
+      const trigger = q(`transfer-pane-${side}-bookmarks`) as HTMLButtonElement;
+      expect(trigger).not.toBeNull();
+      await act(async () => {
+        trigger.focus();
+        trigger.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })
+        );
+      });
+      for (let i = 0; i < 20 && !q("file-bookmarks-menu"); i++) await flush();
+      expect(q("file-bookmarks-menu")).not.toBeNull();
+    }
+
+    async function pick(testId: string) {
+      const el = q(testId) as HTMLElement;
+      expect(el).not.toBeNull();
+      await act(async () => {
+        el.click();
+      });
+      await flush();
+    }
+
+    beforeEach(() => {
+      useAppStore.setState({ tabContent: { [sshTab.id]: { ...sshTab, connectionId: "c1" } } });
+      useFileBookmarksStore.setState({
+        bookmarks: [
+          mark("docs", "local", "/home/me/docs"),
+          mark("logs", "connection:c1", "/srv/app/logs"),
+          mark("other", "connection:c2", "/etc"),
+        ],
+        loaded: true,
+      });
+    });
+
+    it("the local pane lists the local bookmarks and jumps to one", async () => {
+      await render({ remoteTabId: "tab-ssh" });
+      await openBookmarks("local");
+      expect(q("file-bookmark-item-logs")).toBeNull();
+      await pick("file-bookmark-item-docs");
+      expect(api.localListDir).toHaveBeenLastCalledWith("/home/me/docs");
+      expect((q("transfer-pane-local-path") as HTMLInputElement).value).toBe("/home/me/docs");
+    });
+
+    it("the remote pane lists the remote connection's bookmarks and jumps to one", async () => {
+      await render({ remoteTabId: "tab-ssh" });
+      await openBookmarks("remote");
+      expect(q("file-bookmark-item-docs")).toBeNull();
+      expect(q("file-bookmark-item-other")).toBeNull();
+      await pick("file-bookmark-item-logs");
+      expect(api.sessionListFiles).toHaveBeenLastCalledWith("s1", "/srv/app/logs");
+    });
+
+    it("bookmarks the remote folder in the remote connection's scope", async () => {
+      bookmarksApi.addFileBookmark.mockResolvedValue(mark("new", "connection:c1", "/srv/app"));
+      useFileBookmarksStore.setState({ bookmarks: [], loaded: true });
+      await render({ remoteTabId: "tab-ssh" });
+      await openBookmarks("remote");
+      await pick("file-bookmarks-add");
+      expect(bookmarksApi.addFileBookmark).toHaveBeenCalledWith(
+        "connection:c1",
+        "/srv/app",
+        undefined
+      );
+    });
+
+    it("hides the remote pane's bookmarks until a remote is chosen", async () => {
+      await render({ remoteTabId: null });
+      expect(q("transfer-pane-remote-bookmarks")).toBeNull();
+      expect(q("transfer-pane-local-bookmarks")).not.toBeNull();
+    });
   });
 });

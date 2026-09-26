@@ -82,4 +82,24 @@ describe("fileBookmarksStore", () => {
     expect(bookmarksForScope(all, "local").map((b) => b.id)).toEqual(["a", "c"]);
     expect(bookmarksForScope(all, null)).toEqual([]);
   });
+
+  it("forgetScopes drops only the matching scopes from the cache (#3562)", () => {
+    useFileBookmarksStore.setState({
+      bookmarks: [
+        bookmark("a", "connection:c1"),
+        bookmark("b", "connection:c10"),
+        bookmark("c", "local"),
+      ],
+      loaded: true,
+    });
+    useFileBookmarksStore.getState().forgetScopes((scope) => scope === "connection:c1");
+    expect(useFileBookmarksStore.getState().bookmarks.map((b) => b.id)).toEqual(["b", "c"]);
+  });
+
+  it("forgetScopes keeps the same state when nothing matches", () => {
+    const before = [bookmark("a", "local")];
+    useFileBookmarksStore.setState({ bookmarks: before, loaded: true });
+    useFileBookmarksStore.getState().forgetScopes(() => false);
+    expect(useFileBookmarksStore.getState().bookmarks).toBe(before);
+  });
 });

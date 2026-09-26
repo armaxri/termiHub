@@ -79,6 +79,8 @@ vi.mock("@/components/ui", async () => {
 });
 
 import { useAppStore } from "./appStore";
+import { useFileBookmarksStore } from "./fileBookmarksStore";
+import type { FileBookmark } from "@/types/fileBookmark";
 import { removeConnection } from "@/services/storage";
 import {
   currentConnectionsView,
@@ -356,5 +358,33 @@ describe("connection delete sweeps dependent state (FES-009)", () => {
     expect(useAppStore.getState().persistentSessions["ssh-2"]).toBeDefined();
     expect(mockStopPersistentSession).toHaveBeenCalledWith("ssh-1");
     expect(mockStopPersistentSession).not.toHaveBeenCalledWith("ssh-2");
+  });
+
+  it("drops the deleted connection's bookmarks from the UI cache only once the delete is durable (#3562)", async () => {
+    const mark = (id: string, scope: string): FileBookmark => ({
+      id,
+      scope,
+      path: `/${id}`,
+      name: id,
+      createdAt: "2026-09-26T00:00:00Z",
+    });
+    useFileBookmarksStore.setState({
+      bookmarks: [mark("a", "connection:ssh-1"), mark("b", "connection:ssh-2"), mark("c", "local")],
+      loaded: true,
+    });
+    useAppStore.getState().addConnection(makeConnection("ssh-1"));
+    useAppStore.getState().addConnection(makeConnection("ssh-2"));
+
+    // A rejected delete keeps the bookmarks.
+    vi.mocked(removeConnection).mockRejectedValueOnce(new Error("disk read-only"));
+    useAppStore.getState().deleteConnection("ssh-2");
+    await vi.waitFor(() => expect(ids()).toEqual(["ssh-1", "ssh-2"]));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(useFileBookmarksStore.getState().bookmarks).toHaveLength(3);
+
+    useAppStore.getState().deleteConnection("ssh-1");
+    await vi.waitFor(() =>
+      expect(useFileBookmarksStore.getState().bookmarks.map((b) => b.id)).toEqual(["b", "c"])
+    );
   });
 });

@@ -8,6 +8,7 @@ import { PasswordInput } from "@/components/PasswordInput/PasswordInput";
 import { Button, Select, Toggle, toast } from "@/components/ui";
 import { SettingsField } from "./SettingsField";
 import { CredentialVaultBackup } from "./CredentialVaultBackup";
+import { SharedCredentialsSettings } from "./SharedCredentialsSettings";
 import { BiometricUnlockSettings } from "./BiometricUnlockSettings";
 import { errorMessage } from "@/utils/errorMessage";
 
@@ -538,6 +539,8 @@ export function SecuritySettings({ visibleFields }: SecuritySettingsProps) {
           )}
         </>
       )}
+
+      {show("sharedCredentials") && <SharedCredentialsSettings />}
 
       {show("credentialVaultBackup") && (
         <CredentialVaultBackup modeLabel={modeLabel(currentMode)} />

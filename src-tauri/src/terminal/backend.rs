@@ -95,6 +95,12 @@ pub struct RemoteAgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub save_password: Option<bool>,
+    /// Id of a shared named credential (#3557) that supplies this agent's
+    /// password / key passphrase instead of a per-agent secret. When set, the
+    /// per-agent secret is neither stored nor consulted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub credential_ref: Option<String>,
     /// Path to the agent binary on the remote host.
     ///
     /// Defaults to `~/.local/bin/termihub-agent`. The `~` prefix is expanded
@@ -149,6 +155,7 @@ impl Default for RemoteAgentConfig {
             password: None,
             key_path: None,
             save_password: None,
+            credential_ref: None,
             agent_path: None,
             external_connection_files: Vec::new(),
             allow_self_update: false,
