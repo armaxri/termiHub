@@ -72,5 +72,54 @@ it allocate unbounded memory. Upstream `0.5.3` did both; this fork changes:
   `VncError::Internal`. Regression and
   seeded fuzz tests live in `src/client/hostile_server_tests.rs`.
 
+## Upstream fixes ported from vnc-rs 0.6.0 (#3499)
+
+Reviewed upstream up to [`99ed1a2`](https://github.com/HsuJv/vnc-rs/commit/99ed1a28553c7594212adf30b9517d57fe46558d)
+(release **0.6.0**, 2026-09-22). The fork base stays **0.5.3**
+(`f8ac0ee4915e8e1e1adb8880a0716761b91281f6`): upstream's 20 commits rewrite the
+same files as the #3473 hardening (connection loop, all codecs) and add a
+~1000-line desktop-resize feature and a new public event, so re-basing would
+mean re-porting all of our delta for no security gain. Ported instead, each
+marked `#3499` in the source:
+
+- **Handshake** (`b266a3f`, `6adeb0d`): `SecurityResult` is range-checked
+  (upstream transmuted any `u32` into a two-variant enum — undefined behaviour);
+  `SecurityType` uses an explicit match; an RFB 3.3 security type is checked
+  _before_ narrowing to `u8` (`257` read as `1`, None); unknown offered types are
+  skipped and an empty list is `VncError::Protocol` instead of an `assert!`; RFB
+  3.8 None-auth reads and honours its `SecurityResult`; a failed VncAuth on 3.3
+  no longer reads a reason 3.3 never sends. Reason and desktop-name bounds drop
+  from 64 KiB to upstream's 4 KiB.
+- **Pixel formats** (`1c07e2c`): wire booleans are normalised to 0/1 and
+  `PixelFormat::validate` (2^n-1 maxima, shifts inside the pixel, no
+  overlapping masks) runs in `VncConnector::build` and when the server's format
+  is adopted. Tight also requires three 8-bit channels (`129e7c9`).
+- **Geometry** (`623b894`): rectangles must use an encoding the client sent in
+  `SetEncodings` (Raw always allowed) and lie inside the current framebuffer,
+  tracked through `DesktopSize`; framebuffer sides are capped at 8192.
+- **Tasks and queues** (`dea233d`, `6acf3da`): the stop signal cancels a
+  decoder blocked mid-message and a blocked socket write; the network bridge
+  reserves capacity inside the select, so it wakes when the decoder frees a slot
+  (upstream could park forever with data pending); exit drops the bridge
+  instead of awaiting an EOF send into a full queue; `VncClient::input` no longer
+  holds the client mutex across backpressure (which could deadlock `close` and
+  `poll_event`); decoder errors are delivered racing the stop signal.
+
+Kept stricter or deliberately different from upstream: the 8192 x 8192 area
+bound (`MAX_RECT_PIXELS`, upstream caps at 3840 x 2160 and would refuse 5K/8K
+desktops), zero-sized rectangles stay legal, the 16 MiB skip-not-fail
+`ServerCutText` bound, and `MAX_ENCODED_BYTES`. Upstream's run-length /
+palette-index / zlib-slot fixes (`129e7c9`) were already covered by #3473.
+The event-queue size stays 4096 (upstream: 2) because termiHub's driver drains
+it on a 30 ms tick; bounding it by memory is follow-up
+[#3511](https://github.com/armaxri/termiHub/issues/3511).
+
+Not ported (features or tooling): desktop resizing (`cc4472d`, `6528704`,
+`46934f4`), exposing the desktop name (`f2dcc3c`), the cargo-fuzz harness
+(`ce7c4ee`; the seeded fuzz test in `hostile_server_tests.rs` covers the same
+parsers), version/author/CI bumps and merge commits. Regression tests are in
+`src/client/upstream_060_tests.rs`, `hostile_server_tests.rs`,
+`connection.rs`, `config.rs` and `codec/mod.rs`.
+
 Everything else is upstream `0.5.3`, under the original MIT/Apache-2.0 licenses
 (`LICENSE-MIT`, `LICENSE-APACHE`).

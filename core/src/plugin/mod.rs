@@ -61,12 +61,14 @@
 
 mod capabilities;
 mod connection;
+mod fat_pack;
 mod host;
 mod manager;
 mod manifest;
 mod native_trust;
 mod pack;
 mod package;
+mod platform;
 mod security;
 mod settings_migration;
 mod signature;
@@ -80,9 +82,14 @@ pub use capabilities::{
     DEFAULT_MAX_CONNECTIONS,
 };
 pub use connection::{config_schema_to_settings_schema, PluginConnectionType};
+pub use fat_pack::{
+    merge_packages, package_platform_entries, platform_library_map, MultiPlatformPackError,
+    PlatformEntry,
+};
 pub use host::{
-    find_backend_library, load_backend_library, load_backend_library_for_manifest, HostError,
-    HostLifecycleHook, LoadedLibrary, LoadedPluginInfo, PluginHost,
+    find_backend_library, load_backend_library, load_backend_library_for_manifest,
+    select_backend_library, HostError, HostLifecycleHook, LoadedLibrary, LoadedPluginInfo,
+    PluginHost,
 };
 pub use manager::{
     installed_backend_types, read_stored_settings, resolve_plugin_settings,
@@ -101,7 +108,12 @@ pub use native_trust::{
 };
 pub use pack::{pack_plugin, pack_plugin_signed, sign_package, PluginPackError};
 pub use package::{
-    validate_package, PluginPackageError, MANIFEST_FILE_NAME, MAX_PACKAGE_SIZE_BYTES,
+    check_host_platform, validate_package, PluginPackageError, MANIFEST_FILE_NAME,
+    MAX_PACKAGE_SIZE_BYTES,
+};
+pub use platform::{
+    host_target_triple, is_valid_library_path, is_valid_target_triple,
+    library_file_name_for_triple, BACKEND_DIR, HOST_TARGET_TRIPLE,
 };
 pub use security::{
     assess_trust, FilesystemScope, PermissionError, PermissionSet, RecoveryAction, RecoveryState,

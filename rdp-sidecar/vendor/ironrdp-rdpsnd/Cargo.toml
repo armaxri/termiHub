@@ -1,6 +1,7 @@
 # termiHub vendored fork of ironrdp-rdpsnd 0.9.0.
 #
-# WHAT WAS CHANGED vs upstream (the only functional edit — see `src/client.rs`):
+# WHAT WAS CHANGED vs upstream (see `src/client.rs` and README.md; README also
+# lists the upstream post-0.9.0 fixes ported under #3499):
 # the client `wave` callback now receives the *concrete negotiated* `AudioFormat`
 # instead of a bare `format_no` index. Upstream 0.9.0 built the Client Audio
 # Formats list in `Rdpsnd::client_formats()` from a `HashSet` intersection (so its

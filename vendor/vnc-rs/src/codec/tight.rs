@@ -46,6 +46,13 @@ impl Decoder {
         // is a typed error (upstream: `unreachable!()`), and the rectangle size
         // is bounded before anything is allocated.
         self.alpha_shift = super::alpha_shift(format)?;
+        // termiHub fork (#3499, upstream 129e7c9): Tight's true-colour and
+        // gradient paths assume three 8-bit channels.
+        if format.true_color_flag == 0
+            || [format.red_max, format.green_max, format.blue_max] != [255; 3]
+        {
+            return Err(VncError::WrongPixelFormat);
+        }
         super::rect_pixels(rect)?;
 
         let ctrl = input.read_u8().await?;

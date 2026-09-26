@@ -6,7 +6,7 @@ use super::{
 };
 use std::future::Future;
 use std::pin::Pin;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tracing::{info, trace};
 
 use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
@@ -55,7 +55,14 @@ where
                     let security_types =
                         SecurityType::read(&mut connector.stream, &connector.rfb_version).await?;
 
-                    assert!(!security_types.is_empty());
+                    // termiHub fork (#3499, upstream 6adeb0d): unknown offers are
+                    // now skipped, so an empty list is reachable — a typed error,
+                    // never an `assert!` panic.
+                    if security_types.is_empty() {
+                        return Err(VncError::Protocol(
+                            "server offered no supported security type".to_string(),
+                        ));
+                    }
 
                     // VeNCrypt takes precedence when the client is configured for
                     // it and the server offers it: it is the only TLS-secured
@@ -103,8 +110,16 @@ where
                                 info!("No auth needed in vnc3.8");
                                 SecurityType::write(&SecurityType::None, &mut connector.stream)
                                     .await?;
-                                let mut ok = [0; 4];
-                                connector.stream.read_exact(&mut ok).await?;
+                                // termiHub fork (#3499, upstream 6adeb0d): RFB 3.8
+                                // sends a SecurityResult for None too; upstream
+                                // discarded it and carried on after a failure.
+                                if let AuthResult::Failed =
+                                    super::auth::read_auth_result(&mut connector.stream).await?
+                                {
+                                    return Err(VncError::General(
+                                        super::auth::read_reason(&mut connector.stream).await?,
+                                    ));
+                                }
                             }
                         }
                     } else {
@@ -144,7 +159,10 @@ where
                         auth.write(&mut connector.stream).await?;
                         let result = auth.finish(&mut connector.stream).await?;
                         if let AuthResult::Failed = result {
-                            if let VncVersion::RFB37 = connector.rfb_version {
+                            // termiHub fork (#3499, upstream 6adeb0d): only RFB 3.8
+                            // follows a failed SecurityResult with a reason; 3.3
+                            // does not either (upstream read a reason for 3.3).
+                            if connector.rfb_version != VncVersion::RFB38 {
                                 // In VNC Authentication (Section 7.2.2), if the authentication fails,
                                 // the server sends the SecurityResult message, but does not send an
                                 // error message before closing the connection.
@@ -361,6 +379,11 @@ where
     pub fn build(self) -> Result<VncState<S, F>, VncError> {
         if self.encodings.is_empty() {
             return Err(VncError::NoEncoding);
+        }
+        // termiHub fork (#3499, upstream 1c07e2c): reject a caller-chosen pixel
+        // format the decoders cannot represent before connecting.
+        if let Some(format) = &self.pixel_format {
+            format.validate()?;
         }
         Ok(VncState::Handshake(self))
     }
