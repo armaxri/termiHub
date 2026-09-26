@@ -36,6 +36,21 @@
 //! **before any store is loaded**, with a full rollback if any file fails. The
 //! running app therefore never has its in-memory stores changed underneath it,
 //! and a restore is all-or-nothing across every chosen section.
+//!
+//! ## Trust stores and plugins (#3515)
+//!
+//! - The SSH host-key and RDP certificate trust stores are ordinary sections
+//!   ([`sections::Shape::TrustMap`]), but **integrity-sensitive**: they are
+//!   only exported encrypted and only restored from an encrypted (therefore
+//!   authenticated) backup, and a merge never adds or swaps a key for a host
+//!   that is already trusted here.
+//! - Installed plugins are one [`plugins`] section: every plugin's files, its
+//!   `plugin-state.json` record (including the signer record, as-is), its
+//!   settings, and the pinned publisher keys. Restored **native** plugins come
+//!   back turned off, and the native-plugin trust file (global switch and the
+//!   hash-bound per-plugin acknowledgments) is never backed up or restored —
+//!   a native plugin only loads after the user re-acknowledges it on this
+//!   machine. Plugins over a size cap are skipped with a warning.
 
 use serde::{Deserialize, Serialize};
 
@@ -45,11 +60,17 @@ use crate::credential::vault::{VaultExportFile, VaultImportPreview, VaultImportR
 pub mod commit;
 pub mod export;
 pub mod pending;
+pub mod plugins;
 pub mod restore;
 pub mod sections;
+pub mod trust_map;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_plugins;
+#[cfg(test)]
+mod tests_trust;
 
 /// Format identifier stamped on every backup file.
 pub const BACKUP_FORMAT_ID: &str = "termihub-backup";
@@ -146,6 +167,8 @@ pub struct BackupExportResult {
     pub sections: Vec<String>,
     /// Number of credentials in the vault section, when included.
     pub credential_count: Option<u32>,
+    /// Things that were left out and why (e.g. a plugin over the size cap).
+    pub warnings: Vec<String>,
 }
 
 /// A backupable section as shown in the export dialog.
@@ -159,6 +182,9 @@ pub struct BackupSectionInfo {
     pub description: String,
     /// The section holds secrets and is only exported in an encrypted backup.
     pub contains_secrets: bool,
+    /// The section is only exported in an encrypted backup — it holds secrets
+    /// or trust decisions (host keys, plugins).
+    pub requires_encryption: bool,
     /// The store file exists on this machine (there is something to back up).
     pub present: bool,
     /// Number of items in the store (0 for single-object stores like settings).
@@ -238,6 +264,12 @@ pub struct BackupSectionPreview {
     pub conflict_count: u32,
     /// Backup items identical to the current store.
     pub unchanged_count: u32,
+    /// A merge always keeps the current item on a conflict, whatever strategy
+    /// is chosen (trust stores: a backup never replaces a trusted key).
+    pub conflicts_keep_existing: bool,
+    /// Things the user should know before restoring this section (kept
+    /// conflicts, plugins that come back turned off, …).
+    pub notes: Vec<String>,
 }
 
 /// Preview of the credentials section.

@@ -18,6 +18,16 @@ interface BackupExportDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+/** How long an export warning stays on screen. */
+const WARNING_TOAST_MS = 15_000;
+
+/** Why a section can only be backed up with encryption turned on. */
+export function encryptionReason(section: BackupSectionInfo): string {
+  return section.containsSecrets
+    ? "Contains passwords — needs encryption"
+    : "Trust decisions — needs encryption";
+}
+
 /** Default file name for a backup, dated so successive backups don't collide. */
 export function defaultBackupFileName(): string {
   const date = new Date().toISOString().slice(0, 10);
@@ -131,10 +141,10 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
     (on: boolean) => {
       setEncrypt(on);
       if (!on && sections) {
-        // Secret-bearing stores are only ever exported encrypted.
+        // Secret- and trust-bearing stores are only ever exported encrypted.
         setSelected((prev) => {
           const next = new Set(prev);
-          sections.filter((s) => s.containsSecrets).forEach((s) => next.delete(s.id));
+          sections.filter((s) => s.requiresEncryption).forEach((s) => next.delete(s.id));
           return next;
         });
       }
@@ -180,7 +190,16 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
       await writeTextFile(filePath, result.json);
       const parts = [`${result.sections.length} part${result.sections.length === 1 ? "" : "s"}`];
       if (result.credentialCount !== null) parts.push(`${result.credentialCount} credentials`);
-      toast.success(`Backup saved (${parts.join(", ")}).`);
+      if (result.warnings.length > 0) {
+        // Something was left out (e.g. a plugin over the size cap): keep the
+        // explanation on screen long enough to read.
+        toast.info(`Backup saved (${parts.join(", ")}), but some items were left out.`, {
+          description: result.warnings.join("\n"),
+          duration: WARNING_TOAST_MS,
+        });
+      } else {
+        toast.success(`Backup saved (${parts.join(", ")}).`);
+      }
       onOpenChange(false);
     } catch (err) {
       setError(isVaultError(err) ? err.message : errorMessage(err));
@@ -229,7 +248,7 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
         <p className="credential-vault__note">Choose what to include in the backup file.</p>
         <ul className="backup-restore__list" data-testid="backup-export-sections">
           {sections?.map((s) => {
-            const disabled = !s.present || (s.containsSecrets && !encrypt);
+            const disabled = !s.present || (s.requiresEncryption && !encrypt);
             return (
               <li key={s.id} className="backup-restore__row">
                 <Checkbox
@@ -244,8 +263,8 @@ export function BackupExportDialog({ open, onOpenChange }: BackupExportDialogPro
                   <span className="backup-restore__detail">
                     {!s.present
                       ? "Nothing saved yet"
-                      : s.containsSecrets && !encrypt
-                        ? "Contains passwords — needs encryption"
+                      : s.requiresEncryption && !encrypt
+                        ? encryptionReason(s)
                         : s.description}
                   </span>
                 </label>

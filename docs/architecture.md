@@ -1309,6 +1309,34 @@ changed underneath it (and cannot overwrite the restored data with stale in-memo
 startup swap snapshots the originals before touching anything, so a crash mid-swap resumes from the
 original snapshot, and the manifest may only name known store files.
 
+##### Trusted host keys and plugins (#3515)
+
+- **Trust stores** — `ssh_known_hosts.json` and `rdp_known_hosts.json` are sections of shape
+  `TrustMap` (`host:port` → trusted fingerprints). They are **integrity-sensitive**: only exported
+  in an encrypted backup and only restored from one (AES-GCM authenticates the whole contents, so a
+  hand-edited file cannot inject a key). A **merge** is a union by host, but a host already trusted
+  here always keeps exactly its current keys — whatever conflict strategy is picked — and the
+  preview lists those hosts; only **replace** adopts the backup's keys.
+- **Trust-store versioning** — the files keep their flat, unversioned on-disk format: adding a
+  `version` key inside that object would make every older termiHub read the file as corrupt and
+  start with an empty store (the downgrade loss the migration layer exists to prevent). The format
+  is versioned where it leaves the machine: the backup section records schema version 1
+  (`TRUST_STORE_SCHEMA_VERSION`), and a section with a newer version is refused. The on-disk
+  migration story itself is still open in [#2745](https://github.com/armaxri/termiHub/issues/2745).
+- **Plugins** (`backup/plugins/`) — one section with every installed plugin's files
+  (base64), its `plugin-state.json` record (including the signer record, as-is), its settings and
+  the pinned publisher keys (each must still hash to its `keyId`). Encrypted-only as well. Each
+  restored plugin's manifest must validate and name its directory, and file paths must stay inside
+  it. Plugins over 16 MB, or past 24 MB in total, are skipped with a warning at export time.
+- **Plugin trust is never restored** — `native-plugin-trust.json` (the global "native plugins on"
+  switch and the per-plugin, library-hash-bound acknowledgments) is neither backed up nor written by
+  a restore, and every restored **native** plugin comes back turned off. It loads only after the
+  user turns it on and acknowledges trust on this machine.
+- **Swap** — plugin directories are staged whole and swapped at startup by renames (the original
+  moves into the rollback directory; a replace removes plugins not in the backup the same way), so
+  a failure or crash restores the original directories exactly. The manifest format that can name
+  plugin paths is version 2, which older builds refuse instead of half-applying.
+
 ### Content-Security-Policy & capability scoping
 
 termiHub ships a deliberately tight webview Content-Security-Policy and a scoped Tauri capability

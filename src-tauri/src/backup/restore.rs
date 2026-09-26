@@ -19,6 +19,7 @@ use std::path::Path;
 use zeroize::Zeroizing;
 
 pub use super::commit::{apply, PendingManifest, MANIFEST_FILE, PENDING_DIR, STAGING_DIR};
+use super::plugins::{self, StagedDir};
 use super::sections::{self, CurrentDoc, NormalizeError, SectionSpec};
 use super::{
     BackupContents, BackupCredentialsPreview, BackupFile, BackupHeader, BackupRestorePreview,
@@ -247,7 +248,14 @@ fn count(n: usize) -> u32 {
 }
 
 /// Preview one section against the current store.
-fn preview_section(section: &BackupSection, config_dir: &Path) -> BackupSectionPreview {
+fn preview_section(
+    section: &BackupSection,
+    config_dir: &Path,
+    encrypted: bool,
+) -> BackupSectionPreview {
+    if section.id == plugins::SECTION_ID {
+        return plugins::preview(section, config_dir, encrypted);
+    }
     let Some(spec) = sections::spec(&section.id) else {
         return BackupSectionPreview {
             id: section.id.clone(),
@@ -265,6 +273,8 @@ fn preview_section(section: &BackupSection, config_dir: &Path) -> BackupSectionP
             new_count: 0,
             conflict_count: 0,
             unchanged_count: 0,
+            conflicts_keep_existing: false,
+            notes: Vec::new(),
         };
     };
     let mut preview = BackupSectionPreview {
@@ -284,8 +294,15 @@ fn preview_section(section: &BackupSection, config_dir: &Path) -> BackupSectionP
         new_count: 0,
         conflict_count: 0,
         unchanged_count: 0,
+        conflicts_keep_existing: spec.conflicts_keep_existing(),
+        notes: Vec::new(),
     };
-    let backup_doc = match spec.normalize(section.data.clone()) {
+    if spec.integrity_sensitive && !encrypted {
+        preview.status = SectionStatus::Invalid;
+        preview.message = Some(plugins::needs_encrypted_backup_message(spec.label));
+        return preview;
+    }
+    let backup_doc = match spec.normalize_section(section) {
         Ok(doc) => doc,
         Err(e) => {
             preview.status = match e {
@@ -312,6 +329,21 @@ fn preview_section(section: &BackupSection, config_dir: &Path) -> BackupSectionP
             preview.new_count = cmp.new_count;
             preview.conflict_count = cmp.conflict_count;
             preview.unchanged_count = cmp.unchanged_count;
+            if spec.shape == sections::Shape::TrustMap {
+                let conflicts = sections::trust_conflicts(&backup_doc, &current_doc);
+                if !conflicts.is_empty() {
+                    preview.notes.push(format!(
+                        "{} already trusted here with a different key: {}. Merge keeps your \
+                         current keys for them; only Replace adopts the backup's keys.",
+                        if conflicts.len() == 1 {
+                            "1 host is".to_string()
+                        } else {
+                            format!("{} hosts are", conflicts.len())
+                        },
+                        conflicts.join(", ")
+                    ));
+                }
+            }
         }
         Err(detail) => {
             preview.status = SectionStatus::Invalid;
@@ -339,7 +371,7 @@ pub fn plan(
     let sections = opened
         .sections
         .iter()
-        .map(|s| preview_section(s, config_dir))
+        .map(|s| preview_section(s, config_dir, opened.encrypted))
         .collect();
     BackupRestorePreview {
         created_at: opened.created_at.clone(),
@@ -352,8 +384,11 @@ pub fn plan(
 
 /// The computed content of every chosen store, ready to be staged.
 pub struct PreparedRestore {
-    /// `(store file name, file content)`; content zeroized on drop.
-    pub files: Vec<(&'static str, Zeroizing<String>)>,
+    /// `(path relative to the config dir, file content)`; content zeroized on
+    /// drop.
+    pub files: Vec<(String, Zeroizing<String>)>,
+    /// Plugin directories to write or remove.
+    pub dirs: Vec<StagedDir>,
     pub outcomes: Vec<SectionRestoreOutcome>,
 }
 
@@ -361,11 +396,21 @@ pub struct PreparedRestore {
 fn prepare_section(
     spec: &'static SectionSpec,
     section: &BackupSection,
-    mode: RestoreMode,
-    strategy: vault::ConflictStrategy,
+    choice: (RestoreMode, vault::ConflictStrategy),
     config_dir: &Path,
+    encrypted: bool,
 ) -> Result<(Zeroizing<String>, u32), VaultError> {
-    let backup_doc = spec.normalize(section.data.clone()).map_err(|e| match e {
+    let (mode, strategy) = choice;
+    if spec.integrity_sensitive && !encrypted {
+        return Err(other(plugins::needs_encrypted_backup_message(spec.label)));
+    }
+    // A trust store's merge conflicts always keep the current keys.
+    let strategy = if spec.conflicts_keep_existing() {
+        vault::ConflictStrategy::Skip
+    } else {
+        strategy
+    };
+    let backup_doc = spec.normalize_section(section).map_err(|e| match e {
         NormalizeError::Newer { .. } => VaultError::UnsupportedVersion {
             message: e.message(spec.label),
         },
@@ -442,6 +487,7 @@ pub fn prepare(
     let mut seen = HashSet::new();
     let mut prepared = PreparedRestore {
         files: Vec::new(),
+        dirs: Vec::new(),
         outcomes: Vec::new(),
     };
     for choice in &request.sections {
@@ -450,6 +496,29 @@ pub fn prepare(
                 "Section \"{}\" was chosen more than once.",
                 choice.id
             )));
+        }
+        if choice.id == plugins::SECTION_ID {
+            let section = opened
+                .sections
+                .iter()
+                .find(|s| s.id == choice.id)
+                .ok_or_else(|| other(format!("The backup does not contain {}.", plugins::LABEL)))?;
+            let staged = plugins::prepare(
+                section,
+                config_dir,
+                opened.encrypted,
+                choice.mode,
+                choice.conflicts,
+            )?;
+            prepared.files.extend(staged.files);
+            prepared.dirs.extend(staged.dirs);
+            prepared.outcomes.push(SectionRestoreOutcome {
+                id: plugins::SECTION_ID.to_string(),
+                label: plugins::LABEL.to_string(),
+                mode: choice.mode,
+                resulting_count: staged.resulting_count,
+            });
+            continue;
         }
         let spec = sections::spec(&choice.id).ok_or_else(|| {
             other(format!(
@@ -462,9 +531,14 @@ pub fn prepare(
             .iter()
             .find(|s| s.id == choice.id)
             .ok_or_else(|| other(format!("The backup does not contain {}.", spec.label)))?;
-        let (text, resulting_count) =
-            prepare_section(spec, section, choice.mode, choice.conflicts, config_dir)?;
-        prepared.files.push((spec.file_name, text));
+        let (text, resulting_count) = prepare_section(
+            spec,
+            section,
+            (choice.mode, choice.conflicts),
+            config_dir,
+            opened.encrypted,
+        )?;
+        prepared.files.push((spec.file_name.to_string(), text));
         prepared.outcomes.push(SectionRestoreOutcome {
             id: spec.id.to_string(),
             label: spec.label.to_string(),
@@ -475,7 +549,7 @@ pub fn prepare(
     if request.credentials.is_some() && opened.credentials.is_none() {
         return Err(other("The backup does not contain credentials."));
     }
-    if prepared.files.is_empty() && request.credentials.is_none() {
+    if prepared.files.is_empty() && prepared.dirs.is_empty() && request.credentials.is_none() {
         return Err(other("Choose at least one thing to restore."));
     }
     Ok(prepared)

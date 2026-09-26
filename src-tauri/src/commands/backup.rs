@@ -93,7 +93,7 @@ pub async fn export_backup(
         None
     };
 
-    let (json, sections) = export::build(
+    let built = export::build(
         &config_dir(&app)?,
         &options,
         passphrase.as_deref().map(String::as_str),
@@ -101,15 +101,19 @@ pub async fn export_backup(
         created_at,
         env!("CARGO_PKG_VERSION").to_string(),
     )?;
+    for warning in &built.warnings {
+        warn!("backup export: {warning}");
+    }
     info!(
-        sections = ?sections,
+        sections = ?built.sections,
         credentials = ?credential_count,
         "backup exported"
     );
     Ok(BackupExportResult {
-        json,
-        sections,
+        json: built.json,
+        sections: built.sections,
         credential_count,
+        warnings: built.warnings,
     })
 }
 

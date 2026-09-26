@@ -1830,6 +1830,23 @@ backend and dialogs are unit-tested; this checks the native dialogs and the rest
 5. Switch to OS Keychain mode and open **Back up everything…**: Credentials is disabled with the
    "requires system authentication … #3433" reason; a backup of the rest still saves.
 
+### Backup of trusted host keys and plugins (#3515)
+
+Verifies the new backup parts in the real app (merge/replace, trust rules and the plugin swap are
+unit-tested; this checks the restart and the plugin manager after a restore).
+
+1. Connect once to an SSH host and accept its key; install a theme plugin and a native plugin, turn
+   native plugins on and trust the native plugin.
+2. **Back up everything…** with encryption on: "Trusted SSH host keys" and "Plugins" are listed.
+   Turn encryption off: both are unchecked and disabled ("Trust decisions — needs encryption").
+3. Uninstall both plugins and forget the SSH host key, then **Restore…** the backup (merge) →
+   **Restore and restart**. Expect: the SSH host connects without a host-key prompt; both plugins
+   are installed; the theme plugin is on; the native plugin is **off** and turning it on asks for
+   trust again.
+4. Accept a different key for the SSH host (or edit `ssh_known_hosts.json`), restore again with
+   merge: the preview notes the host is already trusted with a different key, offers no "Use
+   backup" choice, and after the restart the current key is kept.
+
 ### Zoomed tab repaints terminal content immediately (#1823)
 
 Verifies that zooming a terminal tab repaints its content at the new size right

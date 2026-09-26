@@ -7,6 +7,7 @@ use std::path::Path;
 use serde_json::Value;
 use zeroize::Zeroizing;
 
+use super::plugins;
 use super::sections::{self, keyed_items, CurrentDoc, SectionSpec, Shape, SECTIONS};
 use super::{
     BackupContents, BackupExportOptions, BackupFile, BackupSection, BackupSectionInfo,
@@ -26,7 +27,7 @@ fn other(message: impl Into<String>) -> VaultError {
 /// Describe every section for the export dialog: whether its store exists on
 /// this machine and how many items it holds.
 pub fn section_infos(config_dir: &Path) -> Vec<BackupSectionInfo> {
-    SECTIONS
+    let mut infos: Vec<BackupSectionInfo> = SECTIONS
         .iter()
         .map(|spec| {
             let (present, item_count) = match sections::read_current(spec, config_dir) {
@@ -44,11 +45,14 @@ pub fn section_infos(config_dir: &Path) -> Vec<BackupSectionInfo> {
                 label: spec.label.to_string(),
                 description: spec.description.to_string(),
                 contains_secrets: spec.contains_secrets,
+                requires_encryption: spec.requires_encryption(),
                 present,
                 item_count,
             }
         })
-        .collect()
+        .collect();
+    infos.push(plugins::section_info(config_dir));
+    infos
 }
 
 /// Read one store file for a backup. `Ok(None)` when the store does not exist
@@ -91,8 +95,14 @@ fn read_section(
     if spec.shape == Shape::Connections {
         sections::strip_connection_passwords(&mut data);
     }
-    // A file with no version field predates versioning and is schema v1.
-    let schema_version = read_version(&data).unwrap_or(1);
+    // A trust store has no in-file version (its format is versioned by the
+    // section, see `TRUST_STORE_SCHEMA_VERSION`). Any other file with no
+    // version field predates versioning and is schema v1.
+    let schema_version = if spec.shape == Shape::TrustMap {
+        spec.current_version
+    } else {
+        read_version(&data).unwrap_or(1)
+    };
     Ok(Some(BackupSection {
         id: spec.id.to_string(),
         schema_version,
@@ -100,13 +110,42 @@ fn read_section(
     }))
 }
 
+fn needs_encryption_error(label: &str, contains_secrets: bool) -> VaultError {
+    let what = if contains_secrets {
+        "contains passwords"
+    } else {
+        "holds trust decisions"
+    };
+    VaultError::WeakPassphrase {
+        message: format!("{label} {what} and can only be backed up with encryption turned on."),
+    }
+}
+
+/// The resolved export request: the store sections plus whether the plugins
+/// section is included.
+struct Resolved {
+    specs: Vec<&'static SectionSpec>,
+    plugins: bool,
+}
+
 /// Validate the requested section ids and resolve them to specs.
-fn resolve_sections(
-    options: &BackupExportOptions,
-) -> Result<Vec<&'static SectionSpec>, VaultError> {
+fn resolve_sections(options: &BackupExportOptions) -> Result<Resolved, VaultError> {
     let mut seen = HashSet::new();
     let mut specs = Vec::new();
+    let mut with_plugins = false;
     for id in &options.sections {
+        if id == plugins::SECTION_ID {
+            if !seen.insert(plugins::SECTION_ID) {
+                return Err(other(format!(
+                    "Backup section \"{id}\" was requested twice."
+                )));
+            }
+            if !options.encrypt {
+                return Err(needs_encryption_error(plugins::LABEL, false));
+            }
+            with_plugins = true;
+            continue;
+        }
         let spec =
             sections::spec(id).ok_or_else(|| other(format!("Unknown backup section \"{id}\".")))?;
         if !seen.insert(spec.id) {
@@ -114,27 +153,37 @@ fn resolve_sections(
                 "Backup section \"{id}\" was requested twice."
             )));
         }
-        if spec.contains_secrets && !options.encrypt {
-            return Err(VaultError::WeakPassphrase {
-                message: format!(
-                    "{} contains passwords and can only be backed up with encryption turned on.",
-                    spec.label
-                ),
-            });
+        if spec.requires_encryption() && !options.encrypt {
+            return Err(needs_encryption_error(spec.label, spec.contains_secrets));
         }
         specs.push(spec);
     }
-    if specs.is_empty() && !options.include_credentials {
+    if specs.is_empty() && !with_plugins && !options.include_credentials {
         return Err(other("Choose at least one thing to back up."));
     }
-    Ok(specs)
+    Ok(Resolved {
+        specs,
+        plugins: with_plugins,
+    })
+}
+
+/// A built backup file.
+#[derive(Debug)]
+pub struct BuiltBackup {
+    /// The backup file's JSON text.
+    pub json: String,
+    /// Ids of the sections written.
+    pub sections: Vec<String>,
+    /// Things left out and why (e.g. plugins over the size cap).
+    pub warnings: Vec<String>,
 }
 
 /// Build the backup file text.
 ///
 /// `passphrase` is required when `options.encrypt` is set or `credentials` is
 /// given (the vault in `credentials` must already be sealed with the same
-/// passphrase). Returns the JSON text and the ids of the sections written.
+/// passphrase). Returns the JSON text, the ids of the sections written, and
+/// warnings about anything left out.
 pub fn build(
     config_dir: &Path,
     options: &BackupExportOptions,
@@ -142,8 +191,11 @@ pub fn build(
     credentials: Option<VaultExportFile>,
     created_at: String,
     app_version: String,
-) -> Result<(String, Vec<String>), VaultError> {
-    let specs = resolve_sections(options)?;
+) -> Result<BuiltBackup, VaultError> {
+    let Resolved {
+        specs,
+        plugins: with_plugins,
+    } = resolve_sections(options)?;
     if options.include_credentials != credentials.is_some() {
         return Err(other("The credential vault section is missing."));
     }
@@ -155,10 +207,20 @@ pub fn build(
 
     let mut written = Vec::new();
     let mut backup_sections = Vec::new();
+    let mut warnings = Vec::new();
     for spec in specs {
         if let Some(section) = read_section(spec, config_dir)? {
             written.push(spec.id.to_string());
             backup_sections.push(section);
+        }
+    }
+    if with_plugins {
+        let exported = plugins::export_section(config_dir)
+            .map_err(|e| other(format!("Could not back up the plugins: {e}")))?;
+        if let Some((section, plugin_warnings)) = exported {
+            written.push(plugins::SECTION_ID.to_string());
+            backup_sections.push(section);
+            warnings.extend(plugin_warnings);
         }
     }
 
@@ -202,7 +264,16 @@ pub fn build(
 
     let json = serde_json::to_string_pretty(&file)
         .map_err(|e| other(format!("Failed to serialize the backup: {e}")))?;
-    Ok((json, written))
+    if json.len() > super::MAX_BACKUP_FILE_BYTES {
+        return Err(other(
+            "The backup would be too large to restore. Leave out some plugins and try again.",
+        ));
+    }
+    Ok(BuiltBackup {
+        json,
+        sections: written,
+        warnings,
+    })
 }
 
 /// Collect and seal every saved credential for the backup's credentials

@@ -6,14 +6,21 @@
 //! manifest is written *before* the first store file is replaced. If the app
 //! dies mid-swap, the next start finds the rollback manifest, keeps the
 //! original snapshot, and simply redoes the (idempotent) swap.
+//!
+//! Plugin directories (#3515) are swapped by **renames**, not copies: the
+//! rollback manifest records whether each directory existed, then the swap
+//! moves the original into the rollback directory and the staged copy into
+//! place. Every step is idempotent, so a resumed swap and a rollback can tell
+//! the original from the restored copy by where the original now lives.
 
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use tracing::{error, info, warn};
 
+use super::commit::{MANIFEST_FORMAT_FILES_ONLY, MANIFEST_FORMAT_WITH_PLUGINS};
 use super::restore::{PendingManifest, MANIFEST_FILE, PENDING_DIR, STAGING_DIR};
-use super::sections;
+use super::{plugins, sections};
 use crate::connection::recovery::RecoveryWarning;
 use crate::utils::fs::write_atomic;
 
@@ -33,6 +40,9 @@ struct RollbackEntry {
 #[serde(rename_all = "camelCase")]
 struct RollbackManifest {
     entries: Vec<RollbackEntry>,
+    /// Plugin directories (`file` is the directory path).
+    #[serde(default)]
+    dirs: Vec<RollbackEntry>,
 }
 
 fn remove_dir(path: &Path) {
@@ -58,15 +68,19 @@ fn read_manifest(pending: &Path) -> Result<PendingManifest, String> {
         .map_err(|e| format!("could not read the restore manifest: {e}"))?;
     let manifest: PendingManifest = serde_json::from_str(&text)
         .map_err(|e| format!("the restore manifest is malformed: {e}"))?;
-    if manifest.format_version != 1 {
-        return Err(format!(
-            "unsupported restore manifest version {}",
-            manifest.format_version
-        ));
+    let with_plugins = match manifest.format_version {
+        MANIFEST_FORMAT_FILES_ONLY => false,
+        MANIFEST_FORMAT_WITH_PLUGINS => true,
+        other => return Err(format!("unsupported restore manifest version {other}")),
+    };
+    if !with_plugins && !manifest.dirs.is_empty() {
+        return Err("the restore manifest lists directories it cannot contain".to_string());
     }
     let mut seen = std::collections::HashSet::new();
     for file in &manifest.files {
-        if sections::spec_for_file(file).is_none() {
+        let known = sections::spec_for_file(file).is_some()
+            || (with_plugins && plugins::is_restorable_root_file(file));
+        if !known {
             return Err(format!(
                 "the restore manifest names an unknown file \"{file}\""
             ));
@@ -76,6 +90,22 @@ fn read_manifest(pending: &Path) -> Result<PendingManifest, String> {
         }
         if !pending.join(file).is_file() {
             return Err(format!("the staged file \"{file}\" is missing"));
+        }
+    }
+    for dir in &manifest.dirs {
+        if !plugins::is_restorable_plugin_dir(dir) {
+            return Err(format!(
+                "the restore manifest names an unknown directory \"{dir}\""
+            ));
+        }
+        if !seen.insert(dir.as_str()) {
+            return Err(format!("the restore manifest lists \"{dir}\" twice"));
+        }
+        // A staged directory, when present, must be a real directory.
+        if let Ok(meta) = std::fs::symlink_metadata(pending.join(dir)) {
+            if !meta.is_dir() {
+                return Err(format!("the staged directory \"{dir}\" is not a directory"));
+            }
         }
     }
     Ok(manifest)
@@ -104,7 +134,12 @@ fn snapshot(
         let target = config_dir.join(file);
         let existed = target.is_file();
         if existed {
-            std::fs::copy(&target, rollback.join(file))
+            let saved = rollback.join(file);
+            if let Some(parent) = saved.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|e| format!("could not back up {file} before restoring: {e}"))?;
+            }
+            std::fs::copy(&target, saved)
                 .map_err(|e| format!("could not back up {file} before restoring: {e}"))?;
         }
         entries.push(RollbackEntry {
@@ -112,7 +147,17 @@ fn snapshot(
             existed,
         });
     }
-    let snapshot = RollbackManifest { entries };
+    // Directories are moved (not copied) during the swap; only record here
+    // whether each existed.
+    let dirs = manifest
+        .dirs
+        .iter()
+        .map(|dir| RollbackEntry {
+            file: dir.clone(),
+            existed: config_dir.join(dir).is_dir(),
+        })
+        .collect();
+    let snapshot = RollbackManifest { entries, dirs };
     let text = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("could not write the rollback manifest: {e}"))?;
     write_atomic(&manifest_path, &text)
@@ -120,9 +165,66 @@ fn snapshot(
     Ok(snapshot)
 }
 
+/// Swap one plugin directory into place (or remove it when nothing is
+/// staged), moving the original into the rollback directory. Idempotent.
+fn swap_dir(
+    config_dir: &Path,
+    pending: &Path,
+    rollback: &Path,
+    entry: &RollbackEntry,
+) -> std::io::Result<()> {
+    let target = config_dir.join(&entry.file);
+    let saved = rollback.join(&entry.file);
+    let staged = pending.join(&entry.file);
+    if entry.existed && !saved.exists() && target.exists() {
+        if let Some(parent) = saved.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&target, &saved)?;
+    }
+    if staged.exists() {
+        // Anything at the target now is not the original (it was moved away
+        // above, or never existed): a leftover of an interrupted attempt.
+        if target.exists() {
+            std::fs::remove_dir_all(&target)?;
+        }
+        if let Some(parent) = target.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::rename(&staged, &target)?;
+    } else if !entry.existed && target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }
+    Ok(())
+}
+
+/// Put one plugin directory back the way it was.
+fn roll_back_dir(config_dir: &Path, rollback: &Path, entry: &RollbackEntry) -> std::io::Result<()> {
+    let target = config_dir.join(&entry.file);
+    let saved = rollback.join(&entry.file);
+    if entry.existed {
+        // When the original was never moved away it is still in place.
+        if saved.exists() {
+            if target.exists() {
+                std::fs::remove_dir_all(&target)?;
+            }
+            std::fs::rename(&saved, &target)?;
+        }
+    } else if target.exists() {
+        std::fs::remove_dir_all(&target)?;
+    }
+    Ok(())
+}
+
 /// Put every original back. Returns the files that could not be restored.
 fn roll_back(config_dir: &Path, rollback: &Path, snapshot: &RollbackManifest) -> Vec<String> {
     let mut failed = Vec::new();
+    for entry in &snapshot.dirs {
+        if let Err(e) = roll_back_dir(config_dir, rollback, entry) {
+            error!(dir = %entry.file, "Could not roll back a restored plugin directory: {e}");
+            failed.push(entry.file.clone());
+        }
+    }
     for entry in &snapshot.entries {
         let target = config_dir.join(&entry.file);
         let outcome = if entry.existed {
@@ -176,10 +278,26 @@ pub fn apply_pending_restore(config_dir: &Path) -> Option<RecoveryWarning> {
         }
     };
 
-    for file in &manifest.files {
+    let dir_outcomes = snapshot.dirs.iter().map(|entry| {
+        (
+            entry.file.clone(),
+            swap_dir(config_dir, &pending, &rollback, entry).map_err(anyhow::Error::from),
+        )
+    });
+    let file_outcomes = manifest.files.iter().map(|file| {
+        let target = config_dir.join(file);
         let outcome = std::fs::read_to_string(pending.join(file))
             .map_err(anyhow::Error::from)
-            .and_then(|text| write_atomic(&config_dir.join(file), &text));
+            .and_then(|text| {
+                if let Some(parent) = target.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                write_atomic(&target, &text)
+            });
+        (file.clone(), outcome)
+    });
+    // Directories first, so a failing file still rolls every directory back.
+    for (file, outcome) in dir_outcomes.chain(file_outcomes) {
         if let Err(e) = outcome {
             error!(file = %file, "Restoring a backed-up store failed; rolling back: {e:#}");
             let failed = roll_back(config_dir, &rollback, &snapshot);
@@ -201,6 +319,6 @@ pub fn apply_pending_restore(config_dir: &Path) -> Option<RecoveryWarning> {
 
     remove_dir(&pending);
     remove_dir(&rollback);
-    info!(files = ?manifest.files, "Backup restore applied");
+    info!(files = ?manifest.files, dirs = ?manifest.dirs, "Backup restore applied");
     None
 }
