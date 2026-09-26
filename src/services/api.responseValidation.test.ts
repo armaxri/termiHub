@@ -137,7 +137,12 @@ describe("api response-validation (TFE-004)", () => {
   // on wrongPassword via isImportError.
   describe("importConnectionsWithCredentials", () => {
     it("returns the ImportResult on success with the right arg shape", async () => {
-      const importResult = { connectionsImported: 3, credentialsImported: 2 };
+      const importResult = {
+        connectionsImported: 3,
+        credentialsImported: 2,
+        sharedCredentialsImported: 1,
+        warnings: [],
+      };
       mockedInvoke.mockResolvedValue(importResult);
 
       const result = await importConnectionsWithCredentials('{"connections":[]}', "pw");
@@ -165,7 +170,12 @@ describe("api response-validation (TFE-004)", () => {
     });
 
     it("forwards a null import password (no-decrypt import)", async () => {
-      mockedInvoke.mockResolvedValue({ connectionsImported: 1, credentialsImported: 0 });
+      mockedInvoke.mockResolvedValue({
+        connectionsImported: 1,
+        credentialsImported: 0,
+        sharedCredentialsImported: 0,
+        warnings: [],
+      });
 
       await importConnectionsWithCredentials('{"connections":[]}', null);
 
