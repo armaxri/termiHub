@@ -9,7 +9,8 @@ subsystem: src/components/MacroSidebar, src/store/slices/macrosSlice
 evidence:
   - src/components/MacroSidebar/MacroEditorDialog.tsx:89
   - src/store/slices/macrosSlice.ts:195
-status: open
+status: fixed
+resolution: "#3441 — New Macro authoring + editable/insertable step text with lossless escape notation; validation; plays identical to recorded"
 ---
 
 ## What
