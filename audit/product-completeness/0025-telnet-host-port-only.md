@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/backends/telnet
 evidence:
   - core/src/backends/telnet.rs:207
-status: open
+status: partial
+resolution: "#3398 — telnet TTYPE + optional auto-login (credential store); line-mode/ECHO/SGA tracked #3396"
 ---
 
 ## What
