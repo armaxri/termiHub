@@ -37,6 +37,17 @@ pub fn save_workspace(
     manager.save_workspace(definition)
 }
 
+/// Mark a workspace as active so its settings overrides (PROD-052) apply to new
+/// sessions; `None` clears it. Called by the frontend when a workspace is
+/// launched or saved from the current layout.
+#[tauri::command]
+pub fn set_active_workspace(
+    workspace_id: Option<String>,
+    manager: State<'_, WorkspaceManager>,
+) -> Result<(), TerminalError> {
+    manager.set_active_workspace(workspace_id)
+}
+
 /// Delete a workspace by ID.
 #[tauri::command]
 pub fn delete_workspace(

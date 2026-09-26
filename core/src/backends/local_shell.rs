@@ -866,6 +866,8 @@ mod tests {
         reader_tx: Arc<Mutex<Option<std::sync::mpsc::SyncSender<Vec<u8>>>>>,
         /// Captures the environment of the last spawned command.
         captured_env: Arc<Mutex<Option<HashMap<String, String>>>>,
+        /// Captures the working directory of the last spawned command.
+        captured_cwd: Arc<Mutex<Option<Option<std::path::PathBuf>>>>,
         /// Unblocks `wait_for_exit`. Sending on it (or dropping it) simulates
         /// the child process exiting — mirroring a real `exit` or `kill()`.
         child_exit: Arc<Mutex<Option<std::sync::mpsc::Sender<()>>>>,
@@ -881,6 +883,7 @@ mod tests {
                 kill_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
                 reader_tx: Arc::new(Mutex::new(None)),
                 captured_env: Arc::new(Mutex::new(None)),
+                captured_cwd: Arc::new(Mutex::new(None)),
                 child_exit: Arc::new(Mutex::new(None)),
             }
         }
@@ -899,6 +902,7 @@ mod tests {
                 return Err(SessionError::SpawnFailed("mock spawn failure".to_string()));
             }
             *self.captured_env.lock().unwrap() = Some(command.env.clone());
+            *self.captured_cwd.lock().unwrap() = Some(command.cwd.clone());
             let write_log = self.write_log.clone();
             let resize_log = self.resize_log.clone();
             let killed = self.killed.clone();
@@ -1278,6 +1282,55 @@ mod tests {
             .find(|f| f.key == "envVars")
             .expect("envVars field present in schema");
         assert!(matches!(field.field_type, FieldType::KeyValueList));
+    }
+
+    /// PROD-052: the desktop merges a workspace's session defaults into a new
+    /// local shell's settings as *leading* `envVars` entries plus a
+    /// `startingDirectory`. The spawned process must see both, and a
+    /// connection entry of the same name (placed after) must win.
+    #[tokio::test]
+    async fn connect_applies_workspace_merged_env_and_directory() {
+        let mock = MockLocalShellSpawner::new();
+        let captured_env = mock.captured_env.clone();
+        let captured_cwd = mock.captured_cwd.clone();
+
+        let mut shell = LocalShell::with_spawner(mock);
+        let shells = detect_available_shells();
+        let sh = shells.first().cloned().unwrap_or_else(|| "sh".to_string());
+        let dir = std::env::temp_dir();
+        let settings = serde_json::json!({
+            "shell": sh,
+            "startingDirectory": dir.to_string_lossy(),
+            "envVars": [
+                { "key": "TERMIHUB_WS_ONLY", "value": "workspace" },
+                { "key": "TERMIHUB_SHARED", "value": "workspace" },
+                { "key": "TERMIHUB_SHARED", "value": "connection" },
+            ],
+        });
+        shell.connect(settings).await.expect("connect");
+
+        let env = captured_env
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("spawn should have captured a command");
+        assert_eq!(
+            env.get("TERMIHUB_WS_ONLY").map(String::as_str),
+            Some("workspace")
+        );
+        assert_eq!(
+            env.get("TERMIHUB_SHARED").map(String::as_str),
+            Some("connection"),
+            "the connection's entry (last) must win over the workspace default"
+        );
+        let cwd = captured_cwd
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("spawn should have captured a command");
+        assert!(cwd.is_some(), "an existing starting directory must be used");
+
+        shell.disconnect().await.ok();
     }
 
     #[tokio::test]
