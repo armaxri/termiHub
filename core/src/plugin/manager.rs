@@ -45,8 +45,8 @@ use thiserror::Error;
 
 use super::manifest::{is_valid_plugin_id, parse_manifest, ApiCompatibility, PluginManifest};
 use super::package::{
-    check_entry_count, check_package_size, read_entry_bounded, validate_package,
-    PluginPackageError, MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES,
+    check_entry_count, check_host_platform, check_package_size, read_entry_bounded,
+    validate_package, PluginPackageError, MANIFEST_FILE_NAME, MAX_DECOMPRESSED_ENTRY_BYTES,
     MAX_DECOMPRESSED_TOTAL_BYTES, MAX_PACKAGE_ENTRIES,
 };
 use super::security::{assess_trust, TrustAssessment, TrustLevel};
@@ -307,10 +307,13 @@ impl PluginManager {
     }
 
     /// Validate a `.termihub-plugin` package without installing it, returning
-    /// its trusted manifest. Thin pass-through to [`validate_package`] so the
-    /// command surface has a single entry point.
+    /// its trusted manifest. [`validate_package`] plus the host-platform check
+    /// (PLG-011) — so the install preview already reports a multi-platform
+    /// package that lacks this platform — behind a single command entry point.
     pub fn validate(&self, package_path: &Path) -> Result<PluginManifest, PluginPackageError> {
-        validate_package(package_path)
+        let manifest = validate_package(package_path)?;
+        check_host_platform(&manifest)?;
+        Ok(manifest)
     }
 
     /// Scan the plugins root and return every installed plugin, sorted by id.
@@ -481,6 +484,9 @@ impl PluginManager {
         let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
 
         let manifest = validate_package(package_path)?;
+        // A multi-platform package without this host's platform is refused
+        // before anything is pinned or extracted (PLG-011).
+        check_host_platform(&manifest)?;
         let id = manifest.id.clone();
         let dest = self.plugin_dir(&id);
 
@@ -1420,6 +1426,141 @@ mod tests {
     fn list_is_empty_when_root_absent() {
         let (mgr, _t) = manager();
         assert!(mgr.list().unwrap().is_empty());
+    }
+
+    // --- Multi-platform packages (PLG-011) ---
+
+    /// A native terminal-backend manifest for `id`, with an optional
+    /// `libraries` map JSON object (empty string = legacy single-platform).
+    fn native_manifest(id: &str, libraries: &str) -> String {
+        let libs = if libraries.is_empty() {
+            String::new()
+        } else {
+            format!(", \"libraries\": {libraries}")
+        };
+        format!(
+            r#"{{
+                "id": "{id}",
+                "name": "Native",
+                "version": "1.0.0",
+                "author": "tester",
+                "description": "native plugin",
+                "license": "MIT",
+                "apiVersion": "1.0",
+                "platforms": ["linux", "macos", "windows"],
+                "permissions": ["terminal"],
+                "extensions": {{
+                    "terminalBackend": {{
+                        "connectionType": "native",
+                        "displayName": "Native",
+                        "configSchema": {{}}{libs}
+                    }}
+                }}
+            }}"#
+        )
+    }
+
+    const FOREIGN_TRIPLE: &str = "riscv64gc-unknown-none-elf";
+
+    #[test]
+    fn legacy_single_platform_package_still_installs() {
+        let (mgr, tmp) = manager();
+        let lib = format!(
+            "backend/{}legacy{}",
+            std::env::consts::DLL_PREFIX,
+            std::env::consts::DLL_SUFFIX
+        );
+        let pkg = make_package(
+            tmp.path(),
+            &native_manifest("legacy", ""),
+            &[(lib.as_str(), b"legacy-bytes")],
+        );
+        mgr.validate(&pkg).expect("legacy package validates");
+        mgr.install(&pkg, true, false)
+            .expect("legacy package installs");
+        assert_eq!(
+            std::fs::read(mgr.root().join("legacy").join(&lib)).unwrap(),
+            b"legacy-bytes"
+        );
+    }
+
+    #[test]
+    fn fat_package_with_this_platform_installs_every_entry() {
+        let (mgr, tmp) = manager();
+        let host = crate::plugin::host_target_triple();
+        let host_lib = format!("backend/{host}/lib.bin");
+        let foreign_lib = format!("backend/{FOREIGN_TRIPLE}/lib.bin");
+        let map = format!(r#"{{ "{host}": "{host_lib}", "{FOREIGN_TRIPLE}": "{foreign_lib}" }}"#);
+        let pkg = make_package(
+            tmp.path(),
+            &native_manifest("fat", &map),
+            &[
+                (host_lib.as_str(), b"host-bytes"),
+                (foreign_lib.as_str(), b"foreign-bytes"),
+            ],
+        );
+        let manifest = mgr.validate(&pkg).expect("fat package validates here");
+        assert_eq!(
+            manifest
+                .extensions
+                .terminal_backend
+                .as_ref()
+                .unwrap()
+                .libraries
+                .len(),
+            2
+        );
+        mgr.install(&pkg, true, false)
+            .expect("fat package installs");
+        assert_eq!(
+            std::fs::read(mgr.root().join("fat").join(&host_lib)).unwrap(),
+            b"host-bytes"
+        );
+    }
+
+    #[test]
+    fn fat_package_without_this_platform_is_refused_before_extraction() {
+        let (mgr, tmp) = manager();
+        let foreign_lib = format!("backend/{FOREIGN_TRIPLE}/lib.bin");
+        let map = format!(r#"{{ "{FOREIGN_TRIPLE}": "{foreign_lib}" }}"#);
+        let pkg = make_package(
+            tmp.path(),
+            &native_manifest("elsewhere", &map),
+            &[(foreign_lib.as_str(), b"foreign-bytes")],
+        );
+
+        // The install preview already reports it...
+        match mgr.validate(&pkg) {
+            Err(PluginPackageError::PlatformUnavailable {
+                id,
+                host,
+                available,
+            }) => {
+                assert_eq!(id, "elsewhere");
+                assert_eq!(host, crate::plugin::host_target_triple());
+                assert_eq!(available, FOREIGN_TRIPLE);
+            }
+            other => panic!("expected PlatformUnavailable, got {other:?}"),
+        }
+        // ...and the install refuses it with the clear message, extracting nothing.
+        let err = mgr.install(&pkg, true, false).unwrap_err();
+        assert!(
+            err.to_string().contains("not available for this platform"),
+            "{err}"
+        );
+        assert!(!mgr.root().join("elsewhere").exists());
+    }
+
+    #[test]
+    fn fat_package_naming_a_library_it_lacks_is_invalid() {
+        let (mgr, tmp) = manager();
+        let host = crate::plugin::host_target_triple();
+        let map = format!(r#"{{ "{host}": "backend/{host}/lib.bin" }}"#);
+        let pkg = make_package(tmp.path(), &native_manifest("hollow", &map), &[]);
+        assert!(matches!(
+            mgr.validate(&pkg),
+            Err(PluginPackageError::MissingPlatformLibrary { .. })
+        ));
     }
 
     #[test]

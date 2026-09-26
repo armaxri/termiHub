@@ -66,6 +66,19 @@ pub enum HostError {
     #[error("no backend library found in `{0}`")]
     LibraryNotFound(PathBuf),
 
+    /// A multi-platform package (PLG-011) ships no native library for this
+    /// host's target triple, so the plugin cannot run here.
+    #[error(
+        "plugin is not available for this platform ({host}); it ships native libraries for: \
+         {available}"
+    )]
+    PlatformUnavailable {
+        /// This host's Rust target triple.
+        host: String,
+        /// The target triples the package does carry, sorted, comma-joined.
+        available: String,
+    },
+
     /// More than one file under `backend/` matches the current platform's
     /// dynamic-library extension, so which one to load is ambiguous. A directory
     /// scan has no defined order, so silently picking one is nondeterministic and
@@ -196,12 +209,16 @@ pub enum HostError {
 }
 
 impl HostError {
-    /// Whether this failure is specifically an ABI/version incompatibility, as
+    /// Whether this failure is specifically an ABI/version incompatibility (or a
+    /// multi-platform package lacking this host's platform, PLG-011), as
     /// opposed to a load or initialization error. The management layer maps the
     /// two to different plugin states.
     #[must_use]
     pub fn is_incompatible(&self) -> bool {
-        matches!(self, HostError::IncompatibleAbi(_))
+        matches!(
+            self,
+            HostError::IncompatibleAbi(_) | HostError::PlatformUnavailable { .. }
+        )
     }
 }
 
@@ -409,6 +426,54 @@ pub fn find_backend_library(plugin_dir: &Path) -> Result<PathBuf, HostError> {
         .into_iter()
         .next()
         .ok_or(HostError::LibraryNotFound(backend_dir))
+}
+
+/// Select the backend library an installed plugin must load **on this host**
+/// (PLG-011), honouring a multi-platform package's manifest mapping.
+///
+/// * When the terminal backend declares a `libraries` map, the entry for
+///   [`host_target_triple`](super::platform::host_target_triple) is the one and
+///   only candidate; a map without that triple is
+///   [`HostError::PlatformUnavailable`], and a mapped file missing on disk is
+///   [`HostError::LibraryNotFound`]. Other platforms' libraries are never
+///   considered, so the trust hash and signed digest bind to exactly this file.
+/// * Without a map (a legacy single-platform package) this is
+///   [`find_backend_library`]: the one file in `backend/` with this OS's
+///   dynamic-library extension.
+///
+/// The manifest's map is validated at install ([`super::PluginManifest::validate`])
+/// to hold only safe relative paths under `backend/`; the join is re-checked here
+/// anyway so a hand-edited manifest cannot point the loader outside the plugin.
+pub fn select_backend_library(
+    plugin_dir: &Path,
+    backend: &TerminalBackendExtension,
+) -> Result<PathBuf, HostError> {
+    if backend.libraries.is_empty() {
+        return find_backend_library(plugin_dir);
+    }
+    let host = super::platform::host_target_triple();
+    let Some(rel) = backend.libraries.get(host) else {
+        return Err(HostError::PlatformUnavailable {
+            host: host.to_owned(),
+            available: backend
+                .libraries
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", "),
+        });
+    };
+    if !super::platform::is_valid_library_path(rel) {
+        return Err(HostError::LibraryNotFound(plugin_dir.join(rel)));
+    }
+    let path = rel
+        .split('/')
+        .fold(plugin_dir.to_path_buf(), |acc, part| acc.join(part));
+    if path.is_file() {
+        Ok(path)
+    } else {
+        Err(HostError::LibraryNotFound(path))
+    }
 }
 
 /// Open a plugin backend library, validate its ABI version, and resolve its
@@ -888,7 +953,9 @@ impl PluginHost {
         }
 
         let plugin_dir = self.root.join(&id);
-        let lib_path = find_backend_library(&plugin_dir)?;
+        // A multi-platform package resolves to THIS host's entry only (PLG-011);
+        // the trust hash and signed digest below bind to that selected file.
+        let lib_path = select_backend_library(&plugin_dir, backend)?;
 
         // Bind consent to the exact bytes: hash the library on disk and require an
         // acknowledgment matching that hash. A missing ack or a changed binary
@@ -1282,6 +1349,170 @@ mod tests {
         }
     }
 
+    // --- Multi-platform packages (PLG-011) ---
+
+    /// A foreign target triple no host running these tests can be.
+    const FOREIGN_TRIPLE: &str = "riscv64gc-unknown-none-elf";
+
+    /// `manifest_json` for `host-sec` with a `libraries` map over `triples`, each
+    /// mapped to `backend/<triple>/lib.bin`.
+    fn multi_platform_manifest(triples: &[&str]) -> String {
+        let entries = triples
+            .iter()
+            .map(|t| format!("\"{t}\": \"backend/{t}/lib.bin\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        manifest_json(r#"["terminal"]"#, "").replace(
+            "\"configSchema\": {}",
+            &format!("\"configSchema\": {{}}, \"libraries\": {{ {entries} }}"),
+        )
+    }
+
+    /// Write `backend/<triple>/lib.bin` for each triple under `root/host-sec`,
+    /// each with distinct bytes, returning `(triple, sha256)` pairs.
+    fn write_multi_platform_backend(root: &Path, triples: &[&str]) -> Vec<(String, String)> {
+        triples
+            .iter()
+            .map(|t| {
+                let dir = root.join("host-sec").join("backend").join(t);
+                std::fs::create_dir_all(&dir).unwrap();
+                let bytes = format!("native library for {t}").into_bytes();
+                std::fs::write(dir.join("lib.bin"), &bytes).unwrap();
+                ((*t).to_owned(), sha256_digest(&bytes))
+            })
+            .collect()
+    }
+
+    fn backend_of(plugin: &InstalledPlugin) -> &TerminalBackendExtension {
+        plugin
+            .manifest
+            .extensions
+            .terminal_backend
+            .as_ref()
+            .unwrap()
+    }
+
+    #[test]
+    fn select_backend_library_picks_the_host_triple_entry() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let host = super::super::platform::host_target_triple();
+        write_multi_platform_backend(tmp.path(), &[host, FOREIGN_TRIPLE]);
+        let plugin = installed(&multi_platform_manifest(&[host, FOREIGN_TRIPLE]));
+
+        let selected =
+            select_backend_library(&tmp.path().join("host-sec"), backend_of(&plugin)).unwrap();
+        assert_eq!(
+            selected,
+            tmp.path()
+                .join("host-sec")
+                .join("backend")
+                .join(host)
+                .join("lib.bin")
+        );
+    }
+
+    #[test]
+    fn select_backend_library_reports_a_missing_platform() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        write_multi_platform_backend(tmp.path(), &[FOREIGN_TRIPLE]);
+        let plugin = installed(&multi_platform_manifest(&[FOREIGN_TRIPLE]));
+
+        match select_backend_library(&tmp.path().join("host-sec"), backend_of(&plugin)) {
+            Err(err @ HostError::PlatformUnavailable { .. }) => {
+                assert!(err.is_incompatible());
+                let msg = err.to_string();
+                assert!(msg.contains("not available for this platform"), "{msg}");
+                assert!(msg.contains(super::super::platform::host_target_triple()));
+                assert!(msg.contains(FOREIGN_TRIPLE), "{msg}");
+            }
+            other => panic!("expected PlatformUnavailable, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn select_backend_library_mapped_file_missing_is_not_found() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let host = super::super::platform::host_target_triple();
+        std::fs::create_dir_all(tmp.path().join("host-sec").join("backend")).unwrap();
+        let plugin = installed(&multi_platform_manifest(&[host]));
+        assert!(matches!(
+            select_backend_library(&tmp.path().join("host-sec"), backend_of(&plugin)),
+            Err(HostError::LibraryNotFound(_))
+        ));
+    }
+
+    #[test]
+    fn select_backend_library_without_a_map_uses_the_legacy_scan() {
+        let (_host, tmp) = test_host();
+        write_dummy_backend(tmp.path(), "host-sec");
+        let plugin = installed(&manifest_json(r#"["terminal"]"#, ""));
+        let dir = tmp.path().join("host-sec");
+        assert_eq!(
+            select_backend_library(&dir, backend_of(&plugin)).unwrap(),
+            find_backend_library(&dir).unwrap()
+        );
+    }
+
+    #[test]
+    fn load_refuses_a_multi_platform_plugin_lacking_this_platform() {
+        let (host, tmp) = test_host();
+        write_multi_platform_backend(tmp.path(), &[FOREIGN_TRIPLE]);
+        NativeTrustStore::load(tmp.path())
+            .set_native_enabled(true)
+            .unwrap();
+        let plugin = installed(&multi_platform_manifest(&[FOREIGN_TRIPLE]));
+        assert!(matches!(
+            host.load(&plugin),
+            Err(HostError::PlatformUnavailable { .. })
+        ));
+        assert!(!host.is_loaded("host-sec"));
+    }
+
+    #[test]
+    fn trust_ack_binds_to_the_selected_platform_library() {
+        let (host, tmp) = test_host();
+        let triple = super::super::platform::host_target_triple();
+        let hashes = write_multi_platform_backend(tmp.path(), &[triple, FOREIGN_TRIPLE]);
+        let host_hash = hashes.iter().find(|(t, _)| t == triple).unwrap().1.clone();
+        let foreign_hash = hashes
+            .iter()
+            .find(|(t, _)| t == FOREIGN_TRIPLE)
+            .unwrap()
+            .1
+            .clone();
+        let manifest = multi_platform_manifest(&[triple, FOREIGN_TRIPLE]);
+        std::fs::write(tmp.path().join("host-sec").join("manifest.json"), &manifest).unwrap();
+        let plugin = installed(&manifest);
+
+        // The hash the trust UI computes is the SELECTED (host) library's.
+        assert_eq!(
+            super::super::native_trust::native_library_hash(tmp.path(), "host-sec").unwrap(),
+            host_hash
+        );
+
+        // Acknowledging ANOTHER platform's library does not authorize this one.
+        let mut trust = NativeTrustStore::load(tmp.path());
+        trust.set_native_enabled(true).unwrap();
+        trust.acknowledge("host-sec", foreign_hash).unwrap();
+        assert!(matches!(
+            host.load(&plugin),
+            Err(HostError::NativePluginNotTrusted { .. })
+        ));
+
+        // Acknowledging the selected library passes the gate and reaches dlopen
+        // (the bytes are not a real library, so it fails there).
+        trust.acknowledge("host-sec", host_hash).unwrap();
+        match host.load(&plugin) {
+            Err(HostError::Open { path, .. }) => {
+                assert!(
+                    path.ends_with(Path::new(triple).join("lib.bin")),
+                    "{path:?}"
+                );
+            }
+            other => panic!("expected the load to reach dlopen, got {other:?}"),
+        }
+    }
+
     #[test]
     fn frontend_only_plugin_loads_without_native_trust() {
         let (host, _t) = test_host();
@@ -1384,6 +1615,7 @@ mod tests {
             connection_type: connection_type.to_string(),
             display_name: display_name.to_string(),
             config_schema: serde_json::json!({}),
+            libraries: Default::default(),
         }
     }
 

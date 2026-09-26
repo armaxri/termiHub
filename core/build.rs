@@ -25,11 +25,25 @@
 //! means "no embedded digest", not a compile error.
 //!
 //! [`rdp_sidecar`]: crate::backends::rdp_sidecar
+//!
+//! # Plugin host target triple (PLG-011)
+//!
+//! The plugin host picks the native backend library matching its own Rust
+//! target triple out of a multi-platform `.termihub-plugin` package
+//! (`extensions.terminalBackend.libraries`). Rust does not expose the target
+//! triple to the crate itself, so this script forwards cargo's `TARGET` as the
+//! `TERMIHUB_TARGET_TRIPLE` env var, read with `env!` in `plugin::platform`.
 
 use std::path::{Path, PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=TERMIHUB_RDP_HELPER_SHA256");
+
+    // Cargo always sets TARGET for build scripts; fall back to "unknown" rather
+    // than failing the build (a host that cannot name its triple then simply
+    // matches no multi-platform package entry — fail closed).
+    let target = std::env::var("TARGET").unwrap_or_else(|_| "unknown".to_owned());
+    println!("cargo:rustc-env=TERMIHUB_TARGET_TRIPLE={target}");
 
     let staged = staged_helper_path();
     // Re-run when the staged binary appears/changes (rerun-if-changed on a
