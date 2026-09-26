@@ -143,9 +143,9 @@ describe("FileBookmarksMenu", () => {
     render("connection:c1", "/var/log");
     await openMenu();
     expect(q("file-bookmarks-add")).toBeNull();
-    expect(
-      (q("file-browser-bookmarks") as HTMLButtonElement).getAttribute("aria-pressed")
-    ).toBe("true");
+    expect((q("file-browser-bookmarks") as HTMLButtonElement).getAttribute("aria-pressed")).toBe(
+      "true"
+    );
     await select("file-bookmarks-remove-current");
     expect(api.removeFileBookmark).toHaveBeenCalledWith("a");
   });

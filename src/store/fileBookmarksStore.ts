@@ -34,10 +34,7 @@ interface FileBookmarksState {
 }
 
 /** The bookmarks of one scope, in the order they were added. */
-export function bookmarksForScope(
-  bookmarks: FileBookmark[],
-  scope: string | null
-): FileBookmark[] {
+export function bookmarksForScope(bookmarks: FileBookmark[], scope: string | null): FileBookmark[] {
   if (!scope) return [];
   return bookmarks.filter((b) => b.scope === scope);
 }

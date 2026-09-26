@@ -85,7 +85,11 @@ export function FileBookmarksDialog({
       ) : (
         <ul className="file-bookmarks__list" aria-label="Bookmarked folders">
           {bookmarks.map((b) => (
-            <li key={b.id} className="file-bookmarks__row" data-testid={`file-bookmark-row-${b.id}`}>
+            <li
+              key={b.id}
+              className="file-bookmarks__row"
+              data-testid={`file-bookmark-row-${b.id}`}
+            >
               <div className="file-bookmarks__text">
                 {renamingId === b.id ? (
                   <Input
