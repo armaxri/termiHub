@@ -6,7 +6,8 @@
 //! the minimal-tools case), streams a multi-MiB file through
 //! `run_docker_transfer`, and byte-verifies the result against `sha256sum`
 //! inside the container. The container is force-removed afterwards even when
-//! the test body panics. Skips when no container daemon is reachable (see
+//! the test body panics. Skips when no Linux-capable container daemon is
+//! reachable — including a Windows-container-mode daemon (see `client()`; see
 //! `docker_spawn.rs` for why it observes through bollard, not the CLI).
 //!
 //! Killing the streaming process is made deterministic by arming an in-
@@ -123,11 +124,32 @@ impl Fixture {
     }
 }
 
-/// Reach the daemon, or `None` to skip.
-async fn client() -> Option<bollard::Docker> {
-    let client = bollard::Docker::connect_with_local_defaults().ok()?;
-    client.ping().await.ok()?;
-    Some(client)
+/// Reach a daemon that can run Linux containers, or `Err(reason)` to skip.
+///
+/// Two legitimate skip cases, both environments where `alpine:3` cannot run:
+/// no reachable daemon at all, and a daemon in *Windows-container* mode
+/// (the GitHub `windows-latest` runner — its Docker reports `OSType:
+/// windows` and refuses to pull any Linux image with "no matching
+/// manifest"). A Linux-capable daemon (Linux, Docker Desktop / Podman on
+/// macOS) always runs the tests, so a real failure there stays a failure.
+async fn client() -> Result<bollard::Docker, String> {
+    let client = bollard::Docker::connect_with_local_defaults()
+        .map_err(|e| format!("no container daemon configured ({e})"))?;
+    client
+        .ping()
+        .await
+        .map_err(|e| format!("container daemon unreachable ({e})"))?;
+    let info = client
+        .info()
+        .await
+        .map_err(|e| format!("container daemon info failed ({e})"))?;
+    match info.os_type.as_deref() {
+        Some("linux") => Ok(client),
+        other => Err(format!(
+            "container daemon cannot run Linux containers (OSType: {})",
+            other.unwrap_or("unknown")
+        )),
+    }
 }
 
 async fn ensure_image(client: &bollard::Docker) {
@@ -154,9 +176,12 @@ where
     F: FnOnce(Arc<Fixture>) -> Fut,
     Fut: Future<Output = ()> + Send + 'static,
 {
-    let Some(client) = client().await else {
-        eprintln!("SKIPPED: no reachable container daemon ({test})");
-        return;
+    let client = match client().await {
+        Ok(client) => client,
+        Err(reason) => {
+            eprintln!("SKIPPED: {reason} ({test})");
+            return;
+        }
     };
     ensure_image(&client).await;
     let name = format!("termihub-xfer-{}-{test}", std::process::id());
