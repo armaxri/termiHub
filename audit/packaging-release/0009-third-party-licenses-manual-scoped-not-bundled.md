@@ -10,7 +10,8 @@ evidence:
   - THIRD_PARTY_LICENSES.md:5
   - THIRD_PARTY_LICENSES.md:10
   - src-tauri/tauri.conf.json:52
-status: open
+status: fixed
+resolution: "#3470 — THIRD_PARTY_NOTICES generated from real dep graph (cargo-about 0.9.2 + pnpm licenses), bundled in installers + in-app viewer + release asset; CI check"
 ---
 
 ## What
