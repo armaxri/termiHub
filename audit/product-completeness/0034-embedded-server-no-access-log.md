@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/embedded_servers
 evidence:
   - src/types/embeddedServer.ts:27
-status: open
+status: fixed
+resolution: "#3455 — per-server bounded access log (HTTP/FTP/TFTP), no secrets, incremental UI with filter/copy/clear"
 ---
 
 ## What

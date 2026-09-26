@@ -8,7 +8,8 @@ is_workaround: false
 subsystem: core/embedded_servers
 evidence:
   - src/types/embeddedServer.ts:27
-status: open
+status: fixed
+resolution: "#3455 — detailed per-server stats: requests, errors, bytes, active conns, transfers, top paths/clients"
 ---
 
 ## What
