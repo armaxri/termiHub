@@ -1258,6 +1258,53 @@ are exercised only through explicit user actions (OS dialogs and app-level allow
 deliberate, documented trade-off rather than an oversight, and each has a tracked path to future
 tightening.
 
+### Projection client identity (window binding)
+
+Every projection intent and subscription carries a `clientId` — the fan-out / audit identity and
+the key of client-scoped regions such as `layout@<clientId>` (see ADR-14). That field is asserted by
+the webview, so on its own it proves nothing. Since multi-window (#1900), each window is a separate
+JavaScript context, and nothing in the payload would stop window B from dispatching an intent as
+window A's client or subscribing to A's private regions (audit finding TAURI-012, #3444).
+
+The backend therefore **binds each `clientId` to the calling principal** in
+`ClientIdentities` (`src-tauri/src/projection/identity.rs`). On desktop the principal is the invoking
+`WebviewWindow` label (`main`, `win-N`), supplied server-side by Tauri and not forgeable by page
+script; a future remote-client transport must supply the authenticated connection id instead.
+
+```mermaid
+flowchart LR
+    W["window win-1<br/>(invokes command)"] -->|"label from Tauri,<br/>clientId from payload"| C{"ClientIdentities"}
+    C -->|"unbound → bind to win-1"| OK["dispatch / subscribe"]
+    C -->|"bound to win-1"| OK
+    C -->|"bound to another window"| R["reject: client_identity_mismatch<br/>(logged)"]
+```
+
+- **Trust-on-first-use binding.** The frontend mints unguessable `client-<ulid>` ids per bridge; the
+  first window to use an id owns it. A window may mint any number of ids, but can only ever act as
+  its own.
+- **Enforcement points** (`src-tauri/src/commands/projection.rs`): `intent_dispatch` rejects an
+  intent whose `clientId` belongs to another window before any handler runs;
+  `projection_subscribe` requires the asserted `clientId` and, for a client-scoped region
+  (`<domain>@<clientId>`), the region's client to be the caller's; `projection_resync` and
+  `projection_unsubscribe` apply the same region rule, and unsubscribe detaches only the caller's
+  own subscriptions. A resubscribe with a reused subscription id replaces only the same client's
+  subscription, so one window cannot evict another's diff stream.
+- **Shared regions stay shared.** Regions without an `@` suffix (`connections`, `settings`,
+  `tunnels`, …) are app-wide authority that every window legitimately reads and mutates; windows are
+  the same trusted application code, so no per-window policy applies to them.
+- **Lifecycle.** When a window is destroyed its bindings are released and its subscriptions
+  detached.
+- **Wire compatibility.** The frontend still sends `clientId`; it is validated, not trusted.
+  Rejections surface as a rejected `IntentAck` or a `{ code, message }` command error.
+
+**Threat model.** The webview is trusted application code — this is not a defence against a
+compromised renderer, which could invoke any command. It guarantees that multiple windows cannot
+impersonate each other through the projection substrate. Frontend plugins run sandboxed in a Web
+Worker (#2136, default-off) with no Tauri IPC access; even code that reached IPC from inside a window
+would act only under that window's label and could not assume another window's identity. Before a
+remote-client transport ships, it must derive the principal from its authenticated session and add
+an authorization policy for shared regions — the substrate does not authenticate transports itself.
+
 ### Experimental Features
 
 termiHub provides an opt-in mechanism for features that are under active development and not yet ready for general availability.

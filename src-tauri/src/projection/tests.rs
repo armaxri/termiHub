@@ -668,3 +668,52 @@ fn concurrent_publishers_to_one_region_deliver_in_version_order() {
     }
     assert_eq!(cache.version, total as u64);
 }
+
+// ── Client-scoped subscriber isolation (TAURI-012) ──────────────────────────
+
+#[test]
+fn reused_subscription_id_from_another_client_does_not_evict() {
+    let projector = Projector::new();
+    let a = Arc::new(VecSink::new());
+    let b = Arc::new(VecSink::new());
+    projector.subscribe("r", "sub-1", "A", a.clone());
+    // Client B presents A's subscription id: it attaches beside A, never
+    // replacing A's sink.
+    projector.subscribe("r", "sub-1", "B", b.clone());
+    assert_eq!(projector.subscriber_count("r"), 2);
+
+    projector.publish("r", json!({ "n": 1 }));
+    assert_eq!(a.diffs().len(), 1, "A keeps receiving diffs");
+    assert_eq!(b.diffs().len(), 1);
+}
+
+#[test]
+fn unsubscribe_owned_only_detaches_owned_subscribers() {
+    let projector = Projector::new();
+    projector.subscribe("r", "sub-1", "A", Arc::new(VecSink::new()));
+    projector.subscribe("r", "sub-1", "B", Arc::new(VecSink::new()));
+
+    // A caller owning only B cannot detach A's subscription.
+    assert_eq!(projector.unsubscribe_owned("r", "sub-1", |c| c == "B"), 1);
+    assert_eq!(projector.subscriber_count("r"), 1);
+    assert_eq!(projector.unsubscribe_owned("r", "sub-1", |c| c == "B"), 0);
+    assert_eq!(projector.unsubscribe_owned("missing", "sub-1", |_| true), 0);
+    assert_eq!(projector.unsubscribe_owned("r", "sub-1", |c| c == "A"), 1);
+    assert_eq!(projector.subscriber_count("r"), 0);
+}
+
+#[test]
+fn unsubscribe_clients_everywhere_detaches_across_regions() {
+    let projector = Projector::new();
+    projector.subscribe("shared", "s1", "A", Arc::new(VecSink::new()));
+    projector.subscribe("layout@A", "s2", "A", Arc::new(VecSink::new()));
+    projector.subscribe("shared", "s3", "B", Arc::new(VecSink::new()));
+
+    assert_eq!(projector.unsubscribe_clients_everywhere(&[]), 0);
+    assert_eq!(
+        projector.unsubscribe_clients_everywhere(&["A".to_string()]),
+        2
+    );
+    assert_eq!(projector.subscriber_count("shared"), 1);
+    assert_eq!(projector.subscriber_count("layout@A"), 0);
+}
