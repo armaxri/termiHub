@@ -34,7 +34,7 @@
  */
 
 import { MAX_STEP_DELAY_MS } from "@/services/macroPlayback";
-import type { WorkflowCondition, WorkflowStep } from "@/types/workflow";
+import type { WorkflowCondition, WorkflowStep, WorkflowStepRetry } from "@/types/workflow";
 import { frontendWarn } from "@/utils/frontendLog";
 
 /**
@@ -72,6 +72,46 @@ export const MAX_LOOP_ITERATIONS = 1000;
  * parameters are otherwise fixed for the whole run.
  */
 export const LOOP_ITERATION_PARAM = "iteration";
+
+/**
+ * Maximum number of retries a single step's {@link WorkflowStepRetry} policy may
+ * request (PROD-045). A larger `count` is clamped to this, so a step runs at most
+ * `MAX_STEP_RETRIES + 1` times — a mis-authored policy can never retry forever.
+ */
+export const MAX_STEP_RETRIES = 10;
+
+/**
+ * Maximum delay (ms) the runner waits between two attempts of a retried step
+ * (PROD-045). Both the authored `delayMs` and every exponential-backoff step are
+ * clamped to this, so a retry policy can never stall a run for hours.
+ */
+export const MAX_RETRY_DELAY_MS = 60_000;
+
+/**
+ * The number of retries a step's policy actually grants (PROD-045): the
+ * authored `count` floored and clamped to `[0, MAX_STEP_RETRIES]`; an absent
+ * policy or a non-finite count grants none. A **pure** helper.
+ */
+export function effectiveRetryCount(retry: WorkflowStepRetry | undefined): number {
+  if (!retry || !Number.isFinite(retry.count)) return 0;
+  return Math.max(0, Math.min(Math.floor(retry.count), MAX_STEP_RETRIES));
+}
+
+/**
+ * The delay (ms) to wait before retry number `retryNumber` (1-based) of a step
+ * (PROD-045). `fixed` backoff always waits `delayMs`; `exponential` doubles it
+ * per retry (`delayMs × 2^(retryNumber-1)`). The result is clamped to
+ * `[0, MAX_RETRY_DELAY_MS]`, and an absent/non-finite delay means "retry
+ * immediately". A **pure** helper.
+ */
+export function retryDelayMs(retry: WorkflowStepRetry | undefined, retryNumber: number): number {
+  const base = retry?.delayMs;
+  if (base === undefined || !Number.isFinite(base) || base <= 0) return 0;
+  const clampedBase = Math.min(base, MAX_RETRY_DELAY_MS);
+  if (retry?.backoff !== "exponential") return clampedBase;
+  const exponent = Math.max(0, retryNumber - 1);
+  return Math.min(clampedBase * 2 ** exponent, MAX_RETRY_DELAY_MS);
+}
 
 /** Default timeout (ms) for a `wait-for-output` step when it declares none. */
 export const WAIT_FOR_OUTPUT_DEFAULT_TIMEOUT_MS = 30_000;
@@ -153,16 +193,38 @@ export function evaluateCondition(condition: WorkflowCondition): boolean {
 /** Terminal outcome of a workflow run (the state machine's end states). */
 export type WorkflowRunStatus = "completed" | "cancelled" | "failed";
 
+/**
+ * A step failure the run tolerated because the step was marked
+ * `continueOnError` (PROD-045).
+ */
+export interface WorkflowToleratedFailure {
+  /** The 0-based index of the top-level step the failure occurred in. */
+  stepIndex: number;
+  /** The failure reason of the step's final attempt. */
+  error: string;
+  /** How many times the step was attempted (1 + retries used). */
+  attempts: number;
+}
+
 /** Result of a finished workflow run. */
 export interface WorkflowRunResult {
   /** Which terminal state the run ended in. */
   status: WorkflowRunStatus;
-  /** Number of steps that completed successfully before the run ended. */
+  /**
+   * Number of top-level steps the run got past before it ended. A step whose
+   * failure was tolerated via `continueOnError` counts as got-past (PROD-045).
+   */
   stepsCompleted: number;
   /** For `failed`: the 0-based index of the step that failed. */
   failedStepIndex?: number;
   /** For `failed`: a human-readable reason. */
   error?: string;
+  /**
+   * Step failures tolerated via `continueOnError` (PROD-045), in the order they
+   * happened. Absent when no failure was tolerated, so a run of a workflow that
+   * uses no error handling reports exactly the same result shape as before.
+   */
+  continuedFailures?: WorkflowToleratedFailure[];
 }
 
 /**
@@ -295,12 +357,65 @@ export interface WorkflowRunnerDeps {
 export interface WorkflowStepSignal {
   /** `true` once the owning run has been cancelled. */
   isCancelled: () => boolean;
+  /**
+   * Optional promise that resolves the moment the run is cancelled. A retry
+   * back-off wait races it so a cancel interrupts the wait immediately instead
+   * of after the full delay (PROD-045). Absent → the wait runs to completion and
+   * the cancel is observed right after it.
+   */
+  whenCancelled?: Promise<void>;
+}
+
+/** A retry of a failing step is about to be attempted (PROD-045). */
+export interface WorkflowStepRetryEvent {
+  /** The 0-based index of the top-level step this (possibly nested) step is in. */
+  stepIndex: number;
+  /** The step that failed and will be retried. */
+  step: WorkflowStep;
+  /** The attempt that just failed (1-based). */
+  failedAttempt: number;
+  /** The total attempts the policy allows (1 + effective retries). */
+  maxAttempts: number;
+  /** Why the attempt failed. */
+  error: string;
+  /** How long (ms) the runner waits before the next attempt. */
+  delayMs: number;
+}
+
+/** A failing step was tolerated via `continueOnError` (PROD-045). */
+export interface WorkflowStepContinuedEvent {
+  /** The 0-based index of the top-level step this (possibly nested) step is in. */
+  stepIndex: number;
+  /** The step whose failure was tolerated. */
+  step: WorkflowStep;
+  /** The failure reason of the final attempt. */
+  error: string;
+  /** How many times the step was attempted. */
+  attempts: number;
 }
 
 /** Optional lifecycle hooks fired as a run advances. */
 export interface WorkflowRunHooks {
   /** Fired after each step completes, with the 1-based count, total, and step. */
   onProgress?: (completed: number, total: number, step: WorkflowStep) => void;
+  /** Fired before a failing step is retried (PROD-045). */
+  onStepRetry?: (event: WorkflowStepRetryEvent) => void;
+  /** Fired when a failing step is tolerated via `continueOnError` (PROD-045). */
+  onStepContinued?: (event: WorkflowStepContinuedEvent) => void;
+}
+
+/**
+ * Per-run bookkeeping threaded through {@link executeStep} so the error-handling
+ * policy of nested steps (inside a conditional/loop) reports into the same run
+ * (PROD-045). Optional: an isolated `executeStep` call runs without it.
+ */
+export interface WorkflowPolicyContext {
+  /** The 0-based index of the top-level step currently executing. */
+  stepIndex: number;
+  /** Hooks to notify about retries and tolerated failures. */
+  hooks?: WorkflowRunHooks;
+  /** Collected tolerated failures, appended in order. */
+  continuedFailures: WorkflowToleratedFailure[];
 }
 
 /** A running workflow that can be awaited or cancelled. */
@@ -353,6 +468,26 @@ function defaultWait(ms: number): Promise<void> {
 /** Sleep for `ms` through the injected timer seam, or the real timer by default. */
 async function sleepFor(ms: number, deps: WorkflowRunnerDeps): Promise<void> {
   await (deps.wait ?? defaultWait)(ms);
+}
+
+/**
+ * Sleep for `ms` unless the run is cancelled first (PROD-045 retry back-off).
+ * Races the timer seam against {@link WorkflowStepSignal.whenCancelled} so a
+ * cancel interrupts the wait immediately. Resolves `true` when the run was
+ * cancelled (before, during, or right after the wait), `false` otherwise.
+ */
+async function sleepUnlessCancelled(
+  ms: number,
+  deps: WorkflowRunnerDeps,
+  signal?: WorkflowStepSignal
+): Promise<boolean> {
+  const cancelled = (): boolean => signal?.isCancelled() ?? false;
+  if (cancelled()) return true;
+  if (ms > 0) {
+    const sleep = Promise.resolve(sleepFor(ms, deps));
+    await (signal?.whenCancelled ? Promise.race([sleep, signal.whenCancelled]) : sleep);
+  }
+  return cancelled();
 }
 
 /**
@@ -503,7 +638,8 @@ export async function executeStep(
   deps: WorkflowRunnerDeps,
   signal?: WorkflowStepSignal,
   paramValues?: WorkflowParamValues,
-  depth = 0
+  depth = 0,
+  policy?: WorkflowPolicyContext
 ): Promise<StepOutcome> {
   const cancelled = (): boolean => signal?.isCancelled() ?? false;
 
@@ -594,7 +730,14 @@ export async function executeStep(
         if (cancelled()) return { ok: true, cancelled: true };
         // Sub-steps run through their own substitution pass; forward the raw
         // (un-substituted) paramValues, not the resolved ones.
-        const outcome = await executeStep(child, deps, signal, paramValues, depth + 1);
+        const outcome = await executeStepWithPolicy(
+          child,
+          deps,
+          signal,
+          paramValues,
+          depth + 1,
+          policy
+        );
         if (!outcome.ok) return outcome;
         if (outcome.cancelled) return { ok: true, cancelled: true };
       }
@@ -614,7 +757,14 @@ export async function executeStep(
         const augmented: WorkflowParamValues = { ...base, [LOOP_ITERATION_PARAM]: String(i) };
         for (const child of resolved.body) {
           if (cancelled()) return { ok: true, cancelled: true };
-          const outcome = await executeStep(child, deps, signal, augmented, depth + 1);
+          const outcome = await executeStepWithPolicy(
+            child,
+            deps,
+            signal,
+            augmented,
+            depth + 1,
+            policy
+          );
           if (!outcome.ok) return outcome;
           if (outcome.cancelled) return { ok: true, cancelled: true };
         }
@@ -708,6 +858,82 @@ export async function executeStep(
 }
 
 /**
+ * Execute a step under its per-step error-handling policy (PROD-045).
+ *
+ * - **Retry.** A failing attempt is re-run up to {@link effectiveRetryCount}
+ *   more times, waiting {@link retryDelayMs} before each retry. The wait is
+ *   cancellable: a cancel during it ends the step as `cancelled` without another
+ *   attempt. A cancelled attempt is never retried.
+ * - **Continue on error.** When every attempt failed and the step is marked
+ *   `continueOnError`, the failure is recorded on `policy` and reported as a
+ *   success so the enclosing list moves on; otherwise the final failure is
+ *   returned (annotated with the attempt count when retries were used).
+ *
+ * A step with neither option behaves exactly like {@link executeStep}.
+ */
+export async function executeStepWithPolicy(
+  step: WorkflowStep,
+  deps: WorkflowRunnerDeps,
+  signal?: WorkflowStepSignal,
+  paramValues?: WorkflowParamValues,
+  depth = 0,
+  policy?: WorkflowPolicyContext
+): Promise<StepOutcome> {
+  const maxRetries = effectiveRetryCount(step.retry);
+  const maxAttempts = maxRetries + 1;
+  let attempt = 0;
+  let lastError = "";
+  for (;;) {
+    attempt += 1;
+    const outcome = await executeStep(step, deps, signal, paramValues, depth, policy);
+    if (outcome.ok) return outcome;
+    lastError = outcome.error;
+    if (attempt >= maxAttempts) break;
+    const delayMs = retryDelayMs(step.retry, attempt);
+    frontendWarn(
+      "workflow",
+      `step "${step.kind}" failed (attempt ${attempt}/${maxAttempts}): ${lastError}; ` +
+        `retrying in ${delayMs} ms`
+    );
+    policy?.hooks?.onStepRetry?.({
+      stepIndex: policy.stepIndex,
+      step,
+      failedAttempt: attempt,
+      maxAttempts,
+      error: lastError,
+      delayMs,
+    });
+    if (await sleepUnlessCancelled(delayMs, deps, signal)) return { ok: true, cancelled: true };
+  }
+
+  if (step.continueOnError) {
+    frontendWarn(
+      "workflow",
+      `step "${step.kind}" failed after ${attempt} attempt(s) but is marked ` +
+        `continue-on-error; continuing: ${lastError}`
+    );
+    if (policy) {
+      policy.continuedFailures.push({
+        stepIndex: policy.stepIndex,
+        error: lastError,
+        attempts: attempt,
+      });
+      policy.hooks?.onStepContinued?.({
+        stepIndex: policy.stepIndex,
+        step,
+        error: lastError,
+        attempts: attempt,
+      });
+    }
+    return { ok: true };
+  }
+  return {
+    ok: false,
+    error: attempt > 1 ? `${lastError} (after ${attempt} attempts)` : lastError,
+  };
+}
+
+/**
  * Run a workflow's steps in order through `deps`, honouring cancellation and
  * reporting progress. Returns a {@link WorkflowRunHandle} whose `done` promise
  * resolves once the run reaches a terminal state.
@@ -722,6 +948,12 @@ export async function executeStep(
  *
  * `paramValues` (PROD-0040) is forwarded to each step's substitution pass. Absent
  * or empty, the run is byte-identical to a parameter-free run.
+ *
+ * Each step runs under its error-handling policy (PROD-045, see
+ * {@link executeStepWithPolicy}): a step with a `retry` policy is re-attempted
+ * before the run fails, and a step marked `continueOnError` records its failure
+ * in {@link WorkflowRunResult.continuedFailures} and lets the run carry on. A
+ * cancel interrupts a retry back-off wait immediately.
  */
 export function runWorkflow(
   steps: WorkflowStep[],
@@ -730,12 +962,24 @@ export function runWorkflow(
   paramValues?: WorkflowParamValues
 ): WorkflowRunHandle {
   let cancelled = false;
+  let resolveCancelled: () => void = () => {};
+  const whenCancelled = new Promise<void>((resolve) => {
+    resolveCancelled = resolve;
+  });
 
   const cancel = (): void => {
     cancelled = true;
+    resolveCancelled();
   };
 
-  const signal: WorkflowStepSignal = { isCancelled: () => cancelled };
+  const signal: WorkflowStepSignal = { isCancelled: () => cancelled, whenCancelled };
+  const policy: WorkflowPolicyContext = { stepIndex: 0, hooks, continuedFailures: [] };
+  // Attach the tolerated failures only when there were any, so a run that uses
+  // no error handling reports exactly the pre-PROD-045 result shape.
+  const withFailures = (result: WorkflowRunResult): WorkflowRunResult =>
+    policy.continuedFailures.length > 0
+      ? { ...result, continuedFailures: [...policy.continuedFailures] }
+      : result;
 
   const done = (async (): Promise<WorkflowRunResult> => {
     // Yield once before the first step so a cancel() issued synchronously right
@@ -743,24 +987,25 @@ export function runWorkflow(
     // before it starts does nothing.
     await Promise.resolve();
     for (let i = 0; i < steps.length; i++) {
-      if (cancelled) return { status: "cancelled", stepsCompleted: i };
+      if (cancelled) return withFailures({ status: "cancelled", stepsCompleted: i });
 
-      const outcome = await executeStep(steps[i], deps, signal, paramValues);
+      policy.stepIndex = i;
+      const outcome = await executeStepWithPolicy(steps[i], deps, signal, paramValues, 0, policy);
       if (!outcome.ok) {
-        return {
+        return withFailures({
           status: "failed",
           stepsCompleted: i,
           failedStepIndex: i,
           error: outcome.error,
-        };
+        });
       }
       // A multi-part step that aborted mid-flight on cancel: end the run without
       // counting it as completed and without firing its progress hook.
-      if (outcome.cancelled) return { status: "cancelled", stepsCompleted: i };
+      if (outcome.cancelled) return withFailures({ status: "cancelled", stepsCompleted: i });
 
       hooks?.onProgress?.(i + 1, steps.length, steps[i]);
     }
-    return { status: "completed", stepsCompleted: steps.length };
+    return withFailures({ status: "completed", stepsCompleted: steps.length });
   })();
 
   return { done, cancel };
