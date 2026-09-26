@@ -1809,9 +1809,10 @@ backend and dialogs are unit-tested; this checks the native save/open dialogs).
 4. Enter the right passphrase → **Preview** shows 1 conflict; choose **Replace
    them with the imported ones** → **Import** → success toast; connecting uses the
    exported password again.
-5. Switch to OS Keychain mode: on macOS/Windows **Export vault…** is enabled and
-   exporting asks for Touch ID / Windows Hello (see the #3433 steps below); on
-   Linux it is disabled with the "requires system authentication" reason.
+5. Switch to OS Keychain mode: **Export vault…** is enabled and exporting asks
+   for Touch ID / Windows Hello / the polkit password (see the #3433 and #3535
+   steps below); in a Linux AppImage it is disabled with the "requires system
+   authentication" reason.
    **Import vault…** with the same file works and the credentials land in the OS
    keychain.
 
@@ -1871,13 +1872,32 @@ or face sensor for the biometric steps). Each step states the expected result.
 4. **Change Master Password** → the toggle turns off. (Adding a fingerprint does **not** invalidate on
    Windows — documented limitation.)
 
-#### Linux
+#### Linux — keychain export via polkit (#3535)
 
-1. Storage **OS Keychain**: **Export vault…** is disabled with "Exporting from the OS keychain
-   requires system authentication (Touch ID / Windows Hello), which is not available on this
-   computer…"; backup Credentials is disabled with the same reason; import still works.
-2. Storage **Master Password**: no "Unlock with…" toggle is shown; the unlock dialog shows only the
-   password field.
+The polkit result mapping is unit-tested against a fake authority; the real agent dialog needs a
+desktop session. Run once on **GNOME** (Ubuntu/Fedora Workstation — GNOME Shell is the agent) and
+once on **KDE Plasma** (`polkit-kde-authentication-agent-1`), installing termiHub from the **.deb**
+(Ubuntu/Debian) or **.rpm** (Fedora/openSUSE) package.
+
+1. After installing the package, `ls /usr/share/polkit-1/actions/com.termihub.app.policy` → the file
+   exists; `pkaction --action-id com.termihub.app.reauthenticate --verbose` → `implicit active:
+auth_self`, `implicit any: no`, `implicit inactive: no`.
+2. Storage **OS Keychain**, save one connection password. The Credential Vault Backup section says
+   to confirm with "your account password"; **Export vault…** is enabled. Export → passphrase twice
+   → **Export…** → the desktop's polkit dialog asks for **your own** password (not root's / an
+   admin's) with "termiHub is trying to export the credentials saved in your keyring…" → enter it →
+   the save dialog opens; saving shows a success toast.
+3. Repeat and click **Cancel** in the polkit dialog → inline "System authentication was cancelled —
+   nothing was exported."; no file. A wrong password makes the agent ask again; cancelling after it
+   also refuses the export.
+4. Export twice in a row → the polkit dialog appears **both** times (no retained authorization).
+5. **Back up everything…** with Credentials checked → polkit dialog → backup saves with "N
+   credentials".
+6. Run the **AppImage** (or remove the policy file with `sudo rm` and wait a second): **Export
+   vault…** and backup Credentials are disabled with "…termiHub's polkit action is not installed.
+   Install termiHub from the .deb or .rpm package…"; import still works.
+7. Storage **Master Password**: no "Unlock with…" toggle is shown (no biometric unlock on Linux); the
+   unlock dialog shows only the password field.
 
 ### Unified backup and restore (PROD-068, #3509)
 
@@ -1894,9 +1914,9 @@ backend and dialogs are unit-tested; this checks the native dialogs and the rest
 4. Keep the defaults (merge) → **Restore and restart**. termiHub restarts; the deleted connection
    and macro are back, the theme is the backed-up one, and the saved password still connects.
 5. Switch to OS Keychain mode and open **Back up everything…**: on macOS/Windows Credentials is
-   checked and saving asks for Touch ID / Windows Hello first (see the #3433 steps below); on Linux
-   it is disabled with the "requires system authentication" reason and a backup of the rest still
-   saves.
+   checked and saving asks for Touch ID / Windows Hello / the polkit password first (see the #3433
+   and #3535 steps above); in a Linux AppImage it is disabled with the "requires system
+   authentication" reason and a backup of the rest still saves.
 
 ### Backup of trusted host keys and plugins (#3515)
 

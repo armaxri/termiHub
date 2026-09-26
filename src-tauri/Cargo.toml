@@ -267,6 +267,12 @@ keyring = { version = "3", default-features = false, features = [
     "crypto-rust",
     "tokio",
 ] }
+# polkit D-Bus client for keychain-export re-authentication (#3535):
+# `CheckAuthorization` on the `com.termihub.app.reauthenticate` action through
+# the blocking API. zbus 5 with default features is already in the tree via
+# `tauri-plugin-single-instance` / `tauri-plugin-opener`, so this adds no new
+# crate; pure Rust, no `libdbus-1-dev` build dependency.
+zbus = "5"
 
 [dev-dependencies]
 # Paused-clock time control (`tokio::test(start_paused)`) for deterministic
