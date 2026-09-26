@@ -18,6 +18,8 @@ import { LayoutDesigner } from "./LayoutDesigner";
 import { WorkspaceSettingsSection } from "./WorkspaceSettingsSection";
 import { normalizeWorkspaceSettings } from "@/services/workspaceSettings";
 import { newId } from "@/services/transport/ids";
+import { useFollowConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { remapWorkspaceTabGroups } from "@/utils/connectionIdChanges";
 import "./WorkspaceEditor.css";
 
 interface WorkspaceEditorProps {
@@ -50,6 +52,9 @@ export function WorkspaceEditor({ tabId, meta, isVisible }: WorkspaceEditorProps
   const [settings, setSettings] = useState<WorkspaceSettings>({});
   // Carried through unchanged so editing a multi-window workspace keeps its windows.
   const [windows, setWindows] = useState<WorkspaceWindowDef[] | undefined>(undefined);
+  // A saved connection renamed while the editor is open: re-point the draft's
+  // tab refs, or saving would write the old id back over the backend's follow (#3603).
+  useFollowConnectionIdChanges(setTabGroupDefs, remapWorkspaceTabGroups);
 
   useEffect(() => {
     if (meta.workspaceId) {

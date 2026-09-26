@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import {
@@ -27,6 +27,8 @@ import {
   weekdayLabel,
   type ScheduleFormValues,
 } from "./scheduleForm";
+import { useConnectionIdChanges } from "@/hooks/useFollowConnectionIdChanges";
+import { remapConnectionIdList } from "@/utils/connectionIdChanges";
 import "./Schedules.css";
 
 export interface ScheduleEditorDialogProps {
@@ -84,16 +86,32 @@ export function ScheduleEditorDialog({
   onOpenChange,
   onSave,
 }: ScheduleEditorDialogProps) {
-  const { control, getValues, reset } = useForm<ScheduleFormValues>({
+  const { control, getValues, setValue, reset } = useForm<ScheduleFormValues>({
     defaultValues: blankScheduleForm(),
     resolver: zodResolver(scheduleFormSchema),
     mode: "onChange",
   });
 
+  // Load the working copy when the dialog opens or switches to another schedule
+  // — keyed on the schedule's id, not the object, so a refresh of the schedules
+  // list (a run, or the backend following a connection rename) never clobbers
+  // the unsaved edits (#3603).
+  const latestSchedule = useRef(schedule);
+  latestSchedule.current = schedule;
+  const loadedId = schedule?.id ?? null;
   useEffect(() => {
     if (!open) return;
-    reset(schedule ? scheduleToForm(schedule) : blankScheduleForm(initialAction));
-  }, [open, schedule, initialAction, reset]);
+    const current = latestSchedule.current;
+    reset(current ? scheduleToForm(current) : blankScheduleForm(initialAction));
+  }, [open, loadedId, initialAction, reset]);
+
+  // A connection renamed while the dialog is open: re-point the targets, or
+  // saving would write the old id back (#3603).
+  useConnectionIdChanges((remap) => {
+    const ids = getValues("connectionIds");
+    const next = remapConnectionIdList(ids, remap);
+    if (next !== ids) setValue("connectionIds", next, { shouldValidate: true });
+  }, open);
 
   const watched = useWatch({ control }) as ScheduleFormValues;
   const validation = useMemo(() => scheduleFormSchema.safeParse(watched), [watched]);
