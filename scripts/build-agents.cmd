@@ -418,8 +418,10 @@ set /a BUILT+=1
 exit /b 0
 
 REM Write "<binary>.sha256" next to a built binary: "<lowercase hex>  <file name>"
-REM plus LF -- byte-identical to `sha256sum <name>` run in the binary's directory,
-REM the format build-agents.sh writes and release.yml publishes (#1350). Uses
+REM plus LF, no BOM -- byte-identical to text-mode `sha256sum <name>` on Linux
+REM (the format release.yml publishes, #1350). Git for Windows' sha256sum
+REM defaults to binary mode ("<hex> *<name>"); both forms verify with
+REM `sha256sum -c`, and every consumer reads only the first token. Uses
 REM Windows PowerShell's Get-FileHash (built into every supported Windows; the
 REM output is locale-independent, unlike certutil's). Returns non-zero -- and the
 REM caller FAILS the target -- if hashing or the write fails or the sidecar is

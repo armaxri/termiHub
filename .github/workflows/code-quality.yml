@@ -545,7 +545,15 @@ jobs:
         run: |
           set -euo pipefail
           cd "$(cygpath -u "$RUNNER_TEMP")/sha"
-          sha256sum termihub-agent.exe | cmp - termihub-agent.exe.sha256
+          # Expected bytes: "<hex>  <name>" + LF, the Linux text-mode format.
+          # Built by hand because Git for Windows' sha256sum defaults to binary
+          # mode and prints "<hex> *<name>", which is not the published format.
+          hex="$(sha256sum <termihub-agent.exe | cut -c1-64)"
+          printf '%s  %s\n' "$hex" termihub-agent.exe >expected.sha256
+          if ! cmp expected.sha256 termihub-agent.exe.sha256; then
+            od -c termihub-agent.exe.sha256
+            exit 1
+          fi
           sha256sum -c termihub-agent.exe.sha256
 
   # Run tests
