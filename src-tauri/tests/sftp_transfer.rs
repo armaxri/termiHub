@@ -17,211 +17,20 @@
 
 #![cfg(unix)]
 
-use std::net::TcpStream;
-use std::sync::{Arc, Mutex};
+#[macro_use]
+mod common;
+
+use common::*;
+
 use std::time::{Duration, Instant};
 
-use termihub_core::backends::ssh::{SftpAdvancedOps, SftpFileBrowser, SftpTransferChannel};
-use termihub_core::config::SshConfig;
+use termihub_core::backends::ssh::SftpAdvancedOps;
 use termihub_core::files::FileBrowser;
 use termihub_lib::files::sftp::Writability;
 use termihub_lib::files::transfer::sftp::{run_sftp_remote_copy, run_sftp_transfer, ResumeMode};
 use termihub_lib::files::transfer::state::TransferStateTag;
-use termihub_lib::files::transfer::{
-    ProgressSink, TransferDirection, TransferPhase, TransferProgress, TransferRegistry,
-};
+use termihub_lib::files::transfer::{TransferDirection, TransferPhase, TransferRegistry};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-
-/// Resolve the sftp-stress container port (per-checkout offset aware), matching
-/// `core/tests/common`'s `port_sftp_stress`.
-fn sftp_stress_port() -> u16 {
-    if let Some(p) = std::env::var("TERMIHUB_TEST_SFTP_STRESS_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-    {
-        return p;
-    }
-    let offset: u16 = std::env::var("TERMIHUB_TEST_PORT_OFFSET")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    2210 + offset
-}
-
-fn is_port_reachable(port: u16) -> bool {
-    let addr = format!("127.0.0.1:{port}");
-    addr.parse()
-        .map(|a| TcpStream::connect_timeout(&a, Duration::from_secs(2)).is_ok())
-        .unwrap_or(false)
-}
-
-/// Env var that flips a missing fixture from a silent skip to a hard failure
-/// (TBE-006). Mirrors `core/tests/common`'s `REQUIRE_DOCKER_ENV`; a CI lane that
-/// brings the sftp-stress fixture up sets it (`=1`) so an absent/broken
-/// container reds the lane instead of skipping to a false green.
-const REQUIRE_DOCKER_ENV: &str = "TERMIHUB_REQUIRE_DOCKER";
-
-/// Interpret a raw `TERMIHUB_REQUIRE_DOCKER` value as a boolean (truthy: `1`,
-/// `true`, `yes`, `on`, case-insensitive; unset / everything else is falsey, so
-/// local and per-PR runs never hard-fail).
-fn parse_required(val: Option<&str>) -> bool {
-    matches!(
-        val.map(|v| v.trim().to_ascii_lowercase()).as_deref(),
-        Some("1") | Some("true") | Some("yes") | Some("on")
-    )
-}
-
-/// Whether this process requires the Docker fixture to be present.
-fn docker_required() -> bool {
-    parse_required(std::env::var(REQUIRE_DOCKER_ENV).ok().as_deref())
-}
-
-/// Resolve whether a fixture-gated test body should run. Returns `true` to run;
-/// `false` after a visible `SKIPPED:` line when the fixture is absent and not
-/// required; **panics** when absent but required (`TERMIHUB_REQUIRE_DOCKER`
-/// set), so a Docker-backed lane reds instead of going falsely green (TBE-006).
-fn require_fixture(reachable: bool, required: bool, port: u16) -> bool {
-    match (reachable, required) {
-        (true, _) => true,
-        (false, false) => {
-            eprintln!(
-                "SKIPPED: sftp-stress container not reachable on port {port} \
-                 (start with `docker compose -f tests/docker/docker-compose.yml --profile stress up -d`)"
-            );
-            false
-        }
-        (false, true) => panic!(
-            "REQUIRED fixture unavailable: sftp-stress container not reachable on \
-             port {port} but {REQUIRE_DOCKER_ENV} is set — a missing/broken \
-             fixture is a hard failure here, not a skip (TBE-006)"
-        ),
-    }
-}
-
-/// Register a process-wide host-key verifier that trusts the local Docker
-/// fixture containers, so these desktop SFTP integration tests connect
-/// deterministically under the strict default host-key policy (#1969, #2032).
-///
-/// Opening a session goes through the same strict host-key path as the rest of
-/// the app: with no verifier registered it trusts only keys already recorded in
-/// the runner's `~/.ssh/known_hosts` and refuses everything else with "Unknown
-/// server key". CI runners (and any freshly-(re)built fixture image) never have
-/// the generated fixture key recorded, so the handshake fails pre-auth (#2105).
-/// These tests connect only to the loopback `sftp-stress` fixture, where there
-/// is no man-in-the-middle to guard against, so a test-only verifier that trusts
-/// every fixture key is safe and deterministic. This mirrors core's
-/// `trust_fixture_host_keys()` (`core/tests/common/mod.rs`). Registration is
-/// set-once and idempotent (first call wins), so calling it from every
-/// `require_sftp_stress!` site is harmless.
-fn trust_fixture_host_keys() {
-    use termihub_core::backends::ssh::host_key::{
-        set_host_key_verifier, HostKeyInfo, HostKeyVerifier,
-    };
-
-    struct TrustLocalFixtures;
-
-    #[async_trait::async_trait]
-    impl HostKeyVerifier for TrustLocalFixtures {
-        async fn verify(&self, _info: &HostKeyInfo) -> bool {
-            true
-        }
-    }
-
-    // First registration wins; any later call is a harmless no-op.
-    let _ = set_host_key_verifier(Arc::new(TrustLocalFixtures));
-}
-
-/// Skip *or hard-fail* the current test based on the sftp-stress container's
-/// port. Not reachable normally prints a visible `SKIPPED:` line and returns —
-/// but under `TERMIHUB_REQUIRE_DOCKER=1` it panics instead, so an absent/broken
-/// fixture reds a Docker-backed lane rather than skipping to a false green
-/// (TBE-006). See [`require_fixture`].
-macro_rules! require_sftp_stress {
-    ($port:expr) => {
-        // Trust the loopback fixture host key before connecting, so the strict
-        // default host-key policy (#1969) does not refuse the freshly-built
-        // fixture container with "Unknown server key" (#2105, sibling of #2032).
-        trust_fixture_host_keys();
-        let __require_port = $port;
-        if !require_fixture(
-            is_port_reachable(__require_port),
-            docker_required(),
-            __require_port,
-        ) {
-            return;
-        }
-    };
-}
-
-fn stress_config(port: u16) -> SshConfig {
-    SshConfig {
-        host: "127.0.0.1".to_string(),
-        port,
-        username: "testuser".to_string(),
-        auth_method: "password".to_string(),
-        password: Some("testpass".to_string()),
-        ..SshConfig::default()
-    }
-}
-
-/// A progress sink that records every emitted payload, so tests can assert on
-/// the transfer lifecycle without a Tauri `AppHandle`.
-#[derive(Clone, Default)]
-struct RecordingSink {
-    events: Arc<Mutex<Vec<TransferProgress>>>,
-}
-
-impl RecordingSink {
-    fn as_sink(&self) -> ProgressSink {
-        let events = self.events.clone();
-        Arc::new(move |p: &TransferProgress| {
-            events.lock().expect("sink mutex").push(p.clone());
-        })
-    }
-
-    fn terminal_phase(&self) -> Option<TransferPhase> {
-        self.events
-            .lock()
-            .expect("sink mutex")
-            .last()
-            .map(|p| p.phase)
-    }
-
-    /// Whether any recorded event carried the given rich queue state — used to
-    /// confirm a pause actually landed mid-transfer (PROD-0012).
-    fn saw_state(&self, state: TransferStateTag) -> bool {
-        self.events
-            .lock()
-            .expect("sink mutex")
-            .iter()
-            .any(|p| p.state == state)
-    }
-}
-
-/// Connect a core [`SftpFileBrowser`] against the container and return it, ready
-/// to drive the transfer subsystem.
-///
-/// Constructs the browser directly and eagerly connects it — the same path the
-/// session's `ConnectionType` file browser resolves to — now that the standalone
-/// UUID `SftpManager` session model has been retired (#2314).
-async fn connect() -> Arc<SftpFileBrowser> {
-    let config = stress_config(sftp_stress_port());
-    let browser = SftpFileBrowser::new(config);
-    browser
-        .connect()
-        .await
-        .expect("SFTP session should connect");
-    Arc::new(browser)
-}
-
-/// Open a dedicated [`SftpTransferChannel`] off `session` (mirrors the command
-/// layer), awaited directly on the async core browser.
-async fn open_dedicated(session: Arc<SftpFileBrowser>) -> SftpTransferChannel {
-    session
-        .open_dedicated_channel()
-        .await
-        .expect("dedicated SFTP channel should open")
-}
 
 /// Cancel-mid-transfer: the partial local file is removed and the terminal
 /// `cancelled` event fires.
@@ -413,26 +222,6 @@ async fn browsing_stays_live_during_transfer() {
 }
 
 // --- Resume primitives + rich-executor pause/resume (PROD-0012) ---
-
-/// A deterministic, non-repeating byte pattern of length `n`, so a resumed
-/// tail can be compared exactly against its source.
-fn known_bytes(n: usize) -> Vec<u8> {
-    (0..n).map(|i| (i % 251) as u8).collect()
-}
-
-/// Write `content` to `remote_path` via a dedicated channel's truncating
-/// `create_write`, then flush + shut down so the whole file is durable.
-async fn write_remote(channel: &SftpTransferChannel, remote_path: &str, content: &[u8]) {
-    let mut w = channel
-        .create_write(remote_path)
-        .await
-        .expect("create_write should open the remote file");
-    w.write_all(content)
-        .await
-        .expect("write_all should succeed");
-    w.flush().await.expect("flush should succeed");
-    w.shutdown().await.expect("shutdown should succeed");
-}
 
 /// `open_read_at` returns exactly the tail of the file from `offset` onward, and
 /// `remote_file_size` reports the true size — the read half of resume.
