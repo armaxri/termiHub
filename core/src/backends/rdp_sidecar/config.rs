@@ -14,13 +14,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::connection::schema::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
 use crate::connection::graphical_resolution::{
     DEFAULT_FIXED_HEIGHT, DEFAULT_FIXED_WIDTH, RESOLUTION_MODE_DYNAMIC,
 };
+use crate::connection::schema::{Condition, FieldType, SelectOption, SettingsField, SettingsGroup};
 use crate::connection::{
-    fixed_resolution_fields, is_fixed_mode, normalize_fixed_size, shared_field_base,
-    SettingsSchema,
+    fixed_resolution_fields, is_fixed_mode, normalize_fixed_size, shared_field_base, SettingsSchema,
 };
 
 /// Standard RDP TCP port.
@@ -675,7 +674,13 @@ mod tests {
         let keys: Vec<&str> = display.fields.iter().map(|f| f.key.as_str()).collect();
         assert_eq!(
             keys,
-            vec!["scaleMode", "resolutionMode", "width", "height", "colorDepth"]
+            vec![
+                "scaleMode",
+                "resolutionMode",
+                "width",
+                "height",
+                "colorDepth"
+            ]
         );
         let depth = display
             .fields

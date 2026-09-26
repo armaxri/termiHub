@@ -109,23 +109,21 @@ pub fn shared_field_base(default_port: u16) -> Vec<SettingsGroup> {
             collapsed: false,
             key: "display".to_string(),
             label: "Display".to_string(),
-            fields: vec![
-                SettingsField {
-                    default: Some(serde_json::json!("fit")),
-                    description: Some("How the remote framebuffer fills the tab".to_string()),
-                    ..field(
-                        "scaleMode",
-                        "Scale Mode",
-                        FieldType::Select {
-                            options: vec![
-                                opt("fit", "Fit to Tab"),
-                                opt("pixel", "1:1 Pixel"),
-                                opt("match", "Match Window"),
-                            ],
-                        },
-                    )
-                },
-            ],
+            fields: vec![SettingsField {
+                default: Some(serde_json::json!("fit")),
+                description: Some("How the remote framebuffer fills the tab".to_string()),
+                ..field(
+                    "scaleMode",
+                    "Scale Mode",
+                    FieldType::Select {
+                        options: vec![
+                            opt("fit", "Fit to Tab"),
+                            opt("pixel", "1:1 Pixel"),
+                            opt("match", "Match Window"),
+                        ],
+                    },
+                )
+            }],
         },
         SettingsGroup {
             collapsed: false,
